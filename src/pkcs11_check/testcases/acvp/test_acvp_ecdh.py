@@ -286,14 +286,14 @@ _ECDH_VECTORS = _load_all_ecdh_vectors()
 
 @pytest.mark.parametrize("vec_id, vec", _ECDH_VECTORS, ids=[v[0] for v in _ECDH_VECTORS])
 def test_acvp_ecdh_shared_secret(
-    p11_raw_session: RawSession, vec_id: str, vec: dict[str, Any]
+    p11_module_session: RawSession, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """ECDH shared secret derivation test using Wycheproof vectors.
 
     Imports a private key and peer public key, derives the shared secret using
     CKM_ECDH1_DERIVE, and verifies it matches the expected value.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
 
     # Skip if ECDH not supported
     if not rs.has_mechanism("ECDH1_DERIVE"):
@@ -392,9 +392,9 @@ class TestEcdhKeyAgreement:
     """ECDH key agreement tests by curve."""
 
     @pytest.mark.parametrize("curve", ["P-256", "P-384", "P-521"])
-    def test_ecdh_key_agreement_basic(self, p11_raw_session: RawSession, curve: str) -> None:
+    def test_ecdh_key_agreement_basic(self, p11_module_session: RawSession, curve: str) -> None:
         """Basic ECDH key agreement with module-generated keys."""
-        rs = p11_raw_session
+        rs = p11_module_session
 
         if not rs.has_mechanism("ECDH1_DERIVE"):
             pytest.skip("CKM_ECDH1_DERIVE not supported by module")

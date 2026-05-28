@@ -95,9 +95,9 @@ _ALL_MLDSA_VECTORS = _load_mldsa_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_MLDSA_VECTORS, ids=[v[0] for v in _ALL_MLDSA_VECTORS])
-def test_mldsa_verify(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_mldsa_verify(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """ML-DSA signature verification from Wycheproof vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("ML_DSA"):
         pytest.skip("ML_DSA not supported")
 

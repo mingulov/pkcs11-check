@@ -99,7 +99,7 @@ _AES_CMAC_VECTORS = _load_flat("aes_cmac_test.json")
 
 
 @pytest.mark.parametrize("vec_id,vec", _AES_CMAC_VECTORS, ids=[v[0] for v in _AES_CMAC_VECTORS])
-def test_aes_cmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_aes_cmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CMAC tag verification from Wycheproof vectors.
 
     Verifies the *supplied* tag with C_Verify so that invalid vectors actually
@@ -108,7 +108,7 @@ def test_aes_cmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
     (C_Sign + compare) could never reject an invalid vector because a fresh
     correct tag never matched the modified expected tag.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_CMAC"):
         pytest.skip("AES_CMAC not supported")
 
@@ -160,7 +160,7 @@ _AES_WRAP_VECTORS = _load_flat("aes_wrap_test.json")
 
 
 @pytest.mark.parametrize("vec_id,vec", _AES_WRAP_VECTORS, ids=[v[0] for v in _AES_WRAP_VECTORS])
-def test_aes_key_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES Key Wrap (RFC 3394) unwrap from Wycheproof vectors.
 
     Unwraps the supplied wrapped blob (``ct``) so invalid vectors actually
@@ -169,7 +169,7 @@ def test_aes_key_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) ->
     produce-direction (wrap + compare) could never reject an invalid vector
     because a fresh correct wrap never matched the modified expected blob.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_KEY_WRAP"):
         pytest.skip("AES_KEY_WRAP not supported")
 
@@ -241,13 +241,13 @@ _AES_KWP_VECTORS = _load_flat("aes_kwp_test.json")
 
 
 @pytest.mark.parametrize("vec_id,vec", _AES_KWP_VECTORS, ids=[v[0] for v in _AES_KWP_VECTORS])
-def test_aes_kwp(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES Key Wrap with Padding (RFC 5649) from Wycheproof vectors.
 
     KWP allows wrapping data that is not a multiple of 8 bytes,
     unlike basic AES-KW which requires 8-byte aligned data.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_KEY_WRAP_KWP"):
         pytest.skip("AES_KEY_WRAP_KWP not supported")
 
@@ -310,7 +310,7 @@ _AES_CCM_VECTORS = _load_flat("aes_ccm_test.json")
 
 
 @pytest.mark.parametrize("vec_id,vec", _AES_CCM_VECTORS, ids=[v[0] for v in _AES_CCM_VECTORS])
-def test_aes_ccm(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CCM AEAD decryption from Wycheproof vectors.
 
     Decrypts the supplied ct||tag so invalid vectors actually exercise tag
@@ -319,7 +319,7 @@ def test_aes_ccm(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
     produce-direction (encrypt + compare) could never reject an invalid vector
     because a fresh correct ciphertext never matched the modified expected one.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_CCM"):
         pytest.skip("AES_CCM not supported")
 
@@ -389,7 +389,7 @@ _AES_GMAC_VECTORS = _load_flat("aes_gmac_test.json")
 
 
 @pytest.mark.parametrize("vec_id,vec", _AES_GMAC_VECTORS, ids=[v[0] for v in _AES_GMAC_VECTORS])
-def test_aes_gmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-GMAC (authentication-only GCM) tag verification from Wycheproof vectors.
 
     GMAC is GCM with empty plaintext - authenticates AAD only. Verifies the
@@ -398,7 +398,7 @@ def test_aes_gmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
     -> fail). The previous produce-direction (C_Sign + compare) could never
     reject an invalid vector.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_GMAC"):
         pytest.skip("AES_GMAC not supported")
 
@@ -458,13 +458,13 @@ _AES_XTS_VECTORS = _load_flat("aes_xts_test.json")
 
 
 @pytest.mark.parametrize("vec_id,vec", _AES_XTS_VECTORS, ids=[v[0] for v in _AES_XTS_VECTORS])
-def test_aes_xts(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_aes_xts(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-XTS disk encryption mode from Wycheproof vectors.
 
     XTS uses a double-size key (e.g. 512 bits = two 256-bit keys)
     and a tweak (IV) for sector-based encryption.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_XTS"):
         pytest.skip("AES_XTS not supported")
 

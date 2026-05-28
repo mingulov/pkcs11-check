@@ -118,7 +118,7 @@ class TestMechProbeNoRegistry:
     """Smoke-test vendor/unknown mechanisms that are not in the registry."""
 
     def test_no_registry_entry(
-        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+        self, p11_module_session: RawSession, mech_any_entry: MechEntry
     ) -> None:
         """Confirm mechanism is genuinely unregistered (skip if it has a config).
 
@@ -132,7 +132,7 @@ class TestMechProbeNoRegistry:
         # No assertion needed -- reaching here confirms it is unregistered.
 
     def test_has_operation_flag(
-        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+        self, p11_module_session: RawSession, mech_any_entry: MechEntry
     ) -> None:
         """Unregistered mechanism must advertise at least one operation class flag.
 
@@ -156,7 +156,7 @@ class TestMechProbeNoRegistry:
         )
 
     def test_init_does_not_crash(
-        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+        self, p11_module_session: RawSession, mech_any_entry: MechEntry
     ) -> None:
         """C_EncryptInit / C_SignInit / C_DigestInit with null-ish handle must not crash.
 
@@ -170,7 +170,7 @@ class TestMechProbeNoRegistry:
 
         flags = entry.flags
         mech = mech_simple(CKM(entry.mech_id))
-        rs = p11_raw_session
+        rs = p11_module_session
 
         # Choose the Init function based on advertised flags
         ckf_encrypt = int(CKF_ENCRYPT)

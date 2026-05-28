@@ -81,21 +81,21 @@ _CCM_ENCRYPT_VECTORS, _CCM_DECRYPT_VECTORS = _load_ccm_vectors()
 @pytest.mark.parametrize(
     "vec_id,vec", _CCM_ENCRYPT_VECTORS, ids=[v[0] for v in _CCM_ENCRYPT_VECTORS]
 )
-def test_acvp_aes_ccm_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_ccm_encrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CCM encryption from NIST ACVP vectors.
 
     SoftHSM2: May not support all nonce/tag sizes.
     Kryoptic: Generally supports CCM well.
     """
-    run_ccm_encrypt_test(p11_raw_session, vec_id, vec)
+    run_ccm_encrypt_test(p11_module_session, vec_id, vec)
 
 
 @pytest.mark.parametrize(
     "vec_id,vec", _CCM_DECRYPT_VECTORS, ids=[v[0] for v in _CCM_DECRYPT_VECTORS]
 )
-def test_acvp_aes_ccm_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_ccm_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CCM decryption from NIST ACVP vectors."""
-    run_ccm_decrypt_test(p11_raw_session, vec_id, vec)
+    run_ccm_decrypt_test(p11_module_session, vec_id, vec)
 
 
 # =============================================================================
@@ -157,7 +157,7 @@ _CCM_ECMA_ENCRYPT_VECTORS, _CCM_ECMA_DECRYPT_VECTORS = _load_ccm_ecma_vectors()
 @pytest.mark.parametrize(
     "vec_id,vec", _CCM_ECMA_ENCRYPT_VECTORS, ids=[v[0] for v in _CCM_ECMA_ENCRYPT_VECTORS]
 )
-def test_acvp_aes_ccm_ecma_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_ccm_ecma_encrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CCM-ECMA encryption from NIST ACVP vectors.
 
     CCM-ECMA is a variant of CCM used in the ECMA-368 standard (UWB).
@@ -166,12 +166,12 @@ def test_acvp_aes_ccm_ecma_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[
     SoftHSM2: May not support all nonce/tag sizes.
     Kryoptic: Generally supports CCM well.
     """
-    run_ccm_encrypt_test(p11_raw_session, vec_id, vec)
+    run_ccm_encrypt_test(p11_module_session, vec_id, vec)
 
 
 @pytest.mark.parametrize(
     "vec_id,vec", _CCM_ECMA_DECRYPT_VECTORS, ids=[v[0] for v in _CCM_ECMA_DECRYPT_VECTORS]
 )
-def test_acvp_aes_ccm_ecma_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_ccm_ecma_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CCM-ECMA decryption from NIST ACVP vectors."""
-    run_ccm_decrypt_test(p11_raw_session, vec_id, vec)
+    run_ccm_decrypt_test(p11_module_session, vec_id, vec)

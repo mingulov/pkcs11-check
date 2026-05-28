@@ -185,7 +185,7 @@ def _xfail_if_hmac_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_HMAC_VECTORS, ids=[v[0] for v in _ALL_HMAC_VECTORS])
-def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_hmac_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """HMAC tag verification from Wycheproof vectors.
 
     Verifies the *supplied* tag with C_Verify so invalid vectors actually
@@ -196,7 +196,7 @@ def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any])
     valid MAC the module declines to verify (e.g. an unsupported truncated tag
     length) is an honest, provider-dependent deviation -> xfail.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     key_bytes = bytes.fromhex(vec["key"])
     msg = bytes.fromhex(vec["msg"])
     tag_expected = bytes.fromhex(vec["tag"])

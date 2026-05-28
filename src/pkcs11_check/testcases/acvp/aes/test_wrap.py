@@ -105,9 +105,9 @@ _KW_ENCRYPT_VECTORS, _KW_DECRYPT_VECTORS = _load_kw_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _KW_ENCRYPT_VECTORS, ids=[v[0] for v in _KW_ENCRYPT_VECTORS])
-def test_acvp_aes_kw_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_kw_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-KW wrap via C_Encrypt from NIST ACVP vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_KEY_WRAP"):
         pytest.skip("AES_KEY_WRAP not supported by module")
 
@@ -140,9 +140,9 @@ def test_acvp_aes_kw_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 
 
 @pytest.mark.parametrize("vec_id,vec", _KW_DECRYPT_VECTORS, ids=[v[0] for v in _KW_DECRYPT_VECTORS])
-def test_acvp_aes_kw_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_kw_unwrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-KW unwrap via C_Decrypt from NIST ACVP vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_KEY_WRAP"):
         pytest.skip("AES_KEY_WRAP not supported by module")
 
@@ -220,9 +220,9 @@ _KWP_ENCRYPT_VECTORS, _KWP_DECRYPT_VECTORS = _load_kwp_vectors()
 @pytest.mark.parametrize(
     "vec_id,vec", _KWP_ENCRYPT_VECTORS, ids=[v[0] for v in _KWP_ENCRYPT_VECTORS]
 )
-def test_acvp_aes_kwp_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_kwp_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-KWP wrap via C_Encrypt from NIST ACVP vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_KEY_WRAP_KWP"):
         pytest.skip("AES_KEY_WRAP_KWP not supported by module")
 
@@ -258,9 +258,9 @@ def test_acvp_aes_kwp_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
 @pytest.mark.parametrize(
     "vec_id,vec", _KWP_DECRYPT_VECTORS, ids=[v[0] for v in _KWP_DECRYPT_VECTORS]
 )
-def test_acvp_aes_kwp_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_kwp_unwrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-KWP unwrap via C_Decrypt from NIST ACVP vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_KEY_WRAP_KWP"):
         pytest.skip("AES_KEY_WRAP_KWP not supported by module")
 

@@ -68,17 +68,17 @@ _GCM_ENCRYPT_VECTORS, _GCM_DECRYPT_VECTORS = _load_gcm_vectors()
 @pytest.mark.parametrize(
     "vec_id,vec", _GCM_ENCRYPT_VECTORS, ids=[v[0] for v in _GCM_ENCRYPT_VECTORS]
 )
-def test_acvp_aes_gcm_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_gcm_encrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-GCM encryption from NIST ACVP vectors."""
-    run_gcm_encrypt_test(p11_raw_session, vec_id, vec)
+    run_gcm_encrypt_test(p11_module_session, vec_id, vec)
 
 
 @pytest.mark.parametrize(
     "vec_id,vec", _GCM_DECRYPT_VECTORS, ids=[v[0] for v in _GCM_DECRYPT_VECTORS]
 )
-def test_acvp_aes_gcm_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_gcm_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-GCM decryption from NIST ACVP vectors."""
-    run_gcm_decrypt_test(p11_raw_session, vec_id, vec)
+    run_gcm_decrypt_test(p11_module_session, vec_id, vec)
 
 
 # =============================================================================
@@ -127,9 +127,9 @@ _GCM_SIV_ENCRYPT_VECTORS, _GCM_SIV_DECRYPT_VECTORS = _load_gcm_siv_vectors()
 @pytest.mark.parametrize(
     "vec_id,vec", _GCM_SIV_ENCRYPT_VECTORS, ids=[v[0] for v in _GCM_SIV_ENCRYPT_VECTORS]
 )
-def test_acvp_aes_gcm_siv_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_gcm_siv_encrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-GCM-SIV encryption from NIST ACVP vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_GCM_SIV"):
         pytest.skip("AES_GCM_SIV not supported")
     try:
@@ -153,9 +153,9 @@ def test_acvp_aes_gcm_siv_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[s
 @pytest.mark.parametrize(
     "vec_id,vec", _GCM_SIV_DECRYPT_VECTORS, ids=[v[0] for v in _GCM_SIV_DECRYPT_VECTORS]
 )
-def test_acvp_aes_gcm_siv_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_gcm_siv_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-GCM-SIV decryption from NIST ACVP vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_GCM_SIV"):
         pytest.skip("AES_GCM_SIV not supported")
     try:
@@ -204,9 +204,9 @@ _GMAC_VECTORS: list[tuple[str, dict[str, Any]]] = _load_gmac_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _GMAC_VECTORS, ids=[v[0] for v in _GMAC_VECTORS])
-def test_acvp_aes_gmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-GMAC authentication tag generation from NIST ACVP vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_GMAC"):
         pytest.skip("AES_GMAC not supported")
     try:
@@ -292,14 +292,14 @@ _XPN_ENCRYPT_VECTORS, _XPN_DECRYPT_VECTORS = _load_xpn_vectors()
 @pytest.mark.parametrize(
     "vec_id,vec", _XPN_ENCRYPT_VECTORS, ids=[v[0] for v in _XPN_ENCRYPT_VECTORS]
 )
-def test_acvp_aes_xpn_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_xpn_encrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-XPN encryption from NIST ACVP vectors."""
-    run_gcm_encrypt_test(p11_raw_session, vec_id, vec)
+    run_gcm_encrypt_test(p11_module_session, vec_id, vec)
 
 
 @pytest.mark.parametrize(
     "vec_id,vec", _XPN_DECRYPT_VECTORS, ids=[v[0] for v in _XPN_DECRYPT_VECTORS]
 )
-def test_acvp_aes_xpn_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_xpn_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-XPN decryption from NIST ACVP vectors."""
-    run_gcm_decrypt_test(p11_raw_session, vec_id, vec)
+    run_gcm_decrypt_test(p11_module_session, vec_id, vec)

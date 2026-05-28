@@ -84,9 +84,9 @@ _ALL_MLKEM_VECTORS = _load_all_mlkem_vectors()
     _ALL_MLKEM_VECTORS,
     ids=[v[0] for v in _ALL_MLKEM_VECTORS],
 )
-def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) -> None:
+def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_module_session: Any) -> None:
     """ML-KEM decapsulation from Wycheproof vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("ML_KEM"):
         pytest.skip("ML_KEM not supported")
 

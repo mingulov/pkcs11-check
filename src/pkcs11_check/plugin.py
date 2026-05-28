@@ -20,9 +20,11 @@ from pkcs11_check.core.test_selection import parse_disabled_nodeids
 # Re-export fixtures so pytest discovers them
 from pkcs11_check.fixtures import (  # noqa: F401
     RawSession,
+    _p11_module_session_holder,
     p11_config,
     p11_interface_version,
     p11_module,
+    p11_module_session,
     p11_raw_session,
     p11_session,
 )
@@ -539,7 +541,7 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
 
     funcargs = getattr(item, "funcargs", None)
     if funcargs and isinstance(funcargs, dict):
-        for name in ("p11_raw_session", "p11_session"):
+        for name in ("p11_raw_session", "p11_session", "p11_module_session"):
             rs = funcargs.get(name)
             if rs is not None and hasattr(rs, "raw"):
                 cumulative.update(rs.raw.call_log.keys())

@@ -125,9 +125,9 @@ class TestMlKemKeyGen:
     """ML-KEM key generation tests using ACVP vectors."""
 
     @pytest.mark.parametrize("vec_id,vec", _KEYGEN_VECTORS, ids=[v[0] for v in _KEYGEN_VECTORS])
-    def test_mlkem_keygen(self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    def test_mlkem_keygen(self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         """Test ML-KEM keypair generation and roundtrip encap/decap."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("ML_KEM_KEY_PAIR_GEN"):
             pytest.skip("ML_KEM_KEY_PAIR_GEN not supported by module")
 
@@ -190,7 +190,7 @@ class TestMlKemEncapsulate:
 
     @pytest.mark.parametrize("vec_id,vec", _ENCAP_VECTORS, ids=[v[0] for v in _ENCAP_VECTORS])
     def test_mlkem_encapsulate(
-        self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
+        self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]
     ) -> None:
         """Test ML-KEM encapsulate+decapsulate round-trip using ACVP vectors.
 
@@ -199,7 +199,7 @@ class TestMlKemEncapsulate:
         Instead we verify: encapsulate with the public key, then decapsulate
         with the private key, and confirm both sides produce the same secret.
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         param_set = vec["param_set"]
 
         if not rs.has_mechanism("ML_KEM"):
@@ -311,14 +311,14 @@ class TestMlKemDecapsulate:
 
     @pytest.mark.parametrize("vec_id,vec", _DECAP_VECTORS, ids=[v[0] for v in _DECAP_VECTORS])
     def test_mlkem_decapsulate(
-        self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
+        self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]
     ) -> None:
         """Test ML-KEM decapsulation using ACVP vectors.
 
         Imports the private key from the vector and verifies that
         decapsulation recovers the expected shared secret.
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         param_set = vec["param_set"]
 
         if not rs.has_mechanism("ML_KEM"):

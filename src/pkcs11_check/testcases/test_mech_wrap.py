@@ -543,7 +543,7 @@ class TestMechWrapRoundtrip:
     """Wrap/unwrap roundtrip for every advertised wrap mechanism with a registry config."""
 
     def test_wrap_unwrap_aes_key(
-        self, p11_raw_session: RawSession, p11_config: Any, mech_wrap_entry: MechEntry
+        self, p11_module_session: RawSession, p11_config: Any, mech_wrap_entry: MechEntry
     ) -> None:
         """Wrap an AES key, unwrap it, verify it works for encryption.
 
@@ -557,7 +557,7 @@ class TestMechWrapRoundtrip:
         7. Decrypt data with unwrapped key
         8. Verify plaintext matches
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         entry = mech_wrap_entry
         config = entry.config
         mech_id = entry.mech_id

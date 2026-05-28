@@ -61,9 +61,9 @@ _P256_OID: bytes = encode_named_curve_parameters("secp256r1")
 class TestWrongKeyType:
     """EncryptInit/SignInit with wrong key type must be rejected."""
 
-    def test_aes_ecb_with_rsa_key_rejected(self, p11_raw_session: RawSession) -> None:
+    def test_aes_ecb_with_rsa_key_rejected(self, p11_module_session: RawSession) -> None:
         """CKM_AES_ECB with an RSA private key must fail EncryptInit."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
@@ -81,9 +81,9 @@ class TestWrongKeyType:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_rsa_pkcs_with_aes_key_rejected(self, p11_raw_session: RawSession) -> None:
+    def test_rsa_pkcs_with_aes_key_rejected(self, p11_module_session: RawSession) -> None:
         """CKM_RSA_PKCS with an AES key must fail EncryptInit."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
         if not rs.has_mechanism("AES_KEY_GEN"):
@@ -99,9 +99,9 @@ class TestWrongKeyType:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_ecdsa_with_rsa_key_rejected(self, p11_raw_session: RawSession) -> None:
+    def test_ecdsa_with_rsa_key_rejected(self, p11_module_session: RawSession) -> None:
         """CKM_ECDSA with an RSA key must fail SignInit."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("ECDSA"):
             pytest.skip("CKM_ECDSA not supported")
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
@@ -116,9 +116,9 @@ class TestWrongKeyType:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_hmac_sha256_with_rsa_key_rejected(self, p11_raw_session: RawSession) -> None:
+    def test_hmac_sha256_with_rsa_key_rejected(self, p11_module_session: RawSession) -> None:
         """CKM_SHA256_HMAC with an RSA key must fail SignInit."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("SHA256_HMAC"):
             pytest.skip("CKM_SHA256_HMAC not supported")
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
@@ -135,9 +135,9 @@ class TestWrongKeyType:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_aes_ecb_with_ec_key_rejected(self, p11_raw_session: RawSession) -> None:
+    def test_aes_ecb_with_ec_key_rejected(self, p11_module_session: RawSession) -> None:
         """CKM_AES_ECB with an EC private key must fail EncryptInit."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
@@ -158,9 +158,9 @@ class TestWrongKeyType:
 class TestMissingPermission:
     """Keys with required CKA flags set to False must be rejected."""
 
-    def test_encrypt_without_flag(self, p11_raw_session: RawSession) -> None:
+    def test_encrypt_without_flag(self, p11_module_session: RawSession) -> None:
         """Key with CKA_ENCRYPT=False cannot EncryptInit."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
 
@@ -179,9 +179,9 @@ class TestMissingPermission:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_decrypt_without_flag(self, p11_raw_session: RawSession) -> None:
+    def test_decrypt_without_flag(self, p11_module_session: RawSession) -> None:
         """Key with CKA_DECRYPT=False cannot DecryptInit."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
 
@@ -200,9 +200,9 @@ class TestMissingPermission:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_sign_without_flag(self, p11_raw_session: RawSession) -> None:
+    def test_sign_without_flag(self, p11_module_session: RawSession) -> None:
         """Key with CKA_SIGN=False cannot SignInit."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("SHA256_HMAC"):
             pytest.skip("CKM_SHA256_HMAC not supported")
         if not rs.has_mechanism("GENERIC_SECRET_KEY_GEN"):
@@ -230,9 +230,9 @@ class TestMissingPermission:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_verify_without_flag(self, p11_raw_session: RawSession) -> None:
+    def test_verify_without_flag(self, p11_module_session: RawSession) -> None:
         """Key with CKA_VERIFY=False cannot VerifyInit."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("SHA256_HMAC"):
             pytest.skip("CKM_SHA256_HMAC not supported")
         if not rs.has_mechanism("GENERIC_SECRET_KEY_GEN"):
@@ -261,9 +261,9 @@ class TestMissingPermission:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_wrap_without_flag(self, p11_raw_session: RawSession) -> None:
+    def test_wrap_without_flag(self, p11_module_session: RawSession) -> None:
         """Wrapping key with CKA_WRAP=False must fail C_WrapKey."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
             pytest.skip("CKM_AES_KEY_WRAP not supported")
         if not rs.has_mechanism("AES_KEY_GEN"):
@@ -297,9 +297,9 @@ class TestMissingPermission:
             destroy_quietly(rs.raw, rs.sh, wrapping_key)
             destroy_quietly(rs.raw, rs.sh, target_key)
 
-    def test_derive_without_flag(self, p11_raw_session: RawSession) -> None:
+    def test_derive_without_flag(self, p11_module_session: RawSession) -> None:
         """Key with CKA_DERIVE=False cannot be used as derive base key."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("SHA256_KEY_DERIVATION"):
             pytest.skip("CKM_SHA256_KEY_DERIVATION not supported")
         if not rs.has_mechanism("GENERIC_SECRET_KEY_GEN"):

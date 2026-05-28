@@ -31,16 +31,16 @@ _DECRYPT_VECTORS = [(vid, v) for vid, v in _ALL_DECRYPT if not v.get("is_multibl
 
 
 @pytest.mark.parametrize("vec_id,vec", _ENCRYPT_VECTORS, ids=[v[0] for v in _ENCRYPT_VECTORS])
-def test_acvp_aes_cfb1_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_cfb1_encrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CFB1 encryption from NIST ACVP vectors.
 
     PKCS#11 CKM_AES_CFB1 processes full bytes (8 CFB1 bit-operations per byte).
     For vectors with payloadLen < 8, only the top payloadLen bits are compared.
     """
-    run_simple_encrypt_test(p11_raw_session, vec_id, vec, "AES_CFB1", CKM_AES_CFB1)
+    run_simple_encrypt_test(p11_module_session, vec_id, vec, "AES_CFB1", CKM_AES_CFB1)
 
 
 @pytest.mark.parametrize("vec_id,vec", _DECRYPT_VECTORS, ids=[v[0] for v in _DECRYPT_VECTORS])
-def test_acvp_aes_cfb1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_cfb1_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CFB1 decryption from NIST ACVP vectors."""
-    run_simple_decrypt_test(p11_raw_session, vec_id, vec, "AES_CFB1", CKM_AES_CFB1)
+    run_simple_decrypt_test(p11_module_session, vec_id, vec, "AES_CFB1", CKM_AES_CFB1)

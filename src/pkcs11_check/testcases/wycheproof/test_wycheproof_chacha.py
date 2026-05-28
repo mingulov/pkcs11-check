@@ -58,7 +58,7 @@ _CHACHA_VECTORS = _load_chacha_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _CHACHA_VECTORS, ids=[v[0] for v in _CHACHA_VECTORS])
-def test_chacha20_poly1305(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_chacha20_poly1305(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """ChaCha20-Poly1305 AEAD decryption from Wycheproof vectors.
 
     Decrypts the supplied ct||tag so invalid vectors actually exercise tag
@@ -67,7 +67,7 @@ def test_chacha20_poly1305(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
     (encrypt + compare) could never reject an invalid vector because a fresh
     correct ciphertext never matched the modified expected output.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("CHACHA20_POLY1305"):
         pytest.skip("CHACHA20_POLY1305 not supported")
 

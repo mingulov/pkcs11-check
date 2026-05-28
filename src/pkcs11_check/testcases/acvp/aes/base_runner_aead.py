@@ -70,18 +70,18 @@ def _import_aes_key(
 
 
 def run_gcm_encrypt_test(
-    p11_raw_session: Any,
+    p11_module_session: Any,
     vec_id: str,
     vec: dict[str, Any],
 ) -> None:
     """Run AES-GCM encrypt test with tag extraction.
 
     Args:
-        p11_raw_session: Pytest fixture with RawSession
+        p11_module_session: Pytest fixture with RawSession
         vec_id: Vector identifier string
         vec: Vector data dictionary with key, iv, pt, aad, ct_expected, tag_expected, tag_len_bits
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_GCM"):
         pytest.skip("AES_GCM not supported by module")
 
@@ -137,18 +137,18 @@ def run_gcm_encrypt_test(
 
 
 def run_gcm_decrypt_test(
-    p11_raw_session: Any,
+    p11_module_session: Any,
     vec_id: str,
     vec: dict[str, Any],
 ) -> None:
     """Run AES-GCM decrypt test with tag verification.
 
     Args:
-        p11_raw_session: Pytest fixture with RawSession
+        p11_module_session: Pytest fixture with RawSession
         vec_id: Vector identifier string
         vec: Vector data with key, iv, ct, tag, aad, pt_expected, test_passed, tag_len_bits
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_GCM"):
         pytest.skip("AES_GCM not supported by module")
 
@@ -211,18 +211,18 @@ def run_gcm_decrypt_test(
 
 
 def run_ccm_encrypt_test(
-    p11_raw_session: Any,
+    p11_module_session: Any,
     vec_id: str,
     vec: dict[str, Any],
 ) -> None:
     """Run AES-CCM encrypt test.
 
     Args:
-        p11_raw_session: Pytest fixture with RawSession
+        p11_module_session: Pytest fixture with RawSession
         vec_id: Vector identifier string
         vec: Vector data dictionary with key, nonce, pt, aad, ct_expected, tag_len
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_CCM"):
         pytest.skip("AES_CCM not supported by module")
 
@@ -287,18 +287,18 @@ def run_ccm_encrypt_test(
 
 
 def run_ccm_decrypt_test(
-    p11_raw_session: Any,
+    p11_module_session: Any,
     vec_id: str,
     vec: dict[str, Any],
 ) -> None:
     """Run AES-CCM decrypt test.
 
     Args:
-        p11_raw_session: Pytest fixture with RawSession
+        p11_module_session: Pytest fixture with RawSession
         vec_id: Vector identifier string
         vec: Vector data dictionary with key, nonce, ct, aad, pt_expected, test_passed, tag_len
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_CCM"):
         pytest.skip("AES_CCM not supported by module")
 

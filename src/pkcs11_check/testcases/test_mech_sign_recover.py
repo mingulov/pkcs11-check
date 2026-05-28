@@ -47,7 +47,7 @@ def _rsa_x509_keypair(rs: RawSession) -> tuple[int, int]:
 class TestSignRecover:
     """Sign-recover and verify-recover for CKM_RSA_X_509."""
 
-    def test_rsa_x509_sign_recover_roundtrip(self, p11_raw_session: RawSession) -> None:
+    def test_rsa_x509_sign_recover_roundtrip(self, p11_module_session: RawSession) -> None:
         """RSA X.509 sign-recover -> verify-recover roundtrip recovers original data.
 
         C_SignRecover (PKCS#11 Sec.5.10.6): embeds the data directly in the RSA
@@ -58,7 +58,7 @@ class TestSignRecover:
         Data must be PKCS#1 raw-RSA padded to the modulus length (256 bytes for
         2048-bit key).  The sign-recover_single recipe handles the padding.
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("RSA_X_509"):
             pytest.skip("CKM_RSA_X_509 not supported")
         pub, priv = _rsa_x509_keypair(rs)
@@ -89,7 +89,7 @@ class TestSignRecover:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_rsa_x509_verify_recover_invalid_sig(self, p11_raw_session: RawSession) -> None:
+    def test_rsa_x509_verify_recover_invalid_sig(self, p11_module_session: RawSession) -> None:
         """C_VerifyRecover on tampered data does not recover the original message.
 
         CKM_RSA_X_509 is raw RSA: C_VerifyRecover computes sig^e mod n and returns
@@ -100,7 +100,7 @@ class TestSignRecover:
         Modules that do not implement C_VerifyRecover at all return
         CKR_FUNCTION_NOT_SUPPORTED; those are skipped.
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("RSA_X_509"):
             pytest.skip("CKM_RSA_X_509 not supported")
         pub, priv = _rsa_x509_keypair(rs)

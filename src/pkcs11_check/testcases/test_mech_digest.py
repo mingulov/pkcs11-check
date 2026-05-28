@@ -136,10 +136,10 @@ def _check_not_parameterised(entry: MechEntry, config: MechConfig) -> None:
 class TestMechDigest:
     """Digest tests for every advertised digest mechanism with a registry config."""
 
-    def test_known_empty(self, p11_raw_session: RawSession, mech_digest_entry: MechEntry) -> None:
+    def test_known_empty(self, p11_module_session: RawSession, mech_digest_entry: MechEntry) -> None:
         """Digest of empty input: verify against hashlib for known algorithms,
         or just check output is non-empty for others."""
-        rs = p11_raw_session
+        rs = p11_module_session
         entry = mech_digest_entry
         config = entry.config
         if config is None:
@@ -164,9 +164,9 @@ class TestMechDigest:
         else:
             assert len(digest) > 0, f"{entry.mech_name}: empty digest output is zero bytes"
 
-    def test_length(self, p11_raw_session: RawSession, mech_digest_entry: MechEntry) -> None:
+    def test_length(self, p11_module_session: RawSession, mech_digest_entry: MechEntry) -> None:
         """Output length matches expected for the algorithm."""
-        rs = p11_raw_session
+        rs = p11_module_session
         entry = mech_digest_entry
         config = entry.config
         if config is None:
@@ -187,9 +187,9 @@ class TestMechDigest:
             # Unknown algorithm -- just verify output is non-empty
             assert len(digest) > 0, f"{entry.mech_name}: digest output is zero bytes"
 
-    def test_deterministic(self, p11_raw_session: RawSession, mech_digest_entry: MechEntry) -> None:
+    def test_deterministic(self, p11_module_session: RawSession, mech_digest_entry: MechEntry) -> None:
         """Same input produces same digest in two consecutive calls."""
-        rs = p11_raw_session
+        rs = p11_module_session
         entry = mech_digest_entry
         config = entry.config
         if config is None:
@@ -209,9 +209,9 @@ class TestMechDigest:
 class TestMechDigestKAT:
     """Known-answer digest tests from pre-generated vectors."""
 
-    def test_kat_vector(self, p11_raw_session: RawSession, mech_digest_entry: MechEntry) -> None:
+    def test_kat_vector(self, p11_module_session: RawSession, mech_digest_entry: MechEntry) -> None:
         """Digest known inputs -- verify output matches pre-computed vectors."""
-        rs = p11_raw_session
+        rs = p11_module_session
         entry = mech_digest_entry
         config = entry.config
         if config is None or not config.vector_file:

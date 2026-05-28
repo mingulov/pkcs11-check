@@ -103,9 +103,9 @@ def _xfail_if_rsa_pkcs1_decrypt_runtime_reject(exc: AssertionError, label: str) 
 @pytest.mark.parametrize(
     "vec_id,vec", _ALL_DECRYPT_VECTORS, ids=[v[0] for v in _ALL_DECRYPT_VECTORS]
 )
-def test_rsa_pkcs1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_rsa_pkcs1_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA PKCS#1 v1.5 decryption from Wycheproof vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     ct = bytes.fromhex(vec["ct"])
     msg_expected = bytes.fromhex(vec["msg"])
     result = vec["result"]

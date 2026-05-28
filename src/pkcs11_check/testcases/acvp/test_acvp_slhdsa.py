@@ -254,13 +254,13 @@ _SIGGEN_VECTORS = _load_siggen_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _KEYGEN_VECTORS, ids=[v[0] for v in _KEYGEN_VECTORS])
-def test_slhdsa_keygen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_slhdsa_keygen(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """SLH-DSA key generation test from NIST ACVP vectors.
 
     Imports the expected private key and verifies it can be used for signing,
     with the expected public key used for verification.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("SLH_DSA"):
         pytest.skip("SLH_DSA not supported")
 
@@ -312,9 +312,9 @@ def test_slhdsa_keygen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
 
 
 @pytest.mark.parametrize("vec_id,vec", _SIGVER_VECTORS, ids=[v[0] for v in _SIGVER_VECTORS])
-def test_slhdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_slhdsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """SLH-DSA signature verification from NIST ACVP vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("SLH_DSA"):
         pytest.skip("SLH_DSA not supported")
 
@@ -354,7 +354,7 @@ def test_slhdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
 
 
 @pytest.mark.parametrize("vec_id,vec", _SIGGEN_VECTORS, ids=[v[0] for v in _SIGGEN_VECTORS])
-def test_slhdsa_siggen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_slhdsa_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """SLH-DSA signature generation from NIST ACVP message vectors.
 
     PKCS#11 does not guarantee deterministic SLH-DSA output. This test
@@ -362,7 +362,7 @@ def test_slhdsa_siggen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
     result. Exact signature comparison is skipped because most PKCS#11
     implementations use randomized SLH-DSA.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("SLH_DSA"):
         pytest.skip("SLH_DSA not supported")
 

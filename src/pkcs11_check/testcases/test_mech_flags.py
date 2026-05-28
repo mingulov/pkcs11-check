@@ -96,7 +96,7 @@ class TestMechFlags:
     """Validate mechanism flags reported by C_GetMechanismInfo."""
 
     def test_expected_flags_present(
-        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+        self, p11_module_session: RawSession, mech_any_entry: MechEntry
     ) -> None:
         """Report registry-expected CKF_* flags missing from actual flags.
 
@@ -130,7 +130,7 @@ class TestMechFlags:
             )
 
     def test_min_le_max_key_size(
-        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+        self, p11_module_session: RawSession, mech_any_entry: MechEntry
     ) -> None:
         """min_key_size must be <= max_key_size from C_GetMechanismInfo.
 
@@ -214,83 +214,83 @@ class TestMechFlagBehavioralConformance:
     """
 
     def test_encrypt_flag_callable(
-        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+        self, p11_module_session: RawSession, mech_any_entry: MechEntry
     ) -> None:
         entry = mech_any_entry
         if not (entry.flags & int(CKF_ENCRYPT)):
             pytest.skip(f"{entry.mech_name}: CKF_ENCRYPT not advertised")
-        rv = _probe_init_with_key(p11_raw_session, "C_EncryptInit", entry.mech_id)
+        rv = _probe_init_with_key(p11_module_session, "C_EncryptInit", entry.mech_id)
         try:
             _assert_not_lie(entry, "CKF_ENCRYPT", "C_EncryptInit", rv)
         finally:
             if rv == CKR_OK:
-                _abort_op(p11_raw_session, "C_EncryptFinal")
+                _abort_op(p11_module_session, "C_EncryptFinal")
 
     def test_decrypt_flag_callable(
-        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+        self, p11_module_session: RawSession, mech_any_entry: MechEntry
     ) -> None:
         entry = mech_any_entry
         if not (entry.flags & int(CKF_DECRYPT)):
             pytest.skip(f"{entry.mech_name}: CKF_DECRYPT not advertised")
-        rv = _probe_init_with_key(p11_raw_session, "C_DecryptInit", entry.mech_id)
+        rv = _probe_init_with_key(p11_module_session, "C_DecryptInit", entry.mech_id)
         try:
             _assert_not_lie(entry, "CKF_DECRYPT", "C_DecryptInit", rv)
         finally:
             if rv == CKR_OK:
-                _abort_op(p11_raw_session, "C_DecryptFinal")
+                _abort_op(p11_module_session, "C_DecryptFinal")
 
     def test_digest_flag_callable(
-        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+        self, p11_module_session: RawSession, mech_any_entry: MechEntry
     ) -> None:
         entry = mech_any_entry
         if not (entry.flags & int(CKF_DIGEST)):
             pytest.skip(f"{entry.mech_name}: CKF_DIGEST not advertised")
-        rv = _probe_digest_init(p11_raw_session, entry.mech_id)
+        rv = _probe_digest_init(p11_module_session, entry.mech_id)
         try:
             _assert_not_lie(entry, "CKF_DIGEST", "C_DigestInit", rv)
         finally:
             if rv == CKR_OK:
-                _abort_op(p11_raw_session, "C_DigestFinal")
+                _abort_op(p11_module_session, "C_DigestFinal")
 
     def test_sign_flag_callable(
-        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+        self, p11_module_session: RawSession, mech_any_entry: MechEntry
     ) -> None:
         entry = mech_any_entry
         if not (entry.flags & int(CKF_SIGN)):
             pytest.skip(f"{entry.mech_name}: CKF_SIGN not advertised")
-        rv = _probe_init_with_key(p11_raw_session, "C_SignInit", entry.mech_id)
+        rv = _probe_init_with_key(p11_module_session, "C_SignInit", entry.mech_id)
         try:
             _assert_not_lie(entry, "CKF_SIGN", "C_SignInit", rv)
         finally:
             if rv == CKR_OK:
-                _abort_op(p11_raw_session, "C_SignFinal")
+                _abort_op(p11_module_session, "C_SignFinal")
 
     def test_verify_flag_callable(
-        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+        self, p11_module_session: RawSession, mech_any_entry: MechEntry
     ) -> None:
         entry = mech_any_entry
         if not (entry.flags & int(CKF_VERIFY)):
             pytest.skip(f"{entry.mech_name}: CKF_VERIFY not advertised")
-        rv = _probe_init_with_key(p11_raw_session, "C_VerifyInit", entry.mech_id)
+        rv = _probe_init_with_key(p11_module_session, "C_VerifyInit", entry.mech_id)
         # C_VerifyFinal needs an input signature; skip cleanup — Final
         # without buffer is best-effort only.  Module may end up in odd
         # state, but the probe itself completed.
         _assert_not_lie(entry, "CKF_VERIFY", "C_VerifyInit", rv)
 
     def test_sign_recover_flag_callable(
-        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+        self, p11_module_session: RawSession, mech_any_entry: MechEntry
     ) -> None:
         entry = mech_any_entry
         if not (entry.flags & int(CKF_SIGN_RECOVER)):
             pytest.skip(f"{entry.mech_name}: CKF_SIGN_RECOVER not advertised")
-        rv = _probe_init_with_key(p11_raw_session, "C_SignRecoverInit", entry.mech_id)
+        rv = _probe_init_with_key(p11_module_session, "C_SignRecoverInit", entry.mech_id)
         _assert_not_lie(entry, "CKF_SIGN_RECOVER", "C_SignRecoverInit", rv)
 
     def test_verify_recover_flag_callable(
-        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+        self, p11_module_session: RawSession, mech_any_entry: MechEntry
     ) -> None:
         entry = mech_any_entry
         if not (entry.flags & int(CKF_VERIFY_RECOVER)):
             pytest.skip(f"{entry.mech_name}: CKF_VERIFY_RECOVER not advertised")
-        rv = _probe_init_with_key(p11_raw_session, "C_VerifyRecoverInit", entry.mech_id)
+        rv = _probe_init_with_key(p11_module_session, "C_VerifyRecoverInit", entry.mech_id)
         _assert_not_lie(entry, "CKF_VERIFY_RECOVER", "C_VerifyRecoverInit", rv)

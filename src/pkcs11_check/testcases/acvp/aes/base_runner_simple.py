@@ -91,7 +91,7 @@ def _import_aes_key(
 
 
 def run_simple_encrypt_test(
-    p11_raw_session: Any,
+    p11_module_session: Any,
     vec_id: str,
     vec: dict[str, Any],
     mech_name: str,
@@ -101,14 +101,14 @@ def run_simple_encrypt_test(
     """Run a simple encrypt test for CFB/OFB modes.
 
     Args:
-        p11_raw_session: Pytest fixture with RawSession
+        p11_module_session: Pytest fixture with RawSession
         vec_id: Vector identifier string
         vec: Vector data dictionary
         mech_name: Mechanism name for has_mechanism check (e.g., "AES_CFB128")
         mech_constant: CKM constant for the mechanism
         mech_param_func: Optional function to create mechanism parameter
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism(mech_name):
         pytest.skip(f"{mech_name} not supported by module")
 
@@ -148,7 +148,7 @@ def run_simple_encrypt_test(
 
 
 def run_simple_decrypt_test(
-    p11_raw_session: Any,
+    p11_module_session: Any,
     vec_id: str,
     vec: dict[str, Any],
     mech_name: str,
@@ -158,14 +158,14 @@ def run_simple_decrypt_test(
     """Run a simple decrypt test for CFB/OFB modes.
 
     Args:
-        p11_raw_session: Pytest fixture with RawSession
+        p11_module_session: Pytest fixture with RawSession
         vec_id: Vector identifier string
         vec: Vector data dictionary
         mech_name: Mechanism name for has_mechanism check
         mech_constant: CKM constant for the mechanism
         mech_param_func: Optional function to create mechanism parameter
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism(mech_name):
         pytest.skip(f"{mech_name} not supported by module")
 
@@ -266,7 +266,7 @@ def _mct_dec_next_input(
 
 
 def run_multiblock_encrypt_test(
-    p11_raw_session: Any,
+    p11_module_session: Any,
     vec_id: str,
     vec: dict[str, Any],
     mech_name: str,
@@ -279,7 +279,7 @@ def run_multiblock_encrypt_test(
     final ciphertext after 1000 inner encrypt-with-feedback iterations.
     The feedback pattern is mode-specific (see ACVP spec Sec.4).
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism(mech_name):
         pytest.skip(f"{mech_name} not supported by module")
 
@@ -342,7 +342,7 @@ def run_multiblock_encrypt_test(
 
 
 def run_multiblock_decrypt_test(
-    p11_raw_session: Any,
+    p11_module_session: Any,
     vec_id: str,
     vec: dict[str, Any],
     mech_name: str,
@@ -355,7 +355,7 @@ def run_multiblock_decrypt_test(
     For CFB modes the IV/shift-register tracks the ciphertext input,
     not the plaintext output.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism(mech_name):
         pytest.skip(f"{mech_name} not supported by module")
 

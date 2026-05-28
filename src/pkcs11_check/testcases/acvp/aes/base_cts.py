@@ -270,9 +270,9 @@ def _handle_cts_error(exc: AssertionError, vec_id: str, direction: str) -> None:
     raise exc
 
 
-def run_cbc_cs_encrypt_test(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def run_cbc_cs_encrypt_test(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """Run AES-CBC-CS encrypt test."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_CTS"):
         pytest.skip("AES_CTS not supported by module")
 
@@ -302,9 +302,9 @@ def run_cbc_cs_encrypt_test(p11_raw_session: Any, vec_id: str, vec: dict[str, An
             destroy_quietly(rs.raw, rs.sh, key)
 
 
-def run_cbc_cs_decrypt_test(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def run_cbc_cs_decrypt_test(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """Run AES-CBC-CS decrypt test."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_CTS"):
         pytest.skip("AES_CTS not supported by module")
 

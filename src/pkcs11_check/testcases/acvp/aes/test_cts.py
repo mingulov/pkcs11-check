@@ -44,19 +44,19 @@ _CBC_CS3_ENCRYPT_VECTORS, _CBC_CS3_DECRYPT_VECTORS = load_cbc_cs_vectors("3")
 @pytest.mark.parametrize(
     "vec_id,vec", _CBC_CS1_ENCRYPT_VECTORS, ids=[v[0] for v in _CBC_CS1_ENCRYPT_VECTORS]
 )
-def test_acvp_aes_cbc_cs1_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_cbc_cs1_encrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CBC-CS1 encryption from NIST ACVP vectors."""
-    skip_unless_cts_variant(p11_raw_session, "1")
-    run_cbc_cs_encrypt_test(p11_raw_session, vec_id, vec)
+    skip_unless_cts_variant(p11_module_session, "1")
+    run_cbc_cs_encrypt_test(p11_module_session, vec_id, vec)
 
 
 @pytest.mark.parametrize(
     "vec_id,vec", _CBC_CS1_DECRYPT_VECTORS, ids=[v[0] for v in _CBC_CS1_DECRYPT_VECTORS]
 )
-def test_acvp_aes_cbc_cs1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_cbc_cs1_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CBC-CS1 decryption from NIST ACVP vectors."""
-    skip_unless_cts_variant(p11_raw_session, "1")
-    run_cbc_cs_decrypt_test(p11_raw_session, vec_id, vec)
+    skip_unless_cts_variant(p11_module_session, "1")
+    run_cbc_cs_decrypt_test(p11_module_session, vec_id, vec)
 
 
 # ---------------------------------------------------------------------------
@@ -67,19 +67,19 @@ def test_acvp_aes_cbc_cs1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[s
 @pytest.mark.parametrize(
     "vec_id,vec", _CBC_CS2_ENCRYPT_VECTORS, ids=[v[0] for v in _CBC_CS2_ENCRYPT_VECTORS]
 )
-def test_acvp_aes_cbc_cs2_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_cbc_cs2_encrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CBC-CS2 encryption from NIST ACVP vectors."""
-    skip_unless_cts_variant(p11_raw_session, "2")
-    run_cbc_cs_encrypt_test(p11_raw_session, vec_id, vec)
+    skip_unless_cts_variant(p11_module_session, "2")
+    run_cbc_cs_encrypt_test(p11_module_session, vec_id, vec)
 
 
 @pytest.mark.parametrize(
     "vec_id,vec", _CBC_CS2_DECRYPT_VECTORS, ids=[v[0] for v in _CBC_CS2_DECRYPT_VECTORS]
 )
-def test_acvp_aes_cbc_cs2_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_cbc_cs2_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CBC-CS2 decryption from NIST ACVP vectors."""
-    skip_unless_cts_variant(p11_raw_session, "2")
-    run_cbc_cs_decrypt_test(p11_raw_session, vec_id, vec)
+    skip_unless_cts_variant(p11_module_session, "2")
+    run_cbc_cs_decrypt_test(p11_module_session, vec_id, vec)
 
 
 # ---------------------------------------------------------------------------
@@ -90,16 +90,16 @@ def test_acvp_aes_cbc_cs2_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[s
 @pytest.mark.parametrize(
     "vec_id,vec", _CBC_CS3_ENCRYPT_VECTORS, ids=[v[0] for v in _CBC_CS3_ENCRYPT_VECTORS]
 )
-def test_acvp_aes_cbc_cs3_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_cbc_cs3_encrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CBC-CS3 encryption from NIST ACVP vectors."""
-    skip_unless_cts_variant(p11_raw_session, "3")
-    run_cbc_cs_encrypt_test(p11_raw_session, vec_id, vec)
+    skip_unless_cts_variant(p11_module_session, "3")
+    run_cbc_cs_encrypt_test(p11_module_session, vec_id, vec)
 
 
 @pytest.mark.parametrize(
     "vec_id,vec", _CBC_CS3_DECRYPT_VECTORS, ids=[v[0] for v in _CBC_CS3_DECRYPT_VECTORS]
 )
-def test_acvp_aes_cbc_cs3_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_cbc_cs3_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CBC-CS3 decryption from NIST ACVP vectors."""
-    skip_unless_cts_variant(p11_raw_session, "3")
-    run_cbc_cs_decrypt_test(p11_raw_session, vec_id, vec)
+    skip_unless_cts_variant(p11_module_session, "3")
+    run_cbc_cs_decrypt_test(p11_module_session, vec_id, vec)

@@ -22,7 +22,7 @@
 - `core/isolation.py` — lower-level `spawn` helper retained for focused tests and future integration
 - `config.py` — four-layer config: CLI > env > TOML > defaults
 - `plugin.py` — pytest11 entry point, registers markers, fixtures, collection hooks
-- `fixtures.py` — p11_raw_session / p11_session (both yield RawSession), p11_module, p11_config, p11_interface_version
+- `fixtures.py` — p11_raw_session / p11_session (function-scoped, fresh session per test), p11_module_session (module-scoped, self-healing for fast verification tests), p11_module, p11_config, p11_interface_version
 - `testcases/conftest.py` — shared helpers: get_pin_bytes(), extract_ec_point()
 - `testcases/ckr/` — CKR error coverage tests (102 tests, 21 files). Use `--ckr-strict` for exact spec compliance
 
@@ -112,11 +112,14 @@ class TestExample:
 
 ### Key fixtures
 
-- `p11_raw_session` — primary: yields `RawSession` with login/logout per test. Fields: `rs.raw`, `rs.sh`, `rs.slot_id`, `rs.has_mechanism(name)`, `rs.mechanisms`
-- `p11_session` — legacy alias, also yields `RawSession`
+- `p11_raw_session` — function-scoped: fresh C_OpenSession + C_Login per test. Fields: `rs.raw`, `rs.sh`, `rs.slot_id`, `rs.has_mechanism(name)`, `rs.mechanisms`. Use for tests that test session lifecycle, login/logout/PIN behavior, or otherwise need a fresh session per invocation.
+- `p11_module_session` — module-scoped session reused across all tests in the file, with self-healing health check (C_GetSessionInfo) before each test that triggers a transparent reopen if a prior test closed the session or logged out. Per-test call_log / used_mechanisms are reset for accurate coverage. **Use this for read-only verification tests (Wycheproof, ACVP vectors, ...).** On providers with expensive C_Login this saves ~47 ms/test (OpenCryptoki SWToken's PBKDF2-based PIN derivation) to ~80 ms/test (BouncyHSM's TCP RPC). Concrete impact on the ECDSA Wycheproof file (28 915 tests): OpenCryptoki 42 min → 47 s; BouncyHSM 56 min → 2 min.
+- `p11_session` — legacy alias, also yields `RawSession` (function-scoped)
 - `p11_module` — loaded PKCS#11 module (session-scoped)
 - `p11_config` — merged config (session-scoped)
 - `p11_interface_version` — negotiated version string
+
+When in doubt, prefer `p11_module_session` for new verification tests and only fall back to `p11_raw_session` when the test depends on session lifecycle.
 
 ### Patterns
 

@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `p11_module_session` fixture (module-scoped, self-healing) for read-only
+  verification tests. Opens C_OpenSession+C_Login once per test file instead
+  of once per test, with a C_GetSessionInfo health check that transparently
+  reopens the session if a prior test closed it or logged out. The 44 heavy
+  vector-driven test files (Wycheproof + ACVP) now use this fixture.
+
+### Changed
+
+- Docker runs on providers with expensive C_Login finish much faster:
+  - OpenCryptoki (SWToken, PBKDF2 PIN derivation, ~47 ms/login): per-file
+    examples — test_wycheproof_ecdsa.py 42 min → 47 s.
+  - BouncyHSM (TCP-based RPC, ~80 ms/login): test_wycheproof_ecdsa.py
+    56 min → 2 min; test_wycheproof_ecdh.py 25 min → 3 min.
+  - Providers with cheap C_Login (SoftHSM2, NSS, Kryoptic) are unchanged.
+- Function-scoped `p11_raw_session` is preserved for tests that depend on
+  session lifecycle (login/logout/PIN behavior, session state machine).
+
 ## [0.1.1] - 2026-05-27
 
 Maintenance and coverage release on top of 0.1.0. Focuses on a consistent

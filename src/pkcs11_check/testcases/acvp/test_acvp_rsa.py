@@ -120,10 +120,10 @@ class TestRsaPkcs15:
 
     @pytest.mark.parametrize("vec_id,vec", _PKCS15_SIGN, ids=[v[0] for v in _PKCS15_SIGN])
     def test_rsa_pkcs15_sign_verify(
-        self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
+        self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]
     ) -> None:
         """Test RSA PKCS#1 v1.5 sign and verify with ACVP vectors."""
-        rs = p11_raw_session
+        rs = p11_module_session
         mech_name: str = vec["mech_name"]
         mech_int = vec["mech_int"]
         key_bits = vec["modulo"] if vec["modulo"] else 2048
@@ -162,10 +162,10 @@ class TestRsaPss:
 
     @pytest.mark.parametrize("vec_id,vec", _PSS_SIGN, ids=[v[0] for v in _PSS_SIGN])
     def test_rsa_pss_sign_verify(
-        self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
+        self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]
     ) -> None:
         """Test RSA-PSS sign and verify with ACVP vectors."""
-        rs = p11_raw_session
+        rs = p11_module_session
         mech_name: str = vec["mech_name"]
         mech_int = vec["mech_int"]
         hash_mech = vec["hash_mech"]
@@ -218,10 +218,10 @@ class TestRsaSigVer:
 
     @pytest.mark.parametrize("vec_id,vec", _PKCS15_VER, ids=[v[0] for v in _PKCS15_VER])
     def test_rsa_pkcs15_verify(
-        self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
+        self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]
     ) -> None:
         """Test RSA PKCS#1 v1.5 signature verification."""
-        rs = p11_raw_session
+        rs = p11_module_session
         mech_name: str = vec["mech_name"]
         mech_int = vec["mech_int"]
         expected_pass: bool = vec["expected_pass"]
@@ -252,9 +252,9 @@ class TestRsaSigVer:
             destroy_quietly(rs.raw, rs.sh, pub_key)
 
     @pytest.mark.parametrize("vec_id,vec", _PSS_VER, ids=[v[0] for v in _PSS_VER])
-    def test_rsa_pss_verify(self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    def test_rsa_pss_verify(self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         """Test RSA-PSS signature verification."""
-        rs = p11_raw_session
+        rs = p11_module_session
         mech_name: str = vec["mech_name"]
         mech_int = vec["mech_int"]
         hash_mech = vec["hash_mech"]

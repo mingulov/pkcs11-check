@@ -154,9 +154,9 @@ def _skip_or_xfail_rsa_private_import_reject(
     _ALL_SIGGEN_VECTORS,
     ids=[v[0] for v in _ALL_SIGGEN_VECTORS],
 )
-def test_rsa_pkcs1_siggen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_rsa_pkcs1_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA PKCS#1 v1.5 signature generation from Wycheproof vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     mechanism: int = vec["_mechanism"]
     key_size: int = vec["_key_size"]
     sha: str = vec["_sha"]

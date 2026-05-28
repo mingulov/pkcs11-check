@@ -73,9 +73,9 @@ _ENCRYPT_RUNTIME_REJECT_RVS = (
 class TestMechEncryptRoundtrip:
     """Encrypt then decrypt roundtrip for every advertised encrypt mechanism."""
 
-    def test_roundtrip(self, p11_raw_session: RawSession, mech_encrypt_entry: MechEntry) -> None:
+    def test_roundtrip(self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry) -> None:
         """Encrypt then decrypt, verify recovered plaintext matches original."""
-        rs = p11_raw_session
+        rs = p11_module_session
         entry = mech_encrypt_entry
         config = entry.config
         assert config is not None
@@ -139,9 +139,9 @@ class TestMechEncryptRoundtrip:
 class TestMechEncryptKAT:
     """Known-answer encryption tests from pre-generated vectors."""
 
-    def test_kat_vector(self, p11_raw_session: RawSession, mech_encrypt_entry: MechEntry) -> None:
+    def test_kat_vector(self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry) -> None:
         """Encrypt known plaintext with known key -- verify ciphertext matches vector."""
-        rs = p11_raw_session
+        rs = p11_module_session
         entry = mech_encrypt_entry
         config = entry.config
         if config is None or not config.vector_file:

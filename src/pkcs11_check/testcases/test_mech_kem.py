@@ -70,9 +70,9 @@ _AES_DERIVED_ATTRS: dict[int, Any] = {
 class TestMechKEM:
     """KEM encapsulate/decapsulate tests."""
 
-    def test_ml_kem_roundtrip(self, p11_raw_session: RawSession) -> None:
+    def test_ml_kem_roundtrip(self, p11_module_session: RawSession) -> None:
         """ML-KEM encapsulate -> decapsulate produces same shared secret."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("ML_KEM"):
             pytest.skip("ML_KEM not supported")
         pub, priv = _ml_kem_keypair(rs)
@@ -104,7 +104,7 @@ class TestMechKEM:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_ml_kem_wrong_key_fails(self, p11_raw_session: RawSession) -> None:
+    def test_ml_kem_wrong_key_fails(self, p11_module_session: RawSession) -> None:
         """Decapsulate with wrong private key produces a different shared secret.
 
         ML-KEM uses implicit rejection (FIPS 203 Section 6.3): decapsulating a
@@ -113,7 +113,7 @@ class TestMechKEM:
         are therefore different, which is confirmed by showing that ciphertext
         encrypted under enc_key cannot be decrypted correctly by dec_key_wrong.
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("ML_KEM"):
             pytest.skip("ML_KEM not supported")
         pub1, priv1 = _ml_kem_keypair(rs)

@@ -170,9 +170,9 @@ def _xfail_if_xdh_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_XDH_VECTORS, ids=[v[0] for v in _ALL_XDH_VECTORS])
-def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_xdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """X25519/X448 key exchange from Wycheproof vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("ECDH1_DERIVE"):
         pytest.skip("ECDH1_DERIVE not supported")
 

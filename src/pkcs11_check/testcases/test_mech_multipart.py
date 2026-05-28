@@ -98,10 +98,10 @@ class TestMultipartEncrypt:
     """C_EncryptUpdate chunks -> C_EncryptFinal matches C_Encrypt."""
 
     def test_streaming_equals_single(
-        self, p11_raw_session: RawSession, mech_multipart_encrypt_entry: MechEntry
+        self, p11_module_session: RawSession, mech_multipart_encrypt_entry: MechEntry
     ) -> None:
         """Multi-part encrypt output must equal single-part encrypt for the same input."""
-        rs = p11_raw_session
+        rs = p11_module_session
         entry = mech_multipart_encrypt_entry
         config = entry.config
         assert config is not None
@@ -187,10 +187,10 @@ class TestMultipartDigest:
     """C_DigestUpdate chunks -> C_DigestFinal matches C_Digest."""
 
     def test_streaming_equals_single(
-        self, p11_raw_session: RawSession, mech_digest_entry: MechEntry
+        self, p11_module_session: RawSession, mech_digest_entry: MechEntry
     ) -> None:
         """Multi-part digest must match single-part digest for the same input."""
-        rs = p11_raw_session
+        rs = p11_module_session
         entry = mech_digest_entry
         config = entry.config
         if config is None:
@@ -232,10 +232,10 @@ class TestMultipartDigest:
         )
 
     def test_streaming_single_chunk_equals_single(
-        self, p11_raw_session: RawSession, mech_digest_entry: MechEntry
+        self, p11_module_session: RawSession, mech_digest_entry: MechEntry
     ) -> None:
         """Multi-part with one chunk must equal single-part digest."""
-        rs = p11_raw_session
+        rs = p11_module_session
         entry = mech_digest_entry
         config = entry.config
         if config is None:
@@ -270,10 +270,10 @@ class TestMultipartSign:
     """C_SignUpdate chunks -> C_SignFinal -- multipart signature verifies."""
 
     def test_multipart_sign_verify(
-        self, p11_raw_session: RawSession, mech_multipart_sign_entry: MechEntry
+        self, p11_module_session: RawSession, mech_multipart_sign_entry: MechEntry
     ) -> None:
         """Multi-part sign then verify with the same multi-part verify."""
-        rs = p11_raw_session
+        rs = p11_module_session
         entry = mech_multipart_sign_entry
         config = entry.config
         assert config is not None

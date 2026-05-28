@@ -322,9 +322,9 @@ def _xfail_if_rsa_pss_runtime_reject(exc: AssertionError, label: str) -> NoRetur
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_PSS_VECTORS, ids=[v[0] for v in _ALL_PSS_VECTORS])
-def test_rsa_pss(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA-PSS signature verification from Wycheproof vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     mechanism = vec["_mechanism"]
     name = _MECH_DISPLAY.get(mechanism, "RSA_PKCS_PSS")
     if not rs.has_mechanism(name):

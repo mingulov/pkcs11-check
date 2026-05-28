@@ -182,9 +182,9 @@ _ALL_RSA_VECTORS = _load_all_rsa_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_RSA_VECTORS, ids=[v[0] for v in _ALL_RSA_VECTORS])
-def test_rsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_rsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA PKCS#1 v1.5 signature verification from Wycheproof vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     msg = bytes.fromhex(vec["msg"])
     sig = bytes.fromhex(vec["sig"])
     result = vec["result"]

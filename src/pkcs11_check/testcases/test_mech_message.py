@@ -67,7 +67,7 @@ def _xfail_if_message_init_rejected(rv: int, *, label: str) -> None:
 class TestMessageEncrypt:
     """v3.0 C_MessageEncrypt* API tests."""
 
-    def test_message_encrypt_decrypt_aes_gcm(self, p11_raw_session: RawSession) -> None:
+    def test_message_encrypt_decrypt_aes_gcm(self, p11_module_session: RawSession) -> None:
         """Single-message AES-GCM encrypt/decrypt roundtrip via message-based API.
 
         Verifies the full CK_GCM_MESSAGE_PARAMS packing path through
@@ -76,7 +76,7 @@ class TestMessageEncrypt:
 
         Reference: PKCS#11 v3.1 Sec.5.4 (Message-based encryption functions).
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
 
@@ -241,7 +241,7 @@ class TestMessageEncrypt:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_message_encrypt_aes_gcm_generated_iv_writeback(
-        self, p11_raw_session: RawSession
+        self, p11_module_session: RawSession
     ) -> None:
         """C_EncryptMessage with CKG_GENERATE writes the generated IV to pIv.
 
@@ -249,7 +249,7 @@ class TestMessageEncrypt:
         IV handling. Unlike legacy CKM_AES_GCM parameter mutation, ivGenerator
         support is part of CK_GCM_MESSAGE_PARAMS.
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
 
@@ -342,10 +342,10 @@ class TestMessageEncrypt:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_message_encrypt_aes_ccm_generated_nonce_writeback(
-        self, p11_raw_session: RawSession
+        self, p11_module_session: RawSession
     ) -> None:
         """C_EncryptMessage with CKG_GENERATE writes AES-CCM nonce and MAC outputs."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_CCM"):
             pytest.skip("CKM_AES_CCM not supported")
 
@@ -436,7 +436,7 @@ class TestMessageEncrypt:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_message_encrypt_rejects_decrypt_only_key(self, p11_raw_session: RawSession) -> None:
+    def test_message_encrypt_rejects_decrypt_only_key(self, p11_module_session: RawSession) -> None:
         """C_MessageEncryptInit must reject a key with CKA_ENCRYPT=False.
 
         Phase 4.5 GAP-A3 closure: the v3.0 message-based API has separate
@@ -446,7 +446,7 @@ class TestMessageEncrypt:
         skips the check at C_MessageEncryptInit allows a decrypt-only
         key to be used for encryption — bypass of the usage attribute.
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
 
@@ -523,7 +523,7 @@ class TestMessageEncrypt:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_message_sign_aes_gmac(self, p11_raw_session: RawSession) -> None:
+    def test_message_sign_aes_gmac(self, p11_module_session: RawSession) -> None:
         """Message-based sign init/final roundtrip for CKM_AES_GMAC.
 
         Verifies that C_MessageSignInit accepts a CKM_AES_GMAC mechanism built
@@ -532,7 +532,7 @@ class TestMessageEncrypt:
 
         Reference: PKCS#11 v3.1 Sec.5.5 (Message-based signing functions).
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_GMAC"):
             pytest.skip("CKM_AES_GMAC not supported")
 
