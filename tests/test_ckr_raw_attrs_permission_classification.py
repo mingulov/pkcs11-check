@@ -64,3 +64,21 @@ def test_decrypt_not_claimed_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_decrypt_claimed_enforced_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_run(monkeypatch, _ENC_CLAIMED_REJECTED)
     tra.TestKeyFunctionNotPermitted().test_decrypt_not_permitted(_cfg())
+
+
+def test_sign_claimed_violated_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_run(monkeypatch, _ENC_OK)
+    with pytest.raises(Failed) as ei:
+        tra.TestKeyFunctionNotPermitted().test_sign_not_permitted(_cfg())
+    assert not isinstance(ei.value, XFailed)
+
+
+def test_sign_not_claimed_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_run(monkeypatch, _ENC_NOT_CLAIMED)
+    with pytest.raises(pytest.xfail.Exception):
+        tra.TestKeyFunctionNotPermitted().test_sign_not_permitted(_cfg())
+
+
+def test_sign_claimed_enforced_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_run(monkeypatch, _ENC_CLAIMED_REJECTED)
+    tra.TestKeyFunctionNotPermitted().test_sign_not_permitted(_cfg())

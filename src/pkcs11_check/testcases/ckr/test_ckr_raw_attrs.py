@@ -163,20 +163,21 @@ rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, b
 if rv != CKR_OK:
     print(f"SETUP_XFAIL:C_GenerateKey for CKA_SIGN=False failed: {ckr_name(rv)}")
 else:
+    _claim(sh, key.value, CKA_SIGN)
     mech = mech_simple(CKM_SHA256_HMAC)  # sign mech to test CKA_SIGN=False
     rv = raw.C_SignInit(sh, mech.byref(), key.value)
     print(f"CKR:0x{rv:08x}")
-    # KEY_FUNCTION_NOT_PERMITTED, MECHANISM_INVALID, or KEY_TYPE_INCONSISTENT
-    assert rv in (
-        CKR_KEY_FUNCTION_NOT_PERMITTED,
-        CKR_MECHANISM_INVALID,
-        CKR_KEY_TYPE_INCONSISTENT,
-        CKR_FUNCTION_FAILED,
-    ), f"Got 0x{rv:08x}"
+    # Report result without asserting -- outer test checks security compliance
     print("OK")
 """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_SignInit with CKA_SIGN=False")
+        # Type-B: enforcing CKA_SIGN=False is mandatory (PKCS#11 v3.1 Sec.4.4.1).
+        _classify_permission_flag(
+            out,
+            label="C_SignInit with a CKA_SIGN=False key "
+            "(PKCS#11 v3.1 Sec.4.4.1 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+        )
 
     def test_decrypt_not_permitted(self, p11_config: Any) -> None:
         """Key with CKA_DECRYPT=False -> C_DecryptInit -> CKR_KEY_FUNCTION_NOT_PERMITTED.
