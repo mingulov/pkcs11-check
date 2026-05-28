@@ -331,9 +331,13 @@ classify_negative_rv(rv, (CKR_SESSION_READ_ONLY,), label="create token object on
 
 ## Phase 6 — P2 / P3 / C cleanups (depends Phase 1)
 
-- [ ] **P3 message-API:** `test_message_crypto.py:211,212,231,235,292,337` and `test_mech_message.py:79,267,364,481,531` — replace ungated `except AssertionError: pytest.skip` with `reject_or_classify`/`xfail_if_known_ckr` (advertised-but-rejecting → `xfail`, not `skip`); commit.
-- [ ] **P2 wrong-result leaks → `fail`:** `test_crossverify_extended.py:169` (GCM mismatch swallowed by skip), `test_ecdh_extended.py:440` (failed self-roundtrip xfailed). Isolated metadata defaults (`CKA_LOCAL`, `CKA_PRIVATE` in `test_attribute_defaults.py`, `test_key_flags.py`, `test_access_control.py:108`) **stay `xfail`**; commit.
-- [ ] **C cleanups:** `ckr/test_ckr_wrap.py:84` (skip masks finding → `fail`), `ckr/test_ckr_session.py:67` (non-capability skip → `xfail`), `test_object_visibility.py:487` / `test_profiles.py:64` (substring CKR → exact); `security/test_crypto_weakness.py` — classify each `note()`-only site as posture (keep) vs Type-A/B (→ fail); commit.
+- [x] **P3 message-API:** `test_message_crypto.py` — 5 `except AssertionError: pytest.skip("Message ... not supported")` blocks (encrypt/decrypt legs) now route through `xfail_if_known_ckr` (advertised-but-rejecting → `xfail`, not `skip`; non-CKR propagates). `test_mech_message.py` — 4 `C_Message*Init` legs widened from `MECHANISM_INVALID`-only to a shared `_xfail_if_message_init_rejected` helper (positive-op 3-way); the CKA_ENCRYPT=False must-reject site (`:481`) routed through `classify_negative_rv` (CKR_OK security finding still `fail`, spec reject pass, other clean → xfail).
+- [x] **P2 wrong-result leaks → `fail`:** `test_crossverify_extended.py` GCM — split the conflated `except`: a clean reject of the decrypt op → `xfail` (shared `CIPHER_OP_RUNTIME_REJECT_RVS`), but a successful decrypt whose plaintext differs from the cryptography-library reference → hard `fail` (was swallowed by skip). `test_ecdh_extended.py` XEdDSA — split similarly: clean reject of the verify op → `xfail`, but a self-produced signature that does not verify with its own key → hard `fail` (was xfailed). Isolated metadata defaults (`CKA_LOCAL`/`CKA_PRIVATE`) **left as `xfail`** per the model (no change).
+- [x] **C cleanups:**
+    - `ckr/test_ckr_wrap.py:84` — the skip that masked the "doesn't honour CKA_EXTRACTABLE=False" case is replaced by a Type-B `classify_policy_enforcement` (claimed-then-wrapped/exported → `fail`; not-claimed → `xfail`; claimed-and-rejected → pass).
+    - `ckr/test_ckr_session.py:67` — token-login-state (non-capability) skip → `xfail`; the wrong-PIN assert routed through `classify_negative_rv` (CKR_OK = accepted wrong PIN → `fail`; non-spec reject → `xfail`).
+    - `test_object_visibility.py:487` and `test_profiles.py:64` — substring `"CKR_..." in str(exc)` matches replaced with exact `is_known_error(exc, <specific set>)`.
+    - `security/test_crypto_weakness.py` — **assessed: all `note()` sites are genuine posture observations** (weak-RSA/DES/MD5/SSL3 availability + deprecated sign that merely *produces* output + PIN-timing). None is a Type-A crypto-correctness break or Type-B claimed-then-violated, so all correctly stay `note()` per the file's documented "NOT pass/fail" posture-probe design. No change.
 
 ---
 
