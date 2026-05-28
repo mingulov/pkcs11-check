@@ -82,6 +82,20 @@ The "CKR common storage" is **`src/pkcs11_check/testcases/ckr/_ckr_spec.py`**:
 
 - Allowed, but **write to NEW folder names** under `artifacts/` (e.g. `artifacts/<target>-recheck-YYYYMMDD/`)
   — never overwrite the 2026-05-27 baseline result dirs (backup: `/home/user/src/m/artifacts.tar.xz`).
+- **Safe rerun command** (override the per-service `PKCS11_CHECK_ARTIFACT_DIR` env so output
+  lands in a new folder, baseline untouched):
+  ```
+  docker compose -f docker/docker-compose.test.yml run --rm \
+    -e PKCS11_CHECK_ARTIFACT_DIR=/artifacts/<target>-recheck-20260528 \
+    --build test-<target>
+  ```
+  In-scope targets (excl. bouncyhsm) + approx test-exec time: softhsm2 ~10m, softhsm2-main ~10m,
+  kryoptic ~15m, kryoptic-main ~16m, kryoptic-fips ~18m, nss ~9m, nss-main ~10m, nss-pqc ~9m,
+  opencryptoki ~2h, opencryptoki-master ~1.5h, tpm2 ~25m, pkcs11-mock ~3m. Run fast ones first;
+  opencryptoki are the long tail. After each: parse `quality.json` summary, compare deltas vs
+  baseline `artifacts/_matrix/provider-summary.json`, regenerate the matrix summary, refresh the
+  three docs (rounded ~Xk), update `module-issues.md` for NEW findings (e.g. cross-provider GCM
+  NULL-AAD SIGSEGV).
 - After fixes, re-run only the **affected** targets and compare `passed/failed/xfailed/skipped`
   deltas vs `artifacts/_matrix/provider-summary.json`. "Better" = no new signal/crash `fail`,
   no finding demoted to silent pass/skip; every `fail→xfail` offset by an `xfail` gain.
