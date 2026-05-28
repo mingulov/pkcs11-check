@@ -67,8 +67,11 @@ from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_LEN_RANGE,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._subprocess_preamble import (
@@ -76,7 +79,7 @@ from pkcs11_check.testcases._subprocess_preamble import (
     run_with_coverage,
     subprocess_session_preamble,
 )
-from pkcs11_check.testcases.conftest import reject_or_classify
+from pkcs11_check.testcases.conftest import is_known_error, reject_or_classify
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess_per_test]
@@ -92,6 +95,20 @@ _WEAK_PARAM_REJECT_RVS = (
     CKR_DATA_LEN_RANGE,
     CKR_ARGUMENTS_BAD,
     CKR_TEMPLATE_INCONSISTENT,
+)
+
+# CKRs that a module may legitimately return when refusing to *generate* a
+# key shape required by a security probe (e.g. tpm2 rejecting session RSA
+# keys with restrictive attribute policy). The probe targets weak/insecure
+# *operation* parameters, not keygen support; if keygen itself is not
+# operational, the probe is a missing-capability ``skip``, not a ``fail``.
+_KEYGEN_CAPABILITY_REJECT_RVS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_MECHANISM_INVALID,
+    CKR_KEY_SIZE_RANGE,
 )
 
 # ---------------------------------------------------------------------------
@@ -352,13 +369,18 @@ class TestPssSaltLength:
             pytest.skip("RSA keygen not supported")
         if not rs.has_mechanism("SHA256_RSA_PKCS_PSS"):
             pytest.skip("SHA256_RSA_PKCS_PSS not supported")
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
-            2048,
-            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
-            public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
-        )
+        try:
+            pub, priv = gen_rsa_keypair(
+                rs.raw,
+                rs.sh,
+                2048,
+                private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+                public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+            )
+        except AssertionError as exc:
+            if is_known_error(exc, _KEYGEN_CAPABILITY_REJECT_RVS):
+                pytest.skip(f"RSA keygen for PSS zero-salt probe not operational: {exc}")
+            raise
         try:
             pss = mech_pss(
                 CKM_SHA256_RSA_PKCS_PSS,
@@ -402,13 +424,18 @@ class TestPssSaltLength:
             pytest.skip("RSA keygen not supported")
         if not rs.has_mechanism("SHA256_RSA_PKCS_PSS"):
             pytest.skip("SHA256_RSA_PKCS_PSS not supported")
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
-            2048,
-            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
-            public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
-        )
+        try:
+            pub, priv = gen_rsa_keypair(
+                rs.raw,
+                rs.sh,
+                2048,
+                private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+                public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+            )
+        except AssertionError as exc:
+            if is_known_error(exc, _KEYGEN_CAPABILITY_REJECT_RVS):
+                pytest.skip(f"RSA keygen for PSS excessive-salt probe not operational: {exc}")
+            raise
         try:
             # max sLen = 256 - 32 - 2 = 222 for 2048-bit RSA / SHA-256
             pss = mech_pss(
@@ -606,12 +633,17 @@ class TestEcPointValidation:
             pytest.skip("ECDH1_DERIVE not supported")
 
         curve_oid = encode_named_curve_parameters("secp256r1")
-        pub, priv = gen_ec_keypair(
-            rs.raw,
-            rs.sh,
-            curve_oid,
-            private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
-        )
+        try:
+            pub, priv = gen_ec_keypair(
+                rs.raw,
+                rs.sh,
+                curve_oid,
+                private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+            )
+        except AssertionError as exc:
+            if is_known_error(exc, _KEYGEN_CAPABILITY_REJECT_RVS):
+                pytest.skip(f"EC keygen for invalid-point probe not operational: {exc}")
+            raise
         try:
             # Read the valid EC point to use as a base for crafting invalid ones
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])
@@ -711,13 +743,18 @@ class TestRsaOaepSha1Mgf:
             pytest.skip("RSA keygen not supported")
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("RSA_PKCS_OAEP not supported")
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
-            2048,
-            public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
-            private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
-        )
+        try:
+            pub, priv = gen_rsa_keypair(
+                rs.raw,
+                rs.sh,
+                2048,
+                public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+                private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
+            )
+        except AssertionError as exc:
+            if is_known_error(exc, _KEYGEN_CAPABILITY_REJECT_RVS):
+                pytest.skip(f"RSA keygen for OAEP-SHA1 probe not operational: {exc}")
+            raise
         try:
             oaep = mech_oaep(
                 CKM_RSA_PKCS_OAEP,
@@ -762,13 +799,18 @@ class TestRsaPssMd5Hash:
             pytest.skip("RSA keygen not supported")
         if not rs.has_mechanism("RSA_PKCS_PSS"):
             pytest.skip("RSA_PKCS_PSS not supported")
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
-            2048,
-            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
-            public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
-        )
+        try:
+            pub, priv = gen_rsa_keypair(
+                rs.raw,
+                rs.sh,
+                2048,
+                private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+                public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+            )
+        except AssertionError as exc:
+            if is_known_error(exc, _KEYGEN_CAPABILITY_REJECT_RVS):
+                pytest.skip(f"RSA keygen for PSS probe not operational: {exc}")
+            raise
         try:
             # MD5 hash with SHA-256 MGF -- intentionally mismatched
             # to specifically test whether MD5 hash is accepted
