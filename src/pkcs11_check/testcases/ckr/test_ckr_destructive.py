@@ -17,7 +17,39 @@ import textwrap
 
 import pytest
 
+from pkcs11_check.raw.types_std import (
+    CKR_ARGUMENTS_BAD,
+    CKR_PIN_INCORRECT,
+    CKR_PIN_LEN_RANGE,
+    CKR_PIN_TOO_WEAK,
+    CKR_SESSION_EXISTS,
+    CKR_TOKEN_NOT_INITIALIZED,
+    CKR_USER_NOT_LOGGED_IN,
+)
+from pkcs11_check.testcases.conftest import classify_negative_rv
+
 pytestmark = [pytest.mark.access, pytest.mark.subprocess, pytest.mark.destructive]
+
+
+def _classify_destructive_ckr(out: str, expected_rvs: tuple[int, ...], *, label: str) -> None:
+    """Parent-side 3-way classifier over a child script's ``CKR:0x...`` line.
+
+    The destructive probes run in a subprocess and print ``CKR:0x{rv:08x}`` for
+    the negative op under test. Classification happens here (not via an in-child
+    ``assert``) so a non-spec clean reject becomes ``xfail`` instead of crashing
+    the child and being mislabeled as a crash:
+
+    - ``CKR_OK`` (the forbidden/invalid op was accepted) -> ``fail``,
+    - ``rv in expected_rvs`` (spec) -> ``pass``,
+    - any other clean reject code -> ``xfail``.
+    """
+    rv: int | None = None
+    for line in out.splitlines():
+        if line.startswith("CKR:0x"):
+            rv = int(line.removeprefix("CKR:"), 16)
+            break
+    assert rv is not None, f"{label}: no CKR line in child output: {out!r}"
+    classify_negative_rv(rv, expected_rvs, label=label)
 
 
 def _create_temp_softhsm_token() -> tuple[str, str, str]:
@@ -112,12 +144,14 @@ label = b"reinit-test     "  # 32 bytes padded
 label_buf = (ctypes.c_ubyte * 32)(*label.ljust(32))
 rv = raw.C_InitToken(slot, so_pin_buf, len(so_pin), label_buf)
 print(f"CKR:0x{rv:08x}")
-assert rv == CKR_SESSION_EXISTS, f"Expected SESSION_EXISTS, got 0x{rv:08x}"
 print("OK")
 raw.C_CloseSession(sess.value)
 """)
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
+        _classify_destructive_ckr(
+            out, (CKR_SESSION_EXISTS,), label="C_InitToken with an open session"
+        )
 
     def test_init_token_wrong_so_pin(self) -> None:
         """C_InitToken with wrong SO PIN -> CKR_PIN_INCORRECT."""
@@ -128,11 +162,13 @@ label = b"reinit-test     "
 label_buf = (ctypes.c_ubyte * 32)(*label.ljust(32))
 rv = raw.C_InitToken(slot, pin_buf, len(wrong_pin), label_buf)
 print(f"CKR:0x{rv:08x}")
-assert rv == CKR_PIN_INCORRECT, f"Expected PIN_INCORRECT, got 0x{rv:08x}"
 print("OK")
 """)
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
+        _classify_destructive_ckr(
+            out, (CKR_PIN_INCORRECT,), label="C_InitToken with a wrong SO PIN"
+        )
 
 
 class TestSetPINErrors:
@@ -153,13 +189,13 @@ wrong = b"WRONG"
 new_pin = b"5678"
 rv = raw.C_SetPIN(sh, (ctypes.c_ubyte * 5)(*wrong), 5, (ctypes.c_ubyte * 4)(*new_pin), 4)
 print(f"CKR:0x{rv:08x}")
-assert rv == CKR_PIN_INCORRECT, f"Expected PIN_INCORRECT, got 0x{rv:08x}"
 print("OK")
 raw.C_Logout(sh)
 raw.C_CloseSession(sh)
 """)
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
+        _classify_destructive_ckr(out, (CKR_PIN_INCORRECT,), label="C_SetPIN with a wrong old PIN")
 
 
 class TestInitPINErrors:
@@ -176,12 +212,14 @@ sh = sess.value
 new_pin = b"9999"
 rv = raw.C_InitPIN(sh, (ctypes.c_ubyte * 4)(*new_pin), 4)
 print(f"CKR:0x{rv:08x}")
-assert rv == CKR_USER_NOT_LOGGED_IN, f"Expected USER_NOT_LOGGED_IN, got 0x{rv:08x}"
 print("OK")
 raw.C_CloseSession(sh)
 """)
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
+        _classify_destructive_ckr(
+            out, (CKR_USER_NOT_LOGGED_IN,), label="C_InitPIN without SO login"
+        )
 
     def test_init_pin_short_pin(self) -> None:
         """C_InitPIN with 1-byte PIN -> CKR_PIN_TOO_WEAK or related PIN error."""
@@ -198,16 +236,17 @@ assert rv == CKR_OK, f"SO login failed: 0x{rv:08x}"
 short_pin = b"X"
 rv = raw.C_InitPIN(sh, (ctypes.c_ubyte * 1)(*short_pin), 1)
 print(f"CKR:0x{rv:08x}")
-ok_codes = (CKR_PIN_TOO_WEAK, CKR_PIN_LEN_RANGE, CKR_PIN_INCORRECT, CKR_ARGUMENTS_BAD)
-assert rv in ok_codes, (
-    f"Expected PIN_TOO_WEAK/PIN_LEN_RANGE/PIN_INCORRECT/ARGUMENTS_BAD, got 0x{rv:08x}"
-)
 print("OK")
 raw.C_Logout(sh)
 raw.C_CloseSession(sh)
 """)
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
+        _classify_destructive_ckr(
+            out,
+            (CKR_PIN_TOO_WEAK, CKR_PIN_LEN_RANGE, CKR_PIN_INCORRECT, CKR_ARGUMENTS_BAD),
+            label="C_InitPIN with a 1-byte PIN (weak/too-short)",
+        )
 
     def test_init_pin_token_not_initialized(self) -> None:
         """C_InitPIN on uninitialized token -> CKR_TOKEN_NOT_INITIALIZED."""
@@ -275,7 +314,8 @@ raw.C_CloseSession(sh)
         if "NO_SLOTS" in result.stdout:
             pytest.skip("No slots available on uninitialized token")
         assert "OK" in result.stdout
-        acceptable = (
-            "TOKEN_NOT_INITIALIZED" in result.stdout or "USER_NOT_LOGGED_IN" in result.stdout
+        _classify_destructive_ckr(
+            result.stdout,
+            (CKR_TOKEN_NOT_INITIALIZED, CKR_USER_NOT_LOGGED_IN),
+            label="C_InitPIN on an uninitialized token",
         )
-        assert acceptable, f"Unexpected CKR in output: {result.stdout}"
