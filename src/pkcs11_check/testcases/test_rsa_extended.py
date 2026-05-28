@@ -67,8 +67,21 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKZ_DATA_SPECIFIED,
 )
+from pkcs11_check.testcases.conftest import (
+    CIPHER_OP_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.full
+
+# Phase 5 P1b: first-leg "advertised but not operational" reject sets. These
+# guard the *produce* leg only (sign/wrap/encrypt/keygen); the dependent
+# second leg (verify/unwrap/decrypt of the just-produced output) is left
+# unguarded so a self-contradiction there stays a hard failure. A non-CKR
+# Python error always propagates (xfail_if_known_ckr re-raises).
+_RSA_OP_REJECT_RVS = CIPHER_OP_RUNTIME_REJECT_RVS
+_RSA_KEYGEN_REJECT_RVS = KEYPAIR_RUNTIME_REJECT_RVS
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +193,8 @@ class TestRSAX931:
             try:
                 sig = sign_single(rs.raw, rs.sh, priv, CKM_RSA_X9_31, digest)
             except AssertionError as exc:
-                pytest.xfail(f"CKM_RSA_X9_31 sign not functional: {exc}")
+                xfail_if_known_ckr(exc, _RSA_OP_REJECT_RVS, "CKM_RSA_X9_31 sign not operational")
+                raise
 
             assert len(sig) == 256  # 2048-bit RSA = 256 bytes
             result = verify_single(rs.raw, rs.sh, pub, CKM_RSA_X9_31, digest, sig)
@@ -203,7 +217,10 @@ class TestRSAX931:
             try:
                 sig = sign_single(rs.raw, rs.sh, priv, CKM_RSA_X9_31, digest)
             except AssertionError as exc:
-                pytest.xfail(f"CKM_RSA_X9_31 sign with SHA-1 digest not functional: {exc}")
+                xfail_if_known_ckr(
+                    exc, _RSA_OP_REJECT_RVS, "CKM_RSA_X9_31 sign with SHA-1 digest not operational"
+                )
+                raise
 
             result = verify_single(rs.raw, rs.sh, pub, CKM_RSA_X9_31, digest, sig)
             assert result is True
@@ -224,7 +241,8 @@ class TestRSAX931:
             try:
                 sig = sign_single(rs.raw, rs.sh, priv, CKM_RSA_X9_31, digest)
             except AssertionError as exc:
-                pytest.xfail(f"CKM_RSA_X9_31 sign not functional: {exc}")
+                xfail_if_known_ckr(exc, _RSA_OP_REJECT_RVS, "CKM_RSA_X9_31 sign not operational")
+                raise
 
             # Flip a byte in the signature
             tampered = bytearray(sig)
@@ -250,7 +268,8 @@ class TestRSAX931:
             try:
                 sig = sign_single(rs.raw, rs.sh, priv, CKM_RSA_X9_31, digest)
             except AssertionError as exc:
-                pytest.xfail(f"CKM_RSA_X9_31 sign not functional: {exc}")
+                xfail_if_known_ckr(exc, _RSA_OP_REJECT_RVS, "CKM_RSA_X9_31 sign not operational")
+                raise
 
             wrong_digest = hashlib.sha256(b"different data").digest()
 
@@ -283,7 +302,10 @@ class TestRSAX931KeyPairGen:
                 mechanism=CKM_RSA_X9_31_KEY_PAIR_GEN,
             )
         except AssertionError as exc:
-            pytest.xfail(f"CKM_RSA_X9_31_KEY_PAIR_GEN not functional: {exc}")
+            xfail_if_known_ckr(
+                exc, _RSA_KEYGEN_REJECT_RVS, "CKM_RSA_X9_31_KEY_PAIR_GEN not operational"
+            )
+            raise
 
         try:
             assert pub != 0
@@ -312,7 +334,10 @@ class TestRSAX931KeyPairGen:
                 mechanism=CKM_RSA_X9_31_KEY_PAIR_GEN,
             )
         except AssertionError as exc:
-            pytest.xfail(f"CKM_RSA_X9_31_KEY_PAIR_GEN not functional: {exc}")
+            xfail_if_known_ckr(
+                exc, _RSA_KEYGEN_REJECT_RVS, "CKM_RSA_X9_31_KEY_PAIR_GEN not operational"
+            )
+            raise
 
         try:
             data = b"sign with X9.31-generated key"
@@ -339,7 +364,10 @@ class TestRSAX931KeyPairGen:
                 mechanism=CKM_RSA_X9_31_KEY_PAIR_GEN,
             )
         except AssertionError as exc:
-            pytest.xfail(f"CKM_RSA_X9_31_KEY_PAIR_GEN not functional: {exc}")
+            xfail_if_known_ckr(
+                exc, _RSA_KEYGEN_REJECT_RVS, "CKM_RSA_X9_31_KEY_PAIR_GEN not operational"
+            )
+            raise
 
         try:
             oaep = mech_oaep(
@@ -434,7 +462,10 @@ class TestRSAAESKeyWrap:
                     mech_param=wrap_param,
                 )
             except AssertionError as exc:
-                pytest.xfail(f"CKM_RSA_AES_KEY_WRAP wrap not functional: {exc}")
+                xfail_if_known_ckr(
+                    exc, _RSA_OP_REJECT_RVS, "CKM_RSA_AES_KEY_WRAP wrap not operational"
+                )
+                raise
 
             assert wrapped is not None
             assert len(wrapped) > 0
@@ -495,7 +526,10 @@ class TestRSAAESKeyWrap:
                     mech_param=wrap_param,
                 )
             except AssertionError as exc:
-                pytest.xfail(f"CKM_RSA_AES_KEY_WRAP wrap not functional: {exc}")
+                xfail_if_known_ckr(
+                    exc, _RSA_OP_REJECT_RVS, "CKM_RSA_AES_KEY_WRAP wrap not operational"
+                )
+                raise
 
             unwrap_param = _mech_rsa_aes_key_wrap(256)
             unwrapped = unwrap_key(
@@ -553,7 +587,10 @@ class TestRSAAESKeyWrap:
                     mech_param=wrap_param,
                 )
             except AssertionError as exc:
-                pytest.xfail(f"CKM_RSA_AES_KEY_WRAP wrap not functional: {exc}")
+                xfail_if_known_ckr(
+                    exc, _RSA_OP_REJECT_RVS, "CKM_RSA_AES_KEY_WRAP wrap not operational"
+                )
+                raise
 
             # The wrapped blob should not contain the raw key bytes
             assert original_value not in wrapped
@@ -584,7 +621,10 @@ class TestRSAOAEPTPM:
             try:
                 ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP_TPM_1_1, plaintext)
             except AssertionError as exc:
-                pytest.xfail(f"CKM_RSA_PKCS_OAEP_TPM_1_1 encrypt not functional: {exc}")
+                xfail_if_known_ckr(
+                    exc, _RSA_OP_REJECT_RVS, "CKM_RSA_PKCS_OAEP_TPM_1_1 encrypt not operational"
+                )
+                raise
 
             assert len(ct) == 256  # 2048-bit RSA
             assert ct != plaintext
@@ -621,7 +661,10 @@ class TestRSAOAEPTPM:
                     plaintext,
                 )
             except AssertionError as exc:
-                pytest.xfail(f"CKM_RSA_PKCS_OAEP_TPM_1_1 encrypt not functional: {exc}")
+                xfail_if_known_ckr(
+                    exc, _RSA_OP_REJECT_RVS, "CKM_RSA_PKCS_OAEP_TPM_1_1 encrypt not operational"
+                )
+                raise
 
             # OAEP uses random padding - two encryptions should differ
             assert ct1 != ct2
@@ -652,7 +695,10 @@ class TestRSAOAEPTPM:
                     max_plaintext,
                 )
             except AssertionError as exc:
-                pytest.xfail(f"CKM_RSA_PKCS_OAEP_TPM_1_1 encrypt not functional: {exc}")
+                xfail_if_known_ckr(
+                    exc, _RSA_OP_REJECT_RVS, "CKM_RSA_PKCS_OAEP_TPM_1_1 encrypt not operational"
+                )
+                raise
 
             pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP_TPM_1_1, ct)
             assert pt == max_plaintext
