@@ -32,7 +32,20 @@ from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
     SIGNATURE_REJECT_RVS,
 )
-from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, xfail_if_known_ckr
+
+# Phase 6 P3: the v3.0 message functions are already gated by the function-list
+# capability check (_skip_unless_message_functions). Past that gate the op is
+# *advertised*, so a clean reject at use is advertised-but-rejecting -> xfail
+# (not skip). A non-CKR error propagates as a real failure.
+_MESSAGE_OP_REJECT_RVS = (
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_DEVICE_ERROR,
+    CKR_GENERAL_ERROR,
+)
 
 MESSAGE_ENCRYPT_FUNCS = [
     "C_MessageEncryptInit",
@@ -208,8 +221,11 @@ class TestMessageEncryptDecrypt:
 
             try:
                 ct = message_encrypt(rs.raw, rs.sh, key, CKM_AES_CBC, plaintext)
-            except AssertionError:
-                pytest.skip("Message encrypt not supported for CKM_AES_CBC")
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc, _MESSAGE_OP_REJECT_RVS, "advertised message encrypt rejected (CKM_AES_CBC)"
+                )
+                raise
             assert len(ct) > 0
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -227,12 +243,18 @@ class TestMessageEncryptDecrypt:
 
             try:
                 ct = message_encrypt(rs.raw, rs.sh, key, CKM_AES_CBC, plaintext)
-            except AssertionError:
-                pytest.skip("Message encrypt not supported for CKM_AES_CBC")
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc, _MESSAGE_OP_REJECT_RVS, "advertised message encrypt rejected (CKM_AES_CBC)"
+                )
+                raise
             try:
                 pt = message_decrypt(rs.raw, rs.sh, key, CKM_AES_CBC, ct)
-            except AssertionError:
-                pytest.skip("Message decrypt not supported for CKM_AES_CBC")
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc, _MESSAGE_OP_REJECT_RVS, "advertised message decrypt rejected (CKM_AES_CBC)"
+                )
+                raise
             assert pt == plaintext
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -288,8 +310,11 @@ class TestMessageEncryptDecrypt:
 
             try:
                 ct = message_encrypt(rs.raw, rs.sh, key, CKM_AES_CBC, plaintext)
-            except AssertionError:
-                pytest.skip("Message encrypt not supported for CKM_AES_CBC")
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc, _MESSAGE_OP_REJECT_RVS, "advertised message encrypt rejected (CKM_AES_CBC)"
+                )
+                raise
 
             from pkcs11_check.raw.pack import mech_simple
 
@@ -333,8 +358,11 @@ class TestMessageEncryptDecrypt:
 
             try:
                 ct = message_encrypt(rs.raw, rs.sh, key, CKM_AES_CBC, plaintext)
-            except AssertionError:
-                pytest.skip("Message encrypt not supported for CKM_AES_CBC")
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc, _MESSAGE_OP_REJECT_RVS, "advertised message encrypt rejected (CKM_AES_CBC)"
+                )
+                raise
             assert ct != plaintext
             pt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_CBC, ct)
             assert pt == plaintext
