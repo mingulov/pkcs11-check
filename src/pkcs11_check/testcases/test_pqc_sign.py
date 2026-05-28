@@ -44,10 +44,21 @@ from pkcs11_check.raw.types_std import (
     CKP_SLH_DSA_SHA2_128S,
     CKP_SLH_DSA_SHA2_256F,
 )
+from pkcs11_check.testcases.conftest import (
+    CIPHER_OP_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    xfail_if_known_ckr,
+)
 
 pytestmark = [pytest.mark.pqc]
 
 _PLAINTEXT = b"post-quantum signature test message 2026"
+
+# Phase 5 P1b: produce-leg "advertised but not operational" reject sets. Only a
+# known clean CKR -> xfail; a non-CKR Python error propagates. The dependent
+# verify leg is left unguarded (self-contradiction stays a hard failure).
+_PQC_SIGN_REJECT_RVS = CIPHER_OP_RUNTIME_REJECT_RVS
+_PQC_KEYGEN_REJECT_RVS = KEYPAIR_RUNTIME_REJECT_RVS
 
 
 def _skip_if_no(rs: Any, mech_name: str) -> None:
@@ -177,10 +188,8 @@ class TestMLDSASignVerify:
             try:
                 sig = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT)
             except AssertionError as exc:
-                pytest.xfail(
-                    f"Advertised CKM_ML_DSA sign operation is not operational on this module: {exc}"
-                )
-                raise  # unreachable
+                xfail_if_known_ckr(exc, _PQC_SIGN_REJECT_RVS, "CKM_ML_DSA sign not operational")
+                raise
             assert isinstance(sig, bytes) and len(sig) > 0
             result = verify_single(rs.raw, rs.sh, pub, CKM_ML_DSA, _PLAINTEXT, sig)
             assert result is True
@@ -197,10 +206,8 @@ class TestMLDSASignVerify:
             try:
                 sig = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT)
             except AssertionError as exc:
-                pytest.xfail(
-                    f"Advertised CKM_ML_DSA sign operation is not operational on this module: {exc}"
-                )
-                raise  # unreachable
+                xfail_if_known_ckr(exc, _PQC_SIGN_REJECT_RVS, "CKM_ML_DSA sign not operational")
+                raise
             tampered = _PLAINTEXT[:-1] + bytes([_PLAINTEXT[-1] ^ 0xFF])
             try:
                 result = verify_single(rs.raw, rs.sh, pub, CKM_ML_DSA, tampered, sig)
@@ -225,10 +232,8 @@ class TestMLDSASignVerify:
                 sig1 = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT)
                 sig2 = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT)
             except AssertionError as exc:
-                pytest.xfail(
-                    f"Advertised CKM_ML_DSA sign operation is not operational on this module: {exc}"
-                )
-                raise  # unreachable
+                xfail_if_known_ckr(exc, _PQC_SIGN_REJECT_RVS, "CKM_ML_DSA sign not operational")
+                raise
             # ML-DSA is randomized - two signatures should differ (with overwhelming probability)
             # Note: some implementations may use deterministic signing, so xfail not assert
             if sig1 == sig2:
