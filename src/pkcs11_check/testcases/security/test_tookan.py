@@ -44,7 +44,9 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
     CKR_KEY_NOT_WRAPPABLE,
+    CKR_KEY_UNEXTRACTABLE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
@@ -63,6 +65,30 @@ _TYPE_CONFUSION_WRAP_INAPPLICABLE_RVS = {
 }
 
 _TYPE_CONFUSION_WRAP_RUNTIME_REJECT_RVS = {
+    CKR_DATA_LEN_RANGE,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+}
+
+# A module that refuses to wrap a non-extractable / sensitive key with one of
+# these codes is enforcing the protection the Tookan attack targets -> the
+# extraction did NOT happen, so the test passes. (CKR_KEY_HANDLE_INVALID covers
+# modules that internally invalidate an unwrappable target handle.)
+_WRAP_EXTRACTION_PROTECTED_RVS = {
+    CKR_KEY_UNEXTRACTABLE,
+    CKR_KEY_NOT_WRAPPABLE,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_ACTION_PROHIBITED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+}
+
+# Other clean reject codes at the wrap site -> honest non-spec deviation (the
+# attack still did not succeed); routed to xfail rather than fail.
+_WRAP_EXTRACTION_RUNTIME_REJECT_RVS = {
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
@@ -245,9 +271,29 @@ class TestWrapExtraction:
             },
         )
         try:
-            wrapped = wrap_key(rs.raw, rs.sh, wrap_key_h, target_h, CKM_AES_KEY_WRAP)
+            # The wrap is the attacker's first step. Refusing to wrap a
+            # non-extractable/sensitive key is the module CORRECTLY enforcing the
+            # protection -- the Tookan extraction never gets off the ground:
+            #   - CKR_KEY_UNEXTRACTABLE / NOT_WRAPPABLE / etc. -> protection
+            #     worked -> pass.
+            #   - any other clean reject code -> honest non-spec deviation (still
+            #     no extraction) -> xfail.
+            #   - CKR_OK -> the wrap succeeded; only THEN can the decrypt leg
+            #     reveal key material, which is the actual Type-B violation.
+            try:
+                wrapped = wrap_key(rs.raw, rs.sh, wrap_key_h, target_h, CKM_AES_KEY_WRAP)
+            except AssertionError as exc:
+                if is_known_error(exc, _WRAP_EXTRACTION_PROTECTED_RVS):
+                    return  # Module refused to wrap the protected key -- attack blocked.
+                xfail_if_known_ckr(
+                    exc,
+                    _WRAP_EXTRACTION_RUNTIME_REJECT_RVS,
+                    "Tookan wrap-extraction wrap rejected before the decrypt leg",
+                )
+                raise
 
-            # Claim-check: did the target actually hold its protection?
+            # Wrap succeeded. Claim-check: did the target actually hold its
+            # protection?
             tgt = read_attributes(rs.raw, rs.sh, target_h, [CKA_EXTRACTABLE])
             claimed = tgt.get(CKA_EXTRACTABLE) is False
 
