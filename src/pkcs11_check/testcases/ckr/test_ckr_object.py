@@ -28,6 +28,7 @@ from pkcs11_check.raw.recipes import (
 )
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
+    CK_ATTRIBUTE,
     CK_OBJECT_HANDLE,
     CK_ULONG,
     CKA_CLASS,
@@ -39,11 +40,14 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKO_DATA,
     CKO_SECRET_KEY,
+    CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
+    CKR_SESSION_HANDLE_INVALID,
 )
 from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS
 from pkcs11_check.testcases.conftest import (
     classify_lifecycle_effect,
+    classify_negative_rv,
     classify_policy_enforcement,
 )
 
@@ -124,23 +128,25 @@ class TestGetAttributeErrors:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_destroyed_handle(self, p11_raw_session: Any) -> None:
-        """Using destroyed handle -> CKR_OBJECT_HANDLE_INVALID."""
+        """Using a destroyed object's handle -> CKR_OBJECT_HANDLE_INVALID."""
         rs = p11_raw_session
         key = gen_aes_key(rs.raw, rs.sh, 128)
-        # Type-C use-after-destroy effect-check. Tag the object with a unique
-        # CKA_LABEL so a survived object is distinguishable from handle reuse.
-        tag = b"ckr-uad-getattr"
-        tag_tmpl = template(attr_bytes(CKA_LABEL, tag))
-        rs.raw.C_SetAttributeValue(rs.sh, key, tag_tmpl.ptr, tag_tmpl.count)
-        destroy_rv = rs.raw.C_DestroyObject(rs.sh, key)
-        # claimed_success = destroy reported CKR_OK; effect_observed = a read on
-        # the same handle still returns the *tagged* content (true survival).
-        label_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LABEL])
-        survived = label_attrs.get(CKA_LABEL) == tag
-        classify_lifecycle_effect(
-            claimed_success=destroy_rv == CKR_OK,
-            effect_observed=survived,
-            label="read attributes via a destroyed object handle (use-after-destroy)",
+        rs.raw.C_DestroyObject(rs.sh, key)
+        # Negative op on a destroyed handle. Issue C_GetAttributeValue *directly*
+        # (not via read_attributes, which would re-raise the correct
+        # CKR_OBJECT_HANDLE_INVALID rejection as a setup error). Sizing call only.
+        tmpl = (CK_ATTRIBUTE * 1)()
+        tmpl[0].type = CKA_LABEL
+        tmpl[0].pValue = None
+        tmpl[0].ulValueLen = 0
+        rv = rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
+        # CKR_OK -> the read succeeded on a destroyed handle (use-after-destroy)
+        # -> fail. A handle-invalid rejection is spec-correct -> pass. Any other
+        # clean reject code -> xfail (honest non-spec deviation).
+        classify_negative_rv(
+            rv,
+            (CKR_OBJECT_HANDLE_INVALID, CKR_SESSION_HANDLE_INVALID),
+            label="C_GetAttributeValue via a destroyed object handle (use-after-destroy)",
         )
 
 

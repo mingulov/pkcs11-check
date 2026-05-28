@@ -25,6 +25,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
     CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
+    CKR_SESSION_HANDLE_INVALID,
 )
 from pkcs11_check.testcases.ckr import test_ckr_object
 
@@ -70,45 +71,39 @@ def test_sensitive_protected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # --- Type C: use-after-destroy (C_GetAttributeValue) -----------------------
 
-_TAG = b"ckr-uad-getattr"
 
-
-def _run_destroyed_handle(
-    monkeypatch: pytest.MonkeyPatch, *, destroy_rv: int, survives: bool
-) -> None:
+def _run_destroyed_handle(monkeypatch: pytest.MonkeyPatch, *, getattr_rv: int) -> None:
     monkeypatch.setattr(test_ckr_object, "gen_aes_key", lambda *_a, **_k: 1)
-    monkeypatch.setattr(test_ckr_object, "destroy_quietly", lambda *_a, **_k: None)
-
-    def _read(_raw: object, _sh: object, _h: object, attrs: list[int]) -> dict:
-        # First read: get the tag label (setup). After destroy, return the tag
-        # iff the object survives.
-        if survives:
-            return {test_ckr_object.CKA_LABEL: _TAG}
-        return {}
-
-    monkeypatch.setattr(test_ckr_object, "read_attributes", _read)
     raw = SimpleNamespace(
-        C_DestroyObject=lambda *_a, **_k: int(destroy_rv),
-        C_SetAttributeValue=lambda *_a, **_k: int(CKR_OK),
+        C_DestroyObject=lambda *_a, **_k: int(CKR_OK),
+        C_GetAttributeValue=lambda *_a, **_k: int(getattr_rv),
     )
     test_ckr_object.TestGetAttributeErrors().test_destroyed_handle(
         SimpleNamespace(raw=raw, sh=1, has_mechanism=lambda n: True)
     )
 
 
-def test_destroyed_handle_survives_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_destroyed_handle_read_succeeds_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    # CKR_OK on a destroyed handle = use-after-destroy -> fail.
     with pytest.raises(Failed) as ei:
-        _run_destroyed_handle(monkeypatch, destroy_rv=int(CKR_OK), survives=True)
+        _run_destroyed_handle(monkeypatch, getattr_rv=int(CKR_OK))
     _assert_real_fail(ei)
 
 
-def test_destroyed_handle_gone_passes(monkeypatch: pytest.MonkeyPatch) -> None:
-    _run_destroyed_handle(monkeypatch, destroy_rv=int(CKR_OK), survives=False)
+def test_destroyed_handle_object_handle_invalid_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Spec-correct rejection -> pass. This is the real softhsm2 behavior that
+    # previously surfaced as a false positive (read_attributes re-raised the
+    # correct CKR_OBJECT_HANDLE_INVALID as a setup error).
+    _run_destroyed_handle(monkeypatch, getattr_rv=int(CKR_OBJECT_HANDLE_INVALID))
 
 
-def test_destroyed_handle_destroy_declined_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_destroyed_handle_session_handle_invalid_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    _run_destroyed_handle(monkeypatch, getattr_rv=int(CKR_SESSION_HANDLE_INVALID))
+
+
+def test_destroyed_handle_other_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(pytest.xfail.Exception):
-        _run_destroyed_handle(monkeypatch, destroy_rv=int(CKR_FUNCTION_FAILED), survives=True)
+        _run_destroyed_handle(monkeypatch, getattr_rv=int(CKR_FUNCTION_FAILED))
 
 
 # --- Type C: copy destroyed handle -----------------------------------------
