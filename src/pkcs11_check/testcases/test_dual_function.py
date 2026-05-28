@@ -97,9 +97,10 @@ if len(slot_ids) <= {slot_index}:
 
 hSession = open_session(raw, slot_ids[{slot_index}], CKF_SERIAL_SESSION | CKF_RW_SESSION)
 
-_PIN = {pin_bytes!r}
+import os as _os
+_PIN = _os.environ.get("_P11CHECK_PIN")
 if _PIN:
-    login_user(raw, hSession, 1, _PIN)
+    login_user(raw, hSession, 1, _PIN.encode())
 
 c_ulong = ctypes.c_ulong
 c_void_p = ctypes.c_void_p
@@ -149,28 +150,35 @@ raw.C_Finalize(None)
 def _run_script(
     module_path: str,
     slot_index: int,
-    pin_bytes: bytes,
+    pin: str | None,
     script_body: str,
     timeout: int = 30,
 ) -> tuple[int, str, str]:
+    # The PIN is forwarded to the child via the env (run_raw_script's ``pin``
+    # arg), never interpolated into the script text -- so it cannot appear in
+    # the child argv (``ps``/``/proc``) or any traceback.
     return run_raw_script(
         _SCRIPT_PREAMBLE.format(
             module_path=module_path,
             slot_index=slot_index,
-            pin_bytes=pin_bytes,
         ),
         script_body,
         cleanup=_SCRIPT_CLEANUP,
         timeout=timeout,
+        pin=pin,
     )
 
 
-def _get_params(p11_config: Any) -> tuple[str, int, bytes]:
-    """Extract (module_path, slot_index, pin_bytes) from config fixture."""
+def _get_params(p11_config: Any) -> tuple[str, int, str | None]:
+    """Extract (module_path, slot_index, pin) from config fixture.
+
+    The PIN is returned as a plain ``str`` (or None) only to be forwarded into
+    the child env by :func:`_run_script`; it is never embedded in script text.
+    """
     module_path = str(p11_config.module)
     slot_index = p11_config.slot if p11_config.slot is not None else 0
-    pin_bytes = p11_config.pin.get_secret_value().encode() if p11_config.pin else b""
-    return module_path, slot_index, pin_bytes
+    pin = p11_config.pin.get_secret_value() if p11_config.pin else None
+    return module_path, slot_index, pin
 
 
 def _skip_missing_mechanisms(rs: Any, names: tuple[str, ...]) -> None:
@@ -221,7 +229,7 @@ class TestDigestEncryptUpdate:
         Source: PKCS#11 v3.1 Sec.5.14.1.
         """
         _skip_missing_mechanisms(p11_raw_session, ("AES_KEY_GEN", "AES_CBC", "SHA256"))
-        module_path, slot_index, pin_bytes = _get_params(p11_config)
+        module_path, slot_index, pin = _get_params(p11_config)
 
         script = (
             _KEYGEN_SCRIPT
@@ -339,7 +347,7 @@ class TestDigestEncryptUpdate:
 """
         )
 
-        returncode, stdout, stderr = _run_script(module_path, slot_index, pin_bytes, script)
+        returncode, stdout, stderr = _run_script(module_path, slot_index, pin, script)
         lines_map = _parse_output(stdout)
 
         if "SKIP" in lines_map:
@@ -407,7 +415,7 @@ class TestDecryptDigestUpdate:
         Source: PKCS#11 v3.1 Sec.5.14.2.
         """
         _skip_missing_mechanisms(p11_raw_session, ("AES_KEY_GEN", "AES_CBC", "SHA256"))
-        module_path, slot_index, pin_bytes = _get_params(p11_config)
+        module_path, slot_index, pin = _get_params(p11_config)
 
         script = (
             _KEYGEN_SCRIPT
@@ -528,7 +536,7 @@ class TestDecryptDigestUpdate:
 """
         )
 
-        returncode, stdout, stderr = _run_script(module_path, slot_index, pin_bytes, script)
+        returncode, stdout, stderr = _run_script(module_path, slot_index, pin, script)
         lines_map = _parse_output(stdout)
 
         if "SKIP" in lines_map:

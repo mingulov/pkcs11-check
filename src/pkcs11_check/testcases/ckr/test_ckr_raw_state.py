@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.types_std import CKR_OPERATION_ACTIVE
+from pkcs11_check.testcases._subprocess_preamble import _P11CHECK_PIN_ENV
 from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 from pkcs11_check.testcases.conftest import classify_negative_rv
 
@@ -91,7 +92,8 @@ assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)
 
 sh = open_session(raw, get_slot_ids(raw)[0], CKF_SERIAL_SESSION | CKF_RW_SESSION)
 
-pin = {pin_arg}
+import os as _os
+pin = _os.environ.get("_P11CHECK_PIN")
 if pin is not None:
     login_user(raw, sh, 1, pin.encode())
 
@@ -116,18 +118,23 @@ key_handle = key.value
 
 
 def _run(module: str, pin: str | None, test_code: str) -> tuple[int, str, str]:
-    pin_arg = repr(pin) if pin is not None else "None"
+    # The PIN is passed to the child through the _P11CHECK_PIN env var, never
+    # interpolated into the script text -- so it cannot leak via the child argv
+    # (``ps``/``/proc``) or any traceback. The preamble reads it from os.environ.
     script = (
-        _SCRIPT_PREAMBLE.format(module=module, pin_arg=pin_arg)
+        _SCRIPT_PREAMBLE.format(module=module)
         + textwrap.dedent(test_code)
         + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
     )
+    env = os.environ.copy()
+    if pin is not None:
+        env[_P11CHECK_PIN_ENV] = pin
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
         timeout=15,
-        env=os.environ.copy(),
+        env=env,
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
