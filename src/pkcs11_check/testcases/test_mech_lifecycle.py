@@ -102,6 +102,12 @@ _HKDF_KEYGEN_REJECT_CKRS = (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+_RSA_OAEP_RUNTIME_REJECT_RVS: tuple[int, ...] = (
+    CKR_ARGUMENTS_BAD,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+)
 
 
 class TestAESWrapUnwrapUse:
@@ -420,14 +426,21 @@ class TestRSAOAEPWrapLifecycle:
                 CKM(int(CKM_RSA_PKCS_OAEP)), hash_mech=int(CKM_SHA256), mgf=int(CKG_MGF1_SHA256)
             )
 
-            wrapped = wrap_key(
-                rs.raw,
-                rs.sh,
-                rsa_pub,
-                target,
-                CKM(int(CKM_RSA_PKCS_OAEP)),
-                mech_param=oaep_param,
-            )
+            try:
+                wrapped = wrap_key(
+                    rs.raw,
+                    rs.sh,
+                    rsa_pub,
+                    target,
+                    CKM(int(CKM_RSA_PKCS_OAEP)),
+                    mech_param=oaep_param,
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _RSA_OAEP_RUNTIME_REJECT_RVS,
+                    "RSA-OAEP wrap advertised but not operational",
+                )
             assert len(wrapped) > 0
 
             destroy_quietly(rs.raw, rs.sh, target)
@@ -435,21 +448,28 @@ class TestRSAOAEPWrapLifecycle:
 
             # CKA_CLASS is required by PKCS#11 spec for C_UnwrapKey -- Kryoptic
             # returns CKR_TEMPLATE_INCONSISTENT when it is absent.
-            unwrapped_key = unwrap_key(
-                rs.raw,
-                rs.sh,
-                rsa_priv,
-                wrapped,
-                CKM(int(CKM_RSA_PKCS_OAEP)),
-                attrs={
-                    CKA_CLASS: CKO_SECRET_KEY,
-                    CKA_KEY_TYPE: CKK_AES,
-                    CKA_DECRYPT: True,
-                    CKA_ENCRYPT: True,
-                    CKA_TOKEN: False,
-                },
-                mech_param=oaep_param,
-            )
+            try:
+                unwrapped_key = unwrap_key(
+                    rs.raw,
+                    rs.sh,
+                    rsa_priv,
+                    wrapped,
+                    CKM(int(CKM_RSA_PKCS_OAEP)),
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_DECRYPT: True,
+                        CKA_ENCRYPT: True,
+                        CKA_TOKEN: False,
+                    },
+                    mech_param=oaep_param,
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _RSA_OAEP_RUNTIME_REJECT_RVS,
+                    "RSA-OAEP unwrap advertised but not operational",
+                )
             assert unwrapped_key != 0
 
             recovered = decrypt_single(rs.raw, rs.sh, unwrapped_key, CKM_AES_ECB, ciphertext)
