@@ -86,6 +86,7 @@ from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     get_pin_bytes,
     is_known_error,
+    reject_or_classify,
     require_operational_aes_keygen,
     skip_if_token_write_protected,
     xfail_if_known_ckr,
@@ -820,9 +821,12 @@ class TestROWrapUnwrapRestrictions:
                     assert False, "Unwrap to TOKEN=True succeeded in RO session"
                 except AssertionError as e:
                     if "Unwrap to TOKEN=True succeeded" in str(e):
-                        raise
-                    if not is_known_error(e, _RO_OR_UNSUPPORTED_RVS):
-                        raise
+                        raise  # Type-A acceptance must hard-fail
+                    reject_or_classify(
+                        e,
+                        _RO_OR_UNSUPPORTED_RVS,
+                        label="C_UnwrapKey to TOKEN=True in RO session",
+                    )
             finally:
                 close_session_quietly(rs.raw, ro_sh)
         finally:

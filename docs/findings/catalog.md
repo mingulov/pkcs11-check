@@ -89,6 +89,7 @@ Counts are failures in this artifact set (per `failure-inventory.json`).
 ### PC-4 — WRONG_CKR expectation mismatches (assorted)  ·  NEEDS-CONFIRM
 Small classes where the module returns a *plausibly correct* CKR the test didn't list:
 - `TestROWrapUnwrapRestrictions::test_unwrap_to_token_object_in_ro_fails` → `CKR_TEMPLATE_INCOMPLETE` (softhsm2, opencryptoki). RO-session rejection via a different-but-valid CKR.
+  (RESOLVED 2026-05-28: routed through `reject_or_classify`; unlisted clean rejects like softhsm2 `CKR_TEMPLATE_INCOMPLETE` now xfail. Regression `tests/test_ro_unwrap_token_classification.py`.)
 - `TestWrapIntegrity::test_aes_key_wrap_bit_flip_detected` → `CKR_GENERAL_ERROR` (softhsm2).
 - `TestRSAOAEPWrapLifecycle::test_rsa_oaep_wrap_aes_roundtrip` → `CKR_ARGUMENTS_BAD` (softhsm2).
 - `TestEcPointValidation::test_ecdh_invalid_point` → `CKR_ATTRIBUTE_VALUE_INVALID` (tpm2) — looks like a *correct* rejection scored as wrong.
