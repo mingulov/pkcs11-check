@@ -22,6 +22,7 @@ from pkcs11_check.raw.types_std import (
     CKR_NO_EVENT,
     CKR_OK,
 )
+from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = pytest.mark.access
 
@@ -34,8 +35,11 @@ class TestGetMechanismInfoErrors:
         rs = p11_raw_session
         info = CK_MECHANISM_INFO()
         rv = rs.raw.C_GetMechanismInfo(rs.slot_id, 0xDEADBEEF, byref(info))
-        assert rv != CKR_OK, "Should have rejected non-existent mechanism"
-        assert rv == CKR_MECHANISM_INVALID, f"Expected CKR_MECHANISM_INVALID, got {ckr_name(rv)}"
+        classify_negative_rv(
+            rv,
+            (CKR_MECHANISM_INVALID,),
+            label="C_GetMechanismInfo for a non-existent mechanism",
+        )
 
 
 class TestWaitForSlotEventErrors:
