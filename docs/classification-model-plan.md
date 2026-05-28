@@ -308,7 +308,15 @@ classify_negative_rv(rv, (CKR_SESSION_READ_ONLY,), label="create token object on
 **Goal:** stop hard-failing a lenient-but-conformant module on a clean error.
 
 **Pattern (P1a, `x509/test_attribute_parity.py`):** split the caller's accumulation into two buckets — `mismatches` (wrong value → `fail`) and `missing_mandatory` (absent → collect); after all attrs, `pytest.fail` if mismatches else `pytest.xfail` if missing_mandatory.
-- [ ] **P1a sites:** `x509/test_attribute_parity.py:67-68`, `x509/test_core_ops.py:427` (clean `ATTRIBUTE_*_INVALID` → xfail), `x509/test_attributes.py:87`, `x509/test_limbo_import.py:155`, `x509/test_identity.py:105`, `x509/test_search.py:104`, `test_profiles.py:243,295,345,350`, `test_v30_session.py` `C_LoginUser` clean-error sites (~11). One task per file; meta-test + commit; update `docs/module-issues.md`.
+- [x] **P1a sites:** all converted (one commit + meta-test per file):
+    - `x509/test_attribute_parity.py` — two-bucket split: value mismatch → `fail`, absent-mandatory / clean valid-cert reject → `xfail`.
+    - `x509/test_core_ops.py:427` — v3.0 clean `ATTRIBUTE_*_INVALID` reject → `xfail` (non-CKR errors still propagate).
+    - `x509/test_attributes.py:87`, `x509/test_limbo_import.py:155` — clean reject of a Limbo-valid cert → `xfail`.
+    - `x509/test_identity.py:105` — clean sign-leg failure with a valid imported key → `xfail`.
+    - `x509/test_search.py:104` (+ issuer/serial/combined, 4 sites) — search-by-derived-attribute miss → `xfail` via `_xfail_if_search_miss`.
+    - `test_profiles.py` (4 sites) — advertised-profile missing functions/mechanisms/object-classes → `xfail`.
+    - `test_v30_session.py` — 10 C_LoginUser / context-specific-login "unexpected clean CKR" sites → `xfail` (crash-detection `pytest.fail` at the subprocess-cancel probe intentionally kept as `fail`).
+    - `docs/module-issues.md`: no existing finding entry was flipped (these were hard-fails on lenient-but-conformant behavior, not documented findings), so no stat/finding edit per the no-stats-churn rule.
 - [ ] **P1b sites:** make the positive second leg (`decrypt`/`verify`/`unwrap`) `xfail` on a clean error via `xfail_if_known_ckr` — `test_{camellia,aria,des,twofish,blowfish,salsa20,gost}.py` (`_*_or_xfail` currently only catch `MECHANISM_INVALID`), `test_rsa_extended.py:186,443,592`, `test_metamorphic.py:76`, `test_eddsa.py:177`, `test_mech_kem.py:82`, `test_mech_sign_recover.py:71`, **PQC/KEM** `test_pqc_sign.py`, `test_hash_slh_dsa.py`, `test_hash_ml_dsa.py`. *Keep `fail` for the dependent-roundtrip self-contradiction case (encrypt→decrypt of the same output).* Meta-test + commit per file.
 
 ---
