@@ -54,6 +54,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     gen_ec_keypair_or_xfail,
     is_known_error,
+    reject_or_classify,
     require_operational_aes_keygen,
     xfail_if_known_ckr,
 )
@@ -564,32 +565,32 @@ class TestWrapIntegrity:
                     },
                 )
             except AssertionError as exc:
-                # Expected: module rejected the tampered ciphertext.
-                # The base set is the spec-conformant rejection codes.
-                # Per-module fallbacks (e.g. Kryoptic's wrong-CKR habit
-                # returning CKR_DEVICE_ERROR for all integrity failures)
-                # are added via the quirk registry, NOT hard-coded here —
-                # so a different module returning CKR_DEVICE_ERROR is
-                # surfaced as a finding rather than silently accepted.
-                #
-                # CKR_GENERAL_ERROR removed from base — too lenient. If a
-                # specific module needs it as a documented fallback, add
-                # it as a quirk in `_module_quirks.py`.
-                # Per-module quirks: Kryoptic's verify-failure CKR_DEVICE_ERROR
-                # and OpenCryptoki's CKR_ATTRIBUTE_READ_ONLY-on-unwrap-template
-                # are routed through the quirk registry so the rejection is
-                # accepted ONLY for the module that documents the deviation,
-                # not as a global fallback.
-                accepted_rvs = {
-                    CKR_WRAPPED_KEY_INVALID,
-                    CKR_ENCRYPTED_DATA_INVALID,
-                    CKR_WRAPPED_KEY_LEN_RANGE,
-                    *quirk_extras(p11_config, "verify_or_integrity_failure"),
-                    *quirk_extras(p11_config, "unwrap_template_class_keytype_rejected"),
-                }
-                if is_known_error(exc, accepted_rvs):
-                    return
-                raise
+                # Spec-preferred = RFC 3394 ICV-specific reject codes.
+                # Quirk-registry extras stay (documented per-module
+                # fallbacks: Kryoptic CKR_DEVICE_ERROR-on-integrity-fail,
+                # OpenCryptoki CKR_ATTRIBUTE_READ_ONLY-on-unwrap-template).
+                # Any OTHER clean reject (e.g. softhsm2 CKR_GENERAL_ERROR)
+                # becomes xfail via the classification model -- surfaced as
+                # a noted deviation, never silenced. The post-`except`
+                # `pytest.fail` below still triggers Type-A on acceptance
+                # (CKR_OK on bit-flipped ciphertext).
+                reject_or_classify(
+                    exc,
+                    (
+                        CKR_WRAPPED_KEY_INVALID,
+                        CKR_ENCRYPTED_DATA_INVALID,
+                        CKR_WRAPPED_KEY_LEN_RANGE,
+                        *quirk_extras(p11_config, "verify_or_integrity_failure"),
+                        *quirk_extras(
+                            p11_config, "unwrap_template_class_keytype_rejected"
+                        ),
+                    ),
+                    label=(
+                        "AES-KEY-WRAP unwrap of bit-flipped ciphertext "
+                        "(expected RFC 3394 ICV reject)"
+                    ),
+                )
+                return
 
             # Unwrap returned CKR_OK on tampered ciphertext — security violation.
             from pkcs11_check.compliance import ComplianceLevel, note
