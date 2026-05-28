@@ -62,8 +62,12 @@ from .types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKA_VERIFY,
+    CKF_DECRYPT,
+    CKF_ENCRYPT,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
+    CKF_SIGN,
+    CKF_VERIFY,
     CKK,
     CKK_AES,
     CKK_DSA,
@@ -101,6 +105,29 @@ def to_ubyte_buf(data: bytes) -> ctypes.Array[ctypes.c_ubyte]:
     if n == 0:
         return (ctypes.c_ubyte * 0)()
     return (ctypes.c_ubyte * n).from_buffer_copy(data)
+
+
+def _cancel_operation(raw: RawPKCS11, session: int, flags: int) -> None:
+    """Best-effort cancel of a dangling active operation on ``session``.
+
+    Used by single-shot recipes when the terminal call raises after a
+    successful ``*Init``: without this, the session is left with an active
+    operation and a later op may return a spurious ``CKR_OPERATION_ACTIVE``,
+    mis-attributing a finding to the wrong call.
+
+    Uses ``C_SessionCancel`` (PKCS#11 v3.0+, the spec-blessed way to abort an
+    in-progress operation). Modules that predate v3.0 do not expose it
+    (``AttributeError``); cleanup is best-effort, so that is swallowed. The
+    cancel's own return value is intentionally ignored -- this is teardown of
+    an already-failing path, not an assertion point, so it must never mask the
+    original error being propagated.
+    """
+    try:
+        raw.C_SessionCancel(session, flags)
+    except AttributeError:
+        # Module lacks C_SessionCancel (pre-v3.0). Nothing portable to do; the
+        # per-test/subprocess session teardown still bounds the leak.
+        pass
 
 
 def _resolve_mech(
@@ -676,15 +703,22 @@ def encrypt_single(
     expect_rv(rv, CKR_OK)
     in_buf = to_ubyte_buf(plaintext)
     hint = (len(plaintext) + output_overhead) if output_overhead > 0 else 0
-    return _two_call_output(
-        raw,
-        "C_Encrypt",
-        session,
-        in_buf,
-        len(plaintext),
-        output_size_hint=hint,
-        retry_on_buffer_too_small=retry_on_buffer_too_small,
-    )
+    try:
+        return _two_call_output(
+            raw,
+            "C_Encrypt",
+            session,
+            in_buf,
+            len(plaintext),
+            output_size_hint=hint,
+            retry_on_buffer_too_small=retry_on_buffer_too_small,
+        )
+    except BaseException:
+        # Terminal call failed after C_EncryptInit succeeded: cancel the
+        # dangling operation so it does not leak into the next op on a reused
+        # session, then re-raise the original error unchanged.
+        _cancel_operation(raw, session, int(CKF_ENCRYPT))
+        raise
 
 
 def sign_single(
@@ -707,14 +741,18 @@ def sign_single(
     rv = raw.C_SignInit(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
     in_buf = to_ubyte_buf(data)
-    return _two_call_output(
-        raw,
-        "C_Sign",
-        session,
-        in_buf,
-        len(data),
-        output_size_hint=output_size_hint,
-    )
+    try:
+        return _two_call_output(
+            raw,
+            "C_Sign",
+            session,
+            in_buf,
+            len(data),
+            output_size_hint=output_size_hint,
+        )
+    except BaseException:
+        _cancel_operation(raw, session, int(CKF_SIGN))
+        raise
 
 
 def decrypt_single(
@@ -746,15 +784,19 @@ def decrypt_single(
     rv = raw.C_DecryptInit(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
     in_buf = to_ubyte_buf(ciphertext)
-    return _two_call_output(
-        raw,
-        "C_Decrypt",
-        session,
-        in_buf,
-        len(ciphertext),
-        retry_on_buffer_too_small=retry_on_buffer_too_small,
-        output_size_hint=output_size_hint,
-    )
+    try:
+        return _two_call_output(
+            raw,
+            "C_Decrypt",
+            session,
+            in_buf,
+            len(ciphertext),
+            retry_on_buffer_too_small=retry_on_buffer_too_small,
+            output_size_hint=output_size_hint,
+        )
+    except BaseException:
+        _cancel_operation(raw, session, int(CKF_DECRYPT))
+        raise
 
 
 def verify_single(
@@ -783,8 +825,16 @@ def verify_single(
     if rv == CKR_OK:
         return True
     if rv in _VERIFY_FAIL_RVS:
+        # Per spec a completed C_Verify terminates the operation, including the
+        # signature-mismatch outcomes -- no cancel needed here.
         return False
-    expect_rv(rv, CKR_OK)
+    # Unexpected CKR: the operation may still be active (C_Verify did not
+    # complete). Cancel before surfacing the wrong-code finding.
+    try:
+        expect_rv(rv, CKR_OK)
+    except BaseException:
+        _cancel_operation(raw, session, int(CKF_VERIFY))
+        raise
     return False  # unreachable
 
 
@@ -1001,8 +1051,18 @@ def find_objects(
 
     handles = (CK_OBJECT_HANDLE * max_count)()
     found = CK_ULONG(0)
-    rv = raw.C_FindObjects(session, handles, max_count, byref(found))
-    expect_rv(rv, CKR_OK)
+    try:
+        rv = raw.C_FindObjects(session, handles, max_count, byref(found))
+        expect_rv(rv, CKR_OK)
+    except BaseException:
+        # C_FindObjects raised after C_FindObjectsInit succeeded: release the
+        # active search operation (its terminator is C_FindObjectsFinal) so a
+        # later op on a reused session is not blocked, then re-raise.
+        try:
+            raw.C_FindObjectsFinal(session)
+        except AttributeError:
+            pass
+        raise
 
     rv = raw.C_FindObjectsFinal(session)
     expect_rv(rv, CKR_OK)
