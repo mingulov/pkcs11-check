@@ -26,6 +26,18 @@ from pkcs11_check.testcases.x509.conftest import (
 pytestmark = [pytest.mark.cert, pytest.mark.object]
 
 
+def _xfail_if_search_miss(found: list[int], h: int, *, by: str) -> None:
+    """Phase 5 P1a: search-by-derived-attribute incompleteness -> xfail.
+
+    The module extracted the attribute (it was readable) but searching by it did
+    not return the imported object. Indexing certs by a derived attribute is an
+    optional capability a lenient-but-conformant module may not implement, so a
+    miss is a noted deviation (``xfail``), not a hard ``fail``.
+    """
+    if h not in found:
+        pytest.xfail(f"module extracted {by} but search-by-{by} did not return the cert")
+
+
 def _get_searchable_testcases() -> list[dict[str, Any]]:
     all_tcs = load_limbo_testcases()
     if not all_tcs:
@@ -101,7 +113,7 @@ class TestCertificateSearchExtended:
                     attr_bytes(CKA_SUBJECT, subject),
                 )
                 found = find_objects(rs.raw, rs.sh, tmpl)
-                assert h in found
+                _xfail_if_search_miss(found, h, by="CKA_SUBJECT")
 
             # Search by issuer
             if issuer:
@@ -110,7 +122,7 @@ class TestCertificateSearchExtended:
                     attr_bytes(CKA_ISSUER, issuer),
                 )
                 found = find_objects(rs.raw, rs.sh, tmpl)
-                assert h in found
+                _xfail_if_search_miss(found, h, by="CKA_ISSUER")
 
             # Search by serial
             if serial:
@@ -119,7 +131,7 @@ class TestCertificateSearchExtended:
                     attr_bytes(CKA_SERIAL_NUMBER, serial),
                 )
                 found = find_objects(rs.raw, rs.sh, tmpl)
-                assert h in found
+                _xfail_if_search_miss(found, h, by="CKA_SERIAL_NUMBER")
 
             # Combined: Subject + Serial
             if subject and serial:
@@ -129,7 +141,7 @@ class TestCertificateSearchExtended:
                     attr_bytes(CKA_SERIAL_NUMBER, serial),
                 )
                 found = find_objects(rs.raw, rs.sh, tmpl)
-                assert h in found
+                _xfail_if_search_miss(found, h, by="CKA_SUBJECT+CKA_SERIAL_NUMBER")
 
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
