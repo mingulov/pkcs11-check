@@ -20,5 +20,5 @@ def test_des_encrypt_key_type_inconsistent_is_xfail(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(test_des, "encrypt_single", _encrypt_reject)
 
-    with pytest.raises(pytest.xfail.Exception, match="Mechanism advertised but rejected"):
+    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
         test_des._encrypt_or_xfail(object(), 1, 2, CKM_DES_CFB64, b"12345678")
