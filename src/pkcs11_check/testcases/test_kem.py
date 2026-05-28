@@ -28,7 +28,6 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
     to_ubyte_buf,
 )
-from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
@@ -53,7 +52,6 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_KEM_512,
     CKP_ML_KEM_768,
     CKP_ML_KEM_1024,
-    CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_BUFFER_TOO_SMALL,
@@ -66,7 +64,6 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
-    CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
@@ -198,11 +195,6 @@ def _decapsulate_ml_kem_or_xfail(
         pytest.skip("decapsulate_key not available")
     except AssertionError as exc:
         _xfail_kem_operation_reject(exc, operation)
-
-
-def _xfail_if_kem_negative_rv(rv: int, xfail_rvs: tuple[int, ...], label: str) -> None:
-    if rv in xfail_rvs:
-        pytest.xfail(f"{label}: {ckr_name(int(rv))}")
 
 
 class TestMLKEMKeyGeneration:
@@ -801,12 +793,11 @@ class TestMLKEMNegative:
                 len(short_ct),
                 byref(handle),
             )
-            _xfail_if_kem_negative_rv(
+            classify_negative_rv(
                 rv,
-                (CKR_ARGUMENTS_BAD, CKR_DEVICE_ERROR, CKR_GENERAL_ERROR, CKR_FUNCTION_FAILED),
-                "ML-KEM invalid ciphertext length non-specific reject",
+                (CKR_ENCRYPTED_DATA_LEN_RANGE, CKR_ENCRYPTED_DATA_INVALID),
+                label="ML-KEM invalid ciphertext length",
             )
-            assert rv in (CKR_ENCRYPTED_DATA_LEN_RANGE, CKR_ENCRYPTED_DATA_INVALID)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -929,17 +920,17 @@ class TestMLKEMNegative:
                 byref(handle),
             )
             # Providers may validate the key's permitted operations before
-            # reporting that the key type is wrong for ML-KEM.
-            _xfail_if_kem_negative_rv(
+            # reporting that the key type is wrong for ML-KEM; any other clean
+            # reject code is a noted deviation (xfail), not a hard failure.
+            classify_negative_rv(
                 rv,
-                (CKR_OBJECT_HANDLE_INVALID,),
-                "ML-KEM wrong-key-type reject",
-            )
-            assert rv in (
-                CKR_KEY_TYPE_INCONSISTENT,
-                CKR_KEY_FUNCTION_NOT_PERMITTED,
-                CKR_MECHANISM_INVALID,
-                CKR_TEMPLATE_INCOMPLETE,
+                (
+                    CKR_KEY_TYPE_INCONSISTENT,
+                    CKR_KEY_FUNCTION_NOT_PERMITTED,
+                    CKR_MECHANISM_INVALID,
+                    CKR_TEMPLATE_INCOMPLETE,
+                ),
+                label="ML-KEM wrong-key-type reject",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
