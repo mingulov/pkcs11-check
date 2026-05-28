@@ -29,7 +29,9 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
@@ -63,6 +65,24 @@ KEYPAIR_RUNTIME_REJECT_RVS = (
 EC_CURVE_UNSUPPORTED_RVS = (
     CKR_CURVE_NOT_SUPPORTED,
     CKR_DOMAIN_PARAMS_INVALID,
+)
+
+# Phase 5 P1b: clean codes a module may return at a cipher/MAC *use* site when
+# the mechanism is advertised but not operational for the given key/params.
+# A first (produce) leg returning one of these -> xfail (advertised-but-not-
+# operational); a dependent roundtrip second leg (decrypt of a just-produced
+# output) is NOT routed here -- that stays a hard failure (self-contradiction).
+CIPHER_OP_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 
 
