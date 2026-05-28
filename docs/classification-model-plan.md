@@ -317,7 +317,15 @@ classify_negative_rv(rv, (CKR_SESSION_READ_ONLY,), label="create token object on
     - `test_profiles.py` (4 sites) — advertised-profile missing functions/mechanisms/object-classes → `xfail`.
     - `test_v30_session.py` — 10 C_LoginUser / context-specific-login "unexpected clean CKR" sites → `xfail` (crash-detection `pytest.fail` at the subprocess-cancel probe intentionally kept as `fail`).
     - `docs/module-issues.md`: no existing finding entry was flipped (these were hard-fails on lenient-but-conformant behavior, not documented findings), so no stat/finding edit per the no-stats-churn rule.
-- [ ] **P1b sites:** make the positive second leg (`decrypt`/`verify`/`unwrap`) `xfail` on a clean error via `xfail_if_known_ckr` — `test_{camellia,aria,des,twofish,blowfish,salsa20,gost}.py` (`_*_or_xfail` currently only catch `MECHANISM_INVALID`), `test_rsa_extended.py:186,443,592`, `test_metamorphic.py:76`, `test_eddsa.py:177`, `test_mech_kem.py:82`, `test_mech_sign_recover.py:71`, **PQC/KEM** `test_pqc_sign.py`, `test_hash_slh_dsa.py`, `test_hash_ml_dsa.py`. *Keep `fail` for the dependent-roundtrip self-contradiction case (encrypt→decrypt of the same output).* Meta-test + commit per file.
+- [x] **P1b sites:** produce-leg "advertised but not operational" now xfails only on a known clean CKR (never on an arbitrary AssertionError), with the dependent roundtrip second leg left as a hard `fail` (self-contradiction). Added shared `CIPHER_OP_RUNTIME_REJECT_RVS` in `conftest.py`.
+    - `test_{camellia,aria,twofish,blowfish}.py` — widened `_encrypt_or_xfail`/`_sign_or_xfail` from `{MECHANISM_INVALID}`-only to the shared set via `xfail_if_known_ckr`.
+    - `test_des.py` — widened `_encrypt_or_xfail` onto the shared set (inline MAC `pytest.skip` sites left as-is: "legacy provider absent" capability gaps).
+    - `test_salsa20.py` — `_SALSA20_ENCRYPT_REJECT_RVS` widened to the shared set.
+    - `test_rsa_extended.py` — 13 first-leg `except AssertionError: pytest.xfail(...)` blocks (sign/wrap/encrypt + X9.31 keygen) now route through `xfail_if_known_ckr` so a non-CKR Python error propagates.
+    - `test_pqc_sign.py` — 3 ML-DSA sign blocks (pure `AssertionError`) routed through `xfail_if_known_ckr`. (SLH-DSA keygen/sign blocks catch `(AssertionError, OSError)` deliberately — left as-is, OSError = not-operational signal.)
+    - `test_hash_slh_dsa.py` — 4 sign blocks routed through `xfail_if_known_ckr` (mirrors `test_hash_ml_dsa` `_SIGN_ERROR_CKRS`).
+    - `test_mech_kem.py`, `test_mech_sign_recover.py` — produce leg (encapsulate / sign-recover) guarded with `xfail_if_known_ckr`; dependent roundtrip kept as `fail`; NotImplementedError→skip kept.
+    - **Already conformant (no change):** `test_eddsa.py` and `test_hash_ml_dsa.py` already use `xfail_if_known_ckr` with a broad reject set; `test_gost.py` already uses `xfail_if_known_ckr` with a tailored `_GOST_RUNTIME_REJECT_RVS`; `test_metamorphic.py:76` is the dependent encrypt→decrypt roundtrip the plan says to KEEP as `fail` (its setup leg already uses the shared `gen_aes_key_or_xfail`).
 
 ---
 
