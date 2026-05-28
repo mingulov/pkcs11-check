@@ -26,7 +26,7 @@ from pkcs11_check.raw.types_std import (
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.requires_v30
 
@@ -61,7 +61,10 @@ class TestProfileObjects:
                 template_from_dict({CKA_CLASS: CKO_PROFILE}),
             )
         except AssertionError as exc:
-            if "CKR_" in str(exc):
+            # Phase 6 C: match the specific not-supported CKRs by rv, not by a
+            # loose "CKR_" substring. A genuinely-absent profile-object capability
+            # is a legitimate skip; any other error propagates.
+            if is_known_error(exc, _PROFILE_ATTR_ERROR_CKRS):
                 pytest.skip(f"Profile enumeration not supported: {exc}")
             raise
 

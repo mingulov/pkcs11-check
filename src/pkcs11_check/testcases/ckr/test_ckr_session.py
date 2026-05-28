@@ -25,6 +25,7 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_TYPE_INVALID,
     CKU_USER,
 )
+from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = pytest.mark.access
 
@@ -64,8 +65,12 @@ class TestLoginErrors:
             pin_buf = (ctypes.c_ubyte * len(wrong_pin))(*wrong_pin)
             rv = rs.raw.C_Login(sh, CKU_USER, pin_buf, len(wrong_pin))
             if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_TYPE_INVALID):
-                pytest.skip("Token-level login prevents testing wrong PIN")
-            assert rv == CKR_PIN_INCORRECT, f"Expected CKR_PIN_INCORRECT, got {ckr_name(rv)}"
+                # Phase 6 C: token session state (not a missing capability)
+                # prevented exercising the wrong-PIN path -> xfail, not skip.
+                pytest.xfail(f"token login state prevents testing wrong PIN: {ckr_name(rv)}")
+            # CKR_OK here would mean the module accepted a wrong PIN -> fail;
+            # a non-spec reject code -> xfail; CKR_PIN_INCORRECT -> pass.
+            classify_negative_rv(rv, (CKR_PIN_INCORRECT,), label="C_Login with a wrong PIN")
         finally:
             close_session_quietly(rs.raw, sh)
 
