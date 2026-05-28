@@ -771,13 +771,18 @@ class TestSoftHSM2Issue722:
 
     def test_rsa_encrypt_decrypt_no_crash(self, p11_config: Any) -> None:
         """RSA encrypt/decrypt cycle in subprocess - must not crash."""
+        import os
         import subprocess
         import sys
 
-        from pkcs11_check.testcases._subprocess_preamble import subprocess_session_preamble
+        from pkcs11_check.testcases._subprocess_preamble import (
+            _P11CHECK_PIN_ENV,
+            pin_from_config,
+            subprocess_session_preamble,
+        )
 
         module = str(p11_config.module)
-        pin = p11_config.pin.get_secret_value() if p11_config.pin else None
+        pin = pin_from_config(p11_config)
 
         preamble = subprocess_session_preamble(
             module,
@@ -815,11 +820,16 @@ finally:
     raw.C_Finalize(None)
 """
         )
+        # Pass the PIN via the child env (never embed it in the script source).
+        env = {**os.environ}
+        if pin is not None:
+            env[_P11CHECK_PIN_ENV] = pin
         result = subprocess.run(
             [sys.executable, "-c", script],
             capture_output=True,
             text=True,
             timeout=30,
+            env=env,
         )
         assert result.returncode == 0, (
             f"RSA encrypt/decrypt crashed (rc={result.returncode}): {result.stderr}"

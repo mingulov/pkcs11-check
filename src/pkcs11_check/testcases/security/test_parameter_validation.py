@@ -72,6 +72,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._subprocess_preamble import (
+    pin_from_config,
     run_with_coverage,
     subprocess_session_preamble,
 )
@@ -319,7 +320,7 @@ finally:
 cleanup()
 """
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,

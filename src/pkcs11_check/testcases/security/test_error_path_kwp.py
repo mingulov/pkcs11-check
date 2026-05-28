@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.testcases._subprocess_preamble import (
+    pin_from_config,
     run_with_coverage,
     subprocess_session_preamble,
 )
@@ -292,7 +293,7 @@ class TestCorruptedUnwrap:
             corruption_code=corruption_code,
             api=api,
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=15)
+        rc, stdout, stderr = run_with_coverage(script, timeout=15, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -335,7 +336,7 @@ class TestBitFlipUnwrap:
             corruption_code=corruption_code,
             api="unwrap",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=15)
+        rc, stdout, stderr = run_with_coverage(script, timeout=15, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,

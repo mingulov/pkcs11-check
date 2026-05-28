@@ -145,11 +145,13 @@ def _run_config_script(
     *,
     timeout: int = 10,
 ) -> tuple[int, str, str]:
+    pin = p11_config.pin.get_secret_value() if p11_config.pin else None
     return run_raw_script(
         _build_preamble(p11_config),
         script_body,
         cleanup=_RAW_CLEANUP,
         timeout=timeout,
+        pin=pin,
     )
 
 

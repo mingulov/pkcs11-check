@@ -26,6 +26,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
 )
 from pkcs11_check.testcases._subprocess_preamble import (
+    pin_from_config,
     run_with_coverage,
     subprocess_session_preamble,
 )
@@ -191,7 +192,7 @@ class TestRsaPkcsDecryptErrorPaths:
 
         bad_ct_code = "import os\nbad_ct = os.urandom(mod_len)\n"
         script = _build_decrypt_script(p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY)
-        rc, stdout, stderr = run_with_coverage(script, timeout=15)
+        rc, stdout, stderr = run_with_coverage(script, timeout=15, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS decrypt: random ciphertext"
         )
@@ -209,7 +210,7 @@ class TestRsaPkcsDecryptErrorPaths:
 
         bad_ct_code = "import os\nbad_ct = os.urandom(mod_len // 2)\n"
         script = _build_decrypt_script(p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY)
-        rc, stdout, stderr = run_with_coverage(script, timeout=15)
+        rc, stdout, stderr = run_with_coverage(script, timeout=15, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS decrypt: truncated ciphertext (half modulus)"
         )
@@ -227,7 +228,7 @@ class TestRsaPkcsDecryptErrorPaths:
 
         bad_ct_code = "import os\nbad_ct = os.urandom(mod_len + 16)\n"
         script = _build_decrypt_script(p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY)
-        rc, stdout, stderr = run_with_coverage(script, timeout=15)
+        rc, stdout, stderr = run_with_coverage(script, timeout=15, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS decrypt: extended ciphertext (modulus + 16)"
         )
@@ -245,7 +246,7 @@ class TestRsaPkcsDecryptErrorPaths:
 
         bad_ct_code = "bad_ct = bytes(mod_len)\n"
         script = _build_decrypt_script(p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY)
-        rc, stdout, stderr = run_with_coverage(script, timeout=15)
+        rc, stdout, stderr = run_with_coverage(script, timeout=15, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS decrypt: all-zero ciphertext"
         )
@@ -263,7 +264,7 @@ class TestRsaPkcsDecryptErrorPaths:
 
         bad_ct_code = "bad_ct = b'\\xff' * mod_len\n"
         script = _build_decrypt_script(p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY)
-        rc, stdout, stderr = run_with_coverage(script, timeout=15)
+        rc, stdout, stderr = run_with_coverage(script, timeout=15, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS decrypt: all-0xFF ciphertext"
         )
@@ -297,7 +298,7 @@ class TestRsaOaepDecryptErrorPaths:
 
         bad_ct_code = "import os\nbad_ct = os.urandom(mod_len)\n"
         script = _build_decrypt_script(p11_config, bad_ct_code=bad_ct_code, body=_OAEP_DECRYPT_BODY)
-        rc, stdout, stderr = run_with_coverage(script, timeout=15)
+        rc, stdout, stderr = run_with_coverage(script, timeout=15, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS_OAEP decrypt: random ciphertext"
         )
@@ -315,7 +316,7 @@ class TestRsaOaepDecryptErrorPaths:
 
         bad_ct_code = "import os\nbad_ct = os.urandom(mod_len // 2)\n"
         script = _build_decrypt_script(p11_config, bad_ct_code=bad_ct_code, body=_OAEP_DECRYPT_BODY)
-        rc, stdout, stderr = run_with_coverage(script, timeout=15)
+        rc, stdout, stderr = run_with_coverage(script, timeout=15, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS_OAEP decrypt: truncated ciphertext (half modulus)"
         )
@@ -392,7 +393,7 @@ finally:
 cleanup()
 """
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=15)
+        rc, stdout, stderr = run_with_coverage(script, timeout=15, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,
