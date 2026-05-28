@@ -26,40 +26,46 @@ classification plan.
 
 ## The fix phase EXECUTES the classification plan (backbone)
 
-**Decision (2026-05-27):** the CKR-common-storage / table-centric classification plan
-([`../classification-model-plan.md`](../classification-model-plan.md)) is **part of this goal**
-and must be **executed**, not just referenced. Status: **0 / 46 tasks done** — only the *ad-hoc*
-per-test classification shipped in v0.1.1; the table-centric refactor (the `kind` field, 3-way
-`assert_ckr`, mock-`raw` meta-tests) is unimplemented.
+**Status (2026-05-28):** the CKR-common-storage / table-centric classification plan
+([`../classification-model-plan.md`](../classification-model-plan.md)) is **46 / 46 tasks
+done** — Phases 1–6 shipped on `dev` (commits c367749…3ddc13c). The `kind` field on
+`CkrExpectation`, the 3-way `assert_ckr` (other-reject → xfail, `CKR_OK` → fail),
+the four classifier helpers (`classify_negative_rv`, `reject_or_classify`,
+`classify_policy_enforcement`, `classify_lifecycle_effect`), and the mock-`raw`
+meta-tests under `tests/*_runtime_classification.py` are all in production. v0.1.2
+packages the shipped state.
 
-The classification plan is the **backbone** of the fix phase; the per-finding fixes (PC-*) are
-implemented as rows/migrations on top of it, never ad-hoc. Run it with
-`superpowers:executing-plans` (or `superpowers:subagent-driven-development`), incrementally —
-each phase is one revertible change gated on its meta-tests. **Phase 1** (foundation) enables
-the PC-4/PC-6 CKR work; **Phase 2** (invalid-vector A/B classification) is Phase-1-independent
-and may land first and directly covers PV-1/PV-2/PV-3/PV-9 accept-invalid findings.
+Phase 1 unblocks PC-4 / PC-6 fixes; those ride on top of the now-shipped classifier
+rather than introducing their own ad-hoc per-test edits.
 
 ## CKR changes go through the common storage (do NOT widen ad-hoc)
 
 The "CKR common storage" is **`src/pkcs11_check/testcases/ckr/_ckr_spec.py`**:
-`CkrExpectation` (the table) + the single `assert_ckr()`. Per
-[`../classification-model-plan.md`](../classification-model-plan.md) (table-centric, 6 phases):
-- **Tests declare intent; `assert_ckr` decides pass/xfail/fail.** Add the planned `kind` field
-  to `CkrExpectation` and make `assert_ckr` 3-way (expected→pass, other clean reject→`xfail`,
-  `CKR_OK`/crash→`fail`).
-- The **PC-4 / PC-6 CKR-widenings** (e.g. accepting `CKR_FUNCTION_NOT_SUPPORTED` for tpm2's
-  limited surface, the RO-wrap `CKR_TEMPLATE_INCOMPLETE`, etc.) must be expressed as
-  `CkrExpectation` rows / spec-vs-compat sets — **not** scattered per-test `in {...}` edits
-  (that ad-hoc style is exactly what the plan rejects, and how today's asymmetries arose).
-- Only ever widen to **specific** additional CKRs (never a catch-all), per `CLAUDE.md`.
+`CkrExpectation` (the table) + the single 3-way `assert_ckr()`, both shipped.
+
+PC-4 / PC-6 widenings:
+- **Function-level negative ops** (the `CkrExpectation` family — keygen/sign/verify/
+  etc. invalid-mechanism, invalid-key-size, etc.): the 3-way `assert_ckr` plus the
+  existing tuples in `src/pkcs11_check/testcases/_error_tuples.py` (notably
+  `MECHANISM_ERRORS` which already contains `CKR_FUNCTION_NOT_SUPPORTED`) absorb
+  tpm2's limited-surface rejections as xfail rather than fail. No new table rows
+  needed — rerun confirms.
+- **Scenario-level sites** (RO-unwrap, RSA-OAEP roundtrip, bit-flip integrity):
+  these compose multiple recipe calls and don't fit the per-function table shape.
+  They use the recipe-site classifiers (`reject_or_classify`,
+  `xfail_if_known_ckr`) inline at the except-block, per the Phase 4 N2 / Phase 5
+  P1b convention.
+
+Only ever widen to **specific** additional CKRs (never a catch-all), per `CLAUDE.md`.
 
 ## Suggested fix order (each = one revertible change + its regression test)
 
 1. **PC-1** (GCM NULL-AAD `pIv` cast) — unblock probe; rerun GCM targets into a new artifact
    folder; record real behavior; regression meta-test. *Highest value: clarifies a real probe.*
 2. **PC-5** (KWP wrap setup classification) — capture real wrap `rv`; skip/xfail honestly.
-3. **Phase 1 of the classification plan** (add `kind`, 3-way `assert_ckr` + meta-tests), then
-   **PC-4 / PC-6** CKR rows on top of it.
+3. **Phase 1 of the classification plan** (add `kind`, 3-way `assert_ckr` + meta-tests) —
+   **RESOLVED 2026-05-28**: shipped on `dev` (commits c367749…3ddc13c) along with Phases 2–6;
+   PC-4 / PC-6 fixes now ride on top of the live classifier (see Status block at top of file).
 4. **PC-2** (ML-DSA sigVer encoding) — **RESOLVED 2026-05-28**: loader filters
    `signatureInterface == "internal"` groups (the 9 false-fails per provider were ACVP
    internal-interface vectors with no PKCS#11 mechanism equivalent). Regression test
