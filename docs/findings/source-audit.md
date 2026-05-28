@@ -4,7 +4,10 @@ Date: 2026-05-28
 Scope: pkcs11-check's OWN source (`src/pkcs11_check/`), not provider behavior.
 Goal: find harness/binding bugs and risks **other than** the provider findings
 already catalogued in `docs/findings/` (PC-/PV-/CR-/EX- classes).
-**No source was modified.** This is a review-only document.
+**Originally review-only.** Update 2026-05-28: M1, M3, and L2 have since been
+fixed test-first (see the per-finding "Resolution" notes); M2 was reviewed and
+deliberately left unchanged as by-design per the classification model. The
+minor LOWs (L1, L3–L6) remain documented-only.
 
 Reviewed areas:
 - `raw/` ctypes binding: `api.py`, `recipes.py`, `pack.py`, `pack_mechanisms.py`,
@@ -55,6 +58,21 @@ SUSPECTED, surface as Python errors rather than silently hiding module bugs).
   (like `P11TEST_PIN`, already redacted in `file_runner`) or stdin, and read it
   in the preamble from `os.environ`, instead of interpolating into source. Escape
   `slot_label` with `repr()`/`json.dumps()` rather than raw `f"...{label}..."`.
+- **Resolution (2026-05-28): FIXED.** The preamble now reads the PIN from the
+  `_P11CHECK_PIN` env var at runtime (never interpolated into the script text),
+  and the subprocess runners (`run_with_coverage`, `_raw_subprocess.run_raw_script`,
+  and the `ckr/` + `test_cve_regression` `subprocess.run` callers) inject it into
+  the child `env`. `module_path` / `slot_label` are encoded with `json.dumps` to
+  prevent breakage/injection. Regression tests in
+  `tests/test_subprocess_preamble.py` assert the PIN never appears in the script
+  text/argv and that the runner places it in env.
+- **Out-of-scope follow-up (not the audited M1):** three other test files build
+  their OWN boilerplate (not via `_subprocess_preamble`) and still interpolate
+  the PIN into the script source: `ckr/test_ckr_raw_state.py` (`pin = {pin_arg}`
+  via `repr()`), `test_dual_function.py`, and `test_sign_recover.py` (`_PIN`
+  placeholder). These share the M1 leak class but were not flagged by the
+  original audit (which scoped M1 to the shared preamble). Recommend a follow-up
+  pass to migrate them to the same env-var mechanism.
 
 ### M2 — `assert_ckr` / `full_compat` can never *fail* on a generic-but-wrong CKR (CONFIRMED, design tension)
 - **Location:** `src/pkcs11_check/testcases/ckr/_ckr_spec.py:123` (`_UNIVERSAL`
@@ -78,6 +96,16 @@ SUSPECTED, surface as Python errors rather than silently hiding module bugs).
   non-preferred code" (xfail) from "rejected with a generic catch-all code"
   (separate xfail reason / counter), so generic-reject prevalence is visible in
   reports without changing pass/fail semantics.
+- **Resolution (2026-05-28): by-design — NOT changed.** Per the classification
+  model (see `docs/classification-model-design.md` and
+  `memory/feedback_classification_model.md`), any clean reject — including a
+  generic catch-all CKR — is an `xfail` (provider deviation), not a `fail`;
+  `fail` is reserved for crypto-correctness breaks, self-contradiction, or
+  crashes. `full_compat()` appending the universal CKR set is therefore the
+  intended behavior, not a bug. Left unchanged deliberately. The "separate
+  xfail bucket for generic rejects" idea remains a possible reporting
+  enhancement for the classification-model owners, but it is out of scope here
+  and does not affect pass/fail semantics.
 
 ### M3 — substring CKR matching fallback can match the EXPECTED code, not the ACTUAL one (SUSPECTED)
 - **Location:** `src/pkcs11_check/testcases/conftest.py:369–370` (`is_known_error`
@@ -96,6 +124,13 @@ SUSPECTED, surface as Python errors rather than silently hiding module bugs).
   a latent way to mis-route a fail → skip/xfail.
 - **Suggested direction:** Drop the substring fallback entirely (require `.rv`),
   or constrain matching to the portion of the message before `"; expected one of:"`.
+- **Resolution (2026-05-28): FIXED.** Added `_actual_rv_portion()` in
+  `conftest.py`, which strips the `"; expected one of:"` tail; `is_known_error`
+  and `_matched_ckr_name` now substring-match ONLY the actual-return portion
+  when `.rv` is absent (exact `.rv` matching is unchanged and still preferred).
+  This makes MORE real failures surface (a prefix collision no longer masks a
+  genuine fail). Regression tests in `tests/test_classification_helpers.py`
+  cover the prefix-collision case.
 
 ### M4 — `_two_call_output` second call with a NULL-reported size of 0 (SUSPECTED)
 - **Location:** `src/pkcs11_check/raw/recipes.py:170–185` (`_two_call_output`),
@@ -145,6 +180,14 @@ SUSPECTED, surface as Python errors rather than silently hiding module bugs).
 - **Suggested direction:** Wrap the init→terminal pair in `try/finally` and issue
   the matching cancel (e.g. `C_FindObjectsFinal`, or a zero-length finalize) on
   error — only where the helper owns the operation lifecycle.
+- **Resolution (2026-05-28): FIXED.** `encrypt_single`/`sign_single`/
+  `decrypt_single`/`verify_single` now wrap the init→terminal pair in
+  `try/except` issuing a best-effort `C_SessionCancel` (added `_cancel_operation`
+  helper, swallows only `AttributeError` for pre-v3.0 modules), and
+  `find_objects` issues `C_FindObjectsFinal` on error. The original error is
+  re-raised unchanged, so no finding is masked. Regression tests in
+  `tests/test_raw.py` use a fake raw that fails the terminal call and assert the
+  cancel/Final is issued.
 
 ### L3 — `_run_subprocess_tee` does not reap the child on timeout (SUSPECTED)
 - **Location:** `src/pkcs11_check/core/file_runner.py:1967–1994`.
