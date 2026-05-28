@@ -77,13 +77,14 @@ Counts are failures in this artifact set (per `failure-inventory.json`).
   `CKR_MECHANISM_INVALID`, `CKR_KEY_SIZE_RANGE` — never a catch-all). Unknown failures
   still re-raise so a real defect is surfaced. Regression test
   `tests/test_security_rsa_pss_md5_setup_skip.py` (RED → GREEN; 5 tests).
-- **REMAINING (43 wycheproof "valid rejected" SHA-1 PSS on tpm2):** these are different —
-  the verify call returns cleanly with `verified=False` (no exception), so the
-  is_known_error path does not apply. Needs a *self-roundtrip-probe* helper: when the
-  module rejects a known-valid wycheproof sig, generate a fresh key and try a sign+verify
-  with the same (mech, hash, mgf) params. If the roundtrip also fails, classify the combo
-  as "advertised but not operational" → `xfail`. Otherwise the rejection is a real
-  provider bug → `fail`. Tracked in fix-plan.md.
+- **PC-3 wycheproof "valid rejected" RESOLVED 2026-05-28:** `test_wycheproof_rsa_pss.py`
+  now calls `_pss_combo_operational(rs, mech, hash_mech, mgf, sLen)` on the
+  `verified=False` valid-vector path. The helper does a self-roundtrip probe: generates
+  a fresh RSA-2048 keypair and tries sign+verify of a canned message with the same PSS
+  params. Result cached per-combo for the rest of the run. Roundtrip-fails ⇒
+  `pytest.xfail("advertised but not operational")`; roundtrip-succeeds ⇒ the original
+  `pytest.fail`. Regression test `tests/test_wycheproof_rsa_pss_combo_probe.py`
+  (6 cases — probe-only + end-to-end xfail vs fail).
 
 ### PC-4 — WRONG_CKR expectation mismatches (assorted)  ·  NEEDS-CONFIRM
 Small classes where the module returns a *plausibly correct* CKR the test didn't list:
@@ -227,15 +228,18 @@ File-level crashes (`results.json status=crashed`) + test-level "module crashed 
 
 ---
 
-### EX-2 — pkcs11-mock: full functional/security suite is meaningless on a mock  ·  confirmed
-- **Count/scope:** ~1,353 (pkcs11-mock dominates its own failures). Round-trip/KAT/RNG/attribute
-  tests all "fail" because the mock returns canned values ("Hello world!"), non-random RNG,
-  fixed labels, and does not really store objects. Examples across ~150 count-1 classes:
-  `assert b'Hello world!' == ...`, `RNG produced duplicate values`, `Shannon entropy too low`,
-  `cryptoki version ... below baseline`, KCV/KAT/cert/CRL round-trip mismatches.
-- **Classification:** EXPECTED (mock identity). Fix-phase option: gate the functional/security/
-  KAT suites off pkcs11-mock (run only smoke/diagnostic), or label it non-conformance-bearing.
-  A handful of *negative* mock rows (e.g. "Should have rejected ...") are also mock no-ops.
+### EX-2 — pkcs11-mock: full functional/security suite is meaningless on a mock  ·  RESOLVED 2026-05-28
+- **Count/scope:** ~1,353 (pkcs11-mock dominated its own failures). Round-trip/KAT/RNG/attribute
+  tests all "failed" because the mock returns canned values ("Hello world!"), non-random RNG,
+  fixed labels, and does not really store objects.
+- **Fix:** plugin now detects pkcs11-mock at collection (`is_pkcs11_mock_path`) and skips
+  every test carrying any conformance-bearing marker from `_MOCK_INCOMPATIBLE_MARKERS`
+  (acvp, cctv, crossverify, fuzz, interop, kat, metamorphic, nonce_quality,
+  padding_oracle, regressions, security, timing, wycheproof). Smoke/diagnostic and
+  bare-marker tests still run, so the mock continues to exercise the harness's own
+  collection + capability path. New CLI flag `--p11-allow-mock-conformance` opts back
+  in for harness development. Regression test `tests/test_pkcs11_mock_gating.py`
+  (5 cases — predicate + path matcher + marker-set semantics).
 
 ---
 
@@ -269,10 +273,13 @@ These are genuine, smaller-count PROVIDER findings (security-marked or behaviora
 - **CR-6 timeouts:** `TestAllocationGuard::test_generate_key_oom_value_len` (kryoptic*),
   `TestForkSafety`/`test_finalize_not_initialized` (tpm2/nss) → `subprocess.TimeoutExpired`.
   Could be PROVIDER hang (OOM keygen) or too-short test timeout (PKCS11-CHECK). Confirm via
-  focused Docker rerun into a new artifact folder.
-- **Timing tests:** `TestECDSATimingBasic::test_ecdsa_timing_variance` (nss, opencryptoki-master)
-  — CV-based timing-leak heuristic; environment-sensitive, likely flaky → PKCS11-CHECK
-  (make non-gating / informational) unless reproducible.
+  focused Docker rerun into a new artifact folder. **REMAINING.**
+- **Timing tests:** `TestECDSATimingBasic::test_ecdsa_timing_variance` —
+  **RESOLVED 2026-05-28:** 100-sample CV-over-1.0 path now records a
+  `ComplianceLevel.NOT_RECOMMENDED` note + `pytest.xfail` ("informational, needs
+  Minerva-class multi-thousand-sample analysis to confirm") instead of a hard `assert`.
+  Regression `tests/test_security_ecdsa_timing_variance_nongating.py` (low-CV passes,
+  high-CV xfails).
 
 ## Gap analysis 2026-05-27 (harness-masking pattern, using FP-1/FP-2 evidence)
 

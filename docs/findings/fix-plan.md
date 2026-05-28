@@ -70,15 +70,22 @@ The "CKR common storage" is **`src/pkcs11_check/testcases/ckr/_ckr_spec.py`**:
    - **PV-8 (39 invalid-accepted tpm2 rows)** confirmed PROVIDER — already source-
      reviewed in `docs/module-issues.md` (auto-salt-length detection in OpenSSL path).
      No harness change.
-   - **PC-3 REMAINING — 43 wycheproof "valid SHA-1 PSS rejected" on tpm2:** verify
-     returns `verified=False` with no exception (current `is_known_error` path does
-     not apply). Needs a self-roundtrip-probe helper for `test_wycheproof_rsa_pss.py`:
-     if a known-valid sig is rejected, generate a fresh keypair and try sign+verify
-     with the same (mech, hash, mgf); roundtrip-fails → "advertised not operational"
-     → `xfail`, roundtrip-passes → real `fail`.
-5. **EX-2** (pkcs11-mock) — gate the functional/security/KAT suites off the mock provider
-   (capability/identity guard), leaving smoke/diagnostic only. Not a bug.
-6. **CR-6 / timing** — make timeouts/timing-variance non-gating or confirm as provider hangs.
+   - **PC-3 wycheproof "valid SHA-1 PSS rejected" — RESOLVED 2026-05-28:**
+     `_pss_combo_operational` self-roundtrip probe in `test_wycheproof_rsa_pss.py`
+     classifies the `verified=False` valid path as `xfail` when the provider's own
+     fresh-key sign+verify with the same (mech, hash, mgf, sLen) also fails. Cached
+     per-combo. Regression `tests/test_wycheproof_rsa_pss_combo_probe.py` (6 cases).
+5. **EX-2** (pkcs11-mock) — **RESOLVED 2026-05-28**: plugin gates conformance-bearing
+   markers (kat/acvp/cctv/wycheproof/security/interop/crossverify/fuzz/metamorphic/
+   padding_oracle/nonce_quality/regressions/timing) off pkcs11-mock at collection.
+   `--p11-allow-mock-conformance` opts back in. Regression
+   `tests/test_pkcs11_mock_gating.py`.
+6. **CR-6 timing-variance — RESOLVED 2026-05-28**: 100-sample CV heuristic is now
+   informational (`compliance.note` + `pytest.xfail`), not a hard assert. Regression
+   `tests/test_security_ecdsa_timing_variance_nongating.py`.
+   **CR-6 timeouts (REMAINING)**: `test_generate_key_oom_value_len`,
+   `TestForkSafety`/`test_finalize_not_initialized` → `subprocess.TimeoutExpired`.
+   Need focused Docker rerun to distinguish provider hang vs too-short test timeout.
 
 ## Rerun review — softhsm2 (2026-05-28, `artifacts/softhsm2-recheck-20260528/`)
 
