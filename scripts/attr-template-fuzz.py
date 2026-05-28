@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import random
-import sys
 from collections import Counter
 
 import pkcs11
@@ -84,8 +83,10 @@ def random_bad_template() -> dict:
     strategies = [
         lambda: {Attribute.CLASS: 0xDEADBEEF, Attribute.TOKEN: False},
         lambda: {Attribute.TOKEN: False},  # Missing CLASS
-        lambda: {Attribute.CLASS: ObjectClass.SECRET_KEY, Attribute.VALUE: b"", Attribute.TOKEN: False},
-        lambda: {Attribute.CLASS: ObjectClass.DATA, Attribute.KEY_TYPE: KeyType.AES, Attribute.TOKEN: False},
+        lambda: {Attribute.CLASS: ObjectClass.SECRET_KEY, Attribute.VALUE: b"",
+                 Attribute.TOKEN: False},
+        lambda: {Attribute.CLASS: ObjectClass.DATA, Attribute.KEY_TYPE: KeyType.AES,
+                 Attribute.TOKEN: False},
         lambda: {Attribute.CLASS: _random_class(), Attribute.KEY_TYPE: _random_keytype(),
                  Attribute.VALUE: _random_bytes(64), Attribute.TOKEN: _random_bool()},
     ]
@@ -113,7 +114,7 @@ def main() -> None:
         results: Counter[str] = Counter()
         generators = [random_data_template, random_key_template, random_bad_template]
 
-        for i in range(args.count):
+        for _ in range(args.count):
             gen = random.choice(generators)
             template = gen()
             try:
@@ -131,7 +132,7 @@ def main() -> None:
             print(f"  {ckr:40s} {count:5d} ({pct:.1f}%)")
 
         print(f"\n  Total: {args.count}, Unique CKR codes: {len(results)}")
-        print(f"  Crashes: 0 (if you see this, no segfaults)")
+        print("  Crashes: 0 (if you see this, no segfaults)")
 
         session.close()
     finally:

@@ -13,7 +13,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import subprocess
 import sys
@@ -38,6 +37,83 @@ UNIVERSAL_CKRS = {
 }
 
 SPEC_DIR = Path("/tmp/pkcs11/working/doc/spec")
+
+# Map _ckr_spec.py exception class names back to CKR codes
+CKR_EXCEPTION_TO_CODE: dict[str, str] = {
+    "ActionProhibited": "CKR_ACTION_PROHIBITED",
+    "ArgumentsBad": "CKR_ARGUMENTS_BAD",
+    "AttributeReadOnly": "CKR_ATTRIBUTE_READ_ONLY",
+    "AttributeSensitive": "CKR_ATTRIBUTE_SENSITIVE",
+    "AttributeTypeInvalid": "CKR_ATTRIBUTE_TYPE_INVALID",
+    "AttributeValueInvalid": "CKR_ATTRIBUTE_VALUE_INVALID",
+    "BufferTooSmall": "CKR_BUFFER_TOO_SMALL",
+    "CryptokiAlreadyInitialized": "CKR_CRYPTOKI_ALREADY_INITIALIZED",
+    "CryptokiNotInitialized": "CKR_CRYPTOKI_NOT_INITIALIZED",
+    "CurveNotSupported": "CKR_CURVE_NOT_SUPPORTED",
+    "DataInvalid": "CKR_DATA_INVALID",
+    "DataLenRange": "CKR_DATA_LEN_RANGE",
+    "DeviceError": "CKR_DEVICE_ERROR",
+    "DeviceMemory": "CKR_DEVICE_MEMORY",
+    "DomainParamsInvalid": "CKR_DOMAIN_PARAMS_INVALID",
+    "EncryptedDataInvalid": "CKR_ENCRYPTED_DATA_INVALID",
+    "EncryptedDataLenRange": "CKR_ENCRYPTED_DATA_LEN_RANGE",
+    "ExceededMaxIterations": "CKR_EXCEEDED_MAX_ITERATIONS",
+    "FunctionCancelled": "CKR_FUNCTION_CANCELED",
+    "FunctionFailed": "CKR_FUNCTION_FAILED",
+    "FunctionNotSupported": "CKR_FUNCTION_NOT_SUPPORTED",
+    "FunctionRejected": "CKR_FUNCTION_REJECTED",
+    "GeneralError": "CKR_GENERAL_ERROR",
+    "KeyFunctionNotPermitted": "CKR_KEY_FUNCTION_NOT_PERMITTED",
+    "KeyHandleInvalid": "CKR_KEY_HANDLE_INVALID",
+    "KeyIndigestible": "CKR_KEY_INDIGESTIBLE",
+    "KeyNeeded": "CKR_KEY_NEEDED",
+    "KeyNotNeeded": "CKR_KEY_NOT_NEEDED",
+    "KeyNotWrappable": "CKR_KEY_NOT_WRAPPABLE",
+    "KeySizeRange": "CKR_KEY_SIZE_RANGE",
+    "KeyTypeInconsistent": "CKR_KEY_TYPE_INCONSISTENT",
+    "KeyUnextractable": "CKR_KEY_UNEXTRACTABLE",
+    "MechanismInvalid": "CKR_MECHANISM_INVALID",
+    "MechanismParamInvalid": "CKR_MECHANISM_PARAM_INVALID",
+    "NoEvent": "CKR_NO_EVENT",
+    "ObjectHandleInvalid": "CKR_OBJECT_HANDLE_INVALID",
+    "OperationActive": "CKR_OPERATION_ACTIVE",
+    "OperationNotInitialized": "CKR_OPERATION_NOT_INITIALIZED",
+    "ParameterSetNotSupported": "CKR_PARAMETER_SET_NOT_SUPPORTED",
+    "ParallelNotSupported": "CKR_SESSION_PARALLEL_NOT_SUPPORTED",
+    "PinExpired": "CKR_PIN_EXPIRED",
+    "PinIncorrect": "CKR_PIN_INCORRECT",
+    "PinInvalid": "CKR_PIN_INVALID",
+    "PinLenRange": "CKR_PIN_LEN_RANGE",
+    "PinLocked": "CKR_PIN_LOCKED",
+    "RandomNoRNG": "CKR_RANDOM_NO_RNG",
+    "RandomSeedNotSupported": "CKR_RANDOM_SEED_NOT_SUPPORTED",
+    "SavedStateInvalid": "CKR_SAVED_STATE_INVALID",
+    "SessionAsyncNotSupported": "CKR_SESSION_ASYNC_NOT_SUPPORTED",
+    "SessionCount": "CKR_SESSION_COUNT",
+    "SessionExists": "CKR_SESSION_EXISTS",
+    "SessionReadOnly": "CKR_SESSION_READ_ONLY",
+    "SessionReadOnlyExists": "CKR_SESSION_READ_ONLY_EXISTS",
+    "SessionReadWriteSOExists": "CKR_SESSION_READ_WRITE_SO_EXISTS",
+    "SignatureInvalid": "CKR_SIGNATURE_INVALID",
+    "SignatureLenRange": "CKR_SIGNATURE_LEN_RANGE",
+    "SlotIDInvalid": "CKR_SLOT_ID_INVALID",
+    "StateUnsaveable": "CKR_STATE_UNSAVEABLE",
+    "TemplateIncomplete": "CKR_TEMPLATE_INCOMPLETE",
+    "TemplateInconsistent": "CKR_TEMPLATE_INCONSISTENT",
+    "TokenNotRecognised": "CKR_TOKEN_NOT_RECOGNIZED",
+    "TokenWriteProtected": "CKR_TOKEN_WRITE_PROTECTED",
+    "UnwrappingKeyHandleInvalid": "CKR_UNWRAPPING_KEY_HANDLE_INVALID",
+    "UnwrappingKeySizeRange": "CKR_UNWRAPPING_KEY_SIZE_RANGE",
+    "UnwrappingKeyTypeInconsistent": "CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT",
+    "UserAlreadyLoggedIn": "CKR_USER_ALREADY_LOGGED_IN",
+    "UserNotLoggedIn": "CKR_USER_NOT_LOGGED_IN",
+    "UserPinNotInitialized": "CKR_USER_PIN_NOT_INITIALIZED",
+    "UserTooManyTypes": "CKR_USER_TOO_MANY_TYPES",
+    "UserTypeInvalid": "CKR_USER_TYPE_INVALID",
+    "AnotherUserAlreadyLoggedIn": "CKR_USER_ANOTHER_ALREADY_LOGGED_IN",
+    "WrappedKeyInvalid": "CKR_WRAPPED_KEY_INVALID",
+    "WrappedKeyLenRange": "CKR_WRAPPED_KEY_LEN_RANGE",
+}
 
 SPEC_FILES = [
     "encryption_functions.md",
@@ -81,7 +157,9 @@ def parse_spec() -> dict[str, set[str]]:
             func_name = func_match.group(1)
 
             # Find Return values block
-            rv_match = re.search(r"Return values:\s*(.+?)(?=\n\n|\n###|\nExample|\Z)", block, re.DOTALL)
+            rv_match = re.search(
+                r"Return values:\s*(.+?)(?=\n\n|\n###|\nExample|\Z)", block, re.DOTALL
+            )
             if not rv_match:
                 continue
 
@@ -104,83 +182,6 @@ def load_ckr_spec() -> dict[str, set[str]]:
 
     covered: dict[str, set[str]] = {}
 
-    # Map exception class names back to CKR codes
-    CKR_MAP = {
-        "ActionProhibited": "CKR_ACTION_PROHIBITED",
-        "ArgumentsBad": "CKR_ARGUMENTS_BAD",
-        "AttributeReadOnly": "CKR_ATTRIBUTE_READ_ONLY",
-        "AttributeSensitive": "CKR_ATTRIBUTE_SENSITIVE",
-        "AttributeTypeInvalid": "CKR_ATTRIBUTE_TYPE_INVALID",
-        "AttributeValueInvalid": "CKR_ATTRIBUTE_VALUE_INVALID",
-        "BufferTooSmall": "CKR_BUFFER_TOO_SMALL",
-        "CryptokiAlreadyInitialized": "CKR_CRYPTOKI_ALREADY_INITIALIZED",
-        "CryptokiNotInitialized": "CKR_CRYPTOKI_NOT_INITIALIZED",
-        "CurveNotSupported": "CKR_CURVE_NOT_SUPPORTED",
-        "DataInvalid": "CKR_DATA_INVALID",
-        "DataLenRange": "CKR_DATA_LEN_RANGE",
-        "DeviceError": "CKR_DEVICE_ERROR",
-        "DeviceMemory": "CKR_DEVICE_MEMORY",
-        "DomainParamsInvalid": "CKR_DOMAIN_PARAMS_INVALID",
-        "EncryptedDataInvalid": "CKR_ENCRYPTED_DATA_INVALID",
-        "EncryptedDataLenRange": "CKR_ENCRYPTED_DATA_LEN_RANGE",
-        "ExceededMaxIterations": "CKR_EXCEEDED_MAX_ITERATIONS",
-        "FunctionCancelled": "CKR_FUNCTION_CANCELED",
-        "FunctionFailed": "CKR_FUNCTION_FAILED",
-        "FunctionNotSupported": "CKR_FUNCTION_NOT_SUPPORTED",
-        "FunctionRejected": "CKR_FUNCTION_REJECTED",
-        "GeneralError": "CKR_GENERAL_ERROR",
-        "KeyFunctionNotPermitted": "CKR_KEY_FUNCTION_NOT_PERMITTED",
-        "KeyHandleInvalid": "CKR_KEY_HANDLE_INVALID",
-        "KeyIndigestible": "CKR_KEY_INDIGESTIBLE",
-        "KeyNeeded": "CKR_KEY_NEEDED",
-        "KeyNotNeeded": "CKR_KEY_NOT_NEEDED",
-        "KeyNotWrappable": "CKR_KEY_NOT_WRAPPABLE",
-        "KeySizeRange": "CKR_KEY_SIZE_RANGE",
-        "KeyTypeInconsistent": "CKR_KEY_TYPE_INCONSISTENT",
-        "KeyUnextractable": "CKR_KEY_UNEXTRACTABLE",
-        "MechanismInvalid": "CKR_MECHANISM_INVALID",
-        "MechanismParamInvalid": "CKR_MECHANISM_PARAM_INVALID",
-        "NoEvent": "CKR_NO_EVENT",
-        "ObjectHandleInvalid": "CKR_OBJECT_HANDLE_INVALID",
-        "OperationActive": "CKR_OPERATION_ACTIVE",
-        "OperationNotInitialized": "CKR_OPERATION_NOT_INITIALIZED",
-        "ParameterSetNotSupported": "CKR_PARAMETER_SET_NOT_SUPPORTED",
-        "ParallelNotSupported": "CKR_SESSION_PARALLEL_NOT_SUPPORTED",
-        "PinExpired": "CKR_PIN_EXPIRED",
-        "PinIncorrect": "CKR_PIN_INCORRECT",
-        "PinInvalid": "CKR_PIN_INVALID",
-        "PinLenRange": "CKR_PIN_LEN_RANGE",
-        "PinLocked": "CKR_PIN_LOCKED",
-        "RandomNoRNG": "CKR_RANDOM_NO_RNG",
-        "RandomSeedNotSupported": "CKR_RANDOM_SEED_NOT_SUPPORTED",
-        "SavedStateInvalid": "CKR_SAVED_STATE_INVALID",
-        "SessionAsyncNotSupported": "CKR_SESSION_ASYNC_NOT_SUPPORTED",
-        "SessionCount": "CKR_SESSION_COUNT",
-        "SessionExists": "CKR_SESSION_EXISTS",
-        "SessionReadOnly": "CKR_SESSION_READ_ONLY",
-        "SessionReadOnlyExists": "CKR_SESSION_READ_ONLY_EXISTS",
-        "SessionReadWriteSOExists": "CKR_SESSION_READ_WRITE_SO_EXISTS",
-        "SignatureInvalid": "CKR_SIGNATURE_INVALID",
-        "SignatureLenRange": "CKR_SIGNATURE_LEN_RANGE",
-        "SlotIDInvalid": "CKR_SLOT_ID_INVALID",
-        "StateUnsaveable": "CKR_STATE_UNSAVEABLE",
-        "TemplateIncomplete": "CKR_TEMPLATE_INCOMPLETE",
-        "TemplateInconsistent": "CKR_TEMPLATE_INCONSISTENT",
-        "TokenNotRecognised": "CKR_TOKEN_NOT_RECOGNIZED",
-        "TokenWriteProtected": "CKR_TOKEN_WRITE_PROTECTED",
-        "UnwrappingKeyHandleInvalid": "CKR_UNWRAPPING_KEY_HANDLE_INVALID",
-        "UnwrappingKeySizeRange": "CKR_UNWRAPPING_KEY_SIZE_RANGE",
-        "UnwrappingKeyTypeInconsistent": "CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT",
-        "UserAlreadyLoggedIn": "CKR_USER_ALREADY_LOGGED_IN",
-        "UserNotLoggedIn": "CKR_USER_NOT_LOGGED_IN",
-        "UserPinNotInitialized": "CKR_USER_PIN_NOT_INITIALIZED",
-        "UserTooManyTypes": "CKR_USER_TOO_MANY_TYPES",
-        "UserTypeInvalid": "CKR_USER_TYPE_INVALID",
-        "AnotherUserAlreadyLoggedIn": "CKR_USER_ANOTHER_ALREADY_LOGGED_IN",
-        "WrappedKeyInvalid": "CKR_WRAPPED_KEY_INVALID",
-        "WrappedKeyLenRange": "CKR_WRAPPED_KEY_LEN_RANGE",
-    }
-
     # Iterate all dicts in _ckr_spec
     for attr_name in dir(_ckr_spec):
         if not attr_name.startswith("CKR_"):
@@ -198,10 +199,12 @@ def load_ckr_spec() -> dict[str, set[str]]:
             spec_ckr = entry.spec_ckr
             if isinstance(spec_ckr, tuple):
                 for cls in spec_ckr:
-                    ckr_name = CKR_MAP.get(cls.__name__, f"UNKNOWN_{cls.__name__}")
+                    ckr_name = CKR_EXCEPTION_TO_CODE.get(cls.__name__, f"UNKNOWN_{cls.__name__}")
                     covered.setdefault(func, set()).add(ckr_name)
             else:
-                ckr_name = CKR_MAP.get(spec_ckr.__name__, f"UNKNOWN_{spec_ckr.__name__}")
+                ckr_name = CKR_EXCEPTION_TO_CODE.get(
+                    spec_ckr.__name__, f"UNKNOWN_{spec_ckr.__name__}"
+                )
                 covered.setdefault(func, set()).add(ckr_name)
 
     return covered
