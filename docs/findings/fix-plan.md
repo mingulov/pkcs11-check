@@ -60,8 +60,22 @@ The "CKR common storage" is **`src/pkcs11_check/testcases/ckr/_ckr_spec.py`**:
 2. **PC-5** (KWP wrap setup classification) — capture real wrap `rv`; skip/xfail honestly.
 3. **Phase 1 of the classification plan** (add `kind`, 3-way `assert_ckr` + meta-tests), then
    **PC-4 / PC-6** CKR rows on top of it.
-4. **PC-2** (ML-DSA sigVer encoding) and **PC-3 / PV-8** (tpm2 RSA-PSS hash-guard vs invalid-
-   accepted split) — confirm by decoding one vector + Docker rerun; fix guard or confirm finding.
+4. **PC-2** (ML-DSA sigVer encoding) — **RESOLVED 2026-05-28**: loader filters
+   `signatureInterface == "internal"` groups (the 9 false-fails per provider were ACVP
+   internal-interface vectors with no PKCS#11 mechanism equivalent). Regression test
+   `tests/test_acvp_mldsa_sigver_loader.py`. **PC-3 / PV-8** split — partially resolved:
+   - **PC-3 (security probes, 7 tpm2 false-fails)** RESOLVED — `gen_*_keypair` setup
+     now skips on capability-class CKRs (`_KEYGEN_CAPABILITY_REJECT_RVS`). Regression
+     test `tests/test_security_rsa_pss_md5_setup_skip.py` (5 cases).
+   - **PV-8 (39 invalid-accepted tpm2 rows)** confirmed PROVIDER — already source-
+     reviewed in `docs/module-issues.md` (auto-salt-length detection in OpenSSL path).
+     No harness change.
+   - **PC-3 REMAINING — 43 wycheproof "valid SHA-1 PSS rejected" on tpm2:** verify
+     returns `verified=False` with no exception (current `is_known_error` path does
+     not apply). Needs a self-roundtrip-probe helper for `test_wycheproof_rsa_pss.py`:
+     if a known-valid sig is rejected, generate a fresh keypair and try sign+verify
+     with the same (mech, hash, mgf); roundtrip-fails → "advertised not operational"
+     → `xfail`, roundtrip-passes → real `fail`.
 5. **EX-2** (pkcs11-mock) — gate the functional/security/KAT suites off the mock provider
    (capability/identity guard), leaving smoke/diagnostic only. Not a bug.
 6. **CR-6 / timing** — make timeouts/timing-variance non-gating or confirm as provider hangs.

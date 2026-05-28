@@ -41,24 +41,49 @@ Counts are failures in this artifact set (per `failure-inventory.json`).
   (GCM null-AAD finding). Full cross-provider rerun pending. Lesson confirmed: the harness
   bug was hiding a genuine finding.
 
-### PC-2 — ML-DSA sigVer rejects VALID signatures across 3 unrelated providers  ·  NEEDS-CONFIRM
+### PC-2 — ML-DSA sigVer rejects VALID signatures across 3 unrelated providers  ·  RESOLVED 2026-05-28
 - **Count/scope:** 36 — softhsm2-main 9, nss 9, opencryptoki 9, opencryptoki-master 9.
 - **Class:** `TestMlDsaSigVer::test_acvp_mldsa_sigver :: ML-DSA-sigVer-...-tcN: module rejected a VALID ML-DSA signature`.
-- **Reasoning:** the *same* ACVP vectors rejected by three independent implementations is a
-  signal of a pkcs11-check encoding/context bug (e.g. ML-DSA context byte, mu/pure mode, or
-  message encoding) rather than three coincident provider defects. Kryoptic is absent here
-  (it returns DEVICE_ERROR on ML-DSA sign — see PV-7), so the picture is muddied.
-- **Classification:** likely PKCS11-CHECK (ML-DSA sigVer vector handling). Confirm by
-  decoding one rejected vector and checking the signature/context encoding the harness sends.
+- **Root cause:** the ACVP `ML-DSA-sigVer-FIPS204` vector set includes groups
+  with `signatureInterface: "internal"` (FIPS 204 Algorithm 8 — Sign_internal /
+  Verify_internal). Those groups deliver either a precomputed `mu`
+  (`externalMu: true`) or a pre-formatted message representative M'
+  (`externalMu: false`). PKCS#11 v3.2 only exposes the *external* Sign/Verify
+  (Algorithm 2/3) as `CKM_ML_DSA` (and `CKM_HASH_ML_DSA_*`), which constructs
+  M' from `(M, ctx)` internally. Feeding the internal-interface "message"
+  bytes through `CKM_ML_DSA` wraps them in another M' and verification
+  (correctly) fails — three independent providers all "rejected" because the
+  harness was asking the impossible. The 9 failing tcs per provider are the
+  `testPassed=true` subset of groups 8/10/12 (ML-DSA-44 tc108/112/116,
+  ML-DSA-65 tc139/141/142, ML-DSA-87 tc169/172/174).
+- **Fix:** sigVer loader now filters `signatureInterface == "internal"`
+  groups (`_mldsa_helpers.py::load_mldsa_sigver_vectors`). Regression test
+  `tests/test_acvp_mldsa_sigver_loader.py` (RED → GREEN).
 
-### PC-3 — tpm2 RSA-PSS with MD5/SHA-1 hash: missing capability guard  ·  NEEDS-CONFIRM
-- **Scope:** tpm2 (`test_rsa_pss_md5_hash` etc.; part of the 43 "valid rejected").
-- **Evidence:** `Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID; expected one of: CKR_OK`.
-- **Reasoning:** TPM legitimately refuses MD5 (and often SHA-1) PSS. The test asserts CKR_OK,
-  so a correct provider rejection is scored as a failure. Should be a capability skip.
-- **Classification:** likely PKCS11-CHECK (guard MD5/SHA-1 PSS by mechanism/hash support).
-  Confirm against the tpm2 mechanism list. (The "invalid accepted = 39" tpm2 rows are the
-  opposite direction and may be a real PROVIDER finding — see PV-8.)
+### PC-3 — tpm2 security probes: keygen-setup rejects classified as fails  ·  PARTIALLY-RESOLVED 2026-05-28
+- **Scope (resolved part — security probes, 7 tpm2 false-fails):** `test_rsa_pss_md5_hash`,
+  `test_pss_zero_salt_length`, `test_pss_excessive_salt_length`, `test_rsa_oaep_sha1_mgf`,
+  `test_ecdh_invalid_point` (×3 parametrize variants).
+- **Root cause:** tpm2-pkcs11's restrictive RSA/EC key-attribute policy refuses the test's
+  `gen_rsa_keypair` / `gen_ec_keypair` setup call with `CKR_ATTRIBUTE_VALUE_INVALID`. Each
+  probe targets a *weak operation parameter* (zero-salt PSS, MD5 in PSS, SHA-1 MGF in OAEP,
+  invalid EC point in ECDH); if the provider cannot generate the test key, the probe cannot
+  exercise the operation parameter. Per the classification model this is a missing-capability
+  `skip`, not a hard `fail`.
+- **Fix:** the 5 security-probe sites now wrap `gen_*_keypair` in a try/except and `skip`
+  on `is_known_error(exc, _KEYGEN_CAPABILITY_REJECT_RVS)` (the constant lists the
+  capability-class CKRs: `CKR_ATTRIBUTE_VALUE_INVALID`,
+  `CKR_TEMPLATE_INCONSISTENT/INCOMPLETE`, `CKR_FUNCTION_NOT_SUPPORTED`,
+  `CKR_MECHANISM_INVALID`, `CKR_KEY_SIZE_RANGE` — never a catch-all). Unknown failures
+  still re-raise so a real defect is surfaced. Regression test
+  `tests/test_security_rsa_pss_md5_setup_skip.py` (RED → GREEN; 5 tests).
+- **REMAINING (43 wycheproof "valid rejected" SHA-1 PSS on tpm2):** these are different —
+  the verify call returns cleanly with `verified=False` (no exception), so the
+  is_known_error path does not apply. Needs a *self-roundtrip-probe* helper: when the
+  module rejects a known-valid wycheproof sig, generate a fresh key and try a sign+verify
+  with the same (mech, hash, mgf) params. If the roundtrip also fails, classify the combo
+  as "advertised but not operational" → `xfail`. Otherwise the rejection is a real
+  provider bug → `fail`. Tracked in fix-plan.md.
 
 ### PC-4 — WRONG_CKR expectation mismatches (assorted)  ·  NEEDS-CONFIRM
 Small classes where the module returns a *plausibly correct* CKR the test didn't list:
@@ -129,11 +154,18 @@ Small classes where the module returns a *plausibly correct* CKR the test didn't
   (advertised mechanism not operational / broken). Cross-ref `module-issues.md` ML-DSA context.
 - **Classification:** PROVIDER; likely KNOWN (ML-DSA context failure documented).
 
-### PV-8 — tpm2 RSA-PSS: invalid signatures accepted  ·  NEEDS-CONFIRM
-- **Scope:** tpm2, 39 "Invalid RSA-PSS sig accepted by module" (+43 "valid rejected", overlaps PC-3).
-- **Classification:** mixed — the "invalid accepted" direction is a possible PROVIDER finding;
-  the "valid rejected" direction is likely the PC-3 capability-guard test bug. Separate them
-  in the fix phase.
+### PV-8 — tpm2 RSA-PSS: invalid signatures accepted  ·  confirmed (KNOWN, source-reviewed)
+- **Scope:** tpm2, 39 "Invalid RSA-PSS sig accepted by module" (`s_len changed to 0`-class
+  Wycheproof salt-length mutations).
+- **Root cause:** tpm2-pkcs11 routes RSA-PSS public-key verification through OpenSSL but
+  does not set the expected PSS salt length or MGF digest on the verification context, so
+  OpenSSL falls back to *automatic* salt-length detection and accepts mutated sigs that
+  would fail with the vector's declared `sLen`. Source-reviewed in `src/lib/mech.c`,
+  `src/lib/sign.c`, `src/lib/ssl_util.c`. Documented in `docs/module-issues.md` under
+  "tpm2-pkcs11 1.10.0 → Wycheproof RSA-PSS semantic failures".
+- **Classification:** PROVIDER (provider behavior, not a pkcs11-check vector-loader issue).
+  No harness change. The companion "43 valid rejected" rows are NOT part of PV-8; they
+  belong to the PC-3 split (see PC-3 REMAINING).
 
 ### PV-9 — ML-DSA sign: invalid vectors accepted  ·  NEEDS-CONFIRM
 - **Scope:** 32 — nss 14, softhsm2-main/kryoptic*/opencryptoki* 3 each.
