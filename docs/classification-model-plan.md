@@ -274,7 +274,7 @@ assert rv in _RO_ERROR_RVS, f"expected RO rejection, got {ckr_name(rv)}"
 # AFTER (expected = the spec-preferred code(s); the set's other members become xfail)
 classify_negative_rv(rv, (CKR_SESSION_READ_ONLY,), label="create token object on RO session")
 ```
-- [ ] **Per-file tasks** (replace asserts; meta-test the 3 branches; commit each). Status (2026-05-28):
+- [x] **Per-file tasks** (replace asserts; meta-test the 3 branches; commit each). Status (2026-05-28):
   - [x] `test_mech_state.py` (`_NOT_INIT_RVCS`, `_ALREADY_ACTIVE_RVCS`; cross-session strict set intentionally left as fail)
   - [x] `test_errors.py` (per-category reject asserts; tolerant accept paths kept)
   - [x] `ckr/test_ckr_spec_compliance.py:64` (`_check_ckr` ×9 routed to `classify_negative_rv`)
@@ -287,7 +287,7 @@ classify_negative_rv(rv, (CKR_SESSION_READ_ONLY,), label="create token object on
   - [x] `test_verify_signature.py` (wrong-sig + wrong-key reject guards)
   - [x] `test_initialize_args.py:293,331` (pReserved + partial-callbacks; partial-callbacks now symmetric xfail-on-OK)
   - [x] `test_stateful_sigs.py:603` (HSS leaf-budget via `reject_or_classify`)
-  - [ ] `test_reinitialize.py:47,89` — **N/A**: both asserts are `assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)`, i.e. positive-success checks (CKR_OK is a valid pass), not must-reject negatives. No conversion applicable.
+  - [x] `test_reinitialize.py:47,89` — **N/A**: both asserts are `assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)`, i.e. positive-success checks (CKR_OK is a valid pass), not must-reject negatives. No conversion applicable.
   - [x] `test_session_edge_cases.py` — stale-session `C_FindObjectsInit`/`C_GenerateKey` guards (lines 68, 93) → 3-way `classify_negative_rv`. (`C_CloseAllSessions` line 125 `assert rv is not None` and the null-CK_NOTIFY probe line 245 are positive/crash-only, not must-reject negatives — left as-is.)
   - [x] the 6 `ckr/` raw files (`test_ckr_raw_{state,multipart,attrs}`, `test_ckr_{slot_token,random,destructive}`) — surveyed and resolved per-file:
     - `test_ckr_slot_token.py:38` — in-process `C_GetMechanismInfo` bogus-mechanism reject → 3-way `classify_negative_rv`. (`C_WaitForSlotEvent` line 55 is a tolerant probe where CKR_OK is a valid pass — N/A.)
@@ -296,7 +296,10 @@ classify_negative_rv(rv, (CKR_SESSION_READ_ONLY,), label="create token object on
     - `test_ckr_raw_state.py` — 4 double/cross-Init state probes: parent-side tolerant `_classify_state_ckr` (`allow_ok=True`, CKR_OPERATION_ACTIVE *or* CKR_OK pass, any third clean code → xfail not crash; first-init-failed marker handled). `test_encrypt_then_sign_init` is a pure no-crash probe (many codes acceptable) — left as-is.
     - `test_ckr_destructive.py` — 6 InitToken/SetPIN/InitPIN error-condition probes: parent-side `_classify_destructive_ckr` over the printed `CKR:` line, replacing the in-child `assert rv == <spec>` that previously mislabeled a non-spec clean reject as a crash.
     - `test_ckr_random.py` — **N/A**: both asserts (`C_SeedRandom`, `C_GenerateRandom(0)`) are tolerant positive probes where CKR_OK is a valid pass, not must-reject negatives.
-- [ ] **Task 4z — retire local helpers:** migrate/remove the ~7 per-file `*_or_xfail`/`*_negative_rv` reimplementations (`test_kem._xfail_if_kem_negative_rv`, `test_benchmark._xfail_benchmark_operation_reject`, `test_mech_multipart._xfail_multipart_runtime_reject`, `test_multipart_streaming._xfail_streaming_reject`, `security/test_ffi_length_boundary.setup_xfail_if_known_ckr`, `test_fuzz` ×6) onto the shared helpers; commit. — **REMAINING**
+- [x] **Task 4z — retire local helpers:** audited all listed helpers.
+    - `test_kem._xfail_if_kem_negative_rv` — the only genuine **negative-rv reimplementation** (a partial rv-shaped classifier paired with a bare `assert rv in (spec)`). **Retired** onto the shared `classify_negative_rv` at both call sites (invalid-ciphertext-length, wrong-key-type): now CKR_OK→fail, spec→pass, any other clean→xfail (previously an unlisted clean code hard-failed the trailing assert). Local helper + 3 now-unused imports removed; CKR_OK→fail meta-test added.
+    - `test_benchmark._xfail_benchmark_operation_reject` / `_xfail_aes_keygen_reject`, `test_mech_multipart._xfail_multipart_runtime_reject`, `test_multipart_streaming._xfail_streaming_reject` + `_gen_*_or_xfail`, `test_fuzz` `_digest/_encrypt/_decrypt/_sign/_verify/_import_hmac_key_or_xfail` — **N/A (not reimplementations):** these are POSITIVE-op second-leg wrappers (advertised-but-not-operational) that already delegate to the shared Phase-1 `xfail_if_known_ckr`, binding a per-file acceptable-CKR tuple + a per-file neutral message. The trailing `raise`/`raise exc` is required for mypy (the `try` body has a non-`None` return type), not dead code. Folding them into a single generic helper would lose the per-file CKR set/message and gain nothing; left as correct DRY delegation.
+    - `security/test_ffi_length_boundary.setup_xfail_if_known_ckr` — **N/A (necessary child-script duplicate):** defined inside a subprocess-preamble string literal where the in-process/conftest helpers are unavailable; structurally analogous to the existing `security/conftest.child_setup_reject_known`, and already built on the shared `is_known_error` + `ckr_name` imported into the child namespace.
 
 ---
 
