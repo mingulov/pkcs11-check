@@ -86,9 +86,15 @@ The "CKR common storage" is **`src/pkcs11_check/testcases/ckr/_ckr_spec.py`**:
   lands in a new folder, baseline untouched):
   ```
   docker compose -f docker/docker-compose.test.yml run --rm \
+    -v /home/user/.local/share/pkcs11-check/data:/app/data:ro \
     -e PKCS11_CHECK_ARTIFACT_DIR=/artifacts/<target>-recheck-20260528 \
     --build test-<target>
   ```
+  **CRITICAL:** the repo `data/` has NO vectors (they live in XDG `~/.local/share/pkcs11-check/data`,
+  847M); the compose default mount `../data:/app/data:ro` therefore gives the container an EMPTY
+  vector dir → only ~3.3k non-vector tests run instead of the full ~82k. The `-v` override above
+  mounts the XDG vectors over `/app/data` so the full suite runs. (First softhsm2 recheck without
+  it ran only 3,317 tests — do not compare those numbers.)
   In-scope targets (excl. bouncyhsm) + approx test-exec time: softhsm2 ~10m, softhsm2-main ~10m,
   kryoptic ~15m, kryoptic-main ~16m, kryoptic-fips ~18m, nss ~9m, nss-main ~10m, nss-pqc ~9m,
   opencryptoki ~2h, opencryptoki-master ~1.5h, tpm2 ~25m, pkcs11-mock ~3m. Run fast ones first;
