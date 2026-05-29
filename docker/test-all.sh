@@ -24,9 +24,9 @@ DEFAULT_PROVIDERS=(
 )
 
 ALL_PROVIDERS=(
-#    softhsm2 softhsm2-generated-iv softhsm2-main
+    softhsm2 softhsm2-generated-iv softhsm2-main
     kryoptic kryoptic-main kryoptic-fips
-    nss nss-pqc nss-main
+    nss nss-slot0 nss-pqc nss-pqc-slot0 nss-main nss-main-slot0
     opencryptoki opencryptoki-master
     tpm2
     pkcs11-mock

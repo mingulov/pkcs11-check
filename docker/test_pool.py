@@ -35,7 +35,12 @@ DEFAULT_PROVIDERS = [
     "softhsm2",
     "kryoptic",
     "nss",
+    # NSS digest/hash/cipher mechanisms live only on slot 0 (Internal Crypto
+    # Services); the default nss/nss-pqc passes use slot 1 (cert/key DB). The
+    # -slot0 passes cover the slot-0-only mechanisms. See docs/module-issues.md.
+    "nss-slot0",
     "nss-pqc",
+    "nss-pqc-slot0",
     "opencryptoki",
     "bouncyhsm",
     "pkcs11-mock",
@@ -48,6 +53,7 @@ VARIANT_PROVIDERS = [
     "kryoptic-main",
     "kryoptic-fips",
     "nss-main",
+    "nss-main-slot0",
     "opencryptoki-master",
 ]
 ALL_PROVIDERS = DEFAULT_PROVIDERS + VARIANT_PROVIDERS

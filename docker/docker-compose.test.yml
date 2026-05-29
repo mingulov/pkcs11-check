@@ -78,6 +78,19 @@ services:
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss
 
+  # NSS stable, slot 0 (Internal Cryptographic Services) — second pass covering the
+  # digest/hash/bulk-cipher mechanisms NSS advertises only on slot 0 (the default
+  # slot-1 cert/key-DB pass does not). Same image; slot overridden at runtime.
+  # See docs/module-issues.md "Slot architecture".
+  test-nss-slot0:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: docker/nss-softoken/Dockerfile
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss-slot0
+      PKCS11_CHECK_SLOT: "0"
+
   # NSS PQC/source release (official NSS/NSPR RTM tags)
   test-nss-pqc:
     <<: *common
@@ -89,6 +102,19 @@ services:
         NSPR_TAG: "${NSPR_TAG:-NSPR_4_39_RTM}"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss-pqc
+
+  # NSS PQC, slot 0 (Internal Cryptographic Services) — second pass (see test-nss-slot0).
+  test-nss-pqc-slot0:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: docker/nss-softoken/Dockerfile.rawhide
+      args:
+        NSS_TAG: "${NSS_TAG:-NSS_3_124_RTM}"
+        NSPR_TAG: "${NSPR_TAG:-NSPR_4_39_RTM}"
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss-pqc-slot0
+      PKCS11_CHECK_SLOT: "0"
 
   # OpenCryptoki 3.27.0 (IBM, v3.0, OpenSSL 4.0.0)
   test-opencryptoki:
@@ -131,6 +157,16 @@ services:
       dockerfile: docker/nss-softoken/Dockerfile.main
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss-main
+
+  # NSS main, slot 0 (Internal Cryptographic Services) — second pass (see test-nss-slot0).
+  test-nss-main-slot0:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: docker/nss-softoken/Dockerfile.main
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss-main-slot0
+      PKCS11_CHECK_SLOT: "0"
 
   # SoftHSM2 main branch (latest development + custom OpenSSL)
   test-softhsm2-main:

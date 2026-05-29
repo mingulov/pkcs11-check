@@ -146,10 +146,16 @@ login ... can store Private Keys and Certs as token objects". So standalone
 (and any digest test) **skips** under the default slot-1 config because slot 1 does
 not advertise SHA digest mechanisms — not because NSS lacks them. Running the same
 test with `PKCS11_CHECK_SLOT=0` makes NSS digest **pass** (verified: RSA+ECDSA+digest
-all pass on slot 0). To cover NSS's slot-0-only mechanisms, run a second NSS pass
-with `PKCS11_CHECK_SLOT=0` (slot 1 remains the right slot for persistent
-key/cert/token-object tests). Source:
+all pass on slot 0). Slot 1 remains the right slot for persistent
+key/cert/token-object tests. Source:
 <https://nss-crypto.org/reference/security/nss/legacy/pkcs11/faq/index.html>.
+
+**Coverage:** each NSS target now has a dedicated slot-0 second pass —
+`test-nss-slot0`, `test-nss-pqc-slot0`, `test-nss-main-slot0` (same images with
+`PKCS11_CHECK_SLOT=0`, separate artifact dirs). `test_pool.py` runs `nss-slot0` /
+`nss-pqc-slot0` in the default set and `nss-main-slot0` under `--all`, so NSS's
+slot-0-only mechanisms (digest, hashes, bulk ciphers) are exercised alongside the
+slot-1 key/cert pass.
 
 ### Known crash findings
 - **AES-MAC-GENERAL sign flag probe segfault**: focused current-source runs for
