@@ -4,26 +4,39 @@ Failures **70** · file-crashes **5** · classes **46** (sum 70). Root causes: [
 
 ## The crashes are a DEBUG-build artifact, not a FIPS-mode vulnerability
 
-The SIGABRT (rc=6) "crashes" below are almost entirely an artifact of how the FIPS
-variant is **built**, not a kryoptic FIPS defect. `docker/kryoptic/Dockerfile.fips`
-builds kryoptic with `cargo build` (**debug**, no `--release`) — kryoptic's
-reference CI configuration. A Rust **debug** build enables integer-overflow checks
-and `debug_assert!`, so the security/fuzz arguments (`ulDataLen=SIZE_MAX`,
-`template_count=H`, `pNonce=NULL`, `pParameter=NULL`, …) trigger a **panic →
-`abort()` (signal 6)** *before* reaching the crypto. A **release** build compiles
-those checks out and the same calls return a `CKR_*` error — which is exactly what
-stable kryoptic v1.5.0 (a release build) does (0 crashes).
+The SIGABRT (rc=6) "crashes" below are an artifact of how the FIPS variant is
+**built**, not a kryoptic FIPS defect. `docker/kryoptic/Dockerfile.fips` builds
+kryoptic with `cargo build` (**debug**, no `--release`) — kryoptic's reference CI
+configuration. A Rust **debug** build enables integer-overflow checks and
+`debug_assert!`, so the security/fuzz arguments (`ulDataLen=SIZE_MAX`,
+`template_count=H`, `pNonce=NULL`, …) trigger a **panic → `abort()` (signal 6)**
+*before* reaching the crypto. A release build compiles those checks out.
 
-Evidence (2026-05-29 investigation):
-- Building `--features fips,pqc` against **official OpenSSL 4.0.0 (`enable-fips`)
-  compiles cleanly** in release — the `simo5/openssl` fork is no longer required
-  to build, and OpenSSL is *not* the cause of these aborts (they fire Rust-side,
-  before OpenSSL).
-- A `--release` FIPS build is blocked only by kryoptic's FIPS integrity packaging:
-  `hmacify.sh` needs a `.rodata1` HMAC-placeholder section that release
-  optimization strips (`objcopy: error: .rodata1 not found`); `-C link-dead-code`
-  does not restore it. Producing a release FIPS module needs a kryoptic source
-  change (`#[used]` on the placeholder). That is why the reference CI uses debug.
+**Empirical support:** stable kryoptic **v1.5.0 (release)** runs the exact same
+overflow/FFI tests (`test_parameter_validation`, `test_ffi_*`, the `*Overflow`
+classes) with **0 crashes** (it returns `CKR_*` errors); the FIPS variant runs the
+*same v1.5.0 source* in **debug** and aborts on them. The build mode is the only
+relevant difference.
+
+**Why FIPS can't simply be rebuilt in release (2026-05-29 investigation):**
+`misc/hmacify.sh` needs a `.rodata1` section to hold the module HMAC. That section
+is **not** in kryoptic's Rust source — it comes from the statically linked OpenSSL
+(the simo5/openssl fork's Red Hat FIPS patches). A release build's section-GC
+strips it (`objcopy: error: .rodata1 not found`); forcing it back with
+`-Wl,--no-gc-sections` keeps `.rodata1` (hmacify then succeeds) but also retains
+dead code referencing an unresolved symbol, so the module fails to load
+(`undefined symbol: OSSL_PROVIDER_unload`). A clean release FIPS build therefore
+needs upstream kryoptic build support (a linker-script `KEEP(.rodata1)` or
+equivalent), not a Dockerfile/`RUSTFLAGS` tweak — which is why the reference CI
+builds debug.
+
+**Official OpenSSL is not (yet) usable for the FIPS build:** `--features fips,pqc`
+*compiles* against official `openssl-4.0.0` (`enable-fips`), but the FIPS-integrity
+packaging fails — official OpenSSL's FIPS is a separate `fips.so` provider and does
+not emit the fork's `.rodata1`-embedded HMAC, so `hmacify` finds no `.rodata1`
+(verified: official+debug and official+release both fail there; fork+debug is the
+only working combination). The simo5/openssl fork stays required until kryoptic
+adopts OpenSSL's upstream FIPS-indicator scheme (planned for OpenSSL 3.5+).
 
 Distinct from stable kryoptic's historical crashes, which *were* OpenSSL-side
 (release build + system OpenSSL 3.x → OOB in EVP) and went away with OpenSSL 4.0.0
