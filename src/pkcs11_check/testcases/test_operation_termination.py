@@ -1,9 +1,10 @@
-"""Conformance: a single-shot C_Verify / C_Digest MUST terminate the operation.
+"""Conformance: C_Verify / C_VerifyFinal / C_Digest / C_EncryptFinal MUST
+terminate the operation.
 
 PKCS#11 v3.0/v3.1 makes the termination guarantee UNCONDITIONAL:
-  - C_Verify: "A call to C_Verify always terminates the active verification
-    operation" (whether it returns CKR_OK, CKR_SIGNATURE_INVALID,
-    CKR_SIGNATURE_LEN_RANGE, CKR_ARGUMENTS_BAD, ...).
+  - C_Verify / C_VerifyFinal: "A call to C_Verify[Final] always terminates the
+    active verification operation" (whether it returns CKR_OK,
+    CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE, CKR_ARGUMENTS_BAD, ...).
   - C_Digest: "A call to C_Digest always terminates the active digest operation
     unless it returns CKR_BUFFER_TOO_SMALL" (so with an adequate output buffer,
     any return code must terminate the op).
@@ -194,6 +195,83 @@ def test_c_verify_terminates_after_rejected_ecdsa_signature(p11_raw_session: Any
         good_sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
         wrong = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, hashlib.sha256(b"different").digest())
         _assert_verify_terminates(rs, pub, CKM_ECDSA, digest, good_sig, wrong, "ECDSA")
+    finally:
+        destroy_quietly(rs.raw, rs.sh, pub)
+        destroy_quietly(rs.raw, rs.sh, priv)
+
+
+def _assert_verify_final_terminates(
+    rs: Any,
+    key: int,
+    verify_mech: int,
+    chunks: list[bytes],
+    good_sig: bytes,
+    wrong_value_sig: bytes,
+    label: str,
+) -> None:
+    """Multipart analogue of `_assert_verify_terminates`.
+
+    For each rejected-signature variant, C_VerifyInit + C_VerifyUpdate(chunks) +
+    C_VerifyFinal(bad) must leave NO active operation. Fails on the first variant
+    that leaves the verify operation active.
+    """
+    raw, sh = rs.raw, rs.sh
+    mech = mech_simple(verify_mech)
+    probed = 0
+    for name, bad in _bad_sig_variants(good_sig, wrong_value_sig):
+        expect_rv(raw.C_VerifyInit(sh, mech.byref(), key), CKR_OK)
+        for chunk in chunks:
+            expect_rv(raw.C_VerifyUpdate(sh, to_ubyte_buf(chunk), len(chunk)), CKR_OK)
+        rv = int(raw.C_VerifyFinal(sh, to_ubyte_buf(bad), len(bad)))
+        if rv == CKR_OK:
+            continue  # variant unexpectedly verified; op terminated, try the next one
+        probed += 1
+        rv2 = int(raw.C_VerifyInit(sh, mech.byref(), key))
+        if rv2 == CKR_OPERATION_ACTIVE:
+            _cancel_operation(raw, sh, int(CKF_VERIFY))  # tidy; session closed after the test
+            classify_lifecycle_effect(
+                claimed_success=True,  # C_VerifyFinal returned a verdict (op complete per spec)
+                effect_observed=True,  # yet a verify op is still active
+                label=(
+                    f"{label}: C_VerifyFinal({name}) returned {ckr_name(rv)} but left the verify "
+                    f"operation active (next C_VerifyInit -> CKR_OPERATION_ACTIVE) -- the spec "
+                    f"requires C_VerifyFinal to ALWAYS terminate the active verification operation"
+                ),
+            )
+            return  # unreachable: classify_lifecycle_effect raised
+        # Terminated correctly. rv2 started a fresh verify op -> complete it so the
+        # next variant's C_VerifyInit starts clean.
+        if rv2 == CKR_OK:
+            for chunk in chunks:
+                raw.C_VerifyUpdate(sh, to_ubyte_buf(chunk), len(chunk))
+            raw.C_VerifyFinal(sh, to_ubyte_buf(bad), len(bad))
+        else:
+            _cancel_operation(raw, sh, int(CKF_VERIFY))
+    if probed == 0:
+        pytest.skip(f"{label}: no malformed signature produced a rejection to probe")
+
+
+def test_c_verify_final_terminates_after_rejected_signature(p11_raw_session: Any) -> None:
+    """Multipart RSA PKCS#1 v1.5: a rejected C_VerifyFinal must leave no active op.
+
+    The multipart analogue of test_c_verify_terminates_after_rejected_rsa_signature.
+    PKCS#11 ("Functions for verifying signatures and MACs", C_VerifyFinal): "A call
+    to C_VerifyFinal always terminates the active verification operation" -- including
+    a wrong-LENGTH signature (CKR_SIGNATURE_LEN_RANGE), which kryoptic's verify_final
+    leaves dangling exactly as its single-shot verify() does.
+    """
+    rs = p11_raw_session
+    if not rs.has_mechanism("SHA256_RSA_PKCS"):
+        pytest.skip("SHA256_RSA_PKCS not supported by module")
+    pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
+    try:
+        msg = b"pkcs11-check multipart verify-final termination conformance probe"
+        chunks = [msg[: len(msg) // 2], msg[len(msg) // 2 :]]
+        good_sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, msg)
+        wrong = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"a different message")
+        _assert_verify_final_terminates(
+            rs, pub, CKM_SHA256_RSA_PKCS, chunks, good_sig, wrong, "RSA"
+        )
     finally:
         destroy_quietly(rs.raw, rs.sh, pub)
         destroy_quietly(rs.raw, rs.sh, priv)
