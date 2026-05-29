@@ -20,7 +20,7 @@ class TestP11TestConfigDefaults:
         assert config.pin is None
         assert config.interface == "auto"
         assert config.timeout_operation == 30
-        assert config.timeout_test == 120
+        assert config.timeout_test == 180
         assert config.destructive is False
         assert config.max_sessions == 1
         assert config.skip_unsupported is True

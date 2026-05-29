@@ -265,8 +265,15 @@ def discover_auto_isolation_units(
     pytest_args: list[str],
     policy_file: Path | None = None,
     env: Mapping[str, str] | None = None,
+    collected_out: list[CollectedPytestItem] | None = None,
 ) -> list[str]:
-    """Expand targets into a mixed file/test unit list for auto isolation."""
+    """Expand targets into a mixed file/test unit list for auto isolation.
+
+    If ``collected_out`` is provided, the per-item metadata gathered here (a
+    full ``--collect-only`` pass over the suite) is appended to it so the caller
+    can reuse it — e.g. for the disabled-baseline selection plan — instead of
+    running a second identical collection pass over ~all tests at startup.
+    """
     file_units = discover_pytest_units(targets, default_root, granularity="file")
     units: list[str] = []
     promoted_files = load_promoted_files(policy_file, pytest_args, env)
@@ -275,6 +282,8 @@ def discover_auto_isolation_units(
         pytest_args,
         env=dict(env or os.environ),
     )
+    if collected_out is not None:
+        collected_out.extend(collected_items)
     markers_by_file = _markers_by_file(collected_items)
 
     # Build set of files that have collected items (respects -m, -k filters).
@@ -1328,14 +1337,34 @@ def load_run_state(path: Path) -> FileRunState | None:
 
 
 def save_run_state(path: Path, state: FileRunState) -> None:
-    """Persist the current runner state to disk."""
+    """Persist the current runner state to disk.
+
+    ``save_run_state`` is called once per completed unit (plus extra times on
+    crash/timeout escalation), so its cost is paid ~N times over a full run.
+    We deliberately do NOT serialize ``state.report_records_by_unit`` here:
+    those per-test JSONL records are already persisted authoritatively as
+    per-unit shards under ``<state>.report-records/`` (written by
+    ``_write_unit_report_record_cache``) and the end-of-run merge always reads
+    them back from those shards. Embedding the records in state.json made the
+    payload grow to hundreds of MB and turned the per-unit save into an O(n^2)
+    re-serialization (~14 min on a full bouncyhsm round) for data that is never
+    the sole source of truth. The in-memory dict remains available as a
+    same-process fallback in the merge step; on resume the records are
+    reconstructed from the shards (and the prior report.jsonl).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
+    payload: dict[str, Any] = {
         "fingerprint": state.fingerprint,
         "units": state.units,
         "results": [asdict(result) for result in state.results],
-        "report_records_by_unit": state.report_records_by_unit,
     }
+    if os.environ.get("PKCS11_CHECK_STATE_INLINE_RECORDS") == "1":
+        # Opt-in legacy/debug behavior: embed the per-unit report records inline.
+        # This is the O(n^2) re-serialization the default path deliberately
+        # avoids (records already live in per-unit shards). Retained only as an
+        # escape hatch for offline state inspection and for A/B perf measurement;
+        # it is OFF by default and never needed for resume.
+        payload["report_records_by_unit"] = state.report_records_by_unit
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 

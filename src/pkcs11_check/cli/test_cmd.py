@@ -14,7 +14,7 @@ from pydantic import SecretStr
 from rich.console import Console
 
 from pkcs11_check.config import P11TestConfig
-from pkcs11_check.core.collection import collect_pytest_item_metadata
+from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.file_runner import (
     IsolatedReportConfig,
     discover_auto_isolation_units,
@@ -107,7 +107,7 @@ def test_command(
     module: Path = typer.Option(..., "--module", "-m", help="Path to PKCS#11 module"),
     interface: str = typer.Option("auto", "--interface", "-i", help="Interface version"),
     sessions: int = typer.Option(1, "--sessions", "-s", help="Concurrent sessions"),
-    timeout: int = typer.Option(120, "--timeout", "-t", help="Per-test timeout (seconds)"),
+    timeout: int = typer.Option(180, "--timeout", "-t", help="Per-test timeout (seconds)"),
     category: str | None = typer.Option(None, "--category", "-c", help="Test categories"),
     match: str | None = typer.Option(None, "--match", help="Test name pattern"),
     marker: str | None = typer.Option(None, "--marker", help="Pytest marker expression (-m)"),
@@ -247,16 +247,22 @@ def test_command(
 
             try:
                 collected_items = None
+                auto_collected: list[CollectedPytestItem] | None = None
                 if isolation == "auto":
                     prior_state = load_run_state(state_file) if resume else None
                     if prior_state is not None:
                         units = prior_state.units
                     else:
+                        # Capture the collection metadata produced during unit
+                        # discovery so we don't run a second identical
+                        # --collect-only pass below for the disabled plan.
+                        auto_collected = []
                         units = discover_auto_isolation_units(
                             target_args,
                             Path(_TESTCASES_DIR),
                             pytest_args=pytest_args,
                             policy_file=policy_file,
+                            collected_out=auto_collected,
                         )
                     runner_granularity: Literal["mixed"] | Literal["file", "test"] = "mixed"
                 else:
@@ -270,7 +276,11 @@ def test_command(
                     runner_granularity = isolated_mode
                 if disabled_nodeids:
                     if isolation == "auto":
-                        collected_items = collect_pytest_item_metadata(target_args, pytest_args)
+                        collected_items = (
+                            auto_collected
+                            if auto_collected is not None
+                            else collect_pytest_item_metadata(target_args, pytest_args)
+                        )
                     elif runner_granularity == "file":
                         collected_items = collect_pytest_item_metadata(target_args, pytest_args)
                     selection_plan = build_disabled_selection_plan(

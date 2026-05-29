@@ -329,7 +329,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "discover_auto_isolation_units",
-            lambda targets, default_root, *, pytest_args, policy_file: [  # type: ignore[arg-type]
+            lambda targets, default_root, *, pytest_args, policy_file, collected_out=None: [  # type: ignore[arg-type]
                 "src/pkcs11_check/testcases/test_demo.py",
                 "src/pkcs11_check/testcases/test_marked.py::test_case",
             ],
@@ -415,7 +415,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "discover_auto_isolation_units",
-            lambda targets, default_root, *, pytest_args, policy_file: [  # type: ignore[arg-type]
+            lambda targets, default_root, *, pytest_args, policy_file, collected_out=None: [  # type: ignore[arg-type]
                 str(default_root / "test_alpha.py")
             ],
         )
@@ -491,7 +491,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "discover_auto_isolation_units",
-            lambda targets, default_root, *, pytest_args, policy_file: pytest.fail(  # type: ignore[arg-type]
+            lambda *_a, **_k: pytest.fail(  # type: ignore[arg-type]
                 "auto discovery should not run for resume with saved state"
             ),
         )
@@ -589,7 +589,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "discover_auto_isolation_units",
-            lambda targets, default_root, *, pytest_args, policy_file: [
+            lambda targets, default_root, *, pytest_args, policy_file, collected_out=None: [
                 str(default_root / "test_alpha.py")
             ],  # type: ignore[arg-type]
         )
