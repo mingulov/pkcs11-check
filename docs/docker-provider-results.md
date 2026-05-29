@@ -8,23 +8,27 @@ For the size of the test suite itself, see [test-universe.md](test-universe.md).
 For focused crash, timeout, and broad failure classification, see
 [provider-crash-failure-findings.md](provider-crash-failure-findings.md).
 
-> **Status (2026-05-28): the matrix below is the 2026-05-27 PRE-FIX baseline.** The
-> in-progress test-outcome classification fixes shift pass/fail/xfail materially (more
-> findings surface as `fail`/`xfail`); a **post-fix Docker rerun (FP-8) refresh is pending**.
-> Large counts (>1000) are rounded to ~Xk to avoid churn.
+> **Status (2026-05-30): refreshed to the 2026-05-30 POST-FIX full sweep.** This is the
+> first full matrix run with the `CKR_OPERATION_ACTIVE` recovery in place across **all**
+> providers — the prior 2026-05-27/05-29 snapshots had cascade-inflated failures (matrix
+> total `failed` 49,592 → 11,103; `CKR_OPERATION_ACTIVE` failures 38,808 → 39). Reference
+> implementations (softhsm2, opencryptoki) are unchanged vs the prior run; the remaining
+> failures are genuine provider findings. Combined baseline:
+> `artifacts/_matrix/baseline-2026-05-30.json` (supersedes `baseline-2026-05-29.json`).
 
 ## Snapshot Metadata
 
 | Field | Value |
 | --- | --- |
-| Report generated | 2026-05-27 |
+| Report generated | 2026-05-30 |
 | Source manifest | `docker/provider-sources.toml` |
 | Source manifest observed at | `2026-05-25T08:21:09Z` |
-| Provider summary artifact | `artifacts/_matrix/provider-summary.json` |
-| Provider summary generated at | `2026-05-27` (regenerated from the artifact set via `artifacts/_matrix/provider-summary.json`) |
-| Artifact source | per-provider `artifacts/<target>/quality.json` summaries; BouncyHSM is now a single monolithic full run |
-| Matrix command family | `bash docker/test-all.sh --all --rebuild` plus targeted follow-up slices |
-| Runner mode | isolated Docker target runs with per-file/mixed subprocess isolation |
+| Provider summary artifact | `artifacts/_matrix/baseline-2026-05-30.json` |
+| Provider summary generated at | `2026-05-30` (combined from per-provider `artifacts/<target>-pooled/results.json`) |
+| Cascade-fix status | POST-fix — `CKR_OPERATION_ACTIVE` recovery active for all providers |
+| Artifact source | per-provider `artifacts/<target>-pooled/results.json` summaries (pooled/sharded run) |
+| Matrix command family | `docker/test_pool.py` full pooled sweep |
+| Runner mode | pooled Docker target runs with per-file/mixed subprocess isolation |
 
 Failures, errors, crashes, and timeouts are retained as provider findings unless
 a section explicitly identifies a pkcs11-check issue that was fixed after the
@@ -81,19 +85,23 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 
 | Docker target | Source | Status | Total | Passed | Failed | Skipped | Xfailed | Errors | Crashed | Timeout |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `softhsm2` | SoftHSM2 2.7.0, OpenSSL 3.6.2 | full | 82,105 | 44,878 | 85 | 32,267 | 4,875 | 0 | 0 | 0 |
-| `softhsm2-main` | SoftHSM2 main, OpenSSL 4.0.0 | full | 82,884 | 46,301 | 97 | 31,526 | 4,960 | 0 | 0 | 0 |
-| `kryoptic` | Kryoptic v1.5.0, OpenSSL 4.0.0 | full | 108,611 | 51,645 | 115 | 44,756 | 12,095 | 0 | 0 | 0 |
-| `kryoptic-main` | Kryoptic main, OpenSSL 4.0.0 | full | 108,611 | 51,660 | 106 | 44,755 | 12,090 | 0 | 0 | 0 |
-| `kryoptic-fips` | Kryoptic FIPS/PQC + custom OpenSSL branch | full diagnostic | 92,534 | 37,071 | 70 | 44,558 | 10,823 | 0 | 12 | 0 |
-| `nss` | Fedora NSS softoken package | full | 92,972 | 38,271 | 151 | 53,184 | 1,363 | 0 | 3 | 0 |
-| `nss-pqc` | NSS/NSPR RTM tags (currently byte-identical to `nss-main` — confirm/rerun before citing separately) | full | 92,276 | 36,916 | 119 | 53,957 | 1,280 | 0 | 4 | 0 |
-| `nss-main` | NSS/NSPR source tips | full | 92,276 | 36,916 | 119 | 53,957 | 1,280 | 0 | 4 | 0 |
-| `opencryptoki` | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 97,356 | 63,262 | 270 | 32,922 | 902 | 0 | 0 | 0 |
-| `opencryptoki-master` | OpenCryptoki master, OpenSSL 4.0.0 | full | 97,356 | 63,261 | 271 | 32,922 | 902 | 0 | 0 | 0 |
-| `tpm2` | source-built tpm2-pkcs11 1.10.0 | full | 81,357 | 8,306 | 213 | 68,534 | 4,304 | 0 | 0 | 0 |
-| `pkcs11-mock` | pkcs11-mock v2.0.0 | full mock baseline | 32,590 | 1,320 | 1,353 | 28,866 | 1,051 | 0 | 0 | 0 |
-| `bouncyhsm` | BouncyHSM v2.1.0 | full (now monolithic) | 108,118 | 55,485 | 7,692 | 36,233 | 8,703 | 0 | 5 | 0 |
+| `softhsm2` | SoftHSM2 2.7.0, OpenSSL 3.6.2 | full | 78,962 | 42,053 | 135 | 31,749 | 5,025 | 0 | 0 | 0 |
+| `softhsm2-generated-iv` | SoftHSM2 2.7.0 + generated-IV patch, OpenSSL 3.6.2 | full | 78,962 | 42,056 | 134 | 31,747 | 5,025 | 0 | 0 | 0 |
+| `softhsm2-main` | SoftHSM2 main, OpenSSL 4.0.0 | full | 79,741 | 42,994 | 135 | 31,502 | 5,110 | 0 | 0 | 0 |
+| `kryoptic` | Kryoptic v1.5.0, OpenSSL 4.0.0 | full | 105,467 | 48,190 | 175 | 44,683 | 12,419 | 0 | 0 | 0 |
+| `kryoptic-main` | Kryoptic main, OpenSSL 4.0.0 | full | 105,467 | 48,205 | 166 | 44,682 | 12,414 | 0 | 0 | 0 |
+| `kryoptic-fips` | Kryoptic FIPS/PQC + custom OpenSSL branch | full diagnostic | 89,386 | 34,526 | 129 | 44,485 | 10,234 | 0 | 12 | 0 |
+| `nss` | Fedora NSS softoken package (slot 1) | full | 89,840 | 35,740 | 183 | 53,113 | 801 | 0 | 3 | 0 |
+| `nss-pqc` | NSS/NSPR RTM tags (slot 1; near-identical to `nss-main`, differs only by a flaky overflow-crash case) | full | 89,147 | 34,870 | 163 | 53,392 | 718 | 0 | 4 | 0 |
+| `nss-main` | NSS/NSPR source tips (slot 1) | full | 89,147 | 34,868 | 165 | 53,392 | 718 | 0 | 4 | 0 |
+| `nss-slot0` | Fedora NSS softoken, slot 0 (Internal Crypto Services) | full | 90,324 | 36,313 | 198 | 52,988 | 822 | 0 | 3 | 0 |
+| `nss-pqc-slot0` | NSS/NSPR RTM tags, slot 0 | full | 89,649 | 35,446 | 181 | 53,279 | 739 | 0 | 4 | 0 |
+| `nss-main-slot0` | NSS/NSPR source tips, slot 0 | full | 89,649 | 35,446 | 181 | 53,279 | 739 | 0 | 4 | 0 |
+| `opencryptoki` | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 94,220 | 59,735 | 356 | 32,873 | 1,256 | 0 | 0 | 0 |
+| `opencryptoki-master` | OpenCryptoki master, OpenSSL 4.0.0 | full | 94,220 | 59,735 | 356 | 32,873 | 1,256 | 0 | 0 | 0 |
+| `tpm2` | source-built tpm2-pkcs11 1.10.0 | full | 78,209 | 6,597 | 187 | 67,054 | 4,371 | 0 | 0 | 0 |
+| `pkcs11-mock` | pkcs11-mock v2.0.0 | full mock baseline | 29,525 | 230 | 117 | 29,120 | 58 | 0 | 0 | 0 |
+| `bouncyhsm` | BouncyHSM v2.1.0 | full (monolithic) | 104,980 | 52,629 | 8,142 | 36,200 | 8,006 | 0 | 3 | 0 |
 
 Skip composition (why skipped counts are large): a large share of skips are
 not-applicable rather than untested. Per provider, roughly **~18k skips are
@@ -116,28 +124,30 @@ Per-target test execution time, summed from each unit's `duration_s` in
 `results.json` (per-file subprocess isolation). These exclude Docker image build
 and token setup.
 
-| Target | Test execution |
+| Target | Test execution (summed unit time) |
 | --- | ---: |
 | `pkcs11-mock` | ~3 min |
-| `nss`, `nss-main`, `nss-pqc` | ~9-10 min |
-| `softhsm2`, `softhsm2-main` | ~9-10 min |
-| `kryoptic`, `kryoptic-main`, `kryoptic-fips` | ~15-18 min |
-| `tpm2` | ~25 min |
-| `opencryptoki-master` | ~89 min |
-| `opencryptoki` | ~128 min |
-| `bouncyhsm` | ~237 min |
-| **All 13 targets combined** | **~9.6 hours** |
+| `nss-main`, `nss-main-slot0` | ~7-8 min |
+| `softhsm2`/`-main`/`-generated-iv`, `nss-pqc`/`-slot0`, `nss-slot0` | ~8-10 min |
+| `nss`, `tpm2` | ~10 min |
+| `opencryptoki`, `opencryptoki-master` | ~13 min |
+| `kryoptic-main`, `kryoptic-fips`, `kryoptic` | ~14-16 min |
+| `bouncyhsm` | ~98 min |
+| **All 17 targets (summed)** | **~4.4 hours** |
 
-The OpenCryptoki release vs master gap (~128 vs ~89 min) is run-to-run variance
-on the same suite. BouncyHSM is the slow outlier because of an AES vector
-timeout tail (see the segmented evidence below).
+These are the sum of per-unit `duration_s` (per-file subprocess isolation), **not**
+wall-clock — the pooled runner (`docker/test_pool.py`) executes targets in parallel,
+so the real sweep wall-clock is far shorter. The large drop vs the 2026-05-27 snapshot
+(opencryptoki ~89-128 → ~13 min, bouncyhsm ~237 → ~98 min, tpm2 ~25 → ~10 min) is the
+module-scoped `p11_module_session` fixture. BouncyHSM remains the slow outlier (AES
+vector tail).
 
 ## BouncyHSM Segmented Evidence
 
-> Superseded for the 2026-05-27 snapshot: the matrix row above is now a single
-> monolithic BouncyHSM full run (`artifacts/bouncyhsm/`, total 108,118). The
-> segmented breakdown below is retained as earlier diagnostic detail and for the
-> per-group findings, not as the current headline statistic.
+> Superseded: the matrix row above is the 2026-05-30 monolithic BouncyHSM full run
+> (`artifacts/bouncyhsm-pooled/`, total 104,980, 8,142 failed). The segmented
+> breakdown below is retained as **2026-05-27 diagnostic detail** for the per-group
+> failure attribution (Wycheproof ECDH, AES-CCM), not as the current headline statistic.
 
 BouncyHSM is reachable and configured, but one monolithic full-suite run was
 not used as the headline statistic because AES vector execution entered a
