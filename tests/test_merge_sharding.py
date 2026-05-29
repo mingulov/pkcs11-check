@@ -46,6 +46,33 @@ def test_plan_shards_balances_by_count_without_durations() -> None:
     assert sorted(len(s) for s in shards) == [3, 3, 3, 3]
 
 
+def test_plan_shards_isolates_known_heavy_files_without_oracle() -> None:
+    # The 3 ACVP-AES MCT files must land in DISTINCT batches even with no duration
+    # oracle (via the synthetic heavy weight), so no batch concentrates them.
+    base = "src/pkcs11_check/testcases/acvp/aes/"
+    heavy = [base + n for n in ("test_cfb8.py", "test_ofb.py", "test_cfb128.py")]
+    light = [f"src/pkcs11_check/testcases/test_light_{i}.py" for i in range(40)]
+    shards = plan_shards(heavy + light, 4)  # no durations -> heavy weighting kicks in
+    heavy_locations = {
+        u.rsplit("/", 1)[-1]: i
+        for i, s in enumerate(shards)
+        for u in s
+        if u.rsplit("/", 1)[-1] in {"test_cfb8.py", "test_ofb.py", "test_cfb128.py"}
+    }
+    assert len(set(heavy_locations.values())) == 3  # one heavy file per batch
+    # still a complete, disjoint partition
+    flat = sorted(u for s in shards for u in s)
+    assert flat == sorted(heavy + light)
+
+
+def test_plan_shards_heavy_disabled_when_none() -> None:
+    base = "src/pkcs11_check/testcases/acvp/aes/"
+    heavy = [base + n for n in ("test_cfb8.py", "test_ofb.py", "test_cfb128.py")]
+    shards = plan_shards([*heavy, "x.py"], 2, heavy_basenames=None)
+    flat = sorted(u for s in shards for u in s)
+    assert flat == sorted([*heavy, "x.py"])  # partition intact, no special handling
+
+
 def test_duration_by_unit_folds_per_test_nodeids(tmp_path: Path) -> None:
     results = {
         "units": [

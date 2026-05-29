@@ -30,16 +30,31 @@ def duration_by_unit_from_results(results_path: Path) -> dict[str, float]:
     return out
 
 
+# Files known to dominate wall time on transport-bound providers: the ACVP-AES
+# MCT cases run ~100k chained ops (~11 min each on bouncyhsm) and are indivisible
+# at file granularity. Lacking a measured duration, they get a synthetic weight so
+# the balancer ISOLATES them into separate batches instead of lumping them (which
+# produces a straggler batch). Provider-agnostic: with a real oracle a measured
+# duration wins (a file a provider skips stays light); on a first run a skipped
+# heavy file just yields an instant batch the pool immediately moves past.
+DEFAULT_HEAVY_BASENAMES: tuple[str, ...] = ("test_cfb8.py", "test_ofb.py", "test_cfb128.py")
+_HEAVY_WEIGHT_SECONDS = 660.0
+
+
 def plan_shards(
     units: list[str],
     num_shards: int,
     *,
     duration_by_unit: dict[str, float] | None = None,
+    heavy_basenames: tuple[str, ...] | None = DEFAULT_HEAVY_BASENAMES,
 ) -> list[list[str]]:
     """Partition ``units`` into ``num_shards`` balanced groups (LPT).
 
     Returns a list of ``num_shards`` lists. Deterministic: ties broken by unit
-    name so the same inputs always produce the same shards.
+    name so the same inputs always produce the same shards. Known-heavy files
+    (``heavy_basenames``) lacking a measured duration are weighted so they land in
+    separate batches rather than concentrating in one (straggler avoidance);
+    pass ``heavy_basenames=None`` to disable.
     """
     if num_shards < 1:
         raise ValueError("num_shards must be >= 1")
@@ -49,9 +64,15 @@ def plan_shards(
     durations = duration_by_unit or {}
     known = [d for d in durations.values() if d > 0]
     fallback = statistics.median(known) if known else 1.0
+    heavy = set(heavy_basenames or ())
 
     def weight(unit: str) -> float:
-        return durations.get(unit, fallback) or fallback
+        measured = durations.get(unit, 0.0) or 0.0
+        if measured > 0:
+            return measured
+        if unit.rsplit("/", 1)[-1] in heavy:
+            return _HEAVY_WEIGHT_SECONDS
+        return fallback
 
     shards: list[list[str]] = [[] for _ in range(num_shards)]
     loads = [0.0] * num_shards
