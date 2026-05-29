@@ -125,6 +125,32 @@ provider package versions where the finding was first recorded.
 | ~2 | AES-XCBC-MAC | NSS returns CKR_KEY_TYPE_INCONSISTENT on verify despite CKA_VERIFY=True |
 | ~27 | Other | AEAD, key flags, mechanism fuzz, etc. — per-file analysis needed |
 
+### Slot architecture — digest/crypto coverage gap (not an NSS bug)
+
+NSS softoken (`libsoftokn3.so`) exposes **two** slots with split responsibilities,
+and the harness pins `PKCS11_CHECK_SLOT=1`, which silently omits the slot-0-only
+mechanisms (standalone hashes, some bulk ciphers):
+
+| slot index | slot_id | token / description | login | digest (SHA-1/224/256) | keys+certs |
+|---|---|---|---|---|---|
+| 0 | 1 | NSS Internal Cryptographic Services | none | **yes** (232 mechs) | session-only / imported |
+| 1 | 2 | NSS User Private Key and Certificate Services | required | **no** (179 mechs) | persistent token objects |
+
+Per the NSS PKCS#11 FAQ, slot 1 (Internal Crypto Services) "does not require login
+and supports public key operations and all bulk ciphers and hashes ... no token
+storage", while slot 2 (User Private Key and Certificate Services) "requires a
+login ... can store Private Keys and Certs as token objects". So standalone
+`C_Digest` (CKM_SHA*) is advertised only on slot index 0.
+
+**Effect:** `test_operation_termination.py::test_c_digest_terminates_after_each_call`
+(and any digest test) **skips** under the default slot-1 config because slot 1 does
+not advertise SHA digest mechanisms — not because NSS lacks them. Running the same
+test with `PKCS11_CHECK_SLOT=0` makes NSS digest **pass** (verified: RSA+ECDSA+digest
+all pass on slot 0). To cover NSS's slot-0-only mechanisms, run a second NSS pass
+with `PKCS11_CHECK_SLOT=0` (slot 1 remains the right slot for persistent
+key/cert/token-object tests). Source:
+<https://nss-crypto.org/reference/security/nss/legacy/pkcs11/faq/index.html>.
+
 ### Known crash findings
 - **AES-MAC-GENERAL sign flag probe segfault**: focused current-source runs for
   Fedora NSS, `nss-pqc` (`NSS_3_124_RTM`/`NSPR_4_39_RTM`), and `nss-main` all
