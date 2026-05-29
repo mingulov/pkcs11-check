@@ -146,3 +146,30 @@ def test_cancel_call_raising_is_swallowed_and_escalates_to_reopen() -> None:
     rv = _init_or_recover(_RaisingCancelRaw(), 7, lambda: CKR_OPERATION_ACTIVE)  # type: ignore[arg-type]
     assert rv == CKR_OPERATION_ACTIVE
     assert consume_session_reopen_request()
+
+
+def test_holder_consumes_reopen_request_even_when_session_unhealthy() -> None:
+    # The holder's get_session must consume the reopen request unconditionally:
+    # if the health check short-circuits the `or`, the request would otherwise
+    # remain set and trigger a spurious SECOND reopen on the next handout.
+    from pkcs11_check.fixtures import _ModuleSessionHolder
+
+    class _Mod:
+        raw = object()
+
+    holder = _ModuleSessionHolder(_Mod(), object())  # type: ignore[arg-type]
+    holder._sh, holder._slot_id = 1, 0
+    reopens = {"n": 0}
+
+    def _fake_reopen() -> None:
+        reopens["n"] += 1
+        holder._sh, holder._slot_id = 1, 0
+
+    holder._is_healthy = lambda: False  # type: ignore[method-assign]  # unhealthy: would short-circuit
+    holder._reopen = _fake_reopen  # type: ignore[method-assign]
+
+    request_session_reopen()
+    holder.get_session()
+
+    assert reopens["n"] == 1, "unhealthy session must reopen"
+    assert consume_session_reopen_request() is False, "request must be consumed, not left stale"

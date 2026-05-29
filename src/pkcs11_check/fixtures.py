@@ -284,7 +284,11 @@ class _ModuleSessionHolder:
         left an unclearable active operation (see recipes._init_or_recover)."""
         from pkcs11_check.raw.recipes import consume_session_reopen_request
 
-        if not self._is_healthy() or consume_session_reopen_request():
+        # Consume the reopen request FIRST (unconditionally) so it is always
+        # cleared -- a short-circuit on the health check must not leave a stale
+        # request that triggers a spurious reopen on a later handout.
+        reopen_requested = consume_session_reopen_request()
+        if reopen_requested or not self._is_healthy():
             self._reopen()
         assert self._sh is not None and self._slot_id is not None
         return self._sh, self._slot_id, dict(self._bootstrap_log)

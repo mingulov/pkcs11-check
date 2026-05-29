@@ -147,3 +147,32 @@ rejection code), not as failures.
    immediate-victim test of each of the ~12 length-malformed trigger vectors,
    detected one test too late to save — a bounded, near-source remnant rather
    than a file-wide cascade).
+
+## Recovery: scope, interface-independence, and limitations
+
+- **Interface-independent (behaviour-based, not version-based).** Recovery never
+  reads the negotiated interface version; it tries `C_SessionCancel` and reacts
+  to what happens. Absent function (v2.40, or a v3.x NULL/unloaded pointer) →
+  `AttributeError` → reopen path. Present-but-failing (`CKR_FUNCTION_NOT_SUPPORTED`,
+  `CKR_OPERATION_CANCEL_FAILED`, or a call that raises) → swallowed; the **retry**
+  `C_*Init` decides. The cancel's return value is never trusted — the *effect* is
+  verified by the retry, so a missing, broken, or lying `C_SessionCancel` all
+  converge on the safe outcome (reopen).
+- **All crypto-operation init entry points are wrapped**: single-shot
+  encrypt/decrypt/sign/verify/digest, the multipart `*Init`, and
+  sign-recover/verify-recover. Any of them can be the victim of a stale op left
+  by a prior test, so any of them can trigger recovery.
+- **Findings are not masked.** Recovery fires only on `CKR_OPERATION_ACTIVE`
+  (never on the clean path). The tests that deliberately assert
+  `CKR_OPERATION_ACTIVE` (op-race, dual-function, the raw CKR suites) use raw
+  `C_*Init` and check the return code themselves — they do not route through the
+  recovering recipes, so they are unaffected. The genuine non-termination finding
+  is surfaced by `test_operation_termination.py` using raw calls.
+- **Known limitations.** (1) `C_FindObjectsInit` is not wrapped — object-search is
+  a separate operation class not addressable by `C_SessionCancel`'s mechanism
+  flags; a dangling find op (none observed) would be bounded by the per-test
+  session reopen / per-file subprocess teardown rather than recovered in place.
+  (2) The conformance test probes *verify* termination (RSA + ECDSA); a
+  hypothetical success-path non-termination on another operation class probed
+  *through a recipe* could be recovered (masked) — extend the conformance test
+  if such a provider appears.

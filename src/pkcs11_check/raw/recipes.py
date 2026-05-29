@@ -958,7 +958,7 @@ def sign_recover_single(
 ) -> bytes:
     """Sign and recover data in a single operation (C_SignRecoverInit + C_SignRecover)."""
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_SignRecoverInit(session, mech.byref(), key)
+    rv = _init_or_recover(raw, session, lambda: raw.C_SignRecoverInit(session, mech.byref(), key))
     if rv == CKR_FUNCTION_NOT_SUPPORTED:
         raise NotImplementedError("C_SignRecover not supported by this module")
     expect_rv(rv, CKR_OK)
@@ -983,7 +983,7 @@ def verify_recover_single(
     CKR_BUFFER_TOO_SMALL for C_VerifyRecover.
     """
     mech = _resolve_mech(mechanism, None)
-    rv = raw.C_VerifyRecoverInit(session, mech.byref(), key)
+    rv = _init_or_recover(raw, session, lambda: raw.C_VerifyRecoverInit(session, mech.byref(), key))
     if rv == CKR_FUNCTION_NOT_SUPPORTED:
         raise NotImplementedError("C_VerifyRecover not supported by this module")
     expect_rv(rv, CKR_OK)
@@ -1402,7 +1402,7 @@ def sign_multipart(
 ) -> bytes:
     """Sign data in multiple parts. Returns signature."""
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_SignInit(session, mech.byref(), key)
+    rv = _init_or_recover(raw, session, lambda: raw.C_SignInit(session, mech.byref(), key))
     expect_rv(rv, CKR_OK)
     for chunk in chunks:
         in_buf = to_ubyte_buf(chunk)
@@ -1426,7 +1426,7 @@ def verify_multipart(
     Returns True if valid, False if CKR_SIGNATURE_INVALID/CKR_SIGNATURE_LEN_RANGE.
     """
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_VerifyInit(session, mech.byref(), key)
+    rv = _init_or_recover(raw, session, lambda: raw.C_VerifyInit(session, mech.byref(), key))
     expect_rv(rv, CKR_OK)
     for chunk in chunks:
         in_buf = to_ubyte_buf(chunk)
@@ -1452,7 +1452,7 @@ def digest_multipart(
 ) -> bytes:
     """Digest data in multiple parts. Returns digest."""
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_DigestInit(session, mech.byref())
+    rv = _init_or_recover(raw, session, lambda: raw.C_DigestInit(session, mech.byref()))
     expect_rv(rv, CKR_OK)
     for chunk in chunks:
         in_buf = to_ubyte_buf(chunk)
