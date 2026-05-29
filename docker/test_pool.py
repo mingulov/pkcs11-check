@@ -30,7 +30,7 @@ from pkcs11_check.core.merge import merge_shard_dirs
 from pkcs11_check.core.sharding import plan_shards
 
 # Editable per-provider shard counts; providers not listed default to 1 (undivided).
-SHARD_MAP: dict[str, int] = {"bouncyhsm": 8, "opencryptoki": 3}
+SHARD_MAP: dict[str, int] = {"bouncyhsm": 8, "opencryptoki": 3, "opencryptoki-master": 3}
 DEFAULT_PROVIDERS = [
     "softhsm2",
     "kryoptic",
@@ -41,6 +41,16 @@ DEFAULT_PROVIDERS = [
     "pkcs11-mock",
     "tpm2",
 ]
+# Development-branch / variant images (cold builds; some may build-fail and be skipped).
+VARIANT_PROVIDERS = [
+    "softhsm2-main",
+    "softhsm2-generated-iv",
+    "kryoptic-main",
+    "kryoptic-fips",
+    "nss-main",
+    "opencryptoki-master",
+]
+ALL_PROVIDERS = DEFAULT_PROVIDERS + VARIANT_PROVIDERS
 TESTCASES = "src/pkcs11_check/testcases"
 COMPOSE = ["docker", "compose", "-f", "docker/docker-compose.test.yml"]
 
@@ -106,6 +116,11 @@ def main() -> int:
     )
     ap.add_argument("--no-build", action="store_true", help="skip rebuilding provider images")
     ap.add_argument(
+        "--all", action="store_true",
+        help="run the stable set PLUS the dev/variant images (softhsm2-main, kryoptic-main, "
+             "kryoptic-fips, nss-main, opencryptoki-master, softhsm2-generated-iv)",
+    )
+    ap.add_argument(
         "--dry-run", action="store_true",
         help="plan + verify the partition and print the work list; launch nothing",
     )
@@ -123,7 +138,7 @@ def main() -> int:
         if n:
             shard_map[name] = int(n)
     if not providers:
-        providers = list(DEFAULT_PROVIDERS)
+        providers = list(ALL_PROVIDERS if args.all else DEFAULT_PROVIDERS)
 
     project_root = Path.cwd()
     files = discover_files(args.testcases)
