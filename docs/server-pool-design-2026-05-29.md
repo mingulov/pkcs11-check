@@ -134,6 +134,23 @@ Three small, provider-agnostic pieces — **no provider image changes**:
 
 `--shards 1` (default) = today's single-container behavior, byte-for-byte. `results.json` gains a `shards: {count, files_per_shard}` provenance field. Shard count per provider lives in the launcher/CI, not in any image.
 
+## 9a. Empirical result (2026-05-29, K=4 on a 12-core/21 GiB host)
+
+First real sharded bouncyhsm round via `docker/test-parallel.sh bouncyhsm --shards 4`:
+
+| | single container | **K=4 sharded** |
+|---|---|---|
+| wall-clock | 68.2 min | **24m55s** (≈2.7× faster, **under 30 min**) |
+| total tests | 104 962 | 104 962 (identical) |
+| coverage breadth | funcs 70/104, mechs 207/214 | **identical** (merge loses nothing) |
+| passed / failed / crashed | 52 397 / 8 391 / 3 | 52 386 / 8 402 / 3 (**±11**, total identical) |
+
+The ±11 is **G2 observed live**: `test_ccm` crashed on shard-3's fresh token (it ran clean in the single-token oracle), flipping ~11 outcomes — a state-dependent difference, not a merge error. Coverage breadth and total count are exact, confirming the merge is correct.
+
+**Two refinement levers found empirically:**
+1. **Core-aware K** — K=4 × ~2-4 cores **oversubscribed** the 12 cores (~1.5× slowdown). `--shards` now defaults to `cores/4` (=3 here) so shards run near solo speed. K=3 also matches the 3 indivisible ~11-min MCT files.
+2. **Crash-prone-file spread / heavy-file test-splitting** — shard-3 was the long pole (ccm crash + 86 light files). Spreading known-crashers (from `policy.json`) and optionally test-splitting the 3 MCT files would push wall toward ~15-18 min. Not needed to clear 30 min, but the path lower.
+
 ## 9. Expected payoff
 
 With good sharding (G1), wall ≈ `max-worker-load + pool overhead`. The ~33-min MCT block split across 3-4 workers → ~9-11 min; the rest (~18 min of work) spreads too. Realistic target **~20-30 min at N=4** (down from 68 min completing-MCT, or from ~54 min legacy-timeout). The idle-resource headroom (only 2/12 cores used today) confirms this is feasible without contention.

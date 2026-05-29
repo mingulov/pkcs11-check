@@ -8,6 +8,7 @@ from pkcs11_check.cli.compliance_cmd import compliance_report_command
 from pkcs11_check.cli.fetch_cmd import fetch_data_command, fetch_disabled_command
 from pkcs11_check.cli.info_cmd import info_command
 from pkcs11_check.cli.list_cmd import list_command
+from pkcs11_check.cli.shard_cmd import merge_shards_command, shard_units_command
 from pkcs11_check.cli.state_cmd import state_command
 from pkcs11_check.cli.test_cmd import test_command
 
@@ -37,6 +38,8 @@ app.command("state")(state_command)
 app.command("compliance-report")(compliance_report_command)
 app.command("fetch-data")(fetch_data_command)
 app.command("fetch-disabled")(fetch_disabled_command)
+app.command("shard-units")(shard_units_command)
+app.command("merge-shards")(merge_shards_command)
 
 
 @app.command()
