@@ -120,17 +120,23 @@ def _cancel_operation(raw: RawPKCS11, session: int, flags: int) -> None:
     mis-attributing a finding to the wrong call.
 
     Uses ``C_SessionCancel`` (PKCS#11 v3.0+, the spec-blessed way to abort an
-    in-progress operation). Modules that predate v3.0 do not expose it
-    (``AttributeError``); cleanup is best-effort, so that is swallowed. The
-    cancel's own return value is intentionally ignored -- this is teardown of
-    an already-failing path, not an assertion point, so it must never mask the
-    original error being propagated.
+    in-progress operation). Behaviour-based, not version-based: it simply tries
+    the call. A module that does not expose ``C_SessionCancel`` (pre-v3.0, or a
+    v3.x module whose function pointer is NULL) raises ``AttributeError`` from
+    the binding; a malformed invocation raises ``OSError`` / ``ctypes.ArgumentError``.
+    All are swallowed because this is best-effort teardown -- it must never mask
+    the original error on the terminal-failure path, nor turn a failed cancel on
+    the recovery path into a hard error (the caller re-checks the actual
+    operation state and escalates to a session reopen if it is still active). The
+    cancel's own return value is likewise ignored: the effect is verified by the
+    caller, never the cancel's claim.
     """
     try:
         raw.C_SessionCancel(session, flags)
-    except AttributeError:
-        # Module lacks C_SessionCancel (pre-v3.0). Nothing portable to do; the
-        # per-test/subprocess session teardown still bounds the leak.
+    except (AttributeError, OSError, ctypes.ArgumentError):
+        # C_SessionCancel absent (pre-v3.0 / NULL pointer) or the call failed.
+        # Nothing portable to do here; the caller's retry + reopen fallback (or
+        # the per-test/subprocess session teardown) still bounds the leak.
         pass
 
 

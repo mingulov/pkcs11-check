@@ -53,6 +53,25 @@ class _PreV30Raw:
     """No C_SessionCancel attribute (pre-v3.0 module)."""
 
 
+class _ErroringCancelRaw:
+    """C_SessionCancel is present but returns a failure code (e.g. a v3.x module
+    that advertises it but cannot cancel, or returns CKR_FUNCTION_NOT_SUPPORTED)."""
+
+    def __init__(self) -> None:
+        self.cancels = 0
+
+    def C_SessionCancel(self, sh: int, flags: int) -> int:  # noqa: N802
+        self.cancels += 1
+        return 0x00000054  # CKR_FUNCTION_NOT_SUPPORTED -- arbitrary non-OK code
+
+
+class _RaisingCancelRaw:
+    """C_SessionCancel call itself raises (e.g. ctypes-level failure)."""
+
+    def C_SessionCancel(self, sh: int, flags: int) -> int:  # noqa: N802
+        raise OSError("simulated cancel call failure")
+
+
 def test_recovers_in_place_when_cancel_clears_the_op() -> None:
     raw = _RecordingRaw()
     attempts = {"n": 0}
@@ -109,3 +128,21 @@ def test_consume_is_one_shot() -> None:
     request_session_reopen()
     assert consume_session_reopen_request() is True
     assert consume_session_reopen_request() is False, "request must clear after one consume"
+
+
+def test_cancel_returning_an_error_code_still_escalates_to_reopen() -> None:
+    # C_SessionCancel present but returns a failure code: the rv is ignored and the
+    # retry (still active) drives the reopen -- the effect is verified, not the claim.
+    raw = _ErroringCancelRaw()
+    rv = _init_or_recover(raw, 7, lambda: CKR_OPERATION_ACTIVE)  # type: ignore[arg-type]
+    assert rv == CKR_OPERATION_ACTIVE
+    assert raw.cancels == 1
+    assert consume_session_reopen_request()
+
+
+def test_cancel_call_raising_is_swallowed_and_escalates_to_reopen() -> None:
+    # If the cancel call itself raises (ctypes-level failure), recovery must not
+    # turn that into a hard error -- it falls through to the reopen request.
+    rv = _init_or_recover(_RaisingCancelRaw(), 7, lambda: CKR_OPERATION_ACTIVE)  # type: ignore[arg-type]
+    assert rv == CKR_OPERATION_ACTIVE
+    assert consume_session_reopen_request()
