@@ -4,27 +4,27 @@ PKCS#11 v3.0/v3.1, "Functions for verifying signatures and MACs", C_Verify:
 
     "The verification operation MUST have been initialized with C_VerifyInit. A
      call to C_Verify always terminates the active verification operation."
-    "A successful call to C_Verify should return either the value CKR_OK
-     (indicating that the supplied signature is valid) or CKR_SIGNATURE_INVALID
-     (indicating that the supplied signature is invalid). If the signature can
-     be seen to be invalid purely on the basis of its length, then
-     CKR_SIGNATURE_LEN_RANGE should be returned. In any of these cases, the
-     active verification operation is terminated."
 
-So CKR_SIGNATURE_INVALID and CKR_SIGNATURE_LEN_RANGE are EXPLICITLY terminal
-outcomes. A provider that leaves the verify operation active after one of them
-violates the spec: the next C_VerifyInit then returns CKR_OPERATION_ACTIVE.
+The termination guarantee is UNCONDITIONAL -- it holds whether C_Verify returns
+CKR_OK, CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE, CKR_ARGUMENTS_BAD, or
+any other code. A provider that leaves the verify operation active after
+rejecting a signature violates the spec: the next C_VerifyInit then returns
+CKR_OPERATION_ACTIVE.
 
-Observed offenders: kryoptic v1.5.0 and tpm2-pkcs11 (across RSA, ECDSA, PSS,
-HMAC, and PQC verify mechanisms). Under the shared module-scoped session this
-single dangling operation cascaded CKR_OPERATION_ACTIVE onto thousands of
-unrelated tests; the harness now cancels dangling operations on each handout
-(see tests/test_module_session_hygiene.py), and THIS test attributes the
-genuine provider bug to its source as a Type-C lifecycle self-contradiction
-(C_Verify returned a terminal verdict, then did not honor termination).
+Observed offenders fail on DIFFERENT malformations, so we probe several:
+  - kryoptic v1.5.0  leaves the op active after a wrong-LENGTH sig
+    (CKR_SIGNATURE_LEN_RANGE);
+  - tpm2-pkcs11      leaves the op active after an empty / too-long sig
+    (CKR_ARGUMENTS_BAD), but terminates correctly on CKR_SIGNATURE_INVALID.
 
-Runs on a fresh function-scoped session so the bug-trigger operation, if left
-dangling by a non-compliant provider, dies with the session.
+Under the shared module-scoped session this single dangling operation cascaded
+CKR_OPERATION_ACTIVE onto thousands of unrelated tests; the harness now recovers
+the shared session (see tests/test_operation_active_recovery.py) and THIS test
+attributes the genuine provider bug to its source as a Type-C lifecycle
+self-contradiction (C_Verify returned a verdict, then did not honor termination).
+
+Runs on a fresh function-scoped session so any operation a non-compliant provider
+leaves dangling dies with the session.
 """
 
 from __future__ import annotations
@@ -44,16 +44,12 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
     CKR_OK,
     CKR_OPERATION_ACTIVE,
-    CKR_SIGNATURE_INVALID,
-    CKR_SIGNATURE_LEN_RANGE,
 )
 from pkcs11_check.testcases.conftest import (
     classify_lifecycle_effect,
     gen_ec_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
 )
-
-_TERMINAL_REJECTIONS = (CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE)
 
 
 def _cancel_verify(raw: Any, sh: int) -> None:
@@ -64,43 +60,63 @@ def _cancel_verify(raw: Any, sh: int) -> None:
         pass
 
 
+def _bad_sig_variants(good_sig: bytes, wrong_value_sig: bytes) -> list[tuple[str, bytes]]:
+    """Malformations that should each be REJECTED -- and, per spec, each terminate
+    the operation. Different non-compliant providers fail on different ones."""
+    return [
+        ("too-short", good_sig[:-1]),
+        ("too-long", good_sig + b"\x00\x00"),
+        ("empty", b""),
+        ("all-zero", bytes(len(good_sig))),
+        ("wrong-value", wrong_value_sig),
+    ]
+
+
 def _assert_verify_terminates(
-    rs: Any, key: int, verify_mech: int, msg: bytes, good_sig: bytes, label: str
+    rs: Any,
+    key: int,
+    verify_mech: int,
+    msg: bytes,
+    good_sig: bytes,
+    wrong_value_sig: bytes,
+    label: str,
 ) -> None:
-    """Reject a signature, then assert the verify operation was terminated."""
+    """For each rejected-signature variant, assert C_Verify terminated the op.
+
+    Fails on the FIRST variant that leaves the operation active (one offending
+    malformation is enough to surface the spec violation).
+    """
     raw, sh = rs.raw, rs.sh
-    bad_sig = good_sig[:-1]  # one byte short -> a length-based terminal rejection
     mech = mech_simple(verify_mech)
-
-    expect_rv(raw.C_VerifyInit(sh, mech.byref(), key), CKR_OK)
-    rv = int(raw.C_Verify(sh, to_ubyte_buf(msg), len(msg), to_ubyte_buf(bad_sig), len(bad_sig)))
-
-    if rv == CKR_OK:
-        _cancel_verify(raw, sh)
-        pytest.skip(f"{label}: truncated signature was accepted; cannot probe rejection path")
-    if rv not in _TERMINAL_REJECTIONS:
-        # A clean-but-unexpected rejection code: a noted deviation, not this finding.
-        _cancel_verify(raw, sh)
-        pytest.xfail(
-            f"{label}: C_Verify rejected with {ckr_name(rv)} "
-            f"(expected CKR_SIGNATURE_INVALID/CKR_SIGNATURE_LEN_RANGE)"
-        )
-
-    # rv is a terminal verdict -> the spec REQUIRES the operation be terminated.
-    rv2 = int(raw.C_VerifyInit(sh, mech.byref(), key))
-    _cancel_verify(raw, sh)  # tidy whichever op is now active
-    if rv2 not in (CKR_OK, CKR_OPERATION_ACTIVE):
-        pytest.xfail(f"{label}: probing C_VerifyInit returned unexpected {ckr_name(rv2)}")
-
-    classify_lifecycle_effect(
-        claimed_success=True,  # C_Verify returned a terminal verdict (op complete per spec)
-        effect_observed=(rv2 == CKR_OPERATION_ACTIVE),  # yet a verify op is still active
-        label=(
-            f"{label}: C_Verify returned a terminal verdict ({ckr_name(rv)}) but left the "
-            f"verify operation active (next C_VerifyInit -> CKR_OPERATION_ACTIVE) -- the spec "
-            f"requires C_Verify to always terminate the active verification operation"
-        ),
-    )
+    probed = 0
+    for name, bad in _bad_sig_variants(good_sig, wrong_value_sig):
+        expect_rv(raw.C_VerifyInit(sh, mech.byref(), key), CKR_OK)
+        rv = int(raw.C_Verify(sh, to_ubyte_buf(msg), len(msg), to_ubyte_buf(bad), len(bad)))
+        if rv == CKR_OK:
+            continue  # variant unexpectedly verified; op terminated, try the next one
+        probed += 1
+        rv2 = int(raw.C_VerifyInit(sh, mech.byref(), key))
+        if rv2 == CKR_OPERATION_ACTIVE:
+            _cancel_verify(raw, sh)  # tidy (best-effort; session is closed after the test anyway)
+            classify_lifecycle_effect(
+                claimed_success=True,  # C_Verify returned a verdict (op complete per spec)
+                effect_observed=True,  # yet a verify op is still active
+                label=(
+                    f"{label}: C_Verify({name}) returned {ckr_name(rv)} but left the verify "
+                    f"operation active (next C_VerifyInit -> CKR_OPERATION_ACTIVE) -- the spec "
+                    f"requires C_Verify to ALWAYS terminate the active verification operation"
+                ),
+            )
+            return  # unreachable: classify_lifecycle_effect raised
+        # Terminated correctly. rv2 started a fresh verify op -> complete it so the
+        # next variant's C_VerifyInit starts clean.
+        if rv2 == CKR_OK:
+            raw.C_Verify(sh, to_ubyte_buf(msg), len(msg), to_ubyte_buf(bad), len(bad))
+        else:
+            _cancel_verify(raw, sh)
+    if probed == 0:
+        pytest.skip(f"{label}: no malformed signature produced a rejection to probe")
+    # Every probed rejection terminated the operation -> spec-compliant.
 
 
 def test_c_verify_terminates_after_rejected_rsa_signature(p11_raw_session: Any) -> None:
@@ -112,7 +128,9 @@ def test_c_verify_terminates_after_rejected_rsa_signature(p11_raw_session: Any) 
     try:
         msg = b"pkcs11-check operation-termination conformance probe"
         good_sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, msg)
-        _assert_verify_terminates(rs, pub, CKM_SHA256_RSA_PKCS, msg, good_sig, "RSA")
+        # structurally valid, wrong hash -> typically CKR_SIGNATURE_INVALID
+        wrong = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"a different message")
+        _assert_verify_terminates(rs, pub, CKM_SHA256_RSA_PKCS, msg, good_sig, wrong, "RSA")
     finally:
         destroy_quietly(rs.raw, rs.sh, pub)
         destroy_quietly(rs.raw, rs.sh, priv)
@@ -128,7 +146,8 @@ def test_c_verify_terminates_after_rejected_ecdsa_signature(p11_raw_session: Any
         # CKM_ECDSA (raw) signs the message hash directly; P-256 -> 32-byte input.
         digest = hashlib.sha256(b"pkcs11-check operation-termination conformance probe").digest()
         good_sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
-        _assert_verify_terminates(rs, pub, CKM_ECDSA, digest, good_sig, "ECDSA")
+        wrong = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, hashlib.sha256(b"different").digest())
+        _assert_verify_terminates(rs, pub, CKM_ECDSA, digest, good_sig, wrong, "ECDSA")
     finally:
         destroy_quietly(rs.raw, rs.sh, pub)
         destroy_quietly(rs.raw, rs.sh, priv)

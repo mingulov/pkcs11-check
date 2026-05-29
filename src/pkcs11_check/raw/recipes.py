@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from ctypes import byref
 from typing import Any
 
@@ -63,11 +63,14 @@ from .types_std import (
     CKA_VALUE_LEN,
     CKA_VERIFY,
     CKF_DECRYPT,
+    CKF_DIGEST,
     CKF_ENCRYPT,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKF_SIGN,
+    CKF_SIGN_RECOVER,
     CKF_VERIFY,
+    CKF_VERIFY_RECOVER,
     CKK,
     CKK_AES,
     CKK_DSA,
@@ -87,6 +90,7 @@ from .types_std import (
     CKR_BUFFER_TOO_SMALL,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
+    CKR_OPERATION_ACTIVE,
     CKR_SIGNATURE_INVALID,
     CKR_SIGNATURE_LEN_RANGE,
 )
@@ -128,6 +132,81 @@ def _cancel_operation(raw: RawPKCS11, session: int, flags: int) -> None:
         # Module lacks C_SessionCancel (pre-v3.0). Nothing portable to do; the
         # per-test/subprocess session teardown still bounds the leak.
         pass
+
+
+# Every single-shot crypto operation class -- the mask used when recovering from
+# a stale operation whose class we do not know (it may differ from the init we
+# are retrying, e.g. a leftover verify op blocking a later init on a buggy module).
+_ALL_OP_FLAGS = (
+    CKF_ENCRYPT
+    | CKF_DECRYPT
+    | CKF_DIGEST
+    | CKF_SIGN
+    | CKF_SIGN_RECOVER
+    | CKF_VERIFY
+    | CKF_VERIFY_RECOVER
+)
+
+
+# Set when a single-shot recipe meets a CKR_OPERATION_ACTIVE it cannot clear in
+# place (e.g. tpm2-pkcs11: PKCS#11 v2.40, no C_SessionCancel, and its NULL-mechanism
+# C_VerifyInit does not cancel either -- only closing+reopening the session clears
+# the stale op). The module-scoped session holder consumes this on the next handout
+# and reopens, so the cascade stops at one collateral failure instead of running to
+# the end of the file. Process-global is safe under the per-file subprocess runner
+# (one session, one thread); a spurious reopen for a function-scoped session is
+# harmless.
+_SESSION_REOPEN_REQUESTED = False
+
+
+def request_session_reopen() -> None:
+    """Ask the shared-session holder to reopen before the next handout."""
+    global _SESSION_REOPEN_REQUESTED
+    _SESSION_REOPEN_REQUESTED = True
+
+
+def consume_session_reopen_request() -> bool:
+    """Return whether a reopen was requested since the last call, and clear it."""
+    global _SESSION_REOPEN_REQUESTED
+    requested = _SESSION_REOPEN_REQUESTED
+    _SESSION_REOPEN_REQUESTED = False
+    return requested
+
+
+def _init_or_recover(raw: RawPKCS11, session: int, init_fn: Callable[[], int]) -> int:
+    """Run a single-shot ``C_*Init``; recover from a non-compliant provider's stale op.
+
+    A ``C_*Init`` returns ``CKR_OPERATION_ACTIVE`` when an operation of that class
+    is already active on the session. Some providers (kryoptic v1.5.0,
+    tpm2-pkcs11) violate the spec by leaving a verify operation active after
+    ``C_Verify`` rejects a signature ("a call to C_Verify always terminates the
+    active verification operation"); on a shared module-scoped session that makes
+    the NEXT test's ``C_*Init`` return ``CKR_OPERATION_ACTIVE`` and cascade onto
+    every following test.
+
+    Recovery is tiered and fires ONLY on ``CKR_OPERATION_ACTIVE`` (the common clean
+    path runs the init exactly once, so this does not regress RPC-bound modules):
+
+    1. ``C_SessionCancel`` the stale op and retry the init once (works on
+       PKCS#11 v3.0+ modules such as kryoptic -- cheap, same session handle).
+    2. If the init still reports the op active (e.g. tpm2-pkcs11: v2.40 with no
+       ``C_SessionCancel``, and no other in-place cancel works), request a session
+       reopen via :func:`request_session_reopen`. The recipe cannot reopen itself
+       (that would change the handle the caller holds), so the current call still
+       surfaces ``CKR_OPERATION_ACTIVE``; the holder reopens before the next test,
+       stopping the cascade at a single collateral failure.
+
+    The return value is surfaced unchanged (never looped, never masked); the
+    genuine provider bug is reported as a FAIL by
+    ``testcases/test_operation_termination.py``.
+    """
+    rv = init_fn()
+    if rv == CKR_OPERATION_ACTIVE:
+        _cancel_operation(raw, session, _ALL_OP_FLAGS)
+        rv = init_fn()
+        if rv == CKR_OPERATION_ACTIVE:
+            request_session_reopen()
+    return rv
 
 
 def _resolve_mech(
@@ -723,7 +802,7 @@ def encrypt_single(
     rather than a hard failure.
     """
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_EncryptInit(session, mech.byref(), key)
+    rv = _init_or_recover(raw, session, lambda: raw.C_EncryptInit(session, mech.byref(), key))
     expect_rv(rv, CKR_OK)
     in_buf = to_ubyte_buf(plaintext)
     hint = output_size_hint or ((len(plaintext) + output_overhead) if output_overhead > 0 else 0)
@@ -762,7 +841,7 @@ def sign_single(
     on modules that fail the NULL probe.
     """
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_SignInit(session, mech.byref(), key)
+    rv = _init_or_recover(raw, session, lambda: raw.C_SignInit(session, mech.byref(), key))
     expect_rv(rv, CKR_OK)
     in_buf = to_ubyte_buf(data)
     try:
@@ -805,7 +884,7 @@ def decrypt_single(
       might under-estimate the real output (e.g. AEAD with unknown padding).
     """
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_DecryptInit(session, mech.byref(), key)
+    rv = _init_or_recover(raw, session, lambda: raw.C_DecryptInit(session, mech.byref(), key))
     expect_rv(rv, CKR_OK)
     in_buf = to_ubyte_buf(ciphertext)
     try:
@@ -839,7 +918,7 @@ def verify_single(
     or CKR_SIGNATURE_LEN_RANGE. Other errors raise AssertionError.
     """
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_VerifyInit(session, mech.byref(), key)
+    rv = _init_or_recover(raw, session, lambda: raw.C_VerifyInit(session, mech.byref(), key))
     expect_rv(rv, CKR_OK)
 
     data_buf = to_ubyte_buf(data)
@@ -926,7 +1005,7 @@ def digest_single(
 ) -> bytes:
     """Digest data in a single operation. Returns digest."""
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_DigestInit(session, mech.byref())
+    rv = _init_or_recover(raw, session, lambda: raw.C_DigestInit(session, mech.byref()))
     expect_rv(rv, CKR_OK)
     in_buf = to_ubyte_buf(data)
     return _two_call_output(raw, "C_Digest", session, in_buf, len(data))
@@ -943,7 +1022,7 @@ def digest_single_with_key(
     The key material is digested directly without exposing it outside the token.
     """
     mech = _resolve_mech(mechanism, None)
-    rv = raw.C_DigestInit(session, mech.byref())
+    rv = _init_or_recover(raw, session, lambda: raw.C_DigestInit(session, mech.byref()))
     expect_rv(rv, CKR_OK)
     rv = raw.C_DigestKey(session, key)
     if rv == CKR_FUNCTION_NOT_SUPPORTED:

@@ -5,12 +5,20 @@ same session; breaks any client that reuses a session for multiple verifies).
 
 **Affected providers (observed):**
 
-| Provider | Version | Interface |
-|---|---|---|
-| kryoptic | v1.5.0 | 3.2 |
-| tpm2-pkcs11 | (image `docker-test-tpm2`) | — |
+| Provider | Interface | Trigger (rejection code that is NOT terminated) | Recovery that works |
+|---|---|---|---|
+| kryoptic v1.5.0 | 3.2 | wrong-**length** sig → `CKR_SIGNATURE_LEN_RANGE` | `C_SessionCancel` |
+| tpm2-pkcs11 | **2.40** | empty / too-long sig → `CKR_ARGUMENTS_BAD` (terminates fine on `CKR_SIGNATURE_INVALID`) | **only close+reopen** |
 
-**Not affected (control):** SoftHSM2 2.7.0 (v2.40) terminates correctly.
+Both leave the verify operation active after *some* rejection; they differ in
+*which* rejection and in what recovery is possible. tpm2-pkcs11 is the harder
+case: being v2.40 it has no `C_SessionCancel`, its NULL-mechanism `C_VerifyInit`
+cancel idiom returns `CKR_ARGUMENTS_BAD` without cancelling, and
+`C_GetOperationState` is unsupported — so the only way to clear the dangling op
+is to close and reopen the session.
+
+**Not affected (control):** SoftHSM2 2.7.0 (v2.40) terminates correctly after
+every rejection.
 
 ---
 
@@ -120,13 +128,22 @@ rejection code), not as failures.
 ## How pkcs11-check handles this
 
 1. **Surfaced as a finding** — `testcases/test_operation_termination.py` is a
-   provider-general conformance test that rejects a signature and asserts the
-   verify operation was terminated. It `fail`s (Type-C lifecycle
-   self-contradiction) on the affected providers and `pass`es on compliant
-   ones. No per-provider configuration.
-2. **Cascade neutralized** — the shared module-scoped session
-   (`_ModuleSessionHolder` in `fixtures.py`) now cancels any dangling operation
-   via `C_SessionCancel` on each per-test handout, so one provider's
-   non-termination can no longer corrupt the thousands of unrelated tests that
-   share the session. This restores the true (un-inflated) outcomes of those
-   tests while keeping the finding itself visible (point 1).
+   provider-general conformance test that rejects a signature (probing several
+   malformations: too-short, too-long, empty, all-zero, wrong-value) and asserts
+   the verify operation was terminated. It `fail`s (Type-C lifecycle
+   self-contradiction) on kryoptic and tpm2-pkcs11 and `pass`es on compliant
+   modules. No per-provider configuration.
+2. **Cascade neutralized** — `recipes._init_or_recover` wraps every single-shot
+   `C_*Init`. It fires only on `CKR_OPERATION_ACTIVE` (zero cost on the clean
+   path, so no regression for RPC-bound modules) and recovers in tiers:
+   `C_SessionCancel` + retry clears it in place on v3.0+ modules (kryoptic);
+   if that cannot clear it (tpm2-pkcs11), it asks the shared-session holder
+   (`_ModuleSessionHolder`) to close+reopen the session before the next handout.
+   This restores the true outcomes of the unrelated tests that share the session
+   while keeping the finding itself visible (point 1).
+
+   Effect (single file, `test_wycheproof_rsa.py`): kryoptic 4866 → 0
+   `CKR_OPERATION_ACTIVE`; tpm2-pkcs11 2803 → 12 (the residual 12 are the single
+   immediate-victim test of each of the ~12 length-malformed trigger vectors,
+   detected one test too late to save — a bounded, near-source remnant rather
+   than a file-wide cascade).
