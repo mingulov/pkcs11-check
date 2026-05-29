@@ -127,6 +127,11 @@ def run_simple_encrypt_test(
                 mech_constant,
                 vec["pt"],
                 mech_param=mech,
+                # CFB/OFB: ciphertext length == plaintext length, so skip the
+                # NULL-buffer size query (one fewer round-trip per op on
+                # transport-bound modules). retry recovers if a module disagrees.
+                output_size_hint=len(vec["pt"]),
+                retry_on_buffer_too_small=True,
             )
         except AssertionError as exc:
             if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
@@ -184,6 +189,9 @@ def run_simple_decrypt_test(
                 mech_constant,
                 vec["ct"],
                 mech_param=mech,
+                # CFB/OFB: plaintext length == ciphertext length (see encrypt).
+                output_size_hint=len(vec["ct"]),
+                retry_on_buffer_too_small=True,
             )
         except AssertionError as exc:
             if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
@@ -314,6 +322,11 @@ def run_multiblock_encrypt_test(
                         mech_constant,
                         pt,
                         mech_param=mech,
+                        # MCT inner loop is the hot path: ~100k chained ops, each
+                        # a fresh init+encrypt. CFB/OFB ct len == pt len, so skip
+                        # the size-query round-trip; retry recovers a bad guess.
+                        output_size_hint=len(pt),
+                        retry_on_buffer_too_small=True,
                     )
                 except AssertionError as exc:
                     if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
@@ -390,6 +403,9 @@ def run_multiblock_decrypt_test(
                         mech_constant,
                         ct,
                         mech_param=mech,
+                        # MCT inner loop (see encrypt): CFB/OFB pt len == ct len.
+                        output_size_hint=len(ct),
+                        retry_on_buffer_too_small=True,
                     )
                 except AssertionError as exc:
                     if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):

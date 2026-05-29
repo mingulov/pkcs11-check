@@ -191,6 +191,21 @@ def _two_call_output(
         out_len = CK_ULONG(output_size_hint)
         out_buf = (ctypes.c_ubyte * output_size_hint)()
         rv = fn(*args, out_buf, byref(out_len))
+        if (
+            retry_on_buffer_too_small
+            and rv == CKR_BUFFER_TOO_SMALL
+            and out_len.value > output_size_hint
+        ):
+            # The hint under-estimated the output; the module reported the true
+            # size in out_len on the failing call. Re-allocate and retry once.
+            # This keeps callers that pass an exact-size hint (e.g. CFB/OFB,
+            # where ciphertext length == plaintext length) correct even if a
+            # module unexpectedly needs more space — the size query is skipped
+            # for speed, but a wrong guess is recovered, never silently dropped.
+            size = out_len.value
+            out_buf = (ctypes.c_ubyte * size)()
+            out_len = CK_ULONG(size)
+            rv = fn(*args, out_buf, byref(out_len))
         expect_rv(rv, CKR_OK)
         return bytes(out_buf[: out_len.value])
     # Standard two-call pattern: query size with NULL, then allocate and call again.
@@ -686,6 +701,7 @@ def encrypt_single(
     *,
     mech_param: PackedMechanism | None = None,
     output_overhead: int = 0,
+    output_size_hint: int = 0,
     retry_on_buffer_too_small: bool = False,
 ) -> bytes:
     """Encrypt data in a single operation. Returns ciphertext.
@@ -695,14 +711,22 @@ def encrypt_single(
     needed for modules (e.g. NSS softoken) that do not set the output length
     when called with a NULL buffer pointer during the size-query pass.
 
-    ``retry_on_buffer_too_small`` when True, if the module returns
-    CKR_BUFFER_TOO_SMALL with an updated size, re-allocates and retries once.
+    ``output_size_hint`` (> 0) skips the NULL-buffer size-query pass entirely
+    and goes straight to a single call with a pre-allocated buffer of that
+    size.  Pass it for stream/feedback modes where the ciphertext length equals
+    the plaintext length exactly (CFB/OFB) to halve the per-op round-trips on
+    transport-bound modules.  It takes precedence over ``output_overhead``.
+
+    ``retry_on_buffer_too_small`` when True, if the (single or post-probe) call
+    returns CKR_BUFFER_TOO_SMALL with an updated size, re-allocates and retries
+    once — the safety net that makes a too-small ``output_size_hint`` correct
+    rather than a hard failure.
     """
     mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_EncryptInit(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
     in_buf = to_ubyte_buf(plaintext)
-    hint = (len(plaintext) + output_overhead) if output_overhead > 0 else 0
+    hint = output_size_hint or ((len(plaintext) + output_overhead) if output_overhead > 0 else 0)
     try:
         return _two_call_output(
             raw,

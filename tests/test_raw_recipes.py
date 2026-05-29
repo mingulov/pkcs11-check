@@ -362,3 +362,97 @@ def test_benchmark_to_ubyte_buf(benchmark: Any, size: int) -> None:
     data = bytes(size)
     result = benchmark(to_ubyte_buf, data)
     assert len(result) == size
+
+
+class _CountingRaw:
+    """Minimal raw stub that records each output call's buffer-query mode.
+
+    Each recorded entry is ``True`` when called with a NULL output buffer (the
+    size-query pass) and ``False`` for a real call with an allocated buffer.
+    """
+
+    def __init__(self, output: bytes, *, too_small_once: bool = False) -> None:
+        self.output = output
+        self.too_small_once = too_small_once
+        self.calls: list[bool] = []
+
+    def _run(self, out_buf: Any, out_len_ref: Any) -> int:
+        from pkcs11_check.raw.types_std import CKR_BUFFER_TOO_SMALL, CKR_OK
+
+        is_query = out_buf is None
+        self.calls.append(is_query)
+        out_len = out_len_ref._obj  # the CK_ULONG behind byref()
+        full = len(self.output)
+        if is_query:
+            out_len.value = full
+            return CKR_OK
+        if self.too_small_once and out_len.value < full:
+            self.too_small_once = False
+            out_len.value = full  # report the true required size on failure
+            return CKR_BUFFER_TOO_SMALL
+        for i in range(full):
+            out_buf[i] = self.output[i]
+        out_len.value = full
+        return CKR_OK
+
+    def C_Encrypt(  # noqa: N802
+        self,
+        _session: int,
+        _in_buf: Any,
+        _in_len: int,
+        out_buf: Any,
+        out_len_ref: Any,
+    ) -> int:
+        return self._run(out_buf, out_len_ref)
+
+
+class TestTwoCallOutputSizing:
+    """Regression tests for the size-query optimization in _two_call_output.
+
+    Stream/feedback modes (AES CFB/OFB) have ciphertext length == plaintext
+    length, so the CFB/OFB runners pass ``output_size_hint`` to skip the
+    NULL-buffer size-query round-trip — roughly halving per-op round-trips on
+    transport-bound modules (e.g. bouncyhsm, one TCP RPC per call). The
+    single-call path MUST still recover from CKR_BUFFER_TOO_SMALL when
+    ``retry_on_buffer_too_small`` is set, so a wrong size guess is corrected
+    rather than silently dropped.
+    """
+
+    def test_hint_skips_size_query(self) -> None:
+        from pkcs11_check.raw.recipes import _two_call_output
+
+        raw = _CountingRaw(b"\xaa" * 16)
+        out = _two_call_output(raw, "C_Encrypt", 1, None, 16, output_size_hint=16)
+        assert out == b"\xaa" * 16
+        assert raw.calls == [False]  # single real call, no NULL size query
+
+    def test_no_hint_does_size_query(self) -> None:
+        from pkcs11_check.raw.recipes import _two_call_output
+
+        raw = _CountingRaw(b"\xaa" * 16)
+        out = _two_call_output(raw, "C_Encrypt", 1, None, 16)
+        assert out == b"\xaa" * 16
+        assert raw.calls == [True, False]  # NULL query, then real call
+
+    def test_hint_retries_on_buffer_too_small(self) -> None:
+        from pkcs11_check.raw.recipes import _two_call_output
+
+        raw = _CountingRaw(b"\xbb" * 20, too_small_once=True)
+        out = _two_call_output(
+            raw,
+            "C_Encrypt",
+            1,
+            None,
+            16,
+            output_size_hint=16,
+            retry_on_buffer_too_small=True,
+        )
+        assert out == b"\xbb" * 20
+        assert raw.calls == [False, False]  # too-small real call, then retry — no NULL query
+
+    def test_hint_without_retry_raises_on_buffer_too_small(self) -> None:
+        from pkcs11_check.raw.recipes import _two_call_output
+
+        raw = _CountingRaw(b"\xbb" * 20, too_small_once=True)
+        with pytest.raises(AssertionError):
+            _two_call_output(raw, "C_Encrypt", 1, None, 16, output_size_hint=16)
