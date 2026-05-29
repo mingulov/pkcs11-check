@@ -54,21 +54,18 @@ done
 (( concurrency > shards )) && concurrency="$shards"
 
 echo "=== planning $shards batches, $concurrency concurrent (host has $cores cores) ==="
-# Oracle MUST be this provider's own prior run — skip patterns (and thus per-file
-# durations) differ per provider, so another provider's oracle mis-balances.
-# Auto-detect the provider's own results if --prior-results wasn't given; else
-# fall back to count-balancing (first run; self-improves once a result exists).
-if [[ -z "$prior" ]]; then
-    for cand in "artifacts/${provider}-pooled/results.json" "artifacts/${provider}/results.json"; do
-        [[ -f "$cand" ]] && { prior="$cand"; break; }
-    done
-fi
+# Default = simple even count-balanced chunks. The M>N pool absorbs the resulting
+# imbalance (a worker that finishes early just pulls the next chunk), so precise
+# balancing is unnecessary — and a noisy/foreign duration oracle can make it
+# WORSE. Pass --prior-results <this-provider's results.json> only if you want
+# tighter duration-based packing (advanced; must be the SAME provider, since skip
+# patterns and thus per-file durations differ per provider).
 prior_arg=()
 if [[ -n "$prior" && -f "$prior" ]]; then
     prior_arg=(--prior-results "$prior")
-    echo "  oracle: $prior (duration-balanced)"
+    echo "  balance: duration-oracle ($prior)"
 else
-    echo "  oracle: none — count-balanced first run (saves durations for next time)"
+    echo "  balance: even count chunks (simple; pool absorbs imbalance)"
 fi
 mapfile -t LINES < <(uv run pkcs11-check shard-units --shards "$shards" --testcases "$testcases" "${prior_arg[@]}" --format lines)
 if [[ "${#LINES[@]}" -ne "$shards" ]]; then
