@@ -36,7 +36,12 @@ import pytest
 
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_simple
-from pkcs11_check.raw.recipes import destroy_quietly, sign_single, to_ubyte_buf
+from pkcs11_check.raw.recipes import (
+    _cancel_operation,
+    destroy_quietly,
+    sign_single,
+    to_ubyte_buf,
+)
 from pkcs11_check.raw.rv import ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
     CKF_VERIFY,
@@ -50,14 +55,6 @@ from pkcs11_check.testcases.conftest import (
     gen_ec_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
 )
-
-
-def _cancel_verify(raw: Any, sh: int) -> None:
-    """Best-effort cancel of any active verify op (no-op on pre-v3.0 modules)."""
-    try:
-        raw.C_SessionCancel(sh, int(CKF_VERIFY))
-    except AttributeError:
-        pass
 
 
 def _bad_sig_variants(good_sig: bytes, wrong_value_sig: bytes) -> list[tuple[str, bytes]]:
@@ -97,7 +94,9 @@ def _assert_verify_terminates(
         probed += 1
         rv2 = int(raw.C_VerifyInit(sh, mech.byref(), key))
         if rv2 == CKR_OPERATION_ACTIVE:
-            _cancel_verify(raw, sh)  # tidy (best-effort; session is closed after the test anyway)
+            _cancel_operation(
+                raw, sh, int(CKF_VERIFY)
+            )  # tidy (best-effort; session is closed after the test anyway)
             classify_lifecycle_effect(
                 claimed_success=True,  # C_Verify returned a verdict (op complete per spec)
                 effect_observed=True,  # yet a verify op is still active
@@ -113,7 +112,7 @@ def _assert_verify_terminates(
         if rv2 == CKR_OK:
             raw.C_Verify(sh, to_ubyte_buf(msg), len(msg), to_ubyte_buf(bad), len(bad))
         else:
-            _cancel_verify(raw, sh)
+            _cancel_operation(raw, sh, int(CKF_VERIFY))
     if probed == 0:
         pytest.skip(f"{label}: no malformed signature produced a rejection to probe")
     # Every probed rejection terminated the operation -> spec-compliant.

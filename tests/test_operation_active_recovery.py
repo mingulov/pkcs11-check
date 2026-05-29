@@ -89,6 +89,37 @@ def test_recovers_in_place_when_cancel_clears_the_op() -> None:
     assert not consume_session_reopen_request(), "in-place recovery needs no reopen"
 
 
+def test_recovery_cancels_every_crypto_operation_class() -> None:
+    # The tier-1 cancel mask must cover EVERY single-shot crypto op class so a
+    # stale op of ANY type (not just verify) left by a prior test is cleared. If
+    # a flag is ever dropped from _ALL_OP_FLAGS, that op class's cascade returns.
+    from pkcs11_check.raw.types_std import (
+        CKF_DECRYPT,
+        CKF_DIGEST,
+        CKF_ENCRYPT,
+        CKF_SIGN,
+        CKF_SIGN_RECOVER,
+        CKF_VERIFY,
+        CKF_VERIFY_RECOVER,
+    )
+
+    raw = _RecordingRaw()
+    _init_or_recover(raw, 7, lambda: CKR_OPERATION_ACTIVE)  # type: ignore[arg-type]
+
+    assert raw.cancels, "recovery must attempt a cancel"
+    _sh, flags = raw.cancels[-1]
+    for name, flag in (
+        ("ENCRYPT", CKF_ENCRYPT),
+        ("DECRYPT", CKF_DECRYPT),
+        ("DIGEST", CKF_DIGEST),
+        ("SIGN", CKF_SIGN),
+        ("SIGN_RECOVER", CKF_SIGN_RECOVER),
+        ("VERIFY", CKF_VERIFY),
+        ("VERIFY_RECOVER", CKF_VERIFY_RECOVER),
+    ):
+        assert flags & flag, f"tier-1 cancel mask is missing CKF_{name}"
+
+
 def test_clean_path_does_not_cancel_retry_or_reopen() -> None:
     raw = _RecordingRaw()
     attempts = {"n": 0}

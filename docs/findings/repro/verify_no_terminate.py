@@ -32,7 +32,13 @@ import sys
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
 from pkcs11_check.raw.pack import mech_simple
-from pkcs11_check.raw.recipes import gen_rsa_keypair, sign_single, to_ubyte_buf
+from pkcs11_check.raw.recipes import (
+    _VERIFY_FAIL_RVS,
+    gen_rsa_keypair,
+    sign_single,
+    to_ubyte_buf,
+)
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
@@ -40,19 +46,8 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
     CKR_OK,
     CKR_OPERATION_ACTIVE,
-    CKR_SIGNATURE_INVALID,
-    CKR_SIGNATURE_LEN_RANGE,
     CKU_USER,
 )
-
-
-def _rv_name(rv: int) -> str:
-    from pkcs11_check.raw import types_std
-
-    for name in dir(types_std):
-        if name.startswith("CKR_") and getattr(types_std, name) == rv:
-            return name
-    return f"0x{rv:08x}"
 
 
 def _verify_init(raw: RawPKCS11, sh: int, key: int) -> int:
@@ -115,20 +110,20 @@ def main() -> int:
             print("  (module has no C_SessionCancel -- pre-v3.0)")
 
         print()
-        print(f"  control  C_Verify(valid)                 -> {_rv_name(rv_good)}")
-        print(f"  control  C_VerifyInit after valid verify -> {_rv_name(rv_reinit_after_good)}")
-        print(f"  probe    C_Verify(invalid)               -> {_rv_name(rv_bad)}")
-        print(f"  probe    C_VerifyInit after invalid      -> {_rv_name(rv_reinit_after_bad)}")
-        print(f"  recover  C_SessionCancel(CKF_VERIFY)     -> {_rv_name(rv_cancel)}")
-        print(f"  recover  C_VerifyInit after cancel       -> {_rv_name(rv_reinit_after_cancel)}")
+        print(f"  control  C_Verify(valid)                 -> {ckr_name(rv_good)}")
+        print(f"  control  C_VerifyInit after valid verify -> {ckr_name(rv_reinit_after_good)}")
+        print(f"  probe    C_Verify(invalid)               -> {ckr_name(rv_bad)}")
+        print(f"  probe    C_VerifyInit after invalid      -> {ckr_name(rv_reinit_after_bad)}")
+        print(f"  recover  C_SessionCancel(CKF_VERIFY)     -> {ckr_name(rv_cancel)}")
+        print(f"  recover  C_VerifyInit after cancel       -> {ckr_name(rv_reinit_after_cancel)}")
         print()
 
         spec_ok = rv_reinit_after_bad == CKR_OK
         cascade = rv_reinit_after_bad == CKR_OPERATION_ACTIVE
-        if rv_bad not in (CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE):
+        if rv_bad not in _VERIFY_FAIL_RVS:
             print(
                 f"INCONCLUSIVE: rejected sig did not return a terminal "
-                f"CKR_SIGNATURE_* code (got {_rv_name(rv_bad)})"
+                f"CKR_SIGNATURE_* code (got {ckr_name(rv_bad)})"
             )
             return 3
         if spec_ok:
@@ -139,7 +134,7 @@ def main() -> int:
         if cascade:
             print(
                 f"BUG REPRODUCED: C_Verify left the verify operation ACTIVE after "
-                f"{_rv_name(rv_bad)}."
+                f"{ckr_name(rv_bad)}."
             )
             print(
                 "   The next C_VerifyInit returns CKR_OPERATION_ACTIVE -- spec violation "
@@ -150,7 +145,7 @@ def main() -> int:
                     "   C_SessionCancel(CKF_VERIFY) clears the dangling op (recovery path works)."
                 )
             return 1
-        print(f"UNEXPECTED: C_VerifyInit after invalid verify -> {_rv_name(rv_reinit_after_bad)}")
+        print(f"UNEXPECTED: C_VerifyInit after invalid verify -> {ckr_name(rv_reinit_after_bad)}")
         return 4
     finally:
         raw.C_Finalize(None)

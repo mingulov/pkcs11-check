@@ -92,6 +92,7 @@ def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[A
     This avoids UserAlreadyLoggedIn / UserTypeInvalid cascading failures.
     """
     from pkcs11_check.raw.bootstrap import close_session_quietly, logout_quietly
+    from pkcs11_check.raw.recipes import consume_session_reopen_request
 
     raw, sh, slot_id, logged_in = _open_raw_session(p11_module, p11_config)
     bootstrap_log = dict(raw.call_log)
@@ -103,6 +104,10 @@ def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[A
         if logged_in:
             logout_quietly(raw, sh)
         close_session_quietly(raw, sh)
+        # This is a fresh function-scoped session: a reopen request raised by a
+        # recipe here refers to THIS (now-closed) session, not the shared one, so
+        # discard it to keep it from leaking to a later module-scoped handout.
+        consume_session_reopen_request()
 
 
 def _build_ckm_alias_map() -> dict[int, list[str]]:
@@ -226,6 +231,7 @@ def p11_raw_session(
     CKR_USER_ALREADY_LOGGED_IN.
     """
     from pkcs11_check.raw.bootstrap import close_session_quietly, logout_quietly
+    from pkcs11_check.raw.recipes import consume_session_reopen_request
 
     raw, sh, slot_id, logged_in = _open_raw_session(p11_module, p11_config)
     bootstrap_log = dict(raw.call_log)
@@ -237,6 +243,9 @@ def p11_raw_session(
         if logged_in:
             logout_quietly(raw, sh)
         close_session_quietly(raw, sh)
+        # Fresh function-scoped session: discard any reopen request a recipe
+        # raised here so it cannot leak to a later shared-session handout.
+        consume_session_reopen_request()
 
 
 class _ModuleSessionHolder:

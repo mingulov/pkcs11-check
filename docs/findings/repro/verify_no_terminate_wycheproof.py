@@ -20,7 +20,13 @@ import sys
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
 from pkcs11_check.raw.pack import mech_simple
-from pkcs11_check.raw.recipes import destroy_quietly, import_rsa_public_key, to_ubyte_buf
+from pkcs11_check.raw.recipes import (
+    _VERIFY_FAIL_RVS,
+    destroy_quietly,
+    import_rsa_public_key,
+    to_ubyte_buf,
+)
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKF_RW_SESSION,
@@ -29,23 +35,10 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA224_RSA_PKCS,
     CKR_OK,
     CKR_OPERATION_ACTIVE,
-    CKR_SIGNATURE_INVALID,
-    CKR_SIGNATURE_LEN_RANGE,
     CKU_USER,
 )
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
-
-_FAIL_RVS = (CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE)
-
-
-def _rv_name(rv: int) -> str:
-    from pkcs11_check.raw import types_std
-
-    for name in dir(types_std):
-        if name.startswith("CKR_") and getattr(types_std, name) == rv:
-            return name
-    return f"0x{rv:08x}"
 
 
 def main() -> int:
@@ -77,7 +70,7 @@ def main() -> int:
                     rv = int(raw.C_VerifyInit(sh, mech.byref(), pub))
                     if rv != CKR_OK:
                         print(
-                            f"  tc{test['tcId']}: C_VerifyInit -> {_rv_name(rv)} "
+                            f"  tc{test['tcId']}: C_VerifyInit -> {ckr_name(rv)} "
                             f"(operation from a PRIOR vector is still active!)"
                         )
                         return 1
@@ -85,7 +78,7 @@ def main() -> int:
                         raw.C_Verify(sh, to_ubyte_buf(msg), len(msg), to_ubyte_buf(sig), len(sig))
                     )
                     checked += 1
-                    if rv in _FAIL_RVS:
+                    if rv in _VERIFY_FAIL_RVS:
                         # Spec: C_Verify ALWAYS terminates the op here. Probe it.
                         rv2 = int(raw.C_VerifyInit(sh, mech.byref(), pub))
                         if rv2 == CKR_OPERATION_ACTIVE:
@@ -93,15 +86,15 @@ def main() -> int:
                                 f"\nBUG REPRODUCED at tc{test['tcId']} "
                                 f"({test['result']}, {checked} vectors in):"
                             )
-                            print(f"  C_Verify        -> {_rv_name(rv)}  (correctly rejected)")
+                            print(f"  C_Verify        -> {ckr_name(rv)}  (correctly rejected)")
                             print(
-                                f"  C_VerifyInit    -> {_rv_name(rv2)}  "
+                                f"  C_VerifyInit    -> {ckr_name(rv2)}  "
                                 f"(op was NOT terminated -- spec violation)"
                             )
                             rvc = int(raw.C_SessionCancel(sh, CKF_VERIFY))
                             rv3 = int(raw.C_VerifyInit(sh, mech.byref(), pub))
-                            print(f"  C_SessionCancel -> {_rv_name(rvc)}")
-                            print(f"  C_VerifyInit    -> {_rv_name(rv3)}  (recovered after cancel)")
+                            print(f"  C_SessionCancel -> {ckr_name(rvc)}")
+                            print(f"  C_VerifyInit    -> {ckr_name(rv3)}  (recovered after cancel)")
                             return 1
                         # spec-compliant: terminate the probe op we just opened
                         raw.C_Verify(sh, to_ubyte_buf(msg), len(msg), to_ubyte_buf(sig), len(sig))
