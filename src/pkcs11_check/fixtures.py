@@ -247,11 +247,17 @@ class _ModuleSessionHolder:
     C_GetSessionInfo. If a prior test closed the session or logged out the
     token, a fresh session is opened transparently for the next test.
 
-    PKCS#11 spec note: C_*Init functions cancel any pending operation of
-    that type on the session, so pending verify/sign/find state from one
-    test does not corrupt a sibling test (it self-heals on the next init).
-    Only outright C_CloseSession, C_Logout, or C_Finalize damage the
-    shared state, and those are the conditions the health check detects.
+    PKCS#11 spec note: C_*Init does NOT silently cancel a pending operation of
+    the same class -- it returns CKR_OPERATION_ACTIVE. So a provider that
+    fails to terminate an operation when the spec requires it (e.g. kryoptic /
+    tpm2-pkcs11 leave a verify op active after C_Verify rejects a signature,
+    violating "a call to C_Verify always terminates the active verification
+    operation") would leave the shared session dirty and cascade
+    CKR_OPERATION_ACTIVE onto every subsequent test in the file. To keep the
+    handout invariant ("each test gets a clean session"), any dangling
+    operation is cancelled via C_SessionCancel before each handout. Outright
+    C_CloseSession / C_Logout / C_Finalize damage is detected by the health
+    check and triggers a reopen.
     """
 
     def __init__(self, p11_module: P11Module, p11_config: P11TestConfig) -> None:
@@ -273,11 +279,59 @@ class _ModuleSessionHolder:
         return self._reopen_count
 
     def get_session(self) -> tuple[int, int, dict[str, int]]:
-        """Return (sh, slot_id, bootstrap_log); reopen if session is damaged."""
+        """Return (sh, slot_id, bootstrap_log); reopen if damaged, then clean.
+
+        Reopens if the session was closed/logged-out, then cancels any operation
+        a prior test left active so the handed-out session is always clean.
+        """
         if not self._is_healthy():
             self._reopen()
         assert self._sh is not None and self._slot_id is not None
+        self._cancel_dangling_operations(self._sh)
         return self._sh, self._slot_id, dict(self._bootstrap_log)
+
+    def _cancel_dangling_operations(self, sh: int) -> None:
+        """Clear any crypto operation a prior test left active on the shared session.
+
+        Collateral-cascade prevention only: a provider that fails to terminate an
+        operation when the spec requires it (e.g. kryoptic / tpm2-pkcs11 leaving a
+        verify op active after C_Verify returns CKR_SIGNATURE_INVALID /
+        CKR_SIGNATURE_LEN_RANGE) would otherwise make every subsequent test in the
+        file fail with CKR_OPERATION_ACTIVE. C_SessionCancel is the spec-blessed way
+        to abort in-progress operations and, per spec, ignores any operation class
+        that is not currently active -- so issuing it unconditionally on every
+        handout is safe and cheap (one RPC). The return value is intentionally
+        ignored (best-effort cleanup). Pre-v3.0 modules do not expose
+        C_SessionCancel (AttributeError); those terminate operations correctly per
+        spec, so best-effort is sufficient.
+
+        This deliberately records NO finding. The genuine provider bug (failure to
+        terminate) is surfaced as a first-class FAIL by
+        ``testcases/test_operation_termination.py``.
+        """
+        from pkcs11_check.raw.types_std import (
+            CKF_DECRYPT,
+            CKF_DIGEST,
+            CKF_ENCRYPT,
+            CKF_SIGN,
+            CKF_SIGN_RECOVER,
+            CKF_VERIFY,
+            CKF_VERIFY_RECOVER,
+        )
+
+        all_ops = (
+            CKF_ENCRYPT
+            | CKF_DECRYPT
+            | CKF_DIGEST
+            | CKF_SIGN
+            | CKF_SIGN_RECOVER
+            | CKF_VERIFY
+            | CKF_VERIFY_RECOVER
+        )
+        try:
+            self.raw.C_SessionCancel(sh, all_ops)
+        except AttributeError:
+            pass
 
     def _is_healthy(self) -> bool:
         if self._sh is None:
