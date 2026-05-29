@@ -157,6 +157,26 @@ key/cert/token-object tests. Source:
 slot-0-only mechanisms (digest, hashes, bulk ciphers) are exercised alongside the
 slot-1 key/cert pass.
 
+### Multipart `C_EncryptFinal` does not terminate the operation (slot 0)
+
+Surfaced by the slot-0 pass + `test_operation_termination.py::test_c_encrypt_terminates_after_multipart`:
+after a multipart encrypt (`C_EncryptInit`+`C_EncryptUpdate`+`C_EncryptFinal`) that
+returns `CKR_OK`, NSS leaves the encryption operation **active** — the next
+`C_EncryptInit` returns `CKR_OPERATION_ACTIVE`. The spec says "a call to
+`C_EncryptFinal` always terminates the active encryption operation unless it
+returns `CKR_BUFFER_TOO_SMALL`". This affects **~15 symmetric mechanisms**
+(AES-CBC/CTR/CTS/ECB, DES/DES3, Camellia, CDMF, ChaCha20, RC2, RC4) on NSS
+3.120.1 / nss-pqc / nss-main; compliant modules (softhsm2, opencryptoki) pass all,
+kryoptic fails 1.
+
+This is the same Type-C lifecycle class as the `C_Verify` non-termination, on the
+encrypt path. On the **shared** module-scoped session the recovery
+(`_init_or_recover`) masked it to one collateral failure (`DES3_CBC`, see
+[provider-verify-operation-not-terminated.md](findings/provider-verify-operation-not-terminated.md));
+the **fresh-session** conformance test exposes the full scope. NSS does expose
+`C_SessionCancel` (it usually clears the stale op, which is why the shared-session
+cascade stays bounded), but `C_EncryptFinal` itself not terminating is the bug.
+
 ### Known crash findings
 - **AES-MAC-GENERAL sign flag probe segfault**: focused current-source runs for
   Fedora NSS, `nss-pqc` (`NSS_3_124_RTM`/`NSPR_4_39_RTM`), and `nss-main` all

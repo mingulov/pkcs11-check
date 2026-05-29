@@ -42,18 +42,29 @@ from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     _cancel_operation,
     destroy_quietly,
+    encrypt_multipart,
     sign_single,
     to_ubyte_buf,
 )
 from pkcs11_check.raw.rv import ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
     CKF_DIGEST,
+    CKF_ENCRYPT,
     CKF_VERIFY,
+    CKM,
     CKM_ECDSA,
     CKM_SHA224,
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS,
     CKM_SHA_1,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
     CKR_OPERATION_ACTIVE,
 )
@@ -61,7 +72,36 @@ from pkcs11_check.testcases.conftest import (
     classify_lifecycle_effect,
     gen_ec_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
+    xfail_if_known_ckr,
 )
+from pkcs11_check.testcases.mechanism_catalog import MechEntry
+from pkcs11_check.testcases.mechanism_helpers import (
+    generate_key_for_encrypt,
+    get_test_plaintext_bytes,
+    make_mech_param_or_skip,
+)
+
+# Crypto-operation rejection codes meaning "advertised but not operational" (an
+# xfail, not a termination finding) when a multipart encrypt cannot run.
+_ENCRYPT_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
+# AES-XTS does not support multipart on most implementations.
+_CKK_AES_XTS_ID = 0
+try:
+    from pkcs11_check.raw.types_std import CKK_AES_XTS
+
+    _CKK_AES_XTS_ID = int(CKK_AES_XTS)
+except ImportError:
+    pass
 
 
 def _bad_sig_variants(good_sig: bytes, wrong_value_sig: bytes) -> list[tuple[str, bytes]]:
@@ -217,3 +257,56 @@ def test_c_digest_terminates_after_each_call(p11_raw_session: Any) -> None:
             _assert_digest_terminates(rs, mech, name)
             return
     pytest.skip("no SHA-1/SHA-224/SHA-256 digest mechanism supported by module")
+
+
+def test_c_encrypt_terminates_after_multipart(
+    p11_raw_session: Any, mech_multipart_encrypt_entry: MechEntry
+) -> None:
+    """A multipart C_Encrypt (Init+Update+Final) must leave no active operation.
+
+    PKCS#11 ("Encryption functions", C_EncryptFinal): "A call to C_EncryptFinal
+    always terminates the active encryption operation unless it returns
+    CKR_BUFFER_TOO_SMALL ...". Parametrized over every multipart-encrypt mechanism
+    the module advertises, on a FRESH function-scoped session so each mechanism's
+    own termination is tested in isolation. NSS (slot 0) leaves the operation
+    active after C_EncryptFinal for essentially every symmetric cipher -- a
+    widespread spec violation the shared-session run masked down to one collateral
+    failure; compliant modules (softhsm2, opencryptoki) pass.
+    """
+    rs = p11_raw_session
+    entry = mech_multipart_encrypt_entry
+    config = entry.config
+    if config is None:
+        pytest.skip(f"{entry.mech_name}: no registry config")
+    if config.key_type is not None and int(config.key_type) == _CKK_AES_XTS_ID:
+        pytest.skip(f"{entry.mech_name}: AES-XTS multipart not widely supported")
+
+    enc_key, _dec_key = generate_key_for_encrypt(rs, entry, config)
+    try:
+        packed = make_mech_param_or_skip(entry)  # PackedMechanism | None (may skip)
+        mech_id = CKM(entry.mech_id)
+        plaintext = get_test_plaintext_bytes()
+        chunks = [plaintext[: len(plaintext) // 2], plaintext[len(plaintext) // 2 :]]
+        try:
+            encrypt_multipart(rs.raw, rs.sh, enc_key, mech_id, chunks, mech_param=packed)
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _ENCRYPT_RUNTIME_REJECT_RVS,
+                f"{entry.mech_name}: multipart encrypt not operational",
+            )
+            return
+        probe = packed if packed is not None else mech_simple(mech_id)
+        rv2 = int(rs.raw.C_EncryptInit(rs.sh, probe.byref(), enc_key))
+        _cancel_operation(rs.raw, rs.sh, int(CKF_ENCRYPT))  # tidy (session closed after the test)
+        classify_lifecycle_effect(
+            claimed_success=True,  # C_EncryptFinal completed (op complete per spec)
+            effect_observed=(rv2 == CKR_OPERATION_ACTIVE),  # yet an encrypt op is still active
+            label=(
+                f"{entry.mech_name}: C_EncryptFinal completed but left the encrypt operation "
+                f"active (next C_EncryptInit -> {ckr_name(rv2)}) -- the spec requires "
+                f"C_EncryptFinal to terminate the active encryption operation"
+            ),
+        )
+    finally:
+        destroy_quietly(rs.raw, rs.sh, enc_key)
