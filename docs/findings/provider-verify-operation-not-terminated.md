@@ -8,7 +8,14 @@ same session; breaks any client that reuses a session for multiple verifies).
 | Provider | Interface | Trigger (rejection code that is NOT terminated) | Recovery that works |
 |---|---|---|---|
 | kryoptic v1.5.0 | 3.2 | wrong-**length** sig → `CKR_SIGNATURE_LEN_RANGE` | `C_SessionCancel` |
-| tpm2-pkcs11 | **2.40** | empty / too-long sig → `CKR_ARGUMENTS_BAD` (terminates fine on `CKR_SIGNATURE_INVALID`) | **only close+reopen** |
+| tpm2-pkcs11 | **2.40** | **empty** sig → `CKR_ARGUMENTS_BAD` (terminates fine on `CKR_SIGNATURE_INVALID`) | **only close+reopen** |
+| BouncyHSM | 3.2 | **empty** sig → `CKR_ARGUMENTS_BAD` (terminates fine on a wrong-length sig) | `C_SessionCancel` (v3.0) |
+
+(Confirmed by running `test_operation_termination.py` across all 8 stable
+providers: kryoptic, tpm2-pkcs11, and BouncyHSM FAIL it; softhsm2, NSS, NSS-PQC,
+and OpenCryptoki PASS; pkcs11-mock skips. kryoptic is caught by the *too-short*
+variant; tpm2 and BouncyHSM only by the *empty* variant — which is why the test
+probes several malformations rather than one.)
 
 Both leave the verify operation active after *some* rejection; they differ in
 *which* rejection and in what recovery is possible. tpm2-pkcs11 is the harder
