@@ -151,6 +151,40 @@ The ±11 is **G2 observed live**: `test_ccm` crashed on shard-3's fresh token (i
 1. **Core-aware K** — K=4 × ~2-4 cores **oversubscribed** the 12 cores (~1.5× slowdown). `--shards` now defaults to `cores/4` (=3 here) so shards run near solo speed. K=3 also matches the 3 indivisible ~11-min MCT files.
 2. **Crash-prone-file spread / heavy-file test-splitting** — shard-3 was the long pole (ccm crash + 86 light files). Spreading known-crashers (from `policy.json`) and optionally test-splitting the 3 MCT files would push wall toward ~15-18 min. Not needed to clear 30 min, but the path lower.
 
+## 9b. Deep review — M-batches / N-workers pool + cross-provider correctness (2026-05-29)
+
+### Is the pool better than launch-all-at-once? Yes.
+- **M=N (launch all K at once):** each worker gets one possibly-huge batch and idles after finishing → the slowest shard is the long pole (observed: 25 min at K=4, shard-3 alone ran ~24 min while others idled ~9 min).
+- **M>N (pool, finished worker pulls next batch):** load self-balances dynamically → wall ≈ `max(largest single batch, total_work / N)`. With M=8/N=4 and the 3 MCT files each isolated into their own batch, that's ≈ `max(11 min, 17 min) = ~17 min`. Strictly better, and the more (smaller) batches, the closer to the `total/N` optimum.
+
+### The M sweet-spot is a real tension (balance vs container-startup)
+Each batch = one container = one **server boot + slot create** (~4-10 s for bouncyhsm). So:
+- Too few batches (M≈N) → poor balance (long pole).
+- Too many batches (M→#files, "one file per batch" = perfect online bin-packing, no oracle needed) → **M × container-startup** dominates (245 files × ~5 s ≈ 20 min of pure boots — defeats the point).
+- **Sweet spot: moderate M (≈ 8-16)** + a duration oracle that isolates the few heavy files into their own small batches. That gets near-optimal balance with a bounded number of boots.
+
+### Completeness ("nothing forgotten") — VERIFIED
+`shard-units`' file set is cross-checked against the runner's own `discover_pytest_units(granularity=file)`: **245 == 245, zero difference.** The partition is complete and disjoint (unit-tested), the launcher refuses to run if `batched != discovered`, and every batch must emit `results.json` before merge (missing → flagged, non-zero exit). The earlier "268" was per-test *promotion* expansion (escalation), not files; sharding is by file and each container re-expands promotions internally.
+
+### Cross-provider correctness (the key subtlety)
+Per-file duration depends on the provider's **skip pattern** — different modules advertise different mechanisms, so a file heavy on one is *skipped (≈0 s)* on another (e.g. the AES-CFB/MCT files are ~11 min on bouncyhsm but **file-skipped on softhsm2**). Consequences, now handled:
+1. **The oracle must be the SAME provider's own prior run.** The launcher auto-detects `artifacts/<provider>-pooled/results.json` (then `…/<provider>/results.json`); it never borrows another provider's oracle. Using bouncyhsm's oracle for softhsm2 would isolate now-skipped files into wasted batches and mis-size the rest.
+2. **First run / no oracle → count-balance** (median fallback in `plan_shards`). Imperfect (a heavy file lands in a ~M-th-of-files batch), but the M>N pool still absorbs most of the imbalance, and the run's own merged `results.json` becomes the oracle for next time — **self-improving**.
+3. **Who actually benefits:** the pool pays off for **network/daemon, per-call-bound** providers (bouncyhsm; opencryptoki via its daemon). **In-process providers (softhsm2/NSS/kryoptic) are already fast** (µs/call) — sharding adds container-startup + merge overhead for little gain, so leave them at `--shards 1`. This makes the cross-provider oracle issue mostly academic (only bouncyhsm/opencryptoki shard in practice), but the own-oracle rule is enforced regardless.
+
+### Alternatives considered
+| Approach | Verdict |
+|---|---|
+| xdist `-n N` (same token) | Unsafe (concurrent same-token); coverage/crash-classification break. Rejected. |
+| M=N launch-all | Works but long-pole imbalance (~25 min). Superseded. |
+| **M>N pool + own-provider duration oracle (chosen)** | Best safe balance with bounded boots; self-improving; ~17 min target. |
+| M = #files (1 file/batch) | Optimal balance, no oracle — but container-startup dominates. Rejected. |
+
+### Residual risks (accepted / mitigated)
+- **G2 determinism:** sharding can shift state-dependent crashes ~0.01 % vs single-token (observed: ccm crashed on one shard's fresh token). Pool = fast mode; single-container = canonical. Documented.
+- **No pool-level resume:** each batch is a fresh run; a ~17-min round doesn't need resume (per-batch state still exists if a single batch is re-run).
+- **Concurrency vs cores:** N defaults to `cores/4` (each bouncyhsm shard ≈ 2-4 cores). N=4 on 12 cores is borderline; the launcher lets you tune.
+
 ## 9. Expected payoff
 
 With good sharding (G1), wall ≈ `max-worker-load + pool overhead`. The ~33-min MCT block split across 3-4 workers → ~9-11 min; the rest (~18 min of work) spreads too. Realistic target **~20-30 min at N=4** (down from 68 min completing-MCT, or from ~54 min legacy-timeout). The idle-resource headroom (only 2/12 cores used today) confirms this is feasible without contention.
