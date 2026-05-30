@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from collections.abc import Generator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -130,6 +131,38 @@ def _open_raw_session(
     return raw, sh, slot_id, logged_in
 
 
+def _open_or_reinit(
+    p11_module: P11Module,
+    p11_config: P11TestConfig,
+) -> tuple[RawPKCS11, int, int, bool]:
+    """Open a session; recover once if the library lost its C_Initialize state.
+
+    A proxied provider crash + proxy restart leaves the surviving client module
+    returning ``CKR_CRYPTOKI_NOT_INITIALIZED``. On that exact code we
+    re-initialize the library (``reinitialize``) and retry the open once; a
+    second failure propagates (bounded -- no loop). Any other CKR propagates
+    unchanged (only NOT_INITIALIZED is the daemon-restart signature). The
+    triggering test still records its own result; this only un-cascades the
+    *subsequent* tests in the file.
+    """
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.raw.types_std import CKR_CRYPTOKI_NOT_INITIALIZED
+
+    try:
+        return _open_raw_session(p11_module, p11_config)
+    except CkrAssertionError as exc:
+        if getattr(exc, "rv", None) != CKR_CRYPTOKI_NOT_INITIALIZED:
+            raise
+        p11_module.reinitialize()
+        result = _open_raw_session(p11_module, p11_config)
+        warnings.warn(
+            "PKCS#11 library re-initialized after CKR_CRYPTOKI_NOT_INITIALIZED "
+            f"(likely a provider/proxy restart); reinit #{p11_module.reinit_count}",
+            stacklevel=2,
+        )
+        return result
+
+
 @pytest.fixture
 def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[Any]:
     """Open PKCS#11 session with login. Yields RawSession, closes after test.
@@ -140,7 +173,7 @@ def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[A
     from pkcs11_check.raw.bootstrap import close_session_quietly, logout_quietly
     from pkcs11_check.raw.recipes import consume_session_reopen_request
 
-    raw, sh, slot_id, logged_in = _open_raw_session(p11_module, p11_config)
+    raw, sh, slot_id, logged_in = _open_or_reinit(p11_module, p11_config)
     bootstrap_log = dict(raw.call_log)
     raw.reset_call_log()
     raw.reset_used_mechanisms()
@@ -280,7 +313,7 @@ def p11_raw_session(
     from pkcs11_check.raw.bootstrap import close_session_quietly, logout_quietly
     from pkcs11_check.raw.recipes import consume_session_reopen_request
 
-    raw, sh, slot_id, logged_in = _open_raw_session(p11_module, p11_config)
+    raw, sh, slot_id, logged_in = _open_or_reinit(p11_module, p11_config)
     bootstrap_log = dict(raw.call_log)
     raw.reset_call_log()
     raw.reset_used_mechanisms()
@@ -372,7 +405,7 @@ class _ModuleSessionHolder:
 
     def _reopen(self) -> None:
         self._close()
-        raw, sh, slot_id, logged_in = _open_raw_session(self._module, self._config)
+        raw, sh, slot_id, logged_in = _open_or_reinit(self._module, self._config)
         self._sh = sh
         self._slot_id = slot_id
         self._logged_in = logged_in
