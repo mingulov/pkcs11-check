@@ -123,3 +123,40 @@ class TestReinitialize:
                 destroy_quietly(raw, sh, new_key.value)
         finally:
             raw.C_Finalize(None)
+
+    def test_harness_recovers_lost_init_at_bootstrap(self, p11_config: Any) -> None:
+        """Harness auto-recovery for the proxy/provider-restart aftermath.
+
+        When a proxied provider crashes and the proxy restarts, the surviving
+        client library returns ``CKR_CRYPTOKI_NOT_INITIALIZED`` until re-init.
+        The session-bootstrap recovery (``fixtures._open_or_reinit``) must
+        re-initialize and hand back a *usable* session so subsequent tests in
+        the file are not cascaded. Regression for that recovery path (the unit
+        logic is covered by ``tests/test_reinit_recovery.py``; this proves it on
+        a real module). Leaves the library initialized on exit.
+        """
+        from pkcs11_check.core.loader import load_module
+        from pkcs11_check.fixtures import RawSession, _open_or_reinit
+        from pkcs11_check.raw.bootstrap import logout_quietly
+
+        module = load_module(p11_config.module, interface=p11_config.interface)
+
+        # Clean path: open succeeds with no re-init.
+        raw0, sh0, _slot0, li0 = _open_or_reinit(module, p11_config)
+        if li0:
+            logout_quietly(raw0, sh0)
+        close_session_quietly(raw0, sh0)
+        assert module.reinit_count == 0
+
+        # De-initialize the library -- the proxy/provider-restart aftermath.
+        module.raw.C_Finalize(None)
+
+        # Recovery must re-initialize and return a working session.
+        raw, sh, slot_id, logged_in = _open_or_reinit(module, p11_config)
+        try:
+            assert module.reinit_count == 1
+            assert len(RawSession(raw, sh, slot_id).generate_random(128)) == 16
+        finally:
+            if logged_in:
+                logout_quietly(raw, sh)
+            close_session_quietly(raw, sh)
