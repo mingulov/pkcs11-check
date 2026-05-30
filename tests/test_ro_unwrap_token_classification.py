@@ -26,9 +26,7 @@ from pkcs11_check.testcases.test_ro_session_restrictions import (
 
 
 def _exc(rv: int, ckr_name: str) -> CkrAssertionError:
-    return CkrAssertionError(
-        f"Unexpected CK_RV {ckr_name}; expected one of: CKR_OK", rv
-    )
+    return CkrAssertionError(f"Unexpected CK_RV {ckr_name}; expected one of: CKR_OK", rv)
 
 
 def test_listed_reject_passes() -> None:

@@ -22,9 +22,7 @@ import pytest
 from pkcs11_check.testcases.acvp._mldsa_helpers import load_mldsa_sigver_vectors
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 
-pytestmark = pytest.mark.skipif(
-    not ACVP_AVAILABLE, reason="ACVP vectors not cloned"
-)
+pytestmark = pytest.mark.skipif(not ACVP_AVAILABLE, reason="ACVP vectors not cloned")
 
 # tcIds that belong to signatureInterface=internal groups and were
 # emitting false-fails. Listed verbatim from artifacts/softhsm2-main/.
@@ -47,9 +45,7 @@ def test_sigver_loader_drops_internal_interface_vectors() -> None:
     if not vectors:
         pytest.skip("ML-DSA-sigVer ACVP vectors not present")
 
-    seen_param_tcs: set[tuple[str, int]] = {
-        (v["param_set"], v["tc_id"]) for _, v in vectors
-    }
+    seen_param_tcs: set[tuple[str, int]] = {(v["param_set"], v["tc_id"]) for _, v in vectors}
 
     for entry in _INTERNAL_INTERFACE_FALSE_FAILS:
         assert entry not in seen_param_tcs, (

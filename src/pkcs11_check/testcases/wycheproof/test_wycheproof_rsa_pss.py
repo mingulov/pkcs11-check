@@ -130,9 +130,7 @@ def _pss_combo_operational(
     return operational
 
 
-def _probe_pss_combo(
-    rs: Any, mechanism: int, hash_mech: int, mgf: int, salt_len: int
-) -> bool:
+def _probe_pss_combo(rs: Any, mechanism: int, hash_mech: int, mgf: int, salt_len: int) -> bool:
     pub = priv = 0
     try:
         try:

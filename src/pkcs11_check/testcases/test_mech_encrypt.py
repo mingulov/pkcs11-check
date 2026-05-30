@@ -139,7 +139,9 @@ class TestMechEncryptRoundtrip:
 class TestMechEncryptKAT:
     """Known-answer encryption tests from pre-generated vectors."""
 
-    def test_kat_vector(self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry) -> None:
+    def test_kat_vector(
+        self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry
+    ) -> None:
         """Encrypt known plaintext with known key -- verify ciphertext matches vector."""
         rs = p11_module_session
         entry = mech_encrypt_entry

@@ -29,9 +29,7 @@ from pkcs11_check.testcases.security import test_parameter_validation as tpv
 
 
 def _exc(rv: int, ckr_name: str) -> CkrAssertionError:
-    return CkrAssertionError(
-        f"Unexpected CK_RV {ckr_name}; expected one of: CKR_OK", rv
-    )
+    return CkrAssertionError(f"Unexpected CK_RV {ckr_name}; expected one of: CKR_OK", rv)
 
 
 def _bad_keygen(*_a: Any, **_kw: Any) -> tuple[int, int]:

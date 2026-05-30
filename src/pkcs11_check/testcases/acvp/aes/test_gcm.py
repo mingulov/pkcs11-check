@@ -127,7 +127,9 @@ _GCM_SIV_ENCRYPT_VECTORS, _GCM_SIV_DECRYPT_VECTORS = _load_gcm_siv_vectors()
 @pytest.mark.parametrize(
     "vec_id,vec", _GCM_SIV_ENCRYPT_VECTORS, ids=[v[0] for v in _GCM_SIV_ENCRYPT_VECTORS]
 )
-def test_acvp_aes_gcm_siv_encrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_gcm_siv_encrypt(
+    p11_module_session: Any, vec_id: str, vec: dict[str, Any]
+) -> None:
     """AES-GCM-SIV encryption from NIST ACVP vectors."""
     rs = p11_module_session
     if not rs.has_mechanism("AES_GCM_SIV"):
@@ -153,7 +155,9 @@ def test_acvp_aes_gcm_siv_encrypt(p11_module_session: Any, vec_id: str, vec: dic
 @pytest.mark.parametrize(
     "vec_id,vec", _GCM_SIV_DECRYPT_VECTORS, ids=[v[0] for v in _GCM_SIV_DECRYPT_VECTORS]
 )
-def test_acvp_aes_gcm_siv_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_gcm_siv_decrypt(
+    p11_module_session: Any, vec_id: str, vec: dict[str, Any]
+) -> None:
     """AES-GCM-SIV decryption from NIST ACVP vectors."""
     rs = p11_module_session
     if not rs.has_mechanism("AES_GCM_SIV"):

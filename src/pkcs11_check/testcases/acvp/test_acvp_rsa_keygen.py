@@ -85,7 +85,9 @@ class TestRsaKeyGen:
     @pytest.mark.parametrize(
         "vec_id,vec", _RSA_KEYGEN_VECTORS, ids=[v[0] for v in _RSA_KEYGEN_VECTORS]
     )
-    def test_rsa_keygen_basic(self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    def test_rsa_keygen_basic(
+        self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]
+    ) -> None:
         """Test RSA keypair generation with basic sign/verify roundtrip."""
         rs = p11_module_session
         modulo = vec["modulo"]

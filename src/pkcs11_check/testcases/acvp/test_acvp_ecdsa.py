@@ -346,7 +346,9 @@ class TestDetEcdsa:
     @pytest.mark.parametrize(
         "vec_id,vec", _DET_ECDSA_VECTORS, ids=[v[0] for v in _DET_ECDSA_VECTORS]
     )
-    def test_det_ecdsa_siggen(self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    def test_det_ecdsa_siggen(
+        self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]
+    ) -> None:
         """Test deterministic ECDSA signature generation."""
         rs = p11_module_session
         mech_name: str = vec["mech_name"]

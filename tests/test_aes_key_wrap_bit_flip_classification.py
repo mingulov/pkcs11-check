@@ -28,9 +28,7 @@ _SPEC_ICV_CKRS = (int(CKR_WRAPPED_KEY_INVALID),)
 
 
 def _exc(rv: int, ckr_name: str) -> CkrAssertionError:
-    return CkrAssertionError(
-        f"Unexpected CK_RV {ckr_name}; expected one of: CKR_OK", rv
-    )
+    return CkrAssertionError(f"Unexpected CK_RV {ckr_name}; expected one of: CKR_OK", rv)
 
 
 def test_icv_reject_passes() -> None:
@@ -38,10 +36,7 @@ def test_icv_reject_passes() -> None:
     reject_or_classify(
         _exc(int(CKR_WRAPPED_KEY_INVALID), "CKR_WRAPPED_KEY_INVALID"),
         _SPEC_ICV_CKRS,
-        label=(
-            "AES-KEY-WRAP unwrap of bit-flipped ciphertext "
-            "(expected RFC 3394 ICV reject)"
-        ),
+        label=("AES-KEY-WRAP unwrap of bit-flipped ciphertext (expected RFC 3394 ICV reject)"),
     )
 
 
@@ -54,10 +49,7 @@ def test_other_clean_reject_xfails() -> None:
         reject_or_classify(
             _exc(int(CKR_GENERAL_ERROR), "CKR_GENERAL_ERROR"),
             _SPEC_ICV_CKRS,
-            label=(
-                "AES-KEY-WRAP unwrap of bit-flipped ciphertext "
-                "(expected RFC 3394 ICV reject)"
-            ),
+            label=("AES-KEY-WRAP unwrap of bit-flipped ciphertext (expected RFC 3394 ICV reject)"),
         )
 
 

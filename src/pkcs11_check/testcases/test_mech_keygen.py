@@ -77,7 +77,9 @@ def _xfail_generated_local_false(mech_name: str, label: str) -> None:
 class TestMechKeygen:
     """Key generation for every advertised keygen mechanism with a registry config."""
 
-    def test_generate_key(self, p11_module_session: RawSession, mech_keygen_entry: MechEntry) -> None:
+    def test_generate_key(
+        self, p11_module_session: RawSession, mech_keygen_entry: MechEntry
+    ) -> None:
         """Generate a key/keypair and verify the returned handle is non-zero."""
         rs = p11_module_session
         entry = mech_keygen_entry

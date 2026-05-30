@@ -240,9 +240,10 @@ def test_resolve_nonsensical_compact_falls_back_to_full() -> None:
 
     # A negative/zero window is a user error -> enabled (they asked for tracing)
     # + full capture (None), never a deque(maxlen) ValueError in fixture setup.
-    assert _resolve_rv_trace(
-        opt_trace=False, opt_compact=-5, env_trace=None, env_compact=None
-    ) == (True, None)
+    assert _resolve_rv_trace(opt_trace=False, opt_compact=-5, env_trace=None, env_compact=None) == (
+        True,
+        None,
+    )
     assert _resolve_rv_trace(
         opt_trace=False, opt_compact=None, env_trace=None, env_compact="0"
     ) == (True, None)

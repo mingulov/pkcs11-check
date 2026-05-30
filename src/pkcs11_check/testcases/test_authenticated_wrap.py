@@ -581,9 +581,7 @@ class TestWrapIntegrity:
                         CKR_ENCRYPTED_DATA_INVALID,
                         CKR_WRAPPED_KEY_LEN_RANGE,
                         *quirk_extras(p11_config, "verify_or_integrity_failure"),
-                        *quirk_extras(
-                            p11_config, "unwrap_template_class_keytype_rejected"
-                        ),
+                        *quirk_extras(p11_config, "unwrap_template_class_keytype_rejected"),
                     ),
                     label=(
                         "AES-KEY-WRAP unwrap of bit-flipped ciphertext "

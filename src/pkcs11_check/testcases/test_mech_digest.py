@@ -136,7 +136,9 @@ def _check_not_parameterised(entry: MechEntry, config: MechConfig) -> None:
 class TestMechDigest:
     """Digest tests for every advertised digest mechanism with a registry config."""
 
-    def test_known_empty(self, p11_module_session: RawSession, mech_digest_entry: MechEntry) -> None:
+    def test_known_empty(
+        self, p11_module_session: RawSession, mech_digest_entry: MechEntry
+    ) -> None:
         """Digest of empty input: verify against hashlib for known algorithms,
         or just check output is non-empty for others."""
         rs = p11_module_session
@@ -187,7 +189,9 @@ class TestMechDigest:
             # Unknown algorithm -- just verify output is non-empty
             assert len(digest) > 0, f"{entry.mech_name}: digest output is zero bytes"
 
-    def test_deterministic(self, p11_module_session: RawSession, mech_digest_entry: MechEntry) -> None:
+    def test_deterministic(
+        self, p11_module_session: RawSession, mech_digest_entry: MechEntry
+    ) -> None:
         """Same input produces same digest in two consecutive calls."""
         rs = p11_module_session
         entry = mech_digest_entry

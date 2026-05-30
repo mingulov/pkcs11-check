@@ -34,10 +34,7 @@ def crash_calls_command(
     console.print(f"[bold]{len(rows)} crash journal(s) in[/bold] {journal_dir}:")
     for r in rows:
         mech = r.get("mech")
-        extras = "".join(
-            f" {k}={r[k]}" for k in ("mech_params", "in_len", "out_len") if k in r
-        )
+        extras = "".join(f" {k}={r[k]}" for k in ("mech_params", "in_len", "out_len") if k in r)
         console.print(
-            f"  [red]{r['fn']}[/red] i={r['i']} mech={mech}{extras}  "
-            f"[dim]{r['journal']}[/dim]"
+            f"  [red]{r['fn']}[/red] i={r['i']} mech={mech}{extras}  [dim]{r['journal']}[/dim]"
         )

@@ -252,7 +252,9 @@ class TestRsaSigVer:
             destroy_quietly(rs.raw, rs.sh, pub_key)
 
     @pytest.mark.parametrize("vec_id,vec", _PSS_VER, ids=[v[0] for v in _PSS_VER])
-    def test_rsa_pss_verify(self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    def test_rsa_pss_verify(
+        self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]
+    ) -> None:
         """Test RSA-PSS signature verification."""
         rs = p11_module_session
         mech_name: str = vec["mech_name"]
