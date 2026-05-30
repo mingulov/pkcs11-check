@@ -94,9 +94,28 @@ gated on provider identity**. No per-provider config, baselines, or allowlists.
 - When `p11_config.pin` is `None`, don't call `C_Login`
 - Never use `str(pin)` when pin might be `None`
 
+### Execution model — segfault survival via isolation (CRITICAL mental model)
+- **Purpose:** pkcs11-check is a general PKCS#11 conformance + bug-finding suite run
+  against MANY modules **directly** (softhsm2/kryoptic/NSS/tpm2/bouncyhsm/
+  opencryptoki/mock/…). A proxy/daemon in front is just ONE deployment, not the model.
+  **"A segfault IS the finding."**
+- `pkcs11-check test` defaults to `--isolation auto`: each test FILE (or each test,
+  for `subprocess_per_test`) runs in its **own subprocess** (`core/file_runner.py`).
+  A module crash kills only that unit's subprocess; the runner records it as a crash
+  finding (`returncode < 0`, see `_status_from_returncode` / `_identify_crash_culprit`)
+  and continues, bounded by `--max-crashes-per-file`.
+- **So write ordinary tests in-process** (like `testcases/test_reinitialize.py`); the
+  isolated runner provides crash survival. Do NOT wrap a normal test in `subprocess.run`
+  just so a possible crash is survived — isolation already does that.
+- `run_raw_subprocess` (`testcases/_raw_subprocess.py`) is ONLY for tests that need
+  their OWN child to run a controlled crash-expecting sub-script, or to assert on a
+  specific crash's `returncode` — not for general survival.
+
 ### Test isolation
 - Tests that call `lib.finalize()` or `lib.initialize()` MUST be marked `@destructive`
-- Tests expecting crashes MUST run in subprocess via `subprocess.run([sys.executable, "-c", script])`
+- Tests that DELIBERATELY trigger a crash and assert on it run their own child via
+  `subprocess.run([sys.executable, "-c", script])` (general survival is already provided
+  by `--isolation auto`; see the execution model above)
 - Token-locking operations (wrong PIN tests) MUST be marked `@destructive`
 
 ### Module-specific behavior
