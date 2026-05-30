@@ -1615,6 +1615,26 @@ def _status_from_returncode(returncode: int) -> str:
     return "failed"
 
 
+def _maybe_set_crash_journal(run_env: dict[str, str], unit: str) -> None:
+    """Opt-in: give the unit's subprocess a per-unit CK_RV crash journal.
+
+    Off unless ``PKCS11_CHECK_RV_TRACE_JOURNAL_DIR`` is set (per-call flush has a
+    cost, so it is not on by default). When set, a crash leaves the dying C_*
+    call on disk under that dir; ``pkcs11-check crash-calls <dir>`` summarizes it.
+    The ``{pid}`` placeholder is expanded by the child (``raw.api._journal_path``)
+    so concurrent subprocesses don't collide.
+    """
+    journal_dir = run_env.get("PKCS11_CHECK_RV_TRACE_JOURNAL_DIR")
+    if not journal_dir:
+        return
+    from pkcs11_check.core.crash_journal import unit_journal_slug
+
+    Path(journal_dir).mkdir(parents=True, exist_ok=True)
+    run_env["PKCS11_CHECK_RV_TRACE_JOURNAL"] = str(
+        Path(journal_dir) / f"{unit_journal_slug(unit)}-{{pid}}.jsonl"
+    )
+
+
 def _flatten_longrepr(longrepr: Any) -> str:
     """Flatten a JSONL longrepr value to a plain string.
 
@@ -2201,6 +2221,7 @@ def run_isolated_pytest_units(
             unit_jsonl_path: Path | None = None
             initial_deselect_path: Path | None = None
             run_env = dict(env)
+            _maybe_set_crash_journal(run_env, unit)
             collect_report_log = unit_granularity == "file" or (
                 report_config is not None and report_config.jsonl_path is not None
             )

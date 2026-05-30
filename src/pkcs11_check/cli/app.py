@@ -5,6 +5,7 @@ from __future__ import annotations
 import typer
 
 from pkcs11_check.cli.compliance_cmd import compliance_report_command
+from pkcs11_check.cli.crash_calls_cmd import crash_calls_command
 from pkcs11_check.cli.fetch_cmd import fetch_data_command, fetch_disabled_command
 from pkcs11_check.cli.info_cmd import info_command
 from pkcs11_check.cli.list_cmd import list_command
@@ -40,6 +41,7 @@ app.command("fetch-data")(fetch_data_command)
 app.command("fetch-disabled")(fetch_disabled_command)
 app.command("shard-units")(shard_units_command)
 app.command("merge-shards")(merge_shards_command)
+app.command("crash-calls")(crash_calls_command)
 
 
 @app.command()

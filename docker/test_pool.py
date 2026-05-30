@@ -36,6 +36,17 @@ from pkcs11_check.core.sharding import plan_shards
 # (set a different N, or empty to disable). See docs/rv-trace-design.md.
 RV_TRACE_COMPACT_N = os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT", "512")
 
+# Crash-call journal: OFF by default (per-call flush has a cost). Set
+# PKCS11_CHECK_CRASH_JOURNAL=1 in the pool env to write per-unit write-ahead
+# journals under each shard's artifact dir, so `pkcs11-check crash-calls
+# <artifact>/crash-journals` pinpoints the C_* call a crashed unit died in.
+CRASH_JOURNAL = os.environ.get("PKCS11_CHECK_CRASH_JOURNAL", "").strip().lower() not in (
+    "",
+    "0",
+    "false",
+    "no",
+)
+
 # Editable per-provider shard counts; providers not listed default to 1 (undivided).
 SHARD_MAP: dict[str, int] = {"bouncyhsm": 8, "opencryptoki": 3, "opencryptoki-master": 3}
 DEFAULT_PROVIDERS = [
@@ -89,6 +100,11 @@ def run_item(provider: str, idx: int, files: list[str]) -> tuple[str, int, int]:
         if RV_TRACE_COMPACT_N
         else []
     )
+    if CRASH_JOURNAL:
+        rv_trace_env += [
+            "-e",
+            f"PKCS11_CHECK_RV_TRACE_JOURNAL_DIR=/artifacts/{provider}-shard-{idx}/crash-journals",
+        ]
     with log.open("w") as fh:
         rc = subprocess.run(  # noqa: S603
             [
