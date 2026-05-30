@@ -102,7 +102,14 @@ boolean claim — is correct by design.
 
 ## MEDIUM
 
-### M-CLASS-3 — `assert_ckr` strict mode ignores `allow_success`  ·  MEDIUM
+### M-CLASS-3 — `assert_ckr` strict mode ignores `allow_success`  ·  MEDIUM  ·  RESOLVED 2026-05-29
+> **RESOLVED 2026-05-29.** Added `if actual == CKR_OK and expectation.allow_success:
+> return` as the first check in the strict branch, so strict mode now agrees with
+> the compat branch on permissive ops. Meta-tests
+> `test_classification_helpers.py::test_strict_allow_success_ok` (the case that was
+> latent-broken) and `::test_strict_ok_without_allow_success_fails` (guard scope)
+> pin both directions. This is a strict-mode (`--ckr-strict`) behavior change:
+> a CKR_OK on an `allow_success=True` entry is now a pass in strict mode too.
 - **Site:** `src/pkcs11_check/testcases/ckr/_ckr_spec.py:233-239`.
 - **Evidence:** strict-mode body is:
   ```python

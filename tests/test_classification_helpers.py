@@ -110,6 +110,30 @@ def test_strict_wrong_code_fails() -> None:
         assert_ckr(_E, CKR_FUNCTION_FAILED, strict=True)
 
 
+def test_strict_allow_success_ok() -> None:
+    """M-CLASS-3: strict mode must honor allow_success on CKR_OK.
+
+    A permissive op (allow_success=True) that returns CKR_OK is a pass in compat
+    mode; strict mode (--ckr-strict) must agree -- CKR_OK is never in spec_codes,
+    so without the allow_success short-circuit the strict branch wrongly fails.
+    """
+    e = CkrExpectation(
+        function="C_Decrypt",
+        condition="cbc_pad",
+        spec_ckr=0x21,
+        compat_tuple=(0x21,),
+        spec_ref="r",
+        allow_success=True,
+    )
+    assert_ckr(e, CKR_OK, strict=True)
+
+
+def test_strict_ok_without_allow_success_fails() -> None:
+    """M-CLASS-3 guard scope: strict mode still fails on CKR_OK when not allowed."""
+    with pytest.raises(Failed):
+        assert_ckr(_E, CKR_OK, strict=True)
+
+
 # ---------------------------------------------------------------------------
 # Task 3 — negative helpers (rv-shaped + exception-shaped)
 # ---------------------------------------------------------------------------

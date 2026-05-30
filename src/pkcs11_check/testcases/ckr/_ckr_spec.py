@@ -231,6 +231,11 @@ def assert_ckr(
     )
 
     if strict:
+        # A permissive op (allow_success) returning CKR_OK is a pass in both modes;
+        # CKR_OK is never in spec_codes, so this short-circuit is required for strict
+        # mode to agree with the compat branch (audit M-CLASS-3).
+        if actual == CKR_OK and expectation.allow_success:
+            return
         if actual not in spec_codes:
             pytest.fail(
                 f"{expectation.function}({expectation.condition}): "
