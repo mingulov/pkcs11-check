@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 import warnings
 from collections.abc import Generator
 from dataclasses import dataclass, field
@@ -136,36 +137,114 @@ def _open_raw_session(
     return raw, sh, slot_id, logged_in
 
 
+# --- provider/proxy restart recovery (pkcs11-proxy-ng restart window) --------
+# A proxied provider crash + restart is NOT instantaneous: pkcs11-proxy-ng
+# restarts the provider and restores access over seconds, during which the
+# surviving client module returns a "connection lost" CK_RV for every call.
+# Recovery is a BOUNDED wait-and-reconnect loop -- reconnect (C_Finalize +
+# C_Initialize), then re-open + re-login -- so the restart window does not
+# cascade onto every remaining test in the file. The loop is bounded by a time
+# AND an attempt budget, so a genuinely dead provider fails as a finding (never
+# hangs). The triggering test still records its own (real) result; every
+# reconnect is surfaced (warning + reinit_count). No CLI/env knob by design --
+# tune the constants here if a deployment needs a different window.
+_RECONNECT_TIMEOUT_S = 20.0  # total wall-clock budget for one session bootstrap
+_RECONNECT_MAX_ATTEMPTS = 64  # hard backstop on reconnect attempts
+_RECONNECT_INITIAL_DELAY_S = 0.1  # first backoff sleep
+_RECONNECT_MAX_DELAY_S = 2.0  # backoff cap
+
+
+def _restart_signature_rvs() -> frozenset[int]:
+    """CK_RVs that, *at session bootstrap*, mean "the connection/session is gone".
+
+    Recovery triggers ONLY at the fixture open/login layer, where these codes
+    cannot mean a legitimately-rejected operation. They must NEVER be treated as
+    a restart signal inside a test-body assertion path -- e.g. CKR_DEVICE_ERROR
+    is also kryoptic's normal return for a rejected signature (see
+    docs/module-issues.md), so misusing it there would mask real findings.
+    """
+    from pkcs11_check.raw.types_std import (
+        CKR_CRYPTOKI_NOT_INITIALIZED,
+        CKR_DEVICE_ERROR,
+        CKR_DEVICE_REMOVED,
+        CKR_SESSION_CLOSED,
+        CKR_SESSION_HANDLE_INVALID,
+    )
+
+    return frozenset(
+        int(rv)
+        for rv in (
+            CKR_CRYPTOKI_NOT_INITIALIZED,
+            CKR_SESSION_HANDLE_INVALID,
+            CKR_SESSION_CLOSED,
+            CKR_DEVICE_ERROR,
+            CKR_DEVICE_REMOVED,
+        )
+    )
+
+
 def _open_or_reinit(
     p11_module: P11Module,
     p11_config: P11TestConfig,
 ) -> tuple[RawPKCS11, int, int, bool]:
-    """Open a session; recover once if the library lost its C_Initialize state.
+    """Open a session; bridge a provider/proxy restart with a bounded wait loop.
 
-    A proxied provider crash + proxy restart leaves the surviving client module
-    returning ``CKR_CRYPTOKI_NOT_INITIALIZED``. On that exact code we
-    re-initialize the library (``reinitialize``) and retry the open once; a
-    second failure propagates (bounded -- no loop). Any other CKR propagates
-    unchanged (only NOT_INITIALIZED is the daemon-restart signature). The
-    triggering test still records its own result; this only un-cascades the
-    *subsequent* tests in the file.
+    A proxied provider crash + pkcs11-proxy-ng restart leaves the surviving
+    client module returning a restart-signature CK_RV (NOT_INITIALIZED, a stale
+    SESSION_HANDLE_INVALID / SESSION_CLOSED, or a transport DEVICE_ERROR /
+    DEVICE_REMOVED) -- or a transport ``OSError`` -- for the whole restart
+    window. On the clean path the open succeeds once with zero added latency and
+    no reinit. On a restart signature we reconnect (``reinitialize``) and retry
+    the open, sleeping with capped exponential backoff between attempts until the
+    provider returns or the time/attempt budget is exhausted (bounded -- never an
+    infinite loop). Any *non*-restart CKR (e.g. a clean CKR_PIN_INCORRECT)
+    propagates unchanged. The triggering test still records its own result; this
+    only un-cascades the *subsequent* tests in the file.
     """
     from pkcs11_check.raw.rv import CkrAssertionError
-    from pkcs11_check.raw.types_std import CKR_CRYPTOKI_NOT_INITIALIZED
+
+    restart_rvs = _restart_signature_rvs()
+
+    def _is_restart(exc: BaseException) -> bool:
+        # A transport failure (OSError) or a bootstrap-layer "connection gone"
+        # CK_RV. A RuntimeError from reinitialize() (C_Initialize still failing)
+        # is handled as retryable by the loop below, not here.
+        if isinstance(exc, OSError):
+            return True
+        return isinstance(exc, CkrAssertionError) and int(getattr(exc, "rv", -1)) in restart_rvs
 
     try:
         return _open_raw_session(p11_module, p11_config)
-    except CkrAssertionError as exc:
-        if getattr(exc, "rv", None) != CKR_CRYPTOKI_NOT_INITIALIZED:
+    except (CkrAssertionError, OSError) as exc:
+        if not _is_restart(exc):
             raise
-        p11_module.reinitialize()
-        result = _open_raw_session(p11_module, p11_config)
-        warnings.warn(
-            "PKCS#11 library re-initialized after CKR_CRYPTOKI_NOT_INITIALIZED "
-            f"(likely a provider/proxy restart); reinit #{p11_module.reinit_count}",
-            stacklevel=2,
-        )
-        return result
+        last_exc: BaseException = exc
+
+    deadline = time.monotonic() + _RECONNECT_TIMEOUT_S
+    for attempt in range(1, _RECONNECT_MAX_ATTEMPTS + 1):
+        try:
+            p11_module.reinitialize()  # reconnect the client to the restarted proxy
+            result = _open_raw_session(p11_module, p11_config)  # re-open + re-login
+        except CkrAssertionError as exc:
+            if not _is_restart(exc):
+                raise  # a genuine non-restart CKR is a finding -- do not retry/mask
+            last_exc = exc
+        except (OSError, RuntimeError) as exc:
+            # OSError = transport still down; RuntimeError = C_Initialize still
+            # failing. Both are restart-window symptoms -> retry within budget.
+            last_exc = exc
+        else:
+            warnings.warn(
+                "PKCS#11 library reconnected after a likely provider/proxy restart "
+                f"(reinit #{p11_module.reinit_count}, recovered on attempt {attempt})",
+                stacklevel=2,
+            )
+            return result
+        if attempt >= _RECONNECT_MAX_ATTEMPTS or time.monotonic() >= deadline:
+            break
+        delay = min(_RECONNECT_INITIAL_DELAY_S * 2 ** (attempt - 1), _RECONNECT_MAX_DELAY_S)
+        time.sleep(delay)
+    raise last_exc
 
 
 @pytest.fixture
