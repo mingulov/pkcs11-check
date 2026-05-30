@@ -21,7 +21,14 @@ fringe correctness gaps unlikely to trigger in practice.
 These extend the L2 fix (commit c509013) that added `_cancel_operation`
 cleanup to the four single-shot recipes. Sibling sites still need it.
 
-### M-RAW-1 — `_message_crypto` missing `_cancel_operation` after Init  ·  MEDIUM
+### M-RAW-1 — `_message_crypto` missing `_cancel_operation` after Init  ·  MEDIUM  ·  RESOLVED 2026-05-29
+> **RESOLVED 2026-05-29.** `_message_crypto` now takes a required `cancel_flag`
+> kwarg and wraps the body after `C_Message*Init` in `try/_cancel_operation(...)`
+> on `BaseException`, mirroring commit c509013. `message_encrypt` passes
+> `CKF_MESSAGE_ENCRYPT`, `message_decrypt` passes `CKF_MESSAGE_DECRYPT` (the
+> message operation-class flags, not the single-shot `CKF_ENCRYPT`/`CKF_DECRYPT`).
+> Regression tests: `tests/test_raw.py::test_message_{encrypt,decrypt}_cancels_on_terminal_error`
+> (assert the right flag) + `test_message_encrypt_no_cancel_on_success`.
 - **Site:** `src/pkcs11_check/raw/recipes.py:1483-1516` (approx).
 - **Evidence:** after `C_MessageEncryptInit` / `C_MessageDecryptInit` returns
   `CKR_OK`, the function proceeds to the size-query call and the actual call. If
@@ -33,7 +40,14 @@ cleanup to the four single-shot recipes. Sibling sites still need it.
   pattern.
 - **Confidence:** 90%.
 
-### M-RAW-2 — `_multipart_output` missing cancel-on-error after Init  ·  MEDIUM
+### M-RAW-2 — `_multipart_output` missing cancel-on-error after Init  ·  MEDIUM  ·  RESOLVED 2026-05-29
+> **RESOLVED 2026-05-29.** `_multipart_output` now takes a required `cancel_flag`
+> kwarg and wraps the Update-loop + Final after the `*Init` in
+> `try/_cancel_operation(...)` on `BaseException`. `encrypt_multipart` passes
+> `CKF_ENCRYPT`, `decrypt_multipart` passes `CKF_DECRYPT`. Regression tests:
+> `tests/test_raw.py::test_encrypt_multipart_cancels_on_update_error`,
+> `::test_decrypt_multipart_cancels_on_final_error` (Update- and Final-error
+> paths), + `test_encrypt_multipart_no_cancel_on_success`.
 - **Site:** `src/pkcs11_check/raw/recipes.py:1215-1237` (approx).
 - **Evidence:** the `init_fn → Update loop → Final` pattern lacks cancel on
   Update- or Final-error. Less severe than the single-shot case (multi-part
@@ -54,7 +68,16 @@ cleanup to the four single-shot recipes. Sibling sites still need it.
 
 ## Recipe convention / option precedence
 
-### M-RAW-4 — `_two_call_output`: `retry_on_buffer_too_small` silently ignored in `output_size_hint` mode  ·  MEDIUM
+### M-RAW-4 — `_two_call_output`: `retry_on_buffer_too_small` silently ignored in `output_size_hint` mode  ·  MEDIUM  ·  RESOLVED 2026-05-29 (commit 198a9dfd)
+> **RESOLVED 2026-05-29 by commit 198a9dfd** (`perf(acvp-aes): skip redundant
+> CFB/OFB size-query RPC`), independently of this audit-fix cycle. It implemented
+> the audit's recommended **Option (a)**: the size-hint branch now honors
+> `retry_on_buffer_too_small` (retries once with a doubled buffer on
+> `CKR_BUFFER_TOO_SMALL`), and did so **silently** — no `compliance.note`, which
+> matches the gap-analysis conclusion (a `compliance.note` from inside
+> `_two_call_output` would record the wrong test_id). Shipped with 4 regression
+> tests in `tests/test_raw_recipes.py::TestTwoCallOutputSizing`
+> (`test_hint_retries_on_buffer_too_small` covers this exact path).
 - **Site:** `src/pkcs11_check/raw/recipes.py:187-195` (approx).
 - **Evidence:** when `output_size_hint > 0`, the function does a single call and
   returns. `retry_on_buffer_too_small` is not checked in this branch. The

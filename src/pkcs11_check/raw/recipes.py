@@ -65,6 +65,8 @@ from .types_std import (
     CKF_DECRYPT,
     CKF_DIGEST,
     CKF_ENCRYPT,
+    CKF_MESSAGE_DECRYPT,
+    CKF_MESSAGE_ENCRYPT,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKF_SIGN,
@@ -1314,37 +1316,52 @@ def _multipart_output(
     final_fn: str,
     init_args: tuple[Any, ...],
     chunks: list[bytes] | tuple[bytes, ...],
+    *,
+    cancel_flag: int,
 ) -> bytes:
     """Shared Init -> Update(chunks) -> Final for encrypt/decrypt.
 
     Only for operations where Update produces output (C_EncryptUpdate,
     C_DecryptUpdate). Sign/Digest Update calls do not produce output --
     use the manual Init+Update+_two_call_output(Final) pattern instead.
+
+    ``cancel_flag`` is the operation-class flag (e.g. ``CKF_ENCRYPT``) used to
+    cancel the dangling operation if an Update or Final call raises after the
+    ``*Init`` succeeded -- mirroring the single-shot cancel-on-error fix
+    (commit c509013) so a reused session is not left with an active op that
+    would mis-attribute a spurious ``CKR_OPERATION_ACTIVE`` to a later call.
     """
     rv = getattr(raw, init_fn)(session, *init_args)
     expect_rv(rv, CKR_OK)
-    parts: list[bytes] = []
-    for chunk in chunks:
-        in_buf = to_ubyte_buf(chunk)
-        # Allocate a conservative output buffer upfront (chunk + 256 bytes for
-        # block cipher expansion). Do NOT use the two-call size-probe pattern for
-        # Update functions -- probing feeds the same chunk twice, corrupting cipher
-        # state. The Final two-call pattern remains correct.
-        max_out = len(chunk) + 256
-        out_buf = (ctypes.c_ubyte * max_out)()
-        out_len = CK_ULONG(max_out)
-        rv = getattr(raw, update_fn)(
-            session,
-            in_buf,
-            len(chunk),
-            out_buf,
-            byref(out_len),
-        )
-        expect_rv(rv, CKR_OK)
-        if out_len.value > 0:
-            parts.append(bytes(out_buf[: out_len.value]))
-    parts.append(_two_call_output(raw, final_fn, session))
-    return b"".join(parts)
+    try:
+        parts: list[bytes] = []
+        for chunk in chunks:
+            in_buf = to_ubyte_buf(chunk)
+            # Allocate a conservative output buffer upfront (chunk + 256 bytes for
+            # block cipher expansion). Do NOT use the two-call size-probe pattern for
+            # Update functions -- probing feeds the same chunk twice, corrupting cipher
+            # state. The Final two-call pattern remains correct.
+            max_out = len(chunk) + 256
+            out_buf = (ctypes.c_ubyte * max_out)()
+            out_len = CK_ULONG(max_out)
+            rv = getattr(raw, update_fn)(
+                session,
+                in_buf,
+                len(chunk),
+                out_buf,
+                byref(out_len),
+            )
+            expect_rv(rv, CKR_OK)
+            if out_len.value > 0:
+                parts.append(bytes(out_buf[: out_len.value]))
+        parts.append(_two_call_output(raw, final_fn, session))
+        return b"".join(parts)
+    except BaseException:
+        # An Update or Final call raised after *Init succeeded: cancel the
+        # dangling operation so it does not leak into the next op on a reused
+        # session, then re-raise the original error unchanged.
+        _cancel_operation(raw, session, cancel_flag)
+        raise
 
 
 def encrypt_multipart(
@@ -1366,6 +1383,7 @@ def encrypt_multipart(
         "C_EncryptFinal",
         (mech.byref(), key),
         chunks,
+        cancel_flag=int(CKF_ENCRYPT),
     )
 
 
@@ -1388,6 +1406,7 @@ def decrypt_multipart(
         "C_DecryptFinal",
         (mech.byref(), key),
         chunks,
+        cancel_flag=int(CKF_DECRYPT),
     )
 
 
@@ -1584,46 +1603,61 @@ def _message_crypto(
     init_fn: str,
     msg_fn: str,
     *,
+    cancel_flag: int,
     aad: bytes | None = None,
     mech_param: PackedMechanism | None = None,
 ) -> bytes:
-    """Shared Init + two-call Message pattern for encrypt/decrypt."""
+    """Shared Init + two-call Message pattern for encrypt/decrypt.
+
+    ``cancel_flag`` is the message operation-class flag (e.g.
+    ``CKF_MESSAGE_ENCRYPT``) used to cancel the dangling operation if a
+    ``C_*Message`` call raises after ``C_Message*Init`` succeeded -- mirroring
+    the single-shot cancel-on-error fix (commit c509013) so a reused session is
+    not left with an active op that would mis-attribute a spurious
+    ``CKR_OPERATION_ACTIVE`` to a later call.
+    """
     mech = _resolve_mech(mechanism, mech_param)
     rv = getattr(raw, init_fn)(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
+    try:
+        aad_buf = to_ubyte_buf(aad) if aad else None
+        aad_len = len(aad) if aad else 0
+        in_buf = to_ubyte_buf(data)
 
-    aad_buf = to_ubyte_buf(aad) if aad else None
-    aad_len = len(aad) if aad else 0
-    in_buf = to_ubyte_buf(data)
-
-    out_len = CK_ULONG(0)
-    fn = getattr(raw, msg_fn)
-    rv = fn(
-        session,
-        None,
-        0,
-        aad_buf,
-        aad_len,
-        in_buf,
-        len(data),
-        None,
-        byref(out_len),
-    )
-    expect_rv(rv, CKR_OK)
-    out_buf = (ctypes.c_ubyte * out_len.value)()
-    rv = fn(
-        session,
-        None,
-        0,
-        aad_buf,
-        aad_len,
-        in_buf,
-        len(data),
-        out_buf,
-        byref(out_len),
-    )
-    expect_rv(rv, CKR_OK)
-    return bytes(out_buf[: out_len.value])
+        out_len = CK_ULONG(0)
+        fn = getattr(raw, msg_fn)
+        rv = fn(
+            session,
+            None,
+            0,
+            aad_buf,
+            aad_len,
+            in_buf,
+            len(data),
+            None,
+            byref(out_len),
+        )
+        expect_rv(rv, CKR_OK)
+        out_buf = (ctypes.c_ubyte * out_len.value)()
+        rv = fn(
+            session,
+            None,
+            0,
+            aad_buf,
+            aad_len,
+            in_buf,
+            len(data),
+            out_buf,
+            byref(out_len),
+        )
+        expect_rv(rv, CKR_OK)
+        return bytes(out_buf[: out_len.value])
+    except BaseException:
+        # A C_*Message call raised after C_Message*Init succeeded: cancel the
+        # dangling operation so it does not leak into the next op on a reused
+        # session, then re-raise the original error unchanged.
+        _cancel_operation(raw, session, cancel_flag)
+        raise
 
 
 def message_encrypt(
@@ -1645,6 +1679,7 @@ def message_encrypt(
         data,
         "C_MessageEncryptInit",
         "C_EncryptMessage",
+        cancel_flag=int(CKF_MESSAGE_ENCRYPT),
         aad=aad,
         mech_param=mech_param,
     )
@@ -1669,6 +1704,7 @@ def message_decrypt(
         ciphertext,
         "C_MessageDecryptInit",
         "C_DecryptMessage",
+        cancel_flag=int(CKF_MESSAGE_DECRYPT),
         aad=aad,
         mech_param=mech_param,
     )

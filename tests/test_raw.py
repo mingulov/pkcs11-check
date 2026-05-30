@@ -102,6 +102,7 @@ class _FakeRaw:
     def __init__(self, fail_on: str) -> None:
         self._fail_on = fail_on
         self.calls: list[str] = []
+        self.cancel_flags: list[int] = []
 
     # Telemetry hooks accessed by recipes / coverage; harmless no-ops here.
     call_log: dict[str, int] = {}
@@ -113,6 +114,10 @@ class _FakeRaw:
 
         def _fn(*_args: object) -> int:
             self.calls.append(name)
+            if name == "C_SessionCancel" and len(_args) >= 2:
+                # Record the operation-class flag so tests can assert the right
+                # one (e.g. CKF_MESSAGE_ENCRYPT for a message op, not CKF_ENCRYPT).
+                self.cancel_flags.append(int(_args[1]))  # type: ignore[call-overload]
             if name == self._fail_on:
                 # Non-OK return drives expect_rv() to raise inside the recipe.
                 from pkcs11_check.raw.types_std import CKR_DEVICE_ERROR
@@ -187,4 +192,93 @@ def test_encrypt_single_no_cancel_on_success() -> None:
 
     raw = _FakeRaw(fail_on="")  # nothing fails
     encrypt_single(raw, 1, 2, CKM_AES_ECB, b"plaintext")  # type: ignore[arg-type]
+    assert "C_SessionCancel" not in raw.calls
+
+
+# ---------------------------------------------------------------------------
+# M-RAW-1 — message-based crypto cancels a dangling *MessageInit on op error
+# ---------------------------------------------------------------------------
+
+
+def test_message_encrypt_cancels_on_terminal_error() -> None:
+    """If C_EncryptMessage errors, the dangling C_MessageEncryptInit must be
+    cancelled with CKF_MESSAGE_ENCRYPT before the error propagates."""
+    from pkcs11_check.raw.recipes import message_encrypt
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.raw.types_std import CKF_MESSAGE_ENCRYPT, CKM_AES_GCM
+
+    raw = _FakeRaw(fail_on="C_EncryptMessage")
+    with pytest.raises(CkrAssertionError):
+        message_encrypt(raw, 1, 2, CKM_AES_GCM, b"plaintext")  # type: ignore[arg-type]
+
+    assert "C_MessageEncryptInit" in raw.calls
+    assert "C_SessionCancel" in raw.calls, "message op left active -- no cancel issued"
+    assert int(CKF_MESSAGE_ENCRYPT) in raw.cancel_flags
+
+
+def test_message_decrypt_cancels_on_terminal_error() -> None:
+    from pkcs11_check.raw.recipes import message_decrypt
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.raw.types_std import CKF_MESSAGE_DECRYPT, CKM_AES_GCM
+
+    raw = _FakeRaw(fail_on="C_DecryptMessage")
+    with pytest.raises(CkrAssertionError):
+        message_decrypt(raw, 1, 2, CKM_AES_GCM, b"ciphertext")  # type: ignore[arg-type]
+
+    assert "C_MessageDecryptInit" in raw.calls
+    assert "C_SessionCancel" in raw.calls
+    assert int(CKF_MESSAGE_DECRYPT) in raw.cancel_flags
+
+
+def test_message_encrypt_no_cancel_on_success() -> None:
+    from pkcs11_check.raw.recipes import message_encrypt
+    from pkcs11_check.raw.types_std import CKM_AES_GCM
+
+    raw = _FakeRaw(fail_on="")
+    message_encrypt(raw, 1, 2, CKM_AES_GCM, b"plaintext")  # type: ignore[arg-type]
+    assert "C_SessionCancel" not in raw.calls
+
+
+# ---------------------------------------------------------------------------
+# M-RAW-2 — multipart crypto cancels a dangling *Init on Update/Final error
+# ---------------------------------------------------------------------------
+
+
+def test_encrypt_multipart_cancels_on_update_error() -> None:
+    """If C_EncryptUpdate errors mid-stream, the dangling C_EncryptInit must be
+    cancelled with CKF_ENCRYPT before the error propagates."""
+    from pkcs11_check.raw.recipes import encrypt_multipart
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.raw.types_std import CKF_ENCRYPT, CKM_AES_CBC
+
+    raw = _FakeRaw(fail_on="C_EncryptUpdate")
+    with pytest.raises(CkrAssertionError):
+        encrypt_multipart(raw, 1, 2, CKM_AES_CBC, [b"chunk-a", b"chunk-b"])  # type: ignore[arg-type]
+
+    assert "C_EncryptInit" in raw.calls
+    assert "C_SessionCancel" in raw.calls, "multipart op left active -- no cancel issued"
+    assert int(CKF_ENCRYPT) in raw.cancel_flags
+
+
+def test_decrypt_multipart_cancels_on_final_error() -> None:
+    """A failure in the C_DecryptFinal terminal call must also cancel."""
+    from pkcs11_check.raw.recipes import decrypt_multipart
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.raw.types_std import CKF_DECRYPT, CKM_AES_CBC
+
+    raw = _FakeRaw(fail_on="C_DecryptFinal")
+    with pytest.raises(CkrAssertionError):
+        decrypt_multipart(raw, 1, 2, CKM_AES_CBC, [b"chunk-a"])  # type: ignore[arg-type]
+
+    assert "C_DecryptInit" in raw.calls
+    assert "C_SessionCancel" in raw.calls
+    assert int(CKF_DECRYPT) in raw.cancel_flags
+
+
+def test_encrypt_multipart_no_cancel_on_success() -> None:
+    from pkcs11_check.raw.recipes import encrypt_multipart
+    from pkcs11_check.raw.types_std import CKM_AES_CBC
+
+    raw = _FakeRaw(fail_on="")
+    encrypt_multipart(raw, 1, 2, CKM_AES_CBC, [b"chunk-a"])  # type: ignore[arg-type]
     assert "C_SessionCancel" not in raw.calls
