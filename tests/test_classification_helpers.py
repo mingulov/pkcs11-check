@@ -93,6 +93,22 @@ def test_device_error_xfails_neutrally() -> None:
     assert "tpm2" not in msg
 
 
+def test_outside_set_fail_message_lists_full_set() -> None:
+    """M-CLASS-4: the compat fail message must name the universal codes too.
+
+    The gate checks ``actual not in full_compat(compat_tuple)`` (which injects
+    the three universal tuples), but the old message printed only compat_tuple,
+    so a developer saw a too-narrow "acceptable set" and could not tell that
+    CKR_GENERAL_ERROR / CKR_FUNCTION_FAILED / CKR_DEVICE_ERROR / etc. are also
+    accepted. The message must reflect the set actually used by the gate.
+    """
+    with pytest.raises(Failed) as ei:
+        assert_ckr(_E, CKR_PIN_INCORRECT, strict=False)
+    msg = str(ei.value)
+    # A representative universal code that is NOT in _E.compat_tuple must appear.
+    assert "CKR_GENERAL_ERROR" in msg
+
+
 def test_allow_success_ok() -> None:
     e = CkrExpectation(
         function="C_Decrypt",

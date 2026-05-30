@@ -130,7 +130,13 @@ boolean claim — is correct by design.
   `tests/test_classification_helpers.py` for the case.
 - **Confidence:** 85%.
 
-### M-CLASS-4 — `assert_ckr` fail message shows `compat_tuple` not full set  ·  MEDIUM
+### M-CLASS-4 — `assert_ckr` fail message shows `compat_tuple` not full set  ·  MEDIUM  ·  RESOLVED 2026-05-29
+> **RESOLVED 2026-05-29.** The compat fail message now prints the full accepted
+> set — `full_compat(compat_tuple)` deduped with order preserved
+> (`dict.fromkeys`) — so it matches the gate (`actual not in full`) above it. A
+> developer now sees that the universal codes (CKR_GENERAL_ERROR,
+> CKR_FUNCTION_FAILED, CKR_DEVICE_ERROR, …) are accepted. Meta-test
+> `test_outside_set_fail_message_lists_full_set` pins it.
 - **Site:** `_ckr_spec.py:249-254`.
 - **Evidence:** the gate at L249 checks `actual not in full` (where `full =
   full_compat(compat_tuple)` injects the three universal tuples), but the

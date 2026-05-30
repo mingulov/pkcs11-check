@@ -252,9 +252,13 @@ def assert_ckr(
             )
         full = full_compat(expectation.compat_tuple)
         if actual not in full:
+            # List the FULL accepted set (base + universals), deduped while
+            # preserving order, so the message matches the gate actually used
+            # above -- not just compat_tuple (audit M-CLASS-4).
+            accepted = list(dict.fromkeys(ckr_name(c) for c in full))
             pytest.fail(
                 f"{expectation.function}({expectation.condition}): got {ckr_name(actual)}, "
-                f"not in acceptable set {[ckr_name(c) for c in expectation.compat_tuple]} "
+                f"not in acceptable set {accepted} "
                 f"[{expectation.spec_ref}]"
             )
         if actual not in spec_codes:
