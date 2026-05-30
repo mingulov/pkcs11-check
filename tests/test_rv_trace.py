@@ -428,6 +428,69 @@ def test_crash_journal_tolerates_torn_final_line(tmp_path: Path) -> None:
     assert incomplete is None  # torn line is skipped, not crashed on
 
 
+# --- Hardening: serialization round-trip + capture edge cases --------------
+
+
+def test_trace_survives_reportlog_serialization_unchanged() -> None:
+    """The rich nested trace is natively JSON-serializable, so reportlog's
+    cleanup_unserializable is a no-op (it never str()-mangles our value)."""
+    from pytest_reportlog.plugin import cleanup_unserializable
+
+    from pkcs11_check.raw.pack import PackedMechanism
+
+    raw = _stub_raw({"C_EncryptInit": lambda *a: 0, "C_Sign": lambda *a: 0})
+    raw.enable_rv_trace()
+    ck = CK_MECHANISM()
+    ck.mechanism = int(CKM_RSA_PKCS_OAEP)
+    pm = PackedMechanism(ck, sub_mechanisms={"hashAlg": int(CKM_SHA256)})
+    raw.C_EncryptInit(7, pm.byref(), 5)
+    raw.C_Sign(7, b"data", 4, None, byref(CK_ULONG(48)))
+
+    trace = raw.rv_trace
+    assert any("mech_params" in e for e in trace)  # exercises every rich field
+    assert any("in_len" in e and "out_len" in e for e in trace)
+
+    payload = {"nodeid": "x", "user_properties": [["pkcs11_rv_trace", trace]]}
+    assert cleanup_unserializable(payload) == payload  # nothing was str()-coerced
+    assert json.loads(json.dumps(payload)) == payload  # round-trips faithfully
+
+
+def test_mech_null_when_mechanism_arg_malformed() -> None:
+    raw = _stub_raw({"C_EncryptInit": lambda *a: 0})
+    raw.enable_rv_trace()
+    raw.C_EncryptInit(7, 12345, 5)  # args[1] is a plain int -> no ._obj -> mech None
+    e = raw.rv_trace[0]
+    assert e["fn"] == "C_EncryptInit"
+    assert e["mech"] is None
+
+
+def test_reset_rv_trace_preserves_maxlen() -> None:
+    raw = _stub_raw({"C_GetSessionInfo": lambda *a: 0})
+    raw.enable_rv_trace(maxlen=2)
+    for _ in range(5):
+        raw.C_GetSessionInfo(7, None)
+    assert len(raw.rv_trace) == 2
+    assert raw.rv_trace_dropped == 3
+
+    raw.reset_rv_trace()
+    assert raw.rv_trace == []
+    assert raw.rv_trace_dropped == 0
+
+    for _ in range(5):
+        raw.C_GetSessionInfo(7, None)
+    assert len(raw.rv_trace) == 2  # ring-buffer window preserved across reset
+    assert raw.rv_trace_dropped == 3
+
+
+def test_compact_keeps_absolute_indices() -> None:
+    raw = _stub_raw({"C_GetSessionInfo": lambda *a: 0})
+    raw.enable_rv_trace(maxlen=3)
+    for _ in range(10):
+        raw.C_GetSessionInfo(7, None)
+    assert [e["i"] for e in raw.rv_trace] == [7, 8, 9]  # absolute, not 0,1,2
+    assert raw.rv_trace_dropped == 7
+
+
 def test_journal_path_expands_pid_placeholder() -> None:
     import os
 
