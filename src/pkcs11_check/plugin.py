@@ -145,6 +145,21 @@ def pytest_addoption(parser: Any) -> None:
             "suites produce only noise). For harness development only."
         ),
     )
+    group.addoption(
+        "--p11-rv-trace",
+        dest="p11_rv_trace",
+        action="store_true",
+        default=False,
+        help="Record each C_* call's raw CK_RV per test into report.jsonl user_properties",
+    )
+    group.addoption(
+        "--p11-rv-trace-compact",
+        dest="p11_rv_trace_compact",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Keep only the last N CK_RV trace entries per test (implies --p11-rv-trace)",
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -441,9 +456,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     destructive_enabled = config.getoption("p11_destructive", default=False)
     thread_safe_enabled = config.getoption("p11_thread_safe", default=False)
     allow_mock_conformance = config.getoption("p11_allow_mock_conformance", default=False)
-    gate_mock = (
-        not allow_mock_conformance and is_pkcs11_mock_path(str(module_path))
-    )
+    gate_mock = not allow_mock_conformance and is_pkcs11_mock_path(str(module_path))
 
     for item in items:
         if not _is_testcase_item(item):
@@ -516,10 +529,38 @@ def _build_stacked_strings(
     )
 
 
+_RV_TRACE_SESSION_FIXTURES = ("p11_raw_session", "p11_session", "p11_module_session")
+
+
+def _drain_rv_trace(item: pytest.Item) -> None:
+    """Attach the per-test CK_RV trace to ``item.user_properties`` when enabled.
+
+    Independent of coverage draining (not gated on the coverage stash). The
+    trace lands on the teardown TestReport record; ``report.jsonl`` is
+    byte-identical when tracing is off. See docs/rv-trace-design.md.
+    """
+    funcargs = getattr(item, "funcargs", None)
+    if not isinstance(funcargs, dict):
+        return
+    for name in _RV_TRACE_SESSION_FIXTURES:
+        raw = getattr(funcargs.get(name), "raw", None)
+        if raw is None:
+            continue
+        if not getattr(raw, "rv_trace_enabled", False):
+            return
+        item.user_properties.append(("pkcs11_rv_trace", raw.rv_trace))
+        if raw.rv_trace_dropped:
+            item.user_properties.append(("pkcs11_rv_trace_dropped", raw.rv_trace_dropped))
+        return
+
+
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
     """Clear compliance notes after each testcase item to prevent leakage."""
     if not _is_testcase_item(item):
         return
+
+    _drain_rv_trace(item)
+
     from pkcs11_check.compliance import clear_notes
 
     clear_notes()

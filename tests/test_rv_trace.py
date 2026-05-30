@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from collections import Counter, defaultdict
 from ctypes import byref
+from types import SimpleNamespace
 from typing import Any
 
 from pkcs11_check.raw.api import RawPKCS11
@@ -132,3 +133,142 @@ def test_single_rv_change_is_localized() -> None:
     assert (before["i"], before["fn"], before["mech"]) == (1, "C_Sign", None)
     assert (after["i"], after["fn"], after["mech"]) == (1, "C_Sign", None)
     assert before["rv"] != after["rv"]
+
+
+# --- integration wiring: teardown drain + config resolution ---------------
+
+
+def _fake_item(raw: RawPKCS11, fixture: str = "p11_raw_session") -> Any:
+    return SimpleNamespace(funcargs={fixture: SimpleNamespace(raw=raw)}, user_properties=[])
+
+
+def test_drain_appends_trace_once_to_user_properties() -> None:
+    from pkcs11_check.plugin import _drain_rv_trace
+
+    raw = _stub_raw({"C_Sign": lambda *a: 0})
+    raw.enable_rv_trace()
+    raw.C_Sign(7, b"x", 1, None, _len_ptr())
+
+    item = _fake_item(raw)
+    _drain_rv_trace(item)
+
+    assert item.user_properties == [
+        ("pkcs11_rv_trace", [{"i": 0, "fn": "C_Sign", "mech": None, "rv": 0, "rv_name": "CKR_OK"}])
+    ]
+
+
+def test_drain_is_noop_when_tracing_off() -> None:
+    from pkcs11_check.plugin import _drain_rv_trace
+
+    raw = _stub_raw({"C_Sign": lambda *a: 0})  # never enabled
+    raw.C_Sign(7, b"x", 1, None, _len_ptr())
+
+    item = _fake_item(raw)
+    _drain_rv_trace(item)
+
+    assert item.user_properties == []
+
+
+def test_drain_records_dropped_in_compact_mode() -> None:
+    from pkcs11_check.plugin import _drain_rv_trace
+
+    raw = _stub_raw({"C_Sign": lambda *a: 0})
+    raw.enable_rv_trace(maxlen=2)
+    for _ in range(5):
+        raw.C_Sign(7, b"x", 1, None, _len_ptr())
+
+    item = _fake_item(raw)
+    _drain_rv_trace(item)
+
+    props = dict(item.user_properties)
+    assert [e["i"] for e in props["pkcs11_rv_trace"]] == [3, 4]  # absolute tail indices
+    assert props["pkcs11_rv_trace_dropped"] == 3
+
+
+def test_resolve_compact_implies_enabled() -> None:
+    from pkcs11_check.fixtures import _resolve_rv_trace
+
+    assert _resolve_rv_trace(
+        opt_trace=False, opt_compact=256, env_trace=None, env_compact=None
+    ) == (
+        True,
+        256,
+    )
+
+
+def test_resolve_option_enables_full_capture() -> None:
+    from pkcs11_check.fixtures import _resolve_rv_trace
+
+    assert _resolve_rv_trace(
+        opt_trace=True, opt_compact=None, env_trace=None, env_compact=None
+    ) == (
+        True,
+        None,
+    )
+
+
+def test_resolve_env_bridge() -> None:
+    from pkcs11_check.fixtures import _resolve_rv_trace
+
+    assert _resolve_rv_trace(
+        opt_trace=False, opt_compact=None, env_trace="1", env_compact="512"
+    ) == (True, 512)
+
+
+def test_resolve_off_by_default() -> None:
+    from pkcs11_check.fixtures import _resolve_rv_trace
+
+    assert _resolve_rv_trace(
+        opt_trace=False, opt_compact=None, env_trace=None, env_compact=None
+    ) == (False, None)
+
+
+def test_real_teardown_hook_drains_trace_for_testcase_item() -> None:
+    """The actual pytest_runtest_teardown hook attaches the trace (gate + drain).
+
+    Exercises the real hook: the _is_testcase_item gate, the independent drain,
+    and coexistence with the coverage early-return (session=None). Proves the
+    plumbing that lands the trace on the teardown report's user_properties.
+    """
+    from pathlib import Path
+
+    from pkcs11_check import plugin
+
+    raw = _stub_raw({"C_Sign": lambda *a: 0})
+    raw.enable_rv_trace()
+    raw.C_Sign(7, b"x", 1, None, _len_ptr())
+
+    item = SimpleNamespace(
+        funcargs={"p11_raw_session": SimpleNamespace(raw=raw)},
+        user_properties=[],
+        path=Path("/repo/src/pkcs11_check/testcases/test_foo.py"),
+        session=None,  # coverage drain returns early; rv-trace drain already ran
+    )
+
+    plugin.pytest_runtest_teardown(item, None)
+
+    props = dict(item.user_properties)
+    assert props["pkcs11_rv_trace"] == [
+        {"i": 0, "fn": "C_Sign", "mech": None, "rv": 0, "rv_name": "CKR_OK"}
+    ]
+
+
+def test_real_teardown_hook_records_nothing_when_off() -> None:
+    """Off ⇒ the hook leaves user_properties empty (byte-identical report.jsonl)."""
+    from pathlib import Path
+
+    from pkcs11_check import plugin
+
+    raw = _stub_raw({"C_Sign": lambda *a: 0})  # never enabled
+    raw.C_Sign(7, b"x", 1, None, _len_ptr())
+
+    item = SimpleNamespace(
+        funcargs={"p11_raw_session": SimpleNamespace(raw=raw)},
+        user_properties=[],
+        path=Path("/repo/src/pkcs11_check/testcases/test_foo.py"),
+        session=None,
+    )
+
+    plugin.pytest_runtest_teardown(item, None)
+
+    assert item.user_properties == []

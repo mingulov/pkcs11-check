@@ -320,6 +320,11 @@ class RawPKCS11:
         self._rv_trace_total = 0
 
     @property
+    def rv_trace_enabled(self) -> bool:
+        """True once enable_rv_trace() has been called (distinguishes off vs empty)."""
+        return self._rv_trace is not None
+
+    @property
     def rv_trace(self) -> list[dict[str, Any]]:
         """A copy of the current trace entries (empty when tracing is off)."""
         if self._rv_trace is None:

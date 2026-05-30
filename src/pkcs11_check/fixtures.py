@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Generator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +13,42 @@ import pytest
 from pkcs11_check.config import P11TestConfig
 from pkcs11_check.core.loader import P11Module, load_module
 from pkcs11_check.raw.api import RawPKCS11
+
+_RV_TRACE_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _resolve_rv_trace(
+    *,
+    opt_trace: bool,
+    opt_compact: int | None,
+    env_trace: str | None,
+    env_compact: str | None,
+) -> tuple[bool, int | None]:
+    """Resolve ``(enabled, maxlen)`` for the CK_RV trace from options + env.
+
+    Options take precedence over env; a compact window size (``maxlen``) implies
+    tracing is enabled. ``maxlen is None`` means full (unbounded) capture.
+    """
+    compact = opt_compact
+    if compact is None and env_compact:
+        try:
+            compact = int(env_compact)
+        except ValueError:
+            compact = None
+    env_on = (env_trace or "").strip().lower() in _RV_TRACE_TRUTHY
+    enabled = bool(opt_trace) or env_on or (compact is not None)
+    return enabled, compact
+
+
+def _apply_rv_trace(raw: RawPKCS11, p11_config: P11TestConfig) -> None:
+    """Arm (and per-test reset) the CK_RV trace on ``raw`` when configured on.
+
+    Called at each session fixture's reset point, i.e. *after* bootstrap/login,
+    so the PIN-bearing C_Login and session-open calls stay out of the test-body
+    trace. ``enable_rv_trace`` doubles as the per-test reset.
+    """
+    if p11_config.rv_trace:
+        raw.enable_rv_trace(maxlen=p11_config.rv_trace_compact)
 
 
 @pytest.fixture(scope="session")
@@ -33,6 +70,15 @@ def p11_config(request: pytest.FixtureRequest) -> P11TestConfig:
         kwargs["destructive"] = destructive
     if pin_value is not None:
         kwargs["pin"] = pin_value
+    rv_trace_enabled, rv_trace_compact = _resolve_rv_trace(
+        opt_trace=bool(request.config.getoption("p11_rv_trace", default=False)),
+        opt_compact=request.config.getoption("p11_rv_trace_compact", default=None),
+        env_trace=os.environ.get("PKCS11_CHECK_RV_TRACE"),
+        env_compact=os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT"),
+    )
+    if rv_trace_enabled:
+        kwargs["rv_trace"] = True
+        kwargs["rv_trace_compact"] = rv_trace_compact
     return P11TestConfig(**kwargs)
 
 
@@ -98,6 +144,7 @@ def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[A
     bootstrap_log = dict(raw.call_log)
     raw.reset_call_log()
     raw.reset_used_mechanisms()
+    _apply_rv_trace(raw, p11_config)
     try:
         yield RawSession(raw, sh, slot_id, bootstrap_call_counts=bootstrap_log)
     finally:
@@ -237,6 +284,7 @@ def p11_raw_session(
     bootstrap_log = dict(raw.call_log)
     raw.reset_call_log()
     raw.reset_used_mechanisms()
+    _apply_rv_trace(raw, p11_config)
     try:
         yield RawSession(raw, sh, slot_id, bootstrap_call_counts=bootstrap_log)
     finally:
@@ -362,6 +410,7 @@ def _p11_module_session_holder(
 @pytest.fixture
 def p11_module_session(
     _p11_module_session_holder: _ModuleSessionHolder,
+    p11_config: P11TestConfig,
 ) -> Generator[RawSession]:
     """Module-scoped PKCS#11 session with per-test counter reset.
 
@@ -391,4 +440,5 @@ def p11_module_session(
     raw = holder.raw
     raw.reset_call_log()
     raw.reset_used_mechanisms()
+    _apply_rv_trace(raw, p11_config)
     yield RawSession(raw, sh, slot_id, bootstrap_call_counts=bootstrap_log)

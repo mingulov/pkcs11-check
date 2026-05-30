@@ -276,14 +276,20 @@ plus the **drift-guard** test (every `_two_call_output` caller ∈
 
 ## Phasing
 
-1. **Core** — capture (`_call` + trace methods on `RawPKCS11`), gating
-   (option + env + config), reset/drain (fixtures + teardown), and tests 1–4.
-   Delivers all v1 acceptance below.
-2. **Compact** — `deque(maxlen=N)` window + `pkcs11_rv_trace_dropped` sidecar +
-   its test. Isolated behind the same drain seam.
+1. **Core** — ✅ shipped. Capture (`_call` + trace methods on `RawPKCS11`),
+   gating (option + env + config), reset/drain (fixtures + teardown), tests 1–4.
+2. **Compact** — ✅ shipped *with* core (the `deque(maxlen=N)` made it free):
+   `enable_rv_trace(maxlen=N)`, `--p11-rv-trace-compact=N` /
+   `PKCS11_CHECK_RV_TRACE_COMPACT`, `pkcs11_rv_trace_dropped` sidecar + test.
 3. **Deferred out_len** *(optional, greenlit after core)* — `_OUTPUT_LEN_FUNCS`,
    `_read_out_len`, the one-line insert in `_call`, drift-guard + length tests.
 4. **Crash-survivable trace** *(optional, separate mechanism)* — see below.
+
+**Verified end-to-end on SoftHSM2** (the `smoke` slice): flag-on ⇒ the trace
+rides the **teardown** record only with the exact `{i, fn, mech, rv, rv_name}`
+schema; bootstrap/`C_Login` excluded; the login PIN never appears in any trace
+value; flag-off ⇒ every record's `user_properties == []`; both the CLI option
+and the `PKCS11_CHECK_RV_TRACE=1` env gate enable it.
 
 ## Write behavior & outcomes (verified)
 

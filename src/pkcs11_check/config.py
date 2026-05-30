@@ -41,6 +41,10 @@ class P11TestConfig(BaseSettings):
     log_level: str = "INFO"
     output: str = "rich"
     disabled_tests_file: Path | None = None
+    # Per-test CK_RV trace (off by default). rv_trace_compact = ring-buffer
+    # window size N (last-N entries); None = full capture. See docs/rv-trace-design.md.
+    rv_trace: bool = False
+    rv_trace_compact: int | None = None
 
     @classmethod
     def settings_customise_sources(

@@ -55,6 +55,8 @@ def _build_pytest_args(
     pin: str | None,
     slot: int,
     destructive: bool,
+    rv_trace: bool,
+    rv_trace_compact: int | None,
     output: str,
     output_file: str | None,
     include_machine_report_args: bool,
@@ -71,6 +73,14 @@ def _build_pytest_args(
 
     if destructive:
         args.append("--p11-destructive")
+
+    # CK_RV trace: a stable option, so it flows via pytest_args to both the
+    # in-process pytest.main and each isolated subprocess unit (no env bridge
+    # needed). --rv-trace-compact implies tracing. See docs/rv-trace-design.md.
+    if rv_trace_compact is not None:
+        args.append(f"--p11-rv-trace-compact={rv_trace_compact}")
+    elif rv_trace:
+        args.append("--p11-rv-trace")
 
     if marker:
         args.extend(["-m", marker])
@@ -150,6 +160,17 @@ def test_command(
         help="In test/auto isolation, skip remaining tests from a file after this many crashes "
         "(0 = unlimited)",
     ),
+    rv_trace: bool = typer.Option(
+        False,
+        "--rv-trace",
+        help="Record each C_* call's raw CK_RV per test into report.jsonl user_properties",
+    ),
+    rv_trace_compact: int | None = typer.Option(
+        None,
+        "--rv-trace-compact",
+        metavar="N",
+        help="Keep only the last N CK_RV trace entries per test (implies --rv-trace)",
+    ),
     targets: list[str] = typer.Argument(None, help="Optional pytest paths or nodeids"),
 ) -> None:
     """Run the PKCS#11 test suite against a module."""
@@ -198,6 +219,8 @@ def test_command(
         pin=pin,
         slot=slot,
         destructive=destructive,
+        rv_trace=rv_trace,
+        rv_trace_compact=rv_trace_compact,
         output=output,
         output_file=output_file,
         include_machine_report_args=isolation == "none",
