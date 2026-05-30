@@ -283,6 +283,39 @@ plus the **drift-guard** test (every `_two_call_output` caller ∈
    its test. Isolated behind the same drain seam.
 3. **Deferred out_len** *(optional, greenlit after core)* — `_OUTPUT_LEN_FUNCS`,
    `_read_out_len`, the one-line insert in `_call`, drift-guard + length tests.
+4. **Crash-survivable trace** *(optional, separate mechanism)* — see below.
+
+## Write behavior & outcomes (verified)
+
+- **Append-streamed, written once.** `report.jsonl` is opened once and written
+  line-by-line (`pytest_reportlog/plugin.py:71–77`, `write + flush` per event);
+  the merge is byte-copy concat. The trace adds **no** lines — it enriches the
+  teardown record that is emitted anyway.
+- **One copy per test, on the teardown record.** pytest snapshots
+  `user_properties` *by value* per phase (`reports.py:362`, built in
+  `runner.call_and_report`). We append only at teardown, so `setup`/`call`
+  records stay `[]` and only `teardown` carries the trace. No duplication.
+- **Outcome-agnostic.** The trace records what the *module* did; pytest's
+  `outcome` field on the same record says how the *test* classified it. So
+  `passed`/`failed`/`xfailed`/`xpassed` and mid-body `skip` all carry the trace
+  alongside their outcome — no per-outcome handling. The only case that cannot
+  use this path is a hard crash (next).
+
+## Phase 4 — crash-survivable trace (optional)
+
+`record_property`-at-teardown cannot survive a segfault/abort: the process dies
+before teardown, and crash tests run in **subprocesses** whose in-memory trace
+dies with the child. To capture "the last C_* calls before the crash":
+
+- When a side channel is requested (e.g. `PKCS11_CHECK_RV_TRACE_FD=<fd>` or a
+  path), `_call` *also* streams each compact entry to that fd (line-buffered /
+  `os.write`), so the last-N-before-crash is on disk regardless of teardown.
+- Reuse the compact ring-buffer shape; the side file is the tail + total.
+- The subprocess harness (`_raw_subprocess` / `subprocess.run` crash tests)
+  passes the fd/path to the child and, on non-zero/`signal` exit, attaches the
+  recovered tail to the parent test's record.
+- Kept fully separate from the v1 in-process path; same `_rv_trace is None` gate
+  means zero overhead when off.
 
 ## Acceptance (v1 core)
 
