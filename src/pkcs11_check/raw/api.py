@@ -408,12 +408,18 @@ class RawPKCS11:
     def _call(self, name: str, *args: Any) -> CKR:
         self._call_log[name] += 1
         mech_id: int | None = None
+        mech_params: dict[str, int] | None = None
         if name in _MECHANISM_ARG_FUNCS and len(args) >= 2:
             try:
-                m = args[1]._obj.mechanism
+                obj = args[1]._obj
+                m = obj.mechanism
                 self._used_mechanisms.add(m)
                 self._mechanism_counts[m] += 1
                 mech_id = m
+                if self._rv_trace is not None:
+                    sub = getattr(obj, "_rv_trace_sub", None)
+                    if sub:
+                        mech_params = {k: int(v) for k, v in sub.items()}
             except (AttributeError, TypeError):
                 pass
         func = self._funcs.get(name)
@@ -429,6 +435,8 @@ class RawPKCS11:
                 "rv": result,
                 "rv_name": str(ckr),
             }
+            if mech_params is not None:
+                entry["mech_params"] = mech_params
             in_len = _read_in_len(name, args)
             if in_len is not None:
                 entry["in_len"] = in_len

@@ -18,6 +18,8 @@ from pkcs11_check.raw.types_std import (
     CK_MECHANISM,
     CK_ULONG,
     CKM_AES_CBC,
+    CKM_RSA_PKCS_OAEP,
+    CKM_SHA256,
     CKR_BUFFER_TOO_SMALL,
     CKR_FUNCTION_FAILED,
     CKR_OK,
@@ -341,3 +343,29 @@ def test_output_len_funcs_covers_two_call_output_callers() -> None:
     assert direct_callers, "regex found no _two_call_output callers (pattern drift?)"
     missing = direct_callers - _OUTPUT_LEN_FUNCS
     assert not missing, f"output-producing recipes missing from _OUTPUT_LEN_FUNCS: {missing}"
+
+
+# --- Sub-mechanism params (stacked mechanism config, deterministic) ---------
+
+
+def test_mech_params_recorded_for_stacked_mechanism() -> None:
+    from pkcs11_check.raw.pack import PackedMechanism
+
+    raw = _stub_raw({"C_EncryptInit": lambda *a: 0})
+    raw.enable_rv_trace()
+    ck = CK_MECHANISM()
+    ck.mechanism = int(CKM_RSA_PKCS_OAEP)
+    pm = PackedMechanism(ck, sub_mechanisms={"hashAlg": int(CKM_SHA256)})
+
+    raw.C_EncryptInit(7, pm.byref(), 5)
+
+    e = raw.rv_trace[0]
+    assert e["mech"] == int(CKM_RSA_PKCS_OAEP)
+    assert e["mech_params"] == {"hashAlg": int(CKM_SHA256)}
+
+
+def test_mech_params_absent_for_simple_mechanism() -> None:
+    raw = _stub_raw({"C_EncryptInit": lambda *a: 0})
+    raw.enable_rv_trace()
+    raw.C_EncryptInit(7, _mech(int(CKM_AES_CBC)), 5)  # plain CK_MECHANISM, no sub-params
+    assert "mech_params" not in raw.rv_trace[0]

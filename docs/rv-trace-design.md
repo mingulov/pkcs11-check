@@ -287,6 +287,11 @@ plus the **drift-guard** test (every `_two_call_output` caller ∈
    `in_len`); both best-effort, length-only, present only when readable.
    Drift-guard test keeps `_OUTPUT_LEN_FUNCS` honest. Verified on SoftHSM2
    (`AES_CBC_PAD`: `in_len 32 → out_len 48`).
+3b. **Sub-mechanism params** — ✅ shipped. `PackedMechanism` stashes its
+   stacked sub-params on the `CK_MECHANISM` struct (`_rv_trace_sub`); `_call`
+   reads them from `args[1]._obj` (gated on tracing-on) into an optional
+   `mech_params` (`{name: id}`, deterministic, diff-safe, ids only). Verified on
+   SoftHSM2 (RSA-OAEP → `{hashAlg, mgf}`).
 4. **Crash-survivable trace** *(optional, separate mechanism)* — see below.
 
 **Verified end-to-end on SoftHSM2** (the `smoke` slice): flag-on ⇒ the trace
