@@ -181,10 +181,12 @@ output-producing function cannot silently miss `out_len`.
 
 - **Option + env (dual, mirrors `--report-log` / `PKCS11_CHECK_REPORT_LOG`):**
   - `pytest_addoption`: `--p11-rv-trace` (store_true) and
-    `--p11-rv-trace-compact` (`nargs="?"`, `const=512`, `type=int`) so a bare
-    `--p11-rv-trace-compact` ⇒ window 512, `=N` ⇒ window N.
-  - `test_cmd.py` typer flag `--rv-trace` (and `--rv-trace-compact[=N]`) sets the
-    pytest option **and** exports `PKCS11_CHECK_RV_TRACE=1`
+    `--p11-rv-trace-compact` (`type=int, default=None` — an explicit window size
+    `N`; **no** `nargs="?"`, which would let argparse swallow a following test
+    path as the int and crash). Enabling compact implies tracing.
+  - `test_cmd.py` typer flag `--rv-trace` (and `--rv-trace-compact N`) sets the
+    pytest option (always emitting `--p11-rv-trace-compact=N` with the `=` form)
+    **and** exports `PKCS11_CHECK_RV_TRACE=1`
     (`PKCS11_CHECK_RV_TRACE_COMPACT=N`) — with a `try/finally` `os.environ.pop`
     cleanup, exactly mirroring the `PKCS11_CHECK_REPORT_LOG` path — so it
     propagates into isolated/subprocess runs (children inherit `os.environ`).
@@ -200,17 +202,24 @@ output-producing function cannot silently miss `out_len`.
   doubles as reset — fresh `deque`, zeroed counter). Because this runs *after*
   bootstrap/login, the PIN-bearing `C_Login` and session-open calls are excluded
   from the test-body trace.
-- **Drain:** in `pytest_runtest_teardown`, inside the existing funcarg loop
-  (`plugin.py:544`) that already reads `rs.raw.call_log`, when tracing is on:
+- **Drain:** an **independent block at the top of `pytest_runtest_teardown`**
+  (after the `_is_testcase_item` check), *not* nested under the coverage
+  early-return (`plugin.py:531–534` returns on a missing `_CUMULATIVE_FUNCTIONS`
+  stash; rv-trace must not be coupled to that). It scans `item.funcargs` for the
+  first of `("p11_raw_session", "p11_session", "p11_module_session")` that has a
+  `.raw`, and when `raw._rv_trace is not None`:
   ```python
-  trace = rs.raw.rv_trace
-  item.user_properties.append(("pkcs11_rv_trace", trace))
-  dropped = rs.raw.rv_trace_dropped
-  if dropped:
-      item.user_properties.append(("pkcs11_rv_trace_dropped", dropped))
+  item.user_properties.append(("pkcs11_rv_trace", raw.rv_trace))
+  if raw.rv_trace_dropped:
+      item.user_properties.append(("pkcs11_rv_trace_dropped", raw.rv_trace_dropped))
   ```
-  The value lands on the **teardown** `TestReport` record (that is when the hook
-  runs). Documented; harmless today since nothing reads `user_properties`.
+  **Verified** (grep): no `pytest_runtest_makereport` hookwrapper and no other
+  `user_properties` writer exists, so the append flows straight to reportlog.
+  The value lands on the **teardown** `TestReport` record — that is when the hook
+  runs, and pytest builds the teardown report from `item.user_properties` *after*
+  all `pytest_runtest_teardown` hooks complete (`runner.call_and_report`). The
+  setup/call records keep `user_properties == []`. Consumers read the trace from
+  the teardown record.
 
 The raw layer never reads env/config — its gate is purely `_rv_trace is not
 None`, set by the fixture. The choke point stays clean.
@@ -291,7 +300,7 @@ plus the **drift-guard** test (every `_two_call_output` caller ∈
 | `raw/api.py` | `__init__`: add `_rv_trace=None`, `_rv_trace_total=0`; `import deque`. Add `enable_rv_trace`/`reset_rv_trace`/`rv_trace`/`rv_trace_dropped`. In `_call`: hoist `mech_id`, capture `ckr` once, append entry when enabled. | Core |
 | `config.py` | `P11TestConfig`: `rv_trace: bool = False`, `rv_trace_compact: int \| None = None`. | Core |
 | `fixtures.py` | `p11_config`: read `--p11-rv-trace`/`--p11-rv-trace-compact` + env, compact-implies-enabled. Three reset sites (`:99,238,392`): `enable_rv_trace(maxlen=…)` when on. | Core |
-| `plugin.py` | `pytest_addoption`: two options. `pytest_runtest_teardown` (`:544` loop): append `pkcs11_rv_trace` (+`_dropped`) to `item.user_properties`. | Core/Compact |
+| `plugin.py` | `pytest_addoption`: two options. `pytest_runtest_teardown`: independent top-of-hook drain (own funcarg scan, not under the coverage stash guard) appending `pkcs11_rv_trace` (+`_dropped`) to `item.user_properties`. | Core/Compact |
 | `cli/test_cmd.py` | typer `--rv-trace`/`--rv-trace-compact`; `_build_pytest_args` append; `os.environ` export with `try/finally` cleanup. | Core |
 | `tests/test_rv_trace.py` (new) | stub-`_call` meta-tests 1–4. | Core |
 | `raw/api.py` + `tests/` | `_OUTPUT_LEN_FUNCS`, `_read_out_len`, one-line insert; drift-guard + length tests. | Deferred out_len |
