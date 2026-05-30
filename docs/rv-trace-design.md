@@ -281,8 +281,12 @@ plus the **drift-guard** test (every `_two_call_output` caller ∈
 2. **Compact** — ✅ shipped *with* core (the `deque(maxlen=N)` made it free):
    `enable_rv_trace(maxlen=N)`, `--p11-rv-trace-compact=N` /
    `PKCS11_CHECK_RV_TRACE_COMPACT`, `pkcs11_rv_trace_dropped` sidecar + test.
-3. **Deferred out_len** *(optional, greenlit after core)* — `_OUTPUT_LEN_FUNCS`,
-   `_read_out_len`, the one-line insert in `_call`, drift-guard + length tests.
+3. **out_len + in_len** — ✅ shipped. `_OUTPUT_LEN_FUNCS` (the 12
+   `_two_call_output` callers; `out_len = args[-1]._obj.value`, gated on
+   `CKR_OK`/`CKR_BUFFER_TOO_SMALL`) + `_INPUT_LEN_ARG` (single-shot ulDataLen,
+   `in_len`); both best-effort, length-only, present only when readable.
+   Drift-guard test keeps `_OUTPUT_LEN_FUNCS` honest. Verified on SoftHSM2
+   (`AES_CBC_PAD`: `in_len 32 → out_len 48`).
 4. **Crash-survivable trace** *(optional, separate mechanism)* — see below.
 
 **Verified end-to-end on SoftHSM2** (the `smoke` slice): flag-on ⇒ the trace

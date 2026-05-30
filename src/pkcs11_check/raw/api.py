@@ -139,6 +139,69 @@ _MECHANISM_ARG_FUNCS = frozenset(
     }
 )
 
+# Output-producing C_* functions: those routed through recipes._two_call_output,
+# where the output byte-length is the *last* positional arg as byref(CK_ULONG).
+# Gating by name is essential — C_DeriveKey/C_UnwrapKey/C_GenerateKeyPair also
+# have a byref last arg, but it is a key HANDLE, not a length.  Kept honest by
+# the drift-guard meta-test (every _two_call_output caller must be listed).
+_OUTPUT_LEN_FUNCS = frozenset(
+    {
+        "C_Encrypt",
+        "C_Decrypt",
+        "C_Sign",
+        "C_Digest",
+        "C_SignRecover",
+        "C_SignFinal",
+        "C_DigestFinal",
+        "C_EncryptFinal",  # via recipes._multipart_output(final_fn=...)
+        "C_DecryptFinal",  # via recipes._multipart_output(final_fn=...)
+        "C_WrapKey",
+        "C_WrapKeyAuthenticated",
+        "C_GetOperationState",
+    }
+)
+
+# Single-shot input-data functions: the input byte-length is a by-value CK_ULONG
+# at this positional index (ulDataLen).  Length only, never the bytes.
+_INPUT_LEN_ARG = {
+    "C_Encrypt": 2,
+    "C_Decrypt": 2,
+    "C_Sign": 2,
+    "C_Digest": 2,
+    "C_SignRecover": 2,
+}
+
+# out_len is meaningful only when the module actually set the length pointer.
+_OUT_LEN_OK_RVS = (int(CKR_OK), int(CKR_BUFFER_TOO_SMALL))
+
+
+def _coerce_len(value: Any) -> int | None:
+    """Best-effort read of a length: a plain int, or a ctypes scalar's .value."""
+    try:
+        if isinstance(value, int):
+            return value
+        return int(value.value)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _read_out_len(name: str, args: tuple[Any, ...], rv: int) -> int | None:
+    """Output byte-length from the trailing byref(CK_ULONG), best-effort."""
+    if name not in _OUTPUT_LEN_FUNCS or rv not in _OUT_LEN_OK_RVS or not args:
+        return None
+    try:
+        return _coerce_len(args[-1]._obj)
+    except (AttributeError, TypeError, IndexError):
+        return None
+
+
+def _read_in_len(name: str, args: tuple[Any, ...]) -> int | None:
+    """Input byte-length from the by-value ulDataLen arg, best-effort."""
+    idx = _INPUT_LEN_ARG.get(name)
+    if idx is None or idx >= len(args):
+        return None
+    return _coerce_len(args[idx])
+
 
 class RawPKCS11:
     """Raw ctypes access to PKCS#11 C_* functions."""
@@ -359,15 +422,20 @@ class RawPKCS11:
         result = int(func(*args))
         ckr = _to_ckr(result)
         if self._rv_trace is not None:
-            self._rv_trace.append(
-                {
-                    "i": self._rv_trace_total,
-                    "fn": name,
-                    "mech": mech_id,
-                    "rv": result,
-                    "rv_name": str(ckr),
-                }
-            )
+            entry: dict[str, Any] = {
+                "i": self._rv_trace_total,
+                "fn": name,
+                "mech": mech_id,
+                "rv": result,
+                "rv_name": str(ckr),
+            }
+            in_len = _read_in_len(name, args)
+            if in_len is not None:
+                entry["in_len"] = in_len
+            out_len = _read_out_len(name, args, result)
+            if out_len is not None:
+                entry["out_len"] = out_len
+            self._rv_trace.append(entry)
             self._rv_trace_total += 1
         return ckr
 

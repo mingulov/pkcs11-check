@@ -18,6 +18,8 @@ from pkcs11_check.raw.types_std import (
     CK_MECHANISM,
     CK_ULONG,
     CKM_AES_CBC,
+    CKR_BUFFER_TOO_SMALL,
+    CKR_FUNCTION_FAILED,
     CKR_OK,
     CKR_SIGNATURE_INVALID,
 )
@@ -49,22 +51,24 @@ def _len_ptr() -> Any:
 
 
 def test_rv_trace_captures_exact_sequence() -> None:
+    # Non-output, mixed-mechanism functions so the entries are the pure core
+    # schema (no in_len/out_len enrichment — those have dedicated tests below).
     raw = _stub_raw(
         {
             "C_EncryptInit": lambda *a: 0,
-            "C_Sign": lambda *a: 0,
+            "C_Logout": lambda *a: 0,
             "C_GetSessionInfo": lambda *a: 0x12345678,
         }
     )
     raw.enable_rv_trace()
 
     raw.C_EncryptInit(7, _mech(int(CKM_AES_CBC)), 3)
-    raw.C_Sign(7, b"x", 1, None, _len_ptr())
+    raw.C_Logout(7)
     raw.C_GetSessionInfo(7, None)
 
     assert raw.rv_trace == [
         {"i": 0, "fn": "C_EncryptInit", "mech": int(CKM_AES_CBC), "rv": 0, "rv_name": "CKR_OK"},
-        {"i": 1, "fn": "C_Sign", "mech": None, "rv": 0, "rv_name": "CKR_OK"},
+        {"i": 1, "fn": "C_Logout", "mech": None, "rv": 0, "rv_name": "CKR_OK"},
         {
             "i": 2,
             "fn": "C_GetSessionInfo",
@@ -108,7 +112,7 @@ def test_rv_trace_never_leaks_secret_material() -> None:
     for secret in (pin, key_material, plaintext):
         assert secret.decode() not in blob
 
-    whitelist = {"i", "fn", "mech", "rv", "rv_name"}
+    whitelist = {"i", "fn", "mech", "rv", "rv_name", "in_len", "out_len"}
     for entry in raw.rv_trace:
         assert set(entry) <= whitelist, entry
     # C_Login is recorded by name+rv only, never its PIN argument.
@@ -145,15 +149,18 @@ def _fake_item(raw: RawPKCS11, fixture: str = "p11_raw_session") -> Any:
 def test_drain_appends_trace_once_to_user_properties() -> None:
     from pkcs11_check.plugin import _drain_rv_trace
 
-    raw = _stub_raw({"C_Sign": lambda *a: 0})
+    raw = _stub_raw({"C_GetSessionInfo": lambda *a: 0})  # non-output -> pure core schema
     raw.enable_rv_trace()
-    raw.C_Sign(7, b"x", 1, None, _len_ptr())
+    raw.C_GetSessionInfo(7, _len_ptr())
 
     item = _fake_item(raw)
     _drain_rv_trace(item)
 
     assert item.user_properties == [
-        ("pkcs11_rv_trace", [{"i": 0, "fn": "C_Sign", "mech": None, "rv": 0, "rv_name": "CKR_OK"}])
+        (
+            "pkcs11_rv_trace",
+            [{"i": 0, "fn": "C_GetSessionInfo", "mech": None, "rv": 0, "rv_name": "CKR_OK"}],
+        )
     ]
 
 
@@ -234,9 +241,9 @@ def test_real_teardown_hook_drains_trace_for_testcase_item() -> None:
 
     from pkcs11_check import plugin
 
-    raw = _stub_raw({"C_Sign": lambda *a: 0})
+    raw = _stub_raw({"C_GetSessionInfo": lambda *a: 0})  # non-output -> pure core schema
     raw.enable_rv_trace()
-    raw.C_Sign(7, b"x", 1, None, _len_ptr())
+    raw.C_GetSessionInfo(7, _len_ptr())
 
     item = SimpleNamespace(
         funcargs={"p11_raw_session": SimpleNamespace(raw=raw)},
@@ -249,7 +256,7 @@ def test_real_teardown_hook_drains_trace_for_testcase_item() -> None:
 
     props = dict(item.user_properties)
     assert props["pkcs11_rv_trace"] == [
-        {"i": 0, "fn": "C_Sign", "mech": None, "rv": 0, "rv_name": "CKR_OK"}
+        {"i": 0, "fn": "C_GetSessionInfo", "mech": None, "rv": 0, "rv_name": "CKR_OK"}
     ]
 
 
@@ -272,3 +279,65 @@ def test_real_teardown_hook_records_nothing_when_off() -> None:
     plugin.pytest_runtest_teardown(item, None)
 
     assert item.user_properties == []
+
+
+# --- Phase 3: out_len / in_len (best-effort, length-only) ------------------
+
+
+def test_out_len_and_in_len_recorded_for_output_call() -> None:
+    raw = _stub_raw({"C_Sign": lambda *a: 0})
+    raw.enable_rv_trace()
+    raw.C_Sign(7, b"data", 4, None, byref(CK_ULONG(48)))  # in_len=args[2]=4, out_len=48
+    e = raw.rv_trace[0]
+    assert e["in_len"] == 4
+    assert e["out_len"] == 48
+
+
+def test_out_len_absent_for_non_output_function() -> None:
+    raw = _stub_raw({"C_GetSessionInfo": lambda *a: 0})
+    raw.enable_rv_trace()
+    raw.C_GetSessionInfo(7, byref(CK_ULONG(99)))  # readable ulong last arg, but not output
+    e = raw.rv_trace[0]
+    assert "out_len" not in e
+    assert "in_len" not in e
+
+
+def test_out_len_absent_for_derive_key_handle() -> None:
+    """C_DeriveKey's last arg is a key HANDLE, not a length — never read as out_len."""
+    raw = _stub_raw({"C_DeriveKey": lambda *a: 0})
+    raw.enable_rv_trace()
+    raw.C_DeriveKey(7, _mech(int(CKM_AES_CBC)), 1, 0, byref(CK_ULONG(4242)))
+    e = raw.rv_trace[0]
+    assert e["mech"] == int(CKM_AES_CBC)  # mechanism still captured
+    assert "out_len" not in e  # the 4242 handle must NOT be mislabeled
+
+
+def test_out_len_only_on_ok_or_buffer_too_small() -> None:
+    # hard error -> out_len absent (stale), but in_len (an input) still present
+    raw = _stub_raw({"C_Sign": lambda *a: int(CKR_FUNCTION_FAILED)})
+    raw.enable_rv_trace()
+    raw.C_Sign(7, b"x", 1, None, byref(CK_ULONG(48)))
+    e = raw.rv_trace[0]
+    assert "out_len" not in e
+    assert e["in_len"] == 1
+
+    # CKR_BUFFER_TOO_SMALL sets the required length -> out_len present
+    raw2 = _stub_raw({"C_Sign": lambda *a: int(CKR_BUFFER_TOO_SMALL)})
+    raw2.enable_rv_trace()
+    raw2.C_Sign(7, b"x", 1, None, byref(CK_ULONG(256)))
+    assert raw2.rv_trace[0]["out_len"] == 256
+
+
+def test_output_len_funcs_covers_two_call_output_callers() -> None:
+    """Drift guard: every _two_call_output caller must be in _OUTPUT_LEN_FUNCS."""
+    import pathlib
+    import re
+
+    import pkcs11_check.raw.recipes as recipes_mod
+    from pkcs11_check.raw.api import _OUTPUT_LEN_FUNCS
+
+    src = pathlib.Path(recipes_mod.__file__).read_text()
+    direct_callers = set(re.findall(r'_two_call_output\(\s*raw,\s*"(C_\w+)"', src))
+    assert direct_callers, "regex found no _two_call_output callers (pattern drift?)"
+    missing = direct_callers - _OUTPUT_LEN_FUNCS
+    assert not missing, f"output-producing recipes missing from _OUTPUT_LEN_FUNCS: {missing}"
