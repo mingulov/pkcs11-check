@@ -62,13 +62,14 @@ The RV trace is a fourth sibling of that family.
 ## The contract (both sides agree)
 
 - Property name: `pkcs11_rv_trace`.
-- Value (v1 core): a JSON list of entries, each:
+- Value: a JSON list of entries. Required keys always present; the rest are
+  optional and appear only when applicable:
   ```json
-  {"i": <abs int>, "fn": "C_DeriveKey", "mech": <u32|null>,
-   "rv": <int>, "rv_name": "CKR_..."}
+  {"i": <abs int>, "fn": "C_Decrypt", "mech": <u32|null>,
+   "rv": <int>, "rv_name": "CKR_...",
+   "mech_params": {"hashAlg": <id>, "mgf": <id>},  // optional: stacked params
+   "in_len": <int>, "out_len": <int>}              // optional: byte lengths
   ```
-  The optional `"out_len": <int>` field is added **only** by the deferred
-  out_len phase; v1 core never emits it. Consumers must treat it as optional.
   - `i` — **absolute** call index within the test (0-based). Absolute, not
     list-position, so that compact mode (below) can elide a prefix and the
     consumer still knows where each tail entry sits in the full sequence.
@@ -80,9 +81,12 @@ The RV trace is a fourth sibling of that family.
     before any test-level interpretation.
   - `rv_name` — `str(_to_ckr(rv))`: `"CKR_OK"`, `"CKR_MECHANISM_INVALID"`, or
     `"0x........"` for unknown codes.
-  - `out_len` *(deferred phase only)* — present when an output byte-length was
-    cheaply and unambiguously readable for an output-producing call; absent
-    otherwise.
+  - `mech_params` *(optional)* — stacked sub-mechanism params (`{name: id}`,
+    ids only) for mechanisms that carry them (RSA-OAEP, GCM, …). Deterministic.
+  - `in_len` *(optional)* — input byte-length (ulDataLen) for single-shot ops.
+  - `out_len` *(optional)* — output byte-length, for output-producing ops on
+    `CKR_OK`/`CKR_BUFFER_TOO_SMALL`. **All optional fields are length/id only,
+    never key/plaintext bytes.**
 - Sidecar (compact mode only): property `pkcs11_rv_trace_dropped` = integer
   count of elided leading entries, so truncation is never silent.
 
