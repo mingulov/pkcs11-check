@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ctypes
+import json
+import os
 from collections import Counter, defaultdict, deque
 from ctypes import byref, c_void_p, cast
 from typing import Any
@@ -203,8 +205,94 @@ def _read_in_len(name: str, args: tuple[Any, ...]) -> int | None:
     return _coerce_len(args[idx])
 
 
+# Crash-survivable write-ahead journal: when PKCS11_CHECK_RV_TRACE_JOURNAL names a
+# path, every C_* call writes a 'call' record *before* invoking the module and a
+# 'ret' record *after*.  A process death (segfault/abort) between the two leaves
+# an unmatched 'call' on disk = the exact crashing call.  Robust because it never
+# tries to handle the signal (unsafe in a corrupted interpreter) — the data is
+# already flushed to the kernel.  See docs/rv-trace-design.md (Phase 4).
+_RV_TRACE_JOURNAL_PATH = os.environ.get("PKCS11_CHECK_RV_TRACE_JOURNAL")
+
+
+def _journal_path(template: str) -> str:
+    """Expand a ``{pid}`` placeholder so concurrent subprocesses don't collide."""
+    return template.replace("{pid}", str(os.getpid()))
+
+
+class _RvTraceJournal:
+    """Append-only WAL of C_* calls (one 'call' + one 'ret' line each, flushed)."""
+
+    def __init__(self, path: str) -> None:
+        self._fh = open(path, "a", encoding="utf-8")  # noqa: SIM115 — lifetime = process
+        self._n = 0
+
+    def before(
+        self, fn: str, mech: int | None, mech_params: dict[str, int] | None, in_len: int | None
+    ) -> int:
+        i = self._n
+        self._n += 1
+        rec: dict[str, Any] = {"ev": "call", "i": i, "fn": fn, "mech": mech}
+        if mech_params:
+            rec["mech_params"] = mech_params
+        if in_len is not None:
+            rec["in_len"] = in_len
+        self._write(rec)
+        return i
+
+    def after(self, i: int, rv: int, rv_name: str, out_len: int | None) -> None:
+        rec: dict[str, Any] = {"ev": "ret", "i": i, "rv": rv, "rv_name": rv_name}
+        if out_len is not None:
+            rec["out_len"] = out_len
+        self._write(rec)
+
+    def _write(self, rec: dict[str, Any]) -> None:
+        self._fh.write(json.dumps(rec) + "\n")
+        self._fh.flush()  # push to the kernel so a later segfault can't lose it
+
+
+def read_crash_journal(
+    path: str | os.PathLike[str],
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Parse a WAL journal into (completed_calls, last_incomplete_or_None).
+
+    The last incomplete call (a 'call' with no matching 'ret') is the call the
+    process died inside — the crash forensics payload. A torn final line (the
+    crash interrupted a write) is skipped, not raised on.
+    """
+    completed: dict[int, dict[str, Any]] = {}
+    pending: dict[int, dict[str, Any]] = {}
+    order: list[int] = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # torn final line from a crash mid-write
+            i = rec.get("i")
+            if rec.get("ev") == "call":
+                pending[i] = rec
+                order.append(i)
+            elif rec.get("ev") == "ret":
+                call = pending.pop(i, {})
+                completed[i] = {k: v for k, v in {**call, **rec}.items() if k != "ev"}
+    done = [completed[i] for i in order if i in completed]
+    last_incomplete: dict[str, Any] | None = None
+    if pending:
+        last_i = max(pending)
+        last_incomplete = {k: v for k, v in pending[last_i].items() if k != "ev"}
+    return done, last_incomplete
+
+
 class RawPKCS11:
     """Raw ctypes access to PKCS#11 C_* functions."""
+
+    # Class-default so partial test doubles (object.__new__) inherit None without
+    # having to set it; real instances may override in __init__ when the journal
+    # env var is set.
+    _journal: _RvTraceJournal | None = None
 
     def __init__(
         self,
@@ -222,6 +310,9 @@ class RawPKCS11:
         # When None, _call records nothing and output is byte-identical.
         self._rv_trace: deque[dict[str, Any]] | None = None
         self._rv_trace_total: int = 0
+        # Crash-survivable journal (off unless PKCS11_CHECK_RV_TRACE_JOURNAL set).
+        if _RV_TRACE_JOURNAL_PATH:
+            self._journal = _RvTraceJournal(_journal_path(_RV_TRACE_JOURNAL_PATH))
 
         if funclist_ptr:
             self._load_from_ptr(funclist_ptr)
@@ -407,6 +498,7 @@ class RawPKCS11:
 
     def _call(self, name: str, *args: Any) -> CKR:
         self._call_log[name] += 1
+        tracing = self._rv_trace is not None or self._journal is not None
         mech_id: int | None = None
         mech_params: dict[str, int] | None = None
         if name in _MECHANISM_ARG_FUNCS and len(args) >= 2:
@@ -416,7 +508,7 @@ class RawPKCS11:
                 self._used_mechanisms.add(m)
                 self._mechanism_counts[m] += 1
                 mech_id = m
-                if self._rv_trace is not None:
+                if tracing:
                     sub = getattr(obj, "_rv_trace_sub", None)
                     if sub:
                         mech_params = {k: int(v) for k, v in sub.items()}
@@ -425,8 +517,17 @@ class RawPKCS11:
         func = self._funcs.get(name)
         if func is None:
             raise AttributeError(f"{name} not available in this module")
+        in_len = _read_in_len(name, args) if tracing else None
+        journal_i = (
+            self._journal.before(name, mech_id, mech_params, in_len)
+            if self._journal is not None
+            else None
+        )
         result = int(func(*args))
         ckr = _to_ckr(result)
+        out_len = _read_out_len(name, args, result) if tracing else None
+        if journal_i is not None and self._journal is not None:
+            self._journal.after(journal_i, result, str(ckr), out_len)
         if self._rv_trace is not None:
             entry: dict[str, Any] = {
                 "i": self._rv_trace_total,
@@ -437,10 +538,8 @@ class RawPKCS11:
             }
             if mech_params is not None:
                 entry["mech_params"] = mech_params
-            in_len = _read_in_len(name, args)
             if in_len is not None:
                 entry["in_len"] = in_len
-            out_len = _read_out_len(name, args, result)
             if out_len is not None:
                 entry["out_len"] = out_len
             self._rv_trace.append(entry)

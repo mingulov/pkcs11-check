@@ -10,8 +10,11 @@ from __future__ import annotations
 import json
 from collections import Counter, defaultdict
 from ctypes import byref
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.types_std import (
@@ -369,3 +372,99 @@ def test_mech_params_absent_for_simple_mechanism() -> None:
     raw.enable_rv_trace()
     raw.C_EncryptInit(7, _mech(int(CKM_AES_CBC)), 5)  # plain CK_MECHANISM, no sub-params
     assert "mech_params" not in raw.rv_trace[0]
+
+
+# --- Phase 4: crash-survivable write-ahead journal -------------------------
+
+
+def test_crash_journal_records_completed_calls(tmp_path: Path) -> None:
+    from pkcs11_check.raw import api as rawapi
+
+    jpath = tmp_path / "j.jsonl"
+    raw = _stub_raw({"C_EncryptInit": lambda *a: 0, "C_GetSessionInfo": lambda *a: 0})
+    raw._journal = rawapi._RvTraceJournal(str(jpath))
+
+    raw.C_EncryptInit(7, _mech(int(CKM_AES_CBC)), 5)
+    raw.C_GetSessionInfo(7, None)
+
+    done, incomplete = rawapi.read_crash_journal(jpath)
+    assert [d["fn"] for d in done] == ["C_EncryptInit", "C_GetSessionInfo"]
+    assert incomplete is None
+    assert done[0]["mech"] == int(CKM_AES_CBC)
+    assert done[0]["rv"] == 0 and done[0]["rv_name"] == "CKR_OK"
+
+
+def test_crash_journal_recovers_last_call_before_crash(tmp_path: Path) -> None:
+    from pkcs11_check.raw import api as rawapi
+
+    def boom(*_a: Any) -> int:
+        raise RuntimeError("segfault stand-in")  # the C_* call never returns
+
+    jpath = tmp_path / "j.jsonl"
+    raw = _stub_raw({"C_GetSessionInfo": lambda *a: 0, "C_Sign": boom})
+    raw._journal = rawapi._RvTraceJournal(str(jpath))
+
+    raw.C_GetSessionInfo(7, None)
+    with pytest.raises(RuntimeError):
+        raw.C_Sign(7, b"x", 1, None, _len_ptr())
+
+    done, incomplete = rawapi.read_crash_journal(jpath)
+    assert [d["fn"] for d in done] == ["C_GetSessionInfo"]  # only the call that returned
+    assert incomplete is not None
+    assert incomplete["fn"] == "C_Sign"  # the crashing call, recovered from the WAL
+
+
+def test_crash_journal_tolerates_torn_final_line(tmp_path: Path) -> None:
+    from pkcs11_check.raw import api as rawapi
+
+    jpath = tmp_path / "j.jsonl"
+    jpath.write_text(
+        '{"ev": "call", "i": 0, "fn": "C_Sign", "mech": null}\n'
+        '{"ev": "ret", "i": 0, "rv": 0, "rv_name": "CKR_OK"}\n'
+        '{"ev": "call", "i": 1, "fn": "C_Dec'  # torn mid-write by the crash
+    )
+    done, incomplete = rawapi.read_crash_journal(jpath)
+    assert [d["fn"] for d in done] == ["C_Sign"]
+    assert incomplete is None  # torn line is skipped, not crashed on
+
+
+def test_journal_path_expands_pid_placeholder() -> None:
+    import os
+
+    from pkcs11_check.raw.api import _journal_path
+
+    assert _journal_path("/tmp/rvj-{pid}.jsonl") == f"/tmp/rvj-{os.getpid()}.jsonl"
+    assert _journal_path("/tmp/rvj.jsonl") == "/tmp/rvj.jsonl"  # no placeholder, unchanged
+
+
+def test_crash_journal_survives_real_process_death(tmp_path: Path) -> None:
+    """End-to-end: a real SIGABRT mid-call leaves the crashing call on disk."""
+    import subprocess
+    import sys
+
+    jpath = tmp_path / "j.jsonl"
+    script = (
+        "import os\n"
+        "from collections import Counter, defaultdict\n"
+        "from pkcs11_check.raw.api import RawPKCS11, _RvTraceJournal\n"
+        "raw = object.__new__(RawPKCS11)\n"
+        "raw._funcs = {'C_GetInfo': lambda *a: 0, 'C_Sign': lambda *a: os.abort()}\n"
+        "raw._lib = None\n"
+        "raw._call_log = defaultdict(int)\n"
+        "raw._used_mechanisms = set()\n"
+        "raw._mechanism_counts = Counter()\n"
+        "raw._rv_trace = None\n"
+        "raw._rv_trace_total = 0\n"
+        f"raw._journal = _RvTraceJournal({str(jpath)!r})\n"
+        "raw.C_GetInfo(0)\n"
+        "raw.C_Sign(7, b'x', 1, None, None)\n"  # os.abort() -> SIGABRT, never returns
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True)
+    assert result.returncode != 0  # the child died by signal
+
+    from pkcs11_check.raw.api import read_crash_journal
+
+    done, incomplete = read_crash_journal(jpath)
+    assert [d["fn"] for d in done] == ["C_GetInfo"]  # the call that returned
+    assert incomplete is not None
+    assert incomplete["fn"] == "C_Sign"  # the crashing call, recovered after real death

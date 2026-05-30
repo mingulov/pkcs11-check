@@ -316,21 +316,32 @@ and the `PKCS11_CHECK_RV_TRACE=1` env gate enable it.
   alongside their outcome — no per-outcome handling. The only case that cannot
   use this path is a hard crash (next).
 
-## Phase 4 — crash-survivable trace (optional)
+## Phase 4 — crash-survivable trace — ✅ shipped
 
 `record_property`-at-teardown cannot survive a segfault/abort: the process dies
 before teardown, and crash tests run in **subprocesses** whose in-memory trace
-dies with the child. To capture "the last C_* calls before the crash":
+dies with the child. Captured instead via a **write-ahead journal**:
 
-- When a side channel is requested (e.g. `PKCS11_CHECK_RV_TRACE_FD=<fd>` or a
-  path), `_call` *also* streams each compact entry to that fd (line-buffered /
-  `os.write`), so the last-N-before-crash is on disk regardless of teardown.
-- Reuse the compact ring-buffer shape; the side file is the tail + total.
-- The subprocess harness (`_raw_subprocess` / `subprocess.run` crash tests)
-  passes the fd/path to the child and, on non-zero/`signal` exit, attaches the
-  recovered tail to the parent test's record.
-- Kept fully separate from the v1 in-process path; same `_rv_trace is None` gate
-  means zero overhead when off.
+- `PKCS11_CHECK_RV_TRACE_JOURNAL=<path>` (a `{pid}` placeholder is expanded per
+  process) makes `RawPKCS11.__init__` open an append journal. `_call` writes a
+  `call` record *before* invoking the module and a `ret` record *after*, each
+  flushed. A process death between the two leaves an unmatched `call` on disk =
+  the exact crashing call. Robust because it never tries to handle the signal
+  (unsafe in a corrupted interpreter) — the data is already flushed to the kernel.
+- `read_crash_journal(path) -> (completed, last_incomplete)` recovers it;
+  `last_incomplete` is the crash payload. A torn final line is skipped, not raised.
+- **Works for the existing crash harness with no wiring:** `_raw_subprocess`
+  uses `env = {**os.environ, …}`, so a child inherits the journal env var
+  automatically. Set it, re-run a crashing test in its subprocess, and the
+  journal holds the last call.
+- Per-instance gate (a class-default `_journal = None`); zero overhead and
+  byte-identical output when the env var is unset.
+- Verified by a committed test that triggers a **real `SIGABRT`** mid-call in a
+  subprocess and recovers the crashing `C_Sign` from the journal.
+
+*Remaining refinement (optional):* auto-attach the recovered `last_incomplete`
+to the parent crash-test's `report.jsonl` record (today it's a manual
+investigation artifact). Left out to avoid reworking shared crash-test infra.
 
 ## Acceptance (v1 core)
 
