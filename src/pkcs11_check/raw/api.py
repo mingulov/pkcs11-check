@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ctypes
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from ctypes import byref, c_void_p, cast
 from typing import Any
 
@@ -155,6 +155,10 @@ class RawPKCS11:
         self._call_log: dict[str, int] = defaultdict(int)
         self._used_mechanisms: set[int] = set()
         self._mechanism_counts: Counter[int] = Counter()
+        # Optional per-test CK_RV trace (off unless enable_rv_trace() is called).
+        # When None, _call records nothing and output is byte-identical.
+        self._rv_trace: deque[dict[str, Any]] | None = None
+        self._rv_trace_total: int = 0
 
         if funclist_ptr:
             self._load_from_ptr(funclist_ptr)
@@ -295,23 +299,72 @@ class RawPKCS11:
         self._used_mechanisms.clear()
         self._mechanism_counts.clear()
 
+    def enable_rv_trace(self, *, maxlen: int | None = None) -> None:
+        """Start (or restart) per-test CK_RV tracing.
+
+        ``maxlen=None`` keeps the full trace; an int keeps only the last N
+        entries (a ring buffer) while still counting every call, so
+        ``rv_trace_dropped`` reports how many leading entries were elided.
+        Doubles as the per-test reset (fresh buffer, zeroed counter).
+        """
+        self._rv_trace = deque(maxlen=maxlen)
+        self._rv_trace_total = 0
+
+    def reset_rv_trace(self) -> None:
+        """Clear the trace for the next test, preserving the configured maxlen.
+
+        No-op when tracing was never enabled.
+        """
+        if self._rv_trace is not None:
+            self._rv_trace.clear()
+        self._rv_trace_total = 0
+
+    @property
+    def rv_trace(self) -> list[dict[str, Any]]:
+        """A copy of the current trace entries (empty when tracing is off)."""
+        if self._rv_trace is None:
+            return []
+        return list(self._rv_trace)
+
+    @property
+    def rv_trace_dropped(self) -> int:
+        """Count of leading trace entries elided by the ring buffer (0 in full mode)."""
+        if self._rv_trace is None:
+            return 0
+        return max(0, self._rv_trace_total - len(self._rv_trace))
+
     @classmethod
     def from_lib(cls, lib_path: str) -> RawPKCS11:
         return cls(lib_path=lib_path)
 
     def _call(self, name: str, *args: Any) -> CKR:
         self._call_log[name] += 1
+        mech_id: int | None = None
         if name in _MECHANISM_ARG_FUNCS and len(args) >= 2:
             try:
-                mech_id = args[1]._obj.mechanism
-                self._used_mechanisms.add(mech_id)
-                self._mechanism_counts[mech_id] += 1
+                m = args[1]._obj.mechanism
+                self._used_mechanisms.add(m)
+                self._mechanism_counts[m] += 1
+                mech_id = m
             except (AttributeError, TypeError):
                 pass
         func = self._funcs.get(name)
         if func is None:
             raise AttributeError(f"{name} not available in this module")
-        return _to_ckr(int(func(*args)))
+        result = int(func(*args))
+        ckr = _to_ckr(result)
+        if self._rv_trace is not None:
+            self._rv_trace.append(
+                {
+                    "i": self._rv_trace_total,
+                    "fn": name,
+                    "mech": mech_id,
+                    "rv": result,
+                    "rv_name": str(ckr),
+                }
+            )
+            self._rv_trace_total += 1
+        return ckr
 
     # C_* methods (C_Initialize, C_GenerateKey, C_OpenSession, ...) are attached
     # to the class at module load via the `setattr(RawPKCS11, name, ...)` loop
