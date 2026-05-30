@@ -272,6 +272,8 @@ def read_crash_journal(
             except json.JSONDecodeError:
                 continue  # torn final line from a crash mid-write
             i = rec.get("i")
+            if not isinstance(i, int):
+                continue  # malformed/corrupt record -- keep the parser total
             if rec.get("ev") == "call":
                 pending[i] = rec
                 order.append(i)

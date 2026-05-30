@@ -36,8 +36,13 @@ def _resolve_rv_trace(
             compact = int(env_compact)
         except ValueError:
             compact = None
+    compact_requested = compact is not None
+    if compact is not None and compact <= 0:
+        # A nonsensical window (<=0 would be a deque(maxlen) ValueError, or maxlen=0
+        # silently records nothing) -> fall back to full capture, still enabled.
+        compact = None
     env_on = (env_trace or "").strip().lower() in _RV_TRACE_TRUTHY
-    enabled = bool(opt_trace) or env_on or (compact is not None)
+    enabled = bool(opt_trace) or env_on or compact_requested
     return enabled, compact
 
 

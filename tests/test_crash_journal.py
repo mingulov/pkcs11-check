@@ -41,6 +41,18 @@ def test_summarize_missing_dir_is_empty(tmp_path: Path) -> None:
     assert summarize_crash_journals(tmp_path / "nope") == []
 
 
+def test_summarize_tolerates_record_without_index(tmp_path: Path) -> None:
+    # A valid-JSON record missing "i" must not crash the parser (a None key would
+    # break max() over the otherwise-int pending keys).
+    (tmp_path / "weird-1.jsonl").write_text(
+        '{"ev": "call", "fn": "C_Sign"}\n'  # no "i" -> skipped, not crashed on
+        '{"ev": "call", "i": 0, "fn": "C_DeriveKey", "mech": 2}\n'  # the real crash
+    )
+    rows = summarize_crash_journals(tmp_path)
+    assert len(rows) == 1
+    assert (rows[0]["fn"], rows[0]["i"]) == ("C_DeriveKey", 0)
+
+
 def test_maybe_set_crash_journal_off_by_default() -> None:
     env: dict[str, str] = {}
     _maybe_set_crash_journal(env, "src/pkcs11_check/testcases/test_foo.py")

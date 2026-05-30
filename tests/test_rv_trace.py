@@ -235,6 +235,19 @@ def test_resolve_off_by_default() -> None:
     ) == (False, None)
 
 
+def test_resolve_nonsensical_compact_falls_back_to_full() -> None:
+    from pkcs11_check.fixtures import _resolve_rv_trace
+
+    # A negative/zero window is a user error -> enabled (they asked for tracing)
+    # + full capture (None), never a deque(maxlen) ValueError in fixture setup.
+    assert _resolve_rv_trace(
+        opt_trace=False, opt_compact=-5, env_trace=None, env_compact=None
+    ) == (True, None)
+    assert _resolve_rv_trace(
+        opt_trace=False, opt_compact=None, env_trace=None, env_compact="0"
+    ) == (True, None)
+
+
 def test_real_teardown_hook_drains_trace_for_testcase_item() -> None:
     """The actual pytest_runtest_teardown hook attaches the trace (gate + drain).
 
@@ -344,7 +357,16 @@ def test_output_len_funcs_covers_two_call_output_callers() -> None:
     src = pathlib.Path(recipes_mod.__file__).read_text()
     direct_callers = set(re.findall(r'_two_call_output\(\s*raw,\s*"(C_\w+)"', src))
     assert direct_callers, "regex found no _two_call_output callers (pattern drift?)"
-    missing = direct_callers - _OUTPUT_LEN_FUNCS
+    # _multipart_output(raw, session, init_fn, update_fn, final_fn, ...): the
+    # final_fn (3rd string) is also an output-producing call (C_EncryptFinal, ...).
+    multipart_finals = set(
+        re.findall(
+            r'_multipart_output\(\s*raw,\s*session,\s*"C_\w+",\s*"C_\w+",\s*"(C_\w+)"',
+            src,
+        )
+    )
+    assert multipart_finals, "regex found no _multipart_output final_fn (pattern drift?)"
+    missing = (direct_callers | multipart_finals) - _OUTPUT_LEN_FUNCS
     assert not missing, f"output-producing recipes missing from _OUTPUT_LEN_FUNCS: {missing}"
 
 
