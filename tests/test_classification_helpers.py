@@ -75,6 +75,24 @@ def test_outside_set_fails() -> None:
         assert_ckr(_E, CKR_PIN_INCORRECT, strict=False)
 
 
+def test_device_error_xfails_neutrally() -> None:
+    """CKR_DEVICE_ERROR -> xfail with a provider-neutral message (H-CLASS-2).
+
+    This is the classifier safety net that the deleted provider-named
+    ``if rv == CKR_DEVICE_ERROR: pytest.xfail("Kryoptic ...")`` pre-guards in
+    the ckr/ verify tests relied on: CKR_DEVICE_ERROR is token-universal
+    (injected by full_compat) so it lands in the xfail band, never naming a
+    provider.
+    """
+    from pkcs11_check.raw.types_std import CKR_DEVICE_ERROR
+
+    with pytest.raises(pytest.xfail.Exception) as ei:
+        assert_ckr(_E, CKR_DEVICE_ERROR, strict=False)
+    msg = str(ei.value).lower()
+    assert "kryoptic" not in msg
+    assert "tpm2" not in msg
+
+
 def test_allow_success_ok() -> None:
     e = CkrExpectation(
         function="C_Decrypt",

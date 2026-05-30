@@ -43,7 +43,17 @@ boolean claim — is correct by design.
 
 ## HIGH
 
-### H-CLASS-1 — Provider names in `pytest.xfail()` messages  ·  HIGH
+### H-CLASS-1 — Provider names in `pytest.xfail()` messages  ·  HIGH  ·  RESOLVED 2026-05-29
+> **RESOLVED 2026-05-29.** All provider-named xfail messages made provider-neutral;
+> the upstream issue number kept in a code comment. A new AST regression test
+> (`tests/test_provider_neutral_xfail.py`) scans every `pytest.xfail()` literal in
+> `testcases/` and fails on any provider name, so this cannot silently regress.
+> **The regression test found 4 sites the manual audit missed** — the PQC tampered-
+> signature checks in `test_pqc_sign.py` (×2), `test_hash_ml_dsa.py`, and
+> `test_hash_slh_dsa.py`, all naming Kryoptic. Those were routed through
+> `xfail_if_known_ckr(..., _SIGN_ERROR_CKRS/_PQC_SIGN_REJECT_RVS, ...)` (which
+> already includes `CKR_DEVICE_ERROR`), keeping the noted deviation an xfail while
+> a genuine wrong-output break stays a hard fail.
 - **Sites:**
   - `src/pkcs11_check/testcases/ckr/test_ckr_verify.py:115` —
     `pytest.xfail("Kryoptic bug: returns CKR_DEVICE_ERROR for verify failure")`
@@ -62,7 +72,16 @@ boolean claim — is correct by design.
   rejection)" and move the upstream issue number to a code comment.
 - **Confidence:** 95%.
 
-### H-CLASS-2 — Pre-emptive `CKR_DEVICE_ERROR` guards duplicate classifier + embed provider names  ·  HIGH
+### H-CLASS-2 — Pre-emptive `CKR_DEVICE_ERROR` guards duplicate classifier + embed provider names  ·  HIGH  ·  RESOLVED 2026-05-29
+> **RESOLVED 2026-05-29.** The three Kryoptic `if rv == CKR_DEVICE_ERROR:
+> pytest.xfail("Kryoptic …")` pre-guards in `ckr/test_ckr_verify.py` (×2) and
+> `ckr/test_ckr_spec_compliance.py` were deleted; `CKR_DEVICE_ERROR` now flows to
+> the provider-neutral xfail band via `_TOKEN_UNIVERSAL`/`assert_ckr` as designed.
+> A meta-test (`test_classification_helpers.py::test_device_error_xfails_neutrally`)
+> pins the classifier behavior so the guards are not reintroduced.
+> Note: removing the pre-guards means **strict mode (`--ckr-strict`)** now correctly
+> *fails* on `CKR_DEVICE_ERROR` for a verify mismatch (it is not the spec code); no
+> live test depends on the old strict-mode pass, and strict mode is opt-in.
 - **Sites:**
   - `ckr/test_ckr_verify.py:114-115` — `if rv == CKR_DEVICE_ERROR: pytest.xfail("Kryoptic bug: ...")`
   - `ckr/test_ckr_verify.py:140-141` — same shape

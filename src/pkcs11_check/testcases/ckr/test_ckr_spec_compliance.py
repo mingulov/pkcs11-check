@@ -50,7 +50,6 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_LEN_RANGE,
-    CKR_DEVICE_ERROR,
     CKR_MECHANISM_INVALID,
     CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
@@ -247,8 +246,8 @@ class TestCKRVerifyCompliance:
                 sig_buf,
                 len(tampered),
             )
-            if rv == CKR_DEVICE_ERROR:
-                pytest.xfail("Kryoptic bug: returns CKR_DEVICE_ERROR for verify failure")
+            # CKR_DEVICE_ERROR is a clean non-spec reject -> classified as a noted
+            # deviation (xfail) by _check_ckr; no provider-specific pre-guard.
             if rv == CKR_OK:
                 pytest.fail("Tampered signature verified as valid!")
             _check_ckr("C_Verify(tampered)", CKR_SIGNATURE_INVALID, rv)

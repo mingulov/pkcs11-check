@@ -21,7 +21,6 @@ from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_SHA256_RSA_PKCS,
-    CKR_DEVICE_ERROR,
     CKR_OK,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_VERIFY, assert_ckr
@@ -111,8 +110,9 @@ class TestVerifyErrors:
                 sig_buf,
                 len(tampered),
             )
-            if rv == CKR_DEVICE_ERROR:
-                pytest.xfail("Kryoptic bug: returns CKR_DEVICE_ERROR for verify failure")
+            # CKR_DEVICE_ERROR is a clean non-spec reject -> classified as a noted
+            # deviation (xfail) by assert_ckr via _TOKEN_UNIVERSAL; no provider-
+            # specific pre-guard (it would leak provider identity into the report).
             if rv == CKR_OK:
                 pytest.fail("Tampered signature verified as valid!")
             assert_ckr(CKR_VERIFY["signature_invalid"], rv, ckr_strict)
@@ -137,8 +137,9 @@ class TestVerifyErrors:
             data_buf = (ctypes.c_ubyte * len(data))(*data)
             sig_buf = (ctypes.c_ubyte * 128)(*([0] * 128))
             rv = rs.raw.C_Verify(rs.sh, data_buf, len(data), sig_buf, 128)
-            if rv == CKR_DEVICE_ERROR:
-                pytest.xfail("Kryoptic bug: returns CKR_DEVICE_ERROR for verify failure")
+            # CKR_DEVICE_ERROR is a clean non-spec reject -> classified as a noted
+            # deviation (xfail) by assert_ckr via _TOKEN_UNIVERSAL; no provider-
+            # specific pre-guard (it would leak provider identity into the report).
             # Type-A crypto-correctness: a wrong-length RSA signature that
             # verifies (CKR_OK) is a break -> fail; an expected reject -> pass;
             # another clean reject -> xfail (3-way assert_ckr).

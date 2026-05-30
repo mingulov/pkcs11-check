@@ -213,10 +213,13 @@ class TestMLDSASignVerify:
                 result = verify_single(rs.raw, rs.sh, pub, CKM_ML_DSA, tampered, sig)
                 assert not result, "Tampered message should fail verification"
             except AssertionError as exc:
-                if "DEVICE_ERROR" in str(exc):
-                    pytest.xfail(
-                        "Kryoptic returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID"
-                    )
+                # A tampered signature must be rejected; a clean non-spec reject
+                # code (e.g. CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID) is
+                # a noted deviation -> xfail, while a wrong-output assertion (the
+                # tampered signature verified) propagates as a real failure.
+                xfail_if_known_ckr(
+                    exc, _PQC_SIGN_REJECT_RVS, "tampered signature rejected with non-spec CKR"
+                )
                 raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -444,10 +447,13 @@ class TestSLHDSASignVerify:
                 result = verify_single(rs.raw, rs.sh, pub, CKM_SLH_DSA, tampered, sig)
                 assert not result, "Tampered message should fail SLH-DSA verification"
             except AssertionError as exc:
-                if "DEVICE_ERROR" in str(exc):
-                    pytest.xfail(
-                        "Kryoptic returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID"
-                    )
+                # A tampered signature must be rejected; a clean non-spec reject
+                # code (e.g. CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID) is
+                # a noted deviation -> xfail, while a wrong-output assertion (the
+                # tampered signature verified) propagates as a real failure.
+                xfail_if_known_ckr(
+                    exc, _PQC_SIGN_REJECT_RVS, "tampered signature rejected with non-spec CKR"
+                )
                 raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

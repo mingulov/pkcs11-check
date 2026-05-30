@@ -260,7 +260,9 @@ class TestCKADeriveOnEC:
         except AssertionError as e:
             err_str = str(e)
             if "CKR_ATTRIBUTE_VALUE_INVALID" in err_str:
-                pytest.xfail("Module rejects CKA_DERIVE on EC (tpm2-pkcs11 #656)")
+                # Some modules reject CKA_DERIVE on EC keys (e.g. tpm2-pkcs11 #656);
+                # a clean non-spec rejection -> noted deviation, not a finding.
+                pytest.xfail("Module rejects CKA_DERIVE on EC (clean non-spec rejection)")
             else:
                 raise
 
