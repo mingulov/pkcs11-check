@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -28,6 +29,12 @@ from pathlib import Path
 
 from pkcs11_check.core.merge import merge_shard_dirs
 from pkcs11_check.core.sharding import plan_shards
+
+# Per-test CK_RV trace, on by default for pooled runs in COMPACT mode: every test
+# under N C_* calls is recorded in full; only the ~dozen MCT cases (one test =
+# ~100k chained ops) are bounded to their last N. Override via the pool's own env
+# (set a different N, or empty to disable). See docs/rv-trace-design.md.
+RV_TRACE_COMPACT_N = os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT", "512")
 
 # Editable per-provider shard counts; providers not listed default to 1 (undivided).
 SHARD_MAP: dict[str, int] = {"bouncyhsm": 8, "opencryptoki": 3, "opencryptoki-master": 3}
@@ -77,6 +84,11 @@ def build_image(provider: str) -> tuple[str, bool]:
 def run_item(provider: str, idx: int, files: list[str]) -> tuple[str, int, int]:
     """Run one (provider, batch) container. Returns (provider, idx, returncode)."""
     log = Path(f"/tmp/pool-{provider}-{idx}.log")
+    rv_trace_env = (
+        ["-e", f"PKCS11_CHECK_RV_TRACE_COMPACT={RV_TRACE_COMPACT_N}"]
+        if RV_TRACE_COMPACT_N
+        else []
+    )
     with log.open("w") as fh:
         rc = subprocess.run(  # noqa: S603
             [
@@ -87,6 +99,7 @@ def run_item(provider: str, idx: int, files: list[str]) -> tuple[str, int, int]:
                 f"PKCS11_CHECK_TARGETS={' '.join(files)}",
                 "-e",
                 f"PKCS11_CHECK_ARTIFACT_DIR=/artifacts/{provider}-shard-{idx}",
+                *rv_trace_env,
                 f"test-{provider}",
             ],
             stdout=fh,

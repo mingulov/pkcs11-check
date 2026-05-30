@@ -368,6 +368,17 @@ investigation artifact). Left out to avoid reworking shared crash-test infra.
 | `tests/test_rv_trace.py` (new) | stub-`_call` meta-tests 1–4. | Core |
 | `raw/api.py` + `tests/` | `_OUTPUT_LEN_FUNCS`, `_read_out_len`, one-line insert; drift-guard + length tests. | Deferred out_len |
 
+## Enabling (flags & env) — quick reference
+
+| Mechanism | How |
+|---|---|
+| pytest (in-process) | `--p11-rv-trace` or `--p11-rv-trace-compact=N`; or env `PKCS11_CHECK_RV_TRACE=1` / `PKCS11_CHECK_RV_TRACE_COMPACT=N` |
+| CLI (`pkcs11-check test`) | `--rv-trace` or `--rv-trace-compact N` (flows to in-process + isolated subprocess runs) |
+| Docker pool (`docker/test_pool.py`) | **on by default** in compact mode: injects `PKCS11_CHECK_RV_TRACE_COMPACT=512` per shard (`RV_TRACE_COMPACT_N`, overridable via the pool's own env — different N, or empty to disable). Compact 512 = full trace for every test under 512 C_* calls (all of them bar the ~dozen MCT cases), MCT bounded to its last 512. |
+| Crash journal | `PKCS11_CHECK_RV_TRACE_JOURNAL=<path>` (`{pid}` expanded); inherited by the subprocess crash harness automatically |
+
+Off by default everywhere except the pool; compact implies enabled.
+
 ## Deferred / "think later"
 
 - **Further size streamlining beyond last-N.** Levers, none touching the choke
