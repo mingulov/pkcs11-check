@@ -577,9 +577,10 @@ def _render_types_module(
 
     for name in sorted(callbacks):
         return_type, arg_types = callbacks[name]
-        lines.append(
-            f"{name} = {_render_callable_type(return_type, arg_types, aliases, struct_names, callable_names)}"
+        rendered = _render_callable_type(
+            return_type, arg_types, aliases, struct_names, callable_names
         )
+        lines.append(f"{name} = {rendered}")
     if callbacks:
         lines.append("")
 
@@ -599,9 +600,10 @@ def _render_types_module(
         else:
             lines.append(f"{name}._fields_ = [")
             for field_name, field_type in fields:
-                lines.append(
-                    f'    ("{field_name}", {_field_ctype(field_type, aliases, struct_names, callable_names)}),'
+                rendered_field = _field_ctype(
+                    field_type, aliases, struct_names, callable_names
                 )
+                lines.append(f'    ("{field_name}", {rendered_field}),')
             lines.append("    ]")
         lines.append("")
 

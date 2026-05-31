@@ -22,7 +22,9 @@ from pkcs11_check.core.file_runner import (
     _collection_args,
     _identify_crash_culprit,
     _load_available_mechanisms,
+    _load_cached_report_records_by_unit,
     _read_jsonl_results,
+    _write_unit_report_record_cache,
     build_policy_fingerprint,
     build_state_fingerprint,
     collect_pytest_nodeids,
@@ -308,27 +310,66 @@ def test_discover_auto_isolation_units_falls_back_to_nodeid_collection_when_meta
 
 def test_state_round_trip(tmp_path: Path) -> None:
     state_file = tmp_path / "state.json"
+    # The durable resume state is units + fingerprint + results. Report records
+    # are NOT round-tripped through state.json (they are persisted as per-unit
+    # shards); see test_save_run_state_does_not_embed_report_records.
     state = FileRunState(
         units=["test_a.py", "test_b.py"],
         fingerprint="abc123",
         results=[FileRunResult("test_a.py", "passed", 0, 1.2)],
-        report_records_by_unit={
-            "test_a.py": [
-                {
-                    "$report_type": "TestReport",
-                    "nodeid": "test_a.py::test_case",
-                    "when": "call",
-                    "outcome": "passed",
-                    "duration": 0.1,
-                }
-            ]
-        },
     )
 
     save_run_state(state_file, state)
     loaded = load_run_state(state_file)
 
     assert loaded == state
+
+
+def test_save_run_state_does_not_embed_report_records(tmp_path: Path) -> None:
+    """Report records live in per-unit shards, never inline in state.json.
+
+    Embedding ``report_records_by_unit`` in state.json previously made the
+    per-unit ``save_run_state`` call O(n^2): the payload grew to hundreds of MB
+    and was re-serialized once per completed unit (~14 min on a full bouncyhsm
+    round) for data the end-of-run merge always reloads from the shards. Guard
+    against regressing back to persisting the records inline.
+    """
+    state_file = tmp_path / "state.json"
+    # A large in-memory record set that would balloon state.json if persisted.
+    big_records = {
+        f"unit_{i}.py": [
+            {
+                "$report_type": "TestReport",
+                "nodeid": f"unit_{i}.py::t{j}",
+                "when": "call",
+                "outcome": "passed",
+                "duration": 0.01,
+            }
+            for j in range(200)
+        ]
+        for i in range(50)
+    }
+    state = FileRunState(
+        units=sorted(big_records),
+        fingerprint="abc123",
+        results=[FileRunResult(unit, "passed", 0, 0.1) for unit in sorted(big_records)],
+        report_records_by_unit=big_records,
+    )
+
+    save_run_state(state_file, state)
+
+    raw = json.loads(state_file.read_text())
+    assert "report_records_by_unit" not in raw
+    # The persisted file stays tiny even though the in-memory records are large.
+    assert state_file.stat().st_size < 200_000
+
+    # Durable resume fields still round-trip; records load back empty.
+    loaded = load_run_state(state_file)
+    assert loaded is not None
+    assert loaded.units == state.units
+    assert loaded.fingerprint == state.fingerprint
+    assert loaded.results == state.results
+    assert loaded.report_records_by_unit == {}
 
 
 def test_save_run_state_creates_parent_directories(tmp_path: Path) -> None:
@@ -1093,28 +1134,33 @@ def test_run_isolated_pytest_units_resume_json_uses_state_records_without_covera
                 FileRunResult("test_a.py", "passed", 0, 0.1),
                 FileRunResult("test_b.py", "failed", 1, 0.1),
             ],
-            report_records_by_unit={
-                "test_a.py": [
-                    {
-                        "$report_type": "TestReport",
-                        "nodeid": "test_a.py::test_case",
-                        "when": "call",
-                        "outcome": "passed",
-                        "duration": 0.1,
-                    },
-                    {
-                        "$report_type": "SelectionReport",
-                        "selection_coverage": {
-                            "encrypt_roundtrip": {
-                                "selected_mechanisms": ["CKM_AES_CBC"],
-                                "rejected_mechanisms": [],
-                                "rejected_reason_counts": {},
-                            }
-                        },
-                    },
-                ],
-            },
         ),
+    )
+    # A completed unit persists its report records as a per-unit shard (this is
+    # what the real runner writes on completion); the merge reloads them from
+    # there on resume. state.json no longer carries an inline copy.
+    _write_unit_report_record_cache(
+        state_file,
+        "test_a.py",
+        [
+            {
+                "$report_type": "TestReport",
+                "nodeid": "test_a.py::test_case",
+                "when": "call",
+                "outcome": "passed",
+                "duration": 0.1,
+            },
+            {
+                "$report_type": "SelectionReport",
+                "selection_coverage": {
+                    "encrypt_roundtrip": {
+                        "selected_mechanisms": ["CKM_AES_CBC"],
+                        "rejected_mechanisms": [],
+                        "rejected_reason_counts": {},
+                    }
+                },
+            },
+        ],
     )
 
     exit_code = run_isolated_pytest_units(
@@ -1509,8 +1555,10 @@ def test_run_isolated_pytest_units_persists_report_records_into_state(
     saved = load_run_state(state_file)
     assert exit_code == 0
     assert saved is not None
-    assert list(saved.report_records_by_unit) == ["test_a.py"]
-    assert [record["$report_type"] for record in saved.report_records_by_unit["test_a.py"]] == [
+    # Records are persisted as per-unit shards, not inline in state.json.
+    records_by_unit = _load_cached_report_records_by_unit(state_file, units)
+    assert list(records_by_unit) == ["test_a.py"]
+    assert [record["$report_type"] for record in records_by_unit["test_a.py"]] == [
         "TestReport",
         "SelectionReport",
         "CoverageReport",
@@ -1585,8 +1633,10 @@ def test_run_isolated_pytest_units_timeout_persists_partial_report_records(
     assert exit_code == 1
     assert saved is not None
     assert saved.results[0].status == "timeout"
-    assert list(saved.report_records_by_unit) == ["test_a.py"]
-    assert [record["$report_type"] for record in saved.report_records_by_unit["test_a.py"]] == [
+    # Partial records persist as a per-unit shard, not inline in state.json.
+    records_by_unit = _load_cached_report_records_by_unit(state_file, units)
+    assert list(records_by_unit) == ["test_a.py"]
+    assert [record["$report_type"] for record in records_by_unit["test_a.py"]] == [
         "TestReport",
         "SelectionReport",
     ]
@@ -1731,7 +1781,9 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
     assert calls[0][0] == "test_a.py"
     assert calls[1][0] == "test_a.py::test_culprit"
     assert calls[2][0] == "test_a.py"
-    assert [record.get("nodeid") for record in saved.report_records_by_unit["test_a.py"]] == [
+    # Aggregated records persist as a per-unit shard, not inline in state.json.
+    records_by_unit = _load_cached_report_records_by_unit(state_file, units)
+    assert [record.get("nodeid") for record in records_by_unit["test_a.py"]] == [
         "test_a.py::test_done",
         "test_a.py::test_done",
         "test_a.py::test_done",
@@ -1741,8 +1793,7 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
         None,
     ]
     assert [
-        record.get("$report_type", "TestReport")
-        for record in saved.report_records_by_unit["test_a.py"]
+        record.get("$report_type", "TestReport") for record in records_by_unit["test_a.py"]
     ] == [
         "TestReport",
         "TestReport",
@@ -2161,12 +2212,8 @@ def test_run_isolated_pytest_units_preserves_file_crash_after_successful_retry(
             report_log_path.write_text(
                 "\n".join(
                     [
-                        _jsonl_line(
-                            nodeid="test_a.py::test_other", when="setup", outcome="passed"
-                        ),
-                        _jsonl_line(
-                            nodeid="test_a.py::test_other", when="call", outcome="passed"
-                        ),
+                        _jsonl_line(nodeid="test_a.py::test_other", when="setup", outcome="passed"),
+                        _jsonl_line(nodeid="test_a.py::test_other", when="call", outcome="passed"),
                         _jsonl_line(
                             nodeid="test_a.py::test_other", when="teardown", outcome="passed"
                         ),

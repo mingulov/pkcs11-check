@@ -6,11 +6,14 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from _pytest.outcomes import Failed, XFailed
 
 from pkcs11_check.raw import recipes
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKR_ARGUMENTS_BAD,
     CKR_FUNCTION_FAILED,
+    CKR_OK,
     CKR_PIN_INCORRECT,
     CKR_PIN_LEN_RANGE,
     CKR_USER_TYPE_INVALID,
@@ -186,3 +189,41 @@ def test_access_init_pin_token_policy_reject_is_skip(monkeypatch: pytest.MonkeyP
         )
     assert isinstance(exc_info.value, pytest.skip.Exception)
     assert "C_InitPIN not usable" in str(exc_info.value)
+
+
+# --- Phase 4 N2: SO-login wrong-PIN guard -> classify_negative_rv ---
+
+
+def _login_session(login_rv: int) -> SimpleNamespace:
+    class Raw(_Raw):
+        def C_Login(  # noqa: N802
+            self,
+            _session: int,
+            _user_type: int,
+            _pin: object,
+            _pin_len: int,
+        ) -> int:
+            return int(login_rv)
+
+    return SimpleNamespace(raw=Raw(), slot_id=1, sh=1)
+
+
+def _run_wrong_pin(monkeypatch: pytest.MonkeyPatch, login_rv: int) -> None:
+    monkeypatch.setattr(test_so_pin, "raw_open_session", lambda *_a, **_k: 5)
+    monkeypatch.setattr(test_so_pin, "close_session_quietly", lambda *_a, **_k: None)
+    test_so_pin.TestSOLogin().test_so_login_wrong_pin(_login_session(login_rv))
+
+
+def test_so_wrong_pin_accepted_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(Failed) as ei:
+        _run_wrong_pin(monkeypatch, int(CKR_OK))
+    assert not isinstance(ei.value, XFailed)
+
+
+def test_so_wrong_pin_spec_reject_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    _run_wrong_pin(monkeypatch, int(CKR_PIN_INCORRECT))
+
+
+def test_so_wrong_pin_other_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        _run_wrong_pin(monkeypatch, int(CKR_ARGUMENTS_BAD))

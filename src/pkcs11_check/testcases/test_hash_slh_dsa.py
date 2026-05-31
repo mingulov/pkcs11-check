@@ -44,12 +44,30 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKM_SLH_DSA_KEY_PAIR_GEN,
     CKP_SLH_DSA_SHA2_128S,
+    CKR_DATA_LEN_RANGE,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = [pytest.mark.pqc]
 REQUIRED_MECHANISMS = ["SLH_DSA_KEY_PAIR_GEN"]
 
 _MESSAGE = b"HashSLH-DSA pre-hash signature test message 2026"
+
+# Phase 5 P1b: produce-leg "advertised but not operational" reject set, mirroring
+# test_hash_ml_dsa. Only a known clean CKR -> xfail; a non-CKR Python error
+# propagates. The dependent verify leg is left unguarded (self-contradiction
+# stays a hard failure).
+_SIGN_ERROR_CKRS = (
+    CKR_MECHANISM_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_DEVICE_ERROR,
+    CKR_DATA_LEN_RANGE,
+    CKR_GENERAL_ERROR,
+)
 
 # Hash-specific HASH_SLH_DSA variants mapped to their CKM constants.
 # These support both single-part and multi-part sign/verify.
@@ -121,8 +139,8 @@ class TestHashSLHDSAGeneric:
                     rs.raw, rs.sh, priv, CKM_HASH_SLH_DSA, _MESSAGE, mech_param=mech_param
                 )
             except AssertionError as exc:
-                pytest.xfail(f"CKM_HASH_SLH_DSA sign failed: {exc!r}")
-                raise  # unreachable
+                xfail_if_known_ckr(exc, _SIGN_ERROR_CKRS, "CKM_HASH_SLH_DSA sign not operational")
+                raise
             assert isinstance(sig, bytes) and len(sig) > 0
             result = verify_single(
                 rs.raw, rs.sh, pub, CKM_HASH_SLH_DSA, _MESSAGE, sig, mech_param=mech_param
@@ -160,8 +178,8 @@ class TestHashSLHDSAVariants:
             try:
                 sig = sign_single(rs.raw, rs.sh, priv, mech, _MESSAGE)
             except AssertionError as exc:
-                pytest.xfail(f"CKM_{mech_attr} sign failed: {exc!r}")
-                raise  # unreachable
+                xfail_if_known_ckr(exc, _SIGN_ERROR_CKRS, f"CKM_{mech_attr} sign not operational")
+                raise
             assert isinstance(sig, bytes) and len(sig) > 0
             result = verify_single(rs.raw, rs.sh, pub, mech, _MESSAGE, sig)
             assert result is True
@@ -182,18 +200,21 @@ class TestHashSLHDSAVariants:
             try:
                 sig = sign_single(rs.raw, rs.sh, priv, mech, _MESSAGE)
             except AssertionError as exc:
-                pytest.xfail(f"CKM_{mech_attr} sign failed: {exc!r}")
-                raise  # unreachable
+                xfail_if_known_ckr(exc, _SIGN_ERROR_CKRS, f"CKM_{mech_attr} sign not operational")
+                raise
 
             tampered = _MESSAGE[:-1] + bytes([_MESSAGE[-1] ^ 0xFF])
             try:
                 result = verify_single(rs.raw, rs.sh, pub, mech, tampered, sig)
                 assert not result, f"Tampered message should fail CKM_{mech_attr} verification"
             except AssertionError as exc:
-                if "DEVICE_ERROR" in str(exc):
-                    pytest.xfail(
-                        "Kryoptic returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID"
-                    )
+                # A tampered signature must be rejected; a clean non-spec reject
+                # code (e.g. CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID) is
+                # a noted deviation -> xfail, while a wrong-output assertion (the
+                # tampered signature verified) propagates as a real failure.
+                xfail_if_known_ckr(
+                    exc, _SIGN_ERROR_CKRS, "tampered signature rejected with non-spec CKR"
+                )
                 raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -212,8 +233,8 @@ class TestHashSLHDSAVariants:
             try:
                 sig = sign_single(rs.raw, rs.sh, priv, mech, b"")
             except AssertionError as exc:
-                pytest.xfail(f"CKM_{mech_attr} sign of empty message failed: {exc!r}")
-                raise  # unreachable
+                xfail_if_known_ckr(exc, _SIGN_ERROR_CKRS, f"CKM_{mech_attr} sign not operational")
+                raise
             assert isinstance(sig, bytes) and len(sig) > 0
             result = verify_single(rs.raw, rs.sh, pub, mech, b"", sig)
             assert result is True

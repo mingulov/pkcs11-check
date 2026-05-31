@@ -28,7 +28,6 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
     to_ubyte_buf,
 )
-from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
@@ -53,7 +52,6 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_KEM_512,
     CKP_ML_KEM_768,
     CKP_ML_KEM_1024,
-    CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_BUFFER_TOO_SMALL,
@@ -66,12 +64,16 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
-    CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    classify_policy_enforcement,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 
 pytestmark = [pytest.mark.pqc, pytest.mark.keymgmt, pytest.mark.requires_v32]
 
@@ -193,11 +195,6 @@ def _decapsulate_ml_kem_or_xfail(
         pytest.skip("decapsulate_key not available")
     except AssertionError as exc:
         _xfail_kem_operation_reject(exc, operation)
-
-
-def _xfail_if_kem_negative_rv(rv: int, xfail_rvs: tuple[int, ...], label: str) -> None:
-    if rv in xfail_rvs:
-        pytest.xfail(f"{label}: {ckr_name(int(rv))}")
 
 
 class TestMLKEMKeyGeneration:
@@ -749,19 +746,20 @@ class TestMLKEMNegative:
                 len(ct),
                 byref(handle),
             )
-            if rv == CKR_OK:
-                if handle.value:
-                    destroy_quietly(rs.raw, rs.sh, handle.value)
-                pytest.xfail("ML-KEM accepted CKA_VALUE in decapsulation template")
-            _xfail_if_kem_negative_rv(
+            if rv == CKR_OK and handle.value:
+                destroy_quietly(rs.raw, rs.sh, handle.value)
+            # Type-A crypto-correctness: accepting CKA_VALUE in the decapsulation
+            # template lets the caller dictate the derived key's secret bytes
+            # instead of deriving them -- a break for any provider -> fail; an
+            # expected template reject -> pass; another clean reject -> xfail.
+            classify_negative_rv(
                 rv,
-                (CKR_ARGUMENTS_BAD,),
-                "ML-KEM invalid-template non-specific reject",
-            )
-            assert rv in (
-                CKR_TEMPLATE_INCONSISTENT,
-                CKR_ATTRIBUTE_TYPE_INVALID,
-                CKR_ATTRIBUTE_READ_ONLY,
+                (
+                    CKR_TEMPLATE_INCONSISTENT,
+                    CKR_ATTRIBUTE_TYPE_INVALID,
+                    CKR_ATTRIBUTE_READ_ONLY,
+                ),
+                label="inject CKA_VALUE into ML-KEM decapsulation template",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -795,12 +793,11 @@ class TestMLKEMNegative:
                 len(short_ct),
                 byref(handle),
             )
-            _xfail_if_kem_negative_rv(
+            classify_negative_rv(
                 rv,
-                (CKR_ARGUMENTS_BAD, CKR_DEVICE_ERROR, CKR_GENERAL_ERROR, CKR_FUNCTION_FAILED),
-                "ML-KEM invalid ciphertext length non-specific reject",
+                (CKR_ENCRYPTED_DATA_LEN_RANGE, CKR_ENCRYPTED_DATA_INVALID),
+                label="ML-KEM invalid ciphertext length",
             )
-            assert rv in (CKR_ENCRYPTED_DATA_LEN_RANGE, CKR_ENCRYPTED_DATA_INVALID)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -809,8 +806,8 @@ class TestMLKEMNegative:
         """Decapsulate fails if CKA_DECAPSULATE is False on private key.
 
         Spec (PKCS#11 v3.2 Sec.5.14.8): CKR_KEY_FUNCTION_NOT_PERMITTED when
-        CKA_DECAPSULATE is False.  NSS-PQC may return CKR_BUFFER_TOO_SMALL if
-        it validates output buffer availability before checking key permissions.
+        CKA_DECAPSULATE is False.  Some modules return CKR_BUFFER_TOO_SMALL if
+        they validate output buffer availability before checking key permissions.
         """
         rs = p11_raw_session
         _skip_if_no_ml_kem(rs)
@@ -839,26 +836,30 @@ class TestMLKEMNegative:
                 len(ct),
                 ctypes.byref(handle),
             )
-            # CKR_BUFFER_TOO_SMALL: NSS-PQC checks output buffer before permission flags
-            # (module deviation from spec; correct return is CKR_KEY_FUNCTION_NOT_PERMITTED).
-            if rv == CKR_OK:
-                if handle.value:
-                    destroy_quietly(rs.raw, rs.sh, handle.value)
-                from pkcs11_check.compliance import ComplianceLevel, note
+            if rv == CKR_OK and handle.value:
+                destroy_quietly(rs.raw, rs.sh, handle.value)
 
-                note(
-                    "C_DecapsulateKey succeeded with CKA_DECAPSULATE=False on private key "
-                    "-- module ignores permission flag. "
-                    "PKCS#11 v3.2 Sec.5.14.8 requires CKR_KEY_FUNCTION_NOT_PERMITTED.",
-                    ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.2 Sec.5.14.8",
+            if rv != CKR_OK:
+                # A rejection: the spec code passes, another clean code xfails.
+                classify_negative_rv(
+                    rv,
+                    (CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_BUFFER_TOO_SMALL),
+                    label="decapsulate with CKA_DECAPSULATE=False on private key",
                 )
-                pytest.xfail(
-                    "Module ignores CKA_DECAPSULATE=False permission flag on ML-KEM private key "
-                    "(returns CKR_OK instead of CKR_KEY_FUNCTION_NOT_PERMITTED -- SECURITY finding)"
-                )
-            assert rv in (CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_BUFFER_TOO_SMALL), (
-                f"Expected CKR_KEY_FUNCTION_NOT_PERMITTED, got 0x{rv:08x}"
+                return
+
+            # rv == CKR_OK -- Type-B claim/effect-check. The protection is only
+            # claimed if the private key actually reads back CKA_DECAPSULATE=False
+            # (a module that did not honor the flag at create has not claimed the
+            # protection -> honest non-support -> xfail). If it was claimed and
+            # decapsulation still succeeded, the module contradicted itself.
+            decap_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_DECAPSULATE])
+            claimed = decap_attrs.get(CKA_DECAPSULATE) is False
+            classify_policy_enforcement(
+                claimed=claimed,
+                violated=True,
+                label="decapsulate with CKA_DECAPSULATE=False on private key "
+                "(PKCS#11 v3.2 Sec.5.14.8 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -919,17 +920,17 @@ class TestMLKEMNegative:
                 byref(handle),
             )
             # Providers may validate the key's permitted operations before
-            # reporting that the key type is wrong for ML-KEM.
-            _xfail_if_kem_negative_rv(
+            # reporting that the key type is wrong for ML-KEM; any other clean
+            # reject code is a noted deviation (xfail), not a hard failure.
+            classify_negative_rv(
                 rv,
-                (CKR_OBJECT_HANDLE_INVALID,),
-                "ML-KEM wrong-key-type reject",
-            )
-            assert rv in (
-                CKR_KEY_TYPE_INCONSISTENT,
-                CKR_KEY_FUNCTION_NOT_PERMITTED,
-                CKR_MECHANISM_INVALID,
-                CKR_TEMPLATE_INCOMPLETE,
+                (
+                    CKR_KEY_TYPE_INCONSISTENT,
+                    CKR_KEY_FUNCTION_NOT_PERMITTED,
+                    CKR_MECHANISM_INVALID,
+                    CKR_TEMPLATE_INCOMPLETE,
+                ),
+                label="ML-KEM wrong-key-type reject",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

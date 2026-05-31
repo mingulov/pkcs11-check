@@ -109,9 +109,9 @@ def _select_eddsa_public_key_encoding_for_wycheproof(
 
 
 @pytest.mark.parametrize("vec_id,vec", _ED25519_VECTORS, ids=[v[0] for v in _ED25519_VECTORS])
-def test_ed25519_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_ed25519_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """Ed25519 signature verification from Wycheproof vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("EDDSA"):
         pytest.skip("EDDSA not supported")
 
@@ -205,9 +205,9 @@ _ED448_PROBE = next((vec for _vec_id, vec in _ED448_VECTORS if vec["result"] == 
 
 
 @pytest.mark.parametrize("vec_id,vec", _ED448_VECTORS, ids=[v[0] for v in _ED448_VECTORS])
-def test_ed448_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_ed448_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """Ed448 signature verification from Wycheproof vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("EDDSA"):
         pytest.skip("EDDSA not supported")
 

@@ -220,13 +220,13 @@ _ALL_HMAC_VECTORS = _load_hmac_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_HMAC_VECTORS, ids=[v[0] for v in _ALL_HMAC_VECTORS])
-def test_acvp_hmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_hmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """HMAC generation from NIST ACVP vectors.
 
     Tests that the PKCS#11 module can correctly compute HMAC MACs using
     standard SHA-2 and SHA-3 algorithms with truncated output (macLen in bits).
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism(vec["mech_display"]):
         pytest.skip(f"{vec['mech_display']} not supported by module")
 

@@ -67,9 +67,14 @@ jobs:
         env:
           SOFTHSM2_CONF: /tmp/softhsm2.conf
         run: |
+          # Functional smoke only: --marker "not security" excludes destructive
+          # probes (e.g. isize::MAX ulDataLen boundary) that surface real
+          # provider defects (documented in docs/module-issues.md) and are
+          # exercised in the full Docker matrix, not this per-push gate.
           uv run pkcs11-check test \
             --module /usr/lib/softhsm/libsofthsm2.so \
             --pin 1234 \
             --timeout 60 \
             --isolation auto \
+            --marker "not security" \
             --match "test_encrypt or test_sign or test_digest"

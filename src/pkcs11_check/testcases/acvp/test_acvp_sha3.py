@@ -89,12 +89,12 @@ _SHA3_VECTORS = _load_sha3_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _SHA3_VECTORS, ids=[v[0] for v in _SHA3_VECTORS])
-def test_acvp_sha3(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_sha3(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """SHA-3 digest from NIST ACVP vectors.
 
     Compares PKCS#11 digest output against official NIST ACVP expected results.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     alg_name: str = vec["alg_name"]
     msg: bytes = vec["msg"]
     expected_md: bytes = vec["expected_md"]

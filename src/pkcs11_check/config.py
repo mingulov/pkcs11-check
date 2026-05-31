@@ -29,13 +29,22 @@ class P11TestConfig(BaseSettings):
     pin: SecretStr | None = None
     interface: str = "auto"
     timeout_operation: int = 30
-    timeout_test: int = 120
+    # Per-test timeout (pytest-timeout, signal method). Sized as a freeze/runaway
+    # safety net, not a cap on legitimately-slow work: the slowest real tests are
+    # the ACVP AES MCT cases (~100k chained ops ≈ 110s on transport-bound modules
+    # like bouncyhsm), so 180s lets them always complete with margin while still
+    # catching genuine hangs.
+    timeout_test: int = 180
     destructive: bool = False
     max_sessions: int = 1
     skip_unsupported: bool = True
     log_level: str = "INFO"
     output: str = "rich"
     disabled_tests_file: Path | None = None
+    # Per-test CK_RV trace (off by default). rv_trace_compact = ring-buffer
+    # window size N (last-N entries); None = full capture. See docs/rv-trace-design.md.
+    rv_trace: bool = False
+    rv_trace_compact: int | None = None
 
     @classmethod
     def settings_customise_sources(

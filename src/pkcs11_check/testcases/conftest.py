@@ -29,9 +29,12 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
@@ -62,6 +65,24 @@ KEYPAIR_RUNTIME_REJECT_RVS = (
 EC_CURVE_UNSUPPORTED_RVS = (
     CKR_CURVE_NOT_SUPPORTED,
     CKR_DOMAIN_PARAMS_INVALID,
+)
+
+# Phase 5 P1b: clean codes a module may return at a cipher/MAC *use* site when
+# the mechanism is advertised but not operational for the given key/params.
+# A first (produce) leg returning one of these -> xfail (advertised-but-not-
+# operational); a dependent roundtrip second leg (decrypt of a just-produced
+# output) is NOT routed here -- that stays a hard failure (self-contradiction).
+CIPHER_OP_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 
 
@@ -166,15 +187,11 @@ def unwrap_key_for_mechanism_roundtrip(
             mech_param=mech_param,
         )
     except AssertionError as exc:
-        allowed_errors = quirk_extras(
-            p11_config, "unwrap_template_class_keytype_rejected"
-        )
+        allowed_errors = quirk_extras(p11_config, "unwrap_template_class_keytype_rejected")
         if not is_known_error(exc, allowed_errors):
             raise
         relaxed_attrs = {
-            key: value
-            for key, value in attrs.items()
-            if key not in (CKA_CLASS, CKA_KEY_TYPE)
+            key: value for key, value in attrs.items() if key not in (CKA_CLASS, CKA_KEY_TYPE)
         }
         if relaxed_attrs == attrs:
             raise
@@ -334,6 +351,20 @@ def skip_if_token_write_protected(raw: Any, slot_id: int) -> None:
         pytest.skip("Token is write-protected -- cannot create token objects")
 
 
+def _actual_rv_portion(msg: str) -> str:
+    """Return only the ACTUAL-rv portion of an ``expect_rv`` message.
+
+    ``expect_rv`` raises ``CkrAssertionError`` with a message shaped like
+    ``"Unexpected CK_RV <ACTUAL>; expected one of: <EXPECTED...>"``.  The tail
+    after ``"; expected one of:"`` lists the EXPECTED CKR names — substring
+    matching against it would wrongly classify a genuine failure as "known"
+    (the prefix/substring hazard documented on ``CkrAssertionError``).  This
+    drops that tail so only the actual-return portion is matched.
+    """
+    head, sep, _tail = msg.partition("; expected one of:")
+    return head if sep else msg
+
+
 def is_known_error(
     exc: BaseException,
     error_rvs: set[Any] | frozenset[Any] | tuple[Any, ...],
@@ -341,24 +372,30 @@ def is_known_error(
     """Return True if ``exc`` corresponds to one of ``error_rvs``.
 
     Prefers exact integer equality via ``CkrAssertionError.rv`` (set by
-    ``expect_rv``).  Falls back to substring matching against the
-    exception message for legacy AssertionError paths — that fallback can
-    misfire when one CKR name is a prefix of another, so prefer raising
-    via ``expect_rv`` where possible.
+    ``expect_rv``).  When ``.rv`` is absent, falls back to substring matching
+    against ONLY the actual-return portion of the message (the text before
+    ``"; expected one of:"``), so an EXPECTED CKR name listed in the message
+    cannot be mistaken for the actual return — which would otherwise mis-route
+    a real failure to skip/xfail.
     """
     rv = getattr(exc, "rv", None)
     if rv is not None:
         return rv in error_rvs
-    msg = str(exc)
+    msg = _actual_rv_portion(str(exc))
     return any(ckr_name(r) in msg for r in error_rvs)
 
 
 def _matched_ckr_name(exc: BaseException, known_ckrs: Any) -> str | None:
-    """Return the CKR name that matched ``exc``, or None if no match."""
+    """Return the CKR name that matched ``exc``, or None if no match.
+
+    Mirrors :func:`is_known_error`: exact ``.rv`` when present, otherwise a
+    substring match constrained to the actual-return portion of the message so
+    an EXPECTED name in the message cannot produce a false match.
+    """
     rv = getattr(exc, "rv", None)
     if rv is not None:
         return ckr_name(rv) if rv in known_ckrs else None
-    msg = str(exc)
+    msg = _actual_rv_portion(str(exc))
     for ckr in known_ckrs:
         if ckr_name(ckr) in msg:
             return ckr_name(ckr)
@@ -388,6 +425,113 @@ def xfail_if_known_ckr(
     if matched is not None:
         pytest.xfail(f"{msg}: {matched}")
     raise  # Not a known CKR -- propagate as real failure
+
+
+def classify_negative_rv(
+    rv: int,
+    expected_rvs: tuple[Any, ...] | set[Any] | frozenset[Any],
+    *,
+    label: str,
+    allow_ok: bool = False,
+) -> None:
+    """Raw-rv negative classifier (provider-general 3-way).
+
+    For negative ops at sites NOT in the ckr/ table that carry the raw return
+    value directly:
+
+    - ``CKR_OK`` -> ``fail`` (the module accepted an invalid/forbidden op),
+      unless ``allow_ok`` is set for the rare case where success is tolerable.
+    - ``rv in expected_rvs`` -> ``pass`` (spec-correct rejection).
+    - any other clean reject code -> ``xfail`` (honest non-spec deviation,
+      noted for later investigation).
+
+    Per the classification model: only a crypto-correctness break or
+    self-contradiction warrants ``fail``; a different honest reject code is
+    ``xfail``. This helper decides direction by the model, never to silence a
+    finding.
+    """
+    if rv == CKR_OK:
+        if allow_ok:
+            return
+        pytest.fail(f"{label}: accepted invalid (CKR_OK) -- must reject")
+    if rv in expected_rvs:
+        return
+    pytest.xfail(
+        f"{label}: rejected with {ckr_name(rv)}, expected {[ckr_name(c) for c in expected_rvs]}"
+    )
+
+
+def reject_or_classify(
+    exc: BaseException | None,
+    expected_rvs: tuple[Any, ...] | set[Any] | frozenset[Any],
+    *,
+    label: str,
+) -> None:
+    """Recipe-site negative classifier (exception-shaped, provider-general 3-way).
+
+    For recipe call sites that *raise* a ``CkrAssertionError`` on reject and
+    *return* on success (so there is no raw ``rv`` to inspect):
+
+    - ``exc is None`` means the operation SUCCEEDED (accepted the invalid /
+      forbidden input) -> ``fail``.
+    - a caught error whose ``rv`` is in ``expected_rvs`` -> ``pass`` (spec-correct
+      rejection).
+    - any other clean reject code -> ``xfail`` (honest non-spec deviation).
+
+    Mirrors ``classify_negative_rv`` for the exception path, reusing
+    ``is_known_error`` for the match.
+    """
+    if exc is None:
+        pytest.fail(f"{label}: accepted invalid (CKR_OK) -- must reject")
+    if is_known_error(exc, expected_rvs):
+        return
+    rv = getattr(exc, "rv", None)
+    name = ckr_name(rv) if rv is not None else str(exc)
+    pytest.xfail(f"{label}: rejected with {name}, expected {[ckr_name(c) for c in expected_rvs]}")
+
+
+def classify_policy_enforcement(*, claimed: bool, violated: bool, label: str) -> None:
+    """Type-B attribute/permission self-contradiction classifier.
+
+    Args:
+        claimed: the module reported the protective attribute back (e.g. a
+            ``CKA_SENSITIVE=True`` key reads back ``CKA_SENSITIVE=True``).
+        violated: the protection was breached (e.g. the sensitive value was
+            readable, or an escalation was reflected).
+
+    - not ``claimed`` -> ``xfail`` (honest non-support of an optional protection;
+      provider-dependent, noted for later).
+    - ``claimed`` and ``violated`` -> ``fail`` (the module claimed the protection
+      then violated it -- a self-contradiction, broken for any provider).
+    - ``claimed`` and not ``violated`` -> ``pass``.
+    """
+    if not claimed:
+        pytest.xfail(f"{label}: module does not claim the protection (honest non-support)")
+    if violated:
+        pytest.fail(f"{label}: claimed the protection then violated it (self-contradiction)")
+
+
+def classify_lifecycle_effect(*, claimed_success: bool, effect_observed: bool, label: str) -> None:
+    """Type-C lifecycle/state self-contradiction classifier.
+
+    Args:
+        claimed_success: the prior operation returned ``CKR_OK`` (e.g. a
+            ``C_DestroyObject`` claimed the object destroyed, or a read-only
+            ``C_SetAttributeValue`` claimed the write succeeded).
+        effect_observed: the contradicting effect was seen (e.g. the destroyed
+            object's tagged content survived, or the read-only value actually
+            changed).
+
+    - not ``claimed_success`` -> ``xfail`` (prior op did not claim success; the
+      module honestly declined, so no contradiction).
+    - ``claimed_success`` and ``effect_observed`` -> ``fail`` (success claimed then
+      contradicted -- a self-contradiction).
+    - ``claimed_success`` and not ``effect_observed`` -> ``pass``.
+    """
+    if not claimed_success:
+        pytest.xfail(f"{label}: prior operation did not claim success")
+    if effect_observed:
+        pytest.fail(f"{label}: success claimed then contradicted (self-contradiction)")
 
 
 def destroy_returned_handles(rs: Any, *handles: int) -> None:

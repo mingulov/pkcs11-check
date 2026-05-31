@@ -17,10 +17,33 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.testcases._subprocess_preamble import subprocess_session_preamble
+from pkcs11_check.testcases._subprocess_preamble import (
+    _P11CHECK_PIN_ENV,
+    subprocess_session_preamble,
+)
 from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
+from pkcs11_check.testcases.conftest import classify_policy_enforcement
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
+
+
+def _classify_permission_flag(out: str, *, label: str) -> None:
+    """Type-B claim/effect-check from subprocess output.
+
+    The subprocess prints ``CLAIM:0`` (the key read the permission flag back as
+    False -- the module claims the restriction) or ``CLAIM:1`` (the flag was not
+    honored), and ``CKR:0x...`` for the C_*Init result:
+
+    - claimed (``CLAIM:0``) AND the op returned CKR_OK -> fail (the restriction
+      was claimed then ignored -- a self-contradiction),
+    - not claimed (``CLAIM:1``) -> xfail (module did not honor the flag at
+      create; honest non-support),
+    - claimed AND the op was rejected -> pass.
+    """
+    claimed = "CLAIM:0" in out
+    violated = "CKR:0x00000000" in out
+    classify_policy_enforcement(claimed=claimed, violated=violated, label=label)
+
 
 _EXTRA_IMPORTS = """\
 import ctypes
@@ -45,10 +68,18 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
 from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.recipes import read_attributes
 
 
 def _template_ptr(attrs):
     return cast(attrs.array, CK_ATTRIBUTE_PTR)
+
+
+def _claim(sh, key_value, attr):
+    # CLAIM:0 if the key reports the permission flag back as False (module
+    # claims the restriction), CLAIM:1 otherwise (not honored / absent).
+    vals = read_attributes(raw, sh, key_value, [attr])
+    print("CLAIM:0" if vals.get(attr) is False else "CLAIM:1")
 """
 
 
@@ -59,12 +90,16 @@ def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
         extra_imports=_EXTRA_IMPORTS,
     )
     script = preamble + textwrap.dedent(code) + "\ncleanup()\n"
+    # Pass the PIN via the child env (never embed it in the script source).
+    env = os.environ.copy()
+    if pin is not None:
+        env[_P11CHECK_PIN_ENV] = pin
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
         timeout=15,
-        env=os.environ.copy(),
+        env=env,
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
@@ -97,6 +132,7 @@ rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, b
 if rv != CKR_OK:
     print(f"SETUP_XFAIL:C_GenerateKey for CKA_ENCRYPT=False failed: {ckr_name(rv)}")
 else:
+    _claim(sh, key.value, CKA_ENCRYPT)
     # Try EncryptInit with CKA_ENCRYPT=False key
     mech = mech_simple(CKM_AES_ECB)  # AES_ECB
     rv = raw.C_EncryptInit(sh, mech.byref(), key.value)
@@ -106,20 +142,14 @@ else:
 """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_EncryptInit with CKA_ENCRYPT=False")
-        # CKR_OK means the module allowed using the key despite CKA_ENCRYPT=False.
-        if "CKR:0x00000000" in out:
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                "Module allows C_EncryptInit with CKA_ENCRYPT=False key (CKR_OK instead of "
-                "CKR_KEY_FUNCTION_NOT_PERMITTED). Key permission flags are not enforced.",
-                ComplianceLevel.CRITICAL,
-                reference="PKCS#11 v3.1 Sec.4.4.1",
-            )
-            pytest.xfail(
-                "SECURITY: module returns CKR_OK for C_EncryptInit with CKA_ENCRYPT=False key "
-                "(expected CKR_KEY_FUNCTION_NOT_PERMITTED)"
-            )
+        # Type-B: enforcing CKA_ENCRYPT=False is mandatory (PKCS#11 v3.1 Sec.4.4.1).
+        # claimed = the key read CKA_ENCRYPT back as False; violated = EncryptInit
+        # still returned CKR_OK.
+        _classify_permission_flag(
+            out,
+            label="C_EncryptInit with a CKA_ENCRYPT=False key "
+            "(PKCS#11 v3.1 Sec.4.4.1 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+        )
 
     def test_sign_not_permitted(self, p11_config: Any) -> None:
         """Key with CKA_SIGN=False -> C_SignInit -> CKR_KEY_FUNCTION_NOT_PERMITTED."""
@@ -140,20 +170,21 @@ rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, b
 if rv != CKR_OK:
     print(f"SETUP_XFAIL:C_GenerateKey for CKA_SIGN=False failed: {ckr_name(rv)}")
 else:
+    _claim(sh, key.value, CKA_SIGN)
     mech = mech_simple(CKM_SHA256_HMAC)  # sign mech to test CKA_SIGN=False
     rv = raw.C_SignInit(sh, mech.byref(), key.value)
     print(f"CKR:0x{rv:08x}")
-    # KEY_FUNCTION_NOT_PERMITTED, MECHANISM_INVALID, or KEY_TYPE_INCONSISTENT
-    assert rv in (
-        CKR_KEY_FUNCTION_NOT_PERMITTED,
-        CKR_MECHANISM_INVALID,
-        CKR_KEY_TYPE_INCONSISTENT,
-        CKR_FUNCTION_FAILED,
-    ), f"Got 0x{rv:08x}"
+    # Report result without asserting -- outer test checks security compliance
     print("OK")
 """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_SignInit with CKA_SIGN=False")
+        # Type-B: enforcing CKA_SIGN=False is mandatory (PKCS#11 v3.1 Sec.4.4.1).
+        _classify_permission_flag(
+            out,
+            label="C_SignInit with a CKA_SIGN=False key "
+            "(PKCS#11 v3.1 Sec.4.4.1 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+        )
 
     def test_decrypt_not_permitted(self, p11_config: Any) -> None:
         """Key with CKA_DECRYPT=False -> C_DecryptInit -> CKR_KEY_FUNCTION_NOT_PERMITTED.
@@ -179,6 +210,7 @@ rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, b
 if rv != CKR_OK:
     print(f"SETUP_XFAIL:C_GenerateKey for CKA_DECRYPT=False failed: {ckr_name(rv)}")
 else:
+    _claim(sh, key.value, CKA_DECRYPT)
     mech = mech_simple(CKM_AES_ECB)  # AES_ECB
     rv = raw.C_DecryptInit(sh, mech.byref(), key.value)
     print(f"CKR:0x{rv:08x}")
@@ -187,17 +219,9 @@ else:
 """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_DecryptInit with CKA_DECRYPT=False")
-        # CKR_OK means the module allowed using the key despite CKA_DECRYPT=False.
-        if "CKR:0x00000000" in out:
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                "Module allows C_DecryptInit with CKA_DECRYPT=False key (CKR_OK instead of "
-                "CKR_KEY_FUNCTION_NOT_PERMITTED). Key permission flags are not enforced.",
-                ComplianceLevel.CRITICAL,
-                reference="PKCS#11 v3.1 Sec.4.4.1",
-            )
-            pytest.xfail(
-                "SECURITY: module returns CKR_OK for C_DecryptInit with CKA_DECRYPT=False key "
-                "(expected CKR_KEY_FUNCTION_NOT_PERMITTED)"
-            )
+        # Type-B: enforcing CKA_DECRYPT=False is mandatory (PKCS#11 v3.1 Sec.4.4.1).
+        _classify_permission_flag(
+            out,
+            label="C_DecryptInit with a CKA_DECRYPT=False key "
+            "(PKCS#11 v3.1 Sec.4.4.1 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+        )

@@ -22,7 +22,7 @@
 - `core/isolation.py` — lower-level `spawn` helper retained for focused tests and future integration
 - `config.py` — four-layer config: CLI > env > TOML > defaults
 - `plugin.py` — pytest11 entry point, registers markers, fixtures, collection hooks
-- `fixtures.py` — p11_raw_session / p11_session (both yield RawSession), p11_module, p11_config, p11_interface_version
+- `fixtures.py` — p11_raw_session / p11_session (function-scoped, fresh session per test), p11_module_session (module-scoped, self-healing for fast verification tests), p11_module, p11_config, p11_interface_version
 - `testcases/conftest.py` — shared helpers: get_pin_bytes(), extract_ec_point()
 - `testcases/ckr/` — CKR error coverage tests (102 tests, 21 files). Use `--ckr-strict` for exact spec compliance
 
@@ -77,6 +77,7 @@ counts by group and the AES-CTS single-provider maximum.
 
 - `pkcs11_check.raw` is the sole PKCS#11 access layer: pure ctypes, v2.40-v3.2 interface negotiation, PQC mechanisms, generated type/metadata from vendored PKCS#11 headers
 - `pkcs11-check test` defaults to `--isolation auto`; explicit `--isolation none` is the unsafe fast path
+- **Provider/proxy-restart recovery (bounded wait-and-reconnect):** when a *proxied* provider crashes and pkcs11-proxy-ng restarts it, the surviving client module returns a connection-lost CK_RV for the whole restart window (`CKR_CRYPTOKI_NOT_INITIALIZED`, a stale `CKR_SESSION_HANDLE_INVALID` / `CKR_SESSION_CLOSED`, or a transport `CKR_DEVICE_ERROR` / `CKR_DEVICE_REMOVED`) — or a transport `OSError`. A restart is **not instantaneous**, so the session fixtures (`fixtures._open_or_reinit`, used by `p11_session`/`p11_raw_session` bootstrap and the `p11_module_session` health-check reopen) bridge it with a **bounded wait-and-reconnect loop**: reconnect (`C_Finalize` + `C_Initialize`), re-open + re-login, capped exponential backoff between attempts, until the provider returns or a time **and** attempt budget is exhausted (`_RECONNECT_*` constants in `fixtures.py` — no CLI/env knob by design). It is applied **only at the fixture open/login layer**, never inside a test-body assertion path, because those same codes are legitimate negative-test outcomes (e.g. kryoptic returns `CKR_DEVICE_ERROR` for a rejected signature — see [module-issues.md](module-issues.md)). The crash-triggering test still records its own real result; recovery only un-cascades *subsequent* tests, and every reconnect is surfaced (`UserWarning` + `reinit_count` → report.jsonl). The loop is bounded so a genuinely dead provider fails as a finding, never hangs. For a directly-loaded module a provider crash is a real SIGSEGV handled by `--isolation auto` instead (see CLAUDE.md execution model). Regression: `tests/test_reinit_recovery.py` (fakes) + `testcases/test_reinitialize.py::test_harness_recovers_lost_init_at_bootstrap` (real module).
 - `p11_session` fixture does explicit `login()` / `logout()` per test to avoid `UserAlreadyLoggedIn` cascading
 - Tests auto-skip when interface version doesn't support them (@pytest.mark.requires_v30)
 - Mechanism availability checked at runtime via `rs.has_mechanism(name)` on `RawSession`
@@ -112,11 +113,14 @@ class TestExample:
 
 ### Key fixtures
 
-- `p11_raw_session` — primary: yields `RawSession` with login/logout per test. Fields: `rs.raw`, `rs.sh`, `rs.slot_id`, `rs.has_mechanism(name)`, `rs.mechanisms`
-- `p11_session` — legacy alias, also yields `RawSession`
+- `p11_raw_session` — function-scoped: fresh C_OpenSession + C_Login per test. Fields: `rs.raw`, `rs.sh`, `rs.slot_id`, `rs.has_mechanism(name)`, `rs.mechanisms`. Use for tests that test session lifecycle, login/logout/PIN behavior, or otherwise need a fresh session per invocation.
+- `p11_module_session` — module-scoped session reused across all tests in the file, with self-healing health check (C_GetSessionInfo) before each test that triggers a transparent reopen if a prior test closed the session or logged out. Per-test call_log / used_mechanisms are reset for accurate coverage. **Use this for read-only verification tests (Wycheproof, ACVP vectors, ...).** On providers with expensive C_Login this saves ~47 ms/test (OpenCryptoki SWToken's PBKDF2-based PIN derivation) to ~80 ms/test (BouncyHSM's TCP RPC). Concrete impact on the ECDSA Wycheproof file (28 915 tests): OpenCryptoki 42 min → 47 s; BouncyHSM 56 min → 2 min.
+- `p11_session` — legacy alias, also yields `RawSession` (function-scoped)
 - `p11_module` — loaded PKCS#11 module (session-scoped)
 - `p11_config` — merged config (session-scoped)
 - `p11_interface_version` — negotiated version string
+
+When in doubt, prefer `p11_module_session` for new verification tests and only fall back to `p11_raw_session` when the test depends on session lifecycle.
 
 ### Patterns
 

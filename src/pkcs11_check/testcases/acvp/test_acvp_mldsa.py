@@ -143,9 +143,9 @@ class TestMlDsaKeyGen:
     """ML-DSA key generation tests using ACVP vectors."""
 
     @pytest.mark.parametrize("vec_id,vec", _KEYGEN_VECTORS, ids=[v[0] for v in _KEYGEN_VECTORS])
-    def test_mldsa_keygen(self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    def test_mldsa_keygen(self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         """Test ML-DSA keypair generation and roundtrip sign/verify."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("ML_DSA_KEY_PAIR_GEN"):
             pytest.skip("ML_DSA_KEY_PAIR_GEN not supported by module")
 
@@ -191,9 +191,9 @@ class TestMlDsaSigGen:
     """ML-DSA signature generation tests using ACVP vectors."""
 
     @pytest.mark.parametrize("vec_id,vec", _SIGGEN_VECTORS, ids=[v[0] for v in _SIGGEN_VECTORS])
-    def test_mldsa_siggen(self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    def test_mldsa_siggen(self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         """Test ML-DSA signature generation from NIST ACVP SigGen vectors."""
-        rs = p11_raw_session
+        rs = p11_module_session
         pre_hash_for_check = vec["pre_hash"]
         if pre_hash_for_check == "preHash":
             pre_hash_for_check = vec.get("hash_alg", "pure")
@@ -280,10 +280,10 @@ class TestMlDsaSigVer:
 
     @pytest.mark.parametrize("vec_id,vec", _SIGVER_VECTORS, ids=[v[0] for v in _SIGVER_VECTORS])
     def test_acvp_mldsa_sigver(
-        self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
+        self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]
     ) -> None:
         """ML-DSA signature verification from NIST ACVP SigVer vectors."""
-        rs = p11_raw_session
+        rs = p11_module_session
         pre_hash_for_check = vec["pre_hash"]
         if pre_hash_for_check == "preHash":
             pre_hash_for_check = vec.get("hash_alg", "pure")

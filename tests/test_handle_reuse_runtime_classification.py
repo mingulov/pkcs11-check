@@ -73,9 +73,11 @@ def test_missing_aes_keygen_is_skip_not_setup_failure(
         test_handle_reuse.TestHandleReuseAfterDestroy().test_double_destroy(_session())
 
 
-def test_encrypt_after_destroy_unexpected_ckr_fails(
+def test_encrypt_after_destroy_unexpected_ckr_xfails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Phase 3 Type-C: a non-handle clean reject on a destroyed handle is now a
+    # noted deviation (xfail), not a hard fail.
     raw = SimpleNamespace(
         C_DestroyObject=lambda *_a: CKR_OK,
         C_EncryptInit=lambda *_a: CKR_MECHANISM_INVALID,
@@ -88,13 +90,38 @@ def test_encrypt_after_destroy_unexpected_ckr_fails(
     )
     monkeypatch.setattr(test_handle_reuse, "gen_aes_key", lambda *_a, **_k: 7, raising=False)
 
-    with pytest.raises(AssertionError, match="Expected destroyed-handle CKR"):
+    with pytest.raises(pytest.xfail.Exception, match="use-after-destroy"):
         test_handle_reuse.TestHandleReuseAfterDestroy().test_encrypt_after_destroy(
             _session("AES_KEY_GEN", "AES_ECB", raw=raw)
         )
 
 
-def test_double_destroy_unexpected_ckr_fails(
+def test_encrypt_after_destroy_success_is_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Phase 3 Type-C: the op succeeding on a destroyed handle is a genuine fail.
+    from _pytest.outcomes import Failed, XFailed
+
+    raw = SimpleNamespace(
+        C_DestroyObject=lambda *_a: CKR_OK,
+        C_EncryptInit=lambda *_a: CKR_OK,
+    )
+    monkeypatch.setattr(
+        test_handle_reuse,
+        "gen_aes_key_or_xfail",
+        lambda *_a, **_k: 7,
+        raising=False,
+    )
+    monkeypatch.setattr(test_handle_reuse, "gen_aes_key", lambda *_a, **_k: 7, raising=False)
+
+    with pytest.raises(Failed, match="use-after-destroy") as ei:
+        test_handle_reuse.TestHandleReuseAfterDestroy().test_encrypt_after_destroy(
+            _session("AES_KEY_GEN", "AES_ECB", raw=raw)
+        )
+    assert not isinstance(ei.value, XFailed)
+
+
+def test_double_destroy_unexpected_ckr_xfails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = 0
@@ -113,7 +140,7 @@ def test_double_destroy_unexpected_ckr_fails(
     )
     monkeypatch.setattr(test_handle_reuse, "gen_aes_key", lambda *_a, **_k: 7, raising=False)
 
-    with pytest.raises(AssertionError, match="Expected destroyed-handle CKR"):
+    with pytest.raises(pytest.xfail.Exception, match="use-after-destroy"):
         test_handle_reuse.TestHandleReuseAfterDestroy().test_double_destroy(
             _session("AES_KEY_GEN", raw=raw)
         )

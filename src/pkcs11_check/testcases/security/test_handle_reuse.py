@@ -19,7 +19,7 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     read_attributes,
 )
-from pkcs11_check.raw.rv import ckr_name, expect_rv
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKA_ENCRYPT,
@@ -33,6 +33,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._error_tuples import HANDLE_ERRORS
 from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
     is_known_error,
@@ -51,7 +52,17 @@ def _destroy_object(raw: Any, sh: int, handle: int) -> None:
 
 
 def _assert_destroyed_handle_error(rv: int, operation: str) -> None:
-    assert rv in HANDLE_ERRORS, f"Expected destroyed-handle CKR for {operation}, got {ckr_name(rv)}"
+    # Type-C use-after-destroy 3-way classification. The object was already
+    # destroyed (the prior C_DestroyObject was asserted to return CKR_OK), so
+    # the operation must reject the stale handle:
+    #   CKR_OK              -> fail (use-after-destroy: the op succeeded),
+    #   rv in HANDLE_ERRORS -> pass (spec-correct handle rejection),
+    #   other clean reject  -> xfail (rejected, but with a non-handle code).
+    classify_negative_rv(
+        rv,
+        HANDLE_ERRORS,
+        label=f"{operation} on a destroyed object handle (use-after-destroy)",
+    )
 
 
 def _assert_read_destroyed_handle_fails(rs: Any, key: int) -> None:

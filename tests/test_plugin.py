@@ -54,7 +54,11 @@ def test_p11_config_uses_env_pin_when_cli_pin_missing(
         "p11_pin": None,
         "p11_destructive": False,
     }
-    request = SimpleNamespace(config=SimpleNamespace(getoption=options.__getitem__))
+
+    def getoption(name: str, default: object | None = None) -> object | None:
+        return options.get(name, default)
+
+    request = SimpleNamespace(config=SimpleNamespace(getoption=getoption))
 
     config = p11_config.__wrapped__(request)
 

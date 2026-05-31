@@ -18,6 +18,7 @@ from pkcs11_check.raw.types_std import (
     CK_MECHANISM_TYPE,
     CK_TOKEN_INFO,
     CK_ULONG,
+    CKR_CRYPTOKI_ALREADY_INITIALIZED,
     CKR_OK,
 )
 
@@ -166,11 +167,33 @@ class P11Module:
     # Tests that access p11_module.lib will get None and should be updated
     # to use p11_module.raw or the raw bootstrap helpers instead.
     lib: Any = None
+    # Count of mid-run re-initializations (a proxied provider crashed and the
+    # proxy restarted, so the client lost its C_Initialize state). ~one per
+    # provider restart; surfaced so the recovery is never silent.
+    reinit_count: int = 0
 
     @property
     def raw(self) -> RawPKCS11:
         """Return the underlying RawPKCS11 instance."""
         return self._raw
+
+    def reinitialize(self) -> None:
+        """Re-establish C_Initialize state after the library lost it.
+
+        When a proxied provider crashes and the proxy restarts, the loaded
+        client module survives but returns ``CKR_CRYPTOKI_NOT_INITIALIZED``
+        until re-initialized. ``C_Finalize`` is best-effort (it drops any stale
+        "initialized" belief so ``C_Initialize`` reconnects); ``C_Initialize``
+        must then succeed (``CKR_OK`` or ``CKR_CRYPTOKI_ALREADY_INITIALIZED``).
+        """
+        try:
+            self._raw.C_Finalize(None)
+        except (AttributeError, OSError):
+            pass
+        rv = int(self._raw.C_Initialize(None))
+        if rv not in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED):
+            raise RuntimeError(f"re-C_Initialize failed: 0x{rv:08x}")
+        self.reinit_count += 1
 
     @property
     def interface_version(self) -> str:

@@ -181,16 +181,13 @@ class TestSameSessionInitRace:
                 f"single-active-operation. Counters: {counters}"
             )
             assert counters["winner_ok"] >= 1, (
-                f"C_EncryptInit race never produced a clean winner. "
-                f"Counters: {counters}"
+                f"C_EncryptInit race never produced a clean winner. Counters: {counters}"
             )
         finally:
             _abort_encrypt(rs)
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_init_during_update_returns_operation_active(
-        self, p11_raw_session: RawSession
-    ) -> None:
+    def test_init_during_update_returns_operation_active(self, p11_raw_session: RawSession) -> None:
         """One thread mid-C_EncryptUpdate, second thread calls C_EncryptInit.
 
         Spec: the second thread must get CKR_OPERATION_ACTIVE.  The
@@ -236,9 +233,7 @@ class TestSameSessionInitRace:
             _abort_encrypt(rs)
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_digest_init_then_sign_init_other_thread(
-        self, p11_raw_session: RawSession
-    ) -> None:
+    def test_digest_init_then_sign_init_other_thread(self, p11_raw_session: RawSession) -> None:
         """One thread holds an active C_DigestInit, another tries C_SignInit.
 
         Different operation type, same session — still must return

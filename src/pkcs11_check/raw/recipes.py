@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from ctypes import byref
 from typing import Any
 
@@ -62,8 +62,17 @@ from .types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKA_VERIFY,
+    CKF_DECRYPT,
+    CKF_DIGEST,
+    CKF_ENCRYPT,
+    CKF_MESSAGE_DECRYPT,
+    CKF_MESSAGE_ENCRYPT,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
+    CKF_SIGN,
+    CKF_SIGN_RECOVER,
+    CKF_VERIFY,
+    CKF_VERIFY_RECOVER,
     CKK,
     CKK_AES,
     CKK_DSA,
@@ -83,6 +92,7 @@ from .types_std import (
     CKR_BUFFER_TOO_SMALL,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
+    CKR_OPERATION_ACTIVE,
     CKR_SIGNATURE_INVALID,
     CKR_SIGNATURE_LEN_RANGE,
 )
@@ -101,6 +111,110 @@ def to_ubyte_buf(data: bytes) -> ctypes.Array[ctypes.c_ubyte]:
     if n == 0:
         return (ctypes.c_ubyte * 0)()
     return (ctypes.c_ubyte * n).from_buffer_copy(data)
+
+
+def _cancel_operation(raw: RawPKCS11, session: int, flags: int) -> None:
+    """Best-effort cancel of a dangling active operation on ``session``.
+
+    Used by single-shot recipes when the terminal call raises after a
+    successful ``*Init``: without this, the session is left with an active
+    operation and a later op may return a spurious ``CKR_OPERATION_ACTIVE``,
+    mis-attributing a finding to the wrong call.
+
+    Uses ``C_SessionCancel`` (PKCS#11 v3.0+, the spec-blessed way to abort an
+    in-progress operation). Behaviour-based, not version-based: it simply tries
+    the call. A module that does not expose ``C_SessionCancel`` (pre-v3.0, or a
+    v3.x module whose function pointer is NULL) raises ``AttributeError`` from
+    the binding; a malformed invocation raises ``OSError`` / ``ctypes.ArgumentError``.
+    All are swallowed because this is best-effort teardown -- it must never mask
+    the original error on the terminal-failure path, nor turn a failed cancel on
+    the recovery path into a hard error (the caller re-checks the actual
+    operation state and escalates to a session reopen if it is still active). The
+    cancel's own return value is likewise ignored: the effect is verified by the
+    caller, never the cancel's claim.
+    """
+    try:
+        raw.C_SessionCancel(session, flags)
+    except (AttributeError, OSError, ctypes.ArgumentError):
+        # C_SessionCancel absent (pre-v3.0 / NULL pointer) or the call failed.
+        # Nothing portable to do here; the caller's retry + reopen fallback (or
+        # the per-test/subprocess session teardown) still bounds the leak.
+        pass
+
+
+# Every single-shot crypto operation class -- the mask used when recovering from
+# a stale operation whose class we do not know (it may differ from the init we
+# are retrying, e.g. a leftover verify op blocking a later init on a buggy module).
+_ALL_OP_FLAGS = (
+    CKF_ENCRYPT
+    | CKF_DECRYPT
+    | CKF_DIGEST
+    | CKF_SIGN
+    | CKF_SIGN_RECOVER
+    | CKF_VERIFY
+    | CKF_VERIFY_RECOVER
+)
+
+
+# Set when a single-shot recipe meets a CKR_OPERATION_ACTIVE it cannot clear in
+# place (e.g. tpm2-pkcs11: PKCS#11 v2.40, no C_SessionCancel, and its NULL-mechanism
+# C_VerifyInit does not cancel either -- only closing+reopening the session clears
+# the stale op). The module-scoped session holder consumes this on the next handout
+# and reopens, so the cascade stops at one collateral failure instead of running to
+# the end of the file. Process-global is safe under the per-file subprocess runner
+# (one session, one thread); a spurious reopen for a function-scoped session is
+# harmless.
+_SESSION_REOPEN_REQUESTED = False
+
+
+def request_session_reopen() -> None:
+    """Ask the shared-session holder to reopen before the next handout."""
+    global _SESSION_REOPEN_REQUESTED
+    _SESSION_REOPEN_REQUESTED = True
+
+
+def consume_session_reopen_request() -> bool:
+    """Return whether a reopen was requested since the last call, and clear it."""
+    global _SESSION_REOPEN_REQUESTED
+    requested = _SESSION_REOPEN_REQUESTED
+    _SESSION_REOPEN_REQUESTED = False
+    return requested
+
+
+def _init_or_recover(raw: RawPKCS11, session: int, init_fn: Callable[[], int]) -> int:
+    """Run a single-shot ``C_*Init``; recover from a non-compliant provider's stale op.
+
+    A ``C_*Init`` returns ``CKR_OPERATION_ACTIVE`` when an operation of that class
+    is already active on the session. Some providers (kryoptic v1.5.0,
+    tpm2-pkcs11) violate the spec by leaving a verify operation active after
+    ``C_Verify`` rejects a signature ("a call to C_Verify always terminates the
+    active verification operation"); on a shared module-scoped session that makes
+    the NEXT test's ``C_*Init`` return ``CKR_OPERATION_ACTIVE`` and cascade onto
+    every following test.
+
+    Recovery is tiered and fires ONLY on ``CKR_OPERATION_ACTIVE`` (the common clean
+    path runs the init exactly once, so this does not regress RPC-bound modules):
+
+    1. ``C_SessionCancel`` the stale op and retry the init once (works on
+       PKCS#11 v3.0+ modules such as kryoptic -- cheap, same session handle).
+    2. If the init still reports the op active (e.g. tpm2-pkcs11: v2.40 with no
+       ``C_SessionCancel``, and no other in-place cancel works), request a session
+       reopen via :func:`request_session_reopen`. The recipe cannot reopen itself
+       (that would change the handle the caller holds), so the current call still
+       surfaces ``CKR_OPERATION_ACTIVE``; the holder reopens before the next test,
+       stopping the cascade at a single collateral failure.
+
+    The return value is surfaced unchanged (never looped, never masked); the
+    genuine provider bug is reported as a FAIL by
+    ``testcases/test_operation_termination.py``.
+    """
+    rv = init_fn()
+    if rv == CKR_OPERATION_ACTIVE:
+        _cancel_operation(raw, session, _ALL_OP_FLAGS)
+        rv = init_fn()
+        if rv == CKR_OPERATION_ACTIVE:
+            request_session_reopen()
+    return rv
 
 
 def _resolve_mech(
@@ -164,6 +278,21 @@ def _two_call_output(
         out_len = CK_ULONG(output_size_hint)
         out_buf = (ctypes.c_ubyte * output_size_hint)()
         rv = fn(*args, out_buf, byref(out_len))
+        if (
+            retry_on_buffer_too_small
+            and rv == CKR_BUFFER_TOO_SMALL
+            and out_len.value > output_size_hint
+        ):
+            # The hint under-estimated the output; the module reported the true
+            # size in out_len on the failing call. Re-allocate and retry once.
+            # This keeps callers that pass an exact-size hint (e.g. CFB/OFB,
+            # where ciphertext length == plaintext length) correct even if a
+            # module unexpectedly needs more space — the size query is skipped
+            # for speed, but a wrong guess is recovered, never silently dropped.
+            size = out_len.value
+            out_buf = (ctypes.c_ubyte * size)()
+            out_len = CK_ULONG(size)
+            rv = fn(*args, out_buf, byref(out_len))
         expect_rv(rv, CKR_OK)
         return bytes(out_buf[: out_len.value])
     # Standard two-call pattern: query size with NULL, then allocate and call again.
@@ -659,6 +788,7 @@ def encrypt_single(
     *,
     mech_param: PackedMechanism | None = None,
     output_overhead: int = 0,
+    output_size_hint: int = 0,
     retry_on_buffer_too_small: bool = False,
 ) -> bytes:
     """Encrypt data in a single operation. Returns ciphertext.
@@ -668,23 +798,38 @@ def encrypt_single(
     needed for modules (e.g. NSS softoken) that do not set the output length
     when called with a NULL buffer pointer during the size-query pass.
 
-    ``retry_on_buffer_too_small`` when True, if the module returns
-    CKR_BUFFER_TOO_SMALL with an updated size, re-allocates and retries once.
+    ``output_size_hint`` (> 0) skips the NULL-buffer size-query pass entirely
+    and goes straight to a single call with a pre-allocated buffer of that
+    size.  Pass it for stream/feedback modes where the ciphertext length equals
+    the plaintext length exactly (CFB/OFB) to halve the per-op round-trips on
+    transport-bound modules.  It takes precedence over ``output_overhead``.
+
+    ``retry_on_buffer_too_small`` when True, if the (single or post-probe) call
+    returns CKR_BUFFER_TOO_SMALL with an updated size, re-allocates and retries
+    once — the safety net that makes a too-small ``output_size_hint`` correct
+    rather than a hard failure.
     """
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_EncryptInit(session, mech.byref(), key)
+    rv = _init_or_recover(raw, session, lambda: raw.C_EncryptInit(session, mech.byref(), key))
     expect_rv(rv, CKR_OK)
     in_buf = to_ubyte_buf(plaintext)
-    hint = (len(plaintext) + output_overhead) if output_overhead > 0 else 0
-    return _two_call_output(
-        raw,
-        "C_Encrypt",
-        session,
-        in_buf,
-        len(plaintext),
-        output_size_hint=hint,
-        retry_on_buffer_too_small=retry_on_buffer_too_small,
-    )
+    hint = output_size_hint or ((len(plaintext) + output_overhead) if output_overhead > 0 else 0)
+    try:
+        return _two_call_output(
+            raw,
+            "C_Encrypt",
+            session,
+            in_buf,
+            len(plaintext),
+            output_size_hint=hint,
+            retry_on_buffer_too_small=retry_on_buffer_too_small,
+        )
+    except BaseException:
+        # Terminal call failed after C_EncryptInit succeeded: cancel the
+        # dangling operation so it does not leak into the next op on a reused
+        # session, then re-raise the original error unchanged.
+        _cancel_operation(raw, session, int(CKF_ENCRYPT))
+        raise
 
 
 def sign_single(
@@ -704,17 +849,21 @@ def sign_single(
     on modules that fail the NULL probe.
     """
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_SignInit(session, mech.byref(), key)
+    rv = _init_or_recover(raw, session, lambda: raw.C_SignInit(session, mech.byref(), key))
     expect_rv(rv, CKR_OK)
     in_buf = to_ubyte_buf(data)
-    return _two_call_output(
-        raw,
-        "C_Sign",
-        session,
-        in_buf,
-        len(data),
-        output_size_hint=output_size_hint,
-    )
+    try:
+        return _two_call_output(
+            raw,
+            "C_Sign",
+            session,
+            in_buf,
+            len(data),
+            output_size_hint=output_size_hint,
+        )
+    except BaseException:
+        _cancel_operation(raw, session, int(CKF_SIGN))
+        raise
 
 
 def decrypt_single(
@@ -743,18 +892,22 @@ def decrypt_single(
       might under-estimate the real output (e.g. AEAD with unknown padding).
     """
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_DecryptInit(session, mech.byref(), key)
+    rv = _init_or_recover(raw, session, lambda: raw.C_DecryptInit(session, mech.byref(), key))
     expect_rv(rv, CKR_OK)
     in_buf = to_ubyte_buf(ciphertext)
-    return _two_call_output(
-        raw,
-        "C_Decrypt",
-        session,
-        in_buf,
-        len(ciphertext),
-        retry_on_buffer_too_small=retry_on_buffer_too_small,
-        output_size_hint=output_size_hint,
-    )
+    try:
+        return _two_call_output(
+            raw,
+            "C_Decrypt",
+            session,
+            in_buf,
+            len(ciphertext),
+            retry_on_buffer_too_small=retry_on_buffer_too_small,
+            output_size_hint=output_size_hint,
+        )
+    except BaseException:
+        _cancel_operation(raw, session, int(CKF_DECRYPT))
+        raise
 
 
 def verify_single(
@@ -773,7 +926,7 @@ def verify_single(
     or CKR_SIGNATURE_LEN_RANGE. Other errors raise AssertionError.
     """
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_VerifyInit(session, mech.byref(), key)
+    rv = _init_or_recover(raw, session, lambda: raw.C_VerifyInit(session, mech.byref(), key))
     expect_rv(rv, CKR_OK)
 
     data_buf = to_ubyte_buf(data)
@@ -783,8 +936,16 @@ def verify_single(
     if rv == CKR_OK:
         return True
     if rv in _VERIFY_FAIL_RVS:
+        # Per spec a completed C_Verify terminates the operation, including the
+        # signature-mismatch outcomes -- no cancel needed here.
         return False
-    expect_rv(rv, CKR_OK)
+    # Unexpected CKR: the operation may still be active (C_Verify did not
+    # complete). Cancel before surfacing the wrong-code finding.
+    try:
+        expect_rv(rv, CKR_OK)
+    except BaseException:
+        _cancel_operation(raw, session, int(CKF_VERIFY))
+        raise
     return False  # unreachable
 
 
@@ -799,7 +960,7 @@ def sign_recover_single(
 ) -> bytes:
     """Sign and recover data in a single operation (C_SignRecoverInit + C_SignRecover)."""
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_SignRecoverInit(session, mech.byref(), key)
+    rv = _init_or_recover(raw, session, lambda: raw.C_SignRecoverInit(session, mech.byref(), key))
     if rv == CKR_FUNCTION_NOT_SUPPORTED:
         raise NotImplementedError("C_SignRecover not supported by this module")
     expect_rv(rv, CKR_OK)
@@ -824,7 +985,7 @@ def verify_recover_single(
     CKR_BUFFER_TOO_SMALL for C_VerifyRecover.
     """
     mech = _resolve_mech(mechanism, None)
-    rv = raw.C_VerifyRecoverInit(session, mech.byref(), key)
+    rv = _init_or_recover(raw, session, lambda: raw.C_VerifyRecoverInit(session, mech.byref(), key))
     if rv == CKR_FUNCTION_NOT_SUPPORTED:
         raise NotImplementedError("C_VerifyRecover not supported by this module")
     expect_rv(rv, CKR_OK)
@@ -852,7 +1013,7 @@ def digest_single(
 ) -> bytes:
     """Digest data in a single operation. Returns digest."""
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_DigestInit(session, mech.byref())
+    rv = _init_or_recover(raw, session, lambda: raw.C_DigestInit(session, mech.byref()))
     expect_rv(rv, CKR_OK)
     in_buf = to_ubyte_buf(data)
     return _two_call_output(raw, "C_Digest", session, in_buf, len(data))
@@ -869,7 +1030,7 @@ def digest_single_with_key(
     The key material is digested directly without exposing it outside the token.
     """
     mech = _resolve_mech(mechanism, None)
-    rv = raw.C_DigestInit(session, mech.byref())
+    rv = _init_or_recover(raw, session, lambda: raw.C_DigestInit(session, mech.byref()))
     expect_rv(rv, CKR_OK)
     rv = raw.C_DigestKey(session, key)
     if rv == CKR_FUNCTION_NOT_SUPPORTED:
@@ -1001,8 +1162,18 @@ def find_objects(
 
     handles = (CK_OBJECT_HANDLE * max_count)()
     found = CK_ULONG(0)
-    rv = raw.C_FindObjects(session, handles, max_count, byref(found))
-    expect_rv(rv, CKR_OK)
+    try:
+        rv = raw.C_FindObjects(session, handles, max_count, byref(found))
+        expect_rv(rv, CKR_OK)
+    except BaseException:
+        # C_FindObjects raised after C_FindObjectsInit succeeded: release the
+        # active search operation (its terminator is C_FindObjectsFinal) so a
+        # later op on a reused session is not blocked, then re-raise.
+        try:
+            raw.C_FindObjectsFinal(session)
+        except AttributeError:
+            pass
+        raise
 
     rv = raw.C_FindObjectsFinal(session)
     expect_rv(rv, CKR_OK)
@@ -1145,37 +1316,52 @@ def _multipart_output(
     final_fn: str,
     init_args: tuple[Any, ...],
     chunks: list[bytes] | tuple[bytes, ...],
+    *,
+    cancel_flag: int,
 ) -> bytes:
     """Shared Init -> Update(chunks) -> Final for encrypt/decrypt.
 
     Only for operations where Update produces output (C_EncryptUpdate,
     C_DecryptUpdate). Sign/Digest Update calls do not produce output --
     use the manual Init+Update+_two_call_output(Final) pattern instead.
+
+    ``cancel_flag`` is the operation-class flag (e.g. ``CKF_ENCRYPT``) used to
+    cancel the dangling operation if an Update or Final call raises after the
+    ``*Init`` succeeded -- mirroring the single-shot cancel-on-error fix
+    (commit c509013) so a reused session is not left with an active op that
+    would mis-attribute a spurious ``CKR_OPERATION_ACTIVE`` to a later call.
     """
     rv = getattr(raw, init_fn)(session, *init_args)
     expect_rv(rv, CKR_OK)
-    parts: list[bytes] = []
-    for chunk in chunks:
-        in_buf = to_ubyte_buf(chunk)
-        # Allocate a conservative output buffer upfront (chunk + 256 bytes for
-        # block cipher expansion). Do NOT use the two-call size-probe pattern for
-        # Update functions -- probing feeds the same chunk twice, corrupting cipher
-        # state. The Final two-call pattern remains correct.
-        max_out = len(chunk) + 256
-        out_buf = (ctypes.c_ubyte * max_out)()
-        out_len = CK_ULONG(max_out)
-        rv = getattr(raw, update_fn)(
-            session,
-            in_buf,
-            len(chunk),
-            out_buf,
-            byref(out_len),
-        )
-        expect_rv(rv, CKR_OK)
-        if out_len.value > 0:
-            parts.append(bytes(out_buf[: out_len.value]))
-    parts.append(_two_call_output(raw, final_fn, session))
-    return b"".join(parts)
+    try:
+        parts: list[bytes] = []
+        for chunk in chunks:
+            in_buf = to_ubyte_buf(chunk)
+            # Allocate a conservative output buffer upfront (chunk + 256 bytes for
+            # block cipher expansion). Do NOT use the two-call size-probe pattern for
+            # Update functions -- probing feeds the same chunk twice, corrupting cipher
+            # state. The Final two-call pattern remains correct.
+            max_out = len(chunk) + 256
+            out_buf = (ctypes.c_ubyte * max_out)()
+            out_len = CK_ULONG(max_out)
+            rv = getattr(raw, update_fn)(
+                session,
+                in_buf,
+                len(chunk),
+                out_buf,
+                byref(out_len),
+            )
+            expect_rv(rv, CKR_OK)
+            if out_len.value > 0:
+                parts.append(bytes(out_buf[: out_len.value]))
+        parts.append(_two_call_output(raw, final_fn, session))
+        return b"".join(parts)
+    except BaseException:
+        # An Update or Final call raised after *Init succeeded: cancel the
+        # dangling operation so it does not leak into the next op on a reused
+        # session, then re-raise the original error unchanged.
+        _cancel_operation(raw, session, cancel_flag)
+        raise
 
 
 def encrypt_multipart(
@@ -1197,6 +1383,7 @@ def encrypt_multipart(
         "C_EncryptFinal",
         (mech.byref(), key),
         chunks,
+        cancel_flag=int(CKF_ENCRYPT),
     )
 
 
@@ -1219,6 +1406,7 @@ def decrypt_multipart(
         "C_DecryptFinal",
         (mech.byref(), key),
         chunks,
+        cancel_flag=int(CKF_DECRYPT),
     )
 
 
@@ -1233,7 +1421,7 @@ def sign_multipart(
 ) -> bytes:
     """Sign data in multiple parts. Returns signature."""
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_SignInit(session, mech.byref(), key)
+    rv = _init_or_recover(raw, session, lambda: raw.C_SignInit(session, mech.byref(), key))
     expect_rv(rv, CKR_OK)
     for chunk in chunks:
         in_buf = to_ubyte_buf(chunk)
@@ -1257,7 +1445,7 @@ def verify_multipart(
     Returns True if valid, False if CKR_SIGNATURE_INVALID/CKR_SIGNATURE_LEN_RANGE.
     """
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_VerifyInit(session, mech.byref(), key)
+    rv = _init_or_recover(raw, session, lambda: raw.C_VerifyInit(session, mech.byref(), key))
     expect_rv(rv, CKR_OK)
     for chunk in chunks:
         in_buf = to_ubyte_buf(chunk)
@@ -1283,7 +1471,7 @@ def digest_multipart(
 ) -> bytes:
     """Digest data in multiple parts. Returns digest."""
     mech = _resolve_mech(mechanism, mech_param)
-    rv = raw.C_DigestInit(session, mech.byref())
+    rv = _init_or_recover(raw, session, lambda: raw.C_DigestInit(session, mech.byref()))
     expect_rv(rv, CKR_OK)
     for chunk in chunks:
         in_buf = to_ubyte_buf(chunk)
@@ -1415,46 +1603,61 @@ def _message_crypto(
     init_fn: str,
     msg_fn: str,
     *,
+    cancel_flag: int,
     aad: bytes | None = None,
     mech_param: PackedMechanism | None = None,
 ) -> bytes:
-    """Shared Init + two-call Message pattern for encrypt/decrypt."""
+    """Shared Init + two-call Message pattern for encrypt/decrypt.
+
+    ``cancel_flag`` is the message operation-class flag (e.g.
+    ``CKF_MESSAGE_ENCRYPT``) used to cancel the dangling operation if a
+    ``C_*Message`` call raises after ``C_Message*Init`` succeeded -- mirroring
+    the single-shot cancel-on-error fix (commit c509013) so a reused session is
+    not left with an active op that would mis-attribute a spurious
+    ``CKR_OPERATION_ACTIVE`` to a later call.
+    """
     mech = _resolve_mech(mechanism, mech_param)
     rv = getattr(raw, init_fn)(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
+    try:
+        aad_buf = to_ubyte_buf(aad) if aad else None
+        aad_len = len(aad) if aad else 0
+        in_buf = to_ubyte_buf(data)
 
-    aad_buf = to_ubyte_buf(aad) if aad else None
-    aad_len = len(aad) if aad else 0
-    in_buf = to_ubyte_buf(data)
-
-    out_len = CK_ULONG(0)
-    fn = getattr(raw, msg_fn)
-    rv = fn(
-        session,
-        None,
-        0,
-        aad_buf,
-        aad_len,
-        in_buf,
-        len(data),
-        None,
-        byref(out_len),
-    )
-    expect_rv(rv, CKR_OK)
-    out_buf = (ctypes.c_ubyte * out_len.value)()
-    rv = fn(
-        session,
-        None,
-        0,
-        aad_buf,
-        aad_len,
-        in_buf,
-        len(data),
-        out_buf,
-        byref(out_len),
-    )
-    expect_rv(rv, CKR_OK)
-    return bytes(out_buf[: out_len.value])
+        out_len = CK_ULONG(0)
+        fn = getattr(raw, msg_fn)
+        rv = fn(
+            session,
+            None,
+            0,
+            aad_buf,
+            aad_len,
+            in_buf,
+            len(data),
+            None,
+            byref(out_len),
+        )
+        expect_rv(rv, CKR_OK)
+        out_buf = (ctypes.c_ubyte * out_len.value)()
+        rv = fn(
+            session,
+            None,
+            0,
+            aad_buf,
+            aad_len,
+            in_buf,
+            len(data),
+            out_buf,
+            byref(out_len),
+        )
+        expect_rv(rv, CKR_OK)
+        return bytes(out_buf[: out_len.value])
+    except BaseException:
+        # A C_*Message call raised after C_Message*Init succeeded: cancel the
+        # dangling operation so it does not leak into the next op on a reused
+        # session, then re-raise the original error unchanged.
+        _cancel_operation(raw, session, cancel_flag)
+        raise
 
 
 def message_encrypt(
@@ -1476,6 +1679,7 @@ def message_encrypt(
         data,
         "C_MessageEncryptInit",
         "C_EncryptMessage",
+        cancel_flag=int(CKF_MESSAGE_ENCRYPT),
         aad=aad,
         mech_param=mech_param,
     )
@@ -1500,6 +1704,7 @@ def message_decrypt(
         ciphertext,
         "C_MessageDecryptInit",
         "C_DecryptMessage",
+        cancel_flag=int(CKF_MESSAGE_DECRYPT),
         aad=aad,
         mech_param=mech_param,
     )

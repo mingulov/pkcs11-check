@@ -80,9 +80,9 @@ _ALL_HKDF_VECTORS = _load_hkdf_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_HKDF_VECTORS, ids=[v[0] for v in _ALL_HKDF_VECTORS])
-def test_hkdf(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_hkdf(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """HKDF key derivation from Wycheproof vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("HKDF_DERIVE"):
         pytest.skip("HKDF_DERIVE not supported")
 

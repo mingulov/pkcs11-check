@@ -31,7 +31,12 @@ def test_limbo_attribute_parity(
     rs = p11_raw_session
     cases = limbo_filter(all_limbo_cases, limit=100)
 
-    errors: list[str] = []
+    # Two outcome buckets, per the classification model (Phase 5 P1a):
+    #   mismatches       -> wrong extracted value contradicts the cert  -> fail
+    #   missing_mandatory-> mandatory attr absent / valid cert rejected  -> xfail
+    # A real mismatch always dominates (fail wins over a noted incompleteness).
+    mismatches: list[str] = []
+    missing_mandatory: list[str] = []
     for tc in cases:
         der = pem_to_der(tc["peer_certificate"])
         if not der:
@@ -59,22 +64,28 @@ def test_limbo_attribute_parity(
 
             for attr, (matches, p11_val, expected_val, required) in parity.items():
                 if matches is False:
-                    errors.append(
+                    mismatches.append(
                         f"TC {tc['id']} - {attr} mismatch:\n"
                         f"  Observed: {p11_val}\n"
                         f"  Expected: {expected_val}"
                     )
                 elif matches is None and required:
-                    errors.append(f"TC {tc['id']} - {attr} NOT EXTRACTED (Mandatory per OASIS)")
+                    missing_mandatory.append(
+                        f"TC {tc['id']} - {attr} NOT EXTRACTED (Mandatory per OASIS)"
+                    )
 
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as e:
+            # A clean reject of a cert that should import is provider-incompleteness,
+            # not a wrong value -> collect as a noted deviation (xfail), not fail.
             if tc["expected_result"] == "SUCCESS":
-                errors.append(f"TC {tc['id']} - Failed to import valid cert: {e}")
+                missing_mandatory.append(f"TC {tc['id']} - cleanly rejected a valid cert: {e}")
             continue
         except Exception as e:
-            errors.append(f"TC {tc['id']} - Unexpected exception: {e}")
+            mismatches.append(f"TC {tc['id']} - Unexpected exception: {e}")
             continue
 
-    if errors:
-        pytest.fail("\n".join(errors))
+    if mismatches:
+        pytest.fail("\n".join(mismatches + missing_mandatory))
+    if missing_mandatory:
+        pytest.xfail("\n".join(missing_mandatory))

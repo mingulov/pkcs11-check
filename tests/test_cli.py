@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
+from pkcs11_check import __version__
 from pkcs11_check.cli import test_cmd
 from pkcs11_check.cli.app import app
 from pkcs11_check.core.collection import CollectedPytestItem
@@ -23,7 +24,7 @@ class TestVersionCommand:
     def test_version_output(self) -> None:
         result = runner.invoke(app, ["version"])
         assert result.exit_code == 0
-        assert "pkcs11-check 0.1.0" in result.output
+        assert f"pkcs11-check {__version__}" in result.output
 
 
 class TestTestCommand:
@@ -328,7 +329,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "discover_auto_isolation_units",
-            lambda targets, default_root, *, pytest_args, policy_file: [  # type: ignore[arg-type]
+            lambda targets, default_root, *, pytest_args, policy_file, collected_out=None: [  # type: ignore[arg-type]
                 "src/pkcs11_check/testcases/test_demo.py",
                 "src/pkcs11_check/testcases/test_marked.py::test_case",
             ],
@@ -414,7 +415,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "discover_auto_isolation_units",
-            lambda targets, default_root, *, pytest_args, policy_file: [  # type: ignore[arg-type]
+            lambda targets, default_root, *, pytest_args, policy_file, collected_out=None: [  # type: ignore[arg-type]
                 str(default_root / "test_alpha.py")
             ],
         )
@@ -490,7 +491,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "discover_auto_isolation_units",
-            lambda targets, default_root, *, pytest_args, policy_file: pytest.fail(  # type: ignore[arg-type]
+            lambda *_a, **_k: pytest.fail(  # type: ignore[arg-type]
                 "auto discovery should not run for resume with saved state"
             ),
         )
@@ -588,7 +589,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "discover_auto_isolation_units",
-            lambda targets, default_root, *, pytest_args, policy_file: [
+            lambda targets, default_root, *, pytest_args, policy_file, collected_out=None: [
                 str(default_root / "test_alpha.py")
             ],  # type: ignore[arg-type]
         )

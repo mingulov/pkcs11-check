@@ -43,7 +43,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._module_quirks import quirk_extras
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_WRAP, assert_ckr
-from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail
+from pkcs11_check.testcases.conftest import classify_policy_enforcement, gen_aes_key_or_xfail
 
 pytestmark = pytest.mark.access
 
@@ -81,16 +81,13 @@ class TestWrapKeyErrors:
             check[0].pValue = ctypes.cast(ctypes.pointer(val), ctypes.c_void_p)
             check[0].ulValueLen = ctypes.sizeof(val)
             rv = rs.raw.C_GetAttributeValue(rs.sh, target, check, 1)
-            if rv != CKR_OK or val.value != 0:
-                pytest.skip(
-                    "Module did not honour CKA_EXTRACTABLE=False on generated key "
-                    f"(CKR=0x{rv:08x}, value={val.value})"
-                )
+            # Type-B claim-check: did the module honour CKA_EXTRACTABLE=False?
+            claimed = rv == CKR_OK and val.value == 0
 
             mech = mech_simple(CKM_AES_KEY_WRAP)
             wrapped_len = CK_ULONG(256)
             wrapped_buf = (ctypes.c_ubyte * 256)()
-            rv = rs.raw.C_WrapKey(
+            wrap_rv = rs.raw.C_WrapKey(
                 rs.sh,
                 mech.byref(),
                 wrap_key,
@@ -98,20 +95,26 @@ class TestWrapKeyErrors:
                 wrapped_buf,
                 byref(wrapped_len),
             )
-            if rv == CKR_OK:
+            # Enforcement-check: wrapping a non-extractable key succeeded ->
+            # the protected key material was exported (extraction).
+            violated = wrap_rv == CKR_OK
+            if claimed and violated:
                 note(
                     "C_WrapKey returned CKR_OK on CKA_EXTRACTABLE=False key "
                     "(expected CKR_KEY_UNEXTRACTABLE). Non-extractable keys can be exported.",
                     ComplianceLevel.CRITICAL,
                     reference="PKCS#11 v3.1 Sec.5.14.3",
                 )
-                pytest.fail(
-                    "SECURITY: module returns CKR_OK for C_WrapKey on "
-                    "CKA_EXTRACTABLE=False key (expected CKR_KEY_UNEXTRACTABLE) — "
-                    "non-extractable keys can be exported, defeating the "
-                    "extractability access control"
-                )
-            # CKR_KEY_UNEXTRACTABLE or CKR_KEY_NOT_WRAPPABLE - both acceptable
+            # Phase 6 C: a module that claims CKA_EXTRACTABLE=False then wraps the
+            # key anyway is a self-contradiction -> fail (was masked by skip). A
+            # module that does not claim the protection -> xfail (honest non-
+            # support). A claimed-and-rejected wrap -> pass.
+            classify_policy_enforcement(
+                claimed=claimed,
+                violated=violated,
+                label="C_WrapKey on a CKA_EXTRACTABLE=False key "
+                "(PKCS#11 v3.1 Sec.5.14.3 requires CKR_KEY_UNEXTRACTABLE)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_key)
             destroy_quietly(rs.raw, rs.sh, target)

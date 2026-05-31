@@ -146,6 +146,11 @@ class PackedMechanism:
         self.sub_mechanisms = sub_mechanisms
         self._keepalive: list[Any] = []
         self._named_buffers: dict[str, tuple[Any, int]] = {}
+        # Stash stacked sub-mechanism params on the struct itself so the RV trace
+        # can read them from args[1]._obj at the _call choke point (deterministic,
+        # diff-safe; only the param ids, never key material). See rv-trace-design.
+        if sub_mechanisms:
+            self.ck._rv_trace_sub = dict(sub_mechanisms)
 
     def byref(self) -> Any:
         if self.sub_mechanisms:

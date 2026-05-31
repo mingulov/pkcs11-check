@@ -261,9 +261,7 @@ class TestRSAPaddingOracle:
                     m1 = int.from_bytes(m1_bytes, "big")
                 c1 = pow(m1, e, n)
                 c1_bytes = c1.to_bytes(k, "big")
-                _, error = _decrypt_result_or_error(
-                    rs.raw, rs.sh, priv, CKM_RSA_PKCS, c1_bytes
-                )
+                _, error = _decrypt_result_or_error(rs.raw, rs.sh, priv, CKM_RSA_PKCS, c1_bytes)
                 if error is not None:
                     cat1_errors.add(error)
 
@@ -276,9 +274,7 @@ class TestRSAPaddingOracle:
                 m2 = int.from_bytes(m2_bytes, "big") % n
                 c2 = pow(m2, e, n)
                 c2_bytes = c2.to_bytes(k, "big")
-                _, error = _decrypt_result_or_error(
-                    rs.raw, rs.sh, priv, CKM_RSA_PKCS, c2_bytes
-                )
+                _, error = _decrypt_result_or_error(rs.raw, rs.sh, priv, CKM_RSA_PKCS, c2_bytes)
                 if error is not None:
                     cat2_errors.add(error)
 

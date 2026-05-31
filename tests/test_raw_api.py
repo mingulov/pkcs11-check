@@ -172,6 +172,7 @@ def test_call_log_increments_on_call() -> None:
     from collections import defaultdict
 
     raw._call_log = defaultdict(int)
+    raw._rv_trace = None
 
     raw.C_Initialize()
 
@@ -193,6 +194,7 @@ def test_call_log_reset_clears_counts() -> None:
     from collections import defaultdict
 
     raw._call_log = defaultdict(int)
+    raw._rv_trace = None
 
     raw.C_Initialize()
     assert raw.call_count == 1
@@ -221,6 +223,7 @@ def test_call_log_returns_copy() -> None:
     from collections import defaultdict
 
     raw._call_log = defaultdict(int)
+    raw._rv_trace = None
 
     raw.C_Initialize()
     log_copy = raw.call_log

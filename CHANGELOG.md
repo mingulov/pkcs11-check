@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.1.2] - 2026-05-31
+
+Maintenance release. The headline is **much faster test runs** and **refreshed
+provider results**, plus a handful of reliability improvements and minor fixes.
+No breaking CLI or API changes.
+
+- **Faster runs.** Tests that just verify vectors now log in once per file
+  instead of once per test, so providers with slow logins speed up dramatically
+  — the ECDSA Wycheproof file went from ~42 min to under a minute on OpenCryptoki
+  and from ~56 min to ~2 min on BouncyHSM. SoftHSM2, NSS, and Kryoptic (fast
+  logins) are unchanged.
+- **Steadier under stress.** The harness now recovers from provider/proxy
+  restarts and from providers that leave an operation dangling, so one hiccup
+  no longer cascades over the rest of a run. A new opt-in call trace + crash
+  journal make it easier to pin down the exact call behind a crash.
+- **Minor fixes.** Test-result classification cleanups, security-probe hygiene
+  (PINs are never written into subprocess scripts), and CI tweaks.
+
+### Supported modules
+
+SoftHSM2 2.7.0 / main · Kryoptic v1.5.0 / main / FIPS · NSS (Fedora softoken,
+slots 0 and 1) / main · OpenCryptoki v3.27.0 / master · tpm2-pkcs11 1.10.0 ·
+BouncyHSM v2.1.0 · pkcs11-mock v2.0.0
+
+### Test Results
+
+Latest full provider matrix (`artifacts/20260530_3/`, 2026-05-30/31), one row per
+distinct build. Failures, crashes, and skips are kept as provider findings — a
+crash is a finding, not a hidden result.
+
+| Build | Passed | Failed | Skipped | Xfailed | Crashed | Total |
+|-------|-------:|-------:|--------:|--------:|--------:|------:|
+| SoftHSM2 2.7.0 | 42,051 | 135 | 31,753 | 5,025 | 0 | 78,964 |
+| SoftHSM2 main | 42,994 | 136 | 31,504 | 5,110 | 0 | 79,744 |
+| Kryoptic v1.5.0 | 48,195 | 172 | 44,685 | 12,418 | 0 | 105,470 |
+| Kryoptic main | 48,209 | 164 | 44,684 | 12,413 | 0 | 105,470 |
+| Kryoptic FIPS/PQC | 34,526 | 130 | 44,487 | 10,234 | 12 | 89,389 |
+| NSS (Fedora, slot 1) | 35,741 | 183 | 53,115 | 801 | 3 | 89,843 |
+| NSS (Fedora, slot 0) | 36,315 | 197 | 52,990 | 822 | 3 | 90,327 |
+| NSS main (slot 1) | 34,870 | 164 | 53,394 | 718 | 4 | 89,150 |
+| OpenCryptoki v3.27.0 | 59,735 | 357 | 32,875 | 1,256 | 0 | 94,223 |
+| OpenCryptoki master | 59,735 | 357 | 32,875 | 1,256 | 0 | 94,223 |
+| tpm2-pkcs11 1.10.0 | 6,597 | 188 | 67,056 | 4,371 | 0 | 78,212 |
+| BouncyHSM v2.1.0 | 52,628 | 8,144 | 36,202 | 8,006 | 3 | 104,983 |
+| pkcs11-mock v2.0.0 | 230 | 117 | 29,123 | 58 | 0 | 29,528 |
+
+~1.13M total test executions across the 13 builds. Real SIGSEGV crash findings
+remain on Kryoptic FIPS/PQC (12), NSS (3-4), and BouncyHSM (3). See
+[docs/docker-provider-results.md](docs/docker-provider-results.md) for the full
+17-target matrix (including variants) and
+[docs/module-issues.md](docs/module-issues.md) for per-module findings.
+
 ## [0.1.1] - 2026-05-27
 
 Maintenance and coverage release on top of 0.1.0. Focuses on a consistent

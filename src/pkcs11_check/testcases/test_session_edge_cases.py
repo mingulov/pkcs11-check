@@ -41,7 +41,7 @@ from pkcs11_check.raw.types_std import (
     CKR_SESSION_HANDLE_INVALID,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes
+from pkcs11_check.testcases.conftest import classify_negative_rv, get_pin_bytes
 
 pytestmark = pytest.mark.security
 
@@ -63,12 +63,13 @@ class TestStaleSessionHandles:
         # Close the session
         close_session_quietly(rs.raw, test_sh)
 
-        # Try to use the closed session -- must fail, not crash
+        # Try to use the closed session -- must reject, not crash or succeed
         rv = rs.raw.C_FindObjectsInit(test_sh, None, 0)
-        assert rv in (
-            CKR_SESSION_HANDLE_INVALID,
-            CKR_SESSION_CLOSED,
-        ), f"Expected CKR_SESSION_HANDLE_INVALID or CKR_SESSION_CLOSED, got {ckr_name(rv)}"
+        classify_negative_rv(
+            rv,
+            (CKR_SESSION_HANDLE_INVALID, CKR_SESSION_CLOSED),
+            label="C_FindObjectsInit on closed session",
+        )
 
     def test_generate_key_after_close(self, p11_raw_session: Any, p11_config: Any) -> None:
         """C_GenerateKey on closed session must fail cleanly."""
@@ -90,10 +91,11 @@ class TestStaleSessionHandles:
         mech = mech_simple(CKM_AES_KEY_GEN)
         key_h = CK_OBJECT_HANDLE(0)
         rv = rs.raw.C_GenerateKey(test_sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h))
-        assert rv in (
-            CKR_SESSION_HANDLE_INVALID,
-            CKR_SESSION_CLOSED,
-        ), f"Expected CKR_SESSION_HANDLE_INVALID or CKR_SESSION_CLOSED, got {ckr_name(rv)}"
+        classify_negative_rv(
+            rv,
+            (CKR_SESSION_HANDLE_INVALID, CKR_SESSION_CLOSED),
+            label="C_GenerateKey on closed session",
+        )
 
 
 class TestCloseAllSessions:

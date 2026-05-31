@@ -132,17 +132,42 @@ def test_decapsulate_invalid_ciphertext_generic_reject_is_xfail(
         )
 
 
-def test_decapsulate_invalid_template_success_is_xfail(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_decapsulate_invalid_ciphertext_accepted_is_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Task 4z: the local _xfail_if_kem_negative_rv + bare assert was retired onto
+    # the shared classify_negative_rv. A truncated ciphertext that decapsulates
+    # cleanly (CKR_OK) is a crypto-correctness break -> fail.
+    from _pytest.outcomes import Failed, XFailed
+
     raw = SimpleNamespace(C_DecapsulateKey=lambda *_args: test_kem.CKR_OK)
 
     monkeypatch.setattr(test_kem, "_generate_ml_kem_keypair", lambda *_args: (1, 2))
     monkeypatch.setattr(test_kem, "encapsulate_key", lambda *_args, **_kwargs: (3, b"ciphertext"))
     monkeypatch.setattr(test_kem, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(pytest.xfail.Exception, match="ML-KEM accepted CKA_VALUE"):
+    with pytest.raises(Failed, match="accepted invalid") as excinfo:
+        test_kem.TestMLKEMNegative().test_decapsulate_invalid_ciphertext_length(
+            SimpleNamespace(raw=raw, sh=1, has_mechanism=lambda name: name == "ML_KEM"),
+        )
+    assert not isinstance(excinfo.value, XFailed)
+
+
+def test_decapsulate_invalid_template_success_is_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Phase 3 Type-A: accepting CKA_VALUE in the decapsulation template lets the
+    # caller dictate the derived key's secret bytes -- a crypto-correctness break
+    # -> fail (was previously hidden as xfail).
+    from _pytest.outcomes import Failed, XFailed
+
+    raw = SimpleNamespace(C_DecapsulateKey=lambda *_args: test_kem.CKR_OK)
+
+    monkeypatch.setattr(test_kem, "_generate_ml_kem_keypair", lambda *_args: (1, 2))
+    monkeypatch.setattr(test_kem, "encapsulate_key", lambda *_args, **_kwargs: (3, b"ciphertext"))
+    monkeypatch.setattr(test_kem, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(Failed, match="inject CKA_VALUE") as excinfo:
         test_kem.TestMLKEMNegative().test_decapsulate_with_invalid_attributes_in_template(
             SimpleNamespace(raw=raw, sh=1, has_mechanism=lambda name: name == "ML_KEM"),
         )
+    assert not isinstance(excinfo.value, XFailed)
 
 
 def test_wrong_key_type_object_handle_invalid_is_xfail(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -61,6 +61,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    classify_policy_enforcement,
     is_known_error,
     require_operational_aes_keygen,
     xfail_if_known_ckr,
@@ -217,31 +218,30 @@ class TestWrapDecryptOracle:
 
         target_h = 0
         try:
-            # Try the actual attack
+            # The target is created PROTECTED (non-extractable + sensitive) so the
+            # wrap-decrypt oracle, if it works, extracts material the module
+            # promised to protect -- a Type-B self-contradiction.
             target_h = _gen_api_security_aes_key(
                 rs,
-                attrs={CKA_EXTRACTABLE: True},
+                attrs={CKA_EXTRACTABLE: False, CKA_SENSITIVE: True},
                 purpose="API security wrap-decrypt target setup",
             )
             try:
                 wrapped = wrap_key(rs.raw, rs.sh, dual_key_h, target_h, CKM_AES_ECB)
-                # Decrypt the wrapped blob = extract the key material
+                # Decrypt the wrapped blob = extract the key material.
                 try:
                     raw_key = decrypt_single(rs.raw, rs.sh, dual_key_h, CKM_AES_ECB, wrapped)
-                    if raw_key and len(raw_key) > 0:
-                        from pkcs11_check.compliance import ComplianceLevel, note
-
-                        note(
-                            "SECURITY: module allows key with both CKA_WRAP and CKA_DECRYPT, "
-                            "enabling wrap-decrypt oracle attack to extract key material",
-                            ComplianceLevel.CRITICAL,
-                            reference="PKCS#11 v3.1 Sec.4.9.4: for secret keys, "
-                            "CKA_WRAP and CKA_DECRYPT should not both be True",
-                        )
-                        pytest.xfail(
-                            "SECURITY: wrap-decrypt oracle possible -- key has both "
-                            "CKA_WRAP and CKA_DECRYPT, attacker can decrypt wrapped key blobs"
-                        )
+                    # Claim-check: did the target actually hold its protection?
+                    tgt = read_attributes(rs.raw, rs.sh, target_h, [CKA_EXTRACTABLE])
+                    claimed = tgt.get(CKA_EXTRACTABLE) is False
+                    extracted = bool(raw_key) and len(raw_key) > 0
+                    classify_policy_enforcement(
+                        claimed=claimed,
+                        violated=extracted,
+                        label="wrap-decrypt oracle extracts a non-extractable/sensitive key "
+                        "(PKCS#11 v3.1 Sec.4.9.4: CKA_WRAP and CKA_DECRYPT should not both "
+                        "be True)",
+                    )
                 except AssertionError as exc:
                     _return_if_policy_reject_or_xfail_runtime(
                         exc,
@@ -345,25 +345,23 @@ class TestAttributeLaunderingViaCopy:
             attrs={CKA_EXTRACTABLE: False, CKA_COPYABLE: True},
         )
         try:
+            # Type-B claim/effect-check. claimed = the original key reads back
+            # CKA_EXTRACTABLE=False (the module honored the protection); violated
+            # = the escalated copy actually exposes CKA_VALUE.
+            orig = read_attributes(rs.raw, rs.sh, key_h, [CKA_EXTRACTABLE])
+            claimed = orig.get(CKA_EXTRACTABLE) is False
             try:
                 copy_h = copy_object(rs.raw, rs.sh, key_h, {CKA_EXTRACTABLE: True})
                 try:
-                    # If copy succeeded, check value is still protected
                     attrs = read_attributes(rs.raw, rs.sh, copy_h, [CKA_VALUE])
-                    if CKA_VALUE in attrs:
-                        from pkcs11_check.compliance import ComplianceLevel, note
-
-                        note(
-                            "SECURITY: module allows C_CopyObject to escalate CKA_EXTRACTABLE "
-                            "from False to True, making non-extractable key material readable",
-                            ComplianceLevel.CRITICAL,
-                            reference="PKCS#11 v3.1 Sec.4.9.4: CKA_EXTRACTABLE may only be "
-                            "changed TRUE->FALSE on copy, never FALSE->TRUE",
-                        )
-                        pytest.xfail(
-                            "SECURITY: CKA_EXTRACTABLE escalated False->True via C_CopyObject "
-                            "-- key material readable (Tookan vulnerability)"
-                        )
+                    violated = CKA_VALUE in attrs
+                    classify_policy_enforcement(
+                        claimed=claimed,
+                        violated=violated,
+                        label="C_CopyObject escalates CKA_EXTRACTABLE False->True and exposes "
+                        "key material (PKCS#11 v3.1 Sec.4.9.4: CKA_EXTRACTABLE may only "
+                        "change True->False on copy)",
+                    )
                 finally:
                     destroy_quietly(rs.raw, rs.sh, copy_h)
             except AssertionError as exc:

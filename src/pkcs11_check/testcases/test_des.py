@@ -65,11 +65,14 @@ from pkcs11_check.raw.types_std import (
     CKM_DES_MAC,
     CKM_DES_MAC_GENERAL,
     CKM_DES_OFB64,
-    CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_OK,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import (
+    CIPHER_OP_RUNTIME_REJECT_RVS,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.full
 
@@ -87,7 +90,7 @@ def _encrypt_or_xfail(
     mech_param: Any = None,
     xfail_msg: str = "",
 ) -> bytes:
-    """Try encrypt_single; xfail if module returns CKR_MECHANISM_INVALID.
+    """Try encrypt_single; xfail if the advertised mechanism is not operational.
 
     Needed for single-DES on OpenSSL 3 where the mechanism is advertised but
     the legacy cipher provider is absent.
@@ -95,8 +98,11 @@ def _encrypt_or_xfail(
     try:
         return encrypt_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
-        if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_KEY_TYPE_INCONSISTENT}):
-            pytest.xfail(xfail_msg or f"Mechanism advertised but rejected at use: {exc}")
+        xfail_if_known_ckr(
+            exc,
+            CIPHER_OP_RUNTIME_REJECT_RVS,
+            xfail_msg or "DES mechanism advertised but not operational",
+        )
         raise
 
 

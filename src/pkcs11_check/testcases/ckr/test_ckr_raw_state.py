@@ -19,9 +19,39 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.types_std import CKR_OPERATION_ACTIVE
+from pkcs11_check.testcases._subprocess_preamble import _P11CHECK_PIN_ENV
 from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
+from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
+
+
+def _classify_state_ckr(out: str, *, label: str) -> None:
+    """Parent-side tolerant 3-way classifier over a child's ``CKR:0x...`` line.
+
+    A second C_*Init while one is active may legitimately return
+    CKR_OPERATION_ACTIVE *or* CKR_OK (the module may cancel the first op and
+    start a new one) -- both are accepted passes (``allow_ok=True``). Any other
+    clean code is a noted deviation (``xfail``), not a crash. Classification
+    happens here (not via an in-child ``assert``) so a third clean code is no
+    longer mislabeled as a child crash.
+
+    If the child reported the first init itself failed (``...:first_init_failed``),
+    there is no state-conflict result to classify; the probe simply passes
+    (it proved no crash).
+    """
+    rv: int | None = None
+    for line in out.splitlines():
+        if line.startswith("CKR:0x"):
+            token = line.removeprefix("CKR:").split(":", 1)
+            if len(token) > 1 and token[1] == "first_init_failed":
+                return
+            rv = int(token[0], 16)
+            break
+    assert rv is not None, f"{label}: no CKR line in child output: {out!r}"
+    classify_negative_rv(rv, (CKR_OPERATION_ACTIVE,), label=label, allow_ok=True)
+
 
 _SCRIPT_PREAMBLE = """\
 import ctypes
@@ -62,7 +92,8 @@ assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)
 
 sh = open_session(raw, get_slot_ids(raw)[0], CKF_SERIAL_SESSION | CKF_RW_SESSION)
 
-pin = {pin_arg}
+import os as _os
+pin = _os.environ.get("_P11CHECK_PIN")
 if pin is not None:
     login_user(raw, sh, 1, pin.encode())
 
@@ -87,18 +118,23 @@ key_handle = key.value
 
 
 def _run(module: str, pin: str | None, test_code: str) -> tuple[int, str, str]:
-    pin_arg = repr(pin) if pin is not None else "None"
+    # The PIN is passed to the child through the _P11CHECK_PIN env var, never
+    # interpolated into the script text -- so it cannot leak via the child argv
+    # (``ps``/``/proc``) or any traceback. The preamble reads it from os.environ.
     script = (
-        _SCRIPT_PREAMBLE.format(module=module, pin_arg=pin_arg)
+        _SCRIPT_PREAMBLE.format(module=module)
         + textwrap.dedent(test_code)
         + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
     )
+    env = os.environ.copy()
+    if pin is not None:
+        env[_P11CHECK_PIN_ENV] = pin
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
         timeout=15,
-        env=os.environ.copy(),
+        env=env,
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
@@ -121,12 +157,12 @@ rv1 = raw.C_EncryptInit(sh, mech.byref(), key_handle)
 assert rv1 == CKR_OK, f"First EncryptInit failed: 0x{rv1:08x}"
 rv2 = raw.C_EncryptInit(sh, mech.byref(), key_handle)
 print(f"CKR:0x{rv2:08x}")
-# Second should be OPERATION_ACTIVE (or module may cancel first)
-assert rv2 in (CKR_OPERATION_ACTIVE, CKR_OK), f"Got 0x{rv2:08x}"
+# Second should be OPERATION_ACTIVE (or module may cancel first -> CKR_OK)
 print("OK")
 """,
         )
         _assert_probe_completed(rc, out, err)
+        _classify_state_ckr(out, label="double C_EncryptInit (operation-active state)")
 
     def test_encrypt_then_sign_init(self, p11_config: Any) -> None:
         """C_EncryptInit then C_SignInit -> CKR_OPERATION_ACTIVE (if no dual-crypto)."""
@@ -163,11 +199,11 @@ assert rv1 == CKR_OK
 
 rv2 = raw.C_DigestInit(sh, mech.byref())
 print(f"CKR:0x{rv2:08x}")
-assert rv2 in (CKR_OPERATION_ACTIVE, CKR_OK), f"Got 0x{rv2:08x}"
 print("OK")
 """,
         )
         _assert_probe_completed(rc, out, err)
+        _classify_state_ckr(out, label="double C_DigestInit (operation-active state)")
 
     def test_double_sign_init(self, p11_config: Any) -> None:
         """Double C_SignInit -> CKR_OPERATION_ACTIVE."""
@@ -182,13 +218,13 @@ rv1 = raw.C_SignInit(sh, mech.byref(), key_handle)
 if rv1 == CKR_OK:
     rv2 = raw.C_SignInit(sh, mech.byref(), key_handle)
     print(f"CKR:0x{rv2:08x}")
-    assert rv2 in (CKR_OPERATION_ACTIVE, CKR_OK), f"Got 0x{rv2:08x}"
 else:
     print(f"CKR:0x{rv1:08x}:first_init_failed")
 print("OK")
 """,
         )
         _assert_probe_completed(rc, out, err)
+        _classify_state_ckr(out, label="double C_SignInit (operation-active state)")
 
     def test_double_decrypt_init(self, p11_config: Any) -> None:
         """Double C_DecryptInit -> CKR_OPERATION_ACTIVE."""
@@ -201,8 +237,8 @@ rv1 = raw.C_DecryptInit(sh, mech.byref(), key_handle)
 assert rv1 == CKR_OK, f"First DecryptInit: 0x{rv1:08x}"
 rv2 = raw.C_DecryptInit(sh, mech.byref(), key_handle)
 print(f"CKR:0x{rv2:08x}")
-assert rv2 in (CKR_OPERATION_ACTIVE, CKR_OK), f"Got 0x{rv2:08x}"
 print("OK")
 """,
         )
         _assert_probe_completed(rc, out, err)
+        _classify_state_ckr(out, label="double C_DecryptInit (operation-active state)")

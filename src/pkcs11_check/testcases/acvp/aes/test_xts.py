@@ -126,8 +126,7 @@ def _xts_data_unit_chunks(data: bytes, vec: dict[str, Any]) -> list[tuple[bytes,
         pytest.skip("ACVP AES-XTS vector does not provide a 16-byte data-unit sequence number")
     if payload_len != len(data):
         pytest.skip(
-            f"ACVP AES-XTS payloadLen={payload_len_bits} does not match "
-            f"{len(data)} input bytes"
+            f"ACVP AES-XTS payloadLen={payload_len_bits} does not match {len(data)} input bytes"
         )
     if data_unit_len <= 0:
         pytest.skip("ACVP AES-XTS dataUnitLen is empty")
@@ -137,8 +136,7 @@ def _xts_data_unit_chunks(data: bytes, vec: dict[str, Any]) -> list[tuple[bytes,
         chunk = data[offset : offset + data_unit_len]
         if len(chunk) < 16:
             pytest.skip(
-                "ACVP AES-XTS data unit shorter than the PKCS#11 CKM_AES_XTS "
-                "minimum input length"
+                "ACVP AES-XTS data unit shorter than the PKCS#11 CKM_AES_XTS minimum input length"
             )
         chunks.append((chunk, _increment_xts_tweak(tweak, index)))
     return chunks
@@ -153,9 +151,9 @@ _XTS_2_0_ENCRYPT_VECTORS, _XTS_2_0_DECRYPT_VECTORS = _load_xts_vectors("2.0")
     _XTS_1_0_ENCRYPT_VECTORS + _XTS_2_0_ENCRYPT_VECTORS,
     ids=[v[0] for v in _XTS_1_0_ENCRYPT_VECTORS + _XTS_2_0_ENCRYPT_VECTORS],
 )
-def test_acvp_aes_xts_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_xts_encrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-XTS encryption from NIST ACVP vectors (v1.0 and v2.0)."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_XTS"):
         pytest.skip("AES_XTS not supported by module")
 
@@ -206,9 +204,9 @@ def test_acvp_aes_xts_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, 
     _XTS_1_0_DECRYPT_VECTORS + _XTS_2_0_DECRYPT_VECTORS,
     ids=[v[0] for v in _XTS_1_0_DECRYPT_VECTORS + _XTS_2_0_DECRYPT_VECTORS],
 )
-def test_acvp_aes_xts_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_aes_xts_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-XTS decryption from NIST ACVP vectors (v1.0 and v2.0)."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("AES_XTS"):
         pytest.skip("AES_XTS not supported by module")
 

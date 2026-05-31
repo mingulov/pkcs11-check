@@ -102,14 +102,20 @@ _HKDF_KEYGEN_REJECT_CKRS = (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+_RSA_OAEP_RUNTIME_REJECT_RVS: tuple[int, ...] = (
+    CKR_ARGUMENTS_BAD,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+)
 
 
 class TestAESWrapUnwrapUse:
     """Generate AES -> encrypt -> wrap -> destroy -> unwrap -> decrypt."""
 
-    def test_aes_wrap_roundtrip(self, p11_raw_session: RawSession) -> None:
+    def test_aes_wrap_roundtrip(self, p11_module_session: RawSession) -> None:
         """Full AES key lifecycle: generate, use, wrap, destroy, unwrap, use again."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("CKM_AES_KEY_GEN not supported")
         if not rs.has_mechanism("AES_ECB"):
@@ -191,9 +197,9 @@ class TestAESWrapUnwrapUse:
 class TestECDHDerivedKeyUse:
     """ECDH1 derive -> use derived key for AES-CBC encryption."""
 
-    def test_ecdh_derive_and_use(self, p11_raw_session: RawSession) -> None:
+    def test_ecdh_derive_and_use(self, p11_module_session: RawSession) -> None:
         """ECDH derive a shared secret, use it as AES-128 key to encrypt/decrypt."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("CKM_EC_KEY_PAIR_GEN not supported")
         if not rs.has_mechanism("ECDH1_DERIVE"):
@@ -276,9 +282,9 @@ class TestECDHDerivedKeyUse:
 class TestHKDFDerivedKeyUse:
     """HKDF expand -> AES-256 key -> AES-ECB encrypt roundtrip."""
 
-    def test_hkdf_to_aes_encrypt(self, p11_raw_session: RawSession) -> None:
+    def test_hkdf_to_aes_encrypt(self, p11_module_session: RawSession) -> None:
         """HKDF-derive an AES key and use it for encryption."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("HKDF_DERIVE"):
             pytest.skip("CKM_HKDF_DERIVE not supported")
         if not rs.has_mechanism("HKDF_KEY_GEN"):
@@ -372,9 +378,9 @@ class TestHKDFDerivedKeyUse:
 class TestRSAOAEPWrapLifecycle:
     """RSA-OAEP wrap AES key -> unwrap -> encrypt/decrypt verify."""
 
-    def test_rsa_oaep_wrap_aes_roundtrip(self, p11_raw_session: RawSession) -> None:
+    def test_rsa_oaep_wrap_aes_roundtrip(self, p11_module_session: RawSession) -> None:
         """Wrap an AES key under RSA-OAEP, unwrap, and verify enc/dec works."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA keygen not supported")
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
@@ -420,14 +426,21 @@ class TestRSAOAEPWrapLifecycle:
                 CKM(int(CKM_RSA_PKCS_OAEP)), hash_mech=int(CKM_SHA256), mgf=int(CKG_MGF1_SHA256)
             )
 
-            wrapped = wrap_key(
-                rs.raw,
-                rs.sh,
-                rsa_pub,
-                target,
-                CKM(int(CKM_RSA_PKCS_OAEP)),
-                mech_param=oaep_param,
-            )
+            try:
+                wrapped = wrap_key(
+                    rs.raw,
+                    rs.sh,
+                    rsa_pub,
+                    target,
+                    CKM(int(CKM_RSA_PKCS_OAEP)),
+                    mech_param=oaep_param,
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _RSA_OAEP_RUNTIME_REJECT_RVS,
+                    "RSA-OAEP wrap advertised but not operational",
+                )
             assert len(wrapped) > 0
 
             destroy_quietly(rs.raw, rs.sh, target)
@@ -435,21 +448,28 @@ class TestRSAOAEPWrapLifecycle:
 
             # CKA_CLASS is required by PKCS#11 spec for C_UnwrapKey -- Kryoptic
             # returns CKR_TEMPLATE_INCONSISTENT when it is absent.
-            unwrapped_key = unwrap_key(
-                rs.raw,
-                rs.sh,
-                rsa_priv,
-                wrapped,
-                CKM(int(CKM_RSA_PKCS_OAEP)),
-                attrs={
-                    CKA_CLASS: CKO_SECRET_KEY,
-                    CKA_KEY_TYPE: CKK_AES,
-                    CKA_DECRYPT: True,
-                    CKA_ENCRYPT: True,
-                    CKA_TOKEN: False,
-                },
-                mech_param=oaep_param,
-            )
+            try:
+                unwrapped_key = unwrap_key(
+                    rs.raw,
+                    rs.sh,
+                    rsa_priv,
+                    wrapped,
+                    CKM(int(CKM_RSA_PKCS_OAEP)),
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_DECRYPT: True,
+                        CKA_ENCRYPT: True,
+                        CKA_TOKEN: False,
+                    },
+                    mech_param=oaep_param,
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _RSA_OAEP_RUNTIME_REJECT_RVS,
+                    "RSA-OAEP unwrap advertised but not operational",
+                )
             assert unwrapped_key != 0
 
             recovered = decrypt_single(rs.raw, rs.sh, unwrapped_key, CKM_AES_ECB, ciphertext)
@@ -466,9 +486,9 @@ class TestRSAOAEPWrapLifecycle:
 class TestDigestThenEncrypt:
     """Hash plaintext, then encrypt the digest."""
 
-    def test_sha256_digest_then_aes_ecb_encrypt(self, p11_raw_session: RawSession) -> None:
+    def test_sha256_digest_then_aes_ecb_encrypt(self, p11_module_session: RawSession) -> None:
         """Compute SHA-256 digest, encrypt it with AES-ECB, decrypt and compare."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("SHA256"):
             pytest.skip("CKM_SHA256 not supported")
         if not rs.has_mechanism("AES_ECB"):
@@ -501,9 +521,9 @@ class TestDigestThenEncrypt:
 class TestExportReimportAES:
     """Export AES key value, re-import, verify encrypt compatibility."""
 
-    def test_export_reimport_aes_roundtrip(self, p11_raw_session: RawSession) -> None:
+    def test_export_reimport_aes_roundtrip(self, p11_module_session: RawSession) -> None:
         """Generate extractable AES key, export raw bytes, re-import, verify enc/dec."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
         if not rs.has_mechanism("AES_KEY_GEN"):
@@ -563,9 +583,9 @@ class TestExportReimportAES:
 class TestRSASignVerifyLifecycle:
     """RSA keygen -> SHA256-RSA-PKCS sign -> verify."""
 
-    def test_rsa_sign_verify_roundtrip(self, p11_raw_session: RawSession) -> None:
+    def test_rsa_sign_verify_roundtrip(self, p11_module_session: RawSession) -> None:
         """Full RSA sign/verify lifecycle with SHA256-RSA-PKCS."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA keygen not supported")
         if not rs.has_mechanism("SHA256_RSA_PKCS"):
@@ -592,9 +612,9 @@ class TestRSASignVerifyLifecycle:
 class TestECSignVerifyLifecycle:
     """EC keygen -> ECDSA sign -> verify."""
 
-    def test_ecdsa_sign_verify_roundtrip(self, p11_raw_session: RawSession) -> None:
+    def test_ecdsa_sign_verify_roundtrip(self, p11_module_session: RawSession) -> None:
         """Full ECDSA sign/verify lifecycle on P-256."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("CKM_EC_KEY_PAIR_GEN not supported")
         if not rs.has_mechanism("ECDSA_SHA256"):
@@ -623,9 +643,9 @@ class TestECSignVerifyLifecycle:
 class TestAESGCMFullCycle:
     """AES-GCM AEAD encrypt -> decrypt (full cycle with auth tag)."""
 
-    def test_aes_gcm_encrypt_decrypt(self, p11_raw_session: RawSession) -> None:
+    def test_aes_gcm_encrypt_decrypt(self, p11_module_session: RawSession) -> None:
         """AES-GCM encrypt, then decrypt with same IV -- auth tag verified."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
 
@@ -669,9 +689,9 @@ class TestAESGCMFullCycle:
 class TestBatchAESKeys:
     """Generate multiple AES keys, batch encrypt, destroy all."""
 
-    def test_batch_keygen_encrypt_destroy(self, p11_raw_session: RawSession) -> None:
+    def test_batch_keygen_encrypt_destroy(self, p11_module_session: RawSession) -> None:
         """Generate 5 AES keys, encrypt with each, then clean up all."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
         if not rs.has_mechanism("AES_KEY_GEN"):

@@ -40,10 +40,12 @@ from pkcs11_check.raw.types_std import (
     CKM_POLY1305_KEY_GEN,
     CKM_SALSA20,
     CKM_SALSA20_KEY_GEN,
-    CKR_GENERAL_ERROR,
     CKR_OK,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    CIPHER_OP_RUNTIME_REJECT_RVS,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.full
 
@@ -53,7 +55,10 @@ _CHACHA20_NONCE = b"\x00" * 12
 # Salsa20 nonce: 8 bytes (64 bits).
 _SALSA20_NONCE = b"\x00" * 8
 
-_SALSA20_ENCRYPT_REJECT_RVS = (CKR_GENERAL_ERROR,)
+# Phase 5 P1b: widen the produce-leg reject set to the shared cipher-op set so
+# any advertised-but-not-operational clean code (not just CKR_GENERAL_ERROR)
+# becomes xfail.
+_SALSA20_ENCRYPT_REJECT_RVS = CIPHER_OP_RUNTIME_REJECT_RVS
 
 
 def _gen_stream_key(

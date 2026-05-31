@@ -854,9 +854,7 @@ def mech_ssl3_key_mat(
         ctypes.pointer(key_mat_out),
         CK_VOID_PTR,
     )
-    result = _mech_struct(
-        mechanism_type, params, "mech_ssl3_key_mat", ka, cls=KeyMatMechanism
-    )
+    result = _mech_struct(mechanism_type, params, "mech_ssl3_key_mat", ka, cls=KeyMatMechanism)
     if iv_bytes:
         result.add_buffer("iv_client", iv_client, iv_bytes)
         result.add_buffer("iv_server", iv_server, iv_bytes)

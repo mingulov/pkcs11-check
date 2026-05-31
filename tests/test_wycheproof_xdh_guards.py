@@ -120,8 +120,29 @@ def test_invalid_xdh_public_length_success_is_reported(
         vec for vec_id, vec in xdh._ALL_XDH_VECTORS if vec_id == "x448_test.json:tc76-invalid"
     )
 
-    with pytest.raises(pytest.fail.Exception, match="Invalid X25519/X448 vector"):
+    with pytest.raises(pytest.fail.Exception, match="invalid-point accepted"):
         xdh.test_xdh(_XdhSession(), "x448_test.json:tc76-invalid", vec)
+
+
+def test_invalid_xdh_correct_length_success_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An invalid vector that derives must fail even when the public key length is correct.
+
+    Phase-2 V1: the previous gate only fired when ``len(public_bytes) != key_size``,
+    so a low-order / invalid-but-correct-length point that derived a secret was
+    accepted silently. Any successful derive on an invalid vector must now fail.
+    """
+    vec_id = "x25519_jwk_test.json:tc519-invalid"
+    vec = next(vec for candidate_id, vec in xdh._ALL_XDH_VECTORS if candidate_id == vec_id)
+
+    monkeypatch.setattr(xdh, "import_ec_private_key", _handle)
+    monkeypatch.setattr(xdh, "derive_key", _handle)
+    monkeypatch.setattr(xdh, "read_attributes", _read_zeros)
+    monkeypatch.setattr(xdh, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(pytest.fail.Exception, match="invalid-point accepted"):
+        xdh.test_xdh(_XdhSession(), vec_id, vec)
 
 
 def test_valid_xdh_derive_runtime_reject_is_xfail(

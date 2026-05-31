@@ -43,7 +43,7 @@
 
 ### Task 1 — Add `kind` to `CkrExpectation`
 
-- [ ] **Step 1 — Failing test** in `tests/test_classification_helpers.py`:
+- [x] **Step 1 — Failing test** in `tests/test_classification_helpers.py`:
 ```python
 from pkcs11_check.testcases.ckr._ckr_spec import CkrExpectation
 def test_ckr_expectation_kind_default_policy():
@@ -51,20 +51,20 @@ def test_ckr_expectation_kind_default_policy():
                        compat_tuple=(0x70,), spec_ref="r")
     assert e.kind == "policy"
 ```
-- [ ] **Step 2 — Run, verify fail.** `uv run pytest tests/test_classification_helpers.py -q` → FAIL (no `kind`).
-- [ ] **Step 3 — Add field** after `allow_success` in `_ckr_spec.py:177` (keep `frozen=True`):
+- [x] **Step 2 — Run, verify fail.** `uv run pytest tests/test_classification_helpers.py -q` → FAIL (no `kind`).
+- [x] **Step 3 — Add field** after `allow_success` in `_ckr_spec.py:177` (keep `frozen=True`):
 ```python
     kind: str = "policy"
     """'crypto' (correctness) | 'policy' (attribute/permission) | 'lifecycle' (state) | 'metadata'."""
 ```
-- [ ] **Step 4 — Run, verify pass.** → PASS.
-- [ ] **Step 5 — Commit.** `git add -A && git commit -m "Add kind field to CkrExpectation"`
+- [x] **Step 4 — Run, verify pass.** → PASS.
+- [x] **Step 5 — Commit.** `git add -A && git commit -m "Add kind field to CkrExpectation"`
 
 ### Task 2 — 3-way `assert_ckr` (the linchpin)
 
 Compat mode today: `==spec`→pass; `in full_compat but !=spec`→**note()+pass**; outside→fail; `CKR_OK` handled at call sites. New: middle band → **`xfail`**; `CKR_OK` → **`fail`** unless `allow_success`. Strict mode unchanged (exact-compliance).
 
-- [ ] **Step 1 — Failing meta-tests** (`from _pytest.outcomes import Failed`):
+- [x] **Step 1 — Failing meta-tests** (`from _pytest.outcomes import Failed`):
 ```python
 import pytest
 from pkcs11_check.testcases.ckr._ckr_spec import CkrExpectation, assert_ckr
@@ -88,8 +88,8 @@ def test_allow_success_ok():
 def test_strict_wrong_code_fails():
     with pytest.raises(Failed):              assert_ckr(_E, CKR_FUNCTION_FAILED, strict=True)
 ```
-- [ ] **Step 2 — Run, verify the xfail / CKR_OK / allow_success tests FAIL.**
-- [ ] **Step 3 — Replace the compat `else:` branch** in `_ckr_spec.py:229-246`:
+- [x] **Step 2 — Run, verify the xfail / CKR_OK / allow_success tests FAIL.**
+- [x] **Step 3 — Replace the compat `else:` branch** in `_ckr_spec.py:229-246`:
 ```python
     else:
         if actual == CKR_OK:
@@ -107,15 +107,15 @@ def test_strict_wrong_code_fails():
                          f"{ckr_name(actual)}, spec prefers {[ckr_name(c) for c in spec_codes]} "
                          f"[{expectation.spec_ref}]")
 ```
-- [ ] **Step 4 — Run, verify pass.** → PASS.
-- [ ] **Step 5 — Blast-radius check.** `uv run pytest tests/ -k ckr -q 2>&1 | tail -25` → previously-noted deviations now `xfail`; **no new `fail`**. Record the xfail delta in the commit.
-- [ ] **Step 6 — Commit.** `git commit -am "assert_ckr: 3-way classify (other-reject xfail, CKR_OK fail)"`
+- [x] **Step 4 — Run, verify pass.** → PASS.
+- [x] **Step 5 — Blast-radius check.** `uv run pytest tests/ -k ckr -q 2>&1 | tail -25` → previously-noted deviations now `xfail`; **no new `fail`**. Record the xfail delta in the commit.
+- [x] **Step 6 — Commit.** `git commit -am "assert_ckr: 3-way classify (other-reject xfail, CKR_OK fail)"`
 
 ### Task 3 — Negative helpers (rv-shaped + exception-shaped)
 
 Two thin helpers in `conftest.py` for sites NOT in the table. `classify_negative_rv` for raw-`rv` sites; `reject_or_classify` for recipe sites that raise on reject / return on success (no `rv`).
 
-- [ ] **Step 1 — Failing tests:**
+- [x] **Step 1 — Failing tests:**
 ```python
 from _pytest.outcomes import Failed
 from pkcs11_check.testcases.conftest import classify_negative_rv, reject_or_classify
@@ -133,8 +133,8 @@ def test_exc_expected_passes(): reject_or_classify(_exc(CKR_KEY_FUNCTION_NOT_PER
 def test_exc_other_xfails():
     with pytest.raises(pytest.xfail.Exception): reject_or_classify(_exc(CKR_FUNCTION_FAILED), (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
 ```
-- [ ] **Step 2 — Run, verify fail** (helpers undefined).
-- [ ] **Step 3 — Implement** (reuse `is_known_error`, `ckr_name`):
+- [x] **Step 2 — Run, verify fail** (helpers undefined).
+- [x] **Step 3 — Implement** (reuse `is_known_error`, `ckr_name`):
 ```python
 def classify_negative_rv(rv, expected_rvs, *, label, allow_ok=False):
     """Raw-rv negative classifier: CKR_OK -> fail (unless allow_ok);
@@ -158,12 +158,12 @@ def reject_or_classify(exc, expected_rvs, *, label):
     name = ckr_name(rv) if rv is not None else str(exc)
     pytest.xfail(f"{label}: rejected with {name}, expected {[ckr_name(c) for c in expected_rvs]}")
 ```
-- [ ] **Step 4 — Run, verify pass.** → PASS.
-- [ ] **Step 5 — Commit.** `git commit -am "Add classify_negative_rv + reject_or_classify negative helpers"`
+- [x] **Step 4 — Run, verify pass.** → PASS.
+- [x] **Step 5 — Commit.** `git commit -am "Add classify_negative_rv + reject_or_classify negative helpers"`
 
 ### Task 4 — Type-B / Type-C self-contradiction classifiers
 
-- [ ] **Step 1 — Failing tests:**
+- [x] **Step 1 — Failing tests:**
 ```python
 from pkcs11_check.testcases.conftest import classify_policy_enforcement, classify_lifecycle_effect
 def test_policy_claimed_violated_fails():
@@ -174,8 +174,8 @@ def test_policy_claimed_ok_passes(): classify_policy_enforcement(claimed=True, v
 def test_lifecycle_claimed_effect_fails():
     with pytest.raises(Failed): classify_lifecycle_effect(claimed_success=True, effect_observed=True, label="x")
 ```
-- [ ] **Step 2 — Run, verify fail.**
-- [ ] **Step 3 — Implement:**
+- [x] **Step 2 — Run, verify fail.**
+- [x] **Step 3 — Implement:**
 ```python
 def classify_policy_enforcement(*, claimed, violated, label):
     """Type-B: claimed=module reported the protective attribute back; violated=protection breached."""
@@ -191,14 +191,14 @@ def classify_lifecycle_effect(*, claimed_success, effect_observed, label):
     if effect_observed:
         pytest.fail(f"{label}: success claimed then contradicted (self-contradiction)")
 ```
-- [ ] **Step 4 — Run, verify pass.** → PASS.
-- [ ] **Step 5 — Provider-neutral check.** `uv run pytest tests/test_provider_neutral_findings.py -q` → PASS.
-- [ ] **Step 6 — Commit.** `git commit -am "Add Type-B/Type-C self-contradiction classifiers"`
+- [x] **Step 4 — Run, verify pass.** → PASS.
+- [x] **Step 5 — Provider-neutral check.** `uv run pytest tests/test_provider_neutral_findings.py -q` → PASS.
+- [x] **Step 6 — Commit.** `git commit -am "Add Type-B/Type-C self-contradiction classifiers"`
 
 ### Task 5 — Document the model in CLAUDE.md
 
-- [ ] **Step 1 — Add** the model table + core principle to `CLAUDE.md` (Coding Rules), with a one-line note that it **supersedes** "use `pytest.xfail()` for known module bugs" for Type-A / self-contradiction classes; link `docs/classification-model-design.md`.
-- [ ] **Step 2 — Commit.** `git commit -am "Document test-outcome classification model"`
+- [x] **Step 1 — Add** the model table + core principle to `CLAUDE.md` (Coding Rules), with a one-line note that it **supersedes** "use `pytest.xfail()` for known module bugs" for Type-A / self-contradiction classes; link `docs/classification-model-design.md`.
+- [x] **Step 2 — Commit.** `git commit -am "Document test-outcome classification model"`
 
 ---
 
@@ -217,21 +217,21 @@ elif result == "invalid" and not shared_expected:
 elif result == "invalid":
     pytest.fail(f"ECDH derived a secret for an invalid vector {vec_id} (invalid-point accepted)")
 ```
-- [ ] **Task 2a** — fix `test_wycheproof_ecdh.py:273` per pattern; add `tests/test_wycheproof_ecdh_guards.py` meta-test that a fake-accept on an `invalid` vector raises `Failed`; commit.
-- [ ] **Task 2b** — `acvp/aes/test_gcm.py:172`: add the missing `else: pytest.fail(...)` on the GCM-SIV decrypt-success path for `test_passed is False`; meta-test; commit.
-- [ ] **Task 2c** — `wycheproof/test_wycheproof_x25519.py:260`: drop the `len(public_bytes)!=key_size` gate; fail on any successful derive for an `invalid` vector; meta-test; commit.
+- [x] **Task 2a** — fix `test_wycheproof_ecdh.py:273` per pattern; add `tests/test_wycheproof_ecdh_guards.py` meta-test that a fake-accept on an `invalid` vector raises `Failed`; commit.
+- [x] **Task 2b** — `acvp/aes/test_gcm.py:172`: add the missing `else: pytest.fail(...)` on the GCM-SIV decrypt-success path for `test_passed is False`; meta-test; commit.
+- [x] **Task 2c** — `wycheproof/test_wycheproof_x25519.py:260`: drop the `len(public_bytes)!=key_size` gate; fail on any successful derive for an `invalid` vector; meta-test; commit.
 
 ### V2 — produce-direction families that can't test rejection (~1000 vectors)
 
 **Pattern:** these run invalid MAC/AEAD/keywrap vectors as *produce* ops (`sign_single`/`encrypt_single`/`wrap`), so a fresh correct output never matches the modified expected output and rejection is never tested. Re-frame to the **verify/decrypt/unwrap** direction with `fail`-on-accept (the ACVP side already does this). Land each family as a separate revertible commit with a count delta.
-- [ ] **Task 2d** — `test_wycheproof_aes.py` AES-CMAC (`:139`): verify the supplied tag (`C_Verify`), `invalid` accepted → `fail`; meta-test; commit.
-- [ ] **Task 2e** — AES-GMAC (`:428`, ~324 vectors): same; commit.
-- [ ] **Task 2f** — AES-CCM (`:363`, ~147): decrypt-and-reject; commit.
-- [ ] **Task 2g** — AES-KW (`:218`, ~126): unwrap-and-reject; commit.
-- [ ] **Task 2h** — `test_wycheproof_chacha.py:115` (~69): decrypt-and-reject; commit.
-- [ ] **Task 2i** — `test_wycheproof_hmac.py:234/239`: verify-and-reject; commit.
-- [ ] **Task 2j** — `test_wycheproof_pbes2.py:223`: add the `invalid` accept→fail branch (structural; 0 live vectors today); commit.
-- [ ] **Task 2k** — (investigate) `test_wycheproof_rsa_decrypt.py` / `rsa_oaep`: confirm invalid-padding vectors are rejected (Bleichenbacher surface); add fail-on-accept if missing; commit.
+- [x] **Task 2d** — `test_wycheproof_aes.py` AES-CMAC (`:139`): verify the supplied tag (`C_Verify`), `invalid` accepted → `fail`; meta-test; commit.
+- [x] **Task 2e** — AES-GMAC (`:428`, ~324 vectors): same; commit.
+- [x] **Task 2f** — AES-CCM (`:363`, ~147): decrypt-and-reject; commit.
+- [x] **Task 2g** — AES-KW (`:218`, ~126): unwrap-and-reject; commit.
+- [x] **Task 2h** — `test_wycheproof_chacha.py:115` (~69): decrypt-and-reject; commit.
+- [x] **Task 2i** — `test_wycheproof_hmac.py:234/239`: verify-and-reject; commit.
+- [x] **Task 2j** — `test_wycheproof_pbes2.py:223`: add the `invalid` accept→fail branch (structural; 0 live vectors today); commit.
+- [x] **Task 2k** — (investigate) `test_wycheproof_rsa_decrypt.py` / `rsa_oaep`: confirm invalid-padding vectors are rejected (Bleichenbacher surface); add fail-on-accept if missing; commit. **Finding:** both already decrypt-and-reject and `pytest.fail` on accept (no source change needed); added behavioral guard meta-tests to lock it in.
 
 ---
 
@@ -241,7 +241,7 @@ elif result == "invalid":
 
 ### Type A — crypto-correctness → `fail` (no claim-check)
 Replace the accept-tolerant branch with `pytest.fail`/`classify_negative_rv(rv, expected, label)` (no `allow_ok`).
-- [ ] **Sites:** `security/test_cve_regression.py:681` (invalid EC OID), `security/test_parameter_validation.py:522,475,352` (+4 weak-param: gcm weak-tag/weak-iv/iv-reuse, pss sLen=0, xts identical halves), `ckr/test_ckr_decrypt.py:169` (wrong-len ciphertext; drop `allow_success`), `ckr/test_ckr_verify.py:60,144`, `ckr/test_ckr_sign.py:53`, `test_errors.py:289` (verify wrong-mech; reclassify the `if rv==CKR_OK: pass`), `test_kem.py:755` (CKA_VALUE injection). One task per file; meta-test + commit each.
+- [x] **Sites:** `security/test_cve_regression.py:681` (invalid EC OID), `security/test_parameter_validation.py:522,475,352` (+4 weak-param: gcm weak-tag/weak-iv/iv-reuse, pss sLen=0, xts identical halves), `ckr/test_ckr_decrypt.py:169` (wrong-len ciphertext; drop `allow_success`), `ckr/test_ckr_verify.py:60,144`, `ckr/test_ckr_sign.py:53`, `test_errors.py:289` (verify wrong-mech; reclassify the `if rv==CKR_OK: pass`), `test_kem.py:755` (CKA_VALUE injection). One task per file; meta-test + commit each.
 
 ### Type B — attribute/permission → claim-check (`classify_policy_enforcement`)
 **Pattern (canonical, `test_sensitivity.py:64` — currently inverted):**
@@ -252,14 +252,14 @@ val = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
 violated = CKA_VALUE in val                            # read_attributes OMITS sensitive attrs (no raise)
 classify_policy_enforcement(claimed=claimed, violated=violated, label="read sensitive key value")
 ```
-- [ ] **Sites:** `test_sensitivity.py:64,117` (+ dup `ckr/test_ckr_object.py:122`, `ckr/test_ckr_codes.py:127`, `ckr/test_ckr_spec_compliance.py:197`), `test_api_security.py:241,363`, `test_tookan.py:203,268`, `ckr/test_ckr_raw_attrs.py:119,200`, `test_access_levels.py:962`, `test_attribute_enforcement.py:110`, `test_kem.py:858`. For copy-escalation, `claimed` = original read-back holds the protective value; `violated` = copy exposes it. One task per file; meta-test + commit.
+- [x] **Sites:** `test_sensitivity.py:64,117` (+ dup `ckr/test_ckr_object.py:122`, `ckr/test_ckr_codes.py:127`, `ckr/test_ckr_spec_compliance.py:197`), `test_api_security.py:241,363`, `test_tookan.py:203,268`, `ckr/test_ckr_raw_attrs.py:119,200`, `test_access_levels.py:962`, `test_attribute_enforcement.py:110`, `test_kem.py:858`. For copy-escalation, `claimed` = original read-back holds the protective value; `violated` = copy exposes it. One task per file; meta-test + commit.
 
 ### Type C — lifecycle → effect-check (`classify_lifecycle_effect`), content-tagged
 **Pattern (use-after-destroy):** tag the object with a unique `CKA_LABEL` before destroy; after destroy, the op `claimed_success` = destroy returned `CKR_OK`, `effect_observed` = a subsequent read returns the *tagged* object's content (distinguishes survival from handle reuse).
-- [ ] **Sites:** use-after-destroy `ckr/test_ckr_object.py:143,198,255`, `ckr/test_ckr_decrypt.py:240`, `ckr/test_ckr_verify.py:82`, `ckr/test_ckr_sign.py:92`, `ckr/test_ckr_codes.py:193`, `ckr/test_ckr_priority.py:48`, `security/test_handle_reuse.py:54`; read-only setattr (effect = value mutated, readable attrs only) `test_set_attribute.py:109,128,146,161`, `ckr/test_ckr_object.py:167`. One task per file; meta-test + commit.
+- [x] **Sites:** use-after-destroy `ckr/test_ckr_object.py:143,198,255`, `ckr/test_ckr_decrypt.py:240`, `ckr/test_ckr_verify.py:82`, `ckr/test_ckr_sign.py:92`, `ckr/test_ckr_codes.py:193`, `ckr/test_ckr_priority.py:48`, `security/test_handle_reuse.py:54`; read-only setattr (effect = value mutated, readable attrs only) `test_set_attribute.py:109,128,146,161`, `ckr/test_ckr_object.py:167`. One task per file; meta-test + commit.
 
 ### Type D — derived-attribute invariant NEW tests → `fail` on contradiction
-- [ ] **Task 3z** — Create `src/pkcs11_check/testcases/test_attribute_invariants.py` (suite-generated keys only): `NEVER_EXTRACTABLE` must be `True` when the key was created `EXTRACTABLE=False` and never changed; `ALWAYS_SENSITIVE` vs `SENSITIVE` likewise. Contradiction → `fail`; isolated wrong value elsewhere stays `xfail`. Meta-test + commit. Update `docs/module-issues.md` NSS `NEVER_EXTRACTABLE` entry.
+- [x] **Task 3z** — Create `src/pkcs11_check/testcases/test_attribute_invariants.py` (suite-generated keys only): `NEVER_EXTRACTABLE` must be `True` when the key was created `EXTRACTABLE=False` and never changed; `ALWAYS_SENSITIVE` vs `SENSITIVE` likewise. Contradiction → `fail`; isolated wrong value elsewhere stays `xfail`. Meta-test + commit. Update `docs/module-issues.md` NSS `NEVER_EXTRACTABLE` entry.
 
 ---
 
@@ -274,9 +274,32 @@ assert rv in _RO_ERROR_RVS, f"expected RO rejection, got {ckr_name(rv)}"
 # AFTER (expected = the spec-preferred code(s); the set's other members become xfail)
 classify_negative_rv(rv, (CKR_SESSION_READ_ONLY,), label="create token object on RO session")
 ```
-- [ ] **Per-file tasks** (replace asserts; meta-test the 3 branches; commit each):
-  `test_mech_state.py` (14, `_NOT_INIT_RVCS`), `test_errors.py` (13), `ckr/test_ckr_spec_compliance.py:64` (`_check_ckr` ×9 — give it an acceptable-set param or route to `classify_negative_rv`), `test_key_usage_policy.py:84,111,202,241`, `test_ro_session_restrictions.py:259,287,443,675,698,728`, `test_session_state_machine.py:417,446,889,940`, `test_so_pin.py:95,109`, `test_access_levels.py:508,978,1401`, `test_operation_state.py`, `test_verify_signature.py`, `test_reinitialize.py`, `test_session_edge_cases.py`, `test_initialize_args.py:293,331`, `test_stateful_sigs.py:603`, and the 6 `ckr/` raw files (`test_ckr_raw_{state,multipart,attrs}`, `test_ckr_{slot_token,random,destructive}`).
-- [ ] **Task 4z — retire local helpers:** migrate/remove the ~7 per-file `*_or_xfail`/`*_negative_rv` reimplementations (`test_kem._xfail_if_kem_negative_rv`, `test_benchmark._xfail_benchmark_operation_reject`, `test_mech_multipart._xfail_multipart_runtime_reject`, `test_multipart_streaming._xfail_streaming_reject`, `security/test_ffi_length_boundary.setup_xfail_if_known_ckr`, `test_fuzz` ×6) onto the shared helpers; commit.
+- [x] **Per-file tasks** (replace asserts; meta-test the 3 branches; commit each). Status (2026-05-28):
+  - [x] `test_mech_state.py` (`_NOT_INIT_RVCS`, `_ALREADY_ACTIVE_RVCS`; cross-session strict set intentionally left as fail)
+  - [x] `test_errors.py` (per-category reject asserts; tolerant accept paths kept)
+  - [x] `ckr/test_ckr_spec_compliance.py:64` (`_check_ckr` ×9 routed to `classify_negative_rv`)
+  - [x] `test_key_usage_policy.py:84,111,202,241` (+ the SIGN-only AES site)
+  - [x] `test_ro_session_restrictions.py:259,287,443,675,698,728` (7 write guards)
+  - [x] `test_session_state_machine.py:417,446,889,940`
+  - [x] `test_so_pin.py:95,109`
+  - [x] `test_access_levels.py:508,978,1401`
+  - [x] `test_operation_state.py` (`C_SetOperationState` garbage-blob guard; the `C_GetOperationState` query is a tolerant probe where `CKR_OK` is a valid pass — left as-is)
+  - [x] `test_verify_signature.py` (wrong-sig + wrong-key reject guards)
+  - [x] `test_initialize_args.py:293,331` (pReserved + partial-callbacks; partial-callbacks now symmetric xfail-on-OK)
+  - [x] `test_stateful_sigs.py:603` (HSS leaf-budget via `reject_or_classify`)
+  - [x] `test_reinitialize.py:47,89` — **N/A**: both asserts are `assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)`, i.e. positive-success checks (CKR_OK is a valid pass), not must-reject negatives. No conversion applicable.
+  - [x] `test_session_edge_cases.py` — stale-session `C_FindObjectsInit`/`C_GenerateKey` guards (lines 68, 93) → 3-way `classify_negative_rv`. (`C_CloseAllSessions` line 125 `assert rv is not None` and the null-CK_NOTIFY probe line 245 are positive/crash-only, not must-reject negatives — left as-is.)
+  - [x] the 6 `ckr/` raw files (`test_ckr_raw_{state,multipart,attrs}`, `test_ckr_{slot_token,random,destructive}`) — surveyed and resolved per-file:
+    - `test_ckr_slot_token.py:38` — in-process `C_GetMechanismInfo` bogus-mechanism reject → 3-way `classify_negative_rv`. (`C_WaitForSlotEvent` line 55 is a tolerant probe where CKR_OK is a valid pass — N/A.)
+    - `test_ckr_raw_attrs.py` — the CKA_SIGN=False sibling (`test_sign_not_permitted`) was the odd one out (bare in-child `assert rv in (...)` + no claim-check) while its encrypt/decrypt siblings already used the parent-side Type-B `_classify_permission_flag`; converted to match (`_claim` + parent `_classify_permission_flag`).
+    - `test_ckr_raw_multipart.py` — 10 C_*Update/Final-without-Init must-reject probes: moved the in-child `assert rv == CKR_OPERATION_NOT_INITIALIZED` to a parent-side `_classify_multipart_ckr` over the printed `CKR:` line (CKR_OK→fail, spec→pass, other clean→xfail instead of a false child-crash).
+    - `test_ckr_raw_state.py` — 4 double/cross-Init state probes: parent-side tolerant `_classify_state_ckr` (`allow_ok=True`, CKR_OPERATION_ACTIVE *or* CKR_OK pass, any third clean code → xfail not crash; first-init-failed marker handled). `test_encrypt_then_sign_init` is a pure no-crash probe (many codes acceptable) — left as-is.
+    - `test_ckr_destructive.py` — 6 InitToken/SetPIN/InitPIN error-condition probes: parent-side `_classify_destructive_ckr` over the printed `CKR:` line, replacing the in-child `assert rv == <spec>` that previously mislabeled a non-spec clean reject as a crash.
+    - `test_ckr_random.py` — **N/A**: both asserts (`C_SeedRandom`, `C_GenerateRandom(0)`) are tolerant positive probes where CKR_OK is a valid pass, not must-reject negatives.
+- [x] **Task 4z — retire local helpers:** audited all listed helpers.
+    - `test_kem._xfail_if_kem_negative_rv` — the only genuine **negative-rv reimplementation** (a partial rv-shaped classifier paired with a bare `assert rv in (spec)`). **Retired** onto the shared `classify_negative_rv` at both call sites (invalid-ciphertext-length, wrong-key-type): now CKR_OK→fail, spec→pass, any other clean→xfail (previously an unlisted clean code hard-failed the trailing assert). Local helper + 3 now-unused imports removed; CKR_OK→fail meta-test added.
+    - `test_benchmark._xfail_benchmark_operation_reject` / `_xfail_aes_keygen_reject`, `test_mech_multipart._xfail_multipart_runtime_reject`, `test_multipart_streaming._xfail_streaming_reject` + `_gen_*_or_xfail`, `test_fuzz` `_digest/_encrypt/_decrypt/_sign/_verify/_import_hmac_key_or_xfail` — **N/A (not reimplementations):** these are POSITIVE-op second-leg wrappers (advertised-but-not-operational) that already delegate to the shared Phase-1 `xfail_if_known_ckr`, binding a per-file acceptable-CKR tuple + a per-file neutral message. The trailing `raise`/`raise exc` is required for mypy (the `try` body has a non-`None` return type), not dead code. Folding them into a single generic helper would lose the per-file CKR set/message and gain nothing; left as correct DRY delegation.
+    - `security/test_ffi_length_boundary.setup_xfail_if_known_ckr` — **N/A (necessary child-script duplicate):** defined inside a subprocess-preamble string literal where the in-process/conftest helpers are unavailable; structurally analogous to the existing `security/conftest.child_setup_reject_known`, and already built on the shared `is_known_error` + `ckr_name` imported into the child namespace.
 
 ---
 
@@ -285,16 +308,36 @@ classify_negative_rv(rv, (CKR_SESSION_READ_ONLY,), label="create token object on
 **Goal:** stop hard-failing a lenient-but-conformant module on a clean error.
 
 **Pattern (P1a, `x509/test_attribute_parity.py`):** split the caller's accumulation into two buckets — `mismatches` (wrong value → `fail`) and `missing_mandatory` (absent → collect); after all attrs, `pytest.fail` if mismatches else `pytest.xfail` if missing_mandatory.
-- [ ] **P1a sites:** `x509/test_attribute_parity.py:67-68`, `x509/test_core_ops.py:427` (clean `ATTRIBUTE_*_INVALID` → xfail), `x509/test_attributes.py:87`, `x509/test_limbo_import.py:155`, `x509/test_identity.py:105`, `x509/test_search.py:104`, `test_profiles.py:243,295,345,350`, `test_v30_session.py` `C_LoginUser` clean-error sites (~11). One task per file; meta-test + commit; update `docs/module-issues.md`.
-- [ ] **P1b sites:** make the positive second leg (`decrypt`/`verify`/`unwrap`) `xfail` on a clean error via `xfail_if_known_ckr` — `test_{camellia,aria,des,twofish,blowfish,salsa20,gost}.py` (`_*_or_xfail` currently only catch `MECHANISM_INVALID`), `test_rsa_extended.py:186,443,592`, `test_metamorphic.py:76`, `test_eddsa.py:177`, `test_mech_kem.py:82`, `test_mech_sign_recover.py:71`, **PQC/KEM** `test_pqc_sign.py`, `test_hash_slh_dsa.py`, `test_hash_ml_dsa.py`. *Keep `fail` for the dependent-roundtrip self-contradiction case (encrypt→decrypt of the same output).* Meta-test + commit per file.
+- [x] **P1a sites:** all converted (one commit + meta-test per file):
+    - `x509/test_attribute_parity.py` — two-bucket split: value mismatch → `fail`, absent-mandatory / clean valid-cert reject → `xfail`.
+    - `x509/test_core_ops.py:427` — v3.0 clean `ATTRIBUTE_*_INVALID` reject → `xfail` (non-CKR errors still propagate).
+    - `x509/test_attributes.py:87`, `x509/test_limbo_import.py:155` — clean reject of a Limbo-valid cert → `xfail`.
+    - `x509/test_identity.py:105` — clean sign-leg failure with a valid imported key → `xfail`.
+    - `x509/test_search.py:104` (+ issuer/serial/combined, 4 sites) — search-by-derived-attribute miss → `xfail` via `_xfail_if_search_miss`.
+    - `test_profiles.py` (4 sites) — advertised-profile missing functions/mechanisms/object-classes → `xfail`.
+    - `test_v30_session.py` — 10 C_LoginUser / context-specific-login "unexpected clean CKR" sites → `xfail` (crash-detection `pytest.fail` at the subprocess-cancel probe intentionally kept as `fail`).
+    - `docs/module-issues.md`: no existing finding entry was flipped (these were hard-fails on lenient-but-conformant behavior, not documented findings), so no stat/finding edit per the no-stats-churn rule.
+- [x] **P1b sites:** produce-leg "advertised but not operational" now xfails only on a known clean CKR (never on an arbitrary AssertionError), with the dependent roundtrip second leg left as a hard `fail` (self-contradiction). Added shared `CIPHER_OP_RUNTIME_REJECT_RVS` in `conftest.py`.
+    - `test_{camellia,aria,twofish,blowfish}.py` — widened `_encrypt_or_xfail`/`_sign_or_xfail` from `{MECHANISM_INVALID}`-only to the shared set via `xfail_if_known_ckr`.
+    - `test_des.py` — widened `_encrypt_or_xfail` onto the shared set (inline MAC `pytest.skip` sites left as-is: "legacy provider absent" capability gaps).
+    - `test_salsa20.py` — `_SALSA20_ENCRYPT_REJECT_RVS` widened to the shared set.
+    - `test_rsa_extended.py` — 13 first-leg `except AssertionError: pytest.xfail(...)` blocks (sign/wrap/encrypt + X9.31 keygen) now route through `xfail_if_known_ckr` so a non-CKR Python error propagates.
+    - `test_pqc_sign.py` — 3 ML-DSA sign blocks (pure `AssertionError`) routed through `xfail_if_known_ckr`. (SLH-DSA keygen/sign blocks catch `(AssertionError, OSError)` deliberately — left as-is, OSError = not-operational signal.)
+    - `test_hash_slh_dsa.py` — 4 sign blocks routed through `xfail_if_known_ckr` (mirrors `test_hash_ml_dsa` `_SIGN_ERROR_CKRS`).
+    - `test_mech_kem.py`, `test_mech_sign_recover.py` — produce leg (encapsulate / sign-recover) guarded with `xfail_if_known_ckr`; dependent roundtrip kept as `fail`; NotImplementedError→skip kept.
+    - **Already conformant (no change):** `test_eddsa.py` and `test_hash_ml_dsa.py` already use `xfail_if_known_ckr` with a broad reject set; `test_gost.py` already uses `xfail_if_known_ckr` with a tailored `_GOST_RUNTIME_REJECT_RVS`; `test_metamorphic.py:76` is the dependent encrypt→decrypt roundtrip the plan says to KEEP as `fail` (its setup leg already uses the shared `gen_aes_key_or_xfail`).
 
 ---
 
 ## Phase 6 — P2 / P3 / C cleanups (depends Phase 1)
 
-- [ ] **P3 message-API:** `test_message_crypto.py:211,212,231,235,292,337` and `test_mech_message.py:79,267,364,481,531` — replace ungated `except AssertionError: pytest.skip` with `reject_or_classify`/`xfail_if_known_ckr` (advertised-but-rejecting → `xfail`, not `skip`); commit.
-- [ ] **P2 wrong-result leaks → `fail`:** `test_crossverify_extended.py:169` (GCM mismatch swallowed by skip), `test_ecdh_extended.py:440` (failed self-roundtrip xfailed). Isolated metadata defaults (`CKA_LOCAL`, `CKA_PRIVATE` in `test_attribute_defaults.py`, `test_key_flags.py`, `test_access_control.py:108`) **stay `xfail`**; commit.
-- [ ] **C cleanups:** `ckr/test_ckr_wrap.py:84` (skip masks finding → `fail`), `ckr/test_ckr_session.py:67` (non-capability skip → `xfail`), `test_object_visibility.py:487` / `test_profiles.py:64` (substring CKR → exact); `security/test_crypto_weakness.py` — classify each `note()`-only site as posture (keep) vs Type-A/B (→ fail); commit.
+- [x] **P3 message-API:** `test_message_crypto.py` — 5 `except AssertionError: pytest.skip("Message ... not supported")` blocks (encrypt/decrypt legs) now route through `xfail_if_known_ckr` (advertised-but-rejecting → `xfail`, not `skip`; non-CKR propagates). `test_mech_message.py` — 4 `C_Message*Init` legs widened from `MECHANISM_INVALID`-only to a shared `_xfail_if_message_init_rejected` helper (positive-op 3-way); the CKA_ENCRYPT=False must-reject site (`:481`) routed through `classify_negative_rv` (CKR_OK security finding still `fail`, spec reject pass, other clean → xfail).
+- [x] **P2 wrong-result leaks → `fail`:** `test_crossverify_extended.py` GCM — split the conflated `except`: a clean reject of the decrypt op → `xfail` (shared `CIPHER_OP_RUNTIME_REJECT_RVS`), but a successful decrypt whose plaintext differs from the cryptography-library reference → hard `fail` (was swallowed by skip). `test_ecdh_extended.py` XEdDSA — split similarly: clean reject of the verify op → `xfail`, but a self-produced signature that does not verify with its own key → hard `fail` (was xfailed). Isolated metadata defaults (`CKA_LOCAL`/`CKA_PRIVATE`) **left as `xfail`** per the model (no change).
+- [x] **C cleanups:**
+    - `ckr/test_ckr_wrap.py:84` — the skip that masked the "doesn't honour CKA_EXTRACTABLE=False" case is replaced by a Type-B `classify_policy_enforcement` (claimed-then-wrapped/exported → `fail`; not-claimed → `xfail`; claimed-and-rejected → pass).
+    - `ckr/test_ckr_session.py:67` — token-login-state (non-capability) skip → `xfail`; the wrong-PIN assert routed through `classify_negative_rv` (CKR_OK = accepted wrong PIN → `fail`; non-spec reject → `xfail`).
+    - `test_object_visibility.py:487` and `test_profiles.py:64` — substring `"CKR_..." in str(exc)` matches replaced with exact `is_known_error(exc, <specific set>)`.
+    - `security/test_crypto_weakness.py` — **assessed: all `note()` sites are genuine posture observations** (weak-RSA/DES/MD5/SSL3 availability + deprecated sign that merely *produces* output + PIN-timing). None is a Type-A crypto-correctness break or Type-B claimed-then-violated, so all correctly stay `note()` per the file's documented "NOT pass/fail" posture-probe design. No change.
 
 ---
 

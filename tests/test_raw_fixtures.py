@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pkcs11_check.fixtures import RawSession, p11_raw_session
+from pkcs11_check.fixtures import RawSession, p11_module_session, p11_raw_session
 from pkcs11_check.raw.recipes import create_object, get_mechanism_list
 
 
@@ -24,3 +24,8 @@ def test_raw_session_importable() -> None:
 def test_p11_raw_session_importable() -> None:
     """p11_raw_session fixture exists and is importable."""
     assert callable(p11_raw_session)
+
+
+def test_p11_module_session_importable() -> None:
+    """p11_module_session fixture exists and is importable."""
+    assert callable(p11_module_session)

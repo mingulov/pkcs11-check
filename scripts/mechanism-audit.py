@@ -50,10 +50,10 @@ def main() -> None:
         tested = get_tested_mechanisms()
 
         print(f"# Mechanism Audit: {Path(args.module).name}")
-        print(f"")
+        print("")
         print(f"Total mechanisms: {len(mechs)}")
         print(f"Tested mechanisms: {len(tested)}")
-        print(f"")
+        print("")
 
         supported = []
         vendor = []
@@ -99,19 +99,22 @@ def main() -> None:
         # Coverage gaps
         gaps = [e for e in supported if not e["tested"]]
         if gaps:
-            print(f"")
+            print("")
             print(f"## Coverage Gaps ({len(gaps)} untested)")
-            print(f"")
+            print("")
             for e in gaps:
                 print(f"- {e['name']} (key size {e['min_key']}-{e['max_key']})")
 
         # Vendor mechanisms
         if vendor:
-            print(f"")
+            print("")
             print(f"## Vendor-Defined Mechanisms ({len(vendor)})")
-            print(f"")
+            print("")
             for e in vendor:
-                print(f"- 0x{e['value']:08x} ({e['name']}) — key size {e['min_key']}-{e['max_key']}")
+                print(
+                    f"- 0x{e['value']:08x} ({e['name']}) — "
+                    f"key size {e['min_key']}-{e['max_key']}"
+                )
 
     finally:
         lib.finalize()

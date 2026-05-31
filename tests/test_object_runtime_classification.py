@@ -55,9 +55,7 @@ def test_session_object_aes_keygen_runtime_reject_is_xfail(
     monkeypatch.setattr(raw_recipes, "gen_aes_key", _keygen_reject)
 
     with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
-        test_object.TestSessionObjects().test_create_secret_key_with_label(
-            _session("AES_KEY_GEN")
-        )
+        test_object.TestSessionObjects().test_create_secret_key_with_label(_session("AES_KEY_GEN"))
 
 
 def test_ec_keypair_attributes_skip_missing_ec_keygen(

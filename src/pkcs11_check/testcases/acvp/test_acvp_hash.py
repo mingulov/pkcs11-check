@@ -169,13 +169,13 @@ _SHAKE_VECTORS = _load_shake_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_HASH_VECTORS, ids=[v[0] for v in _ALL_HASH_VECTORS])
-def test_acvp_hash(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_hash(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """Hash digest from NIST ACVP vectors.
 
     Compares PKCS#11 digest output against official NIST ACVP expected results
     for SHA-1, SHA-2, and SHA-3 families.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     mech_name: str = vec["mech_name"]
 
     # Check mechanism availability
@@ -197,7 +197,7 @@ def test_acvp_hash(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> No
 
 
 @pytest.mark.parametrize("vec_id,vec", _SHAKE_VECTORS, ids=[v[0] for v in _SHAKE_VECTORS])
-def test_acvp_shake(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_shake(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """SHAKE XOF (extendable-output function) from NIST ACVP vectors.
 
     SHAKE produces variable-length output based on the requested output length.
@@ -206,7 +206,7 @@ def test_acvp_shake(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     """
     # TODO: SHAKE requires C_DigestXof functions (not yet in pkcs11_check.raw headers)
     pytest.skip("SHAKE requires C_DigestXof (not yet in pkcs11_check.raw)")
-    rs = p11_raw_session
+    rs = p11_module_session
     mech_name: str = vec["mech_name"]
 
     # Check mechanism availability

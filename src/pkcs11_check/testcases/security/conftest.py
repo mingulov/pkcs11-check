@@ -83,3 +83,27 @@ def assert_subprocess_no_crash(
     for line in stdout.splitlines():
         if line.startswith(SETUP_XFAIL_PREFIX):
             pytest.xfail(line.removeprefix(SETUP_XFAIL_PREFIX).strip())
+
+
+def child_setup_reject_known(
+    exc: BaseException,
+    known_ckrs: tuple[int, ...],
+    purpose: str,
+) -> bool:
+    """Classify a setup reject inside a crash-isolated child script.
+
+    If ``exc`` matches one of ``known_ckrs`` (a clean, advertised-but-not-
+    operational reject), emit a ``SETUP_XFAIL`` marker on stdout and return True
+    so the caller can stop the probe cleanly; the parent's
+    ``assert_subprocess_no_crash`` turns the marker into ``pytest.xfail``.
+    Otherwise return False so the caller re-raises -- an unexpected error or
+    crash must still surface, never be hidden by the setup guard.
+    """
+    from pkcs11_check.testcases.conftest import is_known_error
+
+    if is_known_error(exc, known_ckrs):
+        rv = getattr(exc, "rv", None)
+        detail = ckr_name(rv) if rv is not None else str(exc)
+        print(f"{SETUP_XFAIL_PREFIX}{purpose}: {detail}", flush=True)
+        return True
+    return False

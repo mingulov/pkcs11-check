@@ -85,9 +85,11 @@ class TestRsaKeyGen:
     @pytest.mark.parametrize(
         "vec_id,vec", _RSA_KEYGEN_VECTORS, ids=[v[0] for v in _RSA_KEYGEN_VECTORS]
     )
-    def test_rsa_keygen_basic(self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    def test_rsa_keygen_basic(
+        self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]
+    ) -> None:
         """Test RSA keypair generation with basic sign/verify roundtrip."""
-        rs = p11_raw_session
+        rs = p11_module_session
         modulo = vec["modulo"]
 
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
@@ -131,10 +133,10 @@ class TestRsaKeyGen:
         "vec_id,vec", _RSA_KEYGEN_VECTORS, ids=[v[0] for v in _RSA_KEYGEN_VECTORS]
     )
     def test_rsa_keygen_attributes(
-        self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
+        self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]
     ) -> None:
         """Test RSA keypair attributes match expected specifications."""
-        rs = p11_raw_session
+        rs = p11_module_session
         modulo = vec["modulo"]
 
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
@@ -194,9 +196,9 @@ class TestRsaKeyGenBySize:
     """RSA key generation tests organized by modulus size."""
 
     @pytest.mark.parametrize("bits", [2048, 3072, 4096], ids=["2048", "3072", "4096"])
-    def test_rsa_keygen_by_size(self, p11_raw_session: Any, bits: int) -> None:
+    def test_rsa_keygen_by_size(self, p11_module_session: Any, bits: int) -> None:
         """Test RSA key generation for specific modulus sizes."""
-        rs = p11_raw_session
+        rs = p11_module_session
 
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported by module")

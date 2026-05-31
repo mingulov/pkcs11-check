@@ -33,8 +33,14 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKP_ML_KEM_768,
 )
+from pkcs11_check.testcases.conftest import CIPHER_OP_RUNTIME_REJECT_RVS, xfail_if_known_ckr
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.kem]
+
+# Phase 5 P1b: ML-KEM produce-leg (encapsulate/decapsulate) reject set. A clean
+# "advertised but not operational" reject -> xfail; the dependent encrypt/decrypt
+# roundtrip that follows stays a hard failure (self-contradiction).
+_KEM_OP_REJECT_RVS = CIPHER_OP_RUNTIME_REJECT_RVS
 
 
 def _ml_kem_keypair(rs: RawSession) -> tuple[int, int]:
@@ -64,14 +70,22 @@ _AES_DERIVED_ATTRS: dict[int, Any] = {
 class TestMechKEM:
     """KEM encapsulate/decapsulate tests."""
 
-    def test_ml_kem_roundtrip(self, p11_raw_session: RawSession) -> None:
+    def test_ml_kem_roundtrip(self, p11_module_session: RawSession) -> None:
         """ML-KEM encapsulate -> decapsulate produces same shared secret."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("ML_KEM"):
             pytest.skip("ML_KEM not supported")
         pub, priv = _ml_kem_keypair(rs)
         try:
-            enc_key, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_AES_DERIVED_ATTRS)
+            try:
+                enc_key, ct = encapsulate_key(
+                    rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_AES_DERIVED_ATTRS
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc, _KEM_OP_REJECT_RVS, "CKM_ML_KEM encapsulate not operational"
+                )
+                raise
             try:
                 dec_key = decapsulate_key(
                     rs.raw, rs.sh, priv, CKM_ML_KEM, ct, attrs=_AES_DERIVED_ATTRS
@@ -90,7 +104,7 @@ class TestMechKEM:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_ml_kem_wrong_key_fails(self, p11_raw_session: RawSession) -> None:
+    def test_ml_kem_wrong_key_fails(self, p11_module_session: RawSession) -> None:
         """Decapsulate with wrong private key produces a different shared secret.
 
         ML-KEM uses implicit rejection (FIPS 203 Section 6.3): decapsulating a
@@ -99,7 +113,7 @@ class TestMechKEM:
         are therefore different, which is confirmed by showing that ciphertext
         encrypted under enc_key cannot be decrypted correctly by dec_key_wrong.
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("ML_KEM"):
             pytest.skip("ML_KEM not supported")
         pub1, priv1 = _ml_kem_keypair(rs)

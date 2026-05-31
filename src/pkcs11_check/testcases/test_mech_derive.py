@@ -112,6 +112,7 @@ def _xfail_derive_runtime_reject(exc: AssertionError, entry: MechEntry) -> None:
         f"{entry.mech_name}: advertised derive path is not operational",
     )
 
+
 # SHA key derivation mechanisms have no params and use a generic secret base key
 _SHA_KEY_DERIV_MECHS: set[int] = set()
 try:
@@ -710,7 +711,7 @@ class TestMechDerive:
     """Key derivation for every advertised derive mechanism with a registry config."""
 
     def test_derive_produces_key(
-        self, p11_raw_session: RawSession, mech_derive_entry: MechEntry
+        self, p11_module_session: RawSession, mech_derive_entry: MechEntry
     ) -> None:
         """Derive a key and verify the returned handle is valid (non-zero).
 
@@ -726,7 +727,7 @@ class TestMechDerive:
         - CONCATENATE_BASE_AND_KEY: CK_OBJECT_HANDLE param
         - Everything else: skipped with an explanatory message
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         entry = mech_derive_entry
         config = entry.config
         mech_id = entry.mech_id

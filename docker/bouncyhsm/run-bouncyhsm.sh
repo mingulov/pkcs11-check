@@ -9,7 +9,14 @@ trap cleanup EXIT
 
 echo "BouncyHSM starting..."
 cd /opt/bouncyhsm
+# Server tuning knobs (env-overridable; defaults preserve original behavior).
+#   BHSM_LOG_LEVEL=Warning      -> skip per-call Information log work
+#   DOTNET_TieredPGO=1          -> dynamic PGO of hot methods (managed crypto path)
+# These target the dominant per-call cost (.NET handler + MessagePack + BouncyCastle
+# crypto), which the TCP socket is NOT (connection overhead is ~1% per the transport doc).
 ASPNETCORE_ENVIRONMENT=Production ASPNETCORE_URLS=http://localhost:5000 \
+    Logging__LogLevel__Default="${BHSM_LOG_LEVEL:-Information}" \
+    DOTNET_TieredPGO="${DOTNET_TieredPGO:-0}" \
     dotnet BouncyHsm.dll >/tmp/bouncyhsm-server.log 2>&1 &
 sleep 4
 

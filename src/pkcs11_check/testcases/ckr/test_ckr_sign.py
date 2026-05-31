@@ -22,6 +22,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_SIGN, assert_ckr
+from pkcs11_check.testcases.conftest import classify_lifecycle_effect
 
 pytestmark = pytest.mark.access
 
@@ -50,17 +51,10 @@ class TestSignInitErrors:
         try:
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), key)
-            if rv == CKR_OK:
-                # SoftHSM2 accepts mismatched key type at Init - compliance deviation
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    "C_SignInit accepted AES key with RSA mechanism",
-                    ComplianceLevel.NOT_RECOMMENDED,
-                    reference="PKCS#11 v3.1 Sec.5.10.1",
-                )
-            else:
-                assert_ckr(CKR_SIGN["init_key_type_inconsistent"], rv, ckr_strict)
+            # Type-A crypto-correctness: accepting an AES key under an RSA signing
+            # mechanism (CKR_OK) is key-type confusion -> fail; an expected reject
+            # -> pass; another clean reject -> xfail (3-way assert_ckr).
+            assert_ckr(CKR_SIGN["init_key_type_inconsistent"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -86,10 +80,18 @@ class TestSignInitErrors:
         rs = p11_raw_session
         _pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         destroy_quietly(rs.raw, rs.sh, _pub)
-        rs.raw.C_DestroyObject(rs.sh, priv)
+        destroy_rv = rs.raw.C_DestroyObject(rs.sh, priv)
         mech = mech_simple(CKM_SHA256_RSA_PKCS)
         rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
-        if rv != CKR_OK:
+        if rv == CKR_OK:
+            # Type-C use-after-destroy: destroy claimed CKR_OK yet C_SignInit on
+            # the same handle still succeeded -> contradiction.
+            classify_lifecycle_effect(
+                claimed_success=destroy_rv == CKR_OK,
+                effect_observed=True,
+                label="C_SignInit on a destroyed key handle (use-after-destroy)",
+            )
+        else:
             assert_ckr(CKR_SIGN["init_key_handle_invalid"], rv, ckr_strict)
 
 

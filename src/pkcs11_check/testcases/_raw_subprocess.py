@@ -24,6 +24,8 @@ def run_raw_script(
     script_body: str,
     cleanup: str = "",
     timeout: int = 15,
+    *,
+    pin: str | None = None,
 ) -> tuple[int, str, str]:
     """Run a ctypes PKCS#11 script in a subprocess.
 
@@ -32,6 +34,9 @@ def run_raw_script(
         script_body: Test-specific code appended after boilerplate.
         cleanup: Code appended after script_body (e.g., session close, finalize).
         timeout: Subprocess timeout in seconds.
+        pin: User PIN to forward to the child. Injected into the child env under
+            ``_P11CHECK_PIN`` (never embedded in the script source), matching the
+            login path emitted by ``subprocess_session_preamble``.
 
     Returns:
         (returncode, stdout, stderr) - returncode < 0 means signal (segfault).
@@ -44,6 +49,9 @@ def run_raw_script(
     cov_fd, cov_path = tempfile.mkstemp(suffix=".json", prefix="p11cov_")
     os.close(cov_fd)
     env = {**os.environ, "_P11CHECK_SUBPROCESS_COVERAGE": cov_path}
+    if pin is not None:
+        # Pass the PIN via the child env, never via the script text/argv.
+        env["_P11CHECK_PIN"] = pin
 
     result = subprocess.run(
         [sys.executable, "-c", full_script],

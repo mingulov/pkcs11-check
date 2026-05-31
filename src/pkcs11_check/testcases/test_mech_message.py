@@ -26,10 +26,48 @@ pytestmark = [
 ]
 
 
+def _xfail_if_message_init_rejected(rv: int, *, label: str) -> None:
+    """Phase 6 P3: classify a C_Message*Init result on an advertised mechanism.
+
+    The caller has already confirmed the mechanism advertises the message flag
+    (CKF_MESSAGE_*) and the function is present, so the op is *advertised*:
+
+    - ``CKR_OK`` -> return (pass; caller proceeds),
+    - a known clean reject code -> ``xfail`` (advertised but not operational),
+    - any other code -> caller's ``assert rv == CKR_OK`` fails (unexpected).
+
+    Previously only ``CKR_MECHANISM_INVALID`` was treated as xfail; a different
+    clean reject (e.g. CKR_FUNCTION_FAILED) wrongly hard-failed.
+    """
+    from pkcs11_check.raw.rv import ckr_name
+    from pkcs11_check.raw.types_std import (
+        CKR_DEVICE_ERROR,
+        CKR_FUNCTION_FAILED,
+        CKR_FUNCTION_NOT_SUPPORTED,
+        CKR_GENERAL_ERROR,
+        CKR_MECHANISM_INVALID,
+        CKR_MECHANISM_PARAM_INVALID,
+        CKR_OK,
+    )
+
+    if rv == int(CKR_OK):
+        return
+    reject = (
+        int(CKR_MECHANISM_INVALID),
+        int(CKR_MECHANISM_PARAM_INVALID),
+        int(CKR_FUNCTION_NOT_SUPPORTED),
+        int(CKR_FUNCTION_FAILED),
+        int(CKR_DEVICE_ERROR),
+        int(CKR_GENERAL_ERROR),
+    )
+    if rv in reject:
+        pytest.xfail(f"{label}: advertised message op rejected with {ckr_name(rv)}")
+
+
 class TestMessageEncrypt:
     """v3.0 C_MessageEncrypt* API tests."""
 
-    def test_message_encrypt_decrypt_aes_gcm(self, p11_raw_session: RawSession) -> None:
+    def test_message_encrypt_decrypt_aes_gcm(self, p11_module_session: RawSession) -> None:
         """Single-message AES-GCM encrypt/decrypt roundtrip via message-based API.
 
         Verifies the full CK_GCM_MESSAGE_PARAMS packing path through
@@ -38,7 +76,7 @@ class TestMessageEncrypt:
 
         Reference: PKCS#11 v3.1 Sec.5.4 (Message-based encryption functions).
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
 
@@ -52,7 +90,6 @@ class TestMessageEncrypt:
             CKF_MESSAGE_DECRYPT,
             CKF_MESSAGE_ENCRYPT,
             CKM_AES_GCM,
-            CKR_MECHANISM_INVALID,
             CKR_OK,
         )
 
@@ -75,8 +112,7 @@ class TestMessageEncrypt:
             init_iv = os.urandom(12)
             init_mech = mech_gcm_message(CKM_AES_GCM, init_iv, tag_bits=128)
             rv = rs.raw.C_MessageEncryptInit(rs.sh, init_mech.byref(), key)
-            if rv == CKR_MECHANISM_INVALID:
-                pytest.xfail("C_MessageEncryptInit: CKR_MECHANISM_INVALID for CKM_AES_GCM")
+            _xfail_if_message_init_rejected(rv, label="C_MessageEncryptInit (CKM_AES_GCM)")
             assert rv == CKR_OK, f"C_MessageEncryptInit failed: 0x{rv:08x}"
 
             # Build per-message CK_GCM_MESSAGE_PARAMS for C_EncryptMessage.
@@ -205,7 +241,7 @@ class TestMessageEncrypt:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_message_encrypt_aes_gcm_generated_iv_writeback(
-        self, p11_raw_session: RawSession
+        self, p11_module_session: RawSession
     ) -> None:
         """C_EncryptMessage with CKG_GENERATE writes the generated IV to pIv.
 
@@ -213,7 +249,7 @@ class TestMessageEncrypt:
         IV handling. Unlike legacy CKM_AES_GCM parameter mutation, ivGenerator
         support is part of CK_GCM_MESSAGE_PARAMS.
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
 
@@ -234,7 +270,6 @@ class TestMessageEncrypt:
             CKG_GENERATE,
             CKK_AES,
             CKM_AES_GCM,
-            CKR_MECHANISM_INVALID,
             CKR_OK,
         )
 
@@ -263,8 +298,7 @@ class TestMessageEncrypt:
         try:
             init_mech = mech_gcm_message(CKM_AES_GCM, b"\x00" * 12, tag_bits=128)
             rv = rs.raw.C_MessageEncryptInit(rs.sh, init_mech.byref(), key)
-            if rv == CKR_MECHANISM_INVALID:
-                pytest.xfail("C_MessageEncryptInit: CKR_MECHANISM_INVALID for CKM_AES_GCM")
+            _xfail_if_message_init_rejected(rv, label="C_MessageEncryptInit (CKM_AES_GCM)")
             assert rv == CKR_OK, f"C_MessageEncryptInit failed: 0x{rv:08x}"
 
             msg_mech = mech_gcm_message_generated_iv(
@@ -308,10 +342,10 @@ class TestMessageEncrypt:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_message_encrypt_aes_ccm_generated_nonce_writeback(
-        self, p11_raw_session: RawSession
+        self, p11_module_session: RawSession
     ) -> None:
         """C_EncryptMessage with CKG_GENERATE writes AES-CCM nonce and MAC outputs."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_CCM"):
             pytest.skip("CKM_AES_CCM not supported")
 
@@ -329,7 +363,6 @@ class TestMessageEncrypt:
             CKG_GENERATE,
             CKK_AES,
             CKM_AES_CCM,
-            CKR_MECHANISM_INVALID,
             CKR_OK,
         )
 
@@ -360,8 +393,7 @@ class TestMessageEncrypt:
         try:
             init_mech = mech_ccm(CKM_AES_CCM, b"\x00" * 12, data_len=len(plaintext), mac_len=16)
             rv = rs.raw.C_MessageEncryptInit(rs.sh, init_mech.byref(), key)
-            if rv == CKR_MECHANISM_INVALID:
-                pytest.xfail("C_MessageEncryptInit: CKR_MECHANISM_INVALID for CKM_AES_CCM")
+            _xfail_if_message_init_rejected(rv, label="C_MessageEncryptInit (CKM_AES_CCM)")
             assert rv == CKR_OK, f"C_MessageEncryptInit failed: 0x{rv:08x}"
 
             msg_mech = mech_ccm_message_generated_nonce(
@@ -404,7 +436,7 @@ class TestMessageEncrypt:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_message_encrypt_rejects_decrypt_only_key(self, p11_raw_session: RawSession) -> None:
+    def test_message_encrypt_rejects_decrypt_only_key(self, p11_module_session: RawSession) -> None:
         """C_MessageEncryptInit must reject a key with CKA_ENCRYPT=False.
 
         Phase 4.5 GAP-A3 closure: the v3.0 message-based API has separate
@@ -414,7 +446,7 @@ class TestMessageEncrypt:
         skips the check at C_MessageEncryptInit allows a decrypt-only
         key to be used for encryption — bypass of the usage attribute.
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
 
@@ -473,20 +505,25 @@ class TestMessageEncrypt:
                     "missing on the v3.0 message-based API path."
                 )
 
+            # CKR_OK was handled above (security finding -> fail). Here the op
+            # was rejected: the spec codes pass; any other clean reject is a
+            # noted deviation (xfail), not a hard failure (Phase 6 P3/N2).
+            from pkcs11_check.testcases.conftest import classify_negative_rv
+
             accepted_rejection = (
                 CKR_KEY_FUNCTION_NOT_PERMITTED,
                 CKR_KEY_HANDLE_INVALID,
                 CKR_KEY_TYPE_INCONSISTENT,
             )
-            assert rv in accepted_rejection, (
-                f"C_MessageEncryptInit on CKA_ENCRYPT=False key returned "
-                f"0x{rv:08x}; expected one of "
-                f"{[hex(c) for c in accepted_rejection]}"
+            classify_negative_rv(
+                rv,
+                accepted_rejection,
+                label="C_MessageEncryptInit on a CKA_ENCRYPT=False key",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_message_sign_aes_gmac(self, p11_raw_session: RawSession) -> None:
+    def test_message_sign_aes_gmac(self, p11_module_session: RawSession) -> None:
         """Message-based sign init/final roundtrip for CKM_AES_GMAC.
 
         Verifies that C_MessageSignInit accepts a CKM_AES_GMAC mechanism built
@@ -495,7 +532,7 @@ class TestMessageEncrypt:
 
         Reference: PKCS#11 v3.1 Sec.5.5 (Message-based signing functions).
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("AES_GMAC"):
             pytest.skip("CKM_AES_GMAC not supported")
 
@@ -506,7 +543,6 @@ class TestMessageEncrypt:
             CKA_TOKEN,
             CKF_MESSAGE_SIGN,
             CKM_AES_GMAC,
-            CKR_MECHANISM_INVALID,
             CKR_OK,
         )
 
@@ -527,8 +563,7 @@ class TestMessageEncrypt:
             iv = os.urandom(12)
             mech = mech_gcm_message(CKM_AES_GMAC, iv, tag_bits=128)
             rv = rs.raw.C_MessageSignInit(rs.sh, mech.byref(), key)
-            if rv == CKR_MECHANISM_INVALID:
-                pytest.xfail("C_MessageSignInit: CKR_MECHANISM_INVALID for CKM_AES_GMAC")
+            _xfail_if_message_init_rejected(rv, label="C_MessageSignInit (CKM_AES_GMAC)")
             assert rv == CKR_OK, f"C_MessageSignInit failed: 0x{rv:08x}"
 
             if hasattr(rs.raw, "C_MessageSignFinal"):

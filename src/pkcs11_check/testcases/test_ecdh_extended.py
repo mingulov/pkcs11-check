@@ -419,26 +419,38 @@ class TestXEdDSA:
                     data,
                     mech_param=xeddsa_param,
                 )
-            except AssertionError:
-                pytest.xfail("XEdDSA sign not operational")
-                raise  # unreachable
-            else:
-                assert len(sig) > 0
-                # Verify the signature
-                xeddsa_v = mech_bytes(CKM_XEDDSA, (0).to_bytes(4, "little"))
-                try:
-                    result = verify_single(
-                        rs.raw,
-                        rs.sh,
-                        pub,
-                        CKM_XEDDSA,
-                        data,
-                        sig,
-                        mech_param=xeddsa_v,
-                    )
-                    assert result is True
-                except AssertionError:
-                    pytest.xfail("XEdDSA verify not operational")
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc, _OPERATIONAL_ERROR_CKRS, "XEdDSA sign advertised but not operational"
+                )
+                raise
+            assert len(sig) > 0
+            # Verify the just-produced signature with the same key.
+            xeddsa_v = mech_bytes(CKM_XEDDSA, (0).to_bytes(4, "little"))
+            try:
+                result = verify_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_XEDDSA,
+                    data,
+                    sig,
+                    mech_param=xeddsa_v,
+                )
+            except AssertionError as exc:
+                # A clean reject of the verify op is advertised-but-not-operational
+                # -> xfail; a non-CKR error propagates.
+                xfail_if_known_ckr(
+                    exc, _OPERATIONAL_ERROR_CKRS, "XEdDSA verify advertised but not operational"
+                )
+                raise
+            # Phase 6 P2: the module's own signature failing to verify with its
+            # own key is a self-contradiction (crypto-correctness break) -> fail,
+            # never swallowed as xfail.
+            assert result is True, (
+                "XEdDSA self-roundtrip: the module's own signature did not verify "
+                "with its own public key"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, pub)

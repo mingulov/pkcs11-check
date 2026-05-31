@@ -241,11 +241,9 @@ _DET_ECDSA_VECTORS = _load_ecdsa_siggen_vectors(det=True)
 @pytest.mark.parametrize(
     "vec_id,vec", _ECDSA_SIGVER_VECTORS, ids=[v[0] for v in _ECDSA_SIGVER_VECTORS]
 )
-def test_acvp_ecdsa_sigver(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_acvp_ecdsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """ECDSA signature verification from NIST ACVP FIPS 186-5 vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     mech_int: CKM = cast(CKM, vec["mech_int"])
     mech_name: str = vec["mech_name"]
     if not rs.has_mechanism(mech_name):
@@ -283,9 +281,9 @@ class TestEcdsaKeyGen:
     @pytest.mark.parametrize(
         "vec_id,vec", _ECDSA_KEYGEN_VECTORS, ids=[v[0] for v in _ECDSA_KEYGEN_VECTORS]
     )
-    def test_ecdsa_keygen(self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    def test_ecdsa_keygen(self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         """Test ECDSA keypair generation and roundtrip sign/verify."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("EC_KEY_PAIR_GEN not supported by module")
         skip_duplicate_pkcs11_input(vec, "ECDSA KeyGen")
@@ -315,9 +313,9 @@ class TestEcdsaSigGen:
     @pytest.mark.parametrize(
         "vec_id,vec", _ECDSA_SIGGEN_VECTORS, ids=[v[0] for v in _ECDSA_SIGGEN_VECTORS]
     )
-    def test_ecdsa_siggen(self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    def test_ecdsa_siggen(self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         """Test ECDSA signature generation and roundtrip verification."""
-        rs = p11_raw_session
+        rs = p11_module_session
         mech_name: str = vec["mech_name"]
         mech_int: CKM = cast(CKM, vec["mech_int"])
         if not rs.has_mechanism(mech_name):
@@ -348,9 +346,11 @@ class TestDetEcdsa:
     @pytest.mark.parametrize(
         "vec_id,vec", _DET_ECDSA_VECTORS, ids=[v[0] for v in _DET_ECDSA_VECTORS]
     )
-    def test_det_ecdsa_siggen(self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    def test_det_ecdsa_siggen(
+        self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]
+    ) -> None:
         """Test deterministic ECDSA signature generation."""
-        rs = p11_raw_session
+        rs = p11_module_session
         mech_name: str = vec["mech_name"]
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} not supported by module")

@@ -2,6 +2,13 @@
 
 Generates Python code strings that set up a PKCS#11 session in a subprocess.
 Used by test files that need crash-safe isolation via subprocess.run().
+
+PIN handling: the user PIN is NEVER interpolated into the generated script
+source (that would expose it in the child process argv via ``ps``/``/proc`` and
+in any traceback). Instead the PIN is passed to the child through the
+``_P11CHECK_PIN`` environment variable and read inside the child via
+``os.environ``. Callers must run the script through :func:`run_with_coverage`
+with the ``pin`` argument so the env var is injected.
 """
 
 from __future__ import annotations
@@ -14,15 +21,47 @@ import tempfile
 from collections import Counter
 from typing import Any
 
+# Environment variable carrying the user PIN into the child subprocess. The PIN
+# is passed here (not interpolated into the script) so it never appears in the
+# child argv or in any generated source string. Mirrors the redaction handling
+# already applied to PIN-bearing env keys in ``core/file_runner.py``.
+_P11CHECK_PIN_ENV = "_P11CHECK_PIN"
+
 _subprocess_call_counts: Counter[str] = Counter()
 _subprocess_mechanism_counts: Counter[str] = Counter()
 
 
-def run_with_coverage(script: str, timeout: int = 15) -> tuple[int, str, str]:
-    """Run subprocess script with coverage capture."""
+def pin_from_config(p11_config: Any) -> str | None:
+    """Return the configured user PIN as a plain ``str`` (or None).
+
+    Centralises the ``SecretStr`` unwrap so call sites can pass the PIN to
+    :func:`run_with_coverage` without sprinkling ``get_secret_value()`` (and
+    the accompanying leak surface) across every test. The returned value is
+    only ever forwarded into the child env by the runner, never embedded in a
+    script string.
+    """
+    pin = getattr(p11_config, "pin", None)
+    if pin is None:
+        return None
+    value: str = pin.get_secret_value()
+    return value
+
+
+def run_with_coverage(
+    script: str, timeout: int = 15, *, pin: str | None = None
+) -> tuple[int, str, str]:
+    """Run subprocess script with coverage capture.
+
+    When ``pin`` is provided it is injected into the child environment under
+    ``_P11CHECK_PIN`` rather than embedded in the script text, so the PIN never
+    appears in the child argv or in the generated source. The preamble emitted
+    by :func:`subprocess_session_preamble` reads it from that env var.
+    """
     cov_fd, cov_path = tempfile.mkstemp(suffix=".json", prefix="p11cov_")
     os.close(cov_fd)
     env = {**os.environ, "_P11CHECK_SUBPROCESS_COVERAGE": cov_path}
+    if pin is not None:
+        env[_P11CHECK_PIN_ENV] = pin
 
     result = subprocess.run(
         [sys.executable, "-c", script],
@@ -75,18 +114,29 @@ def subprocess_session_preamble(
 
     Call ``cleanup()`` to close the session and finalize the module.
 
+    The PIN is NOT interpolated into the returned source. When ``pin`` is not
+    ``None`` the script logs in by reading the PIN from the ``_P11CHECK_PIN``
+    environment variable; the caller must supply that PIN via
+    :func:`run_with_coverage`'s ``pin`` argument. String inputs
+    (``module_path``, ``slot_label``) are encoded with ``json.dumps`` so labels
+    containing quotes/backslashes/newlines cannot break or inject into the
+    generated source.
+
     Args:
         module_path: Path to the PKCS#11 .so module.
         slot_id: Explicit slot ID. If None, uses first available slot.
-        pin: User PIN for login. If None, skips login.
+        pin: User PIN for login. If None, skips login. The value itself is NOT
+            embedded in the script -- only its presence selects the login path.
         extra_imports: Additional import lines to include in the script.
         slot_label: If set, filter slots by token label substring.
     """
     if slot_id is not None:
         slot_discovery = f"slot_id = {slot_id}"
     elif slot_label is not None:
+        # json.dumps produces a safe, escaped Python string literal -- a label
+        # containing quotes/backslashes/newlines cannot break or inject code.
         slot_discovery = (
-            f'slots = get_slot_ids(raw, label="{slot_label}")\n'
+            f"slots = get_slot_ids(raw, label={json.dumps(slot_label)})\n"
             f"if not slots:\n"
             f"    slots = get_slot_ids(raw)\n"
             f"slot_id = slots[0]"
@@ -96,7 +146,13 @@ def subprocess_session_preamble(
 
     login_line = ""
     if pin is not None:
-        login_line = f'login_user(raw, sh, CKU_USER, b"{pin}")\n'
+        # Read the PIN from the environment at runtime; never embed it in source.
+        login_line = (
+            f"import os as _os\n"
+            f"_pin = _os.environ.get({json.dumps(_P11CHECK_PIN_ENV)})\n"
+            f"if _pin is not None:\n"
+            f"    login_user(raw, sh, CKU_USER, _pin.encode())\n"
+        )
 
     extra_block = ""
     if extra_imports:
@@ -113,7 +169,7 @@ def subprocess_session_preamble(
         f")\n"
         f"{extra_block}"
         f"\n"
-        f'raw = RawPKCS11.from_lib("{module_path}")\n'
+        f"raw = RawPKCS11.from_lib({json.dumps(module_path)})\n"
         f"rv = raw.C_Initialize(None)\n"
         f"assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), "
         f'f"C_Initialize: 0x{{rv:08x}}"\n'

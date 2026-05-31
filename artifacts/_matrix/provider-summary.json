@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-05-25T06:19:14Z",
-  "generated_from": "current artifacts/results.json and artifacts/qryptotoken/build-status.json",
+  "generated_at": "2026-05-27T00:00:00Z",
+  "generated_from": "current artifacts/<target>/quality.json summaries (regenerated 2026-05-27)",
   "records": [
     {
       "artifact": "artifacts/softhsm2/results.json",
@@ -9,32 +9,15 @@
       "summary": {
         "crashed": 0,
         "error": 0,
-        "failed": 2609,
-        "passed": 60181,
-        "skipped": 19316,
+        "failed": 85,
+        "passed": 44878,
+        "skipped": 32267,
         "timeout": 0,
-        "total": 82147,
-        "xfailed": 41,
+        "total": 82105,
+        "xfailed": 4875,
         "xpassed": 0
       },
       "target": "softhsm2"
-    },
-    {
-      "artifact": "artifacts/softhsm2-generated-iv/results.json",
-      "source": "SoftHSM2 2.7.0 + local generated-IV patch",
-      "status": "full",
-      "summary": {
-        "crashed": 0,
-        "error": 0,
-        "failed": 2607,
-        "passed": 60185,
-        "skipped": 19314,
-        "timeout": 0,
-        "total": 82147,
-        "xfailed": 41,
-        "xpassed": 0
-      },
-      "target": "softhsm2-generated-iv"
     },
     {
       "artifact": "artifacts/softhsm2-main/results.json",
@@ -43,12 +26,12 @@
       "summary": {
         "crashed": 0,
         "error": 0,
-        "failed": 2702,
-        "passed": 61538,
-        "skipped": 18645,
+        "failed": 97,
+        "passed": 46301,
+        "skipped": 31526,
         "timeout": 0,
-        "total": 82926,
-        "xfailed": 41,
+        "total": 82884,
+        "xfailed": 4960,
         "xpassed": 0
       },
       "target": "softhsm2-main"
@@ -60,12 +43,12 @@
       "summary": {
         "crashed": 0,
         "error": 0,
-        "failed": 2853,
-        "passed": 67487,
-        "skipped": 33378,
+        "failed": 115,
+        "passed": 51645,
+        "skipped": 44756,
         "timeout": 0,
-        "total": 103789,
-        "xfailed": 71,
+        "total": 108611,
+        "xfailed": 12095,
         "xpassed": 0
       },
       "target": "kryoptic"
@@ -77,12 +60,12 @@
       "summary": {
         "crashed": 0,
         "error": 0,
-        "failed": 2839,
-        "passed": 67503,
-        "skipped": 33376,
+        "failed": 106,
+        "passed": 51660,
+        "skipped": 44755,
         "timeout": 0,
-        "total": 103789,
-        "xfailed": 71,
+        "total": 108611,
+        "xfailed": 12090,
         "xpassed": 0
       },
       "target": "kryoptic-main"
@@ -94,46 +77,46 @@
       "summary": {
         "crashed": 12,
         "error": 0,
-        "failed": 4733,
-        "passed": 53404,
-        "skipped": 29490,
+        "failed": 70,
+        "passed": 37071,
+        "skipped": 44558,
         "timeout": 0,
-        "total": 87712,
-        "xfailed": 73,
+        "total": 92534,
+        "xfailed": 10823,
         "xpassed": 0
       },
       "target": "kryoptic-fips"
     },
     {
       "artifact": "artifacts/nss/results.json",
-      "source": "Fedora NSS softoken packages",
+      "source": "Fedora NSS softoken package",
       "status": "full",
       "summary": {
         "crashed": 3,
         "error": 0,
-        "failed": 2111,
-        "passed": 48928,
-        "skipped": 34372,
+        "failed": 151,
+        "passed": 38271,
+        "skipped": 53184,
         "timeout": 0,
-        "total": 85515,
-        "xfailed": 101,
+        "total": 92972,
+        "xfailed": 1363,
         "xpassed": 0
       },
       "target": "nss"
     },
     {
       "artifact": "artifacts/nss-pqc/results.json",
-      "source": "NSS/NSPR source tips",
+      "source": "NSS/NSPR RTM tags (identical to nss-main; confirm/rerun)",
       "status": "full",
       "summary": {
         "crashed": 4,
         "error": 0,
-        "failed": 2019,
-        "passed": 47548,
-        "skipped": 35147,
+        "failed": 119,
+        "passed": 36916,
+        "skipped": 53957,
         "timeout": 0,
-        "total": 84819,
-        "xfailed": 101,
+        "total": 92276,
+        "xfailed": 1280,
         "xpassed": 0
       },
       "target": "nss-pqc"
@@ -145,12 +128,12 @@
       "summary": {
         "crashed": 4,
         "error": 0,
-        "failed": 2018,
-        "passed": 47549,
-        "skipped": 35147,
+        "failed": 119,
+        "passed": 36916,
+        "skipped": 53957,
         "timeout": 0,
-        "total": 84819,
-        "xfailed": 101,
+        "total": 92276,
+        "xfailed": 1280,
         "xpassed": 0
       },
       "target": "nss-main"
@@ -162,12 +145,12 @@
       "summary": {
         "crashed": 0,
         "error": 0,
-        "failed": 2593,
-        "passed": 78656,
-        "skipped": 8593,
+        "failed": 270,
+        "passed": 63262,
+        "skipped": 32922,
         "timeout": 0,
-        "total": 89899,
-        "xfailed": 57,
+        "total": 97356,
+        "xfailed": 902,
         "xpassed": 0
       },
       "target": "opencryptoki"
@@ -179,49 +162,32 @@
       "summary": {
         "crashed": 0,
         "error": 0,
-        "failed": 2589,
-        "passed": 78657,
-        "skipped": 8595,
+        "failed": 271,
+        "passed": 63261,
+        "skipped": 32922,
         "timeout": 0,
-        "total": 89899,
-        "xfailed": 58,
+        "total": 97356,
+        "xfailed": 902,
         "xpassed": 0
       },
       "target": "opencryptoki-master"
     },
     {
-      "artifact": "artifacts/tpm2-source/results.json",
-      "source": "upstream tpm2-pkcs11 1.10.0",
+      "artifact": "artifacts/tpm2/results.json",
+      "source": "source-built tpm2-pkcs11 1.10.0",
       "status": "full",
       "summary": {
         "crashed": 0,
         "error": 0,
-        "failed": 6825,
-        "passed": 9847,
-        "skipped": 64696,
+        "failed": 213,
+        "passed": 8306,
+        "skipped": 68534,
         "timeout": 0,
-        "total": 81400,
-        "xfailed": 32,
+        "total": 81357,
+        "xfailed": 4304,
         "xpassed": 0
       },
-      "target": "tpm2-source"
-    },
-    {
-      "artifact": "artifacts/tpm2-fedora-package-20260525/results.json",
-      "source": "Fedora tpm2-pkcs11 1.9.1 package",
-      "status": "archived full",
-      "summary": {
-        "crashed": 0,
-        "error": 851,
-        "failed": 5067,
-        "passed": 8433,
-        "skipped": 49727,
-        "timeout": 0,
-        "total": 64084,
-        "xfailed": 6,
-        "xpassed": 0
-      },
-      "target": "tpm2-fedora-package-20260525"
+      "target": "tpm2"
     },
     {
       "artifact": "artifacts/pkcs11-mock/results.json",
@@ -230,282 +196,32 @@
       "summary": {
         "crashed": 0,
         "error": 0,
-        "failed": 3546,
-        "passed": 2560,
-        "skipped": 26517,
+        "failed": 1353,
+        "passed": 1320,
+        "skipped": 28866,
         "timeout": 0,
-        "total": 32633,
-        "xfailed": 10,
+        "total": 32590,
+        "xfailed": 1051,
         "xpassed": 0
       },
       "target": "pkcs11-mock"
     },
     {
-      "components": [
-        {
-          "artifact": "artifacts/_focused/bouncyhsm-ccm/results.json",
-          "name": "ccm",
-          "summary": {
-            "crashed": 0,
-            "error": 0,
-            "failed": 7370,
-            "passed": 1028,
-            "skipped": 0,
-            "timeout": 0,
-            "total": 8398,
-            "xfailed": 0,
-            "xpassed": 0
-          }
-        },
-        {
-          "artifact": "artifacts/_focused/bouncyhsm-cfb1/results.json",
-          "name": "cfb1",
-          "summary": {
-            "crashed": 0,
-            "error": 0,
-            "failed": 50,
-            "passed": 2088,
-            "skipped": 0,
-            "timeout": 0,
-            "total": 2138,
-            "xfailed": 0,
-            "xpassed": 0
-          }
-        },
-        {
-          "artifact": "artifacts/bouncyhsm-cfb128-nonmultiblock/results.json",
-          "name": "cfb128_nonmultiblock",
-          "summary": {
-            "crashed": 0,
-            "error": 0,
-            "failed": 0,
-            "passed": 2138,
-            "skipped": 0,
-            "timeout": 0,
-            "total": 2138,
-            "xfailed": 0,
-            "xpassed": 0
-          }
-        },
-        {
-          "artifact": "artifacts/bouncyhsm-cfb128-multiblock/results.json",
-          "name": "cfb128_multiblock",
-          "summary": {
-            "crashed": 0,
-            "error": 0,
-            "failed": 6,
-            "passed": 0,
-            "skipped": 0,
-            "timeout": 0,
-            "total": 6,
-            "xfailed": 0,
-            "xpassed": 0
-          }
-        },
-        {
-          "artifact": "artifacts/bouncyhsm-acvp-aes-rest/results.json",
-          "name": "acvp_aes_rest",
-          "summary": {
-            "crashed": 1,
-            "error": 0,
-            "failed": 10,
-            "passed": 4357,
-            "skipped": 7320,
-            "timeout": 0,
-            "total": 11718,
-            "xfailed": 30,
-            "xpassed": 0
-          }
-        },
-        {
-          "artifact": "artifacts/bouncyhsm-acvp-nonaes/results.json",
-          "name": "acvp_nonaes",
-          "summary": {
-            "crashed": 0,
-            "error": 0,
-            "failed": 1931,
-            "passed": 3042,
-            "skipped": 306,
-            "timeout": 0,
-            "total": 5309,
-            "xfailed": 30,
-            "xpassed": 0
-          }
-        },
-        {
-          "artifact": "artifacts/bouncyhsm-wycheproof-core/results.json",
-          "name": "wycheproof_core",
-          "summary": {
-            "crashed": 0,
-            "error": 0,
-            "failed": 748,
-            "passed": 19196,
-            "skipped": 528,
-            "timeout": 0,
-            "total": 20472,
-            "xfailed": 0,
-            "xpassed": 0
-          }
-        },
-        {
-          "artifact": "artifacts/bouncyhsm-security/results.json",
-          "name": "security",
-          "summary": {
-            "crashed": 3,
-            "error": 0,
-            "failed": 35,
-            "passed": 169,
-            "skipped": 57,
-            "timeout": 0,
-            "total": 267,
-            "xfailed": 3,
-            "xpassed": 0
-          }
-        },
-        {
-          "artifact": "artifacts/bouncyhsm-general/results.json",
-          "name": "general_no_vectors_security_stress_fuzz_slow",
-          "summary": {
-            "crashed": 0,
-            "error": 0,
-            "failed": 208,
-            "passed": 2908,
-            "skipped": 2440,
-            "timeout": 0,
-            "total": 5580,
-            "xfailed": 24,
-            "xpassed": 0
-          }
-        },
-        {
-          "artifact": "artifacts/bouncyhsm-cctv-stress-fuzz-slow/results.json",
-          "name": "cctv_stress_fuzz_slow",
-          "summary": {
-            "crashed": 0,
-            "error": 0,
-            "failed": 5,
-            "passed": 2413,
-            "skipped": 6,
-            "timeout": 0,
-            "total": 2425,
-            "xfailed": 1,
-            "xpassed": 0
-          }
-        },
-        {
-          "artifact": "artifacts/bouncyhsm-wycheproof-ecdh/results.json",
-          "name": "wycheproof_ecdh",
-          "summary": {
-            "crashed": 0,
-            "error": 0,
-            "failed": 11945,
-            "passed": 1183,
-            "skipped": 0,
-            "timeout": 0,
-            "total": 13128,
-            "xfailed": 0,
-            "xpassed": 0
-          }
-        },
-        {
-          "artifact": "artifacts/bouncyhsm-wycheproof-ecdsa-brainpool/results.json",
-          "name": "wycheproof_ecdsa_brainpool",
-          "summary": {
-            "crashed": 0,
-            "error": 0,
-            "failed": 0,
-            "passed": 6398,
-            "skipped": 0,
-            "timeout": 0,
-            "total": 6398,
-            "xfailed": 0,
-            "xpassed": 0
-          }
-        },
-        {
-          "artifact": "artifacts/bouncyhsm-wycheproof-ecdsa-secp160-192/results.json",
-          "name": "wycheproof_ecdsa_secp160_192",
-          "summary": {
-            "crashed": 0,
-            "error": 0,
-            "failed": 0,
-            "passed": 3390,
-            "skipped": 0,
-            "timeout": 0,
-            "total": 3390,
-            "xfailed": 0,
-            "xpassed": 0
-          }
-        },
-        {
-          "artifact": "artifacts/bouncyhsm-wycheproof-ecdsa-secp224/results.json",
-          "name": "wycheproof_ecdsa_secp224",
-          "summary": {
-            "crashed": 0,
-            "error": 0,
-            "failed": 0,
-            "passed": 5810,
-            "skipped": 0,
-            "timeout": 0,
-            "total": 5810,
-            "xfailed": 0,
-            "xpassed": 0
-          }
-        },
-        {
-          "artifact": "artifacts/bouncyhsm-wycheproof-ecdsa-secp256/results.json",
-          "name": "wycheproof_ecdsa_secp256",
-          "summary": {
-            "crashed": 0,
-            "error": 0,
-            "failed": 0,
-            "passed": 7569,
-            "skipped": 0,
-            "timeout": 0,
-            "total": 7569,
-            "xfailed": 0,
-            "xpassed": 0
-          }
-        },
-        {
-          "artifact": "artifacts/bouncyhsm-wycheproof-ecdsa-secp384-521/results.json",
-          "name": "wycheproof_ecdsa_secp384_521",
-          "summary": {
-            "crashed": 0,
-            "error": 0,
-            "failed": 0,
-            "passed": 5748,
-            "skipped": 0,
-            "timeout": 0,
-            "total": 5748,
-            "xfailed": 0,
-            "xpassed": 0
-          }
-        }
-      ],
-      "notes": "Segmented ACVP plus bounded core Wycheproof, Wycheproof ECDH, complete split Wycheproof ECDSA, security, general, and CCTV/stress/fuzz/slow evidence. AES CCM/CFB/OFB issues remain; CFB8 has one confirmed segfault plus pytest-timeout failures. Non-AES ACVP is complete with ECDH, ML-DSA, EdDSA, hash, RSA-PSS/SHA3, and SLH-DSA failure clusters; ML-KEM, RSA keygen, HMAC, and ECDSA are clean or mostly clean. Core Wycheproof completed without crashes/timeouts; failures cluster in AES, HMAC, RSA-OAEP/PSS/signature, and ML-DSA signing/verification. Standalone Wycheproof ECDH completed without crashes/timeouts and is a broad failure cluster dominated by mechanism-parameter rejection. Wycheproof ECDSA split shards completed with 28,915/28,915 passed and no skips/crashes/timeouts across brainpool, secp160/secp192, secp224, secp256, and secp384/secp521. Security segment found FFI arithmetic/length crashes, NULL mechanism crash, weak RSA exponent keygen segfaults, key-attribute boundary failures, padding/timing oracle findings, and clean KWP/RSA error-path/null-pointer/nonce/handle-reuse/Tookan slices. General slice completed without crashes/timeouts; clean areas include interface/init/interop/object/X.509 import/RSA extended and wrapping, while failures cluster in mechanism sign/digest/attribute/multipart/wrap, hash ML-DSA, session state, access levels, AES/Salsa/ChaCha, and BLAKE2. CCTV/stress/fuzz/slow slice completed without crashes/timeouts; CCTV and X.509 limbo stress were clean, while five fuzz failures returned CKR_OPERATION_ACTIVE in repeated digest/HMAC single-part operations.",
+      "artifact": "artifacts/bouncyhsm/results.json",
       "source": "BouncyHSM v2.1.0",
-      "status": "segmented ACVP + Wycheproof core/ECDH/ECDSA + security + general + CCTV/stress/fuzz/slow; not monolithic full-suite statistics",
+      "status": "full",
       "summary": {
-        "crashed": 4,
+        "crashed": 5,
         "error": 0,
-        "failed": 22308,
-        "passed": 67437,
-        "skipped": 10657,
+        "failed": 7692,
+        "passed": 55485,
+        "skipped": 36233,
         "timeout": 0,
-        "total": 100494,
-        "xfailed": 88,
+        "total": 108118,
+        "xfailed": 8703,
         "xpassed": 0
       },
-      "target": "bouncyhsm-segmented"
-    },
-    {
-      "artifact": "artifacts/qryptotoken/build-status.json",
-      "detail": "qryptotoken build failed with exit code 101",
-      "revision": "24fae88227d6d04331fb599327db83c24d5ae955",
-      "source": "qryptotoken v0.4.1",
-      "status": "build_failed",
-      "target": "qryptotoken"
+      "target": "bouncyhsm"
     }
   ]
 }

@@ -123,5 +123,28 @@ def test_invalid_ecdh_without_shared_secret_success_is_reported(
         if vec_id == "ecdh_secp256r1_ecpoint_test.json:tc332-invalid"
     )
 
-    with pytest.raises(pytest.fail.Exception, match="Invalid ECDH vector"):
+    with pytest.raises(pytest.fail.Exception, match="invalid-point accepted"):
         ecdh.test_ecdh(_EcdhSession(), "ecdh_secp256r1_ecpoint_test.json:tc332-invalid", vec)
+
+
+def test_invalid_ecdh_with_shared_secret_success_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Any successful derive on an invalid vector fails, regardless of shared_expected.
+
+    Phase-2 V1: the previous gate only flagged invalid vectors whose expected
+    shared secret was empty; an invalid vector that carries a non-empty
+    expected shared secret was accepted silently. This vector has a non-empty
+    ``shared`` value, so a successful derive must now fail.
+    """
+    vec_id = "ecdh_secp256r1_pem_test.json:tc352-invalid"
+    vec = next(vec for candidate_id, vec in ecdh._ALL_ECDH_VECTORS if candidate_id == vec_id)
+    assert vec["shared"], "fixture vector must carry a non-empty expected shared secret"
+
+    monkeypatch.setattr(ecdh, "import_ec_private_key", _handle)
+    monkeypatch.setattr(ecdh, "derive_key", _handle)
+    monkeypatch.setattr(ecdh, "read_attributes", _read_zeros)
+    monkeypatch.setattr(ecdh, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(pytest.fail.Exception, match="invalid-point accepted"):
+        ecdh.test_ecdh(_EcdhSession(), vec_id, vec)

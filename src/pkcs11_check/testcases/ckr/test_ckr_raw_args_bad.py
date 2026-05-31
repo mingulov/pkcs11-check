@@ -16,7 +16,10 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.testcases._subprocess_preamble import subprocess_session_preamble
+from pkcs11_check.testcases._subprocess_preamble import (
+    _P11CHECK_PIN_ENV,
+    subprocess_session_preamble,
+)
 from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
@@ -70,12 +73,16 @@ def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
         extra_imports=_EXTRA_IMPORTS,
     )
     script = preamble + textwrap.dedent(code) + "\ncleanup()\n"
+    # Pass the PIN via the child env (never embed it in the script source).
+    env = os.environ.copy()
+    if pin is not None:
+        env[_P11CHECK_PIN_ENV] = pin
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
         timeout=15,
-        env=os.environ.copy(),
+        env=env,
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 

@@ -58,6 +58,19 @@ provider package versions where the finding was first recorded.
   the process. The local `softhsm2-generated-iv` Docker target avoids this path
   with a simulator patch that returns `CKR_MECHANISM_PARAM_INVALID` when
   `pIv == NULL_PTR`; that patch is not stock SoftHSM2 evidence.
+- **GCM null-AAD-pointer-with-nonzero-length SIGSEGV (NEW 2026-05-27)**:
+  `test_parameter_validation.py::TestGcmAadNullWithLength::test_gcm_null_aad_pointer_nonzero_length`
+  calls `C_EncryptInit(CKM_AES_GCM, pAAD=NULL, ulAADLen=16)` (NULL pointer with a
+  non-zero AAD length) in a crash-isolated child. Stock SoftHSM2 2.7.0 (local
+  `/usr/lib/softhsm/libsofthsm2.so`, 2026-05-27) terminates with **signal 11**;
+  a NULL AAD pointer with non-zero length must yield a CKR (e.g.
+  `CKR_ARGUMENTS_BAD`/`CKR_MECHANISM_PARAM_INVALID`), not segfault. **This finding
+  was previously masked:** the probe assigned a raw ctypes array to the
+  `CK_AES_GCM_PARAMS.pIv` pointer field, raising in the subprocess before
+  `C_EncryptInit`, so it reported a uniform setup failure on every provider
+  instead of the real crash. Fixed 2026-05-27 (cast `pIv` correctly; regression
+  test `tests/test_parameter_validation_gcm_probe.py`). A full provider rerun is
+  pending to record which other modules crash here.
 - **Malformed huge data-length child exits (NEW 2026-05-26)**: the same focused
   `test_ffi_length_boundary.py` run reports positive child exit code 5, with no
   stdout/stderr, for `C_Sign(HMAC_SHA256)` and `C_Digest(SHA256)` when
@@ -70,6 +83,12 @@ provider package versions where the finding was first recorded.
 - `C_SeedRandom` succeeds silently (no-op, RNG is OpenSSL-based)
 - v2.40 only — no `C_GetInterface`, no v3.0+ mechanisms
 - Session objects visible across concurrent sessions (spec says they shouldn't be)
+
+### Threading & concurrency — NOT a SoftHSM2 bug (harness methodology)
+- **Concurrent `C_*` after `C_Initialize(NULL)` segfaults — but that is undefined behavior, not a module defect.** Per PKCS#11 v3.2 §5.4, passing `NULL` `pInitArgs` is the application *promising single-threaded use*; the library "need not perform any synchronization." pkcs11-check's shared-session fixtures initialize with `C_Initialize(None)`, so running `ThreadPoolExecutor` concurrency on the shared session (as the old `test_threading.py` did) is the *harness* breaking its own contract. Under that misuse SoftHSM2 crashes ~always: **32 threads × 200 `C_GenerateKey` = 6/6 (100%) SIGSEGV; 16 × 100 ≈ 88%; 4 threads ≈ 7% flaky** — the source of intermittent `crashed=1` for `test_threading.py` in the matrix.
+- **Initialized correctly, SoftHSM2 is thread-safe.** The *same* concurrent workloads under `C_Initialize(CKF_OS_LOCKING_OK)` are rock-solid: **0/6 crashes at 32 × 200, 0/8 at 16 × 100.** So the finding is a harness bug (wrong init mode for the threading test), not a SoftHSM2 conformance violation.
+- **Secondary effect:** a crash mid-`C_GenerateKey` corrupts the file-backed token (`CKR_TOKEN_NOT_RECOGNIZED` for every later test) — a poison-the-shared-token cascade. This is why the threading test isolates its token (below).
+- **The misuse is documented here, not exercised as a test.** We do NOT add a test that deliberately mis-initializes (`C_Initialize(NULL)` + threads) to provoke the crash — provoking documented undefined behavior is not a conformance finding. The only threading test, `test_threading.py::TestConcurrentUnderOSLocking`, always initializes with `CKF_OS_LOCKING_OK` and then hammers concurrent keygen/digest/random in a child subprocess against a disposable throwaway token ([destructive-token-isolation.md](destructive-token-isolation.md), Tier 1). A crash or hang there *is* a genuine module thread-safety FAIL; `CKR_CANT_LOCK` skips (capability absent). SoftHSM2 passes.
 
 ---
 
@@ -112,6 +131,58 @@ provider package versions where the finding was first recorded.
 | ~2 | AES-XCBC-MAC | NSS returns CKR_KEY_TYPE_INCONSISTENT on verify despite CKA_VERIFY=True |
 | ~27 | Other | AEAD, key flags, mechanism fuzz, etc. — per-file analysis needed |
 
+### Slot architecture — digest/crypto coverage gap (not an NSS bug)
+
+NSS softoken (`libsoftokn3.so`) exposes **two** slots with split responsibilities,
+and the harness pins `PKCS11_CHECK_SLOT=1`, which silently omits the slot-0-only
+mechanisms (standalone hashes, some bulk ciphers):
+
+| slot index | slot_id | token / description | login | digest (SHA-1/224/256) | keys+certs |
+|---|---|---|---|---|---|
+| 0 | 1 | NSS Internal Cryptographic Services | none | **yes** (232 mechs) | session-only / imported |
+| 1 | 2 | NSS User Private Key and Certificate Services | required | **no** (179 mechs) | persistent token objects |
+
+Per the NSS PKCS#11 FAQ, slot 1 (Internal Crypto Services) "does not require login
+and supports public key operations and all bulk ciphers and hashes ... no token
+storage", while slot 2 (User Private Key and Certificate Services) "requires a
+login ... can store Private Keys and Certs as token objects". So standalone
+`C_Digest` (CKM_SHA*) is advertised only on slot index 0.
+
+**Effect:** `test_operation_termination.py::test_c_digest_terminates_after_each_call`
+(and any digest test) **skips** under the default slot-1 config because slot 1 does
+not advertise SHA digest mechanisms — not because NSS lacks them. Running the same
+test with `PKCS11_CHECK_SLOT=0` makes NSS digest **pass** (verified: RSA+ECDSA+digest
+all pass on slot 0). Slot 1 remains the right slot for persistent
+key/cert/token-object tests. Source:
+<https://nss-crypto.org/reference/security/nss/legacy/pkcs11/faq/index.html>.
+
+**Coverage:** each NSS target now has a dedicated slot-0 second pass —
+`test-nss-slot0`, `test-nss-pqc-slot0`, `test-nss-main-slot0` (same images with
+`PKCS11_CHECK_SLOT=0`, separate artifact dirs). `test_pool.py` runs `nss-slot0` /
+`nss-pqc-slot0` in the default set and `nss-main-slot0` under `--all`, so NSS's
+slot-0-only mechanisms (digest, hashes, bulk ciphers) are exercised alongside the
+slot-1 key/cert pass.
+
+### Multipart `C_EncryptFinal` does not terminate the operation (slot 0)
+
+Surfaced by the slot-0 pass + `test_operation_termination.py::test_c_encrypt_terminates_after_multipart`:
+after a multipart encrypt (`C_EncryptInit`+`C_EncryptUpdate`+`C_EncryptFinal`) that
+returns `CKR_OK`, NSS leaves the encryption operation **active** — the next
+`C_EncryptInit` returns `CKR_OPERATION_ACTIVE`. The spec says "a call to
+`C_EncryptFinal` always terminates the active encryption operation unless it
+returns `CKR_BUFFER_TOO_SMALL`". This affects **~15 symmetric mechanisms**
+(AES-CBC/CTR/CTS/ECB, DES/DES3, Camellia, CDMF, ChaCha20, RC2, RC4) on NSS
+3.120.1 / nss-pqc / nss-main; compliant modules (softhsm2, opencryptoki) pass all,
+kryoptic fails 1.
+
+This is the same Type-C lifecycle class as the `C_Verify` non-termination, on the
+encrypt path. On the **shared** module-scoped session the recovery
+(`_init_or_recover`) masked it to one collateral failure (`DES3_CBC`, see
+[provider-verify-operation-not-terminated.md](findings/provider-verify-operation-not-terminated.md));
+the **fresh-session** conformance test exposes the full scope. NSS does expose
+`C_SessionCancel` (it usually clears the stale op, which is why the shared-session
+cascade stays bounded), but `C_EncryptFinal` itself not terminating is the bug.
+
 ### Known crash findings
 - **AES-MAC-GENERAL sign flag probe segfault**: focused current-source runs for
   Fedora NSS, `nss-pqc` (`NSS_3_124_RTM`/`NSPR_4_39_RTM`), and `nss-main` all
@@ -120,12 +191,34 @@ provider package versions where the finding was first recorded.
   pkcs11-check calls `C_SignInit(CKM_AES_MAC_GENERAL, key=0)` because NSS
   advertises `CKF_SIGN`. The expected outcome is any suitable CKR rejecting the
   dummy key or mechanism parameters, not a segfault.
-- **HMAC-SHA256 with RSA private key segfault**: focused current-source runs for
-  `nss-pqc` and `nss-main` crash in
+- **MAC mechanism with RSA key segfault (root cause confirmed 2026-05-27)**: focused
+  current-source runs for `nss-pqc` and `nss-main` crash in
   `test_mech_negative.py::TestWrongKeyType::test_hmac_sha256_with_rsa_key_rejected`.
-  The test calls `C_SignInit(CKM_SHA256_HMAC, RSA private key)`. This is a valid
-  negative wrong-key-type probe; the provider should return a CKR such as a key
-  type/handle/mechanism error instead of crashing.
+  The test calls `C_SignInit(CKM_SHA256_HMAC, RSA private key)`; the provider should
+  return `CKR_KEY_TYPE_INCONSISTENT` (as `C_SignInit(CKM_ECDSA, RSA)` already does),
+  not crash.
+  **Upstream root cause (NSS softoken):** `NSC_SignInit`/`NSC_VerifyInit` do not
+  validate key type before dispatching to the MAC path (RSA/ECDSA sign paths do, at
+  `pkcs11c.c:3023,4059`, but the HMAC/AES-CMAC branches dispatch straight into
+  `sftk_doMACInit`). `sftk_MAC_Create` allocates `sftk_MACCtx` with `PORT_New`
+  (uninitialized) in `sftkhmac.c:228`; MAC init fails for an RSA key (no `CKA_VALUE`),
+  and the error path `sftk_MAC_DestroyContext` dereferences the uninitialized
+  `destroy_func` → jumps to a garbage address. **Heap-state dependent:** if the
+  allocation lands on zero-filled memory, `destroy_func` is NULL and it returns
+  `CKR_KEY_SIZE_RANGE` (0x62, still wrong) instead of crashing — which is why the
+  Fedora `nss` package variant does not always crash on this file.
+  **Also affects:** `C_VerifyInit(CKM_SHA256_HMAC, RSA pub)` and
+  `C_SignInit(CKM_AES_CMAC, RSA priv)` (same MAC dispatch). Suggested upstream fix:
+  (1) key-type validation in `NSC_SignInit`/`NSC_VerifyInit` before MAC dispatch;
+  (2) `PORT_ZNew(sftk_MACCtx)` instead of `PORT_New` in `sftkhmac.c:228`. An ~80-line
+  ctypes reproducer (heap-warm + `C_SignInit(0x251, RSA)`) reproduces reliably.
+  **Status:** reported upstream and acknowledged, but assessed as **not
+  security-important** — outside the NSS softoken threat model, since the wrong-key-type
+  MAC path is not reachable through Firefox (a malicious local PKCS#11 caller is out of
+  scope). Not prioritized upstream; retained here as a documented robustness finding.
+  pkcs11-check keeps the existing `C_SignInit(CKM_SHA256_HMAC, RSA)` probe as the
+  representative case; `C_VerifyInit` and `CKM_AES_CMAC` are the same `sftk_doMACInit`
+  dispatch family and are not separately tested (low value for a declined finding).
 
 ### Known quirks
 - **Read-only crypto services token**: NSS's default slot ("NSS Generic Crypto Services") is read-only. Cannot create objects, generate keys, or store tokens. Tests requiring RW access should skip.
@@ -256,6 +349,12 @@ unless noted.
 - **CKA_NEVER_EXTRACTABLE inconsistent**: When `CKA_EXTRACTABLE` is explicitly set to `True` at
   creation, `CKA_NEVER_EXTRACTABLE` must be `False` (Sec.4.9.4). NSS softoken behavior is
   inconsistent with this rule in combination with the default-extractable deviation above.
+  The *derived-attribute invariant* of Sec.4.9.4 — a key created `CKA_EXTRACTABLE=False` and never
+  modified must read back `CKA_NEVER_EXTRACTABLE=True`, and a key created `CKA_SENSITIVE=True` and
+  never modified must read back `CKA_ALWAYS_SENSITIVE=True` — is now enforced as a Type-D
+  self-contradiction in `test_attribute_invariants.py`: violating it on a suite-generated,
+  never-modified key is a `fail` (the module contradicts its own derived value), while an
+  unsupported/absent derived attribute remains an `xfail` (honest non-support).
 
 #### Missing/Unsupported Attributes (Phase 2)
 

@@ -59,6 +59,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_NO_EVENT,
     CKR_OBJECT_HANDLE_INVALID,
+    CKR_OK,
     CKR_OPERATION_ACTIVE,
     CKR_OPERATION_NOT_INITIALIZED,
     CKR_OPERATION_NOT_VALIDATED,
@@ -177,6 +178,10 @@ class CkrExpectation:
     allow_success: bool = False
     """True if permissive modules may accept the operation."""
 
+    kind: str = "policy"
+    """'crypto' (correctness) | 'policy' (attribute/permission) | 'lifecycle' (state) |
+    'metadata'."""
+
     testable: bool = True
     """False for conditions requiring NULL pointers or C-memory semantics."""
 
@@ -206,20 +211,31 @@ def assert_ckr(
     actual: int,
     strict: bool,
 ) -> None:
-    """Validate CKR matches spec (strict) or is in acceptable set (compat).
+    """Validate a negative-op CKR three ways (compat) or exactly (strict).
 
     actual is a raw CK_RV integer (e.g. from raw.C_EncryptInit()).
 
     - Strict mode: rv must match spec_ckr exactly. Deviation = test failure.
-    - Compat mode: rv must be in full_compat(compat_tuple). Deviation from
-      spec_ckr is logged as compliance note, not failure.
-    - Both modes: rv outside the acceptable set = test failure.
+    - Compat mode (the provider-general classifier):
+        * rv == CKR_OK            -> fail (accepted invalid; must reject),
+                                     unless allow_success is set -> pass.
+        * rv not in full_compat   -> fail (rejected with a code outside the
+                                     acceptable set).
+        * rv in spec_codes        -> pass (spec-preferred rejection).
+        * rv in full_compat but
+          not in spec_codes       -> xfail (clean but non-spec rejection;
+                                     a noted deviation to investigate later).
     """
     spec_codes = (
         expectation.spec_ckr if isinstance(expectation.spec_ckr, tuple) else (expectation.spec_ckr,)
     )
 
     if strict:
+        # A permissive op (allow_success) returning CKR_OK is a pass in both modes;
+        # CKR_OK is never in spec_codes, so this short-circuit is required for strict
+        # mode to agree with the compat branch (audit M-CLASS-3).
+        if actual == CKR_OK and expectation.allow_success:
+            return
         if actual not in spec_codes:
             pytest.fail(
                 f"{expectation.function}({expectation.condition}): "
@@ -227,22 +243,29 @@ def assert_ckr(
                 f"got {ckr_name(actual)} [{expectation.spec_ref}]"
             )
     else:
+        if actual == CKR_OK:
+            if expectation.allow_success:
+                return
+            pytest.fail(
+                f"{expectation.function}({expectation.condition}): accepted (CKR_OK) "
+                f"but must reject [{expectation.spec_ref}]"
+            )
         full = full_compat(expectation.compat_tuple)
         if actual not in full:
+            # List the FULL accepted set (base + universals), deduped while
+            # preserving order, so the message matches the gate actually used
+            # above -- not just compat_tuple (audit M-CLASS-4).
+            accepted = list(dict.fromkeys(ckr_name(c) for c in full))
             pytest.fail(
-                f"{expectation.function}({expectation.condition}): "
-                f"got {ckr_name(actual)}, not in acceptable set "
-                f"{[ckr_name(c) for c in expectation.compat_tuple]}"
+                f"{expectation.function}({expectation.condition}): got {ckr_name(actual)}, "
+                f"not in acceptable set {accepted} "
+                f"[{expectation.spec_ref}]"
             )
         if actual not in spec_codes:
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                f"{expectation.function}({expectation.condition}): "
-                f"spec says {[ckr_name(c) for c in spec_codes]}, "
-                f"got {ckr_name(actual)}",
-                ComplianceLevel.NOT_RECOMMENDED,
-                reference=expectation.spec_ref,
+            pytest.xfail(
+                f"{expectation.function}({expectation.condition}): rejected with "
+                f"{ckr_name(actual)}, spec prefers {[ckr_name(c) for c in spec_codes]} "
+                f"[{expectation.spec_ref}]"
             )
 
 
@@ -696,7 +719,10 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=_DECRYPT_DATA_ERRORS,
         spec_ref="PKCS#11 v3.1 Sec.5.9.2",
         mechanisms=["RSA_PKCS"],
-        allow_success=True,  # Kryoptic accepts wrong-length ciphertext (spec deviation)
+        kind="crypto",
+        # Type-A crypto-correctness: a wrong-length RSA ciphertext that decrypts
+        # is a break for any provider, so acceptance (CKR_OK) must fail -- no
+        # allow_success exemption (no per-provider demotion).
     ),
     # --- C_DecryptUpdate/Final errors ---
     "update_encrypted_data_len_range": CkrExpectation(
@@ -1160,6 +1186,9 @@ CKR_SIGN: dict[str, CkrExpectation] = {
             CKR_FUNCTION_FAILED,
         ),
         spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        kind="crypto",
+        # Type-A crypto-correctness: an AES key under an RSA signing mechanism is
+        # key-type confusion; acceptance must fail for any provider.
     ),
     "init_mechanism_param_invalid": CkrExpectation(
         function="C_SignInit",
@@ -1799,7 +1828,10 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
             CKR_FUNCTION_FAILED,
         ),
         spec_ref="PKCS#11 v3.1 Sec.5.11.1",
-        allow_success=True,  # SoftHSM2 accepts AES key with RSA verify mechanism
+        kind="crypto",
+        # Type-A crypto-correctness: initializing verify with an AES key under
+        # an RSA mechanism is key-type confusion; acceptance must fail for any
+        # provider (no allow_success exemption).
     ),
     "init_key_handle_invalid": CkrExpectation(
         function="C_VerifyInit",
@@ -1836,7 +1868,10 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(CKR_SIGNATURE_LEN_RANGE, CKR_SIGNATURE_INVALID, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.1 Sec.5.11.2",
         priority_note="Higher priority than CKR_SIGNATURE_INVALID",
-        allow_success=True,  # SoftHSM2 + Kryoptic accept wrong-length, then fail at verify
+        kind="crypto",
+        # Type-A crypto-correctness: a wrong-length RSA signature that verifies
+        # (CKR_OK) is a break for any provider; acceptance must fail (no
+        # allow_success exemption).
     ),
     "data_len_range": CkrExpectation(
         function="C_Verify",

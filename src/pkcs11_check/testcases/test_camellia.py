@@ -41,10 +41,9 @@ from pkcs11_check.raw.types_std import (
     CKM_CAMELLIA_KEY_GEN,
     CKM_CAMELLIA_MAC,
     CKM_CAMELLIA_MAC_GENERAL,
-    CKR_MECHANISM_INVALID,
     CKR_OK,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import CIPHER_OP_RUNTIME_REJECT_RVS, xfail_if_known_ckr
 
 pytestmark = pytest.mark.full
 
@@ -78,12 +77,13 @@ def _encrypt_or_xfail(
     *,
     mech_param: Any = None,
 ) -> bytes:
-    """Try encrypt_single; xfail if module returns CKR_MECHANISM_INVALID."""
+    """Try encrypt_single; xfail if the advertised mechanism is not operational."""
     try:
         return encrypt_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
-        if is_known_error(exc, {CKR_MECHANISM_INVALID}):
-            pytest.xfail(f"Mechanism advertised but rejected at use: {exc}")
+        xfail_if_known_ckr(
+            exc, CIPHER_OP_RUNTIME_REJECT_RVS, "Camellia mechanism advertised but not operational"
+        )
         raise
 
 
@@ -96,12 +96,13 @@ def _sign_or_xfail(
     *,
     mech_param: Any = None,
 ) -> bytes:
-    """Try sign_single; xfail if module returns CKR_MECHANISM_INVALID."""
+    """Try sign_single; xfail if the advertised mechanism is not operational."""
     try:
         return sign_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
-        if is_known_error(exc, {CKR_MECHANISM_INVALID}):
-            pytest.xfail(f"Mechanism advertised but rejected at use: {exc}")
+        xfail_if_known_ckr(
+            exc, CIPHER_OP_RUNTIME_REJECT_RVS, "Camellia MAC advertised but not operational"
+        )
         raise
 
 

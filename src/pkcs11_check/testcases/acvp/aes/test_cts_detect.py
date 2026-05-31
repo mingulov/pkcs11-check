@@ -20,14 +20,14 @@ pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 REQUIRED_MECHANISMS = ["AES_CTS"]
 
 
-def test_cts_variant_detected(p11_raw_session: Any) -> None:
+def test_cts_variant_detected(p11_module_session: Any) -> None:
     """Module advertises AES_CTS -- verify that a CS variant can be detected.
 
     If this fails, the module lists CKM_AES_CTS in its mechanism list but
     errors out when actually attempting CTS encryption.  This is a module bug:
     either fix CTS or stop advertising the mechanism.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     skip_unless_cts_encrypt_decrypt(rs)
     variant = get_detected_variant(rs)
     assert variant is not None, (

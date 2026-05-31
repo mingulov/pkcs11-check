@@ -55,19 +55,14 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import classify_negative_rv, xfail_if_known_ckr
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.state_machine]
 
-# Acceptable "not initialised" return codes.
-# Some modules return CKR_FUNCTION_FAILED rather than the specific code.
-_NOT_INIT_RVCS: frozenset[int] = frozenset(
-    {
-        CKR_OPERATION_NOT_INITIALIZED,
-        CKR_FUNCTION_FAILED,  # non-spec-compliant but widely seen
-        CKR_GENERAL_ERROR,
-    }
-)
+# Single-session operation-state guards (op-without-init, double-init) are
+# classified 3-way via classify_negative_rv: CKR_OK -> fail, the spec-preferred
+# code -> pass, any other clean reject (e.g. CKR_FUNCTION_FAILED, widely seen but
+# non-spec-compliant) -> xfail.
 
 # Strict subset for cross-session-state-confusion tests. CKR_FUNCTION_FAILED /
 # CKR_GENERAL_ERROR are EXPLICITLY NOT accepted here: a module that crashes or
@@ -82,15 +77,6 @@ _CROSS_SESSION_NOT_INIT_RVCS: frozenset[int] = frozenset(
         # keyed the operation table on the
         # wrong handle
     }
-)
-
-# Acceptable "already active" return codes.
-_ALREADY_ACTIVE_RVCS: frozenset[int] = frozenset(
-    [
-        CKR_OPERATION_ACTIVE,
-        CKR_FUNCTION_FAILED,
-        CKR_GENERAL_ERROR,
-    ]
 )
 
 _HMAC_KEY_IMPORT_REJECT_RVS = (
@@ -121,9 +107,10 @@ class TestEncryptState:
         out_len = CK_ULONG(32)
 
         rv = rs.raw.C_Encrypt(rs.sh, in_buf, len(plaintext), out_buf, byref(out_len))
-        assert rv in _NOT_INIT_RVCS, (
-            f"C_Encrypt without init returned 0x{rv:08x}, "
-            f"expected CKR_OPERATION_NOT_INITIALIZED (0x{CKR_OPERATION_NOT_INITIALIZED:08x})"
+        classify_negative_rv(
+            rv,
+            (CKR_OPERATION_NOT_INITIALIZED,),
+            label="C_Encrypt without prior C_EncryptInit",
         )
 
     def test_encrypt_final_without_init(self, p11_raw_session: RawSession) -> None:
@@ -135,9 +122,10 @@ class TestEncryptState:
         out_buf = (ctypes.c_ubyte * 32)()
         out_len = CK_ULONG(32)
         rv = rs.raw.C_EncryptFinal(rs.sh, out_buf, byref(out_len))
-        assert rv in _NOT_INIT_RVCS, (
-            f"C_EncryptFinal without init returned 0x{rv:08x}, "
-            f"expected CKR_OPERATION_NOT_INITIALIZED"
+        classify_negative_rv(
+            rv,
+            (CKR_OPERATION_NOT_INITIALIZED,),
+            label="C_EncryptFinal without prior C_EncryptInit",
         )
 
     def test_double_encrypt_init(self, p11_raw_session: RawSession) -> None:
@@ -158,9 +146,10 @@ class TestEncryptState:
             # Second init while operation is active
             mech2 = mech_simple(CKM_AES_ECB)
             rv2 = rs.raw.C_EncryptInit(rs.sh, mech2.byref(), key)
-            assert rv2 in _ALREADY_ACTIVE_RVCS, (
-                f"Double C_EncryptInit returned 0x{rv2:08x}, "
-                f"expected CKR_OPERATION_ACTIVE (0x{CKR_OPERATION_ACTIVE:08x})"
+            classify_negative_rv(
+                rv2,
+                (CKR_OPERATION_ACTIVE,),
+                label="second C_EncryptInit while an encrypt operation is active",
             )
         finally:
             # Abort any pending operation by calling C_EncryptFinal with a discard buffer
@@ -185,8 +174,10 @@ class TestDecryptState:
         out_len = CK_ULONG(32)
 
         rv = rs.raw.C_Decrypt(rs.sh, in_buf, len(ct), out_buf, byref(out_len))
-        assert rv in _NOT_INIT_RVCS, (
-            f"C_Decrypt without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
+        classify_negative_rv(
+            rv,
+            (CKR_OPERATION_NOT_INITIALIZED,),
+            label="C_Decrypt without prior C_DecryptInit",
         )
 
     def test_decrypt_final_without_init(self, p11_raw_session: RawSession) -> None:
@@ -198,9 +189,10 @@ class TestDecryptState:
         out_buf = (ctypes.c_ubyte * 32)()
         out_len = CK_ULONG(32)
         rv = rs.raw.C_DecryptFinal(rs.sh, out_buf, byref(out_len))
-        assert rv in _NOT_INIT_RVCS, (
-            f"C_DecryptFinal without init returned 0x{rv:08x}, "
-            f"expected CKR_OPERATION_NOT_INITIALIZED"
+        classify_negative_rv(
+            rv,
+            (CKR_OPERATION_NOT_INITIALIZED,),
+            label="C_DecryptFinal without prior C_DecryptInit",
         )
 
 
@@ -217,8 +209,10 @@ class TestSignState:
         sig_len = CK_ULONG(256)
 
         rv = rs.raw.C_Sign(rs.sh, in_buf, len(data), sig_buf, byref(sig_len))
-        assert rv in _NOT_INIT_RVCS, (
-            f"C_Sign without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
+        classify_negative_rv(
+            rv,
+            (CKR_OPERATION_NOT_INITIALIZED,),
+            label="C_Sign without prior C_SignInit",
         )
 
     def test_sign_update_without_init(self, p11_raw_session: RawSession) -> None:
@@ -228,8 +222,10 @@ class TestSignState:
         data = b"\xdd" * 8
         in_buf = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
         rv = rs.raw.C_SignUpdate(rs.sh, in_buf, len(data))
-        assert rv in _NOT_INIT_RVCS, (
-            f"C_SignUpdate without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
+        classify_negative_rv(
+            rv,
+            (CKR_OPERATION_NOT_INITIALIZED,),
+            label="C_SignUpdate without prior C_SignInit",
         )
 
     def test_sign_final_without_init(self, p11_raw_session: RawSession) -> None:
@@ -239,8 +235,10 @@ class TestSignState:
         sig_buf = (ctypes.c_ubyte * 256)()
         sig_len = CK_ULONG(256)
         rv = rs.raw.C_SignFinal(rs.sh, sig_buf, byref(sig_len))
-        assert rv in _NOT_INIT_RVCS, (
-            f"C_SignFinal without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
+        classify_negative_rv(
+            rv,
+            (CKR_OPERATION_NOT_INITIALIZED,),
+            label="C_SignFinal without prior C_SignInit",
         )
 
     def test_sign_single_part_output_call_terminates(self, p11_raw_session: RawSession) -> None:
@@ -311,10 +309,15 @@ class TestVerifyState:
         sig_buf = (ctypes.c_ubyte * len(sig)).from_buffer_copy(sig)
 
         rv = rs.raw.C_Verify(rs.sh, in_buf, len(data), sig_buf, len(sig))
-        assert rv in _NOT_INIT_RVCS | {
-            CKR_SIGNATURE_INVALID,
-            CKR_SIGNATURE_LEN_RANGE,
-        }, f"C_Verify without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
+        classify_negative_rv(
+            rv,
+            (
+                CKR_OPERATION_NOT_INITIALIZED,
+                CKR_SIGNATURE_INVALID,
+                CKR_SIGNATURE_LEN_RANGE,
+            ),
+            label="C_Verify without prior C_VerifyInit",
+        )
 
     def test_verify_update_without_init(self, p11_raw_session: RawSession) -> None:
         """C_VerifyUpdate without prior C_VerifyInit must return CKR_OPERATION_NOT_INITIALIZED."""
@@ -323,9 +326,10 @@ class TestVerifyState:
         data = b"\x01" * 8
         in_buf = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
         rv = rs.raw.C_VerifyUpdate(rs.sh, in_buf, len(data))
-        assert rv in _NOT_INIT_RVCS, (
-            f"C_VerifyUpdate without init returned 0x{rv:08x}, "
-            f"expected CKR_OPERATION_NOT_INITIALIZED"
+        classify_negative_rv(
+            rv,
+            (CKR_OPERATION_NOT_INITIALIZED,),
+            label="C_VerifyUpdate without prior C_VerifyInit",
         )
 
     def test_verify_final_without_init(self, p11_raw_session: RawSession) -> None:
@@ -335,10 +339,15 @@ class TestVerifyState:
         sig = b"\x02" * 64
         sig_buf = (ctypes.c_ubyte * len(sig)).from_buffer_copy(sig)
         rv = rs.raw.C_VerifyFinal(rs.sh, sig_buf, len(sig))
-        assert rv in _NOT_INIT_RVCS | {
-            CKR_SIGNATURE_INVALID,
-            CKR_SIGNATURE_LEN_RANGE,
-        }, f"C_VerifyFinal without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
+        classify_negative_rv(
+            rv,
+            (
+                CKR_OPERATION_NOT_INITIALIZED,
+                CKR_SIGNATURE_INVALID,
+                CKR_SIGNATURE_LEN_RANGE,
+            ),
+            label="C_VerifyFinal without prior C_VerifyInit",
+        )
 
 
 class TestDigestState:
@@ -356,8 +365,10 @@ class TestDigestState:
         out_len = CK_ULONG(64)
 
         rv = rs.raw.C_Digest(rs.sh, in_buf, len(data), out_buf, byref(out_len))
-        assert rv in _NOT_INIT_RVCS, (
-            f"C_Digest without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
+        classify_negative_rv(
+            rv,
+            (CKR_OPERATION_NOT_INITIALIZED,),
+            label="C_Digest without prior C_DigestInit",
         )
 
     def test_digest_update_without_init(self, p11_raw_session: RawSession) -> None:
@@ -369,9 +380,10 @@ class TestDigestState:
         data = b"\x04" * 8
         in_buf = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
         rv = rs.raw.C_DigestUpdate(rs.sh, in_buf, len(data))
-        assert rv in _NOT_INIT_RVCS, (
-            f"C_DigestUpdate without init returned 0x{rv:08x}, "
-            f"expected CKR_OPERATION_NOT_INITIALIZED"
+        classify_negative_rv(
+            rv,
+            (CKR_OPERATION_NOT_INITIALIZED,),
+            label="C_DigestUpdate without prior C_DigestInit",
         )
 
     def test_digest_final_without_init(self, p11_raw_session: RawSession) -> None:
@@ -383,9 +395,10 @@ class TestDigestState:
         out_buf = (ctypes.c_ubyte * 64)()
         out_len = CK_ULONG(64)
         rv = rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
-        assert rv in _NOT_INIT_RVCS, (
-            f"C_DigestFinal without init returned 0x{rv:08x}, "
-            f"expected CKR_OPERATION_NOT_INITIALIZED"
+        classify_negative_rv(
+            rv,
+            (CKR_OPERATION_NOT_INITIALIZED,),
+            label="C_DigestFinal without prior C_DigestInit",
         )
 
     def test_double_digest_init(self, p11_raw_session: RawSession) -> None:
@@ -401,9 +414,10 @@ class TestDigestState:
 
         mech2 = mech_simple(CKM_SHA256)
         rv2 = rs.raw.C_DigestInit(rs.sh, mech2.byref())
-        assert rv2 in _ALREADY_ACTIVE_RVCS, (
-            f"Double C_DigestInit returned 0x{rv2:08x}, "
-            f"expected CKR_OPERATION_ACTIVE (0x{CKR_OPERATION_ACTIVE:08x})"
+        classify_negative_rv(
+            rv2,
+            (CKR_OPERATION_ACTIVE,),
+            label="second C_DigestInit while a digest operation is active",
         )
 
         # Abort the pending digest by completing it

@@ -145,11 +145,13 @@ def _run_config_script(
     *,
     timeout: int = 10,
 ) -> tuple[int, str, str]:
+    pin = p11_config.pin.get_secret_value() if p11_config.pin else None
     return run_raw_script(
         _build_preamble(p11_config),
         script_body,
         cleanup=_RAW_CLEANUP,
         timeout=timeout,
+        pin=pin,
     )
 
 
@@ -660,8 +662,7 @@ print(f"SEU:0x{rv:08x}")
             pytest.skip(stdout.strip())
         if returncode < 0:
             pytest.fail(
-                f"C_SignEncryptUpdate crashed (signal {-returncode}). "
-                f"Stderr: {stderr[:200]}"
+                f"C_SignEncryptUpdate crashed (signal {-returncode}). Stderr: {stderr[:200]}"
             )
         if returncode != 0:
             pytest.fail(f"No output: {stdout!r} {stderr[:200]}")
@@ -687,8 +688,7 @@ print(f"DVU:0x{rv:08x}")
             pytest.skip(stdout.strip())
         if returncode < 0:
             pytest.fail(
-                f"C_DecryptVerifyUpdate crashed (signal {-returncode}). "
-                f"Stderr: {stderr[:200]}"
+                f"C_DecryptVerifyUpdate crashed (signal {-returncode}). Stderr: {stderr[:200]}"
             )
         if returncode != 0:
             pytest.fail(f"No output: {stdout!r} {stderr[:200]}")

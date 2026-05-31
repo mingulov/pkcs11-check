@@ -20,9 +20,32 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.types_std import CKR_OPERATION_NOT_INITIALIZED
 from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
+from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
+
+
+def _classify_multipart_ckr(out: str, *, label: str) -> None:
+    """Parent-side 3-way classifier over a child script's ``CKR:0x...`` line.
+
+    A C_*Update/Final without the matching C_*Init must reject with
+    CKR_OPERATION_NOT_INITIALIZED. Classification happens here (not via an
+    in-child ``assert``) so a non-spec clean reject becomes ``xfail`` instead of
+    crashing the child and being mislabeled as a crash:
+
+    - ``CKR_OK`` (the multipart op ran without init) -> ``fail``,
+    - ``CKR_OPERATION_NOT_INITIALIZED`` (spec) -> ``pass``,
+    - any other clean reject code -> ``xfail``.
+    """
+    rv: int | None = None
+    for line in out.splitlines():
+        if line.startswith("CKR:0x"):
+            rv = int(line.removeprefix("CKR:"), 16)
+            break
+    assert rv is not None, f"{label}: no CKR line in child output: {out!r}"
+    classify_negative_rv(rv, (CKR_OPERATION_NOT_INITIALIZED,), label=label)
 
 
 def _run_raw_test(module_path: str, pin: str | None, test_code: str) -> tuple[int, str, str]:
@@ -95,11 +118,11 @@ class TestMultipartNotInitialized:
             out_len = ctypes.c_ulong(32)
             rv = raw.C_EncryptUpdate(sh, data, 16, out, ctypes.byref(out_len))
             print(f"CKR:0x{rv:08x}")
-            assert rv == CKR_OPERATION_NOT_INITIALIZED, f"Expected NOT_INIT, got 0x{rv:08x}"
             print("OK")
             """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_EncryptUpdate without init")
+        _classify_multipart_ckr(out, label="C_EncryptUpdate without C_EncryptInit")
 
     def test_encrypt_final_no_init(self, p11_config: Any) -> None:
         """C_EncryptFinal without C_EncryptInit."""
@@ -111,11 +134,11 @@ class TestMultipartNotInitialized:
             out_len = ctypes.c_ulong(32)
             rv = raw.C_EncryptFinal(sh, out, ctypes.byref(out_len))
             print(f"CKR:0x{rv:08x}")
-            assert rv == CKR_OPERATION_NOT_INITIALIZED, f"Expected NOT_INIT, got 0x{rv:08x}"
             print("OK")
             """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_EncryptFinal without init")
+        _classify_multipart_ckr(out, label="C_EncryptFinal without C_EncryptInit")
 
     def test_decrypt_update_no_init(self, p11_config: Any) -> None:
         """C_DecryptUpdate without C_DecryptInit."""
@@ -128,11 +151,11 @@ class TestMultipartNotInitialized:
             out_len = ctypes.c_ulong(32)
             rv = raw.C_DecryptUpdate(sh, data, 16, out, ctypes.byref(out_len))
             print(f"CKR:0x{rv:08x}")
-            assert rv == CKR_OPERATION_NOT_INITIALIZED, f"Expected NOT_INIT, got 0x{rv:08x}"
             print("OK")
             """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_DecryptUpdate without init")
+        _classify_multipart_ckr(out, label="C_DecryptUpdate without C_DecryptInit")
 
     def test_sign_update_no_init(self, p11_config: Any) -> None:
         """C_SignUpdate without C_SignInit."""
@@ -143,11 +166,11 @@ class TestMultipartNotInitialized:
             data = (ctypes.c_ubyte * 16)(*([0]*16))
             rv = raw.C_SignUpdate(sh, data, 16)
             print(f"CKR:0x{rv:08x}")
-            assert rv == CKR_OPERATION_NOT_INITIALIZED, f"Expected NOT_INIT, got 0x{rv:08x}"
             print("OK")
             """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_SignUpdate without init")
+        _classify_multipart_ckr(out, label="C_SignUpdate without C_SignInit")
 
     def test_digest_update_no_init(self, p11_config: Any) -> None:
         """C_DigestUpdate without C_DigestInit."""
@@ -158,11 +181,11 @@ class TestMultipartNotInitialized:
             data = (ctypes.c_ubyte * 16)(*([0]*16))
             rv = raw.C_DigestUpdate(sh, data, 16)
             print(f"CKR:0x{rv:08x}")
-            assert rv == CKR_OPERATION_NOT_INITIALIZED, f"Expected NOT_INIT, got 0x{rv:08x}"
             print("OK")
             """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_DigestUpdate without init")
+        _classify_multipart_ckr(out, label="C_DigestUpdate without C_DigestInit")
 
     def test_digest_final_no_init(self, p11_config: Any) -> None:
         """C_DigestFinal without C_DigestInit."""
@@ -174,11 +197,11 @@ class TestMultipartNotInitialized:
             out_len = ctypes.c_ulong(64)
             rv = raw.C_DigestFinal(sh, out, ctypes.byref(out_len))
             print(f"CKR:0x{rv:08x}")
-            assert rv == CKR_OPERATION_NOT_INITIALIZED, f"Expected NOT_INIT, got 0x{rv:08x}"
             print("OK")
             """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_DigestFinal without init")
+        _classify_multipart_ckr(out, label="C_DigestFinal without C_DigestInit")
 
     def test_decrypt_final_no_init(self, p11_config: Any) -> None:
         """C_DecryptFinal without C_DecryptInit."""
@@ -190,11 +213,11 @@ class TestMultipartNotInitialized:
             out_len = ctypes.c_ulong(32)
             rv = raw.C_DecryptFinal(sh, out, ctypes.byref(out_len))
             print(f"CKR:0x{rv:08x}")
-            assert rv == CKR_OPERATION_NOT_INITIALIZED, f"Expected NOT_INIT, got 0x{rv:08x}"
             print("OK")
             """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_DecryptFinal without init")
+        _classify_multipart_ckr(out, label="C_DecryptFinal without C_DecryptInit")
 
     def test_sign_final_no_init(self, p11_config: Any) -> None:
         """C_SignFinal without C_SignInit."""
@@ -206,11 +229,11 @@ class TestMultipartNotInitialized:
             out_len = ctypes.c_ulong(256)
             rv = raw.C_SignFinal(sh, out, ctypes.byref(out_len))
             print(f"CKR:0x{rv:08x}")
-            assert rv == CKR_OPERATION_NOT_INITIALIZED, f"Expected NOT_INIT, got 0x{rv:08x}"
             print("OK")
             """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_SignFinal without init")
+        _classify_multipart_ckr(out, label="C_SignFinal without C_SignInit")
 
     def test_verify_update_no_init(self, p11_config: Any) -> None:
         """C_VerifyUpdate without C_VerifyInit."""
@@ -221,11 +244,11 @@ class TestMultipartNotInitialized:
             data = (ctypes.c_ubyte * 16)(*([0]*16))
             rv = raw.C_VerifyUpdate(sh, data, 16)
             print(f"CKR:0x{rv:08x}")
-            assert rv == CKR_OPERATION_NOT_INITIALIZED, f"Expected NOT_INIT, got 0x{rv:08x}"
             print("OK")
             """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_VerifyUpdate without init")
+        _classify_multipart_ckr(out, label="C_VerifyUpdate without C_VerifyInit")
 
     def test_verify_final_no_init(self, p11_config: Any) -> None:
         """C_VerifyFinal without C_VerifyInit."""
@@ -236,8 +259,8 @@ class TestMultipartNotInitialized:
             sig = (ctypes.c_ubyte * 32)(*([0]*32))
             rv = raw.C_VerifyFinal(sh, sig, 32)
             print(f"CKR:0x{rv:08x}")
-            assert rv == CKR_OPERATION_NOT_INITIALIZED, f"Expected NOT_INIT, got 0x{rv:08x}"
             print("OK")
             """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_VerifyFinal without init")
+        _classify_multipart_ckr(out, label="C_VerifyFinal without C_VerifyInit")

@@ -158,9 +158,9 @@ def _generate_key_with_mech(
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_PBES2_VECTORS, ids=[v[0] for v in _ALL_PBES2_VECTORS])
-def test_pbes2_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_pbes2_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """PBES2 decrypt from Wycheproof vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("PKCS5_PBKD2"):
         pytest.skip("PKCS5_PBKD2 not supported")
     if not rs.has_mechanism("AES_CBC_PAD"):
@@ -220,4 +220,6 @@ def test_pbes2_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
         return
 
     destroy_quietly(rs.raw, rs.sh, key)
+    if result == "invalid":
+        pytest.fail(f"PBES2 decrypt {vec_id}: accepted invalid ciphertext")
     assert plaintext == expected, f"PBES2 plaintext mismatch for {vec_id}"

@@ -22,7 +22,9 @@ from pkcs11_check.raw.pack import (
 from pkcs11_check.raw.recipes import (
     create_object,
     destroy_quietly,
+    find_objects,
     gen_aes_key,
+    read_attributes,
 )
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
@@ -38,11 +40,16 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKO_DATA,
     CKO_SECRET_KEY,
-    CKR_ATTRIBUTE_SENSITIVE,
-    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
+    CKR_SESSION_HANDLE_INVALID,
 )
 from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS
+from pkcs11_check.testcases.conftest import (
+    classify_lifecycle_effect,
+    classify_negative_rv,
+    classify_policy_enforcement,
+)
 
 pytestmark = pytest.mark.access
 
@@ -104,44 +111,43 @@ class TestGetAttributeErrors:
         rs = p11_raw_session
         key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SENSITIVE: True})
         try:
-            tmpl = (CK_ATTRIBUTE * 1)()
-            tmpl[0].type = CKA_VALUE
-            tmpl[0].pValue = None
-            tmpl[0].ulValueLen = 0
-            rv = rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
-            if rv == CKR_OK:
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    "C_GetAttributeValue(CKA_VALUE) returned CKR_OK on CKA_SENSITIVE=True key "
-                    "-- module exposes secret key material without restriction. "
-                    "PKCS#11 spec requires CKR_ATTRIBUTE_SENSITIVE (Sec.5.7.5).",
-                    ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.5.7.5",
-                )
-                pytest.xfail(
-                    "SECURITY: module returns CKR_OK for CKA_VALUE read on "
-                    "CKA_SENSITIVE=True key (expected CKR_ATTRIBUTE_SENSITIVE)"
-                )
-            assert rv in (
-                CKR_ATTRIBUTE_SENSITIVE,
-                CKR_ATTRIBUTE_TYPE_INVALID,
-            ), f"Expected CKR_ATTRIBUTE_SENSITIVE, got {ckr_name(rv)}"
+            # Type-B claim/effect-check: claimed = the key reports
+            # CKA_SENSITIVE=True back; violated = the protected CKA_VALUE is
+            # actually readable (read_attributes omits unavailable attributes).
+            sens_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
+            claimed = sens_attrs.get(CKA_SENSITIVE) is True
+            val_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
+            violated = CKA_VALUE in val_attrs
+            classify_policy_enforcement(
+                claimed=claimed,
+                violated=violated,
+                label="read CKA_VALUE on a CKA_SENSITIVE=True key "
+                "(PKCS#11 v3.1 Sec.5.7.5 requires CKR_ATTRIBUTE_SENSITIVE)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_destroyed_handle(self, p11_raw_session: Any) -> None:
-        """Using destroyed handle -> CKR_OBJECT_HANDLE_INVALID."""
+        """Using a destroyed object's handle -> CKR_OBJECT_HANDLE_INVALID."""
         rs = p11_raw_session
         key = gen_aes_key(rs.raw, rs.sh, 128)
         rs.raw.C_DestroyObject(rs.sh, key)
+        # Negative op on a destroyed handle. Issue C_GetAttributeValue *directly*
+        # (not via read_attributes, which would re-raise the correct
+        # CKR_OBJECT_HANDLE_INVALID rejection as a setup error). Sizing call only.
         tmpl = (CK_ATTRIBUTE * 1)()
         tmpl[0].type = CKA_LABEL
         tmpl[0].pValue = None
         tmpl[0].ulValueLen = 0
-        rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
-        # Some modules don't detect the invalid handle, but should not succeed
-        # without CKR_OBJECT_HANDLE_INVALID or similar
+        rv = rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
+        # CKR_OK -> the read succeeded on a destroyed handle (use-after-destroy)
+        # -> fail. A handle-invalid rejection is spec-correct -> pass. Any other
+        # clean reject code -> xfail (honest non-spec deviation).
+        classify_negative_rv(
+            rv,
+            (CKR_OBJECT_HANDLE_INVALID, CKR_SESSION_HANDLE_INVALID),
+            label="C_GetAttributeValue via a destroyed object handle (use-after-destroy)",
+        )
 
 
 class TestSetAttributeErrors:
@@ -161,19 +167,26 @@ class TestSetAttributeErrors:
             },
         )
         try:
-            # Try to change CKA_CLASS (read-only)
+            # Try to change CKA_CLASS (read-only). Type-C effect-check:
+            # claimed_success = C_SetAttributeValue returned CKR_OK; the
+            # contradiction is only real if the read-only value *actually*
+            # changed. A CKR_OK no-op (value unchanged) is a wrong code with no
+            # harm -> xfail; an honest rejection -> pass.
             tmpl = template(attr_ulong(CKA_CLASS, CKO_SECRET_KEY))
             rv = rs.raw.C_SetAttributeValue(rs.sh, handle, tmpl.ptr, tmpl.count)
-            if rv == CKR_OK:
-                # Kryoptic silently accepts - compliance deviation
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    "C_SetAttributeValue accepted change to read-only CKA_CLASS",
-                    ComplianceLevel.NOT_RECOMMENDED,
-                    reference="PKCS#11 v3.1 Sec.5.7.6",
+            if rv != CKR_OK:
+                return  # Rejected a write to a read-only attribute -- correct.
+            class_attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_CLASS])
+            if class_attrs.get(CKA_CLASS) == CKO_SECRET_KEY:
+                pytest.fail(
+                    "C_SetAttributeValue claimed success and the read-only CKA_CLASS "
+                    "actually changed (self-contradiction) "
+                    "[PKCS#11 v3.1 Sec.5.7.6: CKA_CLASS is read-only]"
                 )
-            # Any rejection is acceptable for read-only attribute
+            pytest.xfail(
+                "C_SetAttributeValue returned CKR_OK for a read-only CKA_CLASS write "
+                "but the value was unchanged (no-op; spec prefers CKR_ATTRIBUTE_READ_ONLY)"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
 
@@ -185,7 +198,7 @@ class TestCopyObjectErrors:
         """Copy destroyed object -> CKR_OBJECT_HANDLE_INVALID."""
         rs = p11_raw_session
         key = gen_aes_key(rs.raw, rs.sh, 128)
-        rs.raw.C_DestroyObject(rs.sh, key)
+        destroy_rv = rs.raw.C_DestroyObject(rs.sh, key)
         tmpl = template(attr_bytes(CKA_LABEL, b"ckr-copy-result"))
         new_handle = CK_OBJECT_HANDLE(0)
         rv = rs.raw.C_CopyObject(
@@ -195,9 +208,18 @@ class TestCopyObjectErrors:
             tmpl.count,
             byref(new_handle),
         )
-        if rv == CKR_OK:
+        # Type-C use-after-destroy effect-check: claimed_success = destroy
+        # reported CKR_OK; effect_observed = the copy of the destroyed object
+        # produced a live new object handle (the object was usable after
+        # destroy).
+        produced = rv == CKR_OK and new_handle.value != 0
+        if produced:
             destroy_quietly(rs.raw, rs.sh, new_handle.value)
-            # Some modules don't detect invalid handle
+        classify_lifecycle_effect(
+            claimed_success=destroy_rv == CKR_OK,
+            effect_observed=produced,
+            label="copy an object via its destroyed handle (use-after-destroy)",
+        )
 
 
 class TestFindObjectsErrors:
@@ -249,9 +271,20 @@ class TestDestroyObjectErrors:
     def test_destroy_already_destroyed(self, p11_raw_session: Any) -> None:
         """Double destroy -> CKR_OBJECT_HANDLE_INVALID."""
         rs = p11_raw_session
+        # Type-C use-after-destroy effect-check. Tag the object so survival is
+        # distinguishable from handle reuse. claimed_success = the first destroy
+        # reported CKR_OK; effect_observed = the tagged object is still findable
+        # afterwards (the destroy was claimed but did not take effect). The
+        # second-destroy return code alone is not the effect.
+        tag = b"ckr-double-destroy"
         key = gen_aes_key(rs.raw, rs.sh, 128)
-        rv = rs.raw.C_DestroyObject(rs.sh, key)
-        assert rv == CKR_OK, f"First destroy failed: {ckr_name(rv)}"
-        rv = rs.raw.C_DestroyObject(rs.sh, key)
-        # Some modules silently accept double destroy
-        # Correct per spec is CKR_OBJECT_HANDLE_INVALID
+        tag_tmpl = template(attr_bytes(CKA_LABEL, tag))
+        rs.raw.C_SetAttributeValue(rs.sh, key, tag_tmpl.ptr, tag_tmpl.count)
+        first_rv = rs.raw.C_DestroyObject(rs.sh, key)
+        find_tmpl = template(attr_bytes(CKA_LABEL, tag))
+        survivors = find_objects(rs.raw, rs.sh, find_tmpl)
+        classify_lifecycle_effect(
+            claimed_success=first_rv == CKR_OK,
+            effect_observed=len(survivors) > 0,
+            label="destroy an object then find its tagged content (use-after-destroy)",
+        )

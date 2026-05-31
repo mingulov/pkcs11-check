@@ -25,6 +25,7 @@ import pytest
 
 from pkcs11_check.raw.types_std import CKA_UNWRAP
 from pkcs11_check.testcases._subprocess_preamble import (
+    pin_from_config,
     run_with_coverage,
     subprocess_session_preamble,
 )
@@ -251,7 +252,7 @@ cleanup()
             raise ValueError(f"Unhandled operation: {operation}")
 
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -481,7 +482,7 @@ cleanup()
             raise ValueError(f"Unhandled operation: {operation}")
 
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -510,7 +511,7 @@ print(f"rv={rv}")
 cleanup()
 """
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -529,7 +530,7 @@ print(f"rv={rv}")
 cleanup()
 """
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -573,7 +574,7 @@ print(f"rv={rv}")
 cleanup()
 """
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -595,7 +596,7 @@ print(f"rv={rv}")
 cleanup()
 """
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -618,7 +619,7 @@ print(f"rv={rv}")
 cleanup()
 """
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -650,7 +651,7 @@ print(f"rv={rv}")
 cleanup()
 """
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -724,7 +725,7 @@ finally:
 cleanup()
 """
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -779,7 +780,7 @@ finally:
 cleanup()
 """
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -978,7 +979,7 @@ cleanup()
             raise ValueError(f"Unhandled operation: {operation}")
 
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -1070,7 +1071,7 @@ finally:
 cleanup()
 """
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         if "not_supported" in stdout:
             pytest.skip("C_MessageEncryptInit not available")
         assert_subprocess_no_crash(
@@ -1146,7 +1147,7 @@ finally:
 cleanup()
 """
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         if "not_supported" in stdout:
             pytest.skip("C_MessageDecryptInit not available")
         assert_subprocess_no_crash(
@@ -1249,7 +1250,7 @@ finally:
 cleanup()
 """
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         if "not_supported" in stdout:
             pytest.skip("C_DecapsulateKey not available")
         assert_subprocess_no_crash(
@@ -1298,7 +1299,7 @@ print(f"rv={rv}")
 cleanup()
 """
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -1323,7 +1324,7 @@ print(f"rv={rv}")
 cleanup()
 """
         script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,

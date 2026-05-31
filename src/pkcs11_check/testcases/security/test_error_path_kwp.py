@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.testcases._subprocess_preamble import (
+    pin_from_config,
     run_with_coverage,
     subprocess_session_preamble,
 )
@@ -174,10 +175,27 @@ else:
 _KEYGEN_AND_WRAP = """\
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 from pkcs11_check.raw.recipes import wrap_key as wrap_key_recipe
+from pkcs11_check.testcases.security.conftest import child_setup_reject_known
 from pkcs11_check.raw.types_std import (
     CKA_WRAP, CKA_UNWRAP, CKA_ENCRYPT, CKA_DECRYPT,
     CKA_EXTRACTABLE, CKA_SENSITIVE, CKA_TOKEN,
+    CKR_FUNCTION_FAILED, CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID, CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
     {ckm_name},
+)
+
+# Clean rejections of the wrap *setup* (advertised but not operational for this
+# key/mechanism). Classified as SETUP_XFAIL so the probe's real target -- unwrap
+# integrity on a corrupted blob -- is not scored as a provider failure. An
+# unexpected error or a crash is NOT in this set and still surfaces.
+_WRAP_SETUP_REJECT_RVS = (
+    int(CKR_FUNCTION_FAILED),
+    int(CKR_FUNCTION_NOT_SUPPORTED),
+    int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+    int(CKR_KEY_TYPE_INCONSISTENT),
+    int(CKR_MECHANISM_INVALID),
+    int(CKR_WRAPPING_KEY_TYPE_INCONSISTENT),
 )
 
 wrap_key = gen_aes_key(raw, sh, 256, attrs={{
@@ -191,7 +209,14 @@ target_key = gen_aes_key(raw, sh, 128, attrs={{
 }})
 
 try:
-    wrapped_blob = wrap_key_recipe(raw, sh, wrap_key, target_key, {ckm_name})
+    try:
+        wrapped_blob = wrap_key_recipe(raw, sh, wrap_key, target_key, {ckm_name})
+    except AssertionError as _wrap_exc:
+        if child_setup_reject_known(
+            _wrap_exc, _WRAP_SETUP_REJECT_RVS, "AES key wrap setup rejected"
+        ):
+            raise SystemExit(0)
+        raise
     destroy_quietly(raw, sh, target_key)
 
 """
@@ -268,7 +293,7 @@ class TestCorruptedUnwrap:
             corruption_code=corruption_code,
             api=api,
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=15)
+        rc, stdout, stderr = run_with_coverage(script, timeout=15, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -311,7 +336,7 @@ class TestBitFlipUnwrap:
             corruption_code=corruption_code,
             api="unwrap",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=15)
+        rc, stdout, stderr = run_with_coverage(script, timeout=15, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
             rc,
             stdout,

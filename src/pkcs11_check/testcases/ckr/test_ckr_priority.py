@@ -26,6 +26,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
 )
+from pkcs11_check.testcases.conftest import classify_lifecycle_effect
 
 pytestmark = pytest.mark.access
 
@@ -41,12 +42,18 @@ class TestErrorPriority:
         """
         rs = p11_raw_session
         key = gen_aes_key(rs.raw, rs.sh, 256)
-        rs.raw.C_DestroyObject(rs.sh, key)
+        destroy_rv = rs.raw.C_DestroyObject(rs.sh, key)
         # Both conditions: handle is invalid AND SHA256 is wrong for encrypt
         mech = mech_simple(CKM_SHA256)
         rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
         if rv == CKR_OK:
-            pass  # Wrapper may not detect destroyed handle
+            # Type-C use-after-destroy: the destroy claimed success yet
+            # C_EncryptInit on the same handle still succeeded -> contradiction.
+            classify_lifecycle_effect(
+                claimed_success=destroy_rv == CKR_OK,
+                effect_observed=True,
+                label="C_EncryptInit on a destroyed key handle (use-after-destroy)",
+            )
         elif rv in (CKR_OBJECT_HANDLE_INVALID, CKR_KEY_HANDLE_INVALID):
             pass  # Correct: handle error has priority
         elif rv == CKR_MECHANISM_INVALID:

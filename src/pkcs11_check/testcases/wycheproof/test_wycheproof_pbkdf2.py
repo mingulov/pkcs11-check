@@ -142,13 +142,13 @@ def _xfail_if_pbkdf2_runtime_reject(exc: AssertionError, label: str) -> NoReturn
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_PBKDF2_VECTORS, ids=[v[0] for v in _ALL_PBKDF2_VECTORS])
-def test_pbkdf2(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_pbkdf2(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """PBKDF2 key derivation from Wycheproof vectors.
 
     Derives a key using CKM_PKCS5_PBKD2 and compares the extracted
     key material against the expected derived key (dk).
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("PKCS5_PBKD2"):
         pytest.skip("PKCS5_PBKD2 not supported")
 

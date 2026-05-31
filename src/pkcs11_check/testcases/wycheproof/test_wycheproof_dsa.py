@@ -180,9 +180,9 @@ def _xfail_if_dsa_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_DSA_VECTORS, ids=[v[0] for v in _ALL_DSA_VECTORS])
-def test_dsa(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_dsa(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """DSA signature verification from Wycheproof vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     mechanism = vec["_mechanism"]
     name = _MECH_DISPLAY.get(mechanism, f"0x{mechanism:08x}")
     if not rs.has_mechanism(name):

@@ -1,0 +1,150 @@
+"""Merge artifacts from parallel shard runs into one combined result set.
+
+A "shard" is one container/process that ran ``pkcs11-check test`` over a
+*disjoint subset* of the test files (each against its own isolated PKCS#11
+server/token). Combining their artifact directories reproduces the artifacts a
+single full run would have produced:
+
+- ``report.jsonl``  : concatenation of the shard JSONL files (record sets are
+  disjoint by unit, so the union is the full record set).
+- ``results.json``  : summary counters summed, ``units`` lists concatenated.
+- ``coverage.json`` : recomputed from the concatenated JSONL via the existing
+  :func:`extract_coverage_from_jsonl`, which unions names and sums counts and
+  is order-independent — so the merge is exact (a split→merge round-trip
+  reproduces the original).
+- ``quality.json``  : regenerated (it is a pure function of the merged results +
+  coverage + records).
+
+The merge logic is intentionally a thin orchestration over functions that
+already exist in :mod:`pkcs11_check.core.file_runner`; the only genuinely new
+behaviour is summing summaries and concatenating the per-unit lists.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+from pathlib import Path
+from typing import Any
+
+from pkcs11_check.core.file_runner import (
+    extract_coverage_from_jsonl,
+    extract_quality_report_records_from_jsonl,
+    write_quality_json_report,
+)
+
+_SUMMARY_KEYS = (
+    "passed",
+    "failed",
+    "skipped",
+    "xfailed",
+    "xpassed",
+    "error",
+    "crashed",
+    "timeout",
+)
+
+
+def _concat_jsonl(paths: list[Path], output_path: Path) -> None:
+    """Non-destructively concatenate JSONL files into ``output_path``.
+
+    Unlike ``file_runner.write_report_jsonl`` this does NOT delete the sources
+    (they are shard artifacts we want to keep), and it ensures a trailing
+    newline between files so records never run together.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("wb") as out_fh:
+        for src in paths:
+            if not src.exists():
+                continue
+            with src.open("rb") as in_fh:
+                shutil.copyfileobj(in_fh, out_fh)
+            # Guard against a source file that does not end in a newline.
+            if src.stat().st_size and not _ends_with_newline(src):
+                out_fh.write(b"\n")
+
+
+def _ends_with_newline(path: Path) -> bool:
+    with path.open("rb") as fh:
+        try:
+            fh.seek(-1, 2)
+        except OSError:
+            return True  # empty file
+        return fh.read(1) == b"\n"
+
+
+def merge_results_payloads(
+    payloads: list[dict[str, Any]],
+    *,
+    coverage: dict[str, Any] | None,
+    shard_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Combine N ``results.json`` payloads (summary summed, units concatenated)."""
+    summary: dict[str, int] = {key: 0 for key in _SUMMARY_KEYS}
+    units: list[dict[str, Any]] = []
+    for payload in payloads:
+        psum = payload.get("summary", {}) or {}
+        for key in _SUMMARY_KEYS:
+            summary[key] += int(psum.get(key, 0) or 0)
+        units.extend(payload.get("units", []) or [])
+    summary["total"] = sum(summary[key] for key in _SUMMARY_KEYS)
+
+    merged: dict[str, Any] = {
+        "tool": "pkcs11-check",
+        "kind": "test-run",
+        "summary": summary,
+        "units": units,
+    }
+    if coverage:
+        merged["coverage"] = coverage
+    if shard_meta is not None:
+        merged["shards"] = shard_meta
+    return merged
+
+
+def merge_shard_dirs(shard_dirs: list[Path], output_dir: Path) -> dict[str, Any]:
+    """Merge the artifact directories of N shard runs into ``output_dir``.
+
+    Each shard dir is expected to contain ``results.json`` and ``report.jsonl``
+    (as produced by ``pkcs11-check test --output json``). Returns the merged
+    ``results.json`` payload.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    report_paths = [d / "report.jsonl" for d in shard_dirs]
+    merged_report = output_dir / "report.jsonl"
+    _concat_jsonl(report_paths, merged_report)
+
+    coverage = extract_coverage_from_jsonl(merged_report) if merged_report.exists() else None
+    if coverage:
+        (output_dir / "coverage.json").write_text(json.dumps(coverage, indent=2) + "\n")
+
+    payloads: list[dict[str, Any]] = []
+    files_per_shard: list[int] = []
+    for d in shard_dirs:
+        results_path = d / "results.json"
+        if not results_path.exists():
+            files_per_shard.append(0)
+            continue
+        payload = json.loads(results_path.read_text())
+        payloads.append(payload)
+        files_per_shard.append(len(payload.get("units", []) or []))
+
+    shard_meta = {
+        "count": len(shard_dirs),
+        "dirs": [d.name for d in shard_dirs],
+        "files_per_shard": files_per_shard,
+    }
+    merged = merge_results_payloads(payloads, coverage=coverage, shard_meta=shard_meta)
+    (output_dir / "results.json").write_text(json.dumps(merged, indent=2) + "\n")
+
+    records = (
+        extract_quality_report_records_from_jsonl(merged_report) if merged_report.exists() else []
+    )
+    write_quality_json_report(
+        output_dir / "quality.json",
+        merged,
+        coverage=coverage,
+        report_log_records=records,
+    )
+    return merged

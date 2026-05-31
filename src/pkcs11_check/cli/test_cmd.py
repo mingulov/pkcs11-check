@@ -14,7 +14,7 @@ from pydantic import SecretStr
 from rich.console import Console
 
 from pkcs11_check.config import P11TestConfig
-from pkcs11_check.core.collection import collect_pytest_item_metadata
+from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.file_runner import (
     IsolatedReportConfig,
     discover_auto_isolation_units,
@@ -55,6 +55,8 @@ def _build_pytest_args(
     pin: str | None,
     slot: int,
     destructive: bool,
+    rv_trace: bool,
+    rv_trace_compact: int | None,
     output: str,
     output_file: str | None,
     include_machine_report_args: bool,
@@ -71,6 +73,14 @@ def _build_pytest_args(
 
     if destructive:
         args.append("--p11-destructive")
+
+    # CK_RV trace: a stable option, so it flows via pytest_args to both the
+    # in-process pytest.main and each isolated subprocess unit (no env bridge
+    # needed). --rv-trace-compact implies tracing. See docs/rv-trace-design.md.
+    if rv_trace_compact is not None:
+        args.append(f"--p11-rv-trace-compact={rv_trace_compact}")
+    elif rv_trace:
+        args.append("--p11-rv-trace")
 
     if marker:
         args.extend(["-m", marker])
@@ -107,7 +117,7 @@ def test_command(
     module: Path = typer.Option(..., "--module", "-m", help="Path to PKCS#11 module"),
     interface: str = typer.Option("auto", "--interface", "-i", help="Interface version"),
     sessions: int = typer.Option(1, "--sessions", "-s", help="Concurrent sessions"),
-    timeout: int = typer.Option(120, "--timeout", "-t", help="Per-test timeout (seconds)"),
+    timeout: int = typer.Option(180, "--timeout", "-t", help="Per-test timeout (seconds)"),
     category: str | None = typer.Option(None, "--category", "-c", help="Test categories"),
     match: str | None = typer.Option(None, "--match", help="Test name pattern"),
     marker: str | None = typer.Option(None, "--marker", help="Pytest marker expression (-m)"),
@@ -149,6 +159,17 @@ def test_command(
         min=0,
         help="In test/auto isolation, skip remaining tests from a file after this many crashes "
         "(0 = unlimited)",
+    ),
+    rv_trace: bool = typer.Option(
+        False,
+        "--rv-trace",
+        help="Record each C_* call's raw CK_RV per test into report.jsonl user_properties",
+    ),
+    rv_trace_compact: int | None = typer.Option(
+        None,
+        "--rv-trace-compact",
+        metavar="N",
+        help="Keep only the last N CK_RV trace entries per test (implies --rv-trace)",
     ),
     targets: list[str] = typer.Argument(None, help="Optional pytest paths or nodeids"),
 ) -> None:
@@ -198,6 +219,8 @@ def test_command(
         pin=pin,
         slot=slot,
         destructive=destructive,
+        rv_trace=rv_trace,
+        rv_trace_compact=rv_trace_compact,
         output=output,
         output_file=output_file,
         include_machine_report_args=isolation == "none",
@@ -247,16 +270,22 @@ def test_command(
 
             try:
                 collected_items = None
+                auto_collected: list[CollectedPytestItem] | None = None
                 if isolation == "auto":
                     prior_state = load_run_state(state_file) if resume else None
                     if prior_state is not None:
                         units = prior_state.units
                     else:
+                        # Capture the collection metadata produced during unit
+                        # discovery so we don't run a second identical
+                        # --collect-only pass below for the disabled plan.
+                        auto_collected = []
                         units = discover_auto_isolation_units(
                             target_args,
                             Path(_TESTCASES_DIR),
                             pytest_args=pytest_args,
                             policy_file=policy_file,
+                            collected_out=auto_collected,
                         )
                     runner_granularity: Literal["mixed"] | Literal["file", "test"] = "mixed"
                 else:
@@ -270,7 +299,11 @@ def test_command(
                     runner_granularity = isolated_mode
                 if disabled_nodeids:
                     if isolation == "auto":
-                        collected_items = collect_pytest_item_metadata(target_args, pytest_args)
+                        collected_items = (
+                            auto_collected
+                            if auto_collected is not None
+                            else collect_pytest_item_metadata(target_args, pytest_args)
+                        )
                     elif runner_granularity == "file":
                         collected_items = collect_pytest_item_metadata(target_args, pytest_args)
                     selection_plan = build_disabled_selection_plan(

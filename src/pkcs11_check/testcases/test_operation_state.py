@@ -24,6 +24,7 @@ import pytest
 
 from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 from pkcs11_check.testcases._raw_subprocess import run_raw_script
+from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = pytest.mark.operation_state
 
@@ -181,11 +182,9 @@ class TestGetOperationStateAPI:
         """
         import ctypes
 
-        from pkcs11_check.raw.rv import ckr_name
         from pkcs11_check.raw.types_std import (
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_NOT_SUPPORTED,
-            CKR_OPERATION_NOT_INITIALIZED,
             CKR_SAVED_STATE_INVALID,
             CKR_STATE_UNSAVEABLE,
         )
@@ -199,11 +198,6 @@ class TestGetOperationStateAPI:
             CKR_STATE_UNSAVEABLE,
         ):
             pytest.skip("Module does not support C_SetOperationState")
-        acceptable = {
-            CKR_SAVED_STATE_INVALID,
-            CKR_OPERATION_NOT_INITIALIZED,
-            CKR_ARGUMENTS_BAD,
-        }
         if rv == CKR_ARGUMENTS_BAD:
             from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -214,9 +208,13 @@ class TestGetOperationStateAPI:
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="PKCS#11 v3.1 C_SetOperationState return values",
             )
-        assert rv in acceptable, (
-            f"C_SetOperationState with garbage: expected "
-            f"CKR_SAVED_STATE_INVALID or CKR_ARGUMENTS_BAD, got {ckr_name(rv)}"
+        # 3-way: accepting a garbage state blob (CKR_OK) -> fail; the spec code
+        # CKR_SAVED_STATE_INVALID -> pass; another clean reject (e.g.
+        # CKR_OPERATION_NOT_INITIALIZED, CKR_ARGUMENTS_BAD) -> xfail.
+        classify_negative_rv(
+            rv,
+            (CKR_SAVED_STATE_INVALID,),
+            label="C_SetOperationState with a garbage state blob (PKCS#11 v3.1 Sec.5.6.6)",
         )
 
 

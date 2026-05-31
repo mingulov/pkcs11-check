@@ -7,6 +7,10 @@ The counts were verified on 2026-05-25 with pytest collection metadata. They
 are collected test items before provider-specific runtime skips, xfails,
 failures, crashes, timeouts, or marker filters.
 
+> **Status (2026-05-28):** suite size is ~stable at **~109k** collected product-test nodes
+> (the classification fixes reframe vectors but barely change the count). Large counts (>1000)
+> are rounded to ~Xk to avoid churn; a minor refresh accompanies the FP-8 rerun.
+
 ## Headline Counts
 
 | Count | Meaning |

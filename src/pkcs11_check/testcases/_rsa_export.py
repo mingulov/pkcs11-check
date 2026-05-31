@@ -52,9 +52,7 @@ def _rsa_int_attr(
     value = attrs[attr]
     if not isinstance(value, bytes) or not value:
         kind = "private" if private else "public"
-        pytest.xfail(
-            f"{label}: malformed RSA {kind} attributes: {_attr_name(attr)}={value!r}"
-        )
+        pytest.xfail(f"{label}: malformed RSA {kind} attributes: {_attr_name(attr)}={value!r}")
 
     parsed = int.from_bytes(value, "big")
     if parsed < min_value:

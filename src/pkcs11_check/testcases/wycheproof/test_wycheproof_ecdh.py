@@ -193,9 +193,9 @@ def _xfail_if_ecdh_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_ECDH_VECTORS, ids=[v[0] for v in _ALL_ECDH_VECTORS])
-def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_ecdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """ECDH key agreement from Wycheproof ecpoint vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("ECDH1_DERIVE"):
         pytest.skip("ECDH1_DERIVE not supported")
 
@@ -247,7 +247,6 @@ def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     # ECDH1_DERIVE params: (kdf, shared_data, public_data)
     # KDF.NULL means raw ECDH (no KDF applied to output)
     ecdh_param = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=public_point)
-    invalid_without_shared_derived = False
     try:
         derived_key = derive_key(
             rs.raw,
@@ -270,8 +269,11 @@ def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         assert isinstance(shared, bytes)
         if result == "valid":
             assert shared == shared_expected, f"ECDH shared secret mismatch for {vec_id}"
-        elif result == "invalid" and not shared_expected:
-            invalid_without_shared_derived = True
+        elif result == "invalid":
+            destroy_quietly(rs.raw, rs.sh, derived_key)
+            pytest.fail(
+                f"ECDH derived a secret for an invalid vector {vec_id} (invalid-point accepted)"
+            )
         destroy_quietly(rs.raw, rs.sh, derived_key)
     except AssertionError as exc:
         exc_msg = str(exc)
@@ -286,6 +288,3 @@ def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         pytest.skip("ECDH derive not supported by binding")
     finally:
         destroy_quietly(rs.raw, rs.sh, priv_key)
-
-    if invalid_without_shared_derived:
-        pytest.fail(f"Invalid ECDH vector {vec_id} derived without an expected shared secret")

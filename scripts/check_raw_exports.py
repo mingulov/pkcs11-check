@@ -99,7 +99,7 @@ def main() -> int:
         for name in missing:
             print(f"  {name}")
         print(file=sys.stderr)
-        print(f"Add these to both the import statement and __all__ list", file=sys.stderr)
+        print("Add these to both the import statement and __all__ list", file=sys.stderr)
         return 1
 
     print("✓ All pkcs11_check.raw imports are properly exported")

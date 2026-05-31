@@ -46,6 +46,7 @@ from pkcs11_check.testcases._rsa_export import (
     read_rsa_private_key_or_xfail,
     read_rsa_public_key_or_xfail,
 )
+from pkcs11_check.testcases.conftest import CIPHER_OP_RUNTIME_REJECT_RVS, xfail_if_known_ckr
 
 pytestmark = pytest.mark.crossverify
 
@@ -157,18 +158,32 @@ class TestAESGCMCrossVerify:
         p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_GCM)
         try:
             gcm = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
-            pt = decrypt_single(
-                rs.raw,
-                rs.sh,
-                p11_key,
-                CKM_AES_GCM,
-                ct_tag,
-                mech_param=gcm,
+            try:
+                pt = decrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    p11_key,
+                    CKM_AES_GCM,
+                    ct_tag,
+                    mech_param=gcm,
+                )
+            except AssertionError as exc:
+                # A clean reject of the decrypt op (e.g. unsupported GCM param
+                # format) is advertised-but-not-operational -> xfail. A non-CKR
+                # error propagates (xfail_if_known_ckr re-raises).
+                xfail_if_known_ckr(
+                    exc,
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    "AES-GCM cross-verify decrypt advertised but not operational",
+                )
+                raise
+            # Phase 6 P2: the decrypt succeeded -- a plaintext that does not match
+            # the reference (cryptography AESGCM) is a crypto-correctness break
+            # and must fail, never be swallowed by a skip.
+            assert pt == plaintext, (
+                "AES-GCM cross-verify: PKCS#11 decrypt produced plaintext that "
+                "differs from the cryptography-library reference"
             )
-            assert pt == plaintext
-        except AssertionError:
-            # Some modules need different GCM parameter format
-            pytest.skip("AES-GCM parameter format incompatible")
         finally:
             destroy_quietly(rs.raw, rs.sh, p11_key)
 

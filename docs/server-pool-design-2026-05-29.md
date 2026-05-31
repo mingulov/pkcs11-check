@@ -1,0 +1,206 @@
+# Server-pool parallelism — design & deep gap analysis (2026-05-29)
+
+## 1. Why this exists
+
+Profiling bouncyhsm's full round (clean, contention-free) gives:
+
+| Component | Time |
+|---|---|
+| call (PKCS#11 ops) | 45.3 min |
+| setup | 5.2 min |
+| teardown | 0.5 min |
+| harness gap (startup/collection/merge/escalation) | 17.3 min |
+| **total wall** | **68.2 min** |
+
+The dominant cost is the **.NET server's per-call processing** (MessagePack ser/deser + BouncyCastle *managed* crypto), ~2-3 ms × ~400k calls. The TCP socket itself is ~1 % (per `bouncyhsm-transport-2026-05-28.md`). Every single-token lever is exhausted and **none help**: InMemory persistence (−71 %), Server GC (−79 %), `DOTNET_TieredPGO` (0), `logging=Warning` (0); ReadyToRun only helps cold-start (negligible over a 50-min run). The cost is inherent compute on one serial token stream.
+
+The 3 ACVP-AES MCT files alone are **~33 min** (cfb128/ofb/cfb8 ≈ 11 min each): ~18 Monte-Carlo tests, each ~100k *chained* single-block ops ≈ 110 s. Chaining forbids in-test parallelism and 2 RPCs/op is the floor, so single-token this is irreducible.
+
+**Conclusion:** the only PKCS#11-safe way to go faster is to run **multiple independent server+token instances in parallel**, each driven by its own serial test process — never concurrent access to one token (which PKCS#11 does not guarantee is safe). This document designs that "server pool" and reviews its gaps before implementation.
+
+## 2. Core architecture — K parallel containers + merge (RECOMMENDED)
+
+Two shapes were considered; the **container-level** one is recommended (see §2.1 for why).
+
+```
+   shard the file list                K independent containers                merge
+   (balanced, pre-selected)           (each = the EXISTING provider image,    (combine the
+                                        1 server + 1 token, fully isolated)     K artifact dirs)
+                                   ┌────────────────────────────────────┐
+  files ──► shard 0 ──────────────►│ docker run … TARGETS=shard0         │──► /artifacts/p-shard0 ─┐
+        ──► shard 1 ──────────────►│ docker run … TARGETS=shard1         │──► /artifacts/p-shard1 ─┤
+        ──► shard 2 ──────────────►│ docker run … TARGETS=shard2         │──► /artifacts/p-shard2 ─┼─► pkcs11-check
+        ──► shard 3 ──────────────►│ docker run … TARGETS=shard3         │──► /artifacts/p-shard3 ─┘   merge-shards
+                                   └────────────────────────────────────┘                              ▼
+                                    run in parallel; each is today's              /artifacts/p/{results,coverage,quality}.json
+                                    full `pkcs11-check test` over its subset       + report.jsonl  (combined)
+```
+
+**Key property:** each *container* runs the existing single-server pipeline over a disjoint subset of test files. One container = one server = one token, accessed serially. No concurrent same-token access — the PKCS#11 hazard is structurally impossible, *and* containers are isolated at the OS level (separate filesystems, network namespaces, memory, LiteDB file, ports) so there is zero shared mutable state between shards.
+
+**Reuse, don't rebuild:** each container is **today's image and today's `pkcs11-check test`, unchanged** — it just receives a subset of files via `PKCS11_CHECK_TARGETS` and its own `PKCS11_CHECK_ARTIFACT_DIR`. Crash-survival, per-file isolation, state/resume, outcome classification: all preserved per shard, untouched. The only NEW code is provider-agnostic: **(a) shard the file list, (b) launch K containers in parallel, (c) `merge-shards` the artifact dirs.**
+
+### 2.1 Why containers, not N-servers-in-one-image
+
+| Concern | N servers in one image | **K parallel containers** |
+|---|---|---|
+| Per-image changes | Each provider image rewritten to spawn+health-gate N servers/tokens | **None** — existing images unchanged |
+| Generalization | Per-provider lifecycle code (bouncyhsm ports, softhsm2 token dirs, NSS DBs…) | **Trivial & uniform** — every image already runs exactly 1 isolated instance |
+| Isolation | Shared FS / ports / memory inside one container; risk of cross-token leakage | **Full OS isolation** per shard |
+| Lifecycle | Custom N-server start/health/teardown inside the image | **Docker does it** (`docker run`/compose) |
+| Config "data" coupling | Server config baked/duplicated in one image | **Stays in compose/env, not the image** |
+| Failure blast radius | One container OOM kills all N servers | One shard dies, others unaffected |
+
+The container approach is what the rest of this document now assumes. (N-servers-in-one-image remains a fallback only for an environment where launching multiple containers is impossible.)
+
+The cost is a little more RAM (K full containers vs K servers in one), but image *layers* are shared and runtime memory is modest (see §9) — a fine trade for a vastly simpler, provider-agnostic design.
+
+## 3. Why NOT pytest-xdist (confirmed)
+
+xdist is a dependency but the plugin has **zero** xdist awareness (no `workerinput`/`worker_id`/`PYTEST_XDIST_WORKER`). Using `-n N` would:
+- distribute individual *test items* across workers **sharing one token** (the unsafe case) unless `--dist=loadfile`, and even then
+- lose all coverage: `config.stash` accumulates per worker and `pytest_sessionfinish` on a worker is **never forwarded** to the controller → `coverage.json` empty;
+- collapse our distinct `crashed`/`timeout` outcomes into xdist's "worker crashed" → "failed", breaking the classification model;
+- fight our own crash-survival/iterative-deselect loop.
+
+The server-pool model (N separate `run_isolated_pytest_units` processes) sidesteps all of this and **preserves the classification model**, which xdist cannot.
+
+## 4. What merges cleanly (validated against the code)
+
+| Artifact | Merge operation | Status |
+|---|---|---|
+| `results.json` `summary.*` | **sum** the 9 int counters | trivial |
+| `results.json` `units[]` | **concatenate** (shards disjoint, no overlap) | trivial |
+| `report.jsonl` | **concatenate** the N worker files | trivial |
+| `coverage.json` | run existing `extract_coverage_from_jsonl` on the concatenated jsonl — it already unions names + sums `Counter`s + recomputes `not_invoked`/`uncalled` | **logic already exists** |
+| `quality.json` | regenerate via `build_quality_audit(merged_results, merged_coverage, concat_records)` — it's a pure derived function | regenerate, don't merge |
+
+The merge is essentially "concatenate the JSONL, then reuse the existing end-of-run aggregation once." This is the single most reassuring finding: **the hard part (coverage union) is already implemented and tested.**
+
+## 5. Path-collision inventory (must isolate per worker)
+
+`run_isolated_pytest_units` writes 6 paths derived from its `state_file` / `report_config`, all of which collide if workers share a dir:
+
+1. `state_file` (per-unit `save_run_state`)
+2. `<state>.report-records/<sha256(unit)>.jsonl` shard dir
+3. `policy_file` (promoted_files / crashed_tests, atomic-rename, no lock)
+4. `report.jsonl`
+5. `results.json`
+6. `coverage.json` + `quality.json`
+
+**Mitigation:** give each worker its own `artifact_dir/worker-<i>/` (state, policy, report, results, coverage, quality all under it). Temp files (manifest, per-unit jsonl, deselect, retry) already use `tempfile.mkstemp` → no collision. `BOUNCY_HSM_CFG_STRING` is already in `_FINGERPRINT_ENV_KEYS`, so each worker's state/policy fingerprint differs naturally.
+
+## 6. Server endpoint routing
+
+The bouncyhsm C shim reads `BOUNCY_HSM_CFG_STRING` (`Server=host;Port=p;`) at `C_Initialize`, inherited by every subprocess a worker spawns (`env = os.environ.copy()`). So routing worker *i* → port `8765+i` is just setting that env per worker. No CLI/transport change needed. One preflight manifest is shared read-only (identical servers ⇒ identical mechanism list).
+
+## 7. GAP ANALYSIS (the hard parts)
+
+### G1 — Shard balance (HIGH impact on speedup) [tractable]
+Naïve round-robin can pile the 3 ~11-min MCT files onto one worker → that worker dominates → no speedup. Need **longest-processing-time-first bin-packing** using per-file durations from a prior run's `results.json` (`units[].duration_s`). Without a prior run, fall back to a small static "known-heavy" list (the MCT + wycheproof_ecdsa + acvp_rsa files) spread across workers first, rest round-robin. Speedup ceiling = total / max-worker-load; good balance is the difference between ~4× and ~2×.
+
+### G2 — State-dependent outcomes / determinism (HIGH — the real semantic cost) [mitigate + document]
+bouncyhsm's crashes are **state-accumulation dependent** (per `xdist-investigation-2026-05-28.md`: a multiblock crash only fired *after* earlier files put the token into a certain state). Sharding files onto N fresh tokens changes that accumulation, so a pool run can legitimately **report different crashes/outcomes** than a single-token run — it may *hide* an accumulation-triggered crash or *surface* a new one. For a tool whose job is stable, comparable bug reports this is a genuine semantic change, not just a perf knob.
+**Mitigations:** (a) pool mode is **opt-in**, single-token remains the canonical findings mode; (b) keep `CKA_TOKEN`-object-creating / known-interacting files grouped on one worker where identifiable; (c) record pool topology in `results.json` metadata so a run's provenance is explicit. **Recommendation:** treat pool mode as the *fast* mode and single-token as the *canonical* mode; document that crash-set may differ.
+
+### G3 — Bootstrap-count inflation (MEDIUM) [fix in merge]
+`C_Initialize`/bootstrap functions run once **per worker**, so summing `bootstrap_counts` across N workers over-counts ~N×, and `called_counts` for session-setup functions inflate too. `extract_coverage_from_jsonl` blindly sums. **Fix:** the merge must treat bootstrap/session-fixture counts specially (max, or per-worker-normalized, or tagged). Names (union) are unaffected — only counts. Coverage *breadth* (which functions/mechanisms exercised) stays correct; only call-count *totals* need de-inflation.
+
+### G4 — Crash classification (LOW — actually a strength) [preserved]
+Because each worker is a full `run_isolated_pytest_units`, per-worker crash-survival/iterative-deselect and the `crashed`/`timeout`/`failed` distinction are **preserved exactly**; the merge just sums buckets. This is strictly better than xdist.
+
+### G5 — Lifecycle (LOW with containers) [docker does it]
+With the container model there is **no in-image multi-server lifecycle to build** — `docker run`/compose starts/stops each shard's container, and each container already starts its own single server+token via the existing entrypoint. The orchestrator just launches K containers in parallel and waits. Resource (measured): each bouncyhsm container ≈ 1 core + ~0.8 GiB server + ~0.5 GiB python ≈ **~1.3 GiB**; box 12 cores / 18 GiB ⇒ K=4-6 comfortable. Readiness/health is already handled inside each container's entrypoint (slot-create curl).
+
+### G6 — Generalization (LOW with containers) [free]
+This is the big win of the container model: **it generalizes for free.** Every provider image already runs exactly one isolated instance, so "K shards = K containers of that image" works identically for bouncyhsm, softhsm2, NSS, kryoptic, opencryptoki — no per-provider pool code. Whether a provider *benefits* still varies (bouncyhsm/opencryptoki are network/daemon and per-call-bound → big win; softhsm2/NSS/kryoptic are in-process and already fast → little gain), so sharding is **opt-in via shard count** (K=1 = today). The merge + shard + launch code is 100 % provider-agnostic.
+
+### G7 — Resume with a pool (LOW) [defer or per-worker]
+Each worker already has its own `state_file` → resume is per-worker for free. A pool-level `--resume` just resumes each worker over its original shard. Defer polish; per-worker resume works.
+
+### G8 — Manifest / preflight (LOW) [share]
+One preflight against any one server produces a manifest valid for all identical servers; pass the same `--p11-manifest` read-only to all workers. Saves N−1 preflights.
+
+### G9 — Failure isolation between workers (LOW) [handle]
+If a worker process dies (OOM, server crash), the coordinator must still merge the survivors and report the dead shard's units as a clear error, not silently drop them. `parallel`-style "collect all, mark failures" with the dead worker's units surfaced as `error`.
+
+## 8. Configurability surface (container model)
+
+Three small, provider-agnostic pieces — **no provider image changes**:
+
+1. **`pkcs11-check shard-units`** (new helper): given the testcases dir (+ optional prior `results.json` for durations), emit K balanced file-lists. Pure planning, no devices.
+2. **`docker/test-parallel.sh <provider> --shards K`** (new launcher): calls `shard-units`, then runs K `docker compose run` in parallel — each with `PKCS11_CHECK_TARGETS="<shard i files>"` and `PKCS11_CHECK_ARTIFACT_DIR=/artifacts/<provider>-shard-i` (shared `../artifacts` mount, distinct subdirs → no collision), waits for all, then calls merge.
+3. **`pkcs11-check merge-shards <dir…> -o <out>`** (new subcommand): the core deliverable — combine the K artifact dirs into one `results.json` + `coverage.json` + `quality.json` + `report.jsonl`.
+
+`--shards 1` (default) = today's single-container behavior, byte-for-byte. `results.json` gains a `shards: {count, files_per_shard}` provenance field. Shard count per provider lives in the launcher/CI, not in any image.
+
+## 9a. Empirical result (2026-05-29, K=4 on a 12-core/21 GiB host)
+
+First real sharded bouncyhsm round via `docker/test-parallel.sh bouncyhsm --shards 4`:
+
+| | single container | **K=4 sharded** |
+|---|---|---|
+| wall-clock | 68.2 min | **24m55s** (≈2.7× faster, **under 30 min**) |
+| total tests | 104 962 | 104 962 (identical) |
+| coverage breadth | funcs 70/104, mechs 207/214 | **identical** (merge loses nothing) |
+| passed / failed / crashed | 52 397 / 8 391 / 3 | 52 386 / 8 402 / 3 (**±11**, total identical) |
+
+The ±11 is **G2 observed live**: `test_ccm` crashed on shard-3's fresh token (it ran clean in the single-token oracle), flipping ~11 outcomes — a state-dependent difference, not a merge error. Coverage breadth and total count are exact, confirming the merge is correct.
+
+**Two refinement levers found empirically:**
+1. **Core-aware K** — K=4 × ~2-4 cores **oversubscribed** the 12 cores (~1.5× slowdown). `--shards` now defaults to `cores/4` (=3 here) so shards run near solo speed. K=3 also matches the 3 indivisible ~11-min MCT files.
+2. **Crash-prone-file spread / heavy-file test-splitting** — shard-3 was the long pole (ccm crash + 86 light files). Spreading known-crashers (from `policy.json`) and optionally test-splitting the 3 MCT files would push wall toward ~15-18 min. Not needed to clear 30 min, but the path lower.
+
+## 9b. Deep review — M-batches / N-workers pool + cross-provider correctness (2026-05-29)
+
+### Is the pool better than launch-all-at-once? Yes.
+- **M=N (launch all K at once):** each worker gets one possibly-huge batch and idles after finishing → the slowest shard is the long pole (observed: 25 min at K=4, shard-3 alone ran ~24 min while others idled ~9 min).
+- **M>N (pool, finished worker pulls next batch):** load self-balances dynamically → wall ≈ `max(largest single batch, total_work / N)`. With M=8/N=4 and the 3 MCT files each isolated into their own batch, that's ≈ `max(11 min, 17 min) = ~17 min`. Strictly better, and the more (smaller) batches, the closer to the `total/N` optimum.
+
+### The M sweet-spot is a real tension (balance vs container-startup)
+Each batch = one container = one **server boot + slot create** (~4-10 s for bouncyhsm). So:
+- Too few batches (M≈N) → poor balance (long pole).
+- Too many batches (M→#files, "one file per batch" = perfect online bin-packing, no oracle needed) → **M × container-startup** dominates (245 files × ~5 s ≈ 20 min of pure boots — defeats the point).
+- **Sweet spot: moderate M (≈ 8-16)** + a duration oracle that isolates the few heavy files into their own small batches. That gets near-optimal balance with a bounded number of boots.
+
+### Completeness ("nothing forgotten") — VERIFIED
+`shard-units`' file set is cross-checked against the runner's own `discover_pytest_units(granularity=file)`: **245 == 245, zero difference.** The partition is complete and disjoint (unit-tested), the launcher refuses to run if `batched != discovered`, and every batch must emit `results.json` before merge (missing → flagged, non-zero exit). The earlier "268" was per-test *promotion* expansion (escalation), not files; sharding is by file and each container re-expands promotions internally.
+
+### Cross-provider correctness (the key subtlety)
+Per-file duration depends on the provider's **skip pattern** — different modules advertise different mechanisms, so a file heavy on one is *skipped (≈0 s)* on another (e.g. the AES-CFB/MCT files are ~11 min on bouncyhsm but **file-skipped on softhsm2**). Consequences, now handled:
+1. **The oracle must be the SAME provider's own prior run.** The launcher auto-detects `artifacts/<provider>-pooled/results.json` (then `…/<provider>/results.json`); it never borrows another provider's oracle. Using bouncyhsm's oracle for softhsm2 would isolate now-skipped files into wasted batches and mis-size the rest.
+2. **First run / no oracle → count-balance** (median fallback in `plan_shards`). Imperfect (a heavy file lands in a ~M-th-of-files batch), but the M>N pool still absorbs most of the imbalance, and the run's own merged `results.json` becomes the oracle for next time — **self-improving**.
+3. **Who actually benefits:** the pool pays off for **network/daemon, per-call-bound** providers (bouncyhsm; opencryptoki via its daemon). **In-process providers (softhsm2/NSS/kryoptic) are already fast** (µs/call) — sharding adds container-startup + merge overhead for little gain, so leave them at `--shards 1`. This makes the cross-provider oracle issue mostly academic (only bouncyhsm/opencryptoki shard in practice), but the own-oracle rule is enforced regardless.
+
+### Alternatives considered
+| Approach | Verdict |
+|---|---|
+| xdist `-n N` (same token) | Unsafe (concurrent same-token); coverage/crash-classification break. Rejected. |
+| M=N launch-all | Works but long-pole imbalance (~25 min). Superseded. |
+| **M>N pool + own-provider duration oracle (chosen)** | Best safe balance with bounded boots; self-improving; ~17 min target. |
+| M = #files (1 file/batch) | Optimal balance, no oracle — but container-startup dominates. Rejected. |
+
+### Residual risks (accepted / mitigated)
+- **G2 determinism:** sharding can shift state-dependent crashes ~0.01 % vs single-token (observed: ccm crashed on one shard's fresh token). Pool = fast mode; single-container = canonical. Documented.
+- **No pool-level resume:** each batch is a fresh run; a ~17-min round doesn't need resume (per-batch state still exists if a single batch is re-run).
+- **Concurrency vs cores:** N defaults to `cores/4` (each bouncyhsm shard ≈ 2-4 cores). N=4 on 12 cores is borderline; the launcher lets you tune.
+
+## 9. Expected payoff
+
+With good sharding (G1), wall ≈ `max-worker-load + pool overhead`. The ~33-min MCT block split across 3-4 workers → ~9-11 min; the rest (~18 min of work) spreads too. Realistic target **~20-30 min at N=4** (down from 68 min completing-MCT, or from ~54 min legacy-timeout). The idle-resource headroom (only 2/12 cores used today) confirms this is feasible without contention.
+
+## 10. Implementation plan (phased, after review)
+
+1. **`merge-shards` subcommand** (no parallelism yet) — combine K artifact dirs: sum `results.summary`, concat `units`, concat `report.jsonl` → reuse `extract_coverage_from_jsonl` for `coverage.json` (with G3 bootstrap de-inflation) → regenerate `quality.json`. Fully unit-testable offline against the existing single-container artifacts (split one run's units into 2 fake shards, merge, assert == original). **Lowest-risk, highest-value, build first.**
+2. **`shard-units` helper** — LPT bin-packing over prior `duration_s` (+ static heavy-file fallback) → K file-lists. Unit-tested.
+3. **`docker/test-parallel.sh`** — shard → K parallel `docker compose run` (distinct TARGETS + artifact subdirs) → wait-all → `merge-shards`. No image changes.
+4. **Validate**: K=4 bouncyhsm round; compare wall-clock + **counts/coverage vs single-container** (expect coverage *breadth* identical; crash-set may differ per G2 — document); confirm merged `results.json` total == sum of shards.
+5. (Later) optional `--shards` convenience flag inside `pkcs11-check test` that drives steps 1-3 for local (non-docker) multi-token runs.
+
+## 11. Open questions for review
+
+1. **Determinism (G2):** OK to treat pool mode as *fast/non-canonical* (crash-set may differ from single-token), with single-token remaining the reference? Or must pool runs reproduce the exact single-token crash-set (which constrains sharding / may be impossible)?
+2. **Default N** for bouncyhsm in CI (4? 6?) and whether other providers ever enable it.
+3. **Bootstrap counts (G3):** acceptable to report per-worker-deduplicated call counts (breadth exact, totals de-inflated), or do call-count totals need to match single-token exactly?
+4. Container model confirmed over N-servers-in-one-image? (Recommended: yes — provider-agnostic, no image changes.)
+5. Shard granularity = **whole files** (preserves per-file isolation + fixture sharing). Agreed? (Per-test sharding would break file-scoped fixtures and isolation.)

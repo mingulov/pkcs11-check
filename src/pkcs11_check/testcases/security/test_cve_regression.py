@@ -68,9 +68,11 @@ from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
     CKR_DATA_INVALID,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
     CKR_ENCRYPTED_DATA_INVALID,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
@@ -89,11 +91,23 @@ from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     get_pin_bytes,
     is_known_error,
+    reject_or_classify,
     skip_unless_mechanism,
     xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.security
+
+# Expected rejection codes for importing an EC public key with an invalid /
+# unknown curve OID (CVE-2021-3798). A spec-correct module rejects the bogus
+# curve; another clean reject code is a non-spec deviation (xfail); acceptance
+# is a crypto-correctness break (fail).
+_INVALID_EC_CURVE_REJECT_RVS = (
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 # CKR codes that indicate template/attribute rejection (not crash)
 _TEMPLATE_REJECT_RVS = {
@@ -246,7 +260,9 @@ class TestCKADeriveOnEC:
         except AssertionError as e:
             err_str = str(e)
             if "CKR_ATTRIBUTE_VALUE_INVALID" in err_str:
-                pytest.xfail("Module rejects CKA_DERIVE on EC (tpm2-pkcs11 #656)")
+                # Some modules reject CKA_DERIVE on EC keys (e.g. tpm2-pkcs11 #656);
+                # a clean non-spec rejection -> noted deviation, not a finding.
+                pytest.xfail("Module rejects CKA_DERIVE on EC (clean non-spec rejection)")
             else:
                 raise
 
@@ -575,12 +591,28 @@ class TestECDSATimingBasic:
             cv = stdev_t / mean_t if mean_t > 0 else 0
 
             # For very fast operations (<1ms), OS scheduling jitter dominates
-            # and CV can be high. Only flag truly extreme variance (CV > 1.0).
-            # Real Minerva leaks show CV > 2.0 with bimodal distribution.
-            assert cv < 1.0, (
-                f"ECDSA timing CV={cv:.3f} (mean={mean_t * 1000:.2f}ms, "
-                f"stdev={stdev_t * 1000:.2f}ms) - possible timing leak"
-            )
+            # and CV can be high. This 100-sample CV heuristic is *informational
+            # only* -- a real Minerva-class leak (CVE-2019-13627, CVE-2023-6135)
+            # needs thousands of signatures + bimodal-distribution analysis. A
+            # high CV here is a flag for further investigation, not proof of a
+            # leak, so it must not gate the suite (catalog CR-6).
+            if cv >= 1.0:
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    f"ECDSA P-256 100-sample timing CV={cv:.3f} "
+                    f"(mean={mean_t * 1000:.2f}ms, stdev={stdev_t * 1000:.2f}ms) "
+                    "-- review with a full Minerva-style multi-thousand-sample "
+                    "analysis to confirm or rule out a timing leak",
+                    ComplianceLevel.NOT_RECOMMENDED,
+                    reference="CVE-2019-13627 / CVE-2023-6135 (Minerva). 100-"
+                    "sample CV is environment-sensitive (OS scheduling jitter "
+                    "alone can push CV past 1.0 on shared runners).",
+                )
+                pytest.xfail(
+                    f"ECDSA timing CV={cv:.3f} -- informational, needs deeper "
+                    "Minerva analysis to confirm leak"
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -664,6 +696,11 @@ class TestInvalidECCurve:
         bad_oid = bytes([0x06, 0x05, 0xDE, 0xAD, 0xBE, 0xEF, 0x00])
         fake_point = b"\x04" + b"\x01" * 64  # Fake uncompressed point
 
+        # Type-A crypto-correctness: importing an EC public key with an invalid /
+        # unknown curve OID and a bogus point is a cryptographic correctness break
+        # (CVE-2021-3798 pattern). Acceptance -> fail; expected curve/param reject ->
+        # pass; another clean reject code -> xfail. No claim-check (Type A).
+        reject_exc: AssertionError | None = None
         try:
             obj = create_object(
                 rs.raw,
@@ -677,17 +714,15 @@ class TestInvalidECCurve:
                     CKA_TOKEN: False,
                 },
             )
-            # If accepted - this is the CVE-2021-3798 vulnerability
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                "Module accepted EC key with invalid curve OID (CVE-2021-3798 pattern)",
-                ComplianceLevel.NOT_RECOMMENDED,
-                reference="CVE-2021-3798: OpenCryptoki missing EC curve validation",
-            )
             destroy_quietly(rs.raw, rs.sh, obj)
-        except AssertionError:
-            pass  # Correct: reject invalid curve
+        except AssertionError as exc:
+            reject_exc = exc
+
+        reject_or_classify(
+            reject_exc,
+            _INVALID_EC_CURVE_REJECT_RVS,
+            label="import EC public key with invalid curve OID",
+        )
 
 
 class TestSoftHSM2Issue596:
@@ -754,13 +789,18 @@ class TestSoftHSM2Issue722:
 
     def test_rsa_encrypt_decrypt_no_crash(self, p11_config: Any) -> None:
         """RSA encrypt/decrypt cycle in subprocess - must not crash."""
+        import os
         import subprocess
         import sys
 
-        from pkcs11_check.testcases._subprocess_preamble import subprocess_session_preamble
+        from pkcs11_check.testcases._subprocess_preamble import (
+            _P11CHECK_PIN_ENV,
+            pin_from_config,
+            subprocess_session_preamble,
+        )
 
         module = str(p11_config.module)
-        pin = p11_config.pin.get_secret_value() if p11_config.pin else None
+        pin = pin_from_config(p11_config)
 
         preamble = subprocess_session_preamble(
             module,
@@ -798,11 +838,16 @@ finally:
     raw.C_Finalize(None)
 """
         )
+        # Pass the PIN via the child env (never embed it in the script source).
+        env = {**os.environ}
+        if pin is not None:
+            env[_P11CHECK_PIN_ENV] = pin
         result = subprocess.run(
             [sys.executable, "-c", script],
             capture_output=True,
             text=True,
             timeout=30,
+            env=env,
         )
         assert result.returncode == 0, (
             f"RSA encrypt/decrypt crashed (rc={result.returncode}): {result.stderr}"

@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.pack import mech_simple
-from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key, read_attributes
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
@@ -26,13 +26,17 @@ from pkcs11_check.raw.types_std import (
     CKF_SERIAL_SESSION,
     CKM_AES_ECB,
     CKM_SHA256,
-    CKR_ATTRIBUTE_SENSITIVE,
-    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
     CKR_PIN_INCORRECT,
+    CKR_SESSION_HANDLE_INVALID,
     CKR_USER_ALREADY_LOGGED_IN,
     CKR_USER_TYPE_INVALID,
     CKU_USER,
+)
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    classify_policy_enforcement,
 )
 
 pytestmark = pytest.mark.security
@@ -109,29 +113,19 @@ class TestCKRAttributeErrors:
         rs = p11_raw_session
         key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SENSITIVE: True})
         try:
-            # Try to read CKA_VALUE (sensitive by default)
-            tmpl = (CK_ATTRIBUTE * 1)()
-            tmpl[0].type = CKA_VALUE
-            tmpl[0].pValue = None
-            tmpl[0].ulValueLen = 0
-            rv = rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
-            if rv == CKR_OK:
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    "C_GetAttributeValue(CKA_VALUE) returned CKR_OK on CKA_SENSITIVE=True key "
-                    "(expected CKR_ATTRIBUTE_SENSITIVE). Sensitive key material is readable.",
-                    ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.4.9.2",
-                )
-                pytest.xfail(
-                    "SECURITY: module returns CKR_OK for CKA_VALUE read on "
-                    "CKA_SENSITIVE=True key (expected CKR_ATTRIBUTE_SENSITIVE)"
-                )
-            assert rv in (
-                CKR_ATTRIBUTE_SENSITIVE,
-                CKR_ATTRIBUTE_TYPE_INVALID,
-            ), f"Expected CKR_ATTRIBUTE_SENSITIVE, got {ckr_name(rv)}"
+            # Type-B claim/effect-check: claimed = the key reports
+            # CKA_SENSITIVE=True back; violated = the protected CKA_VALUE is
+            # actually readable (read_attributes omits unavailable attributes).
+            sens_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
+            claimed = sens_attrs.get(CKA_SENSITIVE) is True
+            val_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
+            violated = CKA_VALUE in val_attrs
+            classify_policy_enforcement(
+                claimed=claimed,
+                violated=violated,
+                label="read CKA_VALUE on a CKA_SENSITIVE=True key "
+                "(PKCS#11 v3.1 Sec.4.9.2 requires CKR_ATTRIBUTE_SENSITIVE)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -181,15 +175,23 @@ class TestCKRObjectErrors:
         self,
         p11_raw_session: Any,
     ) -> None:
-        """Using a destroyed object's handle triggers an error."""
+        """Using a destroyed object's handle -> CKR_OBJECT_HANDLE_INVALID."""
         rs = p11_raw_session
         key = gen_aes_key(rs.raw, rs.sh, 256)
         rs.raw.C_DestroyObject(rs.sh, key)
-        # Try to read attribute on destroyed object
+        # Negative op on a destroyed handle. Issue C_GetAttributeValue *directly*
+        # (not via read_attributes, which would re-raise the correct
+        # CKR_OBJECT_HANDLE_INVALID rejection as a setup error). Sizing call only.
         tmpl = (CK_ATTRIBUTE * 1)()
         tmpl[0].type = CKA_LABEL
         tmpl[0].pValue = None
         tmpl[0].ulValueLen = 0
-        rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
-        # Some modules may not detect the invalid handle
-        # but it should not return CKR_OK with valid data
+        rv = rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
+        # CKR_OK -> the read succeeded on a destroyed handle (use-after-destroy)
+        # -> fail. A handle-invalid rejection is spec-correct -> pass. Any other
+        # clean reject code -> xfail (honest non-spec deviation).
+        classify_negative_rv(
+            rv,
+            (CKR_OBJECT_HANDLE_INVALID, CKR_SESSION_HANDLE_INVALID),
+            label="C_GetAttributeValue via a destroyed object handle (use-after-destroy)",
+        )

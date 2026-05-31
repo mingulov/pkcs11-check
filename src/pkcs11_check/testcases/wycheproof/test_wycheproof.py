@@ -120,8 +120,8 @@ class TestAESGCMWycheproof:
     """Wycheproof AES-GCM vectors - tests AEAD correctness and tag validation."""
 
     @pytest.mark.parametrize("vec", _load_aes_gcm_vectors(), ids=_vec_id)
-    def test_aes_gcm(self, p11_raw_session: Any, vec: dict[str, Any]) -> None:
-        rs = p11_raw_session
+    def test_aes_gcm(self, p11_module_session: Any, vec: dict[str, Any]) -> None:
+        rs = p11_module_session
         _skip_unless_mechanism(rs, "AES_GCM")
         key_bytes = bytes.fromhex(vec["key"])
         iv = bytes.fromhex(vec["iv"])
@@ -238,8 +238,8 @@ class TestHMACSHA256Wycheproof:
     """Wycheproof HMAC-SHA256 vectors."""
 
     @pytest.mark.parametrize("vec", _load_hmac_sha256_vectors(), ids=_vec_id)
-    def test_hmac_sha256(self, p11_raw_session: Any, vec: dict[str, Any]) -> None:
-        rs = p11_raw_session
+    def test_hmac_sha256(self, p11_module_session: Any, vec: dict[str, Any]) -> None:
+        rs = p11_module_session
         _skip_unless_mechanism(rs, "SHA256_HMAC")
         key_bytes = bytes.fromhex(vec["key"])
         msg = bytes.fromhex(vec["msg"])
@@ -327,12 +327,12 @@ class TestECDSAP256Wycheproof:
     """Wycheproof ECDSA P-256/SHA-256 vectors - tests signature verification."""
 
     @pytest.mark.parametrize("vec", _load_ecdsa_p256_vectors(), ids=_vec_id)
-    def test_ecdsa_p256_sha256_verify(self, p11_raw_session: Any, vec: dict[str, Any]) -> None:
+    def test_ecdsa_p256_sha256_verify(self, p11_module_session: Any, vec: dict[str, Any]) -> None:
         import hashlib
 
         from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_unless_mechanism(rs, "ECDSA")
         msg = bytes.fromhex(vec["msg"])
         sig_der = bytes.fromhex(vec["sig"])
@@ -408,8 +408,8 @@ class TestAESCBCPKCS5Wycheproof:
     """Wycheproof AES-CBC-PKCS5 vectors - tests padding correctness."""
 
     @pytest.mark.parametrize("vec", _load_aes_cbc_pkcs5_vectors(), ids=_vec_id)
-    def test_aes_cbc_pkcs5(self, p11_raw_session: Any, vec: dict[str, Any]) -> None:
-        rs = p11_raw_session
+    def test_aes_cbc_pkcs5(self, p11_module_session: Any, vec: dict[str, Any]) -> None:
+        rs = p11_module_session
         _skip_unless_mechanism(rs, "AES_CBC_PAD")
         key_bytes = bytes.fromhex(vec["key"])
         iv = bytes.fromhex(vec["iv"])
@@ -476,12 +476,12 @@ class TestECDSAP384Wycheproof:
     """Wycheproof ECDSA P-384/SHA-384 signature verification vectors."""
 
     @pytest.mark.parametrize("vec", _load_ecdsa_p384_vectors(), ids=_vec_id)
-    def test_ecdsa_p384_sha384_verify(self, p11_raw_session: Any, vec: dict[str, Any]) -> None:
+    def test_ecdsa_p384_sha384_verify(self, p11_module_session: Any, vec: dict[str, Any]) -> None:
         import hashlib
 
         from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_unless_mechanism(rs, "ECDSA")
         msg = bytes.fromhex(vec["msg"])
         sig_der = bytes.fromhex(vec["sig"])
@@ -555,8 +555,8 @@ class TestRSASigWycheproof:
     """Wycheproof RSA PKCS#1 v1.5 signature verification vectors."""
 
     @pytest.mark.parametrize("vec", _load_rsa_sig_vectors(), ids=_vec_id)
-    def test_rsa_sig_2048_sha256(self, p11_raw_session: Any, vec: dict[str, Any]) -> None:
-        rs = p11_raw_session
+    def test_rsa_sig_2048_sha256(self, p11_module_session: Any, vec: dict[str, Any]) -> None:
+        rs = p11_module_session
         _skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
         msg = bytes.fromhex(vec["msg"])
         sig = bytes.fromhex(vec["sig"])

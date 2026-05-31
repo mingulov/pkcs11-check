@@ -162,9 +162,9 @@ class TestEdDsaKeyGen:
     """EdDSA key generation tests using ACVP vectors."""
 
     @pytest.mark.parametrize("vec_id,vec", _KEYGEN_VECTORS, ids=[v[0] for v in _KEYGEN_VECTORS])
-    def test_eddsa_keygen(self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    def test_eddsa_keygen(self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         """Test EdDSA keypair generation and roundtrip sign/verify."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("EC_EDWARDS_KEY_PAIR_GEN"):
             pytest.skip("EC_EDWARDS_KEY_PAIR_GEN not supported by module")
         skip_duplicate_pkcs11_input(vec, "EdDSA KeyGen")
@@ -205,10 +205,10 @@ class TestEdDsaKeyVer:
 
     @pytest.mark.parametrize("vec_id,vec", _KEYVER_VECTORS, ids=[v[0] for v in _KEYVER_VECTORS])
     def test_eddsa_keyver(
-        self, p11_raw_session: Any, p11_config: Any, vec_id: str, vec: dict[str, Any]
+        self, p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[str, Any]
     ) -> None:
         """Test EdDSA public key verification."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("EDDSA"):
             pytest.skip("EDDSA mechanism not supported by module")
 
@@ -265,9 +265,9 @@ class TestEdDsaKeyVer:
 
 
 @pytest.mark.parametrize("vec_id,vec", _SIGVER_VECTORS, ids=[v[0] for v in _SIGVER_VECTORS])
-def test_acvp_eddsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_eddsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """EdDSA signature verification from NIST ACVP SigVer vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("EDDSA"):
         pytest.skip("EDDSA mechanism not supported by module")
 
@@ -316,9 +316,9 @@ def test_acvp_eddsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
 
 
 @pytest.mark.parametrize("vec_id,vec", _SIGGEN_VECTORS, ids=[v[0] for v in _SIGGEN_VECTORS])
-def test_acvp_eddsa_siggen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_eddsa_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """Ed25519 signature generation from NIST ACVP SigGen vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("EDDSA"):
         pytest.skip("EDDSA mechanism not supported by module")
 

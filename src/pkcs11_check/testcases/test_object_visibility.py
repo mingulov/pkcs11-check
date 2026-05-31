@@ -41,6 +41,7 @@ from pkcs11_check.raw.types_std import (
     CKF_SERIAL_SESSION,
     CKK_AES,
     CKO_DATA,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_SESSION_COUNT,
     CKR_TEMPLATE_INCOMPLETE,
@@ -115,8 +116,7 @@ def _gen_visibility_aes_key(
         xfail_if_known_ckr(
             exc,
             AES_KEYGEN_RUNTIME_REJECT_RVS,
-            "AES_KEY_GEN advertised but object-visibility setup key generation "
-            "is not operational",
+            "AES_KEY_GEN advertised but object-visibility setup key generation is not operational",
         )
     raise
 
@@ -483,11 +483,8 @@ class TestCrossSessionModification:
                 try:
                     set_attributes(rs.raw, sh_a, h, {CKA_VALUE: b"after"})
                 except AssertionError as e:
-                    err_msg = str(e)
-                    if (
-                        "CKR_ATTRIBUTE_READ_ONLY" in err_msg
-                        or "CKR_ATTRIBUTE_VALUE_INVALID" in err_msg
-                    ):
+                    # Phase 6 C: match the CKR exactly (via rv), not by substring.
+                    if is_known_error(e, (CKR_ATTRIBUTE_READ_ONLY, CKR_ATTRIBUTE_VALUE_INVALID)):
                         from pkcs11_check.compliance import ComplianceLevel, note
 
                         note(

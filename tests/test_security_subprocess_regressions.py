@@ -87,7 +87,7 @@ def test_kwp_error_path_generated_script_compiles(
 def test_kwp_decrypt_child_uses_minimal_guarded_output_buffer() -> None:
     """The decrypt crash path must expose output-buffer overwrites."""
     assert "minimal_len = max(0, len(corrupted) - 8)" in _DECRYPT_CODE
-    assert "guard_sentinel = b\"PKCS11CHK\"" in _DECRYPT_CODE
+    assert 'guard_sentinel = b"PKCS11CHK"' in _DECRYPT_CODE
     assert "wrote past the minimal output buffer" in _DECRYPT_CODE
 
 
@@ -599,8 +599,7 @@ def test_ffi_null_pin_scripts_use_utf8char_pointers(
     assert len(scripts) == 2
     assert all("CK_UTF8CHAR_PTR" in script for script in scripts)
     assert all(
-        "ctypes.cast(ctypes.pointer(pin_buf), CK_UTF8CHAR_PTR)" in script
-        for script in scripts
+        "ctypes.cast(ctypes.pointer(pin_buf), CK_UTF8CHAR_PTR)" in script for script in scripts
     )
 
 

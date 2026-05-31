@@ -126,9 +126,9 @@ def _skip_kat_import_capability_reject(
 class TestMechSignRoundtrip:
     """Sign then verify roundtrip for every advertised sign mechanism."""
 
-    def test_roundtrip(self, p11_raw_session: RawSession, mech_sign_entry: MechEntry) -> None:
+    def test_roundtrip(self, p11_module_session: RawSession, mech_sign_entry: MechEntry) -> None:
         """Sign data then verify -- must return True."""
-        rs = p11_raw_session
+        rs = p11_module_session
         entry = mech_sign_entry
         config = entry.config
         assert config is not None
@@ -171,10 +171,10 @@ class TestMechSignRoundtrip:
                 destroy_quietly(rs.raw, rs.sh, verify_key)
 
     def test_tampered_data_fails_verify(
-        self, p11_raw_session: RawSession, mech_sign_entry: MechEntry
+        self, p11_module_session: RawSession, mech_sign_entry: MechEntry
     ) -> None:
         """Sign data A, verify with data B -- must return False."""
-        rs = p11_raw_session
+        rs = p11_module_session
         entry = mech_sign_entry
         config = entry.config
         assert config is not None
@@ -360,9 +360,9 @@ def _run_asymmetric_sign_kat(
 class TestMechSignKAT:
     """Known-answer sign/MAC tests from pre-generated vectors."""
 
-    def test_kat_vector(self, p11_raw_session: RawSession, mech_sign_entry: MechEntry) -> None:
+    def test_kat_vector(self, p11_module_session: RawSession, mech_sign_entry: MechEntry) -> None:
         """Compute MAC with known key and input -- verify output matches vector."""
-        rs = p11_raw_session
+        rs = p11_module_session
         entry = mech_sign_entry
         config = entry.config
         if config is None or not config.vector_file:

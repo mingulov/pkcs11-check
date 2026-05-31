@@ -83,8 +83,10 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    classify_negative_rv,
     get_pin_bytes,
     is_known_error,
+    reject_or_classify,
     require_operational_aes_keygen,
     skip_if_token_write_protected,
     xfail_if_known_ckr,
@@ -92,12 +94,10 @@ from pkcs11_check.testcases.conftest import (
 
 pytestmark = pytest.mark.access
 
-# RO restriction errors
-_RO_ERROR_RVS = (
-    CKR_SESSION_READ_ONLY,
-    CKR_ACTION_PROHIBITED,
-    CKR_SESSION_READ_ONLY_EXISTS,
-)
+# RO write-restriction guards classify 3-way via classify_negative_rv: a write
+# accepted on a read-only session (CKR_OK) -> fail, the spec code
+# CKR_SESSION_READ_ONLY -> pass, any other clean reject (CKR_ACTION_PROHIBITED,
+# CKR_SESSION_READ_ONLY_EXISTS, template/write-protected pre-checks) -> xfail.
 
 # Broader set including unsupported
 _RO_OR_UNSUPPORTED_RVS = (
@@ -216,8 +216,7 @@ def _gen_ro_setup_rsa_keypair(
         xfail_if_known_ckr(
             exc,
             KEYPAIR_RUNTIME_REJECT_RVS,
-            f"RSA_PKCS_KEY_PAIR_GEN advertised but {purpose} keypair generation "
-            "is not operational",
+            f"RSA_PKCS_KEY_PAIR_GEN advertised but {purpose} keypair generation is not operational",
         )
     raise
 
@@ -256,7 +255,11 @@ class TestROTokenObjectCreation:
             )
             obj_h = CK_OBJECT_HANDLE(0)
             rv = rs.raw.C_CreateObject(ro_sh, tmpl.ptr, tmpl.count, byref(obj_h))
-            assert rv in _RO_ERROR_RVS, f"Expected RO error, got {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_SESSION_READ_ONLY,),
+                label="C_CreateObject with CKA_TOKEN=True on a read-only session",
+            )
         finally:
             close_session_quietly(rs.raw, ro_sh)
 
@@ -281,10 +284,13 @@ class TestROTokenObjectCreation:
             rv = rs.raw.C_GenerateKey(ro_sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h))
             _xfail_if_aes_keygen_rv(
                 rv,
-                "AES_KEY_GEN advertised but RO restriction AES key generation "
-                "is not operational",
+                "AES_KEY_GEN advertised but RO restriction AES key generation is not operational",
             )
-            assert rv in _RO_ERROR_RVS, f"Expected RO error, got {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_SESSION_READ_ONLY,),
+                label="C_GenerateKey with CKA_TOKEN=True on a read-only session",
+            )
         finally:
             close_session_quietly(rs.raw, ro_sh)
 
@@ -301,8 +307,6 @@ class TestROTokenObjectCreation:
             from pkcs11_check.raw.types_std import (
                 CKA_MODULUS_BITS,
                 CKA_PUBLIC_EXPONENT,
-                CKR_TEMPLATE_INCOMPLETE,
-                CKR_TOKEN_WRITE_PROTECTED,
             )
 
             # Provide a complete RSA template so modules that validate
@@ -334,14 +338,15 @@ class TestROTokenObjectCreation:
                 byref(pub_h),
                 byref(priv_h),
             )
-            # Accept RO errors, write-protected, or template-incomplete
-            # (modules may validate template before checking session type)
-            _ro_or_template_rvs = (
-                *_RO_ERROR_RVS,
-                CKR_TOKEN_WRITE_PROTECTED,
-                CKR_TEMPLATE_INCOMPLETE,
+            # Spec-preferred reject on a read-only session is CKR_SESSION_READ_ONLY.
+            # Some modules validate the template before checking session type and
+            # reject earlier (CKR_TEMPLATE_INCOMPLETE / CKR_TOKEN_WRITE_PROTECTED) --
+            # an honest non-spec reject -> xfail, not a finding.
+            classify_negative_rv(
+                rv,
+                (CKR_SESSION_READ_ONLY,),
+                label="C_GenerateKeyPair with CKA_TOKEN=True on a read-only session",
             )
-            assert rv in _ro_or_template_rvs, f"Expected RO error, got {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, ro_sh)
 
@@ -440,7 +445,11 @@ class TestROTokenObjectMutation:
                 found = find_objects(rs.raw, ro_sh, tmpl)
                 assert len(found) >= 1, "Token object not found in RO session"
                 rv = rs.raw.C_DestroyObject(ro_sh, found[0])
-                assert rv in _RO_ERROR_RVS, f"Expected RO error, got {ckr_name(rv)}"
+                classify_negative_rv(
+                    rv,
+                    (CKR_SESSION_READ_ONLY,),
+                    label="C_DestroyObject of a token object on a read-only session",
+                )
             finally:
                 close_session_quietly(rs.raw, ro_sh)
         finally:
@@ -672,7 +681,12 @@ class TestROExactCKR:
             )
             obj_h = CK_OBJECT_HANDLE(0)
             rv = rs.raw.C_CreateObject(ro_sh, tmpl.ptr, tmpl.count, byref(obj_h))
-            assert rv in _RO_ERROR_RVS, f"Unexpected CKR: {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_SESSION_READ_ONLY,),
+                label="C_CreateObject with CKA_TOKEN=True on a read-only session "
+                "(spec-preferred CKR_SESSION_READ_ONLY)",
+            )
         finally:
             close_session_quietly(rs.raw, ro_sh)
 
@@ -695,7 +709,12 @@ class TestROExactCKR:
                 found = find_objects(rs.raw, ro_sh, tmpl)
                 assert len(found) >= 1, "Token object not found in RO session"
                 rv = rs.raw.C_DestroyObject(ro_sh, found[0])
-                assert rv in _RO_ERROR_RVS, f"Unexpected CKR: {ckr_name(rv)}"
+                classify_negative_rv(
+                    rv,
+                    (CKR_SESSION_READ_ONLY,),
+                    label="C_DestroyObject of a token object on a read-only session "
+                    "(spec-preferred CKR_SESSION_READ_ONLY)",
+                )
             finally:
                 close_session_quietly(rs.raw, ro_sh)
         finally:
@@ -725,7 +744,12 @@ class TestROExactCKR:
                 "AES_KEY_GEN advertised but RO restriction exact-CKR key generation "
                 "is not operational",
             )
-            assert rv in _RO_ERROR_RVS, f"Unexpected CKR: {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_SESSION_READ_ONLY,),
+                label="C_GenerateKey with CKA_TOKEN=True on a read-only session "
+                "(spec-preferred CKR_SESSION_READ_ONLY)",
+            )
         finally:
             close_session_quietly(rs.raw, ro_sh)
 
@@ -797,9 +821,12 @@ class TestROWrapUnwrapRestrictions:
                     assert False, "Unwrap to TOKEN=True succeeded in RO session"
                 except AssertionError as e:
                     if "Unwrap to TOKEN=True succeeded" in str(e):
-                        raise
-                    if not is_known_error(e, _RO_OR_UNSUPPORTED_RVS):
-                        raise
+                        raise  # Type-A acceptance must hard-fail
+                    reject_or_classify(
+                        e,
+                        _RO_OR_UNSUPPORTED_RVS,
+                        label="C_UnwrapKey to TOKEN=True in RO session",
+                    )
             finally:
                 close_session_quietly(rs.raw, ro_sh)
         finally:

@@ -10,12 +10,13 @@ import pytest
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_secret_key,
-    sign_single,
+    verify_single,
 )
 from pkcs11_check.raw.types_std import (
     CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
+    CKA_VERIFY,
     CKK_GENERIC_SECRET,
     CKK_SHA3_224_HMAC,
     CKK_SHA3_256_HMAC,
@@ -184,14 +185,22 @@ def _xfail_if_hmac_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_HMAC_VECTORS, ids=[v[0] for v in _ALL_HMAC_VECTORS])
-def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
-    """HMAC verification from Wycheproof vectors."""
-    rs = p11_raw_session
+def test_hmac_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    """HMAC tag verification from Wycheproof vectors.
+
+    Verifies the *supplied* tag with C_Verify so invalid vectors actually
+    exercise rejection. A module that verifies an invalid (forged) tag as valid
+    is a crypto-correctness break (Type A -> fail). The previous
+    produce-direction (C_Sign + compare) could never reject an invalid vector
+    because a fresh correct tag never matched the modified expected tag. A
+    valid MAC the module declines to verify (e.g. an unsupported truncated tag
+    length) is an honest, provider-dependent deviation -> xfail.
+    """
+    rs = p11_module_session
     key_bytes = bytes.fromhex(vec["key"])
     msg = bytes.fromhex(vec["msg"])
     tag_expected = bytes.fromhex(vec["tag"])
     result = vec["result"]
-    tag_size = vec["_tag_size"]
     mechanism = vec["_mechanism"]
 
     # Check mechanism availability from the module's mechanism list
@@ -216,6 +225,7 @@ def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any])
                 key_bytes,
                 attrs={
                     CKA_SIGN: True,
+                    CKA_VERIFY: True,
                     CKA_TOKEN: False,
                     CKA_SENSITIVE: False,
                 },
@@ -236,17 +246,19 @@ def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any])
         pytest.fail(f"Cannot import {len(key_bytes)}-byte HMAC key: {last_exc_msg}")
 
     try:
-        mac = sign_single(rs.raw, rs.sh, key, mechanism, msg)
-        truncated = mac[:tag_size]
-        if result == "valid":
-            assert truncated == tag_expected
-        elif result == "invalid" and truncated == tag_expected:
-            pytest.fail(f"Invalid HMAC tag {vec_id} accepted by module")
+        verified = verify_single(rs.raw, rs.sh, key, mechanism, msg, tag_expected)
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_hmac_runtime_reject(exc, vec_id)
             pytest.fail(f"HMAC failed for {vec_id}: {exc}")
-        # acceptable: module rejected invalid vector
+        # acceptable: module rejected an invalid vector
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
+
+    if result == "valid" and not verified:
+        # The module declined to verify a valid MAC -- e.g. an unsupported
+        # truncated tag length. Honest, provider-dependent deviation -> xfail.
+        pytest.xfail(f"{vec_id}: module did not verify a valid HMAC tag")
+    if result == "invalid" and verified:
+        pytest.fail(f"HMAC {vec_id}: accepted invalid tag (forged tag verified)")

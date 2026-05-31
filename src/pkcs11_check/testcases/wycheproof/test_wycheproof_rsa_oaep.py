@@ -172,9 +172,9 @@ def _skip_or_xfail_rsa_oaep_private_import_reject(
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_OAEP_VECTORS, ids=[v[0] for v in _ALL_OAEP_VECTORS])
-def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_rsa_oaep(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA-OAEP decryption from Wycheproof vectors."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("RSA_PKCS_OAEP"):
         pytest.skip("RSA_PKCS_OAEP not supported")
 

@@ -1,0 +1,152 @@
+# Fix-phase plan & guard-rails
+
+How to act on [`catalog.md`](catalog.md) in the **later** fix phase. Nothing here is
+implemented yet. Driven by the user's constraints (2026-05-27) + the existing
+classification plan.
+
+## Non-negotiable guard-rails
+
+1. **A pkcs11-check change must NEVER hide a real crash or bug.** Several "PKCS11-CHECK"
+   findings (PC-1 GCM NULL-AAD, PC-5 KWP) are *intended probes blocked by a harness bug*.
+   Fixing the harness must make the probe **actually run** and surface the real provider
+   behavior (crash → `fail`/finding; clean reject → pass; wrong accept → finding). It must
+   not convert the probe into a no-op or a blanket pass.
+2. **Every harness fix gets a dedicated regression test that re-triggers the original issue**
+   so it is *always* exercised and cannot silently regress. Use
+   `superpowers:test-driven-development` (write the failing test first) and, for multi-step
+   work, `superpowers:subagent-driven-development` / `superpowers:executing-plans`.
+   - Prefer an offline **mock-`raw` meta-test** in `tests/*_runtime_classification.py` (drive a
+     fake `raw` returning a chosen `CK_RV`/crash; assert the classification) — runs with no
+     provider, matching the classification plan's per-flip acceptance gate.
+3. **Verify the effect, not the return code** (classification model). Crash = `fail`;
+   accept-invalid-crypto / self-contradiction = `fail`; honest single deviation = `xfail`;
+   missing capability = `skip`. No per-provider config.
+4. **Doc-sync:** any flip of a finding documented in `docs/module-issues.md` updates that entry
+   in the same change; NEW provider findings get added there.
+
+## The fix phase EXECUTES the classification plan (backbone)
+
+**Status (2026-05-28):** the CKR-common-storage / table-centric classification plan
+([`../classification-model-plan.md`](../classification-model-plan.md)) is **46 / 46 tasks
+done** — Phases 1–6 shipped on `dev` (commits c367749…3ddc13c). The `kind` field on
+`CkrExpectation`, the 3-way `assert_ckr` (other-reject → xfail, `CKR_OK` → fail),
+the four classifier helpers (`classify_negative_rv`, `reject_or_classify`,
+`classify_policy_enforcement`, `classify_lifecycle_effect`), and the mock-`raw`
+meta-tests under `tests/*_runtime_classification.py` are all in production. v0.1.2
+packages the shipped state.
+
+Phase 1 unblocks PC-4 / PC-6 fixes; those ride on top of the now-shipped classifier
+rather than introducing their own ad-hoc per-test edits.
+
+## CKR changes go through the common storage (do NOT widen ad-hoc)
+
+The "CKR common storage" is **`src/pkcs11_check/testcases/ckr/_ckr_spec.py`**:
+`CkrExpectation` (the table) + the single 3-way `assert_ckr()`, both shipped.
+
+PC-4 / PC-6 widenings:
+- **Function-level negative ops** (the `CkrExpectation` family — keygen/sign/verify/
+  etc. invalid-mechanism, invalid-key-size, etc.): the 3-way `assert_ckr` plus the
+  existing tuples in `src/pkcs11_check/testcases/_error_tuples.py` (notably
+  `MECHANISM_ERRORS` which already contains `CKR_FUNCTION_NOT_SUPPORTED`) absorb
+  tpm2's limited-surface rejections as xfail rather than fail. No new table rows
+  needed — rerun confirms.
+- **Scenario-level sites** (RO-unwrap, RSA-OAEP roundtrip, bit-flip integrity):
+  these compose multiple recipe calls and don't fit the per-function table shape.
+  They use the recipe-site classifiers (`reject_or_classify`,
+  `xfail_if_known_ckr`) inline at the except-block, per the Phase 4 N2 / Phase 5
+  P1b convention.
+
+Only ever widen to **specific** additional CKRs (never a catch-all), per `CLAUDE.md`.
+
+## Suggested fix order (each = one revertible change + its regression test)
+
+1. **PC-1** (GCM NULL-AAD `pIv` cast) — unblock probe; rerun GCM targets into a new artifact
+   folder; record real behavior; regression meta-test. *Highest value: clarifies a real probe.*
+2. **PC-5** (KWP wrap setup classification) — capture real wrap `rv`; skip/xfail honestly.
+3. **Phase 1 of the classification plan** (add `kind`, 3-way `assert_ckr` + meta-tests) —
+   **RESOLVED 2026-05-28**: shipped on `dev` (commits c367749…3ddc13c) along with Phases 2–6;
+   PC-4 / PC-6 fixes now ride on top of the live classifier (see Status block at top of file).
+4. **PC-2** (ML-DSA sigVer encoding) — **RESOLVED 2026-05-28**: loader filters
+   `signatureInterface == "internal"` groups (the 9 false-fails per provider were ACVP
+   internal-interface vectors with no PKCS#11 mechanism equivalent). Regression test
+   `tests/test_acvp_mldsa_sigver_loader.py`. **PC-3 / PV-8** split — partially resolved:
+   - **PC-3 (security probes, 7 tpm2 false-fails)** RESOLVED — `gen_*_keypair` setup
+     now skips on capability-class CKRs (`_KEYGEN_CAPABILITY_REJECT_RVS`). Regression
+     test `tests/test_security_rsa_pss_md5_setup_skip.py` (5 cases).
+   - **PV-8 (39 invalid-accepted tpm2 rows)** confirmed PROVIDER — already source-
+     reviewed in `docs/module-issues.md` (auto-salt-length detection in OpenSSL path).
+     No harness change.
+   - **PC-3 wycheproof "valid SHA-1 PSS rejected" — RESOLVED 2026-05-28:**
+     `_pss_combo_operational` self-roundtrip probe in `test_wycheproof_rsa_pss.py`
+     classifies the `verified=False` valid path as `xfail` when the provider's own
+     fresh-key sign+verify with the same (mech, hash, mgf, sLen) also fails. Cached
+     per-combo. Regression `tests/test_wycheproof_rsa_pss_combo_probe.py` (6 cases).
+5. **EX-2** (pkcs11-mock) — **RESOLVED 2026-05-28**: plugin gates conformance-bearing
+   markers (kat/acvp/cctv/wycheproof/security/interop/crossverify/fuzz/metamorphic/
+   padding_oracle/nonce_quality/regressions/timing) off pkcs11-mock at collection.
+   `--p11-allow-mock-conformance` opts back in. Regression
+   `tests/test_pkcs11_mock_gating.py`.
+6. **CR-6 timing-variance — RESOLVED 2026-05-28**: 100-sample CV heuristic is now
+   informational (`compliance.note` + `pytest.xfail`), not a hard assert. Regression
+   `tests/test_security_ecdsa_timing_variance_nongating.py`.
+   **CR-6 timeouts (REMAINING)**: `test_generate_key_oom_value_len`,
+   `TestForkSafety`/`test_finalize_not_initialized` → `subprocess.TimeoutExpired`.
+   Need focused Docker rerun to distinguish provider hang vs too-short test timeout.
+
+## Rerun review — softhsm2 (2026-05-28, `artifacts/softhsm2-recheck-20260528/`)
+
+First valid post-fix rerun (full suite, ~82k). Net vs baseline: passed −259, **failed +57**,
+xfailed +147 — findings stopped hiding (former passes → real fails + documented xfails). Total
+~stable (82,014). **GCM NULL-AAD SIGSEGV surfaced as `fail`** (FP-1 confirmed end-to-end);
+KWP no longer exit-1 crashes (FP-2). The +58 new failures reviewed:
+- **~55 legitimate surfaced findings**: ECDH invalid-point accepted (×42), GCM weak tag/IV +
+  IV-reuse, PSS sLen=0, bad EC-curve OID, wrong-key-type sign/verify accepted, CBC-PAD oracle.
+- **3 false-fails — RESOLVED:** the module's correct refusal had been flagged "unexpected".
+  Fixed by 718a429 (destroyed-handle reads now classified by raw rv → `test_destroyed_handle`
+  and `test_ckr_object_handle_invalid_after_destroy` accept `CKR_OBJECT_HANDLE_INVALID`) and
+  33b5f0e (refused wrap of protected key now counts as the attack being blocked →
+  `test_wrap_decrypt_extraction_attempt` accepts `CKR_KEY_UNEXTRACTABLE`). Both fixes are
+  narrow / per-test; the broader Phase-4 N2 follow-up (push these into the
+  table/`classify_negative_rv`) still stands as part of the classification rework.
+
+## Goal additions (2026-05-28)
+
+- **Refresh the result/size docs after FP-8 reruns** (they are stale vs the classification
+  fixes; numbers only become accurate post-rerun): `docs/docker-provider-results.md`
+  (per-provider pass/fail/skip/xfail matrix), `docs/provider-crash-failure-findings.md`
+  (crash/timeout/failure classification + new findings: GCM NULL-AAD SIGSEGV, NSS MAC-RSA),
+  `docs/test-universe.md` (suite size/group breakdown — collection is ~stable at ~109k).
+- **Source audit/review of pkcs11-check while Docker runs** (idle compute): review the raw
+  ctypes binding, `recipes.py`, `core/file_runner.py`, the conftest classifiers, and testcase
+  patterns for *other* possible issues (bugs, masking, unsafe ctypes, error-handling gaps) —
+  use the code-review agents. Separate from provider findings; store in `docs/findings/`.
+
+## Re-measurement (Docker reruns)
+
+- New artifact dirs go under `artifacts/<target>-recheck-YYYYMMDD/` —
+  never overwrite the 2026-05-27 baseline result dirs (backup at
+  `/home/user/src/m/artifacts.tar.xz`).
+- **Wrapper script:** `scripts/docker-rerun.sh <target>` handles the safe
+  rerun + post-run comparison. It mounts XDG vectors (so the full ~82k
+  suite runs, not the 3.3k subset), routes output to a NEW dated dir,
+  refuses to overwrite, runs `scripts/recheck-summary.py` for a one-line
+  summary delta, then runs `scripts/compare-results.py` for per-file
+  regression detection.
+- **Target order** (run fast first, opencryptoki last; approx exec time):
+  softhsm2 ~10m, softhsm2-main ~10m, kryoptic ~15m, kryoptic-main ~16m,
+  kryoptic-fips ~18m, nss ~9m, nss-main ~10m, nss-pqc ~9m,
+  opencryptoki ~2h, opencryptoki-master ~1.5h, tpm2 ~25m, pkcs11-mock ~3m.
+- After each rerun: parse summary deltas vs baseline (the wrapper does
+  this automatically), update `docs/module-issues.md` for any NEW
+  findings flagged by `compare-results.py`, and refresh
+  `docs/findings/catalog.md` finding statuses.
+
+**"Better"** = no new signal/crash `fail`, no finding demoted to silent
+pass/skip; every `fail`→`xfail` offset by an `xfail` gain.
+
+## PROVIDER findings — no pkcs11-check change
+
+PV-1 (RSA PKCS#1 lenient decrypt), PV-2 (opencryptoki AES-CBC), PV-3 (EdDSA invalid keys),
+PV-7/10..15, and all crashes (CR-1..4) are **real module behavior**. The only action is to
+confirm KNOWN vs NEW against `module-issues.md` and document NEW ones. Do **not** soften the
+tests to make these pass.
