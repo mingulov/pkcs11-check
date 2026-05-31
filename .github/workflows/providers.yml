@@ -38,10 +38,6 @@ env:
   # One canonical data location shared by the fetch job (cache save) and every
   # provider job (cache restore). PKCS11_CHECK_DATA_DIR overrides the default.
   PKCS11_CHECK_DATA_DIR: ${{ github.workspace }}/data
-  # Run the JS actions (checkout, setup-uv, cache, upload-artifact) on the
-  # runner's Node 24 instead of the bundled Node 20 (deprecated). GitHub's
-  # documented opt-in; harmless once Node 24 becomes the default (2026-06-16).
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -53,13 +49,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v8.1.0
       - name: Restore / populate vector-data cache
         id: data-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: data
           key: pkcs11-data-${{ hashFiles('src/pkcs11_check/testcases/data/sources.toml') }}
@@ -93,7 +89,7 @@ jobs:
         run: |
           dnf -y install git gcc openssl-devel python3 python3-devel \
             opensc nss-tools findutils
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
       - name: Install provider package
@@ -105,10 +101,10 @@ jobs:
             kryoptic) dnf -y install kryoptic ;;
             nss)      dnf -y install nss nss-softokn ;;
           esac
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v8.1.0
       - run: uv sync --frozen --extra dev
       - name: Restore vector-data cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: data
           key: pkcs11-data-${{ hashFiles('src/pkcs11_check/testcases/data/sources.toml') }}
@@ -208,7 +204,7 @@ jobs:
           PY
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         env:
           PROVIDER: ${{ matrix.provider }}
         with:

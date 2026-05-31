@@ -6,20 +6,14 @@ on:
   pull_request:
     branches: [main, dev]
 
-env:
-  # Run the JS actions (checkout, setup-uv) on the runner's Node 24 instead of
-  # the bundled Node 20 (deprecated). GitHub's documented opt-in; harmless once
-  # Node 24 becomes the default (2026-06-16).
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v8.1.0
       - run: uv sync --frozen --extra dev
       - run: uv run ruff check src/ tests/
       - run: uv run ruff format --check src/ tests/
@@ -27,40 +21,40 @@ jobs:
   typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v8.1.0
       - run: uv sync --frozen --extra dev
       - run: uv run mypy src/
 
   meta-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v8.1.0
       - run: uv sync --frozen --extra dev
       - run: uv run pytest tests/ -v --timeout=60
 
   strict-markers:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v8.1.0
       - run: uv sync --frozen --extra dev
       - run: uv run pytest --strict-markers src/pkcs11_check/testcases/ --collect-only -q
 
   smoke-softhsm2:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v8.1.0
       - run: sudo apt-get update && sudo apt-get install -y softhsm2
       - run: uv sync --frozen --extra dev
       - name: Setup SoftHSM2 token
