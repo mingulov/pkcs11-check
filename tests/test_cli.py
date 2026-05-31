@@ -1200,3 +1200,59 @@ class TestListCommand:
         result = runner.invoke(app, ["list", "--category", "pqc"])
         assert result.exit_code == 0
         assert "pqc" in result.output.lower()
+
+
+class TestFetchDisabledCommand:
+    """`fetch-disabled` downloads the disabled-tests baseline."""
+
+    def test_accepts_empty_baseline(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A comments-only / no-entries baseline is valid ("no disabled tests")
+        and MUST succeed -- an empty baseline is the normal state, not an error.
+        """
+        import io
+
+        from pkcs11_check.cli import fetch_cmd
+
+        baseline = (
+            "# Global production disabled baseline.\n"
+            "# One exact pytest nodeid per line.\n"
+            "#src/pkcs11_check/testcases/acvp/aes/test_cfb128.py::test_x[tc1]\n"
+        )
+        monkeypatch.setattr(fetch_cmd, "urlopen", lambda _url: io.BytesIO(baseline.encode()))
+
+        result = runner.invoke(app, ["fetch-disabled", "--data-dir", str(tmp_path)])
+
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "disabled-tests.txt").read_text() == baseline
+
+    def test_accepts_real_entries(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import io
+
+        from pkcs11_check.cli import fetch_cmd
+
+        baseline = (
+            "# header\n"
+            "src/pkcs11_check/testcases/test_x.py::test_a\n"
+            "src/pkcs11_check/testcases/test_x.py::test_b\n"
+        )
+        monkeypatch.setattr(fetch_cmd, "urlopen", lambda _url: io.BytesIO(baseline.encode()))
+
+        result = runner.invoke(app, ["fetch-disabled", "--data-dir", str(tmp_path)])
+
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "disabled-tests.txt").read_text() == baseline
+
+    def test_rejects_non_baseline(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A non-empty file that is not a baseline (e.g. an HTML 404 page) must
+        still fail -- allowing an empty baseline must not allow garbage.
+        """
+        import io
+
+        from pkcs11_check.cli import fetch_cmd
+
+        html = "<html><body>404: Not Found</body></html>\n"
+        monkeypatch.setattr(fetch_cmd, "urlopen", lambda _url: io.BytesIO(html.encode()))
+
+        result = runner.invoke(app, ["fetch-disabled", "--data-dir", str(tmp_path)])
+
+        assert result.exit_code == 1

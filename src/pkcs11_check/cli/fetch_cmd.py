@@ -319,14 +319,16 @@ def fetch_disabled_command(
         for line in content.splitlines()
         if line.strip() and not line.strip().startswith("#")
     ]
-    if not lines:
-        console.print("[red]Downloaded file is empty or has no entries[/red]")
-        raise typer.Exit(code=1)
-
     nodeid_lines = [line for line in lines if "::" in line]
-    if len(nodeid_lines) < len(lines) * 0.5:
+    # A baseline with no active entries (empty or comments-only) is valid -- it
+    # just means no tests are disabled. Only a NON-empty file that doesn't look
+    # like a baseline (e.g. an HTML error page) is a real error.
+    if lines and len(nodeid_lines) < len(lines) * 0.5:
         console.print("[red]Downloaded file doesn't look like a disabled-tests baseline[/red]")
         raise typer.Exit(code=1)
 
     dest.write_text(content)
-    console.print(f"  [green]Downloaded {len(nodeid_lines)} disabled entries[/green] to {dest}")
+    if nodeid_lines:
+        console.print(f"  [green]Downloaded {len(nodeid_lines)} disabled entries[/green] to {dest}")
+    else:
+        console.print(f"  [green]No disabled tests in baseline (empty)[/green] -> {dest}")

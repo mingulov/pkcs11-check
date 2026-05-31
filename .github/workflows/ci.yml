@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main, dev]
 
+env:
+  # Run the JS actions (checkout, setup-uv) on the runner's Node 24 instead of
+  # the bundled Node 20 (deprecated). GitHub's documented opt-in; harmless once
+  # Node 24 becomes the default (2026-06-16).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   lint:
     runs-on: ubuntu-latest

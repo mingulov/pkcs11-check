@@ -18,7 +18,12 @@ from pkcs11_check.testcases.wycheproof import test_wycheproof_hmac as hmac
 
 
 def _first(result: str) -> tuple[str, dict[str, Any]]:
-    return next((cid, v) for cid, v in hmac._ALL_HMAC_VECTORS if v["result"] == result)
+    hit = next(((cid, v) for cid, v in hmac._ALL_HMAC_VECTORS if v["result"] == result), None)
+    if hit is None:
+        pytest.skip(
+            "Wycheproof HMAC vectors not available (run `pkcs11-check fetch-data wycheproof`)"
+        )
+    return hit
 
 
 class _HmacSession:

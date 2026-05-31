@@ -1,0 +1,220 @@
+name: Provider matrix
+
+# Scheduled conformance run against real PKCS#11 providers installed from
+# Fedora packages (latest dev versions in rawhide). This is separate from the
+# fast per-PR `ci.yml` smoke; it fetches the full test-vector data set ONCE
+# (shared via cache) and fans out to one job per provider so each provider's
+# results land in its own artifact + job summary ("tab").
+#
+# Schedule: weekly (Mondays 05:00 UTC). For monthly, change the cron to
+# '0 5 1 * *'. Also runnable on demand via "Run workflow".
+
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      fedora_image:
+        description: "Fedora container tag (rawhide = latest dev)"
+        default: "rawhide"
+        type: string
+      scope:
+        description: "pytest -m marker expression to scope the run"
+        default: "not (stress or fuzz)"
+        type: string
+      destructive:
+        description: "Enable @destructive (token-mutating) tests"
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: providers-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # One canonical data location shared by the fetch job (cache save) and every
+  # provider job (cache restore). PKCS11_CHECK_DATA_DIR overrides the default.
+  PKCS11_CHECK_DATA_DIR: ${{ github.workspace }}/data
+  # Run the JS actions (checkout, setup-uv, cache, upload-artifact) on the
+  # runner's Node 24 instead of the bundled Node 20 (deprecated). GitHub's
+  # documented opt-in; harmless once Node 24 becomes the default (2026-06-16).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Fetch the ~800 MB Wycheproof/ACVP/CCTV/x509-limbo vectors exactly ONCE.
+  # Cached by the sources manifest hash, so unchanged weeks restore instantly;
+  # the provider matrix restores this same cache instead of re-downloading.
+  # ---------------------------------------------------------------------------
+  fetch-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v4
+      - name: Restore / populate vector-data cache
+        id: data-cache
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: pkcs11-data-${{ hashFiles('src/pkcs11_check/testcases/data/sources.toml') }}
+      - name: Fetch vectors (cache miss only)
+        if: steps.data-cache.outputs.cache-hit != 'true'
+        run: |
+          uv sync --frozen --extra dev
+          uv run pkcs11-check fetch-data all --data-dir data
+          uv run pkcs11-check fetch-disabled --data-dir data
+      - name: Show data status
+        run: uv run pkcs11-check fetch-data --status --data-dir data || true
+
+  # ---------------------------------------------------------------------------
+  # One job per provider (separate result "tab" + artifact). Runs in a Fedora
+  # container so the providers come from distro packages at their latest dev
+  # versions; restores the cached data set rather than re-fetching it.
+  # ---------------------------------------------------------------------------
+  providers:
+    needs: fetch-data
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: fedora:${{ github.event.inputs.fedora_image || 'rawhide' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [softhsm2, kryoptic, nss]
+    steps:
+      # git must exist before checkout can fetch submodules inside the container.
+      - name: Base packages
+        run: |
+          dnf -y install git gcc openssl-devel python3 python3-devel \
+            opensc nss-tools findutils
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install provider package
+        env:
+          PROVIDER: ${{ matrix.provider }}
+        run: |
+          case "$PROVIDER" in
+            softhsm2) dnf -y install softhsm ;;
+            kryoptic) dnf -y install kryoptic ;;
+            nss)      dnf -y install nss nss-softokn ;;
+          esac
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --frozen --extra dev
+      - name: Restore vector-data cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: pkcs11-data-${{ hashFiles('src/pkcs11_check/testcases/data/sources.toml') }}
+      - name: Set up token and resolve module
+        env:
+          PROVIDER: ${{ matrix.provider }}
+        run: |
+          set -euo pipefail
+          case "$PROVIDER" in
+            softhsm2)
+              MODULE=$(rpm -ql softhsm | grep -m1 'libsofthsm2\.so$')
+              CONF="$PWD/softhsm2.conf"
+              mkdir -p "$PWD/softhsm-tokens"
+              printf 'directories.tokendir = %s/softhsm-tokens\nobjectstore.backend = file\n' "$PWD" > "$CONF"
+              export SOFTHSM2_CONF="$CONF"  # init MUST use our conf, else the token lands elsewhere
+              softhsm2-util --init-token --slot 0 --label pkcs11-check --pin 1234 --so-pin 12345678
+              {
+                echo "SOFTHSM2_CONF=$CONF"
+                echo "P11_MODULE=$MODULE"
+                echo "P11_SLOT=0"
+                echo "P11_PIN=1234"
+              } >> "$GITHUB_ENV"
+              ;;
+            kryoptic)
+              MODULE=$(rpm -ql kryoptic | grep -m1 'libkryoptic_pkcs11\.so$')
+              CONF="$PWD/kryoptic.conf"
+              printf '[[slots]]\nslot = 1\ndbtype = "sqlite"\ndbargs = "%s/kryoptic.sql"\n' "$PWD" > "$CONF"
+              KRYOPTIC_CONF="$CONF" pkcs11-tool --module "$MODULE" --init-token --label pkcs11-check --so-pin 12345678
+              KRYOPTIC_CONF="$CONF" pkcs11-tool --module "$MODULE" --init-pin --pin 1234 --so-pin 12345678
+              # --slot is a 0-based INDEX into the token-present slot list, not the
+              # kryoptic slot-ID (1) from the conf; the single token is at index 0.
+              {
+                echo "KRYOPTIC_CONF=$CONF"
+                echo "P11_MODULE=$MODULE"
+                echo "P11_SLOT=0"
+                echo "P11_PIN=1234"
+              } >> "$GITHUB_ENV"
+              ;;
+            nss)
+              # NSS softoken needs a cert DB + NSS_LIB_PARAMS to C_Initialize (even
+              # for slot 0 crypto services); mirrors local-builds/providers/nss-softokn.sh.
+              MODULE=$(find /usr/lib64 /usr/lib -name 'libsoftokn3.so' 2>/dev/null | head -1)
+              NSSDB="$PWD/nssdb"
+              mkdir -p "$NSSDB"
+              certutil -N -d "sql:$NSSDB" --empty-password
+              {
+                echo "NSS_LIB_PARAMS=configDir=sql:$NSSDB"
+                echo "P11_MODULE=$MODULE"
+                echo "P11_SLOT=0"
+                echo "P11_PIN="
+              } >> "$GITHUB_ENV"
+              ;;
+          esac
+          echo "Resolved module: $MODULE"
+      - name: Run pkcs11-check
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          SCOPE: ${{ github.event.inputs.scope || 'not (stress or fuzz)' }}
+          DESTRUCTIVE: ${{ github.event.inputs.destructive || 'false' }}
+        run: |
+          set -uo pipefail
+          args=(
+            --module "$P11_MODULE"
+            --slot "$P11_SLOT"
+            --isolation auto
+            --timeout 180
+            --marker "$SCOPE"
+            --output json
+            --output-file "results-${PROVIDER}.json"
+          )
+          if [ -n "${P11_PIN:-}" ]; then args+=( --pin "$P11_PIN" ); fi
+          if [ "$DESTRUCTIVE" = "true" ]; then args+=( --destructive ); fi
+          rc=0
+          uv run pkcs11-check test "${args[@]}" || rc=$?
+          echo "pkcs11-check exit code: $rc"
+          # 0 = all pass; 1 = provider FINDINGS (test failures/crashes) -- expected,
+          # captured in the artifact, so do NOT fail the job. >=2 = preflight/setup/
+          # usage error -> the run never really happened -> fail the job (no false green).
+          if [ "$rc" -ge 2 ]; then exit "$rc"; fi
+      - name: Summarize results
+        if: always()
+        env:
+          PROVIDER: ${{ matrix.provider }}
+        run: |
+          python3 - "results-${PROVIDER}.json" "$PROVIDER" <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import sys, json
+          path, prov = sys.argv[1], sys.argv[2]
+          try:
+              s = json.load(open(path)).get("summary", {})
+              g = s.get
+              print(f"### {prov}: {g('total', 0)} tests — "
+                    f"{g('passed', 0)} passed, {g('failed', 0)} failed, "
+                    f"{g('crashed', 0)} crashed, {g('timeout', 0)} timeout, "
+                    f"{g('xfailed', 0)} xfailed, {g('skipped', 0)} skipped")
+          except Exception as e:  # noqa: BLE001
+              print(f"### {prov}: no JSON report ({e})")
+          PY
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        env:
+          PROVIDER: ${{ matrix.provider }}
+        with:
+          name: results-${{ matrix.provider }}
+          path: |
+            results-${{ matrix.provider }}.json
+            report.jsonl
+            quality.json
+          if-no-files-found: warn

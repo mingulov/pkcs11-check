@@ -36,9 +36,12 @@ def test_rsa_pkcs1_invalid_ciphertext_decrypt_success_is_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An invalid RSA PKCS#1 v1.5 ciphertext that decrypts must fail (padding oracle break)."""
-    vec_id, vec = next(
-        (vid, v) for vid, v in rsa_dec._ALL_DECRYPT_VECTORS if v["result"] == "invalid"
+    hit = next(
+        ((vid, v) for vid, v in rsa_dec._ALL_DECRYPT_VECTORS if v["result"] == "invalid"), None
     )
+    if hit is None:
+        pytest.skip("Wycheproof RSA decrypt vectors not available (run `fetch-data wycheproof`)")
+    vec_id, vec = hit
     monkeypatch.setattr(rsa_dec, "import_rsa_private_key", _handle)
     monkeypatch.setattr(rsa_dec, "decrypt_single", lambda *_a, **_k: b"\x00recovered")
     monkeypatch.setattr(rsa_dec, "destroy_quietly", lambda *_a: None)
@@ -51,9 +54,14 @@ def test_rsa_oaep_invalid_ciphertext_decrypt_success_is_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An invalid RSA-OAEP ciphertext that decrypts must fail (Manger oracle break)."""
-    vec_id, vec = next(
-        (vid, v) for vid, v in rsa_oaep._ALL_OAEP_VECTORS if v["result"] == "invalid"
+    hit = next(
+        ((vid, v) for vid, v in rsa_oaep._ALL_OAEP_VECTORS if v["result"] == "invalid"), None
     )
+    if hit is None:
+        pytest.skip(
+            "Wycheproof RSA-OAEP vectors not available (run `pkcs11-check fetch-data wycheproof`)"
+        )
+    vec_id, vec = hit
     monkeypatch.setattr(rsa_oaep, "import_rsa_private_key", _handle)
     monkeypatch.setattr(rsa_oaep, "decrypt_single", lambda *_a, **_k: b"\x00recovered")
     monkeypatch.setattr(rsa_oaep, "destroy_quietly", lambda *_a: None)

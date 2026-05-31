@@ -15,13 +15,21 @@ import pytest
 
 from pkcs11_check.testcases.wycheproof import test_wycheproof_aes as aes
 
+_NO_VECTORS = "Wycheproof vectors not available (run `pkcs11-check fetch-data wycheproof`)"
+
 
 def _vec(vecs: list[tuple[str, dict[str, Any]]], vec_id: str) -> dict[str, Any]:
-    return next(v for cid, v in vecs if cid == vec_id)
+    hit = next((v for cid, v in vecs if cid == vec_id), None)
+    if hit is None:
+        pytest.skip(_NO_VECTORS)
+    return hit
 
 
 def _first(vecs: list[tuple[str, dict[str, Any]]], result: str) -> tuple[str, dict[str, Any]]:
-    return next((cid, v) for cid, v in vecs if v["result"] == result)
+    hit = next(((cid, v) for cid, v in vecs if v["result"] == result), None)
+    if hit is None:
+        pytest.skip(_NO_VECTORS)
+    return hit
 
 
 class _AesSession:

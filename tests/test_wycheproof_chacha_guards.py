@@ -17,7 +17,12 @@ from pkcs11_check.testcases.wycheproof import test_wycheproof_chacha as chacha
 
 
 def _first(result: str) -> tuple[str, dict[str, Any]]:
-    return next((cid, v) for cid, v in chacha._CHACHA_VECTORS if v["result"] == result)
+    hit = next(((cid, v) for cid, v in chacha._CHACHA_VECTORS if v["result"] == result), None)
+    if hit is None:
+        pytest.skip(
+            "Wycheproof ChaCha vectors not available (run `pkcs11-check fetch-data wycheproof`)"
+        )
+    return hit
 
 
 class _ChaChaSession:
