@@ -47,9 +47,12 @@ crash is a finding, not a hidden result.
 | pkcs11-mock v2.0.0 | 230 | 117 | 29,123 | 58 | 0 | 29,528 |
 
 ~1.13M total test executions across the 13 builds. Real SIGSEGV crash findings
-remain on Kryoptic FIPS/PQC (12), NSS (3-4), and BouncyHSM (3). See
-[docs/docker-provider-results.md](docs/docker-provider-results.md) for the full
-17-target matrix (including variants) and
+remain on NSS (3-4) and BouncyHSM (3). The 12 "crashes" on the Kryoptic FIPS/PQC
+row are **not** release crashes: that build is compiled in debug mode, so its
+internal debug assertions `abort()` the process on a check failure rather than
+returning an error — they are debug-assertion aborts, not segfaults in a release
+build. See [docs/docker-provider-results.md](docs/docker-provider-results.md) for
+the full 17-target matrix (including variants) and
 [docs/module-issues.md](docs/module-issues.md) for per-module findings.
 
 ## [0.1.1] - 2026-05-27

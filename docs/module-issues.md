@@ -1380,9 +1380,17 @@ not a Kryoptic finding. pkcs11-check was using generic `CKM_EC_KEY_PAIR_GEN`
 for Ed25519 setup; current source uses `CKM_EC_EDWARDS_KEY_PAIR_GEN`.
 
 ### FIPS mode crashes (kryoptic-fips)
-15 crashes on CKM_EXTRACT_KEY_FROM_KEY and certain AES-CCM vectors.
+Crashes on CKM_EXTRACT_KEY_FROM_KEY and certain AES-CCM vectors.
 FIPS mode correctly rejects non-approved operations but aborts instead of
 returning CKR_MECHANISM_INVALID.
+
+**Note — these are debug-build aborts, not release crashes.** The
+`kryoptic-fips` target is compiled in **debug mode** (against a custom OpenSSL
+FIPS branch), so an internal debug assertion calls `abort()` (SIGABRT) on a
+check failure rather than returning an error. The recorded `crashed` count for
+this target therefore reflects debug-assertion aborts, *not* segfaults/UB in a
+release build. The underlying policy issue (a non-approved op should return a
+clean CKR rather than terminate) is still a real finding.
 
 ### Type-confusion: generic-secret accepted as AES wrap key (NEW 2026-04-30)
 `test_ckr_wrap.py::test_wrapping_key_type_inconsistent` — Kryoptic accepts a
