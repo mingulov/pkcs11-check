@@ -15,6 +15,14 @@ For focused crash, timeout, and broad failure classification, see
 > implementations (softhsm2, opencryptoki) are unchanged vs the prior run; the remaining
 > failures are genuine provider findings. Combined baseline:
 > `artifacts/_matrix/baseline-2026-05-30.json` (supersedes `baseline-2026-05-29.json`).
+>
+> **Re-confirmed for the v0.1.2 release (2026-05-31, `artifacts/20260530_3/`):** SoftHSM2
+> was re-run after the threading conformance test was switched to the spec-valid
+> `CKF_OS_LOCKING_OK` contract and temporarily disabled (the earlier intermittent
+> `test_threading.py` SIGSEGV was harness-induced undefined behavior — concurrent access
+> after a single-threaded `C_Initialize(NULL)` — not a SoftHSM2 defect; see
+> [module-issues.md](module-issues.md)). SoftHSM2 is crash-free in the re-run; all other
+> rows are numerically equivalent to the 2026-05-30 sweep (single-digit flaky variance).
 
 ## Snapshot Metadata
 
