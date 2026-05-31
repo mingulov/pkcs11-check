@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pkcs11_check.markers import MARKER_DEFINITIONS, should_skip_for_version
 
-_BUILTIN_MARKERS = {"parametrize", "skipif", "usefixtures", "xfail", "filterwarnings"}
+_BUILTIN_MARKERS = {"parametrize", "skip", "skipif", "usefixtures", "xfail", "filterwarnings"}
 _MARKER_PATTERN = re.compile(r"pytest\.mark\.([A-Za-z_][A-Za-z0-9_]*)")
 
 

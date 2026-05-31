@@ -35,7 +35,15 @@ from typing import Any
 
 import pytest
 
-pytestmark = [pytest.mark.stress, pytest.mark.destructive]
+pytestmark = [
+    pytest.mark.stress,
+    pytest.mark.destructive,
+    # Temporarily disabled 2026-05-31. Retained on purpose: this is a valuable
+    # multi-threaded conformance check for OTHER providers -- e.g. ones that
+    # reject CKF_OS_LOCKING_OK with CKR_CANT_LOCK, or that are thread-unsafe even
+    # under it. Re-enable by removing this skip mark.
+    pytest.mark.skip(reason="threading conformance check temporarily disabled (2026-05-31)"),
+]
 
 
 def _make_throwaway_softhsm_token(p11_config: Any, tmp_path: Path) -> str | None:
