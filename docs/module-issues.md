@@ -84,6 +84,12 @@ provider package versions where the finding was first recorded.
 - v2.40 only — no `C_GetInterface`, no v3.0+ mechanisms
 - Session objects visible across concurrent sessions (spec says they shouldn't be)
 
+### Threading & concurrency — NOT a SoftHSM2 bug (harness methodology)
+- **Concurrent `C_*` after `C_Initialize(NULL)` segfaults — but that is undefined behavior, not a module defect.** Per PKCS#11 v3.2 §5.4, passing `NULL` `pInitArgs` is the application *promising single-threaded use*; the library "need not perform any synchronization." pkcs11-check's shared-session fixtures initialize with `C_Initialize(None)`, so running `ThreadPoolExecutor` concurrency on the shared session (as the old `test_threading.py` did) is the *harness* breaking its own contract. Under that misuse SoftHSM2 crashes ~always: **32 threads × 200 `C_GenerateKey` = 6/6 (100%) SIGSEGV; 16 × 100 ≈ 88%; 4 threads ≈ 7% flaky** — the source of intermittent `crashed=1` for `test_threading.py` in the matrix.
+- **Initialized correctly, SoftHSM2 is thread-safe.** The *same* concurrent workloads under `C_Initialize(CKF_OS_LOCKING_OK)` are rock-solid: **0/6 crashes at 32 × 200, 0/8 at 16 × 100.** So the finding is a harness bug (wrong init mode for the threading test), not a SoftHSM2 conformance violation.
+- **Secondary effect:** a crash mid-`C_GenerateKey` corrupts the file-backed token (`CKR_TOKEN_NOT_RECOGNIZED` for every later test) — a poison-the-shared-token cascade. The reproducer therefore runs against a disposable throwaway token (see [destructive-token-isolation.md](destructive-token-isolation.md), Tier 1).
+- **Tests (rewritten, run each workload in a child subprocess so a crash never segfaults the test file itself):** `test_threading.py::TestConcurrentUnderOSLocking` initializes with `CKF_OS_LOCKING_OK` then hammers concurrent keygen/digest/random — a crash there *is* a genuine module thread-safety FAIL (skips on `CKR_CANT_LOCK`); `test_threading.py::TestConcurrentNullInitUBProbe` reproduces the NULL-init crash 100% on SoftHSM2 and records it as `xfail` (documented misuse per §5.4, not a conformance failure).
+
 ---
 
 ## Kryoptic 1.5.0 (v3.2)
