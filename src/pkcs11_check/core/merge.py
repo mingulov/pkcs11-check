@@ -6,7 +6,9 @@ server/token). Combining their artifact directories reproduces the artifacts a
 single full run would have produced:
 
 - ``report.jsonl``  : concatenation of the shard JSONL files (record sets are
-  disjoint by unit, so the union is the full record set).
+  disjoint by unit, so the union is the full record set), with a compatibility
+  enrichment that copies teardown-only RV traces onto failed/xfail reports from
+  older shard artifacts.
 - ``results.json``  : summary counters summed, ``units`` lists concatenated.
 - ``coverage.json`` : recomputed from the concatenated JSONL via the existing
   :func:`extract_coverage_from_jsonl`, which unions names and sums counts and
@@ -17,7 +19,9 @@ single full run would have produced:
 
 The merge logic is intentionally a thin orchestration over functions that
 already exist in :mod:`pkcs11_check.core.file_runner`; the only genuinely new
-behaviour is summing summaries and concatenating the per-unit lists.
+behaviour is summing summaries, concatenating the per-unit lists, and preserving
+failure-local RV trace visibility for shards produced before failed reports
+carried their own trace.
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ from pkcs11_check.core.file_runner import (
     extract_quality_report_records_from_jsonl,
     write_quality_json_report,
 )
+from pkcs11_check.testcases._subprocess_trace import extract_subprocess_rv_trace
 
 _SUMMARY_KEYS = (
     "passed",
@@ -71,6 +76,98 @@ def _ends_with_newline(path: Path) -> bool:
         except OSError:
             return True  # empty file
         return fh.read(1) == b"\n"
+
+
+def _record_needs_rv_trace(record: dict[str, Any]) -> bool:
+    return record.get("outcome") == "failed" or record.get("wasxfail") is not None
+
+
+def _user_property_names(record: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    for prop in record.get("user_properties") or []:
+        if isinstance(prop, (list, tuple)) and prop:
+            names.add(str(prop[0]))
+    return names
+
+
+def _record_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return "\n".join(_record_text(v) for v in value.values())
+    if isinstance(value, list):
+        return "\n".join(_record_text(v) for v in value)
+    return ""
+
+
+def _rv_trace_props(record: dict[str, Any]) -> list[list[Any]]:
+    props: list[list[Any]] = []
+    current_trace_len = 0
+    for prop in record.get("user_properties") or []:
+        if not isinstance(prop, (list, tuple)) or len(prop) != 2:
+            continue
+        name, value = prop
+        if name in {"pkcs11_rv_trace", "pkcs11_rv_trace_dropped"}:
+            props.append([name, value])
+            if name == "pkcs11_rv_trace":
+                current_trace_len = len(value or []) if isinstance(value, list) else 0
+
+    trace = extract_subprocess_rv_trace(_record_text(record.get("longrepr")))
+    if trace and len(trace) > current_trace_len:
+        props = [prop for prop in props if prop[0] != "pkcs11_rv_trace"]
+        props.append(["pkcs11_rv_trace", trace])
+    return props
+
+
+def _promote_rv_traces_to_outcome_reports(jsonl_path: Path) -> None:
+    """Copy teardown-only RV traces onto failed/xfail reports for old shard artifacts."""
+    records = [json.loads(line) for line in jsonl_path.read_text().splitlines() if line.strip()]
+    trace_by_node: dict[str, list[list[Any]]] = {}
+    for record in records:
+        if record.get("$report_type", "TestReport") != "TestReport":
+            continue
+        nodeid = str(record.get("nodeid", ""))
+        props = _rv_trace_props(record)
+        if not nodeid or not props:
+            continue
+        current = trace_by_node.get(nodeid, [])
+        current_trace_len = len(dict(current).get("pkcs11_rv_trace") or [])
+        new_trace_len = len(dict(props).get("pkcs11_rv_trace") or [])
+        if not current or new_trace_len > current_trace_len:
+            trace_by_node[nodeid] = props
+
+    changed = False
+    for record in records:
+        if record.get("$report_type", "TestReport") != "TestReport":
+            continue
+        if not _record_needs_rv_trace(record):
+            continue
+        nodeid = str(record.get("nodeid", ""))
+        trace_props = trace_by_node.get(nodeid)
+        if not trace_props:
+            continue
+        user_properties = record.setdefault("user_properties", [])
+        if not isinstance(user_properties, list):
+            continue
+        existing = _user_property_names(record)
+        for name, value in trace_props:
+            if name not in existing:
+                user_properties.append([name, value])
+                changed = True
+                continue
+            for index, prop in enumerate(user_properties):
+                if not isinstance(prop, (list, tuple)) or len(prop) != 2:
+                    continue
+                existing_name, existing_value = prop
+                if existing_name != name:
+                    continue
+                if existing_value in (None, "", [], {}) and value not in (None, "", [], {}):
+                    user_properties[index] = [name, value]
+                    changed = True
+                break
+
+    if changed:
+        jsonl_path.write_text("".join(json.dumps(record) + "\n" for record in records))
 
 
 def merge_results_payloads(
@@ -114,6 +211,7 @@ def merge_shard_dirs(shard_dirs: list[Path], output_dir: Path) -> dict[str, Any]
     report_paths = [d / "report.jsonl" for d in shard_dirs]
     merged_report = output_dir / "report.jsonl"
     _concat_jsonl(report_paths, merged_report)
+    _promote_rv_traces_to_outcome_reports(merged_report)
 
     coverage = extract_coverage_from_jsonl(merged_report) if merged_report.exists() else None
     if coverage:

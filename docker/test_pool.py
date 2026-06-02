@@ -35,6 +35,7 @@ from pkcs11_check.core.sharding import plan_shards
 # ~100k chained ops) are bounded to their last N. Override via the pool's own env
 # (set a different N, or empty to disable). See docs/rv-trace-design.md.
 RV_TRACE_COMPACT_N = os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT", "512")
+HOST_ARTIFACT_OWNER = os.environ.get("PKCS11_CHECK_ARTIFACT_OWNER", f"{os.getuid()}:{os.getgid()}")
 
 # Crash-call journal: OFF by default (per-call flush has a cost). Set
 # PKCS11_CHECK_CRASH_JOURNAL=1 in the pool env to write per-unit write-ahead
@@ -115,6 +116,8 @@ def run_item(provider: str, idx: int, files: list[str]) -> tuple[str, int, int]:
                 f"PKCS11_CHECK_TARGETS={' '.join(files)}",
                 "-e",
                 f"PKCS11_CHECK_ARTIFACT_DIR=/artifacts/{provider}-shard-{idx}",
+                "-e",
+                f"PKCS11_CHECK_ARTIFACT_OWNER={HOST_ARTIFACT_OWNER}",
                 *rv_trace_env,
                 f"test-{provider}",
             ],

@@ -64,6 +64,14 @@ def is_pkcs11_mock_path(module_path: str | None) -> bool:
     return "pkcs11-mock" in lowered or "pkcs11_mock" in lowered
 
 
+def is_pkcs11_mock_target(
+    module_path: str | None,
+    backend_module_path: str | None = None,
+) -> bool:
+    """Return True when either the loaded module or proxied backend is pkcs11-mock."""
+    return is_pkcs11_mock_path(module_path) or is_pkcs11_mock_path(backend_module_path)
+
+
 def should_skip_on_mock(item_markers: Iterable[str]) -> bool:
     """Return True if a test carrying ``item_markers`` should skip on mock.
 

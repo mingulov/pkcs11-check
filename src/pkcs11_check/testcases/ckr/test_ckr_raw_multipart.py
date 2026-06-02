@@ -21,7 +21,10 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.types_std import CKR_OPERATION_NOT_INITIALIZED
-from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
+from pkcs11_check.testcases.ckr._subprocess import (
+    assert_ckr_subprocess_ok,
+    ckr_subprocess_rv_trace_setup,
+)
 from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
@@ -64,6 +67,7 @@ def _run_raw_test(module_path: str, pin: str | None, test_code: str) -> tuple[in
         )
 
         raw = RawPKCS11.from_lib("{module_path}")
+{ckr_subprocess_rv_trace_setup(indent="        ")}
         rv = raw.C_Initialize(None)
         assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), f"Init failed: 0x{{rv:08x}}"
 

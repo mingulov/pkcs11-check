@@ -64,7 +64,11 @@ for arg in "$@"; do
     fi
 done
 
-compose_args=(docker compose -f docker/docker-compose.test.yml run --rm)
+artifact_owner="${PKCS11_CHECK_ARTIFACT_OWNER:-$(id -u):$(id -g)}"
+compose_args=(
+    docker compose -f docker/docker-compose.test.yml run --rm
+    -e "PKCS11_CHECK_ARTIFACT_OWNER=$artifact_owner"
+)
 
 if [[ ${#option_args[@]} -gt 0 ]]; then
     printf -v serialized_options '%q ' "${option_args[@]}"

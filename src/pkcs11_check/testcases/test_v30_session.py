@@ -15,8 +15,7 @@ Source: PKCS#11 v3.0 Sec.5.5  C_Login / C_LoginUser
 
 from __future__ import annotations
 
-import subprocess
-import sys
+import json
 import textwrap
 from typing import Any
 
@@ -52,6 +51,9 @@ from pkcs11_check.raw.types_std import (
     CKU_CONTEXT_SPECIFIC,
     CKU_USER,
 )
+from pkcs11_check.testcases._raw_subprocess import run_raw_script
+from pkcs11_check.testcases._subprocess_preamble import _P11CHECK_PIN_ENV
+from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 
 pytestmark = [pytest.mark.requires_v30, pytest.mark.access]
 
@@ -654,12 +656,13 @@ class TestSessionCancel:
         """
         rs = p11_raw_session
         module_path = str(p11_config.module)
-        pin_value = p11_config.pin.get_secret_value() if p11_config.pin is not None else ""
+        pin_value = p11_config.pin.get_secret_value() if p11_config.pin is not None else None
         actual_slot_id: int = rs.slot_id
 
-        script = textwrap.dedent(
+        boilerplate = textwrap.dedent(
             f"""\
             import ctypes
+            import os
             from ctypes import c_ulong, c_ubyte, c_void_p, byref, pointer, POINTER
             from pkcs11_check.raw.api import RawPKCS11
             from pkcs11_check.raw.types_std import (
@@ -669,7 +672,7 @@ class TestSessionCancel:
             )
 
             # Load module and negotiate v3.0 interface for C_SessionCancel
-            lib = ctypes.CDLL("{module_path}")
+            lib = ctypes.CDLL({json.dumps(module_path)})
             get_fl = lib.C_GetFunctionList
             get_fl.restype = c_ulong
             get_fl.argtypes = [POINTER(c_void_p)]
@@ -690,6 +693,11 @@ class TestSessionCancel:
                 pass  # Module does not export C_GetInterface
 
             raw = RawPKCS11(fl_ptr.value, funclist3_ptr=fl3_val)
+            """
+        )
+
+        script = textwrap.dedent(
+            f"""\
 
             rv = raw.C_Initialize(None)
             assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), f"C_Initialize: 0x{{rv:08x}}"
@@ -702,8 +710,9 @@ class TestSessionCancel:
             assert rv == CKR_OK, f"C_OpenSession: 0x{{rv:08x}}"
             hSession = session_handle.value
 
-            pin = "{pin_value}".encode()
-            if pin:
+            _pin = os.environ.get({json.dumps(_P11CHECK_PIN_ENV)})
+            if _pin:
+                pin = _pin.encode()
                 pin_buf = (c_ubyte * len(pin))(*pin)
                 rv = raw.C_Login(hSession, CKU_USER, pin_buf, len(pin))
                 assert rv in (CKR_OK, CKR_USER_ALREADY_LOGGED_IN), f"C_Login: 0x{{rv:08x}}"
@@ -745,22 +754,18 @@ class TestSessionCancel:
             """
         )
 
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
+        rc, stdout, stderr = run_raw_script(
+            boilerplate,
+            script,
             timeout=15,
+            pin=pin_value,
         )
-
-        if result.returncode < 0:
-            pytest.fail(
-                f"Module crashed (signal {-result.returncode}) during "
-                f"C_DigestInit/C_SessionCancel - C_SessionCancel not safely callable. "
-                f"Stderr: {result.stderr.strip()[:200]}"
-            )
-
-        stdout = result.stdout.strip()
-        stderr = result.stderr.strip()
+        assert_subprocess_completed(
+            rc,
+            stdout,
+            stderr,
+            context="C_DigestInit/C_SessionCancel subprocess",
+        )
 
         if "SKIP:" in stdout:
             pytest.skip(f"C_DigestInit not supported: {stdout}")

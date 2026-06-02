@@ -21,6 +21,8 @@ import tempfile
 from collections import Counter
 from typing import Any
 
+from pkcs11_check.testcases._subprocess_trace import record_subprocess_rv_trace
+
 # Environment variable carrying the user PIN into the child subprocess. The PIN
 # is passed here (not interpolated into the script) so it never appears in the
 # child argv or in any generated source string. Mirrors the redaction handling
@@ -85,6 +87,7 @@ def run_with_coverage(
         except OSError:
             pass
 
+    record_subprocess_rv_trace(result.stdout, result.stderr)
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 
@@ -159,6 +162,9 @@ def subprocess_session_preamble(
         extra_block = f"{extra_imports}\n"
 
     return (
+        f"import atexit as _atexit\n"
+        f"import json as _json\n"
+        f"import os as _os\n"
         f"from pkcs11_check.raw.api import RawPKCS11\n"
         f"from pkcs11_check.raw.bootstrap import (\n"
         f"    close_session_quietly, get_slot_ids, login_user, open_session,\n"
@@ -169,7 +175,40 @@ def subprocess_session_preamble(
         f")\n"
         f"{extra_block}"
         f"\n"
+        f"def _p11check_rv_trace_enabled():\n"
+        f"    _value = _os.environ.get('PKCS11_CHECK_RV_TRACE', '')\n"
+        f"    if _value.strip().lower() in ('1', 'true', 'yes', 'on'):\n"
+        f"        return True\n"
+        f"    return bool(_os.environ.get('PKCS11_CHECK_RV_TRACE_COMPACT'))\n"
+        f"\n"
+        f"\n"
+        f"def _p11check_rv_trace_maxlen():\n"
+        f"    _value = _os.environ.get('PKCS11_CHECK_RV_TRACE_COMPACT')\n"
+        f"    if not _value:\n"
+        f"        return None\n"
+        f"    try:\n"
+        f"        _maxlen = int(_value)\n"
+        f"    except ValueError:\n"
+        f"        return None\n"
+        f"    return _maxlen if _maxlen > 0 else None\n"
+        f"\n"
+        f"\n"
         f"raw = RawPKCS11.from_lib({json.dumps(module_path)})\n"
+        f"if _p11check_rv_trace_enabled():\n"
+        f"    raw.enable_rv_trace(maxlen=_p11check_rv_trace_maxlen())\n"
+        f"\n"
+        f"    def _p11check_emit_rv_trace():\n"
+        f"        try:\n"
+        f"            print(\n"
+        f"                'P11_RV_TRACE_JSON:'\n"
+        f"                + _json.dumps(raw.rv_trace, separators=(',', ':')),\n"
+        f"                flush=True,\n"
+        f"            )\n"
+        f"        except (OSError, TypeError, ValueError):\n"
+        f"            pass\n"
+        f"\n"
+        f"    _atexit.register(_p11check_emit_rv_trace)\n"
+        f"\n"
         f"rv = raw.C_Initialize(None)\n"
         f"assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), "
         f'f"C_Initialize: 0x{{rv:08x}}"\n'
@@ -179,7 +218,6 @@ def subprocess_session_preamble(
         f"{login_line}"
         f"\n"
         f"def cleanup():\n"
-        f"    import json as _json, os as _os\n"
         f"    _cov_path = _os.environ.get('_P11CHECK_SUBPROCESS_COVERAGE')\n"
         f"    if _cov_path:\n"
         f"        try:\n"

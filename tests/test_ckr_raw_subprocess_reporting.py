@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -12,16 +13,29 @@ import pytest
 from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
+from pkcs11_check.testcases._subprocess_trace import (
+    drain_subprocess_rv_trace,
+)
 from pkcs11_check.testcases.ckr import (
+    _ctypes_raw,
     test_ckr_dual,
+    test_ckr_fault_inject,
     test_ckr_general,
+    test_ckr_null_params,
     test_ckr_raw_args_bad,
+    test_ckr_raw_multipart,
+    test_ckr_raw_state,
+    test_ckr_universal,
     test_ckr_v30_raw,
     test_ckr_v32_raw,
 )
 from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 
 RawCheck = Callable[[int, str, str, str], None]
+
+
+def _assert_child_script_compiles(script: str) -> None:
+    compile(script, "<pkcs11-check-child-script>", "exec")
 
 
 def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
@@ -60,6 +74,35 @@ def test_raw_check_reports_positive_exit_as_subprocess_failure(check: RawCheck) 
         check(1, "CKR:0x00000007", "AssertionError: unexpected CKR", "C_Test")
 
 
+@pytest.mark.parametrize(
+    "module",
+    [test_ckr_v30_raw, test_ckr_v32_raw],
+)
+def test_versioned_raw_subprocesses_emit_and_record_rv_trace(
+    monkeypatch: pytest.MonkeyPatch,
+    module: Any,
+) -> None:
+    """Hand-rolled v3.x CKR subprocesses must feed failed reports with child traces."""
+    marker = 'P11_RV_TRACE_JSON:[{"i":0,"fn":"C_Test","rv":48,"rv_name":"CKR_DEVICE_ERROR"}]'
+    scripts: list[str] = []
+
+    def run_child(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        scripts.append(args[2])
+        return subprocess.CompletedProcess(args=args, returncode=1, stdout=marker, stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", run_child)
+
+    module._run("/fake/p11.so", None, "print('OK')\n")
+
+    assert len(scripts) == 1
+    _assert_child_script_compiles(scripts[0])
+    assert "P11_RV_TRACE_JSON:" in scripts[0]
+    assert "raw.enable_rv_trace(" in scripts[0]
+    assert drain_subprocess_rv_trace() == [
+        {"i": 0, "fn": "C_Test", "rv": 48, "rv_name": "CKR_DEVICE_ERROR"}
+    ]
+
+
 def test_ckr_subprocess_helper_reports_positive_exit_as_child_failure() -> None:
     with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
         assert_ckr_subprocess_ok(
@@ -80,9 +123,188 @@ def test_ckr_subprocess_helper_converts_setup_marker_to_xfail() -> None:
         )
 
 
+def test_fault_proxy_subprocesses_emit_rv_trace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fault-proxy CKR subprocesses must preserve setup-xfail child traces."""
+    scripts: list[str] = []
+
+    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+        scripts.append(args[2])
+        return SimpleNamespace(
+            returncode=0,
+            stdout="OK:encrypt_decrypt_roundtrip\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(test_ckr_fault_inject, "_skip_if_no_proxy", lambda: None)
+    monkeypatch.setattr(test_ckr_fault_inject, "_PROXY_PATH", "/tmp/fault-proxy.so")
+    monkeypatch.setattr(test_ckr_fault_inject.subprocess, "run", _run_subprocess)
+
+    test_ckr_fault_inject.TestFaultProxyBasic().test_proxy_encrypt_decrypt(
+        SimpleNamespace(module="/tmp/provider.so", pin=None)
+    )
+
+    assert len(scripts) == 1
+    _assert_child_script_compiles(scripts[0])
+    assert "P11_RV_TRACE_JSON:" in scripts[0]
+    assert "enable_rv_trace(" in scripts[0]
+
+
+def test_operation_state_raw_subprocesses_emit_rv_trace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Operation-state CKR subprocesses must preserve setup-xfail child traces."""
+    scripts: list[str] = []
+
+    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+        scripts.append(args[2])
+        return SimpleNamespace(returncode=0, stdout="CKR:0x00000000\nOK\n", stderr="")
+
+    monkeypatch.setattr(test_ckr_raw_state.subprocess, "run", _run_subprocess)
+
+    test_ckr_raw_state._run("/tmp/provider.so", None, 'print("OK")\n')
+
+    assert len(scripts) == 1
+    _assert_child_script_compiles(scripts[0])
+    assert "P11_RV_TRACE_JSON:" in scripts[0]
+    assert "enable_rv_trace(" in scripts[0]
+
+
+def test_ckr_dual_subprocesses_emit_rv_trace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Operation-state subprocess tests must preserve failed child traces."""
+    scripts: list[str] = []
+
+    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+        scripts.append(args[2])
+        return SimpleNamespace(returncode=0, stdout="OK:encrypt_without_init\n", stderr="")
+
+    monkeypatch.setattr(test_ckr_dual.subprocess, "run", _run_subprocess)
+
+    test_ckr_dual.TestOperationStateSubprocess().test_encrypt_without_init(
+        SimpleNamespace(module="/tmp/provider.so", pin=None)
+    )
+
+    assert len(scripts) == 1
+    _assert_child_script_compiles(scripts[0])
+    assert "P11_RV_TRACE_JSON:" in scripts[0]
+    assert "enable_rv_trace(" in scripts[0]
+
+
+def test_ckr_multipart_subprocesses_emit_rv_trace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multipart raw subprocess tests must preserve failed child traces."""
+    scripts: list[str] = []
+
+    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+        scripts.append(args[2])
+        return SimpleNamespace(returncode=0, stdout="CKR:0x00000091\nOK\n", stderr="")
+
+    monkeypatch.setattr(test_ckr_raw_multipart.subprocess, "run", _run_subprocess)
+
+    test_ckr_raw_multipart._run_raw_test("/tmp/provider.so", None, 'print("OK")\n')
+
+    assert len(scripts) == 1
+    _assert_child_script_compiles(scripts[0])
+    assert "P11_RV_TRACE_JSON:" in scripts[0]
+    assert "enable_rv_trace(" in scripts[0]
+
+
+def test_ckr_ctypes_null_subprocesses_emit_rv_trace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct-ctypes NULL probes must emit synthetic per-call RV traces."""
+    scripts: list[str] = []
+
+    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+        scripts.append(args[2])
+        return SimpleNamespace(returncode=0, stdout="CKR:0x00000007\n", stderr="")
+
+    monkeypatch.setattr(_ctypes_raw.subprocess, "run", _run_subprocess)
+
+    _ctypes_raw.run_null_test("/tmp/provider.so", 'print("CKR:0x00000007")\n')
+
+    assert len(scripts) == 1
+    _assert_child_script_compiles(scripts[0])
+    assert "P11_RV_TRACE_JSON:" in scripts[0]
+    assert "_p11check_record_rv(" in scripts[0]
+
+
+def test_ckr_inline_null_subprocesses_emit_rv_trace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inline NULL probes using RawPKCS11 setup must preserve failed child traces."""
+    scripts: list[str] = []
+
+    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+        scripts.append(args[2])
+        return SimpleNamespace(returncode=0, stdout="CKR:0x00000007\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _run_subprocess)
+
+    test_ckr_null_params.TestNullParameters().test_generate_random_null_buffer(
+        SimpleNamespace(module="/tmp/provider.so", pin=None)
+    )
+
+    assert len(scripts) == 1
+    _assert_child_script_compiles(scripts[0])
+    assert "P11_RV_TRACE_JSON:" in scripts[0]
+    assert "enable_rv_trace(" in scripts[0]
+    assert "_p11check_record_rv(" in scripts[0]
+
+
+def test_ckr_null_result_positive_exit_records_child_trace() -> None:
+    """Parent-side NULL probe failures must retain child RV trace output."""
+    marker = (
+        'P11_RV_TRACE_JSON:[{"i":0,"fn":"C_OpenSession","rv":176,"rv_name":"CKR_SESSION_COUNT"}]'
+    )
+
+    with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
+        test_ckr_null_params._check_null_result("C_GenerateRandom", 1, marker, "")
+
+    assert drain_subprocess_rv_trace() == [
+        {"i": 0, "fn": "C_OpenSession", "rv": 176, "rv_name": "CKR_SESSION_COUNT"}
+    ]
+
+
+def test_ckr_null_result_parses_ckr_before_trace_marker() -> None:
+    """Trace marker lines appended to stdout must not break CKR parsing."""
+    test_ckr_null_params._check_null_result(
+        "C_GetInfo",
+        0,
+        'CKR:0x00000007\nP11_RV_TRACE_JSON:[{"i":0,"fn":"C_GetInfo","rv":7}]',
+        "",
+    )
+    assert drain_subprocess_rv_trace() == [{"i": 0, "fn": "C_GetInfo", "rv": 7}]
+
+
 def test_ckr_subprocess_helper_requires_ok_marker() -> None:
     with pytest.raises(pytest.fail.Exception, match="did not emit an OK marker"):
         assert_ckr_subprocess_ok(0, "CKR:0x00000000\n", "", context="CKR setup probe")
+
+
+def test_universal_fault_proxy_subprocess_emits_rv_trace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Universal fault-proxy subprocess must preserve child traces."""
+    scripts: list[str] = []
+
+    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+        scripts.append(args[2])
+        return SimpleNamespace(returncode=0, stdout="OK:DEVICE_REMOVED\n", stderr="")
+
+    monkeypatch.setattr(Path, "exists", lambda _self: True)
+    monkeypatch.setattr(test_ckr_universal.subprocess, "run", _run_subprocess)
+
+    test_ckr_universal.TestUniversalRealTriggers().test_device_removed_via_fault_proxy(
+        SimpleNamespace(module="/tmp/provider.so")
+    )
+
+    assert len(scripts) == 1
+    _assert_child_script_compiles(scripts[0])
+    assert "P11_RV_TRACE_JSON:" in scripts[0]
+    assert "enable_rv_trace(" in scripts[0]
 
 
 def test_raw_args_bad_setup_marker_is_xfail() -> None:

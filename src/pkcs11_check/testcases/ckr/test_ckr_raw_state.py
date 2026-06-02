@@ -21,7 +21,10 @@ import pytest
 
 from pkcs11_check.raw.types_std import CKR_OPERATION_ACTIVE
 from pkcs11_check.testcases._subprocess_preamble import _P11CHECK_PIN_ENV
-from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
+from pkcs11_check.testcases.ckr._subprocess import (
+    assert_ckr_subprocess_ok,
+    ckr_subprocess_rv_trace_setup,
+)
 from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
@@ -87,6 +90,7 @@ def _template_ptr(attrs):
     return cast(attrs.array, CK_ATTRIBUTE_PTR)
 
 raw = RawPKCS11.from_lib("{module}")
+{rv_trace_setup}
 rv = raw.C_Initialize(None)
 assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)
 
@@ -122,7 +126,10 @@ def _run(module: str, pin: str | None, test_code: str) -> tuple[int, str, str]:
     # interpolated into the script text -- so it cannot leak via the child argv
     # (``ps``/``/proc``) or any traceback. The preamble reads it from os.environ.
     script = (
-        _SCRIPT_PREAMBLE.format(module=module)
+        _SCRIPT_PREAMBLE.format(
+            module=module,
+            rv_trace_setup=ckr_subprocess_rv_trace_setup(),
+        )
         + textwrap.dedent(test_code)
         + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
     )

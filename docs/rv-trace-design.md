@@ -200,12 +200,12 @@ output-producing function cannot silently miss `out_len`.
     None) or env_rv_trace`. Stores both on `P11TestConfig` (pydantic
     `BaseSettings`; two new fields `rv_trace: bool = False`,
     `rv_trace_compact: int | None = None`).
-- **Per-test reset:** at each `reset_call_log()` site in the three session
-  fixtures (`fixtures.py:99, 238, 392`), when `p11_config.rv_trace` is on, call
-  `raw.enable_rv_trace(maxlen=p11_config.rv_trace_compact)` each test (enable
-  doubles as reset — fresh `deque`, zeroed counter). Because this runs *after*
-  bootstrap/login, the PIN-bearing `C_Login` and session-open calls are excluded
-  from the test-body trace.
+- **Per-test reset:** when `p11_config.rv_trace` is on, `raw.enable_rv_trace()`
+  is called before bootstrap so setup failures can carry the failing CK_RV.
+  Successful fixture setup resets the trace again at each `reset_call_log()`
+  site before yielding to the test (enable doubles as reset — fresh `deque`,
+  zeroed counter). That keeps bootstrap/login out of ordinary successful
+  test-body traces while preserving setup-failure evidence.
 - **Drain:** an **independent block at the top of `pytest_runtest_teardown`**
   (after the `_is_testcase_item` check), *not* nested under the coverage
   early-return (`plugin.py:531–534` returns on a missing `_CUMULATIVE_FUNCTIONS`
@@ -217,13 +217,12 @@ output-producing function cannot silently miss `out_len`.
   if raw.rv_trace_dropped:
       item.user_properties.append(("pkcs11_rv_trace_dropped", raw.rv_trace_dropped))
   ```
-  **Verified** (grep): no `pytest_runtest_makereport` hookwrapper and no other
-  `user_properties` writer exists, so the append flows straight to reportlog.
-  The value lands on the **teardown** `TestReport` record — that is when the hook
-  runs, and pytest builds the teardown report from `item.user_properties` *after*
-  all `pytest_runtest_teardown` hooks complete (`runner.call_and_report`). The
-  setup/call records keep `user_properties == []`. Consumers read the trace from
-  the teardown record.
+  Passing tests still carry the trace on the **teardown** `TestReport` record.
+  A `pytest_runtest_makereport` hookwrapper also copies the same trace onto the
+  outcome-bearing report when the report is `failed` or has `wasxfail` (pytest's
+  xfail/xpass marker). This is necessary because pytest writes the call report
+  before teardown hooks run; without the hookwrapper, failed/xfail call reports
+  have no trace even though the later teardown record does.
 
 The raw layer never reads env/config — its gate is purely `_rv_trace is not
 None`, set by the fixture. The choke point stays clean.
@@ -299,26 +298,38 @@ plus the **drift-guard** test (every `_two_call_output` caller ∈
 4. **Crash-survivable trace** *(optional, separate mechanism)* — see below.
 
 **Verified end-to-end on SoftHSM2** (the `smoke` slice): flag-on ⇒ the trace
-rides the **teardown** record only with the exact `{i, fn, mech, rv, rv_name}`
-schema; bootstrap/`C_Login` excluded; the login PIN never appears in any trace
-value; flag-off ⇒ every record's `user_properties == []`; both the CLI option
-and the `PKCS11_CHECK_RV_TRACE=1` env gate enable it.
+rides the **teardown** record for passing tests and the outcome-bearing
+failed/xfail/xpass report when a test does not simply pass, with the exact
+`{i, fn, mech, rv, rv_name}` schema. Bootstrap/`C_Login` are excluded from
+successful test-body traces; setup failures may include bootstrap calls so the
+failing CK_RV is visible. The login PIN never appears in any trace value;
+flag-off ⇒ every record's `user_properties == []`; both the CLI option and the
+`PKCS11_CHECK_RV_TRACE=1` env gate enable it.
 
 ## Write behavior & outcomes (verified)
 
-- **Append-streamed, written once.** `report.jsonl` is opened once and written
+- **Append-streamed, written once during a run.** `report.jsonl` is opened once and written
   line-by-line (`pytest_reportlog/plugin.py:71–77`, `write + flush` per event);
-  the merge is byte-copy concat. The trace adds **no** lines — it enriches the
-  teardown record that is emitted anyway.
-- **One copy per test, on the teardown record.** pytest snapshots
+  the trace adds **no** lines — it enriches the report records that are emitted
+  anyway. Shard merge may rewrite the merged `report.jsonl` to promote
+  teardown-only traces from older artifacts onto failed/xfail reports.
+- **Outcome-bearing failures carry their own trace.** pytest snapshots
   `user_properties` *by value* per phase (`reports.py:362`, built in
-  `runner.call_and_report`). We append only at teardown, so `setup`/`call`
-  records stay `[]` and only `teardown` carries the trace. No duplication.
-- **Outcome-agnostic.** The trace records what the *module* did; pytest's
-  `outcome` field on the same record says how the *test* classified it. So
-  `passed`/`failed`/`xfailed`/`xpassed` and mid-body `skip` all carry the trace
-  alongside their outcome — no per-outcome handling. The only case that cannot
+  `runner.call_and_report`). Teardown-only draining is too late for failed call
+  reports, so the makereport hook attaches the trace directly to `failed` and
+  `wasxfail` reports. Passing tests retain one copy on the teardown record.
+- **Outcome-agnostic trace data.** The trace records what the *module* did;
+  pytest's `outcome`/`wasxfail` fields on the same record say how the *test*
+  classified it. `failed`, `xfailed`, and `xpassed` reports carry the trace
+  alongside their outcome. The only case that cannot
   use this path is a hard crash (next).
+- **Subprocess child traces.** Crash-safe child scripts that use
+  `subprocess_session_preamble()` or `_raw_subprocess.run_raw_script()` enable
+  RV tracing when `PKCS11_CHECK_RV_TRACE*` is inherited and print a compact
+  `P11_RV_TRACE_JSON:<json>` marker at process exit. The parent failure helper
+  preserves that marker even when stdout/stderr are otherwise truncated, and
+  the makereport hook parses it back into `pkcs11_rv_trace` on the
+  outcome-bearing report.
 
 ## Phase 4 — crash-survivable trace — ✅ shipped
 
@@ -349,12 +360,14 @@ investigation artifact). Left out to avoid reworking shared crash-test infra.
 
 ## Acceptance (v1 core)
 
-- Flag on ⇒ each test's teardown `report.jsonl` record carries
-  `["pkcs11_rv_trace", [...]]` with the core schema `{i, fn, mech, rv, rv_name}`.
+- Flag on ⇒ each passing test's teardown `report.jsonl` record carries
+  `["pkcs11_rv_trace", [...]]` with the core schema `{i, fn, mech, rv, rv_name}`;
+  failed and xfail/xpass reports carry the trace on the outcome-bearing report.
 - Flag off ⇒ `report.jsonl` byte-identical to today (`user_properties == []`).
 - No-leak meta-test green; entry keys are core-whitelist-only.
 - A single RV change is localized to the exact `(i, fn, mech)` entry.
-- Pooled shard merge preserves the trace verbatim (byte-copy path, already true).
+- Pooled shard merge preserves the trace and promotes old teardown-only traces
+  onto failed/xfail reports when needed.
 
 ## File-change map (verified against current code)
 
@@ -363,7 +376,10 @@ investigation artifact). Left out to avoid reworking shared crash-test infra.
 | `raw/api.py` | `__init__`: add `_rv_trace=None`, `_rv_trace_total=0`; `import deque`. Add `enable_rv_trace`/`reset_rv_trace`/`rv_trace`/`rv_trace_dropped`. In `_call`: hoist `mech_id`, capture `ckr` once, append entry when enabled. | Core |
 | `config.py` | `P11TestConfig`: `rv_trace: bool = False`, `rv_trace_compact: int \| None = None`. | Core |
 | `fixtures.py` | `p11_config`: read `--p11-rv-trace`/`--p11-rv-trace-compact` + env, compact-implies-enabled. Three reset sites (`:99,238,392`): `enable_rv_trace(maxlen=…)` when on. | Core |
-| `plugin.py` | `pytest_addoption`: two options. `pytest_runtest_teardown`: independent top-of-hook drain (own funcarg scan, not under the coverage stash guard) appending `pkcs11_rv_trace` (+`_dropped`) to `item.user_properties`. | Core/Compact |
+| `plugin.py` | `pytest_addoption`: two options. `pytest_runtest_teardown`: independent top-of-hook drain (own funcarg scan, not under the coverage stash guard) appending `pkcs11_rv_trace` (+`_dropped`) to `item.user_properties`; `pytest_runtest_makereport`: copy the same trace onto failed/xfail/xpass reports before report-log writes them. | Core/Compact |
+| `testcases/_subprocess_preamble.py` | Child preamble enables inherited RV tracing before initialize and emits `P11_RV_TRACE_JSON:<json>` at exit for parent-side report attachment. | Subprocess |
+| `testcases/_raw_subprocess.py` | Raw subprocess runner appends the same inherited-trace emitter after caller boilerplate so raw ctypes child tests can surface traces. | Subprocess |
+| `testcases/_subprocess_result.py` | Failure text keeps any `P11_RV_TRACE_JSON:` marker even when normal stdout/stderr excerpts are truncated. | Subprocess |
 | `cli/test_cmd.py` | typer `--rv-trace`/`--rv-trace-compact`; `_build_pytest_args` append; `os.environ` export with `try/finally` cleanup. | Core |
 | `tests/test_rv_trace.py` (new) | stub-`_call` meta-tests 1–4. | Core |
 | `raw/api.py` + `tests/` | `_OUTPUT_LEN_FUNCS`, `_read_out_len`, one-line insert; drift-guard + length tests. | Deferred out_len |

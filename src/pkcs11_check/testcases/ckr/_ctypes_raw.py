@@ -15,6 +15,7 @@ import sys
 import textwrap
 
 from pkcs11_check.raw.types_std import CKR_ARGUMENTS_BAD
+from pkcs11_check.testcases.ckr._subprocess import ckr_ctypes_subprocess_rv_trace_setup
 
 __all__ = ["CKR_ARGUMENTS_BAD", "run_null_test"]
 
@@ -44,6 +45,7 @@ def run_null_test(
             CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_OK,
             CKF_SERIAL_SESSION, CKF_RW_SESSION,
         )
+{ckr_ctypes_subprocess_rv_trace_setup(indent="        ")}
 
         CK_RV = c_ulong
 
@@ -57,6 +59,7 @@ def run_null_test(
 
         funclist_ptr = c_void_p()
         rv = C_GetFunctionList(byref(funclist_ptr))
+        _p11check_record_rv("C_GetFunctionList", rv)
         if rv != CKR_OK:
             print(f"CKR:0x{{rv:08x}}:GetFunctionList_failed")
             exit(1)
@@ -109,7 +112,9 @@ def run_null_test(
             arg_types = [type(a) for a in args]
             func_type = ctypes.CFUNCTYPE(CK_RV, *arg_types)
             func = func_type(addr)
-            return func(*args)
+            rv = func(*args)
+            _p11check_record_rv(name, rv)
+            return rv
 
         # Initialize the module first
         rv = call_func("C_Initialize", c_void_p(None))

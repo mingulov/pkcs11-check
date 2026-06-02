@@ -15,7 +15,12 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 from pkcs11_check.testcases.ckr._ctypes_raw import CKR_ARGUMENTS_BAD, run_null_test
+from pkcs11_check.testcases.ckr._subprocess import (
+    ckr_ctypes_subprocess_rv_trace_setup,
+    ckr_subprocess_rv_trace_setup,
+)
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
@@ -33,15 +38,12 @@ def _check_null_result(
     - Other CKR: module validates but returns different error (acceptable)
     - Segfault (rc < 0): module doesn't validate NULL and must fail
     """
-    if rc < 0:
-        pytest.fail(
-            f"{func_name}(NULL): subprocess crashed with signal {-rc}; "
-            "module does not validate NULL parameters"
-        )
+    assert_subprocess_completed(rc, out, err, context=f"{func_name}(NULL)")
 
     # Parse CKR from stdout
-    assert "CKR:" in out, f"{func_name}: unexpected output: {out} | stderr: {err}"
-    ckr_str = out.split("CKR:")[1].split(":")[0].strip()
+    ckr_line = next((line for line in out.splitlines() if line.startswith("CKR:")), None)
+    assert ckr_line is not None, f"{func_name}: unexpected output: {out} | stderr: {err}"
+    ckr_str = ckr_line.removeprefix("CKR:").split(":", 1)[0].strip()
     ckr = int(ckr_str, 16)
 
     if ckr == CKR_ARGUMENTS_BAD:
@@ -102,7 +104,9 @@ class TestNullParameters:
             import ctypes, sys
             from pkcs11_check.raw.api import RawPKCS11
             from pkcs11_check.raw.bootstrap import get_slot_ids
+{ckr_ctypes_subprocess_rv_trace_setup(indent="            ")}
             raw = RawPKCS11.from_lib("{module}")
+{ckr_subprocess_rv_trace_setup(indent="            ")}
             raw.C_Initialize(None)
             slot_ids = get_slot_ids(raw, token_present=True)
             if not slot_ids:
@@ -124,6 +128,7 @@ class TestNullParameters:
                 ctypes.c_void_p, ctypes.c_void_p,
             ]
             rv = C_OpenSession(slot_id, 0x06, None, None, None)
+            _p11check_record_rv("C_OpenSession", rv)
             print(f"CKR:0x{{rv:08x}}")
             raw.C_Finalize(None)
         """)
@@ -149,7 +154,9 @@ class TestNullParameters:
             from pkcs11_check.raw.api import RawPKCS11
             from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
             from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CKU_USER
+{ckr_ctypes_subprocess_rv_trace_setup(indent="            ")}
             raw = RawPKCS11.from_lib("{module}")
+{ckr_subprocess_rv_trace_setup(indent="            ")}
             raw.C_Initialize(None)
             slot_ids = get_slot_ids(raw, token_present=True)
             if not slot_ids:
@@ -173,6 +180,7 @@ class TestNullParameters:
             C_GenerateRandom.restype = ctypes.c_ulong
             C_GenerateRandom.argtypes = [ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong]
             rv = C_GenerateRandom(sess, None, 32)
+            _p11check_record_rv("C_GenerateRandom", rv)
             print(f"CKR:0x{{rv:08x}}")
             raw.C_CloseSession(sess)
             raw.C_Finalize(None)

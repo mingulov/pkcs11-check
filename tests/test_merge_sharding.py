@@ -197,6 +197,140 @@ def test_merge_shard_dirs_unions_coverage_and_sums_results(tmp_path: Path) -> No
     assert cov["mechanism_coverage"]["not_invoked"] == 0
 
 
+def test_merge_shard_dirs_promotes_teardown_trace_to_failed_call_report(tmp_path: Path) -> None:
+    s0 = tmp_path / "shard0"
+    trace = [
+        {
+            "i": 0,
+            "fn": "C_GetSessionInfo",
+            "mech": None,
+            "rv": 48,
+            "rv_name": "CKR_DEVICE_ERROR",
+        }
+    ]
+    _write_shard(
+        s0,
+        units=[{"target": "a.py", "status": "failed"}],
+        summary={"passed": 0, "failed": 1},
+        records=[
+            {
+                "$report_type": "TestReport",
+                "nodeid": "a.py::test_failure",
+                "when": "call",
+                "outcome": "failed",
+                "user_properties": [],
+            },
+            {
+                "$report_type": "TestReport",
+                "nodeid": "a.py::test_failure",
+                "when": "teardown",
+                "outcome": "passed",
+                "user_properties": [["pkcs11_rv_trace", trace]],
+            },
+        ],
+    )
+
+    out = tmp_path / "merged"
+    merge_shard_dirs([s0], out)
+
+    call_report = next(
+        record
+        for record in (json.loads(line) for line in (out / "report.jsonl").read_text().splitlines())
+        if record.get("$report_type") == "TestReport" and record.get("when") == "call"
+    )
+    assert dict(call_report["user_properties"])["pkcs11_rv_trace"] == trace
+
+
+def test_merge_shard_dirs_promotes_subprocess_marker_to_failed_call_report(
+    tmp_path: Path,
+) -> None:
+    s0 = tmp_path / "shard0"
+    trace = [
+        {
+            "i": 0,
+            "fn": "C_DigestInit",
+            "mech": None,
+            "rv": 48,
+            "rv_name": "CKR_DEVICE_ERROR",
+        }
+    ]
+    marker = json.dumps(trace, separators=(",", ":"))
+    _write_shard(
+        s0,
+        units=[{"target": "a.py", "status": "failed"}],
+        summary={"passed": 0, "failed": 1},
+        records=[
+            {
+                "$report_type": "TestReport",
+                "nodeid": "a.py::test_child_failure",
+                "when": "call",
+                "outcome": "failed",
+                "longrepr": {
+                    "reprcrash": {
+                        "message": (
+                            "child failed\n"
+                            f"stdout: P11_RV_TRACE_JSON:{marker}\n"
+                            "stderr: AssertionError"
+                        )
+                    }
+                },
+                "user_properties": [],
+            },
+        ],
+    )
+
+    out = tmp_path / "merged"
+    merge_shard_dirs([s0], out)
+
+    call_report = json.loads((out / "report.jsonl").read_text().splitlines()[0])
+    assert dict(call_report["user_properties"])["pkcs11_rv_trace"] == trace
+
+
+def test_merge_shard_dirs_replaces_empty_trace_with_subprocess_marker(
+    tmp_path: Path,
+) -> None:
+    s0 = tmp_path / "shard0"
+    trace = [
+        {
+            "i": 0,
+            "fn": "C_GenerateKey",
+            "mech": 4224,
+            "rv": 48,
+            "rv_name": "CKR_DEVICE_ERROR",
+        }
+    ]
+    marker = json.dumps(trace, separators=(",", ":"))
+    _write_shard(
+        s0,
+        units=[{"target": "a.py", "status": "failed"}],
+        summary={"passed": 0, "failed": 1},
+        records=[
+            {
+                "$report_type": "TestReport",
+                "nodeid": "a.py::test_child_failure",
+                "when": "call",
+                "outcome": "failed",
+                "longrepr": {
+                    "reprcrash": {
+                        "message": (
+                            "child failed\n"
+                            f"stdout: P11_RV_TRACE_JSON:{marker}\n"
+                            "stderr: AssertionError"
+                        )
+                    }
+                },
+                "user_properties": [["pkcs11_rv_trace", []]],
+            },
+        ],
+    )
+
+    out = tmp_path / "merged"
+    merge_shard_dirs([s0], out)
+
+    call_report = json.loads((out / "report.jsonl").read_text().splitlines()[0])
+    assert dict(call_report["user_properties"])["pkcs11_rv_trace"] == trace
+
+
 def test_merge_shard_dirs_round_trip_identity(tmp_path: Path) -> None:
     """Splitting one run's records into 2 shards then merging reproduces it.
 

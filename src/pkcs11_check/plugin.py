@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -35,7 +36,11 @@ from pkcs11_check.raw.types_std import (
     CKF_GENERATE,
     CKF_GENERATE_KEY_PAIR,
 )
-from pkcs11_check.testcases._mock_gating import is_pkcs11_mock_path, should_skip_on_mock
+from pkcs11_check.testcases._mock_gating import is_pkcs11_mock_target, should_skip_on_mock
+from pkcs11_check.testcases._subprocess_trace import (
+    drain_subprocess_rv_trace,
+    extract_subprocess_rv_trace,
+)
 from pkcs11_check.testcases.mechanism_selection import (
     ENCRYPT_ROUNDTRIP,
     MULTIPART_ENCRYPT_ROUNDTRIP,
@@ -62,6 +67,7 @@ _CUMULATIVE_MECHANISM_COUNTS: pytest.StashKey[Counter[int]] = pytest.StashKey()
 _CUMULATIVE_DETAIL_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
 _BOOTSTRAP_FUNCTION_COUNTS: pytest.StashKey[dict[str, int]] = pytest.StashKey()
 _BOOTSTRAP_COLLECTED: pytest.StashKey[bool] = pytest.StashKey()
+_LAST_RV_TRACE: pytest.StashKey[list[dict[str, Any]]] = pytest.StashKey()
 
 _SCENARIO_BY_FIXTURE: dict[str, str] = {
     "mech_wrap_entry": WRAP_ROUNDTRIP,
@@ -179,6 +185,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.stash[_CUMULATIVE_DETAIL_COUNTS] = Counter()
     config.stash[_BOOTSTRAP_FUNCTION_COUNTS] = {}
     config.stash[_BOOTSTRAP_COLLECTED] = False
+    config.stash[_LAST_RV_TRACE] = []
     config.stash[_SELECTION_TELEMETRY_KEY] = {}
     config.stash[_SELECTION_PARAM_CACHE_KEY] = {}
 
@@ -456,7 +463,10 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     destructive_enabled = config.getoption("p11_destructive", default=False)
     thread_safe_enabled = config.getoption("p11_thread_safe", default=False)
     allow_mock_conformance = config.getoption("p11_allow_mock_conformance", default=False)
-    gate_mock = not allow_mock_conformance and is_pkcs11_mock_path(str(module_path))
+    backend_module_path = os.environ.get("PKCS11_CHECK_BACKEND_MODULE")
+    gate_mock = not allow_mock_conformance and is_pkcs11_mock_target(
+        str(module_path), backend_module_path
+    )
 
     for item in items:
         if not _is_testcase_item(item):
@@ -529,29 +539,152 @@ def _build_stacked_strings(
     )
 
 
-_RV_TRACE_SESSION_FIXTURES = ("p11_raw_session", "p11_session", "p11_module_session")
+_RV_TRACE_RAW_SOURCES = ("p11_raw_session", "p11_session", "p11_module_session", "p11_module")
+
+
+def _rv_trace_properties(item: pytest.Item) -> list[tuple[str, Any]]:
+    """Return CK_RV trace user properties for ``item`` when tracing is enabled."""
+    subprocess_trace = drain_subprocess_rv_trace()
+    if subprocess_trace:
+        return [("pkcs11_rv_trace", subprocess_trace)]
+
+    funcargs = getattr(item, "funcargs", None)
+    if not isinstance(funcargs, dict):
+        return []
+    for name in _RV_TRACE_RAW_SOURCES:
+        raw = getattr(funcargs.get(name), "raw", None)
+        if raw is None:
+            continue
+        if not getattr(raw, "rv_trace_enabled", False):
+            return []
+        props: list[tuple[str, Any]] = [("pkcs11_rv_trace", raw.rv_trace)]
+        if raw.rv_trace_dropped:
+            props.append(("pkcs11_rv_trace_dropped", raw.rv_trace_dropped))
+        return props
+    return []
+
+
+def _append_missing_rv_trace(
+    user_properties: list[tuple[str, Any]], trace_props: list[tuple[str, Any]]
+) -> None:
+    for name, value in trace_props:
+        replaced = False
+        for index, (existing_name, existing_value) in enumerate(user_properties):
+            if existing_name != name:
+                continue
+            if existing_value in (None, "", [], {}) and value not in (None, "", [], {}):
+                user_properties[index] = (name, value)
+            replaced = True
+            break
+        if not replaced:
+            user_properties.append((name, value))
+
+
+def _nonempty_rv_trace_from_props(user_properties: Any) -> list[dict[str, Any]]:
+    if not isinstance(user_properties, list):
+        return []
+    for name, value in user_properties:
+        if name in ("pkcs11_rv_trace", "pkcs11_rv_trace_compact") and isinstance(value, list):
+            trace = [entry for entry in value if isinstance(entry, dict)]
+            if trace:
+                return trace
+    return []
+
+
+def _last_rv_trace(item: pytest.Item) -> list[dict[str, Any]]:
+    config = getattr(item, "config", None)
+    stash = getattr(config, "stash", None)
+    if stash is None:
+        return []
+    return cast("list[dict[str, Any]]", stash.get(_LAST_RV_TRACE, []))
+
+
+def _remember_rv_trace(item: pytest.Item, report: Any) -> None:
+    trace = _nonempty_rv_trace_from_props(getattr(report, "user_properties", None))
+    if not trace:
+        return
+    config = getattr(item, "config", None)
+    stash = getattr(config, "stash", None)
+    if stash is not None:
+        stash[_LAST_RV_TRACE] = trace
+
+
+def _report_text(report: Any) -> str:
+    longrepr = getattr(report, "longrepr", None)
+    if isinstance(longrepr, dict):
+        crash = longrepr.get("reprcrash")
+        if isinstance(crash, dict):
+            return str(crash.get("message", ""))
+        return json.dumps(longrepr)
+    return str(longrepr or "")
+
+
+def _is_previous_item_setup_failure(report: Any) -> bool:
+    return getattr(
+        report, "when", None
+    ) == "setup" and "previous item was not torn down properly" in _report_text(report)
+
+
+def _rv_trace_properties_from_report(report: Any) -> list[tuple[str, Any]]:
+    trace = extract_subprocess_rv_trace(_report_text(report))
+    if not trace:
+        return []
+    return [("pkcs11_rv_trace", trace)]
+
+
+def _rv_trace_properties_from_previous_failure(
+    item: pytest.Item, report: Any
+) -> list[tuple[str, Any]]:
+    if not _is_previous_item_setup_failure(report):
+        return []
+    trace = _last_rv_trace(item)
+    if not trace:
+        return []
+    return [("pkcs11_rv_trace", trace)]
 
 
 def _drain_rv_trace(item: pytest.Item) -> None:
     """Attach the per-test CK_RV trace to ``item.user_properties`` when enabled.
 
     Independent of coverage draining (not gated on the coverage stash). The
-    trace lands on the teardown TestReport record; ``report.jsonl`` is
-    byte-identical when tracing is off. See docs/rv-trace-design.md.
+    trace lands on the teardown TestReport record for successful tests; failed
+    and xfail/xpass call reports get the same trace in ``pytest_runtest_makereport``.
+    ``report.jsonl`` is byte-identical when tracing is off. See docs/rv-trace-design.md.
     """
-    funcargs = getattr(item, "funcargs", None)
-    if not isinstance(funcargs, dict):
+    user_properties = getattr(item, "user_properties", None)
+    if not isinstance(user_properties, list):
         return
-    for name in _RV_TRACE_SESSION_FIXTURES:
-        raw = getattr(funcargs.get(name), "raw", None)
-        if raw is None:
-            continue
-        if not getattr(raw, "rv_trace_enabled", False):
-            return
-        item.user_properties.append(("pkcs11_rv_trace", raw.rv_trace))
-        if raw.rv_trace_dropped:
-            item.user_properties.append(("pkcs11_rv_trace_dropped", raw.rv_trace_dropped))
+    _append_missing_rv_trace(user_properties, _rv_trace_properties(item))
+
+
+def _report_needs_rv_trace(report: Any) -> bool:
+    return (
+        getattr(report, "outcome", None) == "failed"
+        or getattr(report, "wasxfail", None) is not None
+    )
+
+
+def _attach_rv_trace_to_report(item: pytest.Item, report: Any) -> None:
+    """Attach CK_RV trace directly to failed/xfail reports before report-log writes them."""
+    if not _is_testcase_item(item) or not _report_needs_rv_trace(report):
         return
+    user_properties = getattr(report, "user_properties", None)
+    if not isinstance(user_properties, list):
+        return
+    trace_props = (
+        _rv_trace_properties(item)
+        or _rv_trace_properties_from_report(report)
+        or _rv_trace_properties_from_previous_failure(item, report)
+    )
+    _append_missing_rv_trace(user_properties, trace_props)
+    _remember_rv_trace(item, report)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> Any:
+    outcome = yield
+    report = outcome.get_result()
+    _attach_rv_trace_to_report(item, report)
 
 
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:

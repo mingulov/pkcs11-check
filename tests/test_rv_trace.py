@@ -8,6 +8,9 @@ they assert the exact trace the harness would attach to ``report.jsonl``'s
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+import textwrap
 from collections import Counter, defaultdict
 from ctypes import byref
 from pathlib import Path
@@ -298,6 +301,359 @@ def test_real_teardown_hook_records_nothing_when_off() -> None:
     plugin.pytest_runtest_teardown(item, None)
 
     assert item.user_properties == []
+
+
+def test_failed_call_report_gets_rv_trace() -> None:
+    from pathlib import Path
+
+    from pkcs11_check import plugin
+
+    raw = _stub_raw({"C_GetSessionInfo": lambda *a: int(CKR_FUNCTION_FAILED)})
+    raw.enable_rv_trace()
+    raw.C_GetSessionInfo(7, _len_ptr())
+
+    item = SimpleNamespace(
+        funcargs={"p11_raw_session": SimpleNamespace(raw=raw)},
+        user_properties=[],
+        path=Path("/repo/src/pkcs11_check/testcases/test_foo.py"),
+    )
+    report = SimpleNamespace(when="call", outcome="failed", user_properties=[])
+
+    plugin._attach_rv_trace_to_report(item, report)
+
+    assert dict(report.user_properties)["pkcs11_rv_trace"] == [
+        {
+            "i": 0,
+            "fn": "C_GetSessionInfo",
+            "mech": None,
+            "rv": int(CKR_FUNCTION_FAILED),
+            "rv_name": "CKR_FUNCTION_FAILED",
+        }
+    ]
+
+
+def test_xfailed_call_report_gets_rv_trace() -> None:
+    from pathlib import Path
+
+    from pkcs11_check import plugin
+
+    raw = _stub_raw({"C_GetSessionInfo": lambda *a: int(CKR_FUNCTION_FAILED)})
+    raw.enable_rv_trace()
+    raw.C_GetSessionInfo(7, _len_ptr())
+
+    item = SimpleNamespace(
+        funcargs={"p11_raw_session": SimpleNamespace(raw=raw)},
+        user_properties=[],
+        path=Path("/repo/src/pkcs11_check/testcases/test_foo.py"),
+    )
+    report = SimpleNamespace(
+        when="call",
+        outcome="skipped",
+        wasxfail="known provider deviation",
+        user_properties=[],
+    )
+
+    plugin._attach_rv_trace_to_report(item, report)
+
+    assert dict(report.user_properties)["pkcs11_rv_trace"][0]["rv_name"] == "CKR_FUNCTION_FAILED"
+
+
+def test_setup_failure_report_gets_p11_module_rv_trace() -> None:
+    from pathlib import Path
+
+    from pkcs11_check import plugin
+
+    raw = _stub_raw({"C_GetSlotList": lambda *a: int(CKR_FUNCTION_FAILED)})
+    raw.enable_rv_trace()
+    raw.C_GetSlotList(True, None, _len_ptr())
+
+    item = SimpleNamespace(
+        funcargs={"p11_module": SimpleNamespace(raw=raw)},
+        user_properties=[],
+        path=Path("/repo/src/pkcs11_check/testcases/test_foo.py"),
+    )
+    report = SimpleNamespace(when="setup", outcome="failed", user_properties=[])
+
+    plugin._attach_rv_trace_to_report(item, report)
+
+    assert dict(report.user_properties)["pkcs11_rv_trace"][0]["fn"] == "C_GetSlotList"
+
+
+def test_failed_subprocess_report_gets_stdout_rv_trace_marker() -> None:
+    from pathlib import Path
+
+    from pkcs11_check import plugin
+
+    item = SimpleNamespace(
+        funcargs={},
+        user_properties=[],
+        path=Path("/repo/src/pkcs11_check/testcases/test_foo.py"),
+    )
+    report = SimpleNamespace(
+        when="call",
+        outcome="failed",
+        user_properties=[],
+        longrepr={
+            "reprcrash": {
+                "message": (
+                    "Failed: child failed\n"
+                    'stdout: P11_RV_TRACE_JSON:[{"i":0,"fn":"C_Sign","mech":null,'
+                    '"rv":48,"rv_name":"CKR_DEVICE_ERROR"}]\n'
+                    "stderr: traceback"
+                )
+            }
+        },
+    )
+
+    plugin._attach_rv_trace_to_report(item, report)
+
+    props = dict(report.user_properties)
+    assert props["pkcs11_rv_trace"] == [
+        {"i": 0, "fn": "C_Sign", "mech": None, "rv": 48, "rv_name": "CKR_DEVICE_ERROR"}
+    ]
+
+
+def test_xfailed_subprocess_report_gets_recorded_child_rv_trace() -> None:
+    from pathlib import Path
+
+    from pkcs11_check import plugin
+    from pkcs11_check.testcases._subprocess_trace import record_subprocess_rv_trace
+
+    item = SimpleNamespace(
+        funcargs={},
+        user_properties=[],
+        path=Path("/repo/src/pkcs11_check/testcases/test_child.py"),
+    )
+    report = SimpleNamespace(
+        when="call",
+        outcome="skipped",
+        wasxfail="child classified provider behavior",
+        user_properties=[],
+        longrepr=None,
+    )
+    record_subprocess_rv_trace(
+        'P11_RV_TRACE_JSON:[{"i":0,"fn":"C_Digest","mech":null,"rv":0,"rv_name":"CKR_OK"}]'
+    )
+
+    plugin._attach_rv_trace_to_report(item, report)
+
+    assert dict(report.user_properties)["pkcs11_rv_trace"] == [
+        {"i": 0, "fn": "C_Digest", "mech": None, "rv": 0, "rv_name": "CKR_OK"}
+    ]
+
+
+def test_xfailed_subprocess_report_prefers_child_trace_over_empty_parent_trace() -> None:
+    from pathlib import Path
+
+    from pkcs11_check import plugin
+    from pkcs11_check.testcases._subprocess_trace import record_subprocess_rv_trace
+
+    parent_raw = _stub_raw({})
+    parent_raw.enable_rv_trace()
+    item = SimpleNamespace(
+        funcargs={"p11_module": SimpleNamespace(raw=parent_raw)},
+        user_properties=[],
+        path=Path("/repo/src/pkcs11_check/testcases/test_child.py"),
+    )
+    report = SimpleNamespace(
+        when="call",
+        outcome="skipped",
+        wasxfail="child classified provider behavior",
+        user_properties=[],
+        longrepr=None,
+    )
+    record_subprocess_rv_trace(
+        'P11_RV_TRACE_JSON:[{"i":0,"fn":"C_SignRecover","mech":3,"rv":0,"rv_name":"CKR_OK"}]'
+    )
+
+    plugin._attach_rv_trace_to_report(item, report)
+
+    assert dict(report.user_properties)["pkcs11_rv_trace"] == [
+        {"i": 0, "fn": "C_SignRecover", "mech": 3, "rv": 0, "rv_name": "CKR_OK"}
+    ]
+
+
+def test_report_marker_replaces_existing_empty_rv_trace() -> None:
+    from pathlib import Path
+
+    from pkcs11_check import plugin
+
+    item = SimpleNamespace(
+        funcargs={},
+        user_properties=[],
+        path=Path("/repo/src/pkcs11_check/testcases/test_child.py"),
+    )
+    report = SimpleNamespace(
+        when="call",
+        outcome="failed",
+        user_properties=[("pkcs11_rv_trace", [])],
+        longrepr={
+            "reprcrash": {
+                "message": (
+                    "Failed: child failed\n"
+                    'stdout: P11_RV_TRACE_JSON:[{"i":0,"fn":"C_GenerateKey",'
+                    '"mech":4224,"rv":48,"rv_name":"CKR_DEVICE_ERROR"}]\n'
+                )
+            }
+        },
+    )
+
+    plugin._attach_rv_trace_to_report(item, report)
+
+    assert dict(report.user_properties)["pkcs11_rv_trace"] == [
+        {
+            "i": 0,
+            "fn": "C_GenerateKey",
+            "mech": 4224,
+            "rv": 48,
+            "rv_name": "CKR_DEVICE_ERROR",
+        }
+    ]
+
+
+def test_previous_item_not_torn_down_setup_uses_last_failed_teardown_trace() -> None:
+    from pathlib import Path
+
+    from pkcs11_check import plugin
+
+    trace = [
+        {
+            "i": 0,
+            "fn": "C_SessionCancel",
+            "mech": None,
+            "rv": 48,
+            "rv_name": "CKR_DEVICE_ERROR",
+        }
+    ]
+    config = SimpleNamespace(stash={})
+    item = SimpleNamespace(
+        funcargs={},
+        user_properties=[],
+        path=Path("/repo/src/pkcs11_check/testcases/test_v30_session.py"),
+        config=config,
+    )
+    teardown_report = SimpleNamespace(
+        when="teardown",
+        outcome="failed",
+        user_properties=[("pkcs11_rv_trace", trace)],
+        longrepr=None,
+    )
+    setup_report = SimpleNamespace(
+        when="setup",
+        outcome="failed",
+        user_properties=[],
+        longrepr={
+            "reprcrash": {"message": "AssertionError: previous item was not torn down properly"}
+        },
+    )
+
+    plugin._attach_rv_trace_to_report(item, teardown_report)
+    plugin._attach_rv_trace_to_report(item, setup_report)
+
+    assert dict(setup_report.user_properties)["pkcs11_rv_trace"] == trace
+
+
+def test_open_raw_session_arms_trace_before_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pkcs11_check import fixtures
+    from pkcs11_check.raw import bootstrap
+
+    raw = _stub_raw({"C_GetSlotList": lambda *a: int(CKR_FUNCTION_FAILED)})
+
+    def fail_get_slot_ids(raw_arg: RawPKCS11) -> list[int]:
+        raw_arg.C_GetSlotList(True, None, _len_ptr())
+        raise RuntimeError("bootstrap failed")
+
+    monkeypatch.setattr(bootstrap, "get_slot_ids", fail_get_slot_ids)
+
+    p11_module = SimpleNamespace(raw=raw)
+    p11_config = SimpleNamespace(rv_trace=True, rv_trace_compact=None, slot=None, pin=None)
+
+    with pytest.raises(RuntimeError, match="bootstrap failed"):
+        fixtures._open_raw_session(p11_module, p11_config)
+
+    assert raw.rv_trace[0]["fn"] == "C_GetSlotList"
+
+
+def test_report_log_failed_call_record_contains_rv_trace(tmp_path: Path) -> None:
+    test_dir = tmp_path / "src" / "pkcs11_check" / "testcases"
+    test_dir.mkdir(parents=True)
+    test_file = test_dir / "test_trace_failure.py"
+    report_log = tmp_path / "report.jsonl"
+    test_file.write_text(
+        textwrap.dedent(
+            """
+            from collections import Counter, defaultdict
+            from types import SimpleNamespace
+
+            import pytest
+
+            from pkcs11_check.raw.api import RawPKCS11
+            from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED
+
+
+            def _stub_raw():
+                raw = object.__new__(RawPKCS11)
+                raw._funcs = {"C_GetSessionInfo": lambda *a: int(CKR_FUNCTION_FAILED)}
+                raw._lib = None
+                raw._call_log = defaultdict(int)
+                raw._used_mechanisms = set()
+                raw._mechanism_counts = Counter()
+                raw._rv_trace = None
+                raw._rv_trace_total = 0
+                raw.enable_rv_trace()
+                return raw
+
+
+            @pytest.fixture
+            def p11_raw_session():
+                return SimpleNamespace(raw=_stub_raw())
+
+
+            def test_failure_has_trace(p11_raw_session):
+                p11_raw_session.raw.C_GetSessionInfo(7, None)
+                assert False
+            """
+        )
+    )
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "--report-log",
+            str(report_log),
+            "--p11-module",
+            str(tmp_path / "fake-provider.so"),
+            str(test_file),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+
+    assert proc.returncode == 1, proc.stdout
+    call_reports = []
+    for line in report_log.read_text().splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("$report_type") == "TestReport" and record.get("when") == "call":
+            call_reports.append(record)
+    assert len(call_reports) == 1
+    props = dict(call_reports[0]["user_properties"])
+    assert props["pkcs11_rv_trace"] == [
+        {
+            "i": 0,
+            "fn": "C_GetSessionInfo",
+            "mech": None,
+            "rv": int(CKR_FUNCTION_FAILED),
+            "rv_name": "CKR_FUNCTION_FAILED",
+        }
+    ]
 
 
 # --- Phase 3: out_len / in_len (best-effort, length-only) ------------------

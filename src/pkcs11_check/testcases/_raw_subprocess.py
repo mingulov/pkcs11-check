@@ -15,8 +15,54 @@ import tempfile
 import textwrap
 from collections import Counter
 
+from pkcs11_check.testcases._subprocess_trace import record_subprocess_rv_trace
+
 _subprocess_call_counts: Counter[str] = Counter()
 _subprocess_mechanism_counts: Counter[str] = Counter()
+
+_RV_TRACE_EMITTER = r"""
+import atexit as _p11check_atexit
+import json as _p11check_json
+import os as _p11check_os
+
+
+def _p11check_rv_trace_enabled():
+    _value = _p11check_os.environ.get("PKCS11_CHECK_RV_TRACE", "")
+    if _value.strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    return bool(_p11check_os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT"))
+
+
+def _p11check_rv_trace_maxlen():
+    _value = _p11check_os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT")
+    if not _value:
+        return None
+    try:
+        _maxlen = int(_value)
+    except ValueError:
+        return None
+    return _maxlen if _maxlen > 0 else None
+
+
+_p11check_raw = globals().get("raw")
+if _p11check_raw is not None and _p11check_rv_trace_enabled():
+    _p11check_raw.enable_rv_trace(maxlen=_p11check_rv_trace_maxlen())
+
+    def _p11check_emit_rv_trace():
+        try:
+            print(
+                "P11_RV_TRACE_JSON:"
+                + _p11check_json.dumps(
+                    _p11check_raw.rv_trace,
+                    separators=(",", ":"),
+                ),
+                flush=True,
+            )
+        except (OSError, TypeError, ValueError):
+            pass
+
+    _p11check_atexit.register(_p11check_emit_rv_trace)
+"""
 
 
 def run_raw_script(
@@ -41,7 +87,7 @@ def run_raw_script(
     Returns:
         (returncode, stdout, stderr) - returncode < 0 means signal (segfault).
     """
-    full_script = boilerplate + textwrap.dedent(script_body)
+    full_script = boilerplate + textwrap.dedent(_RV_TRACE_EMITTER) + textwrap.dedent(script_body)
     if cleanup:
         full_script += textwrap.dedent(cleanup)
 
@@ -76,6 +122,7 @@ def run_raw_script(
         except OSError:
             pass
 
+    record_subprocess_rv_trace(result.stdout, result.stderr)
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 

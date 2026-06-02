@@ -126,6 +126,9 @@ class _FakeItem:
     def get_closest_marker(self, name: str) -> object | None:
         return self._markers.get(name)
 
+    def iter_markers(self) -> list[object]:
+        return list(self._markers.values())
+
     def add_marker(self, marker: object) -> None:
         self.added.append(marker)
 
@@ -469,6 +472,29 @@ def test_collection_modifyitems_applies_only_static_skips() -> None:
     reasons = [getattr(marker, "kwargs", {}).get("reason") for marker in item.added]
     assert "Destructive test (use --p11-destructive to enable)" in reasons
     assert not any(reason and "Requires v" in reason for reason in reasons)
+
+
+def test_collection_modifyitems_gates_mock_conformance_behind_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = _FakeItem(
+        Path("/tmp/testcases/acvp/test_demo.py"),
+        {"acvp": SimpleNamespace(name="acvp", args=())},
+    )
+    config = SimpleNamespace(
+        getoption=lambda name, default=None: {
+            "p11_module": "/opt/proxy/bin/libpkcs11_proxy_ng_shim.so",
+            "p11_destructive": False,
+            "p11_thread_safe": False,
+            "p11_allow_mock_conformance": False,
+        }.get(name, default)
+    )
+    monkeypatch.setenv("PKCS11_CHECK_BACKEND_MODULE", "/usr/lib64/libpkcs11-mock.so")
+
+    plugin_mod.pytest_collection_modifyitems(config, [item])
+
+    reasons = [getattr(marker, "kwargs", {}).get("reason") for marker in item.added]
+    assert any(reason and "pkcs11-mock returns canned values" in reason for reason in reasons)
 
 
 def test_collection_modifyitems_ignores_comments_in_deselect_file(

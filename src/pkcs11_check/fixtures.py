@@ -52,7 +52,9 @@ def _apply_rv_trace(raw: RawPKCS11, p11_config: P11TestConfig) -> None:
 
     Called at each session fixture's reset point, i.e. *after* bootstrap/login,
     so the PIN-bearing C_Login and session-open calls stay out of the test-body
-    trace. ``enable_rv_trace`` doubles as the per-test reset.
+    trace for successful fixture setup. It is also called before bootstrap so
+    setup failures can carry the failing CK_RV; successful fixtures reset it
+    again before yielding. ``enable_rv_trace`` doubles as the per-test reset.
     """
     if p11_config.rv_trace:
         raw.enable_rv_trace(maxlen=p11_config.rv_trace_compact)
@@ -115,6 +117,7 @@ def _open_raw_session(
     from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CKU_USER
 
     raw = p11_module.raw
+    _apply_rv_trace(raw, p11_config)
     slots = get_slot_ids(raw)
     slot_idx = p11_config.slot if p11_config.slot is not None else 0
     slot_id = slots[slot_idx] if slot_idx < len(slots) else slots[0]

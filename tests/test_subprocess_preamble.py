@@ -57,6 +57,13 @@ def test_module_path_with_quotes_does_not_break_script() -> None:
     compile(script, "<preamble>", "exec")
 
 
+def test_preamble_emits_rv_trace_marker_when_enabled() -> None:
+    script = subprocess_session_preamble("/path/to/module.so", pin=None)
+    assert "PKCS11_CHECK_RV_TRACE" in script
+    assert "raw.enable_rv_trace(" in script
+    assert "P11_RV_TRACE_JSON:" in script
+
+
 def test_run_with_coverage_places_pin_in_env_not_argv() -> None:
     """M1: run_with_coverage must inject the PIN into the child env, not argv."""
     pin = "another-secret-pin"

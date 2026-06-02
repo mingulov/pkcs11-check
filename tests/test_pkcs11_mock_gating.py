@@ -19,6 +19,7 @@ from __future__ import annotations
 from pkcs11_check.testcases._mock_gating import (
     _MOCK_INCOMPATIBLE_MARKERS,
     is_pkcs11_mock_path,
+    is_pkcs11_mock_target,
     should_skip_on_mock,
 )
 
@@ -30,6 +31,17 @@ def test_is_pkcs11_mock_path_matches_known_filenames() -> None:
     assert not is_pkcs11_mock_path("/usr/lib/softhsm/libsofthsm2.so")
     assert not is_pkcs11_mock_path("/usr/lib/pkcs11/opencryptoki.so")
     assert not is_pkcs11_mock_path(None)
+
+
+def test_is_pkcs11_mock_target_checks_backend_module_path_for_proxy_shim() -> None:
+    assert is_pkcs11_mock_target(
+        "/opt/proxy/bin/libpkcs11_proxy_ng_shim.so",
+        "/usr/lib64/libpkcs11-mock.so",
+    )
+    assert not is_pkcs11_mock_target(
+        "/opt/proxy/bin/libpkcs11_proxy_ng_shim.so",
+        "/usr/lib64/softhsm/libsofthsm2.so",
+    )
 
 
 def test_should_skip_on_mock_for_conformance_markers() -> None:

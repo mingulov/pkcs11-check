@@ -33,7 +33,10 @@ from pkcs11_check.testcases.ckr._ckr_spec import (
     _UNIVERSAL,
     full_compat,
 )
-from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
+from pkcs11_check.testcases.ckr._subprocess import (
+    assert_ckr_subprocess_ok,
+    ckr_subprocess_rv_trace_setup,
+)
 
 pytestmark = pytest.mark.access
 
@@ -179,6 +182,7 @@ class TestUniversalRealTriggers:
             os.environ["PKCS11_INJECT_FUNCTION"] = "C_GenerateRandom"
             os.environ["PKCS11_INJECT_ERROR"] = "0x00000032"  # DEVICE_REMOVED
             raw = RawPKCS11.from_lib("{proxy}")
+{ckr_subprocess_rv_trace_setup(indent="            ")}
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
             sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))

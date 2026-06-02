@@ -18,7 +18,49 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases._subprocess_trace import record_subprocess_rv_trace
+
 pytestmark = [pytest.mark.access, pytest.mark.subprocess, pytest.mark.requires_v32]
+
+_RV_TRACE_SETUP = """\
+import atexit as _p11check_atexit
+import json as _p11check_json
+import os as _p11check_os
+
+
+def _p11check_rv_trace_enabled():
+    _value = _p11check_os.environ.get("PKCS11_CHECK_RV_TRACE", "")
+    if _value.strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    return bool(_p11check_os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT"))
+
+
+def _p11check_rv_trace_maxlen():
+    _value = _p11check_os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT")
+    if not _value:
+        return None
+    try:
+        _maxlen = int(_value)
+    except ValueError:
+        return None
+    return _maxlen if _maxlen > 0 else None
+
+
+if _p11check_rv_trace_enabled():
+    raw.enable_rv_trace(maxlen=_p11check_rv_trace_maxlen())
+
+    def _p11check_emit_rv_trace():
+        try:
+            print(
+                "P11_RV_TRACE_JSON:"
+                + _p11check_json.dumps(raw.rv_trace, separators=(",", ":")),
+                flush=True,
+            )
+        except (OSError, TypeError, ValueError):
+            pass
+
+    _p11check_atexit.register(_p11check_emit_rv_trace)
+"""
 
 _SCRIPT_TEMPLATE = """\
 import ctypes, os, sys
@@ -34,6 +76,7 @@ from pkcs11_check.raw.types_std import (
 
 raw = RawPKCS11.from_lib("{module}")
 raw.C_Initialize(None)
+{rv_trace_setup}
 
 # Check if v3.2 functions are available
 if raw.interface_version != "3.2":
@@ -63,7 +106,10 @@ raw.C_Finalize(None)
 def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
     pin_arg = f'"{pin}"' if pin else "None"
     script = _SCRIPT_TEMPLATE.format(
-        module=module, pin_arg=pin_arg, test_code=textwrap.dedent(code)
+        module=module,
+        pin_arg=pin_arg,
+        rv_trace_setup=textwrap.dedent(_RV_TRACE_SETUP),
+        test_code=textwrap.dedent(code),
     )
     result = subprocess.run(
         [sys.executable, "-c", script],
@@ -72,6 +118,7 @@ def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
         timeout=30,
         env=os.environ.copy(),
     )
+    record_subprocess_rv_trace(result.stdout, result.stderr)
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 

@@ -96,6 +96,8 @@ fi
 docker run --rm -v "$PROJECT_ROOT/artifacts:/artifacts" busybox sh -c \
     "rm -rf /artifacts/${provider}-shard-*" 2>/dev/null || true
 
+artifact_owner="${PKCS11_CHECK_ARTIFACT_OWNER:-$(id -u):$(id -g)}"
+
 # One worker: run batch $1 in its own container against its own server+token.
 run_one_batch() {
     local i="$1"
@@ -106,10 +108,12 @@ run_one_batch() {
     docker compose -f docker/docker-compose.test.yml run --rm \
         -e PKCS11_CHECK_TARGETS="$targets" \
         -e PKCS11_CHECK_ARTIFACT_DIR="/artifacts/${PROVIDER}-shard-${i}" \
+        -e PKCS11_CHECK_ARTIFACT_OWNER="$ARTIFACT_OWNER" \
         "$SERVICE" > "/tmp/${PROVIDER}-shard-${i}.log" 2>&1
 }
 export -f run_one_batch
 export PROVIDER="$provider" SERVICE="$service" BATCHDIR="$batchdir" EXTRA_ARGS="${extra_args[*]:-}"
+export ARTIFACT_OWNER="$artifact_owner"
 
 echo "=== running $shards batches through $concurrency workers ==="
 start=$(date +%s)

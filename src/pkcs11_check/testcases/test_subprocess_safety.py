@@ -9,12 +9,16 @@ SoftHSM2 #729 (exit crash).
 
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 import sys
 import textwrap
 from typing import Any
 
 import pytest
+
+from pkcs11_check.testcases._subprocess_trace import RV_TRACE_MARKER, record_subprocess_rv_trace
 
 pytestmark = [pytest.mark.security, pytest.mark.stress]
 
@@ -23,15 +27,95 @@ def _run_script(
     script: str, env: dict[str, str] | None = None, timeout: int = 30
 ) -> tuple[int, str]:
     """Run a Python script in a subprocess. Returns (exit_code, output)."""
-    result = subprocess.run(
+    script = _inject_rv_trace_emitter(textwrap.dedent(script))
+    process = subprocess.Popen(
         [sys.executable, "-c", textwrap.dedent(script)],
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=timeout,
         env=env,
+        start_new_session=True,
     )
-    output = result.stdout + result.stderr
-    return result.returncode, output
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+            stdout, stderr = process.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            stdout, stderr = process.communicate()
+        record_subprocess_rv_trace(stdout, stderr)
+        raise subprocess.TimeoutExpired(process.args, timeout, output=stdout, stderr=stderr)
+    output = stdout + stderr
+    record_subprocess_rv_trace(output)
+    return process.returncode, output
+
+
+def _inject_rv_trace_emitter(script: str) -> str:
+    """Enable RV tracing in direct subprocess-safety scripts when requested."""
+    if "RawPKCS11.from_lib(" not in script:
+        return script
+    lines = script.splitlines()
+    for index, line in enumerate(lines):
+        if "raw = RawPKCS11.from_lib(" in line:
+            indent = line[: len(line) - len(line.lstrip())]
+            lines.insert(index + 1, f"{indent}_p11check_enable_rv_trace()")
+            break
+    instrumented_script = "\n".join(lines) + "\n"
+    return f"""
+import atexit as _p11check_atexit
+import json as _p11check_json
+import os as _p11check_os
+import signal as _p11check_signal
+
+
+def _p11check_rv_trace_enabled():
+    _value = _p11check_os.environ.get("PKCS11_CHECK_RV_TRACE", "")
+    if _value.strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    return bool(_p11check_os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT"))
+
+
+def _p11check_rv_trace_maxlen():
+    _value = _p11check_os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT")
+    if not _value:
+        return None
+    try:
+        _maxlen = int(_value)
+    except ValueError:
+        return None
+    return _maxlen if _maxlen > 0 else None
+
+
+def _p11check_emit_rv_trace():
+    _raw = globals().get("raw")
+    if _raw is None:
+        return
+    try:
+        print(
+            "{RV_TRACE_MARKER}"
+            + _p11check_json.dumps(_raw.rv_trace, separators=(",", ":")),
+            flush=True,
+        )
+    except (OSError, TypeError, ValueError):
+        pass
+
+
+def _p11check_enable_rv_trace():
+    _raw = globals().get("raw")
+    if _raw is not None and _p11check_rv_trace_enabled():
+        _raw.enable_rv_trace(maxlen=_p11check_rv_trace_maxlen())
+
+
+_p11check_atexit.register(_p11check_emit_rv_trace)
+_p11check_signal.signal(
+    _p11check_signal.SIGTERM,
+    lambda _signum, _frame: (_p11check_emit_rv_trace(), _p11check_os._exit(124)),
+)
+
+{instrumented_script}
+"""
 
 
 class TestPostFinalize:

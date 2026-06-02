@@ -28,6 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
 )
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
+from pkcs11_check.testcases.ckr._subprocess import ckr_subprocess_rv_trace_setup
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
@@ -125,6 +126,7 @@ class TestOperationStateSubprocess:
                 CK_ULONG,
             )
             raw = RawPKCS11.from_lib("{module}")
+{ckr_subprocess_rv_trace_setup(indent="            ")}
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
             sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
@@ -168,6 +170,7 @@ class TestOperationStateSubprocess:
                 CKR_OPERATION_ACTIVE, CKU_USER,
             )
             raw = RawPKCS11.from_lib("{module}")
+{ckr_subprocess_rv_trace_setup(indent="            ")}
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
             sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))

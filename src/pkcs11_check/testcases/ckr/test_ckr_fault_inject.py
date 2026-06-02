@@ -17,7 +17,10 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
+from pkcs11_check.testcases.ckr._subprocess import (
+    assert_ckr_subprocess_ok,
+    ckr_subprocess_rv_trace_setup,
+)
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
@@ -61,6 +64,7 @@ class TestFaultInjection:
             os.environ["PKCS11_INJECT_FUNCTION"] = "C_Encrypt"
             os.environ["PKCS11_INJECT_ERROR"] = "0x00000032"  # CKR_DEVICE_REMOVED
             raw = RawPKCS11.from_lib("{_PROXY_PATH}")
+{ckr_subprocess_rv_trace_setup(indent="            ")}
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
             sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
@@ -127,6 +131,7 @@ class TestFaultInjection:
             os.environ["PKCS11_INJECT_FUNCTION"] = "C_Sign"
             os.environ["PKCS11_INJECT_ERROR"] = "0x00000030"  # CKR_DEVICE_ERROR
             raw = RawPKCS11.from_lib("{_PROXY_PATH}")
+{ckr_subprocess_rv_trace_setup(indent="            ")}
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
             sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
@@ -192,6 +197,7 @@ class TestFaultInjection:
             os.environ["PKCS11_INJECT_FUNCTION"] = "C_GenerateKey"
             os.environ["PKCS11_INJECT_ERROR"] = "0x00000031"  # CKR_DEVICE_MEMORY
             raw = RawPKCS11.from_lib("{_PROXY_PATH}")
+{ckr_subprocess_rv_trace_setup(indent="            ")}
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
             sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
@@ -240,6 +246,7 @@ class TestFaultProxyBasic:
             from pkcs11_check.raw.bootstrap import get_slot_ids
             os.environ["PKCS11_REAL_MODULE"] = "{module}"
             raw = RawPKCS11.from_lib("{_PROXY_PATH}")
+{ckr_subprocess_rv_trace_setup(indent="            ")}
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
             print(f"OK:{{len(slots)}}_slots")
@@ -277,6 +284,7 @@ class TestFaultProxyBasic:
             )
             os.environ["PKCS11_REAL_MODULE"] = "{module}"
             raw = RawPKCS11.from_lib("{_PROXY_PATH}")
+{ckr_subprocess_rv_trace_setup(indent="            ")}
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
             sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))

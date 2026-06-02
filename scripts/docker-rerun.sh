@@ -26,6 +26,7 @@ fi
 docker compose -f docker/docker-compose.test.yml run --rm \
   -v "$HOME/.local/share/pkcs11-check/data:/app/data:ro" \
   -e "PKCS11_CHECK_ARTIFACT_DIR=/artifacts/${target}-recheck-${date_tag}" \
+  -e "PKCS11_CHECK_ARTIFACT_OWNER=${PKCS11_CHECK_ARTIFACT_OWNER:-$(id -u):$(id -g)}" \
   --build "test-${target}" "$@"
 
 baseline="artifacts/${target}/results.json"
