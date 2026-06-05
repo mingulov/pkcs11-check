@@ -832,6 +832,20 @@ in `src/lib/sign.c`, and sets RSA-PSS padding plus signature digest in
 digest on the verification context. This is provider behavior, not a
 pkcs11-check vector-loader issue.
 
+### No symmetric-keygen surface → CKR_FUNCTION_NOT_SUPPORTED (PC-6)
+
+tpm2-pkcs11 does not expose a symmetric key-generation surface, so
+`C_GenerateKey(CKM_AES_KEY_GEN)` returns `CKR_FUNCTION_NOT_SUPPORTED` — the whole
+function is unavailable. A *negative* keygen probe (invalid key size,
+inconsistent or bogus-type template) therefore cannot exercise its parameter and
+can only get `CKR_FUNCTION_NOT_SUPPORTED`. This is an honest missing-capability
+deviation, so pkcs11-check classifies it as **xfail** (the negative `genkey_*`
+expectations in `ckr/_ckr_spec.py` accept `CKR_FUNCTION_NOT_SUPPORTED` in their
+`compat_tuple`), not a hard fail. A provider that *does* support keygen would
+return the specific size/template error instead, so this widening only relaxes
+providers that genuinely lack the surface. A wrong-accept (`CKR_OK`) on a
+non-permissive negative keygen probe remains a hard fail.
+
 ### ACVP RSA SHA-1 PKCS#1 SigVer rejects valid signatures
 
 Focused current-source evidence:

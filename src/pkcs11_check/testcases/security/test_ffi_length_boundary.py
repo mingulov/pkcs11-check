@@ -378,6 +378,7 @@ class TestAllocationGuard:
     in test_arithmetic_overflow.py).
     """
 
+    @pytest.mark.slow
     def test_generate_key_oom_value_len(
         self,
         p11_raw_session: Any,

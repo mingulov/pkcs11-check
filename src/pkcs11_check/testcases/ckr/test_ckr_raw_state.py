@@ -23,6 +23,7 @@ from pkcs11_check.raw.types_std import CKR_OPERATION_ACTIVE
 from pkcs11_check.testcases._subprocess_preamble import _P11CHECK_PIN_ENV
 from pkcs11_check.testcases.ckr._subprocess import (
     assert_ckr_subprocess_ok,
+    ckr_subprocess_cleanup_setup,
     ckr_subprocess_rv_trace_setup,
 )
 from pkcs11_check.testcases.conftest import classify_negative_rv
@@ -95,6 +96,7 @@ rv = raw.C_Initialize(None)
 assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)
 
 sh = open_session(raw, get_slot_ids(raw)[0], CKF_SERIAL_SESSION | CKF_RW_SESSION)
+{cleanup_setup}
 
 import os as _os
 pin = _os.environ.get("_P11CHECK_PIN")
@@ -114,8 +116,7 @@ attrs = template(
 rv = raw.C_GenerateKey(sh, mech_keygen.byref(), _template_ptr(attrs), attrs.count, byref(key))
 if rv != CKR_OK:
     print(f"SETUP_XFAIL:C_GenerateKey failed:{{ckr_name(rv)}}")
-    raw.C_CloseSession(sh)
-    raw.C_Finalize(None)
+    _p11check_cleanup_session()
     sys.exit(0)
 key_handle = key.value
 """
@@ -129,9 +130,10 @@ def _run(module: str, pin: str | None, test_code: str) -> tuple[int, str, str]:
         _SCRIPT_PREAMBLE.format(
             module=module,
             rv_trace_setup=ckr_subprocess_rv_trace_setup(),
+            cleanup_setup=ckr_subprocess_cleanup_setup(),
         )
         + textwrap.dedent(test_code)
-        + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
+        + "\n_p11check_cleanup_session()\n"
     )
     env = os.environ.copy()
     if pin is not None:

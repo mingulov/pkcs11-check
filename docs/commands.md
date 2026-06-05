@@ -37,6 +37,24 @@ bash local-builds/test.sh softhsm2 -m "wycheproof or acvp or cctv"       # ~72K 
 bash local-builds/test.sh softhsm2                                        # full: ~75K tests, ~5min
 ```
 
+### Fast vs full: long-running test cases (`slow`)
+
+A small set of individually long-running cases (RSA-4096 ops/keygen, DSA/DH
+parameter generation, AES large-multiblock, leak/churn/fuzz loops) carry
+`@pytest.mark.slow`. They are *not* the high-count vector files (wycheproof/acvp
+are thousands of fast cases and stay in the basic run). The `pkcs11-check test`
+command has convenience flags:
+
+```bash
+uv run pkcs11-check test -m <module> --skip-slow   # basic/fast: -m "not slow"
+uv run pkcs11-check test -m <module> --only-slow   # only the long-running cases
+uv run pkcs11-check test -m <module>               # full: everything (default)
+```
+
+`--skip-slow`/`--only-slow` compose with `--marker` (e.g. `--marker acvp
+--skip-slow` → `-m "(acvp) and (not slow)"`). The full profile still runs every
+case — `slow` is a *selection* profile, never a way to hide a finding.
+
 ### Available providers
 
 OpenSSL 4.0.0 preferred / 3.6.2 fallback, Kryoptic 1.5.0+PQC, SoftHSM2 2.7.0, OpenCryptoki 3.27.0, NSS softoken, pkcs11-mock 2.0.0, tpm2-pkcs11 1.10.0, BouncyHSM 2.1.0, swtpm 0.10.1, libtpms 0.10.2

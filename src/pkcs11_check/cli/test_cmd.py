@@ -43,6 +43,20 @@ def _preflight_timeout_seconds(test_timeout: int) -> int:
     return max(10, min(test_timeout, 60))
 
 
+def _combine_marker(marker: str | None, *, skip_slow: bool, only_slow: bool) -> str | None:
+    """Combine an explicit --marker expression with the --skip-slow/--only-slow flags."""
+    slow_expr: str | None = None
+    if only_slow:
+        slow_expr = "slow"
+    elif skip_slow:
+        slow_expr = "not slow"
+    if slow_expr is None:
+        return marker
+    if marker:
+        return f"({marker}) and ({slow_expr})"
+    return slow_expr
+
+
 def _build_pytest_args(
     *,
     module: Path,
@@ -116,14 +130,24 @@ def _isolated_report_config(output: str, output_file: str | None) -> IsolatedRep
 def test_command(
     module: Path = typer.Option(..., "--module", "-m", help="Path to PKCS#11 module"),
     interface: str = typer.Option("auto", "--interface", "-i", help="Interface version"),
-    sessions: int = typer.Option(1, "--sessions", "-s", help="Concurrent sessions"),
+    sessions: int = typer.Option(
+        1, "--sessions", "-s", help="Concurrent sessions", rich_help_panel="Advanced"
+    ),
     timeout: int = typer.Option(180, "--timeout", "-t", help="Per-test timeout (seconds)"),
     category: str | None = typer.Option(None, "--category", "-c", help="Test categories"),
     match: str | None = typer.Option(None, "--match", help="Test name pattern"),
     marker: str | None = typer.Option(None, "--marker", help="Pytest marker expression (-m)"),
+    skip_slow: bool = typer.Option(
+        False, "--skip-slow", help="Fast profile: skip long-running tests (-m 'not slow')"
+    ),
+    only_slow: bool = typer.Option(
+        False, "--only-slow", help="Run only the long-running tests (-m 'slow')"
+    ),
     pin: str | None = typer.Option(None, "--pin", help="PIN (prefer P11TEST_PIN env)"),
     slot: int = typer.Option(0, "--slot", help="Slot index"),
-    destructive: bool = typer.Option(False, "--destructive", help="Enable destructive tests"),
+    destructive: bool = typer.Option(
+        False, "--destructive", help="Enable destructive tests", rich_help_panel="Advanced"
+    ),
     output: str = typer.Option("rich", "--output", "-o", help="Output: rich, json, junit"),
     output_file: str | None = typer.Option(None, "--output-file", help="Output file path"),
     verbose: bool = typer.Option(False, "--verbose", "-V", help="Verbose output"),
@@ -131,27 +155,40 @@ def test_command(
         False,
         "--ignore-disabled-tests",
         help="Do not load the configured disabled baseline for this run",
+        rich_help_panel="Advanced",
     ),
     isolation: str = typer.Option(
         "auto",
         "--isolation",
         help="Isolation mode: auto, file, test, none (auto is default; none is fastest but unsafe)",
+        rich_help_panel="Isolation",
     ),
-    resume: bool = typer.Option(False, "--resume", help="Resume an isolated run"),
+    no_collection_cache: bool = typer.Option(
+        False,
+        "--no-collection-cache",
+        help="Disable the cached collection metadata (always re-collect from scratch)",
+        rich_help_panel="Advanced",
+    ),
+    resume: bool = typer.Option(
+        False, "--resume", help="Resume an isolated run", rich_help_panel="Isolation"
+    ),
     stop_on_failure: bool = typer.Option(
         False,
         "--stop-on-failure",
         help="Stop isolated mode at the first failing/crashing unit",
+        rich_help_panel="Isolation",
     ),
     state_file: Path = typer.Option(
         Path(".pkcs11-check-isolation-state.json"),
         "--state-file",
         help="State file for isolated runs",
+        rich_help_panel="Isolation",
     ),
     policy_file: Path = typer.Option(
         Path(".pkcs11-check-isolation-policy.json"),
         "--policy-file",
         help="Adaptive isolation policy file for isolated runs",
+        rich_help_panel="Isolation",
     ),
     max_crashes_per_file: int = typer.Option(
         3,
@@ -159,17 +196,20 @@ def test_command(
         min=0,
         help="In test/auto isolation, skip remaining tests from a file after this many crashes "
         "(0 = unlimited)",
+        rich_help_panel="Isolation",
     ),
     rv_trace: bool = typer.Option(
         False,
         "--rv-trace",
         help="Record each C_* call's raw CK_RV per test into report.jsonl user_properties",
+        rich_help_panel="CK_RV tracing",
     ),
     rv_trace_compact: int | None = typer.Option(
         None,
         "--rv-trace-compact",
         metavar="N",
         help="Keep only the last N CK_RV trace entries per test (implies --rv-trace)",
+        rich_help_panel="CK_RV tracing",
     ),
     targets: list[str] = typer.Argument(None, help="Optional pytest paths or nodeids"),
 ) -> None:
@@ -181,6 +221,14 @@ def test_command(
     if isolation not in {"none", "auto", "file", "test"}:
         console.print(f"[red]Error:[/red] Unsupported isolation mode: {isolation}")
         raise typer.Exit(code=2)
+
+    if skip_slow and only_slow:
+        console.print("[red]Error:[/red] --skip-slow and --only-slow are mutually exclusive")
+        raise typer.Exit(code=2)
+    marker = _combine_marker(marker, skip_slow=skip_slow, only_slow=only_slow)
+
+    if no_collection_cache:
+        os.environ["PKCS11_CHECK_NO_COLLECTION_CACHE"] = "1"
 
     original_pin = os.environ.get("P11TEST_PIN")
     had_original_pin = "P11TEST_PIN" in os.environ

@@ -8,7 +8,6 @@ that can run through the existing raw `CKM_ECDSA` mechanism path.
 from __future__ import annotations
 
 import hashlib
-import json
 from typing import Any, NoReturn
 
 import pytest
@@ -46,7 +45,7 @@ from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["ECDSA"]
 
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
 
 # Module-level cache of curves that failed C_CreateObject with a domain/curve error.
 # Avoids thousands of redundant probe calls when a module does not support a curve.
@@ -260,8 +259,7 @@ def _load_ecdsa_vectors() -> list[tuple[str, dict[str, Any]]]:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         for group in data["testGroups"]:
             for test in group["tests"]:
                 test["_group"] = {k: v for k, v in group.items() if k != "tests"}

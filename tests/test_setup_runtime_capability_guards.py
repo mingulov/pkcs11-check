@@ -13,6 +13,7 @@ from pkcs11_check.raw.types_std import (
     CKF_DECRYPT,
     CKF_ENCRYPT,
     CKK_AES,
+    CKM_AES_CBC,
     CKM_AES_CBC_PAD,
     CKM_AES_KEY_WRAP_KWP,
     CKM_RC2_CBC,
@@ -26,6 +27,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_OPERATION_NOT_INITIALIZED,
     CKR_SESSION_COUNT,
 )
 from pkcs11_check.testcases import (
@@ -53,10 +55,13 @@ from pkcs11_check.testcases import (
     test_object_search_patterns,
     test_object_size,
     test_object_visibility,
+    test_operation_termination,
+    test_ro_session,
     test_ro_session_restrictions,
     test_rsa_oaep,
     test_search,
     test_sensitivity,
+    test_session_info,
     test_session_state_machine,
     test_set_attribute,
     test_sign_recover,
@@ -66,6 +71,7 @@ from pkcs11_check.testcases.ckr import (
     test_ckr_decrypt,
     test_ckr_encrypt,
     test_ckr_raw_state,
+    test_ckr_session,
     test_ckr_wrap,
 )
 from pkcs11_check.testcases.mechanism_registry import ParamRecipe
@@ -816,6 +822,132 @@ def test_legacy_access_missing_aes_keygen_is_skip(
 
     with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
         test_access.TestSessionTypes().test_rw_session_can_generate_key(rs)
+
+
+def test_ckr_session_invalid_slot_capacity_reject_is_skip() -> None:
+    class Raw:
+        pass
+
+    raw = Raw()
+    setattr(raw, "C_OpenSession", lambda *_args, **_kwargs: int(CKR_SESSION_COUNT))
+    rs = SimpleNamespace(raw=raw)
+
+    with pytest.raises(pytest.skip.Exception, match="additional session"):
+        test_ckr_session.TestOpenSessionErrors().test_invalid_slot_id(rs)
+
+
+def test_ckr_session_wrong_pin_capacity_reject_is_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _open_session_limit(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SESSION_COUNT",
+            int(CKR_SESSION_COUNT),
+        )
+
+    open_attr = (
+        "_raw_open_session" if hasattr(test_ckr_session, "_raw_open_session") else "open_session"
+    )
+    monkeypatch.setattr(test_ckr_session, open_attr, _open_session_limit)
+    rs = SimpleNamespace(raw=object(), slot_id=1)
+
+    with pytest.raises(pytest.skip.Exception, match="additional session"):
+        test_ckr_session.TestLoginErrors().test_wrong_pin(rs)
+
+
+def test_ckr_session_logout_capacity_reject_is_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _open_session_limit(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SESSION_COUNT",
+            int(CKR_SESSION_COUNT),
+        )
+
+    open_attr = (
+        "_raw_open_session" if hasattr(test_ckr_session, "_raw_open_session") else "open_session"
+    )
+    monkeypatch.setattr(test_ckr_session, open_attr, _open_session_limit)
+    rs = SimpleNamespace(raw=object(), slot_id=1)
+
+    with pytest.raises(pytest.skip.Exception, match="additional session"):
+        test_ckr_session.TestLogoutErrors().test_logout_when_not_logged_in(rs)
+
+
+def test_legacy_ro_session_extra_session_capacity_reject_is_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _open_session_limit(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SESSION_COUNT",
+            int(CKR_SESSION_COUNT),
+        )
+
+    open_attr = (
+        "_raw_open_session" if hasattr(test_ro_session, "_raw_open_session") else "raw_open_session"
+    )
+    monkeypatch.setattr(test_ro_session, open_attr, _open_session_limit)
+    rs = SimpleNamespace(raw=object(), slot_id=1)
+
+    with pytest.raises(pytest.skip.Exception, match="additional session"):
+        test_ro_session.TestROSessionOperations().test_digest_in_ro_session(
+            rs,
+            SimpleNamespace(pin=None),
+        )
+
+
+def test_session_info_extra_session_capacity_reject_is_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _open_session_limit(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SESSION_COUNT",
+            int(CKR_SESSION_COUNT),
+        )
+
+    open_attr = (
+        "_raw_open_session"
+        if hasattr(test_session_info, "_raw_open_session")
+        else "raw_open_session"
+    )
+    monkeypatch.setattr(test_session_info, open_attr, _open_session_limit)
+    rs = SimpleNamespace(raw=object(), slot_id=1)
+
+    with pytest.raises(pytest.skip.Exception, match="additional session"):
+        test_session_info.TestSessionInfo().test_rw_session_is_rw(
+            rs,
+            SimpleNamespace(pin=None),
+        )
+
+
+def test_operation_termination_multipart_encrypt_not_initialized_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _encrypt_multipart_reject(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_OPERATION_NOT_INITIALIZED",
+            int(CKR_OPERATION_NOT_INITIALIZED),
+        )
+
+    entry = SimpleNamespace(
+        mech_id=int(CKM_AES_CBC),
+        mech_name="AES_CBC",
+        config=SimpleNamespace(key_type=int(CKK_AES)),
+    )
+    rs = SimpleNamespace(raw=object(), sh=1)
+
+    monkeypatch.setattr(
+        test_operation_termination,
+        "generate_key_for_encrypt",
+        lambda *_args: (1, None),
+    )
+    monkeypatch.setattr(test_operation_termination, "make_mech_param_or_skip", lambda _entry: None)
+    monkeypatch.setattr(test_operation_termination, "get_test_plaintext_bytes", lambda: b"0" * 32)
+    monkeypatch.setattr(test_operation_termination, "encrypt_multipart", _encrypt_multipart_reject)
+    monkeypatch.setattr(test_operation_termination, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(pytest.xfail.Exception, match="multipart encrypt not operational"):
+        test_operation_termination.test_c_encrypt_terminates_after_multipart(rs, entry)
 
 
 def test_legacy_access_aes_setup_reject_is_xfail(

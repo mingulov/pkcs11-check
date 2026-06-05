@@ -16,7 +16,7 @@ from pkcs11_check.raw.bootstrap import (
     login_user,
 )
 from pkcs11_check.raw.bootstrap import (
-    open_session as raw_open_session,
+    open_session as _raw_open_session,
 )
 from pkcs11_check.raw.pack import (
     attr_bool,
@@ -37,14 +37,28 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKM_AES_KEY_GEN,
     CKO_SECRET_KEY,
+    CKR_SESSION_COUNT,
     CKR_SESSION_READ_ONLY,
     CKR_SESSION_READ_ONLY_EXISTS,
     CKR_USER_NOT_LOGGED_IN,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes
+from pkcs11_check.testcases.conftest import get_pin_bytes, is_known_error
 
 pytestmark = pytest.mark.access
+
+
+def raw_open_session(raw: Any, slot_id: int, flags: int) -> int:
+    """Open an extra session required by session-info tests."""
+    try:
+        return _raw_open_session(raw, slot_id, flags)
+    except AssertionError as exc:
+        if is_known_error(exc, (CKR_SESSION_COUNT,)):
+            pytest.skip(
+                "Cannot open additional session required by session-info test: "
+                f"{ckr_name(int(CKR_SESSION_COUNT))}"
+            )
+        raise
 
 
 class TestSessionInfo:

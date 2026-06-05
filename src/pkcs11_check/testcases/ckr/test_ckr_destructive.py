@@ -26,6 +26,10 @@ from pkcs11_check.raw.types_std import (
     CKR_TOKEN_NOT_INITIALIZED,
     CKR_USER_NOT_LOGGED_IN,
 )
+from pkcs11_check.testcases.ckr._subprocess import (
+    ckr_subprocess_cleanup_setup,
+    ckr_subprocess_rv_trace_setup,
+)
 from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess, pytest.mark.destructive]
@@ -92,13 +96,14 @@ def _run_destructive(test_code: str) -> tuple[int, str, str]:
         import os, ctypes
         os.environ["SOFTHSM2_CONF"] = "{conf}"
         from pkcs11_check.raw.api import RawPKCS11
-from pkcs11_check.raw.types_std import (
-    CKR_OK, CKR_SESSION_EXISTS, CKR_PIN_INCORRECT,
-    CKR_PIN_LEN_RANGE, CKR_USER_NOT_LOGGED_IN, CKR_PIN_LOCKED,
-    CKR_PIN_TOO_WEAK, CKR_TOKEN_NOT_INITIALIZED, CKR_ARGUMENTS_BAD,
-    CKF_SERIAL_SESSION, CKF_RW_SESSION,
-)
+        from pkcs11_check.raw.types_std import (
+            CKR_OK, CKR_SESSION_EXISTS, CKR_PIN_INCORRECT,
+            CKR_PIN_LEN_RANGE, CKR_USER_NOT_LOGGED_IN, CKR_PIN_LOCKED,
+            CKR_PIN_TOO_WEAK, CKR_TOKEN_NOT_INITIALIZED, CKR_ARGUMENTS_BAD,
+            CKF_SERIAL_SESSION, CKF_RW_SESSION,
+        )
         raw = RawPKCS11.from_lib("{module}")
+{ckr_subprocess_rv_trace_setup(indent="        ")}
         raw.C_Initialize(None)
         sc = ctypes.c_ulong(0)
         raw.C_GetSlotList(1, None, ctypes.byref(sc))
@@ -107,7 +112,13 @@ from pkcs11_check.raw.types_std import (
         slot = sl[0]
     """)
         + textwrap.dedent(test_code)
-        + "\nraw.C_Finalize(None)\n"
+        + textwrap.dedent("""\
+        _p11check_cleanup = globals().get("_p11check_cleanup_session")
+        if _p11check_cleanup is not None:
+            _p11check_cleanup()
+        else:
+            raw.C_Finalize(None)
+    """)
     )
 
     result = subprocess.run(
@@ -131,11 +142,16 @@ class TestInitTokenErrors:
 
     def test_init_token_session_exists(self) -> None:
         """C_InitToken with open session -> CKR_SESSION_EXISTS."""
-        rc, out, err = _run_destructive("""\
+        rc, out, err = _run_destructive(
+            """\
 # Open a session first
 sess = ctypes.c_ulong(0)
 rv = raw.C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess))
 assert rv == CKR_OK, f"OpenSession: 0x{rv:08x}"
+sh = sess.value
+"""
+            + ckr_subprocess_cleanup_setup()
+            + """\
 
 # Try InitToken with session open
 so_pin = b"87654321"
@@ -145,8 +161,8 @@ label_buf = (ctypes.c_ubyte * 32)(*label.ljust(32))
 rv = raw.C_InitToken(slot, so_pin_buf, len(so_pin), label_buf)
 print(f"CKR:0x{rv:08x}")
 print("OK")
-raw.C_CloseSession(sess.value)
-""")
+"""
+        )
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
         _classify_destructive_ckr(
@@ -176,11 +192,15 @@ class TestSetPINErrors:
 
     def test_set_pin_wrong_old(self) -> None:
         """C_SetPIN with wrong old PIN -> CKR_PIN_INCORRECT."""
-        rc, out, err = _run_destructive("""\
+        rc, out, err = _run_destructive(
+            """\
 sess = ctypes.c_ulong(0)
 rv = raw.C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess))
 assert rv == CKR_OK
 sh = sess.value
+"""
+            + ckr_subprocess_cleanup_setup()
+            + """\
 # Login with correct PIN first
 pin = b"1234"
 raw.C_Login(sh, 1, (ctypes.c_ubyte * 4)(*pin), 4)
@@ -191,8 +211,8 @@ rv = raw.C_SetPIN(sh, (ctypes.c_ubyte * 5)(*wrong), 5, (ctypes.c_ubyte * 4)(*new
 print(f"CKR:0x{rv:08x}")
 print("OK")
 raw.C_Logout(sh)
-raw.C_CloseSession(sh)
-""")
+"""
+        )
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
         _classify_destructive_ckr(out, (CKR_PIN_INCORRECT,), label="C_SetPIN with a wrong old PIN")
@@ -203,18 +223,22 @@ class TestInitPINErrors:
 
     def test_init_pin_not_logged_in(self) -> None:
         """C_InitPIN without SO login -> CKR_USER_NOT_LOGGED_IN."""
-        rc, out, err = _run_destructive("""\
+        rc, out, err = _run_destructive(
+            """\
 sess = ctypes.c_ulong(0)
 rv = raw.C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess))
 assert rv == CKR_OK
 sh = sess.value
+"""
+            + ckr_subprocess_cleanup_setup()
+            + """\
 # Don't login - try InitPIN
 new_pin = b"9999"
 rv = raw.C_InitPIN(sh, (ctypes.c_ubyte * 4)(*new_pin), 4)
 print(f"CKR:0x{rv:08x}")
 print("OK")
-raw.C_CloseSession(sh)
-""")
+"""
+        )
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
         _classify_destructive_ckr(
@@ -223,11 +247,15 @@ raw.C_CloseSession(sh)
 
     def test_init_pin_short_pin(self) -> None:
         """C_InitPIN with 1-byte PIN -> CKR_PIN_TOO_WEAK or related PIN error."""
-        rc, out, err = _run_destructive("""\
+        rc, out, err = _run_destructive(
+            """\
 sess = ctypes.c_ulong(0)
 rv = raw.C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess))
 assert rv == CKR_OK
 sh = sess.value
+"""
+            + ckr_subprocess_cleanup_setup()
+            + """\
 # Login as SO
 so_pin = b"87654321"
 rv = raw.C_Login(sh, 0, (ctypes.c_ubyte * len(so_pin))(*so_pin), len(so_pin))
@@ -238,8 +266,8 @@ rv = raw.C_InitPIN(sh, (ctypes.c_ubyte * 1)(*short_pin), 1)
 print(f"CKR:0x{rv:08x}")
 print("OK")
 raw.C_Logout(sh)
-raw.C_CloseSession(sh)
-""")
+"""
+        )
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
         _classify_destructive_ckr(
@@ -268,6 +296,7 @@ raw.C_CloseSession(sh)
             CKF_SERIAL_SESSION, CKF_RW_SESSION,
         )
         raw = RawPKCS11.from_lib("/usr/lib/softhsm/libsofthsm2.so")
+{ckr_subprocess_rv_trace_setup(indent="        ")}
         raw.C_Initialize(None)
         sc = ctypes.c_ulong(0)
         rv = raw.C_GetSlotList(1, None, ctypes.byref(sc))
@@ -291,12 +320,12 @@ raw.C_CloseSession(sh)
             raw.C_Finalize(None)
             exit(0)
         sh = sess.value
+{ckr_subprocess_cleanup_setup(indent="        ")}
         new_pin = b"1234"
         rv = raw.C_InitPIN(sh, (ctypes.c_ubyte * 4)(*new_pin), 4)
         print(f"CKR:0x{{rv:08x}}")
         print("OK")
-        raw.C_CloseSession(sh)
-        raw.C_Finalize(None)
+        _p11check_cleanup_session()
         """)
         result = subprocess.run(
             [sys.executable, "-c", script],

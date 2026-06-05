@@ -344,6 +344,7 @@ class TestDHKeyAgreement:
             destroy_quietly(rs.raw, rs.sh, _priv4)
 
 
+@pytest.mark.slow
 class TestDHParameterGeneration:
     """Test CKM_DH_PKCS_PARAMETER_GEN (on-token DH parameter generation)."""
 

@@ -112,8 +112,7 @@ def main() -> None:
             print("")
             for e in vendor:
                 print(
-                    f"- 0x{e['value']:08x} ({e['name']}) — "
-                    f"key size {e['min_key']}-{e['max_key']}"
+                    f"- 0x{e['value']:08x} ({e['name']}) — key size {e['min_key']}-{e['max_key']}"
                 )
 
     finally:

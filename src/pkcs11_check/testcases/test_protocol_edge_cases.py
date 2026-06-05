@@ -68,6 +68,7 @@ class TestResourceExhaustion:
         for o in objs:
             destroy_quietly(rs.raw, rs.sh, o)
 
+    @pytest.mark.slow
     def test_generate_random_large(self, p11_raw_session: Any) -> None:
         """Generate large random (1MB). Must not crash or hang.
 

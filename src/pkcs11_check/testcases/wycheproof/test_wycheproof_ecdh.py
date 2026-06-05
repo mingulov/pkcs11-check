@@ -6,7 +6,6 @@ curve families that can be fed into the existing PKCS#11 derive path.
 
 from __future__ import annotations
 
-import json
 from binascii import Error as BinasciiError
 from typing import Any, NoReturn
 
@@ -57,7 +56,7 @@ from pkcs11_check.testcases.wycheproof._key_decoders import (
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["ECDH1_DERIVE"]
 
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
 
 # Module-level cache of curves that failed C_CreateObject with a domain/curve error.
 # Avoids thousands of redundant probe calls when a module does not support a curve.
@@ -159,8 +158,7 @@ def _load_ecdh_vectors() -> list[tuple[str, dict[str, Any]]]:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         for group in data["testGroups"]:
             for test in group["tests"]:
                 if _UNTESTABLE_FLAGS & set(test.get("flags", [])):

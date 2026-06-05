@@ -50,6 +50,30 @@ if _p11check_rv_trace_enabled():
     _p11check_atexit.register(_p11check_emit_rv_trace)
 """
 
+_SESSION_CLEANUP_SETUP = """\
+import atexit as _p11check_atexit
+
+_p11check_cleaned = False
+
+
+def _p11check_cleanup_session():
+    global _p11check_cleaned
+    if _p11check_cleaned:
+        return
+    _p11check_cleaned = True
+    try:
+        {raw_var}.C_CloseSession({session_var})
+    except Exception:
+        pass
+    try:
+        {raw_var}.C_Finalize(None)
+    except Exception:
+        pass
+
+
+_p11check_atexit.register(_p11check_cleanup_session)
+"""
+
 _CTYPES_RV_TRACE_SETUP = """\
 import atexit as _p11check_atexit
 import json as _p11check_json
@@ -102,6 +126,14 @@ _p11check_atexit.register(_p11check_emit_rv_trace)
 def ckr_subprocess_rv_trace_setup(indent: str = "") -> str:
     """Return child-script code that emits RV traces for a global ``raw``."""
     return textwrap.indent(_RV_TRACE_SETUP, indent) if indent else _RV_TRACE_SETUP
+
+
+def ckr_subprocess_cleanup_setup(
+    *, raw_var: str = "raw", session_var: str = "sh", indent: str = ""
+) -> str:
+    """Return child-script code that finalizes a raw session at normal exit."""
+    setup = _SESSION_CLEANUP_SETUP.format(raw_var=raw_var, session_var=session_var)
+    return textwrap.indent(setup, indent) if indent else setup
 
 
 def ckr_ctypes_subprocess_rv_trace_setup(indent: str = "") -> str:

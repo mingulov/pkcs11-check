@@ -46,6 +46,7 @@ class TestGenerateRandomErrors:
         # Module may accept zero-length or reject - both acceptable
         assert rv == CKR_OK or rv != 0
 
+    @pytest.mark.slow
     def test_generate_random_large(self, p11_raw_session: Any) -> None:
         """C_GenerateRandom(1MB) - large request."""
         rs = p11_raw_session

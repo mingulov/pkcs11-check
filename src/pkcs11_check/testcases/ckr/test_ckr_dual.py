@@ -28,7 +28,10 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
 )
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
-from pkcs11_check.testcases.ckr._subprocess import ckr_subprocess_rv_trace_setup
+from pkcs11_check.testcases.ckr._subprocess import (
+    ckr_subprocess_cleanup_setup,
+    ckr_subprocess_rv_trace_setup,
+)
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
@@ -130,6 +133,7 @@ class TestOperationStateSubprocess:
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
             sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
+{ckr_subprocess_cleanup_setup(indent="            ")}
             pin = {pin_arg}
             if pin is not None:
                 login_user(raw, sh, CKU_USER, pin.encode())
@@ -138,7 +142,7 @@ class TestOperationStateSubprocess:
             rv = raw.C_Encrypt(sh, data, len(data), None, byref(out_len))
             expect_rv(rv, CKR_OPERATION_NOT_INITIALIZED)
             print("OK:encrypt_without_init")
-            raw.C_Finalize(None)
+            _p11check_cleanup_session()
         """)
         result = subprocess.run(
             [sys.executable, "-c", script],
@@ -174,6 +178,7 @@ class TestOperationStateSubprocess:
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
             sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
+{ckr_subprocess_cleanup_setup(indent="            ")}
             pin = {pin_arg}
             if pin is not None:
                 login_user(raw, sh, CKU_USER, pin.encode())
@@ -183,7 +188,7 @@ class TestOperationStateSubprocess:
             rv = raw.C_DigestInit(sh, mech.byref())
             expect_rv(rv, CKR_OPERATION_ACTIVE)
             print("OK:double_digest_init_active")
-            raw.C_Finalize(None)
+            _p11check_cleanup_session()
         """)
         result = subprocess.run(
             [sys.executable, "-c", script],

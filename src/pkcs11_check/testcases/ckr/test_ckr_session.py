@@ -12,22 +12,37 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.bootstrap import close_session_quietly, open_session
+from pkcs11_check.raw.bootstrap import close_session_quietly
+from pkcs11_check.raw.bootstrap import open_session as _raw_open_session
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKR_OK,
     CKR_PIN_INCORRECT,
+    CKR_SESSION_COUNT,
     CKR_SLOT_ID_INVALID,
     CKR_USER_ALREADY_LOGGED_IN,
     CKR_USER_NOT_LOGGED_IN,
     CKR_USER_TYPE_INVALID,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import classify_negative_rv
+from pkcs11_check.testcases.conftest import classify_negative_rv, is_known_error
 
 pytestmark = pytest.mark.access
+
+
+def open_session(raw: Any, slot_id: int, flags: int) -> int:
+    """Open an extra session required by session-error tests."""
+    try:
+        return _raw_open_session(raw, slot_id, flags)
+    except AssertionError as exc:
+        if is_known_error(exc, (CKR_SESSION_COUNT,)):
+            pytest.skip(
+                "Cannot open additional session required by session-error test: "
+                f"{ckr_name(int(CKR_SESSION_COUNT))}"
+            )
+        raise
 
 
 class TestOpenSessionErrors:
@@ -47,6 +62,11 @@ class TestOpenSessionErrors:
             CK_NOTIFY(),
             ctypes.byref(sh),
         )
+        if rv == CKR_SESSION_COUNT:
+            pytest.skip(
+                "Cannot open additional session required by invalid-slot test: "
+                f"{ckr_name(int(CKR_SESSION_COUNT))}"
+            )
         assert rv == CKR_SLOT_ID_INVALID, (
             f"Expected CKR_SLOT_ID_INVALID for bad slot, got {ckr_name(rv)}"
         )

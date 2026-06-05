@@ -130,6 +130,7 @@ class TestMalformedAttributes:
             else:
                 raise
 
+    @pytest.mark.slow
     def test_negative_key_length(self, p11_raw_session: Any) -> None:
         """Extremely large key length - must reject or handle gracefully."""
         rs = p11_raw_session

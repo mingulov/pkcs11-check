@@ -1,0 +1,318 @@
+{
+  "generated_at": "2026-06-04",
+  "description": "Combined provider baseline: 2026-06-04 full sweep for the v0.1.3 release. Run on the post-review-fix code (R1-R7: merge/crash/timeout finding-preservation, zero-collection guard, JSONL double-parse removal). NSS *-slot0 targets are now SCOPED to the slot-0-unique files (coverage-neutral; the slot-1 pass covers the rest), so their totals drop from ~90k to ~2.3k vs the 2026-05-30 baseline. All other targets are numerically within single-digit flaky variance of 2026-05-30 (probabilistic security oracle/overflow probes). No genuine regression; failures held or decreased.",
+  "provenance": {
+    "sweep": "artifacts/*-pooled, 2026-06-04 - post review-fix (HEAD 682392f3), K=4 pooled",
+    "prior_baseline": "artifacts/_matrix/baseline-2026-05-30.json",
+    "validation": "two independent full runs agree; compared vs _base with scripts/compare-results.py",
+    "note": "slot0 scoping (F2) reduces *-slot0 totals; NSS C_FindObjectsInit(ULONG_MAX) SIGSEGV and softhsm2 AES-CBC-PAD oracle are real, near-deterministic module findings the suite surfaces (not pkcs11-check regressions)."
+  },
+  "records": [
+    {
+      "target": "bouncyhsm",
+      "artifact": "artifacts/bouncyhsm-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 52626,
+        "failed": 8143,
+        "skipped": 36204,
+        "xfailed": 8006,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 3,
+        "timeout": 0,
+        "total": 104982
+      },
+      "ckr_operation_active_failures": 0
+    },
+    {
+      "target": "kryoptic",
+      "artifact": "artifacts/kryoptic-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 48192,
+        "failed": 171,
+        "skipped": 44687,
+        "xfailed": 12419,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 105469
+      },
+      "ckr_operation_active_failures": 0
+    },
+    {
+      "target": "kryoptic-fips",
+      "artifact": "artifacts/kryoptic-fips-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 34524,
+        "failed": 128,
+        "skipped": 44489,
+        "xfailed": 10235,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 12,
+        "timeout": 0,
+        "total": 89388
+      },
+      "ckr_operation_active_failures": 0
+    },
+    {
+      "target": "kryoptic-main",
+      "artifact": "artifacts/kryoptic-main-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 48207,
+        "failed": 162,
+        "skipped": 44686,
+        "xfailed": 12414,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 105469
+      },
+      "ckr_operation_active_failures": 0
+    },
+    {
+      "target": "nss",
+      "artifact": "artifacts/nss-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 35739,
+        "failed": 168,
+        "skipped": 53117,
+        "xfailed": 815,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 3,
+        "timeout": 0,
+        "total": 89842
+      },
+      "ckr_operation_active_failures": 0
+    },
+    {
+      "target": "nss-main",
+      "artifact": "artifacts/nss-main-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 34870,
+        "failed": 145,
+        "skipped": 53396,
+        "xfailed": 734,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 4,
+        "timeout": 0,
+        "total": 89149
+      },
+      "ckr_operation_active_failures": 0
+    },
+    {
+      "target": "nss-main-slot0",
+      "artifact": "artifacts/nss-main-slot0-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 1455,
+        "failed": 29,
+        "skipped": 688,
+        "xfailed": 176,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 4,
+        "timeout": 0,
+        "total": 2352
+      },
+      "ckr_operation_active_failures": 0
+    },
+    {
+      "target": "nss-pqc",
+      "artifact": "artifacts/nss-pqc-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 34868,
+        "failed": 147,
+        "skipped": 53396,
+        "xfailed": 734,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 4,
+        "timeout": 0,
+        "total": 89149
+      },
+      "ckr_operation_active_failures": 0
+    },
+    {
+      "target": "nss-pqc-slot0",
+      "artifact": "artifacts/nss-pqc-slot0-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 1455,
+        "failed": 29,
+        "skipped": 688,
+        "xfailed": 176,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 4,
+        "timeout": 0,
+        "total": 2352
+      },
+      "ckr_operation_active_failures": 0
+    },
+    {
+      "target": "nss-slot0",
+      "artifact": "artifacts/nss-slot0-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 1425,
+        "failed": 29,
+        "skipped": 671,
+        "xfailed": 173,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 3,
+        "timeout": 0,
+        "total": 2301
+      },
+      "ckr_operation_active_failures": 0
+    },
+    {
+      "target": "opencryptoki",
+      "artifact": "artifacts/opencryptoki-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 59732,
+        "failed": 357,
+        "skipped": 32877,
+        "xfailed": 1256,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 94222
+      },
+      "ckr_operation_active_failures": 0
+    },
+    {
+      "target": "opencryptoki-master",
+      "artifact": "artifacts/opencryptoki-master-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 59732,
+        "failed": 357,
+        "skipped": 32877,
+        "xfailed": 1256,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 94222
+      },
+      "ckr_operation_active_failures": 0
+    },
+    {
+      "target": "pkcs11-mock",
+      "artifact": "artifacts/pkcs11-mock-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 230,
+        "failed": 104,
+        "skipped": 29135,
+        "xfailed": 58,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 29527
+      },
+      "ckr_operation_active_failures": 0
+    },
+    {
+      "target": "softhsm2",
+      "artifact": "artifacts/softhsm2-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 42050,
+        "failed": 136,
+        "skipped": 31753,
+        "xfailed": 5025,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 78964
+      },
+      "ckr_operation_active_failures": 0
+    },
+    {
+      "target": "softhsm2-generated-iv",
+      "artifact": "artifacts/softhsm2-generated-iv-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 42054,
+        "failed": 134,
+        "skipped": 31751,
+        "xfailed": 5025,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 78964
+      },
+      "ckr_operation_active_failures": 0
+    },
+    {
+      "target": "softhsm2-main",
+      "artifact": "artifacts/softhsm2-main-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 42992,
+        "failed": 135,
+        "skipped": 31506,
+        "xfailed": 5110,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 79743
+      },
+      "ckr_operation_active_failures": 0
+    },
+    {
+      "target": "tpm2",
+      "artifact": "artifacts/tpm2-pooled",
+      "sweep_date": "2026-06-04",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 6596,
+        "failed": 182,
+        "skipped": 67058,
+        "xfailed": 4375,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 78211
+      },
+      "ckr_operation_active_failures": 0
+    }
+  ]
+}

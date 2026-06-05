@@ -373,9 +373,7 @@ def load_keygen_vectors() -> list[tuple[str, dict[str, Any]]]:
     so these vectors are used to verify key generation produces valid keys
     with the expected properties.
     """
-    import json
-
-    from pkcs11_check.testcases.data import ACVP_DIR
+    from pkcs11_check.testcases.data import ACVP_DIR, load_json_cached
 
     result: list[tuple[str, dict[str, Any]]] = []
 
@@ -389,8 +387,7 @@ def load_keygen_vectors() -> list[tuple[str, dict[str, Any]]]:
         if not proj_file.exists():
             continue
 
-        with open(proj_file) as f:
-            data = json.load(f)
+        data = load_json_cached(proj_file)
 
         for group in data.get("testGroups", []):
             modulo = group.get("modulo", 0)

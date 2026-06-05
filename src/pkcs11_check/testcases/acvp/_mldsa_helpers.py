@@ -6,7 +6,6 @@ NIST ACVP ML-DSA test vectors (FIPS 204).
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from pkcs11_check.raw.types_std import (
@@ -28,7 +27,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.acvp._duplicates import mark_duplicate_pkcs11_inputs
 from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
-from pkcs11_check.testcases.data import ACVP_DIR
+from pkcs11_check.testcases.data import ACVP_DIR, load_json_cached
 
 # Parameter set mapping
 _ML_DSA_PARAM_MAP: dict[str, int] = {
@@ -104,8 +103,7 @@ def _load_internal_vectors(algorithm: str) -> list[tuple[str, dict[str, Any]]]:
     if not internal_file.exists():
         return []
 
-    with open(internal_file) as f:
-        data = json.load(f)
+    data = load_json_cached(internal_file)
 
     result: list[tuple[str, dict[str, Any]]] = []
     for tg in data.get("testGroups", []):
@@ -176,8 +174,7 @@ def load_mldsa_keygen_vectors(limit: int | None = None) -> list[tuple[str, dict[
     if not internal_file.exists():
         return []
 
-    with open(internal_file) as f:
-        data = json.load(f)
+    data = load_json_cached(internal_file)
 
     result: list[tuple[str, dict[str, Any]]] = []
 

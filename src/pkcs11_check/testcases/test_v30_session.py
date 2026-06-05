@@ -641,7 +641,6 @@ class TestSessionCancel:
 
     def test_cancel_after_digest_init_subprocess(
         self,
-        p11_raw_session: Any,
         p11_config: Any,
     ) -> None:
         """C_SessionCancel clears a pending DigestInit state.
@@ -654,10 +653,9 @@ class TestSessionCancel:
         Source: PKCS#11 v3.0 Sec.5.15 - after C_SessionCancel, the session may
         be used for new operations without a C_Finalize/C_Initialize cycle.
         """
-        rs = p11_raw_session
         module_path = str(p11_config.module)
         pin_value = p11_config.pin.get_secret_value() if p11_config.pin is not None else None
-        actual_slot_id: int = rs.slot_id
+        slot_index = p11_config.slot if p11_config.slot is not None else 0
 
         boilerplate = textwrap.dedent(
             f"""\
@@ -665,6 +663,7 @@ class TestSessionCancel:
             import os
             from ctypes import c_ulong, c_ubyte, c_void_p, byref, pointer, POINTER
             from pkcs11_check.raw.api import RawPKCS11
+            from pkcs11_check.raw.bootstrap import get_slot_ids
             from pkcs11_check.raw.types_std import (
                 CK_MECHANISM, CK_NOTIFY, CKR_CRYPTOKI_ALREADY_INITIALIZED,
                 CKR_OK, CKR_FUNCTION_NOT_SUPPORTED, CKR_USER_ALREADY_LOGGED_IN,
@@ -703,8 +702,12 @@ class TestSessionCancel:
             assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), f"C_Initialize: 0x{{rv:08x}}"
 
             session_handle = c_ulong(0)
+            slot_ids = get_slot_ids(raw)
+            assert len(slot_ids) > {slot_index}, (
+                f"slot index {slot_index} unavailable; found {{len(slot_ids)}} slots"
+            )
             rv = raw.C_OpenSession(
-                {actual_slot_id}, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                slot_ids[{slot_index}], CKF_SERIAL_SESSION | CKF_RW_SESSION,
                 None, CK_NOTIFY(), byref(session_handle),
             )
             assert rv == CKR_OK, f"C_OpenSession: 0x{{rv:08x}}"
@@ -721,7 +724,7 @@ class TestSessionCancel:
             rv = raw.C_DigestInit(hSession, pointer(mech))
             if rv != CKR_OK:
                 print(f"SKIP:C_DigestInit=0x{{rv:08x}}")
-                raw.C_Finalize(None)
+                _p11check_cleanup_raw_subprocess()
                 exit(0)
 
             # Attempt C_SessionCancel via RawPKCS11
@@ -729,7 +732,7 @@ class TestSessionCancel:
                 rv_cancel = raw.C_SessionCancel(hSession, 0)
             except AttributeError:
                 print("CANCEL:NOT_AVAILABLE")
-                raw.C_Finalize(None)
+                _p11check_cleanup_raw_subprocess()
                 exit(0)
 
             if rv_cancel == CKR_OK:
@@ -738,8 +741,7 @@ class TestSessionCancel:
                 print("CANCEL:NOT_SUPPORTED")
             else:
                 print(f"CANCEL:0x{{rv_cancel:08x}}")
-                raw.C_CloseSession(hSession)
-                raw.C_Finalize(None)
+                _p11check_cleanup_raw_subprocess()
                 exit(0)
 
             # Session should accept a new DigestInit after cancel.
@@ -749,14 +751,14 @@ class TestSessionCancel:
             else:
                 print(f"REDIGEST:0x{{rv2:08x}}")
 
-            raw.C_CloseSession(hSession)
-            raw.C_Finalize(None)
+            _p11check_cleanup_raw_subprocess()
             """
         )
 
         rc, stdout, stderr = run_raw_script(
             boilerplate,
             script,
+            cleanup="raw.C_CloseSession(hSession)\nraw.C_Finalize(None)\n",
             timeout=15,
             pin=pin_value,
         )

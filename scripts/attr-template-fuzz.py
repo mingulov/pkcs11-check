@@ -30,18 +30,32 @@ def _random_bytes(max_len: int = 256) -> bytes:
 
 
 def _random_class() -> int:
-    return random.choice([
-        ObjectClass.DATA, ObjectClass.CERTIFICATE, ObjectClass.PUBLIC_KEY,
-        ObjectClass.PRIVATE_KEY, ObjectClass.SECRET_KEY,
-        0xDEADBEEF, 0, 0xFFFFFFFF,
-    ])
+    return random.choice(
+        [
+            ObjectClass.DATA,
+            ObjectClass.CERTIFICATE,
+            ObjectClass.PUBLIC_KEY,
+            ObjectClass.PRIVATE_KEY,
+            ObjectClass.SECRET_KEY,
+            0xDEADBEEF,
+            0,
+            0xFFFFFFFF,
+        ]
+    )
 
 
 def _random_keytype() -> int:
-    return random.choice([
-        KeyType.AES, KeyType.RSA, KeyType.EC, KeyType.DES3,
-        0xDEADBEEF, 0, 0xFFFFFFFF,
-    ])
+    return random.choice(
+        [
+            KeyType.AES,
+            KeyType.RSA,
+            KeyType.EC,
+            KeyType.DES3,
+            0xDEADBEEF,
+            0,
+            0xFFFFFFFF,
+        ]
+    )
 
 
 # Template generators
@@ -67,8 +81,14 @@ def random_key_template() -> dict:
         t[Attribute.KEY_TYPE] = _random_keytype()
     if random.random() > 0.3:
         t[Attribute.VALUE] = _random_bytes(32)
-    for attr in [Attribute.ENCRYPT, Attribute.DECRYPT, Attribute.SIGN,
-                 Attribute.VERIFY, Attribute.WRAP, Attribute.UNWRAP]:
+    for attr in [
+        Attribute.ENCRYPT,
+        Attribute.DECRYPT,
+        Attribute.SIGN,
+        Attribute.VERIFY,
+        Attribute.WRAP,
+        Attribute.UNWRAP,
+    ]:
         if random.random() > 0.5:
             t[attr] = _random_bool()
     if random.random() > 0.5:
@@ -83,12 +103,22 @@ def random_bad_template() -> dict:
     strategies = [
         lambda: {Attribute.CLASS: 0xDEADBEEF, Attribute.TOKEN: False},
         lambda: {Attribute.TOKEN: False},  # Missing CLASS
-        lambda: {Attribute.CLASS: ObjectClass.SECRET_KEY, Attribute.VALUE: b"",
-                 Attribute.TOKEN: False},
-        lambda: {Attribute.CLASS: ObjectClass.DATA, Attribute.KEY_TYPE: KeyType.AES,
-                 Attribute.TOKEN: False},
-        lambda: {Attribute.CLASS: _random_class(), Attribute.KEY_TYPE: _random_keytype(),
-                 Attribute.VALUE: _random_bytes(64), Attribute.TOKEN: _random_bool()},
+        lambda: {
+            Attribute.CLASS: ObjectClass.SECRET_KEY,
+            Attribute.VALUE: b"",
+            Attribute.TOKEN: False,
+        },
+        lambda: {
+            Attribute.CLASS: ObjectClass.DATA,
+            Attribute.KEY_TYPE: KeyType.AES,
+            Attribute.TOKEN: False,
+        },
+        lambda: {
+            Attribute.CLASS: _random_class(),
+            Attribute.KEY_TYPE: _random_keytype(),
+            Attribute.VALUE: _random_bytes(64),
+            Attribute.TOKEN: _random_bool(),
+        },
     ]
     return random.choice(strategies)()
 

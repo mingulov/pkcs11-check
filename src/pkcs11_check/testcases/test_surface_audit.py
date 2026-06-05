@@ -174,6 +174,7 @@ class TestFunctionRobustness:
             except AssertionError:
                 pass
 
+    @pytest.mark.slow
     def test_generate_rsa_various_sizes(
         self,
         p11_raw_session: Any,

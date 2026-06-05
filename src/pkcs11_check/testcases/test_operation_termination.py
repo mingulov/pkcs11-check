@@ -68,6 +68,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
     CKR_OPERATION_ACTIVE,
+    CKR_OPERATION_NOT_INITIALIZED,
 )
 from pkcs11_check.testcases.conftest import (
     classify_lifecycle_effect,
@@ -93,6 +94,7 @@ _ENCRYPT_RUNTIME_REJECT_RVS = (
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OPERATION_NOT_INITIALIZED,
 )
 
 # AES-XTS does not support multipart on most implementations.

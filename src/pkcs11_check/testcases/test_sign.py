@@ -384,6 +384,7 @@ class TestHMACSign:
 
 
 class TestDSASignature:
+    @pytest.mark.slow
     def test_dsa_generate_and_sign(self, p11_raw_session: Any) -> None:
         """Generate DSA params + keypair, sign and verify."""
         rs = p11_raw_session

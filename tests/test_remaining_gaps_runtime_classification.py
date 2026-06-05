@@ -65,7 +65,6 @@ def test_legacy_parallel_function_not_supported_is_documented_note(
     clear_notes()
     try:
         getattr(test_remaining_gaps.TestLegacyParallelFunctions(), method_name)(
-            _raw_session(),
             _config(),
         )
         assert any("CKR_FUNCTION_NOT_SUPPORTED" in note.description for note in get_notes())

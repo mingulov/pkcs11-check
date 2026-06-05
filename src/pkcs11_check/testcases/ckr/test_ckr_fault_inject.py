@@ -19,6 +19,7 @@ import pytest
 
 from pkcs11_check.testcases.ckr._subprocess import (
     assert_ckr_subprocess_ok,
+    ckr_subprocess_cleanup_setup,
     ckr_subprocess_rv_trace_setup,
 )
 
@@ -68,6 +69,7 @@ class TestFaultInjection:
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
             sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
+{ckr_subprocess_cleanup_setup(indent="            ")}
             pin = {pin_arg}
             if pin is not None:
                 login_user(raw, sh, CKU_USER, pin.encode())
@@ -91,7 +93,7 @@ class TestFaultInjection:
                         print("FAIL:no_error")
                     else:
                         print(f"OTHER:0x{{rv:08x}}")
-            raw.C_Finalize(None)
+            _p11check_cleanup_session()
         """)
         result = subprocess.run(
             [sys.executable, "-c", script],
@@ -135,6 +137,7 @@ class TestFaultInjection:
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
             sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
+{ckr_subprocess_cleanup_setup(indent="            ")}
             pin = {pin_arg}
             if pin is not None:
                 login_user(raw, sh, CKU_USER, pin.encode())
@@ -158,7 +161,7 @@ class TestFaultInjection:
                         print("FAIL:no_error")
                     else:
                         print(f"OTHER:0x{{rv:08x}}")
-            raw.C_Finalize(None)
+            _p11check_cleanup_session()
         """)
         result = subprocess.run(
             [sys.executable, "-c", script],
@@ -201,6 +204,7 @@ class TestFaultInjection:
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
             sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
+{ckr_subprocess_cleanup_setup(indent="            ")}
             pin = {pin_arg}
             if pin is not None:
                 login_user(raw, sh, CKU_USER, pin.encode())
@@ -214,7 +218,7 @@ class TestFaultInjection:
                 print("FAIL:no_error")
             else:
                 print(f"OTHER:0x{{rv:08x}}")
-            raw.C_Finalize(None)
+            _p11check_cleanup_session()
         """)
         result = subprocess.run(
             [sys.executable, "-c", script],
@@ -288,6 +292,7 @@ class TestFaultProxyBasic:
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
             sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
+{ckr_subprocess_cleanup_setup(indent="            ")}
             pin = {pin_arg}
             if pin is not None:
                 login_user(raw, sh, CKU_USER, pin.encode())
@@ -300,7 +305,7 @@ class TestFaultProxyBasic:
                 pt = decrypt_single(raw, sh, key, CKM_AES_ECB, ct)
                 assert pt == b"\\x00" * 16
                 print("OK:encrypt_decrypt_roundtrip")
-            raw.C_Finalize(None)
+            _p11check_cleanup_session()
         """)
         result = subprocess.run(
             [sys.executable, "-c", script],

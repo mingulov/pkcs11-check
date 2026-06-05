@@ -65,6 +65,24 @@ def test_plan_shards_isolates_known_heavy_files_without_oracle() -> None:
     assert flat == sorted(heavy + light)
 
 
+def test_plan_shards_isolates_widened_heavy_files() -> None:
+    # The straggler (test_parameter_validation.py) and other recurring long poles
+    # added to DEFAULT_HEAVY_BASENAMES must spread across batches instead of being
+    # count-lumped into one (the 1270s bouncyhsm straggler bug).
+    base = "src/pkcs11_check/testcases/"
+    targets = {"test_parameter_validation.py", "test_wycheproof_ecdsa.py", "test_ccm.py"}
+    heavy = [base + n for n in targets]
+    light = [f"{base}test_light_{i}.py" for i in range(40)]
+    shards = plan_shards(heavy + light, 3)  # no durations -> heavy weighting
+    locations = {
+        u.rsplit("/", 1)[-1]: i
+        for i, s in enumerate(shards)
+        for u in s
+        if u.rsplit("/", 1)[-1] in targets
+    }
+    assert len(set(locations.values())) == 3  # one heavy file per batch
+
+
 def test_plan_shards_heavy_disabled_when_none() -> None:
     base = "src/pkcs11_check/testcases/acvp/aes/"
     heavy = [base + n for n in ("test_cfb8.py", "test_ofb.py", "test_cfb128.py")]
