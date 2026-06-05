@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm_version:
-        description: "Version to publish (must match pyproject.toml [project].version)"
+        description: "Version to publish, e.g. 0.1.3 (an optional leading 'v' is accepted); must match pyproject.toml [project].version"
         required: true
         type: string
 
@@ -44,7 +44,11 @@ jobs:
           REQUESTED_VERSION: ${{ inputs.confirm_version }}
         run: |
           declared=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          if [ "$declared" != "$REQUESTED_VERSION" ]; then
+          # Accept an optional leading 'v' so the git-tag spelling (v0.1.3) also
+          # matches the PEP 440 [project].version (0.1.3). Only the prefix is
+          # normalized; a real digit mismatch (e.g. 0.1.4 vs 0.1.3) still aborts.
+          requested="${REQUESTED_VERSION#v}"
+          if [ "$declared" != "$requested" ]; then
             echo "::error::pyproject [project].version is '$declared' but workflow input requested '$REQUESTED_VERSION'"
             exit 1
           fi
