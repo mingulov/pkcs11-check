@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import selectors
 import shutil
 import subprocess
@@ -14,6 +15,7 @@ import tempfile
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
+from functools import cache
 from pathlib import Path
 from typing import Any, Literal
 from xml.etree import ElementTree as ET  # nosec B405
@@ -41,6 +43,10 @@ _DETAIL_COUNT_KEYS = (
 )
 _SPECIAL_DETAIL_OUTCOMES = {"crashed", "timeout", "passed-in-isolation"}
 _MAX_TIMEOUT_RETRIES = 3
+# Exit code when the selection (module/marker/match/path) collected ZERO tests:
+# a run that executed nothing must not report success. Maps to the contract's
+# "couldn't run" code 2 (docs/integration-contract.md), so CI gates on rc>=2.
+_NO_TESTS_COLLECTED_EXIT = 2
 _DISABLE_COLLECTION_PROBES_ENV = "PKCS11_CHECK_DISABLE_COLLECTION_PROBES"
 
 _FINGERPRINT_ENV_KEYS = ("BOUNCY_HSM_CFG_STRING", "SOFTHSM2_CONF", "P11TEST_PIN")
@@ -245,19 +251,6 @@ def _markers_by_file(items: list[CollectedPytestItem]) -> dict[str, set[str]]:
     return markers_by_file
 
 
-def _nodeids_for_unit(unit: str, items: list[CollectedPytestItem]) -> list[str]:
-    file_key = normalize_policy_file_key(unit.split("::", 1)[0])
-    if "::" in unit:
-        prefix = unit
-        return [
-            item.nodeid
-            for item in items
-            if normalize_policy_file_key(item.file_path) == file_key
-            and (item.nodeid == prefix or item.nodeid.startswith(prefix + "["))
-        ]
-    return [item.nodeid for item in items if normalize_policy_file_key(item.file_path) == file_key]
-
-
 def discover_auto_isolation_units(
     targets: list[str],
     default_root: Path,
@@ -286,14 +279,19 @@ def discover_auto_isolation_units(
         collected_out.extend(collected_items)
     markers_by_file = _markers_by_file(collected_items)
 
-    # Build set of files that have collected items (respects -m, -k filters).
-    # If collection returned items, use them to filter files; otherwise include all
-    # (fallback for environments where collection metadata is unavailable).
+    # One pass over collected items builds BOTH the set of files that have
+    # collected nodes (respects -m / -k filters) AND an index of nodeids per
+    # file key. The per-file expansion below then does an O(1) lookup instead of
+    # re-scanning every collected item (with a path resolve each) for every
+    # test-isolated file — O(files x items). See review finding E4.
     collected_files: set[str] | None = None
+    nodeids_by_file_key: dict[str, list[str]] = {}
     if collected_items:
         collected_files = set()
         for item in collected_items:
-            collected_files.add(normalize_policy_file_key(item.file_path))
+            fk = normalize_policy_file_key(item.file_path)
+            collected_files.add(fk)
+            nodeids_by_file_key.setdefault(fk, []).append(item.nodeid)
 
     for file_unit in file_units:
         file_path = Path(file_unit.split("::", 1)[0])
@@ -308,7 +306,7 @@ def discover_auto_isolation_units(
         if normalize_policy_file_key(str(file_path)) in promoted_files:
             mode = "test"
         if mode == "test":
-            nodeids = _nodeids_for_unit(file_unit, collected_items)
+            nodeids = nodeids_by_file_key.get(file_key, [])
             if nodeids:
                 units.extend(nodeids)
             else:
@@ -452,6 +450,38 @@ def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
     if isinstance(detail, Mapping) and detail.get("file_skip"):
         copied["file_skip"] = True
     return copied
+
+
+def _ensure_timeout_recorded(detail: dict[str, Any] | None, unit: str) -> dict[str, Any]:
+    """Guarantee a timed-out file keeps at least one timeout in its counts.
+
+    Used on the timeout-retry success path: when a file timed out but the
+    timeout could not be attributed to a specific test (no culprit, or the
+    culprit passed in isolation) and the remaining tests then pass, the unit
+    would otherwise be recorded as ``passed`` and the hang would vanish from the
+    summary. This records an unattributed *file-level* timeout so a green retry
+    never hides a real timeout (review finding R3).
+
+    Idempotent: if a timeout is already counted (e.g. a confirmed culprit
+    already added one) the detail is returned with only its structure
+    normalized — never a second, double-counted timeout.
+    """
+    result: dict[str, Any] = detail if detail is not None else {}
+    counts = result.setdefault("counts", {key: 0 for key in _DETAIL_COUNT_KEYS})
+    tests = result.setdefault("tests", [])
+    if counts.get("timeout", 0) == 0:
+        tests.append(
+            {
+                "nodeid": unit,
+                "outcome": "timeout",
+                "longrepr": (
+                    "file timed out; cause not attributable to a single test "
+                    "(remaining tests passed on retry after deselection)"
+                ),
+            }
+        )
+        counts["timeout"] = 1
+    return result
 
 
 def _synthetic_file_skip_detail(
@@ -783,23 +813,23 @@ def write_isolated_report(
 
 
 def _load_report_log_records(jsonl_path: Path) -> list[dict[str, Any]]:
-    """Load parseable JSONL report-log records from disk."""
+    """Load parseable JSONL report-log records from disk (streamed line-by-line)."""
+    records: list[dict[str, Any]] = []
     try:
-        text = jsonl_path.read_text()
+        fh = jsonl_path.open(encoding="utf-8")
     except (FileNotFoundError, OSError):
         return []
-
-    records: list[dict[str, Any]] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(rec, dict):
-            records.append(rec)
+    with fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(rec, dict):
+                records.append(rec)
     return records
 
 
@@ -838,13 +868,58 @@ def _load_cached_report_records_by_unit(
     return cached
 
 
+# The only consumer of these records is build_quality_audit(); it reads just
+# these top-level fields. Projecting to them drops the heavy unused fields
+# (rv-trace user_properties, captured sections, keywords, location, timings) so
+# the in-container quality pass holds ~3x less than the full records. Verified
+# byte-identical against real artifacts (tests/test_jsonl_streaming.py). If the
+# quality audit starts reading a new record field, add it here (the golden test
+# on quality.json will catch the omission).
+_QUALITY_AUDIT_RECORD_FIELDS = frozenset(
+    {
+        "$report_type",
+        "nodeid",
+        "when",
+        "outcome",
+        "wasxfail",
+        "longrepr",
+        "reason",
+        "count",
+        "nodeids",
+        "sources",
+        "selection_coverage",
+        "selected_mechanisms",
+        "rejected_reason_counts",
+        "rejected_mechanisms",
+    }
+)
+
+
 def extract_quality_report_records_from_jsonl(jsonl_path: Path) -> list[dict[str, Any]]:
-    """Extract report-log records relevant to the quality audit from JSONL."""
+    """Extract the quality-audit-relevant report-log records from JSONL.
+
+    Streams + filters to TestReport/SelectionReport in one pass and projects each
+    record to the fields build_quality_audit reads, so the full record set is
+    never materialized.
+    """
     records: list[dict[str, Any]] = []
-    for rec in _load_report_log_records(jsonl_path):
-        report_type = rec.get("$report_type", "TestReport")
-        if report_type in {"TestReport", "SelectionReport"}:
-            records.append(rec)
+    try:
+        fh = jsonl_path.open(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return []
+    with fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("$report_type", "TestReport") in {"TestReport", "SelectionReport"}:
+                records.append({k: v for k, v in rec.items() if k in _QUALITY_AUDIT_RECORD_FIELDS})
     return records
 
 
@@ -1163,11 +1238,6 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     Returns a merged coverage dict with function_coverage and mechanism_coverage,
     or None if no CoverageReport entries are found.
     """
-    try:
-        text = jsonl_path.read_text()
-    except (FileNotFoundError, OSError):
-        return None
-
     from collections import Counter
 
     all_called: set[str] = set()
@@ -1183,30 +1253,37 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     all_detail_counts: Counter[str] = Counter()
     found = False
 
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if rec.get("$report_type") != "CoverageReport":
-            continue
-        found = True
-        fc = rec.get("function_coverage", {})
-        func_available = max(func_available, fc.get("available", 0))
-        all_called.update(fc.get("called_names", []))
-        all_uncalled.update(fc.get("uncalled_names", []))
-        all_func_counts.update(fc.get("called_counts", {}))
-        all_bootstrap_counts.update(fc.get("bootstrap_counts", {}))
-        mc = rec.get("mechanism_coverage", {})
-        all_available_mechs.update(mc.get("available_names", []))
-        all_invoked.update(mc.get("invoked_names", []))
-        all_not_invoked.update(mc.get("not_invoked_names", []))
-        all_detail.update(mc.get("invoked_detail", []))
-        all_mech_counts.update(mc.get("invoked_counts", {}))
-        all_detail_counts.update(mc.get("invoked_detail_counts", {}))
+    try:
+        fh = jsonl_path.open(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return None
+    with fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("$report_type") != "CoverageReport":
+                continue
+            found = True
+            fc = rec.get("function_coverage", {})
+            func_available = max(func_available, fc.get("available", 0))
+            all_called.update(fc.get("called_names", []))
+            all_uncalled.update(fc.get("uncalled_names", []))
+            all_func_counts.update(fc.get("called_counts", {}))
+            all_bootstrap_counts.update(fc.get("bootstrap_counts", {}))
+            mc = rec.get("mechanism_coverage", {})
+            all_available_mechs.update(mc.get("available_names", []))
+            all_invoked.update(mc.get("invoked_names", []))
+            all_not_invoked.update(mc.get("not_invoked_names", []))
+            all_detail.update(mc.get("invoked_detail", []))
+            all_mech_counts.update(mc.get("invoked_counts", {}))
+            all_detail_counts.update(mc.get("invoked_detail_counts", {}))
 
     if not found:
         return None
@@ -1242,7 +1319,10 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
     Groups tests by file and writes the unified JSON report.
     Used for ``--isolation none`` to produce consistent output.
     """
-    detail = _read_jsonl_results(jsonl_path)
+    # Parse the JSONL once: build the aggregate detail and the per-file counts
+    # from the same record set (records are already filtered to dicts).
+    records = _load_report_log_records(jsonl_path)
+    detail = _build_detail_from_report_records(records) if records else None
     if detail is None:
         return None
 
@@ -1252,23 +1332,8 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
         file_part = test.get("nodeid", "").split("::")[0]
         by_file.setdefault(file_part, []).append(test)
 
-    # Also need per-file counts - rebuild from the full JSONL
-    # Since _read_jsonl_results only gives us aggregated counts,
-    # we re-read the JSONL for per-file counting.
-    try:
-        text = jsonl_path.read_text()
-    except (FileNotFoundError, OSError):
-        return None
-
     file_counts: dict[str, dict[str, int]] = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for rec in records:
         if rec.get("$report_type") != "TestReport" or rec.get("when") != "call":
             continue
         nodeid = rec.get("nodeid", "")
@@ -1678,46 +1743,33 @@ def _map_outcome(raw_outcome: str, wasxfail: str | None) -> str:
     return raw_outcome
 
 
-def _identify_crash_culprit(jsonl_path: Path) -> tuple[str | None, list[str]]:
-    """Identify crash culprit and completed tests from partial JSONL.
+def _identify_crash_culprit_from_records(
+    records: list[dict[str, Any]],
+) -> tuple[str | None, list[str]]:
+    """Identify crash culprit and completed tests from already-loaded records.
 
     Returns ``(culprit_nodeid, list_of_completed_nodeids)``.
     *culprit* is the nodeid that has ``setup`` started but no ``teardown``
     completed - i.e. the test that was running when the process crashed.
     Returns ``(None, completed_list)`` if every test finished cleanly.
-    """
-    try:
-        text = jsonl_path.read_text()
-    except (FileNotFoundError, OSError):
-        return None, []
-    if not text.strip():
-        return None, []
 
+    Takes records (already filtered to dicts by ``_load_report_log_records``)
+    so a caller that also needs the per-test detail can parse the JSONL once
+    and feed both this and ``_build_detail_from_report_records``.
+    """
     # Per-nodeid phase tracking, preserving insertion order.
     phases: dict[str, set[str]] = {}
-
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        report_type = rec.get("$report_type", "TestReport")
-        if report_type != "TestReport":
+    for rec in records:
+        if rec.get("$report_type", "TestReport") != "TestReport":
             continue
         nodeid: str = rec.get("nodeid", "")
         when: str = rec.get("when", "")
         if not nodeid or not when:
             continue
-        if nodeid not in phases:
-            phases[nodeid] = set()
-        phases[nodeid].add(when)
+        phases.setdefault(nodeid, set()).add(when)
 
     completed: list[str] = []
     culprit: str | None = None
-
     for nid, ph in phases.items():
         if "teardown" in ph:
             completed.append(nid)
@@ -1725,6 +1777,14 @@ def _identify_crash_culprit(jsonl_path: Path) -> tuple[str | None, list[str]]:
             culprit = nid
 
     return culprit, completed
+
+
+def _identify_crash_culprit(jsonl_path: Path) -> tuple[str | None, list[str]]:
+    """Identify crash culprit and completed tests from a partial JSONL file.
+
+    Thin path wrapper over :func:`_identify_crash_culprit_from_records`.
+    """
+    return _identify_crash_culprit_from_records(_load_report_log_records(jsonl_path))
 
 
 def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
@@ -1987,6 +2047,45 @@ def _escalate_current_file(
     return additions
 
 
+# Plugins the per-unit pytest subprocess actually needs. Disabling autoload of
+# everything else (hypothesis, pytest-benchmark, pytest-cov, xdist) trims ~0.15s
+# of fixed startup off every isolated unit. hypothesis/benchmark are re-enabled
+# only for the files that use them (detected from source) so test behavior is
+# unchanged. See docs/findings/test-execution-speedup-gap-analysis-2026-06-04.md.
+_BASE_SUBPROCESS_PLUGINS: tuple[str, ...] = ("pkcs11-check", "pytest_reportlog", "timeout")
+_HYPOTHESIS_IMPORT_RE = re.compile(r"(?m)^\s*(?:from|import)\s+hypothesis\b")
+_BENCHMARK_FIXTURE_RE = re.compile(r"def\s+\w+\s*\([^)]*\bbenchmark\b")
+
+
+@cache
+def _unit_plugin_addopts(file_path: str) -> str | None:
+    """Return the ``-p ...`` addopts for a unit's subprocess, or None to leave
+    plugin autoload enabled (used when the source cannot be read)."""
+    try:
+        text = Path(file_path).read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    plugins = list(_BASE_SUBPROCESS_PLUGINS)
+    if _HYPOTHESIS_IMPORT_RE.search(text):
+        plugins.append("hypothesispytest")
+    if _BENCHMARK_FIXTURE_RE.search(text):
+        plugins.append("benchmark")
+    return " ".join(f"-p {name}" for name in plugins)
+
+
+def _subprocess_plugin_env(base_env: Mapping[str, str], unit: str) -> dict[str, str]:
+    """Per-unit env that disables pytest plugin autoload and enables only the
+    plugins the unit needs. Behavior-preserving; only trims startup cost."""
+    env = dict(base_env)
+    addopts = _unit_plugin_addopts(unit.split("::", 1)[0])
+    if addopts is None:
+        return env
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    existing = env.get("PYTEST_ADDOPTS", "").strip()
+    env["PYTEST_ADDOPTS"] = f"{addopts} {existing}".strip()
+    return env
+
+
 def _run_subprocess_tee(
     cmd: list[str],
     *,
@@ -2018,8 +2117,19 @@ def _run_subprocess_tee(
         while sel.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                proc.kill()
-                raise subprocess.TimeoutExpired(cmd, timeout)
+                # Deadline reached. The loop above ends only on pipe-EOF, so a
+                # child that already crashed/exited but whose stdout/stderr is
+                # held open by a *surviving grandchild* (e.g. a module that
+                # spawned a daemon inheriting our pipe fds) lands here too. Only
+                # a child that is still running is a genuine timeout — if it has
+                # already exited, report its real returncode (e.g. a crash
+                # signal) instead of synthesizing a timeout, so a crash is never
+                # masked as a timeout. See review finding R2.
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()  # reap; never leave a zombie behind (R5)
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                break
             for key, _ in sel.select(timeout=min(remaining, 0.5)):
                 stream = key.fileobj
                 tag, buf = key.data
@@ -2060,6 +2170,26 @@ def run_isolated_pytest_units(
     max_crashes_per_file: int = 3,
 ) -> int:
     """Run pytest units in fresh subprocesses and persist progress."""
+    if not units:
+        # No tests were collected — the module / marker / match / path selection
+        # matched nothing. A run that executed zero tests must NOT report success
+        # (that lets a scoping mistake pass green in CI). This is a "couldn't run"
+        # condition, not a clean pass. See docs/integration-contract.md.
+        console.print(
+            "[red]ERROR: no tests were collected[/red] — the module / marker / "
+            "match / path selection matched nothing. Refusing to report success "
+            "for a run that executed zero tests."
+        )
+        if report_config is not None:
+            empty_state = FileRunState(units=[], fingerprint="", results=[])
+            if report_config.output_format == "json":
+                payload = write_isolated_json_report(report_config.output_path, empty_state)
+                write_quality_json_report(
+                    report_config.output_path.parent / "quality.json", payload
+                )
+            else:
+                write_isolated_report(report_config, empty_state)
+        return _NO_TESTS_COLLECTED_EXIT
     env = os.environ.copy()
     deselect_by_file = {unit: set(nodeids) for unit, nodeids in (deselect_by_file or {}).items()}
     fingerprint = build_state_fingerprint(
@@ -2220,7 +2350,7 @@ def run_isolated_pytest_units(
             # only need it when we are building merged JSON artifacts.
             unit_jsonl_path: Path | None = None
             initial_deselect_path: Path | None = None
-            run_env = dict(env)
+            run_env = _subprocess_plugin_env(env, unit)
             _maybe_set_crash_journal(run_env, unit)
             collect_report_log = unit_granularity == "file" or (
                 report_config is not None and report_config.jsonl_path is not None
@@ -2290,12 +2420,17 @@ def run_isolated_pytest_units(
 
                         try:
                             while retry_count < _MAX_TIMEOUT_RETRIES:
-                                # -- parse JSONL for completed + culprit --
+                                # -- parse JSONL once for completed + culprit + detail --
                                 if to_iter_jsonl is not None:
-                                    culprit, completed = _identify_crash_culprit(
-                                        to_iter_jsonl,
+                                    iter_records = _load_report_log_records(to_iter_jsonl)
+                                    culprit, completed = _identify_crash_culprit_from_records(
+                                        iter_records
                                     )
-                                    iter_detail = _read_jsonl_results(to_iter_jsonl)
+                                    iter_detail = (
+                                        _build_detail_from_report_records(iter_records)
+                                        if iter_records
+                                        else None
+                                    )
                                 else:
                                     culprit, completed = None, []
                                     iter_detail = None
@@ -2442,6 +2577,18 @@ def run_isolated_pytest_units(
                                                 ].get(k, 0)
                                             to_accum_detail["tests"].extend(final_detail["tests"])
 
+                                    # The file timed out at least once. When a
+                                    # specific test was confirmed as the culprit
+                                    # its timeout is already counted above; when
+                                    # it could not be attributed (no culprit, or
+                                    # the culprit passed in isolation) and the
+                                    # rest then pass, preserve an unattributed
+                                    # file-level timeout so the green retry does
+                                    # not hide a real hang (review finding R3).
+                                    to_accum_detail = _ensure_timeout_recorded(
+                                        to_accum_detail, unit
+                                    )
+
                                     keep = retry_status != "passed" or (
                                         to_accum_detail is not None
                                         and any(
@@ -2584,7 +2731,12 @@ def run_isolated_pytest_units(
                     state.report_records_by_unit[unit] = unit_records
                     if report_config is not None and report_config.jsonl_path is not None:
                         _write_unit_report_record_cache(state_file, unit, unit_records)
-                    detail = _read_jsonl_results(unit_jsonl_path)
+                    # Reuse the records loaded just above rather than re-reading
+                    # and re-parsing the same JSONL — _read_jsonl_results is
+                    # _build_detail_from_report_records(_load_report_log_records())
+                    # so this is byte-identical but skips a full parse per unit
+                    # (~one per test file, every run). See review finding R7.
+                    detail = _build_detail_from_report_records(unit_records)
                     if status not in ("crashed", "timeout"):
                         unit_jsonl_path.unlink(missing_ok=True)
                         crash_jsonl_path = None
@@ -2645,10 +2797,17 @@ def run_isolated_pytest_units(
 
                         try:
                             while True:
-                                # - read JSONL for completed + culprit --
+                                # - read JSONL once for completed + culprit + detail --
                                 if iter_jsonl_path is not None:
-                                    culprit, completed = _identify_crash_culprit(iter_jsonl_path)
-                                    iter_detail = _read_jsonl_results(iter_jsonl_path)
+                                    iter_records = _load_report_log_records(iter_jsonl_path)
+                                    culprit, completed = _identify_crash_culprit_from_records(
+                                        iter_records
+                                    )
+                                    iter_detail = (
+                                        _build_detail_from_report_records(iter_records)
+                                        if iter_records
+                                        else None
+                                    )
                                 else:
                                     culprit, completed = None, []
                                     iter_detail = None

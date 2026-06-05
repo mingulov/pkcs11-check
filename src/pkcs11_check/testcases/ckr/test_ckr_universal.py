@@ -35,6 +35,7 @@ from pkcs11_check.testcases.ckr._ckr_spec import (
 )
 from pkcs11_check.testcases.ckr._subprocess import (
     assert_ckr_subprocess_ok,
+    ckr_subprocess_cleanup_setup,
     ckr_subprocess_rv_trace_setup,
 )
 
@@ -186,6 +187,7 @@ class TestUniversalRealTriggers:
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
             sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
+{ckr_subprocess_cleanup_setup(indent="            ")}
             buf = (ctypes.c_ubyte * 32)()
             rv = raw.C_GenerateRandom(sh, buf, 32)
             if rv == CKR_DEVICE_REMOVED:
@@ -194,7 +196,7 @@ class TestUniversalRealTriggers:
                 print("FAIL")
             else:
                 print(f"OTHER:0x{{rv:08x}}")
-            raw.C_Finalize(None)
+            _p11check_cleanup_session()
         """)
         result = subprocess.run(
             [sys.executable, "-c", script],

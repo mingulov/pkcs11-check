@@ -138,3 +138,29 @@ def test_detect_module_recognises_known_paths() -> None:
 
         actual = detect_module(_Cfg())
         assert actual == expected, f"detect_module({path!r}) = {actual} != {expected}"
+
+
+def test_detect_module_uses_proxy_backend_module_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A proxied run should apply documented backend quirks, not shim identity."""
+    from pkcs11_check.testcases._module_quirks import ModuleId
+
+    class _Cfg:
+        module = "/opt/proxy/bin/libpkcs11_proxy_ng_shim.so"
+
+    monkeypatch.setenv("PKCS11_CHECK_BACKEND_MODULE", "/usr/lib64/pkcs11/libopencryptoki.so")
+
+    assert detect_module(_Cfg()) == ModuleId.OPENCRYPTOKI
+
+
+def test_detect_module_ignores_backend_module_env_for_direct_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale proxy backend env var must not change direct-baseline identity."""
+    from pkcs11_check.testcases._module_quirks import ModuleId
+
+    class _Cfg:
+        module = "/usr/lib/softhsm/libsofthsm2.so"
+
+    monkeypatch.setenv("PKCS11_CHECK_BACKEND_MODULE", "/usr/lib64/pkcs11/libopencryptoki.so")
+
+    assert detect_module(_Cfg()) == ModuleId.SOFTHSM2

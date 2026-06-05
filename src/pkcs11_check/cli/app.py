@@ -6,6 +6,7 @@ import typer
 
 from pkcs11_check.cli.compliance_cmd import compliance_report_command
 from pkcs11_check.cli.crash_calls_cmd import crash_calls_command
+from pkcs11_check.cli.doctor_cmd import doctor_command
 from pkcs11_check.cli.fetch_cmd import fetch_data_command, fetch_disabled_command
 from pkcs11_check.cli.info_cmd import info_command
 from pkcs11_check.cli.list_cmd import list_command
@@ -33,6 +34,7 @@ def callback(
 
 
 app.command("test")(test_command)
+app.command("doctor")(doctor_command)
 app.command("info")(info_command)
 app.command("list")(list_command)
 app.command("state")(state_command)

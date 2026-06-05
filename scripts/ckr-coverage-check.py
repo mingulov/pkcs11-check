@@ -218,9 +218,18 @@ def main():
 
     if not SPEC_DIR.exists():
         print("Cloning OASIS spec...")
-        subprocess.run(["git", "clone", "--depth", "1",
-                       "https://github.com/oasis-tcs/pkcs11.git", "/tmp/pkcs11"],
-                      check=True, capture_output=True)
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "--depth",
+                "1",
+                "https://github.com/oasis-tcs/pkcs11.git",
+                "/tmp/pkcs11",
+            ],
+            check=True,
+            capture_output=True,
+        )
 
     spec = parse_spec()
     covered = load_ckr_spec()
@@ -255,8 +264,10 @@ def main():
 
         if args.verbose or specific_missing:
             status = "OK" if not specific_missing else f"GAPS: {len(specific_missing)}"
-            print(f"  {func}: {len(specific)} specific, {len(specific_covered)} covered, "
-                  f"{len(specific_missing)} missing [{status}]")
+            print(
+                f"  {func}: {len(specific)} specific, {len(specific_covered)} covered, "
+                f"{len(specific_missing)} missing [{status}]"
+            )
             if args.verbose and specific_missing:
                 for ckr in sorted(specific_missing):
                     print(f"    MISSING: {ckr}")

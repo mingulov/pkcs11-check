@@ -79,9 +79,80 @@ ALL_PROVIDERS = DEFAULT_PROVIDERS + VARIANT_PROVIDERS
 TESTCASES = "src/pkcs11_check/testcases"
 COMPOSE = ["docker", "compose", "-f", "docker/docker-compose.test.yml"]
 
+# NSS exposes the digest / bulk-cipher / KDF mechanisms only on slot 0 (Internal
+# Cryptographic Services); the default slot-1 (cert/key DB) pass skips them. The
+# `*-slot0` providers re-run to cover exactly those, but today they re-run the
+# WHOLE suite — ~456s/pass of byte-identical re-runs of the slot-1 pass. These
+# are the files that actually have a test node which RUNS on slot 0 but SKIPS on
+# slot 1 (computed from artifacts: nodes covered on nss-slot0 but not nss). The
+# slot0 passes are scoped to these, keeping every slot-0-unique finding while
+# dropping the redundant re-runs. Regenerate after suite changes by diffing
+# call-phase node coverage of <provider>-slot0 vs <provider> report.jsonl.
+# Coverage-neutral: the dropped files have ZERO slot-0-unique nodes (the slot-1
+# pass already covers them). Guarded by tests/test_slot0_scope.py.
+SLOT0_UNIQUE_FILES: tuple[str, ...] = (
+    "acvp/test_acvp_hash.py",
+    "acvp/test_acvp_sha3.py",
+    "security/test_crypto_weakness.py",
+    "security/test_ffi_length_boundary.py",
+    "security/test_ffi_null_pointer.py",
+    "test_aes_kdf.py",
+    "test_benchmark.py",
+    "test_buffers.py",
+    "test_camellia.py",
+    "test_crossverify.py",
+    "test_des.py",
+    "test_digest.py",
+    "test_dual_function.py",
+    "test_errors.py",
+    "test_fuzz.py",
+    "test_kat.py",
+    "test_mech_attribute.py",
+    "test_mech_derive.py",
+    "test_mech_digest.py",
+    "test_mech_encrypt.py",
+    "test_mech_flags.py",
+    "test_mech_keygen.py",
+    "test_mech_lifecycle.py",
+    "test_mech_multipart.py",
+    "test_mech_negative.py",
+    "test_mech_sign.py",
+    "test_mech_state.py",
+    "test_mech_wrap.py",
+    "test_metamorphic.py",
+    "test_misc_kdf.py",
+    "test_multipart.py",
+    "test_multipart_streaming.py",
+    "test_operation_state.py",
+    "test_operation_termination.py",
+    "test_resource.py",
+    "test_sha3.py",
+    "test_ssl3.py",
+    "test_stress.py",
+    "test_tls12.py",
+)
+
 
 def discover_files(testcases: str) -> list[str]:
     return sorted(str(p) for p in Path(testcases).rglob("test_*.py"))
+
+
+def files_for_provider(provider: str, all_files: list[str], testcases: str) -> list[str]:
+    """Scope the `*-slot0` NSS passes to the slot-0-unique files (coverage-neutral);
+    every other provider runs the full suite."""
+    if not provider.endswith("-slot0"):
+        return all_files
+    wanted = {str(Path(testcases) / rel) for rel in SLOT0_UNIQUE_FILES}
+    present = set(all_files)
+    missing = sorted(rel for rel in SLOT0_UNIQUE_FILES if str(Path(testcases) / rel) not in present)
+    if missing:
+        print(
+            f"WARNING: {provider}: slot0-unique file(s) not found (renamed/removed?): {missing}; "
+            "falling back to the FULL suite to avoid dropping coverage.",
+            file=sys.stderr,
+        )
+        return all_files
+    return sorted(f for f in all_files if f in wanted)
 
 
 def build_image(provider: str) -> tuple[str, bool]:
@@ -97,9 +168,7 @@ def run_item(provider: str, idx: int, files: list[str]) -> tuple[str, int, int]:
     """Run one (provider, batch) container. Returns (provider, idx, returncode)."""
     log = Path(f"/tmp/pool-{provider}-{idx}.log")
     rv_trace_env = (
-        ["-e", f"PKCS11_CHECK_RV_TRACE_COMPACT={RV_TRACE_COMPACT_N}"]
-        if RV_TRACE_COMPACT_N
-        else []
+        ["-e", f"PKCS11_CHECK_RV_TRACE_COMPACT={RV_TRACE_COMPACT_N}"] if RV_TRACE_COMPACT_N else []
     )
     if CRASH_JOURNAL:
         rv_trace_env += [
@@ -128,7 +197,12 @@ def run_item(provider: str, idx: int, files: list[str]) -> tuple[str, int, int]:
 
 
 def clean_prior_shards(project_root: Path, providers: list[str]) -> None:
-    rm = "".join(f"rm -rf /artifacts/{p}-shard-*; " for p in providers)
+    # Remove BOTH the per-shard dirs and the merged *-pooled dir for each
+    # provider being run. Clearing -pooled too is essential: if a provider
+    # produces nothing this run (build/container failure), a stale -pooled from
+    # a previous green run must not be read back and reported as this run's
+    # result (which would show a non-running provider as green).
+    rm = "".join(f"rm -rf /artifacts/{p}-shard-* /artifacts/{p}-pooled; " for p in providers)
     subprocess.run(  # noqa: S603
         [
             "docker",
@@ -154,12 +228,14 @@ def main() -> int:
     )
     ap.add_argument("--no-build", action="store_true", help="skip rebuilding provider images")
     ap.add_argument(
-        "--all", action="store_true",
+        "--all",
+        action="store_true",
         help="run the stable set PLUS the dev/variant images (softhsm2-main, kryoptic-main, "
-             "kryoptic-fips, nss-main, opencryptoki-master, softhsm2-generated-iv)",
+        "kryoptic-fips, nss-main, opencryptoki-master, softhsm2-generated-iv)",
     )
     ap.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="plan + verify the partition and print the work list; launch nothing",
     )
     ap.add_argument("--testcases", default=TESTCASES)
@@ -199,17 +275,19 @@ def main() -> int:
     workitems: list[tuple[str, int, list[str]]] = []
     for p in providers:
         n = shard_map.get(p, 1)
-        batches = plan_shards(files, n)  # count-balanced (even chunks); pool absorbs imbalance
+        provider_files = files_for_provider(p, files, args.testcases)
+        batches = plan_shards(provider_files, n)  # count-balanced; pool absorbs imbalance
         batched = sum(len(b) for b in batches)
-        if batched != len(files):
+        if batched != len(provider_files):
             print(
-                f"ERROR: {p} partition {batched} != {len(files)} — refusing to drop tests",
+                f"ERROR: {p} partition {batched} != {len(provider_files)} — refusing to drop tests",
                 file=sys.stderr,
             )
             return 1
         for i, batch in enumerate(batches):
             workitems.append((p, i, batch))
-        print(f"  {p}: {n} batch(es), {batched} files (partition ok)")
+        scope = "slot-0-unique" if len(provider_files) != len(files) else "full"
+        print(f"  {p}: {n} batch(es), {batched} files ({scope}, partition ok)")
 
     # Heaviest-provider-first so the long poles start early (the pool consumes in order).
     workitems.sort(key=lambda w: -shard_map.get(w[0], 1))
@@ -242,10 +320,21 @@ def main() -> int:
     for p in providers:
         n = shard_map.get(p, 1)
         dirs = [Path(f"artifacts/{p}-shard-{i}") for i in range(n)]
-        present = [d for d in dirs if (d / "results.json").exists()]
-        if len(present) != n:
+        # Pass any shard that produced EITHER artifact to the merge: a shard
+        # killed (OOM/SIGKILL) between writing report.jsonl (incrementally) and
+        # results.json (last) still holds real failed/crashed records in its
+        # JSONL, and merge_shard_dirs salvages them from there. Filtering on
+        # results.json alone here would silently drop a crashed shard's findings
+        # and defeat that salvage.
+        present = [
+            d for d in dirs if (d / "results.json").exists() or (d / "report.jsonl").exists()
+        ]
+        complete = sum(1 for d in dirs if (d / "results.json").exists())
+        if complete != n:
+            salvageable = len(present) - complete
             print(
-                f"  WARN: {p} produced {len(present)}/{n} shard results — incomplete!",
+                f"  WARN: {p} produced {complete}/{n} complete shard results "
+                f"({salvageable} salvageable from report.jsonl) — incomplete!",
                 file=sys.stderr,
             )
         if present:

@@ -335,9 +335,7 @@ class TestLegacyParallelFunctions:
     CKR_FUNCTION_NOT_PARALLEL (0x51) per PKCS#11 v2.40+.
     """
 
-    def test_get_function_status_returns_not_parallel(
-        self, p11_raw_session: Any, p11_config: Any
-    ) -> None:
+    def test_get_function_status_returns_not_parallel(self, p11_config: Any) -> None:
         """C_GetFunctionStatus must return CKR_FUNCTION_NOT_PARALLEL."""
         returncode, stdout, stderr = _run_config_script(
             p11_config,
@@ -375,9 +373,7 @@ print(f"CF:0x{rv2:08x}")
                 ComplianceLevel.VENDOR,
             )
 
-    def test_cancel_function_returns_not_parallel(
-        self, p11_raw_session: Any, p11_config: Any
-    ) -> None:
+    def test_cancel_function_returns_not_parallel(self, p11_config: Any) -> None:
         """C_CancelFunction must return CKR_FUNCTION_NOT_PARALLEL."""
         returncode, stdout, stderr = _run_config_script(
             p11_config,

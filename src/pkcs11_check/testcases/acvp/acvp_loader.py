@@ -14,11 +14,10 @@ Usage:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
-from pkcs11_check.testcases.data import ACVP_DIR
+from pkcs11_check.testcases.data import ACVP_DIR, load_json_cached
 
 ACVP_AVAILABLE = ACVP_DIR.exists()
 
@@ -54,10 +53,8 @@ def load_acvp_vectors(algorithm: str) -> list[dict[str, Any]]:
 
     vectors = []
     for pf, rf in zip(prompt_files, result_files):
-        with open(pf) as f:
-            prompt = json.load(f)
-        with open(rf) as f:
-            results = json.load(f)
+        prompt = load_json_cached(pf)
+        results = load_json_cached(rf)
 
         # Merge prompt test groups with expected results
         p_groups = prompt.get("testGroups", [])

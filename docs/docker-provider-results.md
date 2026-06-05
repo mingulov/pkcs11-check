@@ -23,16 +23,28 @@ For focused crash, timeout, and broad failure classification, see
 > after a single-threaded `C_Initialize(NULL)` — not a SoftHSM2 defect; see
 > [module-issues.md](module-issues.md)). SoftHSM2 is crash-free in the re-run; all other
 > rows are numerically equivalent to the 2026-05-30 sweep (single-digit flaky variance).
+>
+> **Refreshed for the v0.1.3 release (2026-06-04, `artifacts/_matrix/baseline-2026-06-04.json`).**
+> Re-run on the post-review-fix code (the runner no longer drops a crashed shard's findings,
+> mis-reports a crash as a timeout, or hides an unattributed timeout; a zero-collection run now
+> fails instead of passing green). **Two independent full sweeps agree — no genuine regression:**
+> failures held or **decreased** on every provider (PC-6 `CKR_FUNCTION_NOT_SUPPORTED` keygen
+> reclassification + gap-triage), crashes are stable, totals unchanged **except the NSS `*-slot0`
+> targets**, which are now scoped to the slot-0-unique files (~90k → ~2.3k, coverage-neutral: the
+> slot-1 pass already covers the dropped files). The only non-slot0 cross-run deltas are the
+> probabilistic security probes (the NSS `C_FindObjectsInit(ULONG_MAX)` SIGSEGV and the softhsm2
+> AES-CBC-PAD Vaudenay oracle — real, near-deterministic module findings the suite surfaces, not
+> pkcs11-check regressions).
 
 ## Snapshot Metadata
 
 | Field | Value |
 | --- | --- |
-| Report generated | 2026-05-30 |
+| Report generated | 2026-06-04 |
 | Source manifest | `docker/provider-sources.toml` |
 | Source manifest observed at | `2026-05-25T08:21:09Z` |
-| Provider summary artifact | `artifacts/_matrix/baseline-2026-05-30.json` |
-| Provider summary generated at | `2026-05-30` (combined from per-provider `artifacts/<target>-pooled/results.json`) |
+| Provider summary artifact | `artifacts/_matrix/baseline-2026-06-04.json` (supersedes `baseline-2026-05-30.json`) |
+| Provider summary generated at | `2026-06-04` (combined from per-provider `artifacts/<target>-pooled/results.json`) |
 | Cascade-fix status | POST-fix — `CKR_OPERATION_ACTIVE` recovery active for all providers |
 | Artifact source | per-provider `artifacts/<target>-pooled/results.json` summaries (pooled/sharded run) |
 | Matrix command family | `docker/test_pool.py` full pooled sweep |
@@ -93,23 +105,35 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 
 | Docker target | Source | Status | Total | Passed | Failed | Skipped | Xfailed | Errors | Crashed | Timeout |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `softhsm2` | SoftHSM2 2.7.0, OpenSSL 3.6.2 | full | 78,962 | 42,053 | 135 | 31,749 | 5,025 | 0 | 0 | 0 |
-| `softhsm2-generated-iv` | SoftHSM2 2.7.0 + generated-IV patch, OpenSSL 3.6.2 | full | 78,962 | 42,056 | 134 | 31,747 | 5,025 | 0 | 0 | 0 |
-| `softhsm2-main` | SoftHSM2 main, OpenSSL 4.0.0 | full | 79,741 | 42,994 | 135 | 31,502 | 5,110 | 0 | 0 | 0 |
-| `kryoptic` | Kryoptic v1.5.0, OpenSSL 4.0.0 | full | 105,467 | 48,190 | 175 | 44,683 | 12,419 | 0 | 0 | 0 |
-| `kryoptic-main` | Kryoptic main, OpenSSL 4.0.0 | full | 105,467 | 48,205 | 166 | 44,682 | 12,414 | 0 | 0 | 0 |
-| `kryoptic-fips` | Kryoptic FIPS/PQC + custom OpenSSL branch | full diagnostic | 89,386 | 34,526 | 129 | 44,485 | 10,234 | 0 | 12 | 0 |
-| `nss` | Fedora NSS softoken package (slot 1) | full | 89,840 | 35,740 | 183 | 53,113 | 801 | 0 | 3 | 0 |
-| `nss-pqc` | NSS/NSPR RTM tags (slot 1; near-identical to `nss-main`, differs only by a flaky overflow-crash case) | full | 89,147 | 34,870 | 163 | 53,392 | 718 | 0 | 4 | 0 |
-| `nss-main` | NSS/NSPR source tips (slot 1) | full | 89,147 | 34,868 | 165 | 53,392 | 718 | 0 | 4 | 0 |
-| `nss-slot0` | Fedora NSS softoken, slot 0 (Internal Crypto Services) | full | 90,324 | 36,313 | 198 | 52,988 | 822 | 0 | 3 | 0 |
-| `nss-pqc-slot0` | NSS/NSPR RTM tags, slot 0 | full | 89,649 | 35,446 | 181 | 53,279 | 739 | 0 | 4 | 0 |
-| `nss-main-slot0` | NSS/NSPR source tips, slot 0 | full | 89,649 | 35,446 | 181 | 53,279 | 739 | 0 | 4 | 0 |
-| `opencryptoki` | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 94,220 | 59,735 | 356 | 32,873 | 1,256 | 0 | 0 | 0 |
-| `opencryptoki-master` | OpenCryptoki master, OpenSSL 4.0.0 | full | 94,220 | 59,735 | 356 | 32,873 | 1,256 | 0 | 0 | 0 |
-| `tpm2` | source-built tpm2-pkcs11 1.10.0 | full | 78,209 | 6,597 | 187 | 67,054 | 4,371 | 0 | 0 | 0 |
-| `pkcs11-mock` | pkcs11-mock v2.0.0 | full mock baseline | 29,525 | 230 | 117 | 29,120 | 58 | 0 | 0 | 0 |
-| `bouncyhsm` | BouncyHSM v2.1.0 | full (monolithic) | 104,980 | 52,629 | 8,142 | 36,200 | 8,006 | 0 | 3 | 0 |
+| `softhsm2` | SoftHSM2 2.7.0, OpenSSL 3.6.2 | full | 78,964 | 42,050 | 136 | 31,753 | 5,025 | 0 | 0 | 0 |
+| `softhsm2-generated-iv` | SoftHSM2 2.7.0 + generated-IV patch, OpenSSL 3.6.2 | full | 78,964 | 42,054 | 134 | 31,751 | 5,025 | 0 | 0 | 0 |
+| `softhsm2-main` | SoftHSM2 main, OpenSSL 4.0.0 | full | 79,743 | 42,992 | 135 | 31,506 | 5,110 | 0 | 0 | 0 |
+| `kryoptic` | Kryoptic v1.5.0, OpenSSL 4.0.0 | full | 105,469 | 48,192 | 171 | 44,687 | 12,419 | 0 | 0 | 0 |
+| `kryoptic-main` | Kryoptic main, OpenSSL 4.0.0 | full | 105,469 | 48,207 | 162 | 44,686 | 12,414 | 0 | 0 | 0 |
+| `kryoptic-fips` | Kryoptic FIPS/PQC + custom OpenSSL branch | full diagnostic | 89,388 | 34,524 | 128 | 44,489 | 10,235 | 0 | 12 | 0 |
+| `nss` | Fedora NSS softoken package (slot 1) | full | 89,842 | 35,739 | 168 | 53,117 | 815 | 0 | 3 | 0 |
+| `nss-pqc` | NSS/NSPR RTM tags (slot 1; near-identical to `nss-main`, differs only by a flaky overflow-crash case) | full | 89,149 | 34,868 | 147 | 53,396 | 734 | 0 | 4 | 0 |
+| `nss-main` | NSS/NSPR source tips (slot 1) | full | 89,149 | 34,870 | 145 | 53,396 | 734 | 0 | 4 | 0 |
+| `nss-slot0` | Fedora NSS softoken, slot 0 (Internal Crypto Services); scoped to the slot-0-unique files (coverage-neutral, see note) | slot-0-scoped | 2,301 | 1,425 | 29 | 671 | 173 | 0 | 3 | 0 |
+| `nss-pqc-slot0` | NSS/NSPR RTM tags, slot 0; scoped | slot-0-scoped | 2,352 | 1,455 | 29 | 688 | 176 | 0 | 4 | 0 |
+| `nss-main-slot0` | NSS/NSPR source tips, slot 0; scoped | slot-0-scoped | 2,352 | 1,455 | 29 | 688 | 176 | 0 | 4 | 0 |
+| `opencryptoki` | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 94,222 | 59,732 | 357 | 32,877 | 1,256 | 0 | 0 | 0 |
+| `opencryptoki-master` | OpenCryptoki master, OpenSSL 4.0.0 | full | 94,222 | 59,732 | 357 | 32,877 | 1,256 | 0 | 0 | 0 |
+| `tpm2` | source-built tpm2-pkcs11 1.10.0 | full | 78,211 | 6,596 | 182 | 67,058 | 4,375 | 0 | 0 | 0 |
+| `pkcs11-mock` | pkcs11-mock v2.0.0 | full mock baseline | 29,527 | 230 | 104 | 29,135 | 58 | 0 | 0 | 0 |
+| `bouncyhsm` | BouncyHSM v2.1.0 | full (monolithic) | 104,982 | 52,626 | 8,143 | 36,204 | 8,006 | 0 | 3 | 0 |
+
+**NSS `*-slot0` scoping (v0.1.3):** NSS exposes the digest / bulk-cipher / KDF
+mechanisms only on slot 0 (Internal Cryptographic Services); the default slot-1
+(cert/key DB) pass skips them. The `*-slot0` targets used to re-run the **whole**
+suite on slot 0 — byte-identical re-runs of the slot-1 pass for every file with
+no slot-0-unique node. They are now scoped to just the files that have a test
+node which runs on slot 0 but skips on slot 1 (`docker/test_pool.py`
+`SLOT0_UNIQUE_FILES`, guarded by `tests/test_slot0_scope.py`), so their totals
+drop from ~90k to ~2.3k. This is **coverage-neutral** — every slot-0-unique
+finding is retained; the dropped files are already covered identically by the
+slot-1 pass. A missing slot-0-unique file falls back to the full suite rather
+than silently dropping coverage.
 
 Skip composition (why skipped counts are large): a large share of skips are
 not-applicable rather than untested. Per provider, roughly **~18k skips are

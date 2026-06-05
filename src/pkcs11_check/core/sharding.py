@@ -37,7 +37,27 @@ def duration_by_unit_from_results(results_path: Path) -> dict[str, float]:
 # produces a straggler batch). Provider-agnostic: with a real oracle a measured
 # duration wins (a file a provider skips stays light); on a first run a skipped
 # heavy file just yields an instant batch the pool immediately moves past.
-DEFAULT_HEAVY_BASENAMES: tuple[str, ...] = ("test_cfb8.py", "test_ofb.py", "test_cfb128.py")
+DEFAULT_HEAVY_BASENAMES: tuple[str, ...] = (
+    # AES multi-block-chained (MCT) cases — ~11 min each on transport-bound
+    # providers (bouncyhsm), and other large ACVP-AES corpora.
+    "test_cfb8.py",
+    "test_ofb.py",
+    "test_cfb128.py",
+    "test_ccm.py",
+    "test_cts.py",
+    "test_wrap.py",
+    # Recurring long poles the count-balancer would otherwise lump into one
+    # straggler batch (e.g. test_parameter_validation.py ~553s on bouncyhsm,
+    # 16s elsewhere; the big Wycheproof/ACVP/DSA corpora). A curated, static,
+    # provider-agnostic list — NOT measured durations (those don't transfer
+    # across providers, which depend on advertised mechanisms).
+    "test_parameter_validation.py",
+    "test_wycheproof_ecdsa.py",
+    "test_wycheproof_ecdh.py",
+    "test_wycheproof_rsa.py",
+    "test_acvp_rsa.py",
+    "test_dsa_complete.py",
+)
 _HEAVY_WEIGHT_SECONDS = 660.0
 
 

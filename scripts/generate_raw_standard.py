@@ -9,8 +9,23 @@ OUT_TYPES = REPO_ROOT / "src/pkcs11_check/raw/types_std.py"
 OUT_METADATA = REPO_ROOT / "src/pkcs11_check/raw/metadata_std.py"
 
 SYMBOL_PREFIXES = (
-    "CKA_", "CKC_", "CKD_", "CKF_", "CKG_", "CKH_", "CKK_", "CKM_",
-    "CKN_", "CKO_", "CKP_", "CKR_", "CKS_", "CKT_", "CKU_", "CKV_", "CKZ_",
+    "CKA_",
+    "CKC_",
+    "CKD_",
+    "CKF_",
+    "CKG_",
+    "CKH_",
+    "CKK_",
+    "CKM_",
+    "CKN_",
+    "CKO_",
+    "CKP_",
+    "CKR_",
+    "CKS_",
+    "CKT_",
+    "CKU_",
+    "CKV_",
+    "CKZ_",
     "CK_",  # CK_CERTIFICATE_CATEGORY_*, CK_SECURITY_DOMAIN_*, etc.
     "CRYPTOKI_VERSION_",
 )
@@ -18,18 +33,35 @@ SYMBOL_PREFIXES = (
 # Last-match-wins prefix ordering for typed constant families.
 CONSTANT_TYPE_MAP = [
     ("CK_", "CK_CONSTANT"),
-    ("CKA_", "CKA"), ("CKC_", "CKC"), ("CKD_", "CKD"),
-    ("CKF_", "CKF"), ("CKG_", "CKG"), ("CKH_", "CKH"),
-    ("CKK_", "CKK"), ("CKM_", "CKM"), ("CKN_", "CKN"),
-    ("CKO_", "CKO"), ("CKP_", "CKP"), ("CKR_", "CKR"),
-    ("CKS_", "CKS"), ("CKT_", "CKT"), ("CKU_", "CKU"),
-    ("CKV_", "CKV"), ("CKZ_", "CKZ"),
+    ("CKA_", "CKA"),
+    ("CKC_", "CKC"),
+    ("CKD_", "CKD"),
+    ("CKF_", "CKF"),
+    ("CKG_", "CKG"),
+    ("CKH_", "CKH"),
+    ("CKK_", "CKK"),
+    ("CKM_", "CKM"),
+    ("CKN_", "CKN"),
+    ("CKO_", "CKO"),
+    ("CKP_", "CKP"),
+    ("CKR_", "CKR"),
+    ("CKS_", "CKS"),
+    ("CKT_", "CKT"),
+    ("CKU_", "CKU"),
+    ("CKV_", "CKV"),
+    ("CKZ_", "CKZ"),
     ("CRYPTOKI_VERSION_", "CK_CONSTANT"),
     # 3.x overrides (more specific prefixes win over shorter ones)
-    ("CKG_MGF1_", "CKG"), ("CKH_HEDGE_", "CKH"), ("CKH_DETERMINISTIC_", "CKH"),
-    ("CKP_ML_DSA_", "CKP"), ("CKP_ML_KEM_", "CKP"), ("CKP_SLH_DSA_", "CKP"),
-    ("CKP_PKCS5_PBKD2_", "CKP"), ("CKS_LAST_VALIDATION_", "CKS"),
-    ("CK_CERTIFICATE_CATEGORY_", "CK_CONSTANT"), ("CK_SECURITY_DOMAIN_", "CK_CONSTANT"),
+    ("CKG_MGF1_", "CKG"),
+    ("CKH_HEDGE_", "CKH"),
+    ("CKH_DETERMINISTIC_", "CKH"),
+    ("CKP_ML_DSA_", "CKP"),
+    ("CKP_ML_KEM_", "CKP"),
+    ("CKP_SLH_DSA_", "CKP"),
+    ("CKP_PKCS5_PBKD2_", "CKP"),
+    ("CKS_LAST_VALIDATION_", "CKS"),
+    ("CK_CERTIFICATE_CATEGORY_", "CK_CONSTANT"),
+    ("CK_SECURITY_DOMAIN_", "CK_CONSTANT"),
 ]
 NAME_TABLES = {
     "ATTR_NAMES": "CKA_",
@@ -346,7 +378,8 @@ def _parse_functions(text: str) -> list[tuple[str, list[str]]]:
         # Extract function order from CK_FUNCTION_LIST_3_2 (the most complete one)
         fl32_match = re.search(
             r"struct\s+CK_FUNCTION_LIST_3_2\s*\{(?P<body>.*?)\};",
-            text, re.DOTALL,
+            text,
+            re.DOTALL,
         )
         if fl32_match:
             body = _strip_comments(fl32_match.group("body"))
@@ -440,8 +473,7 @@ def _render_callable_type(
 ) -> str:
     rendered_return = _render_ctype(return_type, aliases, struct_names, callable_names)
     rendered_args = [
-        _render_ctype(arg_type, aliases, struct_names, callable_names)
-        for arg_type in arg_types
+        _render_ctype(arg_type, aliases, struct_names, callable_names) for arg_type in arg_types
     ]
     if rendered_args:
         return f"ctypes.CFUNCTYPE({rendered_return}, {', '.join(rendered_args)})"
@@ -600,9 +632,7 @@ def _render_types_module(
         else:
             lines.append(f"{name}._fields_ = [")
             for field_name, field_type in fields:
-                rendered_field = _field_ctype(
-                    field_type, aliases, struct_names, callable_names
-                )
+                rendered_field = _field_ctype(field_type, aliases, struct_names, callable_names)
                 lines.append(f'    ("{field_name}", {rendered_field}),')
             lines.append("    ]")
         lines.append("")

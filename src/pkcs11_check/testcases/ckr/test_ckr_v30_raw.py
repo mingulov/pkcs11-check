@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.testcases._subprocess_trace import record_subprocess_rv_trace
+from pkcs11_check.testcases.ckr._subprocess import ckr_subprocess_cleanup_setup
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess, pytest.mark.requires_v30]
 
@@ -91,14 +92,14 @@ if "C_MessageEncryptInit" not in raw._funcs:
 # Open session
 slots = get_slot_ids(raw, token_present=True)
 sh = open_session(raw, slots[0], CKF_SERIAL_SESSION | CKF_RW_SESSION)
+{cleanup_setup}
 pin = {pin_arg}
 if pin:
     login_user(raw, sh, CKU_USER, pin.encode())
 
 {test_code}
 
-raw.C_CloseSession(sh)
-raw.C_Finalize(None)
+_p11check_cleanup_session()
 """
 
 
@@ -108,6 +109,7 @@ def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
         module=module,
         pin_arg=pin_arg,
         rv_trace_setup=textwrap.dedent(_RV_TRACE_SETUP),
+        cleanup_setup=ckr_subprocess_cleanup_setup(),
         test_code=textwrap.dedent(code),
     )
     result = subprocess.run(

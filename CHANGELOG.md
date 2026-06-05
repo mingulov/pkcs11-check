@@ -1,5 +1,77 @@
 # Changelog
 
+## [0.1.3] - 2026-06-04
+
+Faster, more diagnosable, and a documented contract for tools building on it.
+No breaking CLI or API changes (new commands/flags are additive; the default
+`pkcs11-check test` still runs the full suite).
+
+- **Faster.** Postprocessing of the per-run report no longer loads the whole
+  ~200 MB log into memory (peak ~1.4 GB → ~380 MB), which lets the pooled runner
+  pack more containers per host; isolated subprocesses skip unused pytest
+  plugins; parsed test vectors and collection metadata are cached; the pooled
+  shard balancer isolates the recurring long-pole files; the NSS slot-0 passes
+  run only the digest/cipher/KDF files unique to slot 0 instead of the whole
+  suite (coverage-neutral); and BouncyHSM starts on a readiness poll instead of
+  a fixed sleep.
+- **`pkcs11-check doctor`.** A new command that diagnoses the common setup
+  problems — wrong slot index (vs the provider's slot ID), wrong/locked PIN,
+  uninitialized or unrecognized token, an unloadable library, a crashing module,
+  and missing vector data — and prints the exact next step for each.
+- **Faster *opt-in* runs.** `--skip-slow` / `--only-slow` select a fast profile
+  that omits a small set of individually long-running cases (large-RSA, DSA/DH
+  parameter generation, AES multi-block, leak/fuzz loops); the full run is
+  unchanged by default.
+- **More correct.** tpm2's `C_GenerateKey` returning `CKR_FUNCTION_NOT_SUPPORTED`
+  (no symmetric keygen surface) now classifies as `xfail`, not a hard fail;
+  session-capacity (`CKR_SESSION_COUNT`) handling and subprocess cleanup were
+  standardized so one provider hiccup no longer cascades.
+- **For tool builders.** `docs/integration-contract.md` documents the stable
+  surface to depend on (exit codes, the results/coverage/quality JSON schemas,
+  the shard split→merge round-trip, the reusable raw binding / pytest plugin).
+  `test --help` is grouped into Common / Isolation / CK_RV-tracing / Advanced
+  panels, and the README has a "first run in 60 seconds" quickstart.
+
+### Supported modules
+
+SoftHSM2 2.7.0 / main · Kryoptic v1.5.0 / main / FIPS · NSS (Fedora softoken,
+slots 0 and 1) / main · OpenCryptoki v3.27.0 / master · tpm2-pkcs11 1.10.0 ·
+BouncyHSM v2.1.0 · pkcs11-mock v2.0.0
+
+### Test Results
+
+Latest full provider matrix (`artifacts/_matrix/baseline-2026-06-04.json`,
+2026-06-04), one row per distinct build. Validated by **two independent full
+sweeps** that agree; failures held or decreased on every provider vs the v0.1.2
+baseline (PC-6 keygen reclassification + gap-triage), crashes stable.
+
+| Build | Passed | Failed | Skipped | Xfailed | Crashed | Total |
+|-------|-------:|-------:|--------:|--------:|--------:|------:|
+| SoftHSM2 2.7.0 | 42,050 | 136 | 31,753 | 5,025 | 0 | 78,964 |
+| SoftHSM2 main | 42,992 | 135 | 31,506 | 5,110 | 0 | 79,743 |
+| Kryoptic v1.5.0 | 48,192 | 171 | 44,687 | 12,419 | 0 | 105,469 |
+| Kryoptic main | 48,207 | 162 | 44,686 | 12,414 | 0 | 105,469 |
+| Kryoptic FIPS/PQC | 34,524 | 128 | 44,489 | 10,235 | 12 | 89,388 |
+| NSS (Fedora, slot 1) | 35,739 | 168 | 53,117 | 815 | 3 | 89,842 |
+| NSS (Fedora, slot 0) | 1,425 | 29 | 671 | 173 | 3 | 2,301 |
+| NSS main (slot 1) | 34,870 | 145 | 53,396 | 734 | 4 | 89,149 |
+| OpenCryptoki v3.27.0 | 59,732 | 357 | 32,877 | 1,256 | 0 | 94,222 |
+| OpenCryptoki master | 59,732 | 357 | 32,877 | 1,256 | 0 | 94,222 |
+| tpm2-pkcs11 1.10.0 | 6,596 | 182 | 67,058 | 4,375 | 0 | 78,211 |
+| BouncyHSM v2.1.0 | 52,626 | 8,143 | 36,204 | 8,006 | 3 | 104,982 |
+| pkcs11-mock v2.0.0 | 230 | 104 | 29,135 | 58 | 0 | 29,527 |
+
+~1.04M total test executions across these 13 builds (~1.21M across the full
+17-target matrix, including variants). The **NSS slot-0 row drops to ~2.3k**:
+the `*-slot0` passes are now scoped to the slot-0-unique digest/cipher/KDF files
+instead of re-running the whole slot-1 suite (coverage-neutral). Real SIGSEGV
+crash findings remain on NSS (3-4, including a `C_FindObjectsInit(ULONG_MAX)`
+overflow) and BouncyHSM (3); the 12 Kryoptic FIPS/PQC "crashes" are debug-build
+`abort()`s on internal assertions, not release segfaults. See
+[docs/docker-provider-results.md](docs/docker-provider-results.md) for the full
+17-target matrix and [docs/module-issues.md](docs/module-issues.md) for per-module
+findings.
+
 ## [0.1.2] - 2026-05-31
 
 Maintenance release. The headline is **much faster test runs** and **refreshed

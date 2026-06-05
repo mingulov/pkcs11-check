@@ -6,7 +6,6 @@ NIST ACVP ML-KEM test vectors (FIPS 203).
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from pkcs11_check.raw.types_std import (
@@ -17,7 +16,7 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_KEM_1024,
 )
 from pkcs11_check.testcases.acvp._duplicates import mark_duplicate_pkcs11_inputs
-from pkcs11_check.testcases.data import ACVP_DIR
+from pkcs11_check.testcases.data import ACVP_DIR, load_json_cached
 
 # Parameter set mapping
 _ML_KEM_PARAM_MAP: dict[str, int] = {
@@ -57,8 +56,7 @@ def load_mlkem_keygen_vectors(limit: int | None = None) -> list[tuple[str, dict[
     if not internal_file.exists():
         return []
 
-    with open(internal_file) as f:
-        data = json.load(f)
+    data = load_json_cached(internal_file)
 
     result: list[tuple[str, dict[str, Any]]] = []
 
@@ -114,8 +112,7 @@ def load_mlkem_encap_vectors(limit: int | None = None) -> list[tuple[str, dict[s
     if not internal_file.exists():
         return []
 
-    with open(internal_file) as f:
-        data = json.load(f)
+    data = load_json_cached(internal_file)
 
     result: list[tuple[str, dict[str, Any]]] = []
 
@@ -180,8 +177,7 @@ def load_mlkem_decap_vectors(limit: int | None = None) -> list[tuple[str, dict[s
     if not internal_file.exists():
         return []
 
-    with open(internal_file) as f:
-        data = json.load(f)
+    data = load_json_cached(internal_file)
 
     result: list[tuple[str, dict[str, Any]]] = []
 

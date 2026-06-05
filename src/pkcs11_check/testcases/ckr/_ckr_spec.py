@@ -2993,7 +2993,9 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         function="C_GenerateKey",
         condition="invalid_key_size",
         spec_ckr=CKR_ATTRIBUTE_VALUE_INVALID,
-        compat_tuple=KEY_SIZE_ERRORS,
+        # tpm2 has no symmetric-keygen surface -> CKR_FUNCTION_NOT_SUPPORTED for any
+        # negative keygen probe; accept it as a clean reject (xfail, not fail). PC-6.
+        compat_tuple=(*KEY_SIZE_ERRORS, CKR_FUNCTION_NOT_SUPPORTED),
         spec_ref="PKCS#11 v3.1 Sec.5.14.1",
         allow_success=True,  # Kryoptic accepts AES key size 0 and non-standard sizes
     ),
@@ -3008,14 +3010,16 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         function="C_GenerateKey",
         condition="conflicting_attributes",
         spec_ckr=CKR_TEMPLATE_INCONSISTENT,
-        compat_tuple=TEMPLATE_ERRORS,
+        # PC-6: tpm2 has no symmetric-keygen surface -> FUNCTION_NOT_SUPPORTED (xfail).
+        compat_tuple=(*TEMPLATE_ERRORS, CKR_FUNCTION_NOT_SUPPORTED),
         spec_ref="PKCS#11 v3.1 Sec.5.14.1",
     ),
     "genkey_attribute_type_invalid": CkrExpectation(
         function="C_GenerateKey",
         condition="bogus_attribute_in_template",
         spec_ckr=CKR_ATTRIBUTE_TYPE_INVALID,
-        compat_tuple=TEMPLATE_ERRORS,
+        # PC-6: tpm2 has no symmetric-keygen surface -> FUNCTION_NOT_SUPPORTED (xfail).
+        compat_tuple=(*TEMPLATE_ERRORS, CKR_FUNCTION_NOT_SUPPORTED),
         spec_ref="PKCS#11 v3.1 Sec.5.14.1",
         allow_success=True,  # Some modules ignore unknown attributes
     ),

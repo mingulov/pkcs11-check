@@ -19,6 +19,7 @@ from pkcs11_check.testcases._subprocess_result import assert_subprocess_complete
 from pkcs11_check.testcases.ckr._ctypes_raw import CKR_ARGUMENTS_BAD, run_null_test
 from pkcs11_check.testcases.ckr._subprocess import (
     ckr_ctypes_subprocess_rv_trace_setup,
+    ckr_subprocess_cleanup_setup,
     ckr_subprocess_rv_trace_setup,
 )
 
@@ -165,6 +166,7 @@ class TestNullParameters:
                 sys.exit(0)
             slot_id = slot_ids[0]
             sess = open_session(raw, slot_id, CKF_RW_SESSION | CKF_SERIAL_SESSION)
+{ckr_subprocess_cleanup_setup(session_var="sess", indent="            ")}
             pin = {pin_arg}
             if pin is not None:
                 login_user(raw, sess, CKU_USER, pin)
@@ -174,16 +176,14 @@ class TestNullParameters:
                 C_GenerateRandom = so.C_GenerateRandom
             except AttributeError:
                 print("CKR:0x00000000:not_exported")
-                raw.C_CloseSession(sess)
-                raw.C_Finalize(None)
+                _p11check_cleanup_session()
                 sys.exit(0)
             C_GenerateRandom.restype = ctypes.c_ulong
             C_GenerateRandom.argtypes = [ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong]
             rv = C_GenerateRandom(sess, None, 32)
             _p11check_record_rv("C_GenerateRandom", rv)
             print(f"CKR:0x{{rv:08x}}")
-            raw.C_CloseSession(sess)
-            raw.C_Finalize(None)
+            _p11check_cleanup_session()
         """)
         result = subprocess.run(
             [sys.executable, "-c", script],

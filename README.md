@@ -32,13 +32,38 @@ bash local-builds/test.sh kryoptic
 bash local-builds/test.sh nss-softokn
 ```
 
-### From PyPI (installed)
+### First run in 60 seconds (from PyPI)
 
 ```bash
 pip install pkcs11-check
-pkcs11-check fetch-data all # download test vectors (~800 MB)
-pkcs11-check test --module /path/to/module.so --pin 1234
+
+# 1. Make a token (one-time; SoftHSM2 is the easiest provider)
+export SOFTHSM2_CONF="$HOME/softhsm2.conf"
+mkdir -p "$HOME/softhsm2-tokens"
+echo "directories.tokendir = $HOME/softhsm2-tokens" > "$SOFTHSM2_CONF"
+softhsm2-util --init-token --slot 0 --label demo --pin 1234 --so-pin 5678
+
+# 2. Diagnose the setup (module loads? slot / PIN / token OK?)
+pkcs11-check doctor --module /usr/lib/softhsm/libsofthsm2.so --slot 0 --pin 1234
+
+# 3. Fast first run (~2s)
+pkcs11-check test --module /usr/lib/softhsm/libsofthsm2.so --pin 1234 --slot 0 --marker smoke
+
+# 4. Optional: full coverage (downloads ~800 MB of vectors, then runs the suite)
+pkcs11-check fetch-data all
+pkcs11-check test --module /usr/lib/softhsm/libsofthsm2.so --pin 1234 --slot 0
 ```
+
+Two non-obvious rules:
+
+- **`--slot` is a 0-based index** into the token-present slots, **not** the
+  provider's slot ID. Run `pkcs11-check info --module <lib>` (or
+  `pkcs11-check doctor`) to list them. (NSS, for example, uses index 1.)
+- **`fetch-data` is optional** — only the KAT / Wycheproof / ACVP suites need
+  it; without it those are skipped and the rest still runs.
+
+If anything fails, run **`pkcs11-check doctor`** first — it checks the module,
+slot, PIN, token, and data, and prints the exact next step for each problem.
 
 ## Test suite
 
@@ -79,7 +104,7 @@ Test categories:
 ```
 src/pkcs11_check/
   raw/          — pure ctypes PKCS#11 binding (v2.40-v3.2, PQC)
-  cli/          — typer CLI (test, info, version commands)
+  cli/          — typer CLI (test, doctor, info, version, … commands)
   core/         — module loader, isolation runner, preflight
   testcases/    — test files (the product)
     ckr/        — CKR return code compliance tests

@@ -166,6 +166,7 @@ class TestPostFinalize:
 class TestForkSafety:
     """Test fork behavior - child must not crash or deadlock (task 7.4)."""
 
+    @pytest.mark.slow
     def test_fork_after_initialize(self, p11_config: Any) -> None:
         """Fork after C_Initialize - child reinitializes."""
         module = str(p11_config.module)

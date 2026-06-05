@@ -65,6 +65,35 @@ if _p11check_raw is not None and _p11check_rv_trace_enabled():
 """
 
 
+def _cleanup_emitter(cleanup: str) -> str:
+    if not cleanup:
+        return ""
+    cleanup_lines = [
+        line.strip()
+        for line in textwrap.dedent(cleanup).strip().splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    body = "".join(
+        f"    try:\n        {line}\n    except Exception:\n        pass\n" for line in cleanup_lines
+    )
+    return f"""
+import atexit as _p11check_atexit
+
+_p11check_raw_subprocess_cleaned = False
+
+
+def _p11check_cleanup_raw_subprocess():
+    global _p11check_raw_subprocess_cleaned
+    if _p11check_raw_subprocess_cleaned:
+        return
+    _p11check_raw_subprocess_cleaned = True
+{body}
+
+
+_p11check_atexit.register(_p11check_cleanup_raw_subprocess)
+"""
+
+
 def run_raw_script(
     boilerplate: str,
     script_body: str,
@@ -87,9 +116,14 @@ def run_raw_script(
     Returns:
         (returncode, stdout, stderr) - returncode < 0 means signal (segfault).
     """
-    full_script = boilerplate + textwrap.dedent(_RV_TRACE_EMITTER) + textwrap.dedent(script_body)
+    full_script = (
+        boilerplate
+        + textwrap.dedent(_RV_TRACE_EMITTER)
+        + textwrap.dedent(_cleanup_emitter(cleanup))
+        + textwrap.dedent(script_body)
+    )
     if cleanup:
-        full_script += textwrap.dedent(cleanup)
+        full_script += "\n_p11check_cleanup_raw_subprocess()\n"
 
     # Create temp file for subprocess coverage data
     cov_fd, cov_path = tempfile.mkstemp(suffix=".json", prefix="p11cov_")

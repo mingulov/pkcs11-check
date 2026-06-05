@@ -15,7 +15,7 @@ from pkcs11_check.raw.bootstrap import (
     login_user,
 )
 from pkcs11_check.raw.bootstrap import (
-    open_session as raw_open_session,
+    open_session as _raw_open_session,
 )
 from pkcs11_check.raw.pack import template_from_dict
 from pkcs11_check.raw.recipes import (
@@ -27,6 +27,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_KEY_TYPE,
@@ -38,11 +39,29 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS,
     CKO_PUBLIC_KEY,
+    CKR_SESSION_COUNT,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes, skip_if_token_write_protected
+from pkcs11_check.testcases.conftest import (
+    get_pin_bytes,
+    is_known_error,
+    skip_if_token_write_protected,
+)
 
 pytestmark = pytest.mark.access
+
+
+def raw_open_session(raw: Any, slot_id: int, flags: int) -> int:
+    """Open an extra session required by RO/session-lifecycle tests."""
+    try:
+        return _raw_open_session(raw, slot_id, flags)
+    except AssertionError as exc:
+        if is_known_error(exc, (CKR_SESSION_COUNT,)):
+            pytest.skip(
+                "Cannot open additional session required by RO/session-lifecycle test: "
+                f"{ckr_name(int(CKR_SESSION_COUNT))}"
+            )
+        raise
 
 
 class TestROSessionOperations:

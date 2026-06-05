@@ -23,6 +23,7 @@ import pytest
 from pkcs11_check.raw.types_std import CKR_OPERATION_NOT_INITIALIZED
 from pkcs11_check.testcases.ckr._subprocess import (
     assert_ckr_subprocess_ok,
+    ckr_subprocess_cleanup_setup,
     ckr_subprocess_rv_trace_setup,
 )
 from pkcs11_check.testcases.conftest import classify_negative_rv
@@ -83,6 +84,7 @@ def _run_raw_test(module_path: str, pin: str | None, test_code: str) -> tuple[in
                                None, CK_NOTIFY(), ctypes.byref(session))
         assert rv == CKR_OK, f"OpenSession failed: 0x{{rv:08x}}"
         sh = session.value
+{ckr_subprocess_cleanup_setup(indent="        ")}
 
         # Login if needed
         pin = {pin_arg}
@@ -93,8 +95,7 @@ def _run_raw_test(module_path: str, pin: str | None, test_code: str) -> tuple[in
 
 {textwrap.indent(textwrap.dedent(test_code), "        ")}
 
-        raw.C_CloseSession(sh)
-        raw.C_Finalize(None)
+        _p11check_cleanup_session()
     """)
     import os
 

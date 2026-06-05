@@ -28,12 +28,16 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 from pkcs11_check.core.file_runner import (
     extract_coverage_from_jsonl,
     extract_quality_report_records_from_jsonl,
+    postprocess_jsonl_to_unified,
     write_quality_json_report,
 )
 from pkcs11_check.testcases._subprocess_trace import extract_subprocess_rv_trace
@@ -119,11 +123,68 @@ def _rv_trace_props(record: dict[str, Any]) -> list[list[Any]]:
     return props
 
 
+def _stream_records(jsonl_path: Path) -> Iterator[dict[str, Any]]:
+    """Yield parsed dict records from a JSONL file line-by-line (no load-all)."""
+    with jsonl_path.open(encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(rec, dict):
+                yield rec
+
+
+def _apply_trace_promotion(
+    record: dict[str, Any], trace_by_node: dict[str, list[list[Any]]]
+) -> bool:
+    """Promote the node's best trace onto a failed/xfail report. Returns True if
+    the record was modified."""
+    if record.get("$report_type", "TestReport") != "TestReport":
+        return False
+    if not _record_needs_rv_trace(record):
+        return False
+    trace_props = trace_by_node.get(str(record.get("nodeid", "")))
+    if not trace_props:
+        return False
+    user_properties = record.setdefault("user_properties", [])
+    if not isinstance(user_properties, list):
+        return False
+    existing = _user_property_names(record)
+    changed = False
+    for name, value in trace_props:
+        if name not in existing:
+            user_properties.append([name, value])
+            changed = True
+            continue
+        for index, prop in enumerate(user_properties):
+            if not isinstance(prop, (list, tuple)) or len(prop) != 2:
+                continue
+            existing_name, existing_value = prop
+            if existing_name != name:
+                continue
+            if existing_value in (None, "", [], {}) and value not in (None, "", [], {}):
+                user_properties[index] = [name, value]
+                changed = True
+            break
+    return changed
+
+
 def _promote_rv_traces_to_outcome_reports(jsonl_path: Path) -> None:
-    """Copy teardown-only RV traces onto failed/xfail reports for old shard artifacts."""
-    records = [json.loads(line) for line in jsonl_path.read_text().splitlines() if line.strip()]
+    """Copy teardown-only RV traces onto failed/xfail reports for old shard artifacts.
+
+    Streamed in at most two passes so the full record set is never held in
+    memory: pass 1 builds the per-node best trace; pass 2 streams once more,
+    applying the promotion while writing a temp file and tracking whether
+    anything actually changed. The temp is renamed over the original only if a
+    promotion was applied, otherwise it is discarded (original left untouched).
+    Output is byte-identical to the previous detect-then-rewrite implementation.
+    """
     trace_by_node: dict[str, list[list[Any]]] = {}
-    for record in records:
+    for record in _stream_records(jsonl_path):
         if record.get("$report_type", "TestReport") != "TestReport":
             continue
         nodeid = str(record.get("nodeid", ""))
@@ -136,38 +197,20 @@ def _promote_rv_traces_to_outcome_reports(jsonl_path: Path) -> None:
         if not current or new_trace_len > current_trace_len:
             trace_by_node[nodeid] = props
 
-    changed = False
-    for record in records:
-        if record.get("$report_type", "TestReport") != "TestReport":
-            continue
-        if not _record_needs_rv_trace(record):
-            continue
-        nodeid = str(record.get("nodeid", ""))
-        trace_props = trace_by_node.get(nodeid)
-        if not trace_props:
-            continue
-        user_properties = record.setdefault("user_properties", [])
-        if not isinstance(user_properties, list):
-            continue
-        existing = _user_property_names(record)
-        for name, value in trace_props:
-            if name not in existing:
-                user_properties.append([name, value])
-                changed = True
-                continue
-            for index, prop in enumerate(user_properties):
-                if not isinstance(prop, (list, tuple)) or len(prop) != 2:
-                    continue
-                existing_name, existing_value = prop
-                if existing_name != name:
-                    continue
-                if existing_value in (None, "", [], {}) and value not in (None, "", [], {}):
-                    user_properties[index] = [name, value]
-                    changed = True
-                break
+    if not trace_by_node:
+        return
 
+    tmp_path = jsonl_path.with_suffix(jsonl_path.suffix + ".tmp")
+    changed = False
+    with tmp_path.open("w", encoding="utf-8") as out_fh:
+        for record in _stream_records(jsonl_path):
+            if _apply_trace_promotion(record, trace_by_node):
+                changed = True
+            out_fh.write(json.dumps(record) + "\n")
     if changed:
-        jsonl_path.write_text("".join(json.dumps(record) + "\n" for record in records))
+        tmp_path.replace(jsonl_path)
+    else:
+        tmp_path.unlink(missing_ok=True)
 
 
 def merge_results_payloads(
@@ -199,6 +242,65 @@ def merge_results_payloads(
     return merged
 
 
+def _load_shard_payload(shard_dir: Path, warnings: list[str]) -> dict[str, Any] | None:
+    """Load a shard's ``results.json``, salvaging it from ``report.jsonl`` if needed.
+
+    A shard is finalized by writing ``report.jsonl`` incrementally and
+    ``results.json`` last; an OOM/kill between the two (the very pressure the
+    bounded pool guards against) leaves a shard with real failed/crashed records
+    in its JSONL but no — or a truncated — ``results.json``. Folding only the
+    JSONL into the merged report while dropping such a shard from the summed
+    summary would *hide findings* from the headline counts. So:
+
+    - present and valid ``results.json`` → use it;
+    - missing or corrupt ``results.json`` but a non-empty ``report.jsonl`` →
+      reconstruct an equivalent summary/units payload from that JSONL and record
+      a warning;
+    - neither usable → record a warning so the loss is never silent.
+
+    Any abnormality is appended to ``warnings`` for the caller to surface.
+    """
+    results_path = shard_dir / "results.json"
+    report_path = shard_dir / "report.jsonl"
+
+    if results_path.exists():
+        try:
+            data = json.loads(results_path.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            warnings.append(
+                f"{shard_dir.name}: results.json unreadable ({exc.__class__.__name__}); "
+                "reconstructing summary from report.jsonl"
+            )
+        else:
+            if isinstance(data, dict):
+                return data
+            warnings.append(
+                f"{shard_dir.name}: results.json is not an object; "
+                "reconstructing summary from report.jsonl"
+            )
+
+    # results.json missing or corrupt: salvage from the shard's own JSONL.
+    if report_path.exists():
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = postprocess_jsonl_to_unified(report_path, Path(tmp) / "results.json")
+        if payload is not None:
+            total = int(payload.get("summary", {}).get("total", 0) or 0)
+            if not results_path.exists() and total > 0:
+                warnings.append(
+                    f"{shard_dir.name}: results.json missing; reconstructed "
+                    f"{total} outcomes from report.jsonl"
+                )
+            return payload
+
+    if results_path.exists():
+        # Corrupt results.json AND no salvageable report.jsonl: a genuine loss.
+        warnings.append(
+            f"{shard_dir.name}: results.json corrupt and report.jsonl missing/empty; "
+            "shard findings LOST from the merged summary"
+        )
+    return None
+
+
 def merge_shard_dirs(shard_dirs: list[Path], output_dir: Path) -> dict[str, Any]:
     """Merge the artifact directories of N shard runs into ``output_dir``.
 
@@ -219,20 +321,25 @@ def merge_shard_dirs(shard_dirs: list[Path], output_dir: Path) -> dict[str, Any]
 
     payloads: list[dict[str, Any]] = []
     files_per_shard: list[int] = []
+    warnings: list[str] = []
     for d in shard_dirs:
-        results_path = d / "results.json"
-        if not results_path.exists():
+        payload = _load_shard_payload(d, warnings)
+        if payload is None:
             files_per_shard.append(0)
             continue
-        payload = json.loads(results_path.read_text())
         payloads.append(payload)
         files_per_shard.append(len(payload.get("units", []) or []))
+
+    for warning in warnings:
+        print(f"[merge] WARNING: {warning}", file=sys.stderr)
 
     shard_meta = {
         "count": len(shard_dirs),
         "dirs": [d.name for d in shard_dirs],
         "files_per_shard": files_per_shard,
     }
+    if warnings:
+        shard_meta["warnings"] = list(warnings)
     merged = merge_results_payloads(payloads, coverage=coverage, shard_meta=shard_meta)
     (output_dir / "results.json").write_text(json.dumps(merged, indent=2) + "\n")
 

@@ -129,6 +129,7 @@ class TestMemoryLeaks:
         growth = rss_after - rss_before
         assert growth < 50, f"RSS grew by {growth:.1f}MB during 1000 key gen/destroy cycles"
 
+    @pytest.mark.slow
     def test_encrypt_cycle_no_leak(self, p11_raw_session: Any) -> None:
         """1000 encrypt/decrypt cycles - RSS should not grow significantly."""
         rs = p11_raw_session
@@ -205,6 +206,7 @@ class TestUseAfterDestroy:
 class TestSessionChurn:
     """Test rapid session open/close cycles."""
 
+    @pytest.mark.slow
     def test_rapid_session_cycles(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Open and close 100 sessions rapidly - no leak or crash."""
         from pkcs11_check.raw.bootstrap import (

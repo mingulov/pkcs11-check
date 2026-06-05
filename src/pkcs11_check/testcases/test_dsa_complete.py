@@ -96,6 +96,11 @@ _DSA_PARAMETER_RUNTIME_REJECT_RVS = (
     CKR_TEMPLATE_INCONSISTENT,
 )
 
+# DSA parameter/key generation is heavy on several providers (10-32s per case
+# on NSS); the whole file is keygen-bound. Marked slow so a basic run can skip
+# it with -m "not slow"; it still runs in the full profile.
+pytestmark = pytest.mark.slow
+
 _DSA_KEYPAIR_RUNTIME_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,

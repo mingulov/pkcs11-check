@@ -25,6 +25,7 @@ detect tampering, just reported with the wrong code).
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -65,6 +66,11 @@ def detect_module(p11_config: Any) -> ModuleId:
         path = str(p11_config.module).lower()
     except AttributeError:
         return ModuleId.UNKNOWN
+
+    if "pkcs11_proxy_ng_shim" in path or "libpkcs11_proxy_ng" in path:
+        backend_path = os.environ.get("PKCS11_CHECK_BACKEND_MODULE", "").strip().lower()
+        if backend_path:
+            path = backend_path
 
     if "softhsm" in path:
         return ModuleId.SOFTHSM2

@@ -40,6 +40,7 @@ def test_acvp_aes_ofb_decrypt(p11_module_session: Any, vec_id: str, vec: dict[st
     run_simple_decrypt_test(p11_module_session, vec_id, vec, "AES_OFB", CKM_AES_OFB)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("vec_id,vec", _MULTIBLOCK_ENCRYPT, ids=[v[0] for v in _MULTIBLOCK_ENCRYPT])
 def test_acvp_aes_ofb_multiblock_encrypt(
     p11_module_session: Any, vec_id: str, vec: dict[str, Any]
@@ -48,6 +49,7 @@ def test_acvp_aes_ofb_multiblock_encrypt(
     run_multiblock_encrypt_test(p11_module_session, vec_id, vec, "AES_OFB", CKM_AES_OFB)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("vec_id,vec", _MULTIBLOCK_DECRYPT, ids=[v[0] for v in _MULTIBLOCK_DECRYPT])
 def test_acvp_aes_ofb_multiblock_decrypt(
     p11_module_session: Any, vec_id: str, vec: dict[str, Any]

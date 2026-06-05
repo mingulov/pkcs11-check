@@ -17,10 +17,9 @@ References:
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
 
 
 def load_vectors(filename: str) -> list[dict[str, Any]]:
@@ -34,8 +33,7 @@ def load_vectors(filename: str) -> list[dict[str, Any]]:
     path = WYCHEPROOF_DIR / filename
     if not path.exists():
         return []
-    with open(path) as f:
-        data = json.load(f)
+    data = load_json_cached(path)
     vectors: list[dict[str, Any]] = []
     for group in data.get("testGroups", []):
         group_meta = {k: v for k, v in group.items() if k != "tests"}

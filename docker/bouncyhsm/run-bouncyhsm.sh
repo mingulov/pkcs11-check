@@ -18,7 +18,16 @@ ASPNETCORE_ENVIRONMENT=Production ASPNETCORE_URLS=http://localhost:5000 \
     Logging__LogLevel__Default="${BHSM_LOG_LEVEL:-Information}" \
     DOTNET_TieredPGO="${DOTNET_TieredPGO:-0}" \
     dotnet BouncyHsm.dll >/tmp/bouncyhsm-server.log 2>&1 &
-sleep 4
+
+# Poll for the server to accept connections (bounded ~10s) instead of a fixed 4s
+# sleep — the ASP.NET server is typically ready in <1s, reclaiming ~3.5s per
+# container (x8 bouncyhsm shards). -f is omitted so a 404 on / still counts as
+# "up" (connection accepted); if it never comes up the bound elapses and the
+# /Slot POST below surfaces the real error.
+for _ in $(seq 1 100); do
+    curl -s -o /dev/null http://localhost:5000/ && break
+    sleep 0.1
+done
 
 cd /app
 if [[ ! -f /usr/lib/libbouncyhsm_pkcs11.so ]]; then

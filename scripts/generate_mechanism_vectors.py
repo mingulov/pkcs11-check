@@ -1435,9 +1435,7 @@ def _openssl_encrypt(
         libcrypto.EVP_CIPHER_CTX_set_padding(ctx, 0)
         outbuf = ctypes.create_string_buffer(len(plaintext) + 16)
         outlen = ctypes.c_int(0)
-        libcrypto.EVP_EncryptUpdate(
-            ctx, outbuf, ctypes.byref(outlen), plaintext, len(plaintext)
-        )
+        libcrypto.EVP_EncryptUpdate(ctx, outbuf, ctypes.byref(outlen), plaintext, len(plaintext))
         total = outlen.value
         libcrypto.EVP_EncryptFinal_ex(
             ctx,

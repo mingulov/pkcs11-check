@@ -152,7 +152,7 @@ class TestAESKeySizes:
 class TestRSAKeySizes:
     """Test RSA operations across key sizes."""
 
-    @pytest.mark.parametrize("key_bits", [2048, 3072, 4096])
+    @pytest.mark.parametrize("key_bits", [2048, 3072, pytest.param(4096, marks=pytest.mark.slow)])
     def test_rsa_generate(self, p11_raw_session: Any, key_bits: int) -> None:
         """Generate RSA key pair at each size."""
         rs = p11_raw_session
@@ -164,7 +164,7 @@ class TestRSAKeySizes:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    @pytest.mark.parametrize("key_bits", [2048, 3072, 4096])
+    @pytest.mark.parametrize("key_bits", [2048, 3072, pytest.param(4096, marks=pytest.mark.slow)])
     def test_rsa_sign_verify(self, p11_raw_session: Any, key_bits: int) -> None:
         """RSA sign/verify at each key size."""
         rs = p11_raw_session

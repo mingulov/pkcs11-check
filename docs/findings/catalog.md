@@ -114,14 +114,18 @@ Small classes where the module returns a *plausibly correct* CKR the test didn't
   NSS's actual reject `rv` (truncated in the baseline artifact) is confirmed in the FP-8 rerun;
   if it falls outside the set, the test surfaces it rather than hiding it.
 
-### PC-6 — tpm2 negative-path CKR expectations too narrow  ·  NEEDS-CONFIRM
-- **Scope:** tpm2, many count-1 classes: `C_GenerateKey(invalid_*)` → `CKR_FUNCTION_NOT_SUPPORTED`
-  not in acceptable set; `test_mechanism_invalid` "Should have rejected AES_ECB as signing
-  mechanism"; `test_stale_session_handles` got `CKR_FUNCTION_NOT_SUPPORTED`; several
-  session-object-lifecycle `assert False`.
-- **Classification:** mixed PKCS11-CHECK (widen accepted-CKR sets to include
-  `CKR_FUNCTION_NOT_SUPPORTED` for tpm2's limited surface) vs genuine tpm2 capability gaps.
-  Confirm against tpm2 mechanism/function support; only widen to specific CKRs.
+### PC-6 — tpm2 negative-path CKR expectations too narrow  ·  RESOLVED 2026-06-04
+- **Scope:** tpm2, count-1 classes: `C_GenerateKey(invalid_*)` → `CKR_FUNCTION_NOT_SUPPORTED`
+  not in acceptable set (tpm2 has no symmetric-keygen surface, so the whole function is
+  unavailable → a negative keygen probe can only get `CKR_FUNCTION_NOT_SUPPORTED`).
+- **Resolution:** `CKR_FUNCTION_NOT_SUPPORTED` added to the `compat_tuple` (NOT `spec_ckr`)
+  of `genkey_bad_size`, `genkey_template_inconsistent`, `genkey_attribute_type_invalid` in
+  `ckr/_ckr_spec.py`, so it classifies as **xfail** (honest missing-capability deviation),
+  never a hard fail; a wrong-accept (`CKR_OK`) on a non-permissive probe still fails (Type A).
+  Regression: `tests/test_ckr_keygen_function_not_supported_classification.py`. Doc-sync:
+  `docs/module-issues.md` tpm2 section. The other PC-6-bundled rows (`test_mechanism_invalid`,
+  `test_stale_session_handles`, session-lifecycle) ride on the already-shipped suite-side gap
+  triage / classifier; confirm via the Docker re-run.
 
 ---
 
