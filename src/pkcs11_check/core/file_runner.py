@@ -2842,18 +2842,27 @@ def run_isolated_pytest_units(
                                     console.print(
                                         f"[yellow]Confirming crash culprit:[/yellow] {culprit}"
                                     )
-                                    confirm_rc, confirm_out, confirm_err = _run_subprocess_tee(
-                                        [
-                                            sys.executable,
-                                            "-m",
-                                            "pytest",
-                                            culprit,
-                                            *pytest_args,
-                                        ],
-                                        env=env,
-                                        timeout=_unit_timeout_seconds(timeout, "test"),
-                                    )
-                                    confirm_status = _status_from_returncode(confirm_rc)
+                                    try:
+                                        confirm_rc, confirm_out, confirm_err = _run_subprocess_tee(
+                                            [
+                                                sys.executable,
+                                                "-m",
+                                                "pytest",
+                                                culprit,
+                                                *pytest_args,
+                                            ],
+                                            env=env,
+                                            timeout=_unit_timeout_seconds(timeout, "test"),
+                                        )
+                                        confirm_status = _status_from_returncode(confirm_rc)
+                                    except subprocess.TimeoutExpired:
+                                        confirm_rc = 124
+                                        confirm_out = ""
+                                        confirm_err = (
+                                            "crash culprit confirmation timed out after "
+                                            f"{_unit_timeout_seconds(timeout, 'test')} seconds"
+                                        )
+                                        confirm_status = "timeout"
                                     # Record culprit as a standalone result
                                     if confirm_status in {"crashed", "timeout"}:
                                         culprit_outcome = confirm_status

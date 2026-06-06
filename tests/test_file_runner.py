@@ -2160,6 +2160,96 @@ def test_run_isolated_pytest_units_preserves_confirmed_crash_in_json_report_afte
     assert report["summary"]["error"] == 0
 
 
+def test_run_isolated_pytest_units_records_crash_confirmation_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    state_file = tmp_path / "state.json"
+    results_path = tmp_path / "results.json"
+    report_jsonl_path = tmp_path / "report.jsonl"
+    seen_file_runs = 0
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del timeout
+        target = cmd[3]
+        report_log_path: Path | None = None
+        for i, arg in enumerate(cmd):
+            if arg == "--report-log" and i + 1 < len(cmd):
+                report_log_path = Path(cmd[i + 1])
+                break
+
+        if target == "test_a.py":
+            if report_log_path is None:
+                raise AssertionError("expected report-log path for file run")
+            nonlocal seen_file_runs
+            seen_file_runs += 1
+            if seen_file_runs == 1:
+                report_log_path.write_text(
+                    "\n".join(
+                        [
+                            _jsonl_line(
+                                nodeid="test_a.py::test_done", when="setup", outcome="passed"
+                            ),
+                            _jsonl_line(
+                                nodeid="test_a.py::test_done", when="call", outcome="passed"
+                            ),
+                            _jsonl_line(
+                                nodeid="test_a.py::test_done", when="teardown", outcome="passed"
+                            ),
+                            _jsonl_line(
+                                nodeid="test_a.py::test_culprit", when="setup", outcome="passed"
+                            ),
+                        ]
+                    )
+                    + "\n"
+                )
+                return (-11, "fatal python error", "")
+
+            assert env is not None
+            assert "PKCS11_CHECK_DESELECT_FILE" in env
+            report_log_path.write_text(
+                _jsonl_line(nodeid="test_a.py::test_remaining", when="call", outcome="passed")
+                + "\n"
+            )
+            return (0, "", "")
+
+        if target == "test_a.py::test_culprit":
+            raise subprocess.TimeoutExpired(cmd, timeout=12)
+
+        raise AssertionError(f"unexpected target {target}")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+
+    exit_code = run_isolated_pytest_units(
+        ["test_a.py"],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_jsonl_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="mixed",
+    )
+
+    assert exit_code == 1
+    report = json.loads(results_path.read_text())
+    unit = report["units"][0]
+    assert unit["target"] == "test_a.py"
+    assert unit["status"] == "timeout"
+    assert unit["counts"]["timeout"] == 1
+    assert report["summary"]["timeout"] == 1
+    by_nodeid = {entry["nodeid"]: entry for entry in unit["tests"]}
+    culprit = by_nodeid["test_a.py::test_culprit"]
+    assert culprit["outcome"] == "timeout"
+    assert "confirmation timed out" in culprit["longrepr"]
+
+
 def test_run_isolated_pytest_units_preserves_file_crash_after_successful_retry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -84,6 +84,8 @@ uv run pkcs11-check fetch-disabled           # fetch disabled-tests baseline
 bash docker/test.sh softhsm2
 bash docker/test.sh softhsm2-generated-iv --match generated_iv -- src/pkcs11_check/testcases/test_aead.py
 bash docker/test.sh opencryptoki
+bash docker/test.sh wolfpkcs11 -- src/pkcs11_check/testcases/test_interface.py
+bash docker/test.sh wolfpkcs11-master -- src/pkcs11_check/testcases/test_interface.py
 bash docker/test.sh nss --timeout 30 -- src/pkcs11_check/testcases/test_interface.py
 docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2
 docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2-generated-iv

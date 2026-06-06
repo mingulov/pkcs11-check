@@ -63,12 +63,13 @@ Fuzz: Hypothesis property tests, attribute template fuzzer
 See [test-universe.md](test-universe.md) for the current collected product-test
 counts by group and the AES-CTS single-provider maximum.
 
-## Docker test matrix (14 targets)
+## Docker test matrix
 
 - `test-softhsm2` / `test-softhsm2-generated-iv` / `test-softhsm2-main` — SoftHSM2 2.7.0 / generated-IV simulator / main
 - `test-kryoptic` / `test-kryoptic-main` / `test-kryoptic-fips` — Kryoptic v1.5.1 / main / FIPS
 - `test-nss` / `test-nss-pqc` / `test-nss-main` — Fedora NSS packages / NSS official source tags / NSS source tip
 - `test-opencryptoki` / `test-opencryptoki-master` — OpenCryptoki 3.27.0 / master
+- `test-wolfpkcs11` / `test-wolfpkcs11-master` — wolfPKCS11 v2.0.0-stable / master with PKCS#11 v3.2 ML-DSA/ML-KEM enabled
 - `test-tpm2` — source-built tpm2-pkcs11 1.10.0 + swtpm
 - `test-bouncyhsm` — BouncyHSM 2.1.1
 - `test-pkcs11-mock` — pkcs11-mock v2.0.0 stub

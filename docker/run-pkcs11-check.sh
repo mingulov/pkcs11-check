@@ -3,6 +3,9 @@ set -euo pipefail
 
 # Default data dir for Docker containers (host data/ mounted at /app/data)
 export PKCS11_CHECK_DATA_DIR="${PKCS11_CHECK_DATA_DIR:-/app/data}"
+if [[ -f /app/disabled-tests.txt ]]; then
+    export P11TEST_DISABLED_TESTS_FILE="${P11TEST_DISABLED_TESTS_FILE:-/app/disabled-tests.txt}"
+fi
 
 module="${PKCS11_CHECK_MODULE:-${P11TEST_MODULE:-}}"
 pin="${PKCS11_CHECK_PIN:-${P11TEST_PIN:-}}"

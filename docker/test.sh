@@ -33,9 +33,26 @@ if [[ "$service" != test-* ]]; then
     service="test-$service"
 fi
 
-# Warn if test vector data is not present
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if [ ! -d "$PROJECT_ROOT/data/wycheproof" ] && [ ! -d "$PROJECT_ROOT/data/acvp" ]; then
+
+has_vector_data() {
+    local data_dir="$1"
+    [[ -d "$data_dir/wycheproof" || -d "$data_dir/acvp" || -d "$data_dir/cctv" || -d "$data_dir/x509-limbo" ]]
+}
+
+host_data_dir="${PKCS11_CHECK_HOST_DATA_DIR:-$PROJECT_ROOT/data}"
+
+if [[ -z "${PKCS11_CHECK_HOST_DATA_DIR:-}" ]] && ! has_vector_data "$host_data_dir"; then
+    user_data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/pkcs11-check/data"
+    if has_vector_data "$user_data_dir"; then
+        host_data_dir="$user_data_dir"
+        echo "Using fetched test vector data: $host_data_dir" >&2
+    fi
+fi
+
+export PKCS11_CHECK_HOST_DATA_DIR="$host_data_dir"
+
+if ! has_vector_data "$host_data_dir"; then
     echo "Warning: No test vector data found in data/. Vector tests will be skipped." >&2
     echo "  Run: pkcs11-check fetch-data all" >&2
     echo "" >&2

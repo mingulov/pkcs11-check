@@ -114,6 +114,11 @@ After fetch the file lands at
 
 ## Notes
 
+- `docker/` and `local-builds/` build or launch real third-party PKCS#11
+  providers for interoperability testing only. Those provider projects,
+  base images, distro packages, and their dependencies are governed by their
+  own upstream license terms; they are not bundled into pkcs11-check's Python
+  package, source-generated bindings, or application code.
 - No upstream `NOTICE` files exist at any of the pinned commits, so
   Apache-2.0 §4(d) does not impose a propagation requirement on pkcs11-check.
 - Python runtime dependencies (typer, rich, pydantic, pytest, etc.) are

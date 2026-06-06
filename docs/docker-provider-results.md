@@ -42,8 +42,8 @@ For focused crash, timeout, and broad failure classification, see
 | --- | --- |
 | Report generated | 2026-06-04 |
 | Source manifest | `docker/provider-sources.toml` |
-| Source manifest observed at | `2026-06-06T06:58:28Z` |
-| Current release pin refresh | 2026-06-06: Kryoptic `v1.5.1` and BouncyHSM `v2.1.1` pins updated; matrix result rows below still reflect the 2026-06-04 artifact set until a new full Docker validation run is recorded |
+| Source manifest observed at | `2026-06-06T07:33:21Z` |
+| Current release pin refresh | 2026-06-06: Kryoptic `v1.5.1` and BouncyHSM `v2.1.1` pins updated; wolfPKCS11 `v2.0.0-stable` / `master` Docker targets added with wolfSSL `v5.9.1-stable` / `master`; wolfPKCS11 rows are 2026-06-06 single-target full validations, while the rest of the matrix rows remain the 2026-06-04 artifact set |
 | Provider summary artifact | `artifacts/_matrix/baseline-2026-06-04.json` (supersedes `baseline-2026-05-30.json`) |
 | Provider summary generated at | `2026-06-04` (combined from per-provider `artifacts/<target>-pooled/results.json`) |
 | Cascade-fix status | POST-fix — `CKR_OPERATION_ACTIVE` recovery active for all providers |
@@ -67,10 +67,14 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 | OpenSSL | `openssl-3.6.2` | `fe686e15d84334b284f883118ed92f64b409b3aa` | 2026-04-07T12:17:57Z | fallback |
 | OpenSSL | `master` | `83ef5622a64d34885a7d6da866accf2281879c7d` | 2026-05-21T09:13:07Z | branch tip |
 | Kryoptic FIPS OpenSSL | `simo5/openssl:kryoptic_ossl40` | `2d0c89dff0e3a41ad8a83bd6389fedfff8279c7b` | 2026-05-04T15:24:41Z | custom branch required for current FIPS target |
+| wolfSSL | `v5.9.1-stable` | `1d363f3adceba9d1478230ede476a37b0dcdef24` | 2026-04-08T17:40:06Z | wolfPKCS11 release support |
+| wolfSSL | `master` | `8fca95ce651d6e370d91f5598786de4bc66aa2c2` | 2026-06-05T21:27:00Z | wolfPKCS11 master support |
 | SoftHSM2 | `2.7.0` | `13e6e86b83748fef74046dbf0c91f664b7acc1c3` | 2026-01-20T06:25:10Z | release |
 | SoftHSM2 | `main` | `679f33d1b325cca8f5eb1a8febcc7630654a34de` | 2026-05-23T10:20:01Z | branch tip |
 | Kryoptic | `v1.5.1` | `b0d6ee212495244b25d5ac196c6204d22153a31c` | 2026-06-04T18:04:30Z | release pin updated; full Docker result refresh pending |
 | Kryoptic | `main` | `b59babefe229bddeb3a14f8c0d13031bb5060a5f` | 2026-06-04T18:14:15Z | branch tip refreshed; full Docker result refresh pending |
+| wolfPKCS11 | `v2.0.0-stable` | `6b76537e4cc5bea0358b7059fda26d1872584be4` | 2025-08-26T17:00:48Z | release target; 2026-06-06 full Docker result in `artifacts/wolfpkcs11/results.json` |
+| wolfPKCS11 | `master` | `3be61e1d9a6487460dfff5df82d0301e2be2fa30` | 2026-05-20T21:50:11Z | master target with PKCS#11 v3.2 ML-DSA/ML-KEM enabled; 2026-06-06 full Docker result in `artifacts/wolfpkcs11-master/results.json` |
 | OpenCryptoki | `v3.27.0` | `583d0128bb5ebfac263496bc8fe32d4aef440178` | 2026-05-13T11:19:05Z | release |
 | OpenCryptoki | `master` | `583d0128bb5ebfac263496bc8fe32d4aef440178` | 2026-05-13T11:19:05Z | same as release |
 | NSS | `NSS_3_124_RTM` | `089afe88dd219cf4b1516fd04f3b1c1fda3b7b61` | 2026-05-15T14:57:13Z | official RTM tag |
@@ -99,6 +103,8 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 | `test-nss-main` | NSS/NSPR source tips, comparison only | not OpenSSL-based; slot 1 |
 | `test-opencryptoki` | OpenCryptoki v3.27.0 SWToken | OpenSSL 4.0.0 |
 | `test-opencryptoki-master` | OpenCryptoki master SWToken | OpenSSL 4.0.0 |
+| `test-wolfpkcs11` | wolfPKCS11 v2.0.0-stable with wolfSSL v5.9.1-stable | wolfSSL-backed; optional AES key wrap/CTR/CCM/ECB/CTS/CMAC and PBKDF2 enabled |
+| `test-wolfpkcs11-master` | wolfPKCS11 master with wolfSSL master | wolfSSL-backed; optional AES features, PBKDF2, PKCS#11 v3.2, ML-DSA, and ML-KEM enabled |
 | `test-bouncyhsm` | BouncyHSM v2.1.1 | .NET/BouncyCastle provider; not OpenSSL-based |
 | `test-tpm2` | source-built tpm2-pkcs11 1.10.0 | Fedora OpenSSL development package; TPM stack uses libtpms/swtpm |
 | `test-pkcs11-mock` | pkcs11-mock v2.0.0 | mock provider; not OpenSSL-based |
@@ -121,6 +127,8 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 | `nss-main-slot0` | NSS/NSPR source tips, slot 0; scoped | slot-0-scoped | 2,352 | 1,455 | 29 | 688 | 176 | 0 | 4 | 0 |
 | `opencryptoki` | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 94,222 | 59,732 | 357 | 32,877 | 1,256 | 0 | 0 | 0 |
 | `opencryptoki-master` | OpenCryptoki master, OpenSSL 4.0.0 | full | 94,222 | 59,732 | 357 | 32,877 | 1,256 | 0 | 0 | 0 |
+| `wolfpkcs11` | wolfPKCS11 v2.0.0-stable, wolfSSL v5.9.1-stable | full (single-target 2026-06-06) | 97,345 | 38,664 | 3,050 | 52,700 | 2,918 | 0 | 13 | 0 |
+| `wolfpkcs11-master` | wolfPKCS11 master, wolfSSL master, PKCS#11 v3.2/PQC enabled | full (single-target 2026-06-06) | 97,935 | 41,044 | 2,646 | 51,185 | 3,056 | 0 | 4 | 0 |
 | `tpm2` | source-built tpm2-pkcs11 1.10.0 | full | 78,211 | 6,596 | 182 | 67,058 | 4,375 | 0 | 0 | 0 |
 | `pkcs11-mock` | pkcs11-mock v2.0.0 | full mock baseline | 29,527 | 230 | 104 | 29,135 | 58 | 0 | 0 | 0 |
 | `bouncyhsm` | BouncyHSM v2.1.0 | full (monolithic) | 104,982 | 52,626 | 8,143 | 36,204 | 8,006 | 0 | 3 | 0 |
@@ -166,8 +174,11 @@ and token setup.
 | `nss`, `tpm2` | ~10 min |
 | `opencryptoki`, `opencryptoki-master` | ~13 min |
 | `kryoptic-main`, `kryoptic-fips`, `kryoptic` | ~14-16 min |
+| `wolfpkcs11` | ~85 min |
+| `wolfpkcs11-master` | ~90 min |
 | `bouncyhsm` | ~98 min |
-| **All 17 targets (summed)** | **~4.4 hours** |
+| **2026-05-30 baseline targets only (summed)** | **~4.4 hours** |
+| **wolfPKCS11 2026-06-06 single-target additions (summed)** | **~2.9 hours** |
 
 These are the sum of per-unit `duration_s` (per-file subprocess isolation), **not**
 wall-clock — the pooled runner (`docker/test_pool.py`) executes targets in parallel,

@@ -90,6 +90,7 @@ Test categories:
 | pkcs11-mock | 2.0.0 | Stub testing |
 | tpm2-pkcs11 | 1.10.0 | Hardware TPM |
 | BouncyHSM | 2.1.1 | Docker only |
+| wolfPKCS11 | 2.0.0-stable / master | Docker only |
 
 ## Known limitations in v0.1.0
 

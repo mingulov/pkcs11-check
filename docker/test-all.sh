@@ -28,6 +28,7 @@ ALL_PROVIDERS=(
     kryoptic kryoptic-main kryoptic-fips
     nss nss-slot0 nss-pqc nss-pqc-slot0 nss-main nss-main-slot0
     opencryptoki opencryptoki-master
+    wolfpkcs11 wolfpkcs11-master
     tpm2
     pkcs11-mock
     bouncyhsm

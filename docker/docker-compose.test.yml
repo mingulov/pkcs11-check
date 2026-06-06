@@ -7,11 +7,13 @@
 #   docker compose -f docker/docker-compose.test.yml run test-nss
 #   docker compose -f docker/docker-compose.test.yml run test-nss-pqc
 #   docker compose -f docker/docker-compose.test.yml run test-opencryptoki
+#   docker compose -f docker/docker-compose.test.yml run test-wolfpkcs11
 #
 # Development branches (latest from main):
 #   docker compose -f docker/docker-compose.test.yml run test-softhsm2-main
 #   docker compose -f docker/docker-compose.test.yml run test-kryoptic-main
 #   docker compose -f docker/docker-compose.test.yml run test-kryoptic-fips
+#   docker compose -f docker/docker-compose.test.yml run test-wolfpkcs11-master
 #
 # Additional/experimental:
 #   docker compose -f docker/docker-compose.test.yml run test-tpm2
@@ -21,7 +23,8 @@
 x-common: &common
   volumes:
     - ../artifacts:/artifacts
-    - ../data:/app/data:ro
+    - ${PKCS11_CHECK_HOST_DATA_DIR:-../data}:/app/data:ro
+    - ../data/disabled-tests.txt:/app/disabled-tests.txt:ro
 
 services:
 
@@ -130,6 +133,21 @@ services:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/opencryptoki
       PKCS11_CHECK_PIN: "1234"
 
+  # wolfPKCS11 v2.0.0-stable with latest stable wolfSSL
+  test-wolfpkcs11:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: docker/wolfpkcs11/Dockerfile
+      args:
+        WOLFSSL_REF: "v5.9.1-stable"
+        WOLFPKCS11_REF: "v2.0.0-stable"
+        WOLFPKCS11_ENABLE_PQC: "0"
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/wolfpkcs11
+      PKCS11_CHECK_PIN: "1234"
+      PKCS11_CHECK_SLOT: "0"
+
   # ==========================================================
   # Development branches — bleeding edge, may break
   # ==========================================================
@@ -205,6 +223,22 @@ services:
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/kryoptic-fips
       PKCS11_CHECK_PIN: "12345678"
+
+  # wolfPKCS11 master with wolfSSL master, PKCS#11 v3.2, ML-DSA, and ML-KEM
+  test-wolfpkcs11-master:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: docker/wolfpkcs11/Dockerfile
+      args:
+        WOLFSSL_REF: "master"
+        WOLFPKCS11_REF: "master"
+        WOLFPKCS11_ENABLE_PQC: "1"
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/wolfpkcs11-master
+      PKCS11_CHECK_INTERFACE: "3.2"
+      PKCS11_CHECK_PIN: "1234"
+      PKCS11_CHECK_SLOT: "0"
 
   # ==========================================================
   # Additional implementations

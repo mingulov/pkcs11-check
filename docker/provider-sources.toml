@@ -4,7 +4,7 @@
 # resolved with `git ls-remote`; dates are upstream commit dates from the GitHub
 # commits API. Mercurial entries were resolved from hg.mozilla.org json-log tip.
 
-observed_at = "2026-06-06T06:58:28Z"
+observed_at = "2026-06-06T07:33:21Z"
 openssl_policy = "Prefer OpenSSL 4.0.0 when the provider builds and runs against it; use OpenSSL 3.6.2 otherwise."
 
 [sources.openssl_4_0_0]
@@ -38,6 +38,22 @@ commit = "2d0c89dff0e3a41ad8a83bd6389fedfff8279c7b"
 commit_date = "2026-05-04T15:24:41Z"
 role = "kryoptic_fips_reference_branch"
 
+[sources.wolfssl_release]
+kind = "git_tag"
+repo = "https://github.com/wolfSSL/wolfssl.git"
+selector = "v5.9.1-stable"
+commit = "1d363f3adceba9d1478230ede476a37b0dcdef24"
+commit_date = "2026-04-08T17:40:06Z"
+role = "wolfpkcs11_release_support"
+
+[sources.wolfssl_master]
+kind = "git_branch"
+repo = "https://github.com/wolfSSL/wolfssl.git"
+selector = "master"
+commit = "8fca95ce651d6e370d91f5598786de4bc66aa2c2"
+commit_date = "2026-06-05T21:27:00Z"
+role = "wolfpkcs11_master_support"
+
 [sources.softhsm2_release]
 kind = "git_tag"
 repo = "https://github.com/softhsm/SoftHSMv2.git"
@@ -65,6 +81,20 @@ repo = "https://github.com/latchset/kryoptic.git"
 selector = "main"
 commit = "b59babefe229bddeb3a14f8c0d13031bb5060a5f"
 commit_date = "2026-06-04T18:14:15Z"
+
+[sources.wolfpkcs11_release]
+kind = "git_tag"
+repo = "https://github.com/wolfSSL/wolfPKCS11.git"
+selector = "v2.0.0-stable"
+commit = "6b76537e4cc5bea0358b7059fda26d1872584be4"
+commit_date = "2025-08-26T17:00:48Z"
+
+[sources.wolfpkcs11_master]
+kind = "git_branch"
+repo = "https://github.com/wolfSSL/wolfPKCS11.git"
+selector = "master"
+commit = "3be61e1d9a6487460dfff5df82d0301e2be2fa30"
+commit_date = "2026-05-20T21:50:11Z"
 
 [sources.opencryptoki_release]
 kind = "git_tag"
@@ -275,6 +305,25 @@ provider = "OpenCryptoki SWToken master"
 branch_source = "opencryptoki_master"
 openssl = "openssl_4_0_0 validated"
 build_evidence = "2026-05-24 docker compose build --build-arg OPENSSL_VERSION=4.0.0 test-opencryptoki-master"
+
+[targets.wolfpkcs11]
+service = "test-wolfpkcs11"
+provider = "wolfPKCS11"
+release_source = "wolfpkcs11_release"
+branch_source = "wolfpkcs11_master"
+supporting_source = "wolfssl_release"
+openssl = "not OpenSSL-based: provider builds against wolfSSL v5.9.1-stable"
+build_features = "wolfPKCS11 optional AES key wrap/CTR/CCM/ECB/CTS/CMAC and PBKDF2 enabled; stable tag has no PKCS#11 v3.2 ML-DSA/ML-KEM configure options"
+build_evidence = "2026-06-06 bash docker/test.sh wolfpkcs11 full run completed: total 97345, passed 38664, failed 3050, skipped 52700, xfailed 2918, crashed 13, timeout 0"
+
+[targets.wolfpkcs11_master]
+service = "test-wolfpkcs11-master"
+provider = "wolfPKCS11 master"
+branch_source = "wolfpkcs11_master"
+supporting_source = "wolfssl_master"
+openssl = "not OpenSSL-based: provider builds against wolfSSL master"
+build_features = "wolfSSL master built with ML-DSA/ML-KEM support; wolfPKCS11 master built with optional AES key wrap/CTR/CCM/ECB/CTS/CMAC, PBKDF2, PKCS#11 v3.2, ML-DSA, and ML-KEM enabled"
+build_evidence = "2026-06-06 bash docker/test.sh wolfpkcs11-master full run completed: total 97935, passed 41044, failed 2646, skipped 51185, xfailed 3056, crashed 4, timeout 0"
 
 [targets.bouncyhsm]
 service = "test-bouncyhsm"
