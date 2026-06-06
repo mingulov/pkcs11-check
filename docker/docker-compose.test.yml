@@ -8,6 +8,7 @@
 #   docker compose -f docker/docker-compose.test.yml run test-nss-pqc
 #   docker compose -f docker/docker-compose.test.yml run test-opencryptoki
 #   docker compose -f docker/docker-compose.test.yml run test-wolfpkcs11
+#   docker compose -f docker/docker-compose.test.yml run test-corepkcs11
 #
 # Development branches (latest from main):
 #   docker compose -f docker/docker-compose.test.yml run test-softhsm2-main
@@ -146,6 +147,20 @@ services:
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/wolfpkcs11
       PKCS11_CHECK_PIN: "1234"
+      PKCS11_CHECK_SLOT: "0"
+
+  # corePKCS11 v3.6.4 (FreeRTOS MbedTLS software mock, v2.40 subset)
+  test-corepkcs11:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: docker/corepkcs11/Dockerfile
+      args:
+        COREPKCS11_REF: "v3.6.4"
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/corepkcs11
+      PKCS11_CHECK_MODULE: /usr/local/lib/libcorepkcs11_adapter.so
+      PKCS11_CHECK_PIN: "0000"
       PKCS11_CHECK_SLOT: "0"
 
   # ==========================================================

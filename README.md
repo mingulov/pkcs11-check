@@ -91,6 +91,7 @@ Test categories:
 | tpm2-pkcs11 | 1.10.0 | Hardware TPM |
 | BouncyHSM | 2.1.1 | Docker only |
 | wolfPKCS11 | 2.0.0-stable / master | Docker only |
+| corePKCS11 | 3.6.4 | Docker only |
 
 ## Known limitations in v0.1.0
 

@@ -206,3 +206,110 @@ def test_wolfpkcs11_source_manifest_tracks_release_and_master_refs() -> None:
     assert master_target["service"] == "test-wolfpkcs11-master"
     assert master_target["branch_source"] == "wolfpkcs11_master"
     assert master_target["supporting_source"] == "wolfssl_master"
+
+
+def test_corepkcs11_compose_service_uses_latest_release_tag() -> None:
+    compose = (ROOT / "docker/docker-compose.test.yml").read_text()
+
+    assert "test-corepkcs11:" in compose
+
+    block = compose.split("test-corepkcs11:")[1].split("test-", maxsplit=1)[0]
+
+    assert "dockerfile: docker/corepkcs11/Dockerfile" in block
+    assert 'COREPKCS11_REF: "v3.6.4"' in block
+    assert "PKCS11_CHECK_ARTIFACT_DIR: /artifacts/corepkcs11" in block
+    assert "PKCS11_CHECK_MODULE: /usr/local/lib/libcorepkcs11_adapter.so" in block
+    assert 'PKCS11_CHECK_SLOT: "0"' in block
+    assert 'PKCS11_CHECK_PIN: "0000"' in block
+
+
+def test_corepkcs11_dockerfile_builds_release_with_adapter_and_max_config() -> None:
+    dockerfile_path = ROOT / "docker/corepkcs11/Dockerfile"
+
+    assert dockerfile_path.exists()
+
+    dockerfile = dockerfile_path.read_text()
+
+    assert 'ARG COREPKCS11_REF="v3.6.4"' in dockerfile
+    assert "https://github.com/FreeRTOS/corePKCS11.git" in dockerfile
+    assert "-DSTANDALONE_TEST_BUILD_UNIX=ON" in dockerfile
+    assert "-DBUILD_SHARED_LIBS=ON" in dockerfile
+    assert "core_pkcs11_config.h" in dockerfile
+    assert "libcore_pkcs.so" in dockerfile
+    assert "libcorepkcs11_adapter.so" in dockerfile
+    assert "COREPKCS11_REAL_MODULE=/usr/local/lib/libcore_pkcs.so" in dockerfile
+
+    config = (ROOT / "docker/corepkcs11/core_pkcs11_config.h").read_text()
+    assert "pkcs11configMAX_NUM_OBJECTS" in config
+    assert "( ( CK_ULONG ) 128 )" in config
+    assert "pkcs11configMAX_SESSIONS" in config
+    assert "( ( CK_ULONG ) 32 )" in config
+    assert "pkcs11configIMPORT_PRIVATE_KEYS_SUPPORTED" in config
+    assert "pkcs11configSUPPRESS_ECDSA_MECHANISM" not in config
+
+
+def test_corepkcs11_adapter_exposes_upstream_and_extra_operational_mechanisms() -> None:
+    adapter_path = ROOT / "docker/corepkcs11/corepkcs11_adapter.c"
+
+    assert adapter_path.exists()
+
+    adapter = adapter_path.read_text()
+
+    assert "dlopen(" in adapter
+    assert "dlsym(" in adapter
+    assert '"C_GetFunctionList"' in adapter
+    assert "adapter_funcs = *core_funcs" in adapter
+    assert "core_funcs->C_GetMechanismInfo" in adapter
+    assert "adapter_get_mechanism_list" in adapter
+    assert "adapter_get_mechanism_info" in adapter
+    assert "adapter_digest" in adapter
+    assert "C_DigestUpdate" in adapter
+    assert "C_DigestFinal" in adapter
+
+    for mechanism in (
+        "CKM_RSA_PKCS",
+        "CKM_RSA_X_509",
+        "CKM_ECDSA",
+        "CKM_EC_KEY_PAIR_GEN",
+        "CKM_SHA256",
+        "CKM_SHA256_HMAC",
+        "CKM_AES_CMAC",
+    ):
+        assert mechanism in adapter
+
+
+def test_corepkcs11_adapter_normalizes_only_upstream_backed_rsa_pkcs_verify() -> None:
+    adapter = (ROOT / "docker/corepkcs11/corepkcs11_adapter.c").read_text()
+
+    assert "normalize_core_mechanism_info" in adapter
+    assert "CKM_RSA_PKCS" in adapter
+    assert "info->flags |= CKF_VERIFY" in adapter
+    assert "info->flags |= CKF_ENCRYPT" not in adapter
+    assert "info->flags |= CKF_DECRYPT" not in adapter
+    assert "info->flags |= CKF_WRAP" not in adapter
+    assert "info->flags |= CKF_UNWRAP" not in adapter
+
+
+def test_corepkcs11_targets_are_tracked_but_not_default_matrix() -> None:
+    script = (ROOT / "docker/test-all.sh").read_text()
+
+    default_block = script.split("DEFAULT_PROVIDERS=(")[1].split(")", maxsplit=1)[0]
+    all_block = script.split("ALL_PROVIDERS=(")[1].split(")", maxsplit=1)[0]
+
+    assert "corepkcs11" not in default_block
+    assert "corepkcs11" in all_block
+
+
+def test_corepkcs11_source_manifest_tracks_latest_release() -> None:
+    manifest = tomllib.loads((ROOT / "docker/provider-sources.toml").read_text())
+
+    source = manifest["sources"]["corepkcs11_release"]
+    assert source["kind"] == "git_tag"
+    assert source["repo"] == "https://github.com/FreeRTOS/corePKCS11.git"
+    assert source["selector"] == "v3.6.4"
+    assert source["commit"] == "ccc78afee1716436cca832dd3d9388ead2ba05b0"
+
+    target = manifest["targets"]["corepkcs11"]
+    assert target["service"] == "test-corepkcs11"
+    assert target["release_source"] == "corepkcs11_release"
+    assert target["result_tag"] == "corePKCS11 v3.6.4 MbedTLS software mock"

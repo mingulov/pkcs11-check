@@ -43,7 +43,7 @@ For focused crash, timeout, and broad failure classification, see
 | Report generated | 2026-06-04 |
 | Source manifest | `docker/provider-sources.toml` |
 | Source manifest observed at | `2026-06-06T07:33:21Z` |
-| Current release pin refresh | 2026-06-06: Kryoptic `v1.5.1` and BouncyHSM `v2.1.1` pins updated; wolfPKCS11 `v2.0.0-stable` / `master` Docker targets added with wolfSSL `v5.9.1-stable` / `master`; wolfPKCS11 rows are 2026-06-06 single-target full validations, while the rest of the matrix rows remain the 2026-06-04 artifact set |
+| Current release pin refresh | 2026-06-06: Kryoptic `v1.5.1` and BouncyHSM `v2.1.1` pins updated; wolfPKCS11 `v2.0.0-stable` / `master` Docker targets added with wolfSSL `v5.9.1-stable` / `master`; corePKCS11 `v3.6.4` Docker target added with focused build/run smoke only; wolfPKCS11 rows are 2026-06-06 single-target full validations, while the rest of the matrix rows remain the 2026-06-04 artifact set |
 | Provider summary artifact | `artifacts/_matrix/baseline-2026-06-04.json` (supersedes `baseline-2026-05-30.json`) |
 | Provider summary generated at | `2026-06-04` (combined from per-provider `artifacts/<target>-pooled/results.json`) |
 | Cascade-fix status | POST-fix — `CKR_OPERATION_ACTIVE` recovery active for all providers |
@@ -75,6 +75,7 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 | Kryoptic | `main` | `b59babefe229bddeb3a14f8c0d13031bb5060a5f` | 2026-06-04T18:14:15Z | branch tip refreshed; full Docker result refresh pending |
 | wolfPKCS11 | `v2.0.0-stable` | `6b76537e4cc5bea0358b7059fda26d1872584be4` | 2025-08-26T17:00:48Z | release target; 2026-06-06 full Docker result in `artifacts/wolfpkcs11/results.json` |
 | wolfPKCS11 | `master` | `3be61e1d9a6487460dfff5df82d0301e2be2fa30` | 2026-05-20T21:50:11Z | master target with PKCS#11 v3.2 ML-DSA/ML-KEM enabled; 2026-06-06 full Docker result in `artifacts/wolfpkcs11-master/results.json` |
+| corePKCS11 | `v3.6.4` | `ccc78afee1716436cca832dd3d9388ead2ba05b0` | 2026-02-24T05:23:57Z | target added; focused Docker build/run smoke passed, full result refresh pending |
 | OpenCryptoki | `v3.27.0` | `583d0128bb5ebfac263496bc8fe32d4aef440178` | 2026-05-13T11:19:05Z | release |
 | OpenCryptoki | `master` | `583d0128bb5ebfac263496bc8fe32d4aef440178` | 2026-05-13T11:19:05Z | same as release |
 | NSS | `NSS_3_124_RTM` | `089afe88dd219cf4b1516fd04f3b1c1fda3b7b61` | 2026-05-15T14:57:13Z | official RTM tag |
@@ -105,11 +106,16 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 | `test-opencryptoki-master` | OpenCryptoki master SWToken | OpenSSL 4.0.0 |
 | `test-wolfpkcs11` | wolfPKCS11 v2.0.0-stable with wolfSSL v5.9.1-stable | wolfSSL-backed; optional AES key wrap/CTR/CCM/ECB/CTS/CMAC and PBKDF2 enabled |
 | `test-wolfpkcs11-master` | wolfPKCS11 master with wolfSSL master | wolfSSL-backed; optional AES features, PBKDF2, PKCS#11 v3.2, ML-DSA, and ML-KEM enabled |
+| `test-corepkcs11` | corePKCS11 v3.6.4 MbedTLS software mock | not OpenSSL-based; custom config raises capacity, adapter exposes upstream RSA/ECDSA/SHA-256 plus SHA256-HMAC and AES-CMAC sign/verify mechanism metadata |
 | `test-bouncyhsm` | BouncyHSM v2.1.1 | .NET/BouncyCastle provider; not OpenSSL-based |
 | `test-tpm2` | source-built tpm2-pkcs11 1.10.0 | Fedora OpenSSL development package; TPM stack uses libtpms/swtpm |
 | `test-pkcs11-mock` | pkcs11-mock v2.0.0 | mock provider; not OpenSSL-based |
 
 ## Matrix Results
+
+The `corepkcs11` Docker target is build/run-smoke validated only in this
+snapshot. It is intentionally omitted from the matrix table until a full
+single-target run is completed.
 
 | Docker target | Source | Status | Total | Passed | Failed | Skipped | Xfailed | Errors | Crashed | Timeout |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |

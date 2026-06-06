@@ -96,6 +96,14 @@ selector = "master"
 commit = "3be61e1d9a6487460dfff5df82d0301e2be2fa30"
 commit_date = "2026-05-20T21:50:11Z"
 
+[sources.corepkcs11_release]
+kind = "git_tag"
+repo = "https://github.com/FreeRTOS/corePKCS11.git"
+selector = "v3.6.4"
+commit = "ccc78afee1716436cca832dd3d9388ead2ba05b0"
+commit_date = "2026-02-24T05:23:57Z"
+role = "corepkcs11_release"
+
 [sources.opencryptoki_release]
 kind = "git_tag"
 repo = "https://github.com/opencryptoki/opencryptoki.git"
@@ -324,6 +332,15 @@ supporting_source = "wolfssl_master"
 openssl = "not OpenSSL-based: provider builds against wolfSSL master"
 build_features = "wolfSSL master built with ML-DSA/ML-KEM support; wolfPKCS11 master built with optional AES key wrap/CTR/CCM/ECB/CTS/CMAC, PBKDF2, PKCS#11 v3.2, ML-DSA, and ML-KEM enabled"
 build_evidence = "2026-06-06 bash docker/test.sh wolfpkcs11-master full run completed: total 97935, passed 41044, failed 2646, skipped 51185, xfailed 3056, crashed 4, timeout 0"
+
+[targets.corepkcs11]
+service = "test-corepkcs11"
+provider = "corePKCS11"
+release_source = "corepkcs11_release"
+result_tag = "corePKCS11 v3.6.4 MbedTLS software mock"
+openssl = "not OpenSSL-based: provider builds against MbedTLS 3.6.5 through upstream STANDALONE_TEST_BUILD_UNIX"
+build_features = "custom test config raises object/session capacity and leaves ECDSA enabled; adapter exposes upstream RSA/ECDSA/SHA-256 plus operational SHA256-HMAC and AES-CMAC sign/verify mechanisms"
+build_evidence = "2026-06-06 bash docker/test.sh corepkcs11 --rebuild -- test_interface.py test_digest.py test_mech_digest.py test_operation_termination.py passed"
 
 [targets.bouncyhsm]
 service = "test-bouncyhsm"

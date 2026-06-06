@@ -70,6 +70,7 @@ counts by group and the AES-CTS single-provider maximum.
 - `test-nss` / `test-nss-pqc` / `test-nss-main` — Fedora NSS packages / NSS official source tags / NSS source tip
 - `test-opencryptoki` / `test-opencryptoki-master` — OpenCryptoki 3.27.0 / master
 - `test-wolfpkcs11` / `test-wolfpkcs11-master` — wolfPKCS11 v2.0.0-stable / master with PKCS#11 v3.2 ML-DSA/ML-KEM enabled
+- `test-corepkcs11` — corePKCS11 v3.6.4 MbedTLS software mock with a test adapter
 - `test-tpm2` — source-built tpm2-pkcs11 1.10.0 + swtpm
 - `test-bouncyhsm` — BouncyHSM 2.1.1
 - `test-pkcs11-mock` — pkcs11-mock v2.0.0 stub
