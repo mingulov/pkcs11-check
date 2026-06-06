@@ -45,6 +45,13 @@ from pkcs11_check.core.file_runner import (
 )
 
 
+def test_status_from_returncode_classifies_timeout_sentinel() -> None:
+    assert (
+        file_runner_mod._status_from_returncode(file_runner_mod._TIMEOUT_RETURN_CODE)
+        == "timeout"
+    )
+
+
 def test_discover_pytest_units_from_directory(tmp_path: Path) -> None:
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()

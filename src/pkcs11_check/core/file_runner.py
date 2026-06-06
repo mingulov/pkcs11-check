@@ -47,6 +47,8 @@ _MAX_TIMEOUT_RETRIES = 3
 # a run that executed nothing must not report success. Maps to the contract's
 # "couldn't run" code 2 (docs/integration-contract.md), so CI gates on rc>=2.
 _NO_TESTS_COLLECTED_EXIT = 2
+# Match the conventional GNU timeout exit code; pytest itself uses only 0-5.
+_TIMEOUT_RETURN_CODE = 124
 _DISABLE_COLLECTION_PROBES_ENV = "PKCS11_CHECK_DISABLE_COLLECTION_PROBES"
 
 _FINGERPRINT_ENV_KEYS = ("BOUNCY_HSM_CFG_STRING", "SOFTHSM2_CONF", "P11TEST_PIN")
@@ -1675,6 +1677,8 @@ def _status_from_returncode(returncode: int) -> str:
         return "passed"
     if returncode == 5:
         return "empty"
+    if returncode == _TIMEOUT_RETURN_CODE:
+        return "timeout"
     if returncode < 0:
         return "crashed"
     return "failed"
@@ -2396,7 +2400,7 @@ def run_isolated_pytest_units(
                     result = FileRunResult(
                         target=unit,
                         status="timeout",
-                        returncode=124,
+                        returncode=_TIMEOUT_RETURN_CODE,
                         duration_s=duration_s,
                     )
                     _record_result(state, result)
@@ -2479,7 +2483,7 @@ def run_isolated_pytest_units(
                                             timeout=_unit_timeout_seconds(timeout, "test"),
                                         )
                                     except subprocess.TimeoutExpired:
-                                        confirm_rc = 124
+                                        confirm_rc = _TIMEOUT_RETURN_CODE
                                         confirm_out = confirm_err = ""
                                     confirm_status = _status_from_returncode(confirm_rc)
                                     culprit_outcome = (
@@ -2559,7 +2563,7 @@ def run_isolated_pytest_units(
                                     retry_status = _status_from_returncode(retry_rc)
                                 except subprocess.TimeoutExpired:
                                     retry_status = "timeout"
-                                    retry_rc = 124
+                                    retry_rc = _TIMEOUT_RETURN_CODE
                                     retry_out = retry_err = ""
                                 retry_dur = time.monotonic() - retry_start
                                 total_retry_dur += retry_dur
@@ -2679,7 +2683,7 @@ def run_isolated_pytest_units(
                                 FileRunResult(
                                     target=unit,
                                     status="escalated",
-                                    returncode=124,
+                                    returncode=_TIMEOUT_RETURN_CODE,
                                     duration_s=duration_s,
                                 ),
                             )
@@ -2856,7 +2860,7 @@ def run_isolated_pytest_units(
                                         )
                                         confirm_status = _status_from_returncode(confirm_rc)
                                     except subprocess.TimeoutExpired:
-                                        confirm_rc = 124
+                                        confirm_rc = _TIMEOUT_RETURN_CODE
                                         confirm_out = ""
                                         confirm_err = (
                                             "crash culprit confirmation timed out after "
@@ -2986,7 +2990,7 @@ def run_isolated_pytest_units(
                                     retry_status = _status_from_returncode(retry_rc)
                                 except subprocess.TimeoutExpired:
                                     retry_status = "timeout"
-                                    retry_rc = 124
+                                    retry_rc = _TIMEOUT_RETURN_CODE
                                     retry_out = retry_err = ""
                                 retry_dur = time.monotonic() - retry_start
                                 total_retry_dur += retry_dur
@@ -3014,7 +3018,7 @@ def run_isolated_pytest_units(
                                             final_returncode = returncode
                                         elif accumulated_detail["counts"].get("timeout", 0) > 0:
                                             final_status = "timeout"
-                                            final_returncode = 124
+                                            final_returncode = _TIMEOUT_RETURN_CODE
 
                                     keep = final_status != "passed" or (
                                         accumulated_detail is not None
