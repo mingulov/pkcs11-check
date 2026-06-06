@@ -4,7 +4,7 @@
 # resolved with `git ls-remote`; dates are upstream commit dates from the GitHub
 # commits API. Mercurial entries were resolved from hg.mozilla.org json-log tip.
 
-observed_at = "2026-05-25T08:21:09Z"
+observed_at = "2026-06-06T06:58:28Z"
 openssl_policy = "Prefer OpenSSL 4.0.0 when the provider builds and runs against it; use OpenSSL 3.6.2 otherwise."
 
 [sources.openssl_4_0_0]
@@ -55,16 +55,16 @@ commit_date = "2026-05-23T10:20:01Z"
 [sources.kryoptic_release]
 kind = "git_tag"
 repo = "https://github.com/latchset/kryoptic.git"
-selector = "v1.5.0"
-commit = "f3a4ead8baa7568cf99d6dcb6e260b16d69cf010"
-commit_date = "2026-03-03T17:55:36Z"
+selector = "v1.5.1"
+commit = "b0d6ee212495244b25d5ac196c6204d22153a31c"
+commit_date = "2026-06-04T18:04:30Z"
 
 [sources.kryoptic_main]
 kind = "git_branch"
 repo = "https://github.com/latchset/kryoptic.git"
 selector = "main"
-commit = "41abd4e3b3d3e77887ad25cc8ecfdb0d3a9664e2"
-commit_date = "2026-05-08T20:55:41Z"
+commit = "b59babefe229bddeb3a14f8c0d13031bb5060a5f"
+commit_date = "2026-06-04T18:14:15Z"
 
 [sources.opencryptoki_release]
 kind = "git_tag"
@@ -119,16 +119,16 @@ push_date = "2026-05-05T12:50:25Z"
 [sources.bouncyhsm_release]
 kind = "git_tag"
 repo = "https://github.com/harrison314/BouncyHsm.git"
-selector = "v2.1.0"
-commit = "3bfedeec38d10f69cf43a98a864ea4d519266d94"
-commit_date = "2026-05-04T15:25:36Z"
+selector = "v2.1.1"
+commit = "3bfd53943fdc298bee8cd04ba6ac1a8663e8cc0c"
+commit_date = "2026-06-03T16:39:08Z"
 
 [sources.bouncyhsm_main]
 kind = "git_branch"
 repo = "https://github.com/harrison314/BouncyHsm.git"
 selector = "main"
-commit = "3bfedeec38d10f69cf43a98a864ea4d519266d94"
-commit_date = "2026-05-04T15:25:36Z"
+commit = "331308f0b210ef331e4c5499c393271e0f76e68c"
+commit_date = "2026-06-06T06:47:25Z"
 
 [sources.tpm2_pkcs11_release]
 kind = "git_tag"
@@ -216,7 +216,7 @@ provider = "Kryoptic"
 release_source = "kryoptic_release"
 branch_source = "kryoptic_main"
 openssl = "openssl_4_0_0 validated"
-build_evidence = "2026-05-24 docker compose build test-kryoptic"
+build_evidence = "2026-06-06 source pin updated to v1.5.1; Docker build validation pending for this tag"
 
 [targets.kryoptic_main]
 service = "test-kryoptic-main"
@@ -282,7 +282,7 @@ provider = "BouncyHSM"
 release_source = "bouncyhsm_release"
 branch_source = "bouncyhsm_main"
 openssl = "not applicable to provider build: .NET/BouncyCastle"
-build_evidence = "2026-05-24 docker compose build test-bouncyhsm; v2.1.0 already contains the upstream TCP partial-read/write fix, only the GetAttributeValue patch is applied locally"
+build_evidence = "2026-06-06 source pin updated to v2.1.1; Docker build validation pending for this tag; only the GetAttributeValue patch is applied locally"
 
 [targets.tpm2]
 service = "test-tpm2"

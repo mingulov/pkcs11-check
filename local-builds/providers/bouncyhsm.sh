@@ -4,7 +4,7 @@
 # Architecture: .NET server + native PKCS#11 shim (TCP proxy)
 
 PROVIDER_NAME="bouncyhsm"
-DEFAULT_BRANCH="v2.1.0"
+DEFAULT_BRANCH="v2.1.1"
 REPO="https://github.com/harrison314/BouncyHsm.git"
 PATCH_FILE="$PROJECT_DIR/patches/bouncyhsm/0001-fix-getattributevalue-rvmethod.patch"
 

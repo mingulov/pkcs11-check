@@ -63,7 +63,7 @@ case "${1:-help}" in
         echo ""
         echo "Examples:"
         echo "  $0 openssl                     # build OpenSSL 4.0.0"
-        echo "  $0 kryoptic                    # build Kryoptic v1.5.0"
+        echo "  $0 kryoptic                    # build Kryoptic v1.5.1"
         echo "  $0 softhsm2 --sanitize         # build SoftHSM2 with ASAN"
         echo "  $0 kryoptic main               # build Kryoptic dev branch"
         echo "  $0 all                         # build everything"

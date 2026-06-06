@@ -1,11 +1,11 @@
-# Stage 1: Build Kryoptic v1.5.0
+# Stage 1: Build Kryoptic v1.5.1
 FROM rust:latest AS kryoptic-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git pkg-config libssl-dev clang make \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone --branch v1.5.0 --depth 1 https://github.com/latchset/kryoptic.git /build/kryoptic
+RUN git clone --branch v1.5.1 --depth 1 https://github.com/latchset/kryoptic.git /build/kryoptic
 WORKDIR /build/kryoptic
 RUN cargo build --release --features pqc
 

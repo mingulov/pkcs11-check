@@ -57,7 +57,7 @@ case — `slow` is a *selection* profile, never a way to hide a finding.
 
 ### Available providers
 
-OpenSSL 4.0.0 preferred / 3.6.2 fallback, Kryoptic 1.5.0+PQC, SoftHSM2 2.7.0, OpenCryptoki 3.27.0, NSS softoken, pkcs11-mock 2.0.0, tpm2-pkcs11 1.10.0, BouncyHSM 2.1.0, swtpm 0.10.1, libtpms 0.10.2
+OpenSSL 4.0.0 preferred / 3.6.2 fallback, Kryoptic 1.5.1+PQC, SoftHSM2 2.7.0, OpenCryptoki 3.27.0, NSS softoken, pkcs11-mock 2.0.0, tpm2-pkcs11 1.10.0, BouncyHSM 2.1.1, swtpm 0.10.1, libtpms 0.10.2
 
 ### Worktree Kryoptic testing
 

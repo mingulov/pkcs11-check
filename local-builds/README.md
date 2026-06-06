@@ -26,12 +26,12 @@ Each file in `providers/` defines `build()` and `setup()` for one token:
 | Provider | File | Language | Version | Notes |
 |----------|------|----------|---------|-------|
 | **OpenSSL** | `openssl.sh` | C | 4.0.0 | Build dependency, not a PKCS#11 provider |
-| **Kryoptic** | `kryoptic.sh` | Rust | v1.5.0 | v3.2, PQC, auto-detects local OpenSSL |
+| **Kryoptic** | `kryoptic.sh` | Rust | v1.5.1 | v3.2, PQC, auto-detects local OpenSSL |
 | **SoftHSM2** | `softhsm2.sh` | C++ | 2.7.0 | v2.40, supports OPENSSL_DIR |
 | **OpenCryptoki** | `opencryptoki.sh` | C | v3.27.0 | v3.0, needs pkcsslotd daemon |
 | **tpm2-pkcs11** | `tpm2-pkcs11.sh` | C | 1.10.0 | Uses hardware TPM or swtpm |
 | **pkcs11-mock** | `pkcs11-mock.sh` | C | v2.0.0 | v3.1 stub, single file |
-| **BouncyHSM** | `bouncyhsm.sh` | .NET | v2.1.0 | Needs dotnet SDK 10.0, TCP server |
+| **BouncyHSM** | `bouncyhsm.sh` | .NET | v2.1.1 | Needs dotnet SDK 10.0, TCP server |
 
 ## Custom OpenSSL
 

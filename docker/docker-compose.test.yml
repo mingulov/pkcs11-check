@@ -56,7 +56,7 @@ services:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/softhsm2-generated-iv
       PKCS11_CHECK_PIN: "1234"
 
-  # Kryoptic v1.5.0 (v3.2, Rust, OpenSSL 4.0.0)
+  # Kryoptic v1.5.1 (v3.2, Rust, OpenSSL 4.0.0)
   test-kryoptic:
     <<: *common
     build:
@@ -64,7 +64,7 @@ services:
       dockerfile: docker/kryoptic/Dockerfile.main
       args:
         OPENSSL_TAG: "${OPENSSL_TAG:-openssl-4.0.0}"
-        KRYOPTIC_REF: "v1.5.0"
+        KRYOPTIC_REF: "v1.5.1"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/kryoptic
       PKCS11_CHECK_PIN: "1234"

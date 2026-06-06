@@ -84,12 +84,12 @@ Test categories:
 | Module | Version | Status |
 |--------|---------|--------|
 | SoftHSM2 | 2.7.0 | Full support |
-| Kryoptic | 1.5.0+PQC | Full support (v3.2) |
+| Kryoptic | 1.5.1+PQC | Full support (v3.2) |
 | NSS softokn | system | Crypto services (slot 0) |
 | OpenCryptoki | 3.27.0 | Docker only |
 | pkcs11-mock | 2.0.0 | Stub testing |
 | tpm2-pkcs11 | 1.10.0 | Hardware TPM |
-| BouncyHSM | 2.1.0 | Docker only |
+| BouncyHSM | 2.1.1 | Docker only |
 
 ## Known limitations in v0.1.0
 

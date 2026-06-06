@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Kryoptic — Rust PKCS#11 token (v3.2, PQC support)
-# Latest release: v1.5.0
+# Latest release: v1.5.1
 # Requires: rustc 1.70+, OpenSSL 3.2+ (auto-detected from local-builds/openssl)
 
 PROVIDER_NAME="kryoptic"
-DEFAULT_BRANCH="v1.5.0"
+DEFAULT_BRANCH="v1.5.1"
 REPO="https://github.com/latchset/kryoptic.git"
 
 build() {

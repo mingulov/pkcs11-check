@@ -42,7 +42,8 @@ For focused crash, timeout, and broad failure classification, see
 | --- | --- |
 | Report generated | 2026-06-04 |
 | Source manifest | `docker/provider-sources.toml` |
-| Source manifest observed at | `2026-05-25T08:21:09Z` |
+| Source manifest observed at | `2026-06-06T06:58:28Z` |
+| Current release pin refresh | 2026-06-06: Kryoptic `v1.5.1` and BouncyHSM `v2.1.1` pins updated; matrix result rows below still reflect the 2026-06-04 artifact set until a new full Docker validation run is recorded |
 | Provider summary artifact | `artifacts/_matrix/baseline-2026-06-04.json` (supersedes `baseline-2026-05-30.json`) |
 | Provider summary generated at | `2026-06-04` (combined from per-provider `artifacts/<target>-pooled/results.json`) |
 | Cascade-fix status | POST-fix — `CKR_OPERATION_ACTIVE` recovery active for all providers |
@@ -68,15 +69,16 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 | Kryoptic FIPS OpenSSL | `simo5/openssl:kryoptic_ossl40` | `2d0c89dff0e3a41ad8a83bd6389fedfff8279c7b` | 2026-05-04T15:24:41Z | custom branch required for current FIPS target |
 | SoftHSM2 | `2.7.0` | `13e6e86b83748fef74046dbf0c91f664b7acc1c3` | 2026-01-20T06:25:10Z | release |
 | SoftHSM2 | `main` | `679f33d1b325cca8f5eb1a8febcc7630654a34de` | 2026-05-23T10:20:01Z | branch tip |
-| Kryoptic | `v1.5.0` | `f3a4ead8baa7568cf99d6dcb6e260b16d69cf010` | 2026-03-03T17:55:36Z | release |
-| Kryoptic | `main` | `41abd4e3b3d3e77887ad25cc8ecfdb0d3a9664e2` | 2026-05-08T20:55:41Z | branch tip |
+| Kryoptic | `v1.5.1` | `b0d6ee212495244b25d5ac196c6204d22153a31c` | 2026-06-04T18:04:30Z | release pin updated; full Docker result refresh pending |
+| Kryoptic | `main` | `b59babefe229bddeb3a14f8c0d13031bb5060a5f` | 2026-06-04T18:14:15Z | branch tip refreshed; full Docker result refresh pending |
 | OpenCryptoki | `v3.27.0` | `583d0128bb5ebfac263496bc8fe32d4aef440178` | 2026-05-13T11:19:05Z | release |
 | OpenCryptoki | `master` | `583d0128bb5ebfac263496bc8fe32d4aef440178` | 2026-05-13T11:19:05Z | same as release |
 | NSS | `NSS_3_124_RTM` | `089afe88dd219cf4b1516fd04f3b1c1fda3b7b61` | 2026-05-15T14:57:13Z | official RTM tag |
 | NSPR | `NSPR_4_39_RTM` | `54e7c1b0803d151e142e30dc0d05f12e1ec67a13` | 2026-05-05T12:48:55Z | official RTM tag |
 | NSS | `tip` | `1a02ab2a26b719d5a2ba23aed6e7b06b5d3e9370` | 2026-05-19T16:33:46Z | Mercurial tip for `nss-main` comparison |
 | NSPR | `tip` | `764a204fce9a069633c2eb75890f8194f0c54853` | 2026-05-05T12:49:29Z | Mercurial tip for `nss-main` comparison |
-| BouncyHSM | `v2.1.0` | `3bfedeec38d10f69cf43a98a864ea4d519266d94` | 2026-05-04T15:25:36Z | release and main |
+| BouncyHSM | `v2.1.1` | `3bfd53943fdc298bee8cd04ba6ac1a8663e8cc0c` | 2026-06-03T16:39:08Z | release pin updated; full Docker result refresh pending |
+| BouncyHSM | `main` | `331308f0b210ef331e4c5499c393271e0f76e68c` | 2026-06-06T06:47:25Z | branch tip refreshed; no separate Docker target |
 | tpm2-pkcs11 | `1.10.0` | `a95465ce672c5fda92a2d34bc5cbeda4b0511c80` | 2026-05-19T20:44:58Z | release and master |
 | libtpms | `v0.10.2` | `03ff2481e133540be3b3ffe3daa1483d2a73d967` | 2026-01-02T15:56:41Z | TPM support |
 | swtpm | `v0.10.1` | `53841482b0a9a1dfe63a120b00283acfe588ee72` | 2025-04-30T12:32:33Z | TPM support |
@@ -89,7 +91,7 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 | `test-softhsm2` | SoftHSM2 2.7.0 | OpenSSL 3.6.2; OpenSSL 4.0.0 does not build this release |
 | `test-softhsm2-generated-iv` | SoftHSM2 2.7.0 plus local generated-IV patch | OpenSSL 3.6.2 |
 | `test-softhsm2-main` | SoftHSM2 main | OpenSSL 4.0.0 |
-| `test-kryoptic` | Kryoptic v1.5.0 | OpenSSL 4.0.0 |
+| `test-kryoptic` | Kryoptic v1.5.1 | OpenSSL 4.0.0 |
 | `test-kryoptic-main` | Kryoptic main | OpenSSL 4.0.0 |
 | `test-kryoptic-fips` | Kryoptic FIPS/PQC | custom `simo5/openssl:kryoptic_ossl40`; official OpenSSL 4.0.0 compiled Kryoptic but `hmacify` failed because `.rodata1` was absent |
 | `test-nss` | Fedora 44 NSS softoken package `nss-3.123.1-1.fc44` | not OpenSSL-based; slot 1 |
@@ -97,7 +99,7 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 | `test-nss-main` | NSS/NSPR source tips, comparison only | not OpenSSL-based; slot 1 |
 | `test-opencryptoki` | OpenCryptoki v3.27.0 SWToken | OpenSSL 4.0.0 |
 | `test-opencryptoki-master` | OpenCryptoki master SWToken | OpenSSL 4.0.0 |
-| `test-bouncyhsm` | BouncyHSM v2.1.0 | .NET/BouncyCastle provider; not OpenSSL-based |
+| `test-bouncyhsm` | BouncyHSM v2.1.1 | .NET/BouncyCastle provider; not OpenSSL-based |
 | `test-tpm2` | source-built tpm2-pkcs11 1.10.0 | Fedora OpenSSL development package; TPM stack uses libtpms/swtpm |
 | `test-pkcs11-mock` | pkcs11-mock v2.0.0 | mock provider; not OpenSSL-based |
 
