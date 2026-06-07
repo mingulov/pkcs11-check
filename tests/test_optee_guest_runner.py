@@ -39,6 +39,7 @@ def test_build_cli_args_uses_artifact_files_and_targets() -> None:
     runner = load_guest_runner()
     args = runner.build_cli_args(
         make_env(
+            PKCS11_CHECK_SITE="/mnt/pkcs11-check/site",
             PKCS11_CHECK_EXTRA_ARGS="--timeout 30 --match test_interface",
             PKCS11_CHECK_TARGETS="src/pkcs11_check/testcases/test_interface.py",
         )
@@ -62,14 +63,28 @@ def test_build_cli_args_uses_artifact_files_and_targets() -> None:
     assert "30" in args
     assert "--match" in args
     assert "test_interface" in args
-    assert args[-1] == "src/pkcs11_check/testcases/test_interface.py"
+    assert args[-1] == "/mnt/pkcs11-check/site/pkcs11_check/testcases/test_interface.py"
 
 
 def test_build_cli_args_defaults_to_testcases_dir() -> None:
     runner = load_guest_runner()
-    args = runner.build_cli_args(make_env(PKCS11_CHECK_TARGETS=""))
+    args = runner.build_cli_args(
+        make_env(PKCS11_CHECK_SITE="/mnt/pkcs11-check/site", PKCS11_CHECK_TARGETS="")
+    )
 
-    assert args[-1] == "src/pkcs11_check/testcases/"
+    assert args[-1] == "/mnt/pkcs11-check/site/pkcs11_check/testcases"
+
+
+def test_build_cli_args_leaves_non_testcase_targets_unchanged() -> None:
+    runner = load_guest_runner()
+    args = runner.build_cli_args(
+        make_env(
+            PKCS11_CHECK_SITE="/mnt/pkcs11-check/site",
+            PKCS11_CHECK_TARGETS="/tmp/custom-tests/test_custom.py",
+        )
+    )
+
+    assert args[-1] == "/tmp/custom-tests/test_custom.py"
 
 
 def test_render_serial_command_never_contains_pin() -> None:

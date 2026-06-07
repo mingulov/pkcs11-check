@@ -16,7 +16,9 @@
   - if `PKCS11_CHECK_ARTIFACT_DIR` is set, it writes combined stdout/stderr to `console.log`
 - `docker/run-pkcs11-check.sh`
   - translates environment variables into a `pkcs11-check test` invocation
-  - writes `results.json`, `state.json`, and `policy.json` when `PKCS11_CHECK_ARTIFACT_DIR` is set
+  - writes `results.json`, `state.json`, `quality.json`, and `report.jsonl` when
+    `PKCS11_CHECK_ARTIFACT_DIR` is set
+  - may also write `policy.json` when adaptive isolation records a promoted crash policy
 
 ## Artifact Layout
 
@@ -27,7 +29,12 @@ Per-service output goes to:
 - `artifacts/<service>/console.log`
 - `artifacts/<service>/results.json`
 - `artifacts/<service>/state.json`
-- `artifacts/<service>/policy.json`
+- `artifacts/<service>/quality.json`
+- `artifacts/<service>/report.jsonl`
+
+`policy.json` is conditional: it is written only when adaptive isolation records
+a persistent policy change, such as promoting a crashing file to per-test
+isolation.
 
 Example:
 
@@ -43,7 +50,13 @@ Single wrapper for all providers:
 bash docker/test.sh opencryptoki
 bash docker/test.sh softhsm2 --match test_interface
 bash docker/test.sh nss --timeout 30 -- src/pkcs11_check/testcases/test_interface.py
+bash docker/test.sh optee-pkcs11 -- src/pkcs11_check/testcases/test_interface.py
 ```
+
+OP-TEE is a QEMU-backed heavy target. In addition to the standard files above,
+`artifacts/optee-pkcs11/` includes `serial0.log`, `serial1.log`, and
+`pkcs11-tool-info.txt` so guest boot, TEE, and PKCS#11 module setup can be
+debugged without changing the runner contract.
 
 ## Why Not One Common Base Image
 

@@ -62,6 +62,10 @@ project, not a Docker build flag.
   a v2.40 provider.
 - Do not add NVIDIA DRIVE OS PKCS#11 to this target. NVIDIA can be a later
   manual/external target if DRIVE hardware and SDK binaries are available.
+- Do not treat NVIDIA Jetson OP-TEE PKCS#11 as a separate implementation from
+  upstream OP-TEE for this Docker target. NVIDIA Jetson documentation points to
+  OP-TEE `libckteec` and the OP-TEE PKCS#11 TA, which this target already
+  exercises in the upstream QEMU environment.
 - Do not vendor OP-TEE source into this repository.
 - Do not add provider-specific skips, xfails, or allowlists for OP-TEE findings.
   The general pkcs11-check classification model still applies.
@@ -92,6 +96,20 @@ a guest-side runner that initializes the token and invokes pkcs11-check.
 
 Chosen. This is the only option that tests the real OP-TEE provider while still
 fitting the existing Docker artifact contract.
+
+### NVIDIA DRIVE OS or Jetson PKCS#11
+
+NVIDIA publishes two relevant PKCS#11 paths, but neither is a normal
+software-only Docker provider:
+
+- DRIVE OS has a Security Services PKCS#11 library documented as a PKCS#11
+  v3.00 subset with NVIDIA extensions and hardware-backed secure storage/key
+  derivation. This should be tracked as a future manual/hardware-backed target,
+  not as a public QEMU Docker service.
+- Jetson Linux documents PKCS#11 support through OP-TEE `libckteec` and the
+  OP-TEE PKCS#11 TA. That path is covered by the upstream OP-TEE QEMU target
+  here; Jetson-specific validation would be a device/board profile layered on
+  top of the same conceptual provider.
 
 ## Docker Shape
 
@@ -139,9 +157,9 @@ The Dockerfile uses a builder stage that installs OP-TEE build prerequisites,
 
 1. Creates an OP-TEE checkout with
    `repo init -u https://github.com/OP-TEE/manifest.git -m qemu_v8.xml -b 4.10.0`.
-2. Runs `repo sync -j4 --no-clone-bundle`.
-3. Builds toolchains with `make -C build toolchains`.
-4. Builds OP-TEE QEMU v8 with:
+2. Runs `repo sync -j$(nproc) --no-clone-bundle`.
+3. Builds toolchains with `make -C build -j$(nproc) toolchains`.
+4. Builds OP-TEE QEMU v8 with `make -C build -j$(nproc)` and:
    - `CFG_PKCS11_TA=y`
    - `CFG_PKCS11_TA_ALLOW_DIGEST_KEY=y`
    - `CFG_PKCS11_TA_AUTH_TEE_IDENTITY=y`
@@ -150,7 +168,11 @@ The Dockerfile uses a builder stage that installs OP-TEE build prerequisites,
    - `CFG_PKCS11_TA_HEAP_SIZE=(128 * 1024)` initially
    - `QEMU_VIRTFS_ENABLE=y`
    - `QEMU_PSS_ENABLE=y`
+   - `RUST_ENABLE=n` because OP-TEE Rust examples are not part of the
+     PKCS#11 provider target and substantially inflate Buildroot time
    - `BR2_PACKAGE_PYTHON3=y`
+   - `BR2_PACKAGE_PYTHON3_PYEXPAT=y`
+   - `BR2_PACKAGE_PYTHON3_ZLIB=y`
    - `BR2_PACKAGE_OPENSC=y` for a lightweight module sanity check
 
 The OP-TEE source defaults already enable several PKCS#11 TA options. The

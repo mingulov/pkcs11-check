@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 from typing import Any
 
 import pytest
@@ -347,6 +348,24 @@ def test_to_ubyte_buf_empty_input_returns_empty_array() -> None:
     buf = to_ubyte_buf(b"")
     assert len(buf) == 0
     assert bytes(buf) == b""
+
+
+def test_init_token_passes_pin_and_label_as_utf8char_buffers() -> None:
+    from pkcs11_check.raw.types_std import CKR_OK
+
+    class FakeRaw:
+        def C_InitToken(self, slot_id: int, pin_buf: Any, pin_len: int, label_buf: Any) -> int:  # noqa: N802
+            assert slot_id == 7
+            assert pin_len == 6
+            assert isinstance(pin_buf, ctypes.Array)
+            assert pin_buf._type_ is ctypes.c_ubyte
+            assert bytes(pin_buf) == b"so-pin"
+            assert isinstance(label_buf, ctypes.Array)
+            assert label_buf._type_ is ctypes.c_ubyte
+            assert bytes(label_buf) == b"pkcs11-check".ljust(32)
+            return CKR_OK
+
+    init_token(FakeRaw(), 7, b"so-pin", "pkcs11-check")
 
 
 @pytest.mark.parametrize("size", [64, 4096, 1_048_576])

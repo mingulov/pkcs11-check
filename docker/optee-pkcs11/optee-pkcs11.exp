@@ -1,0 +1,67 @@
+#!/usr/bin/env expect
+set timeout 900
+
+log_user 0
+log_file -a -noappend "serial0.log"
+
+proc fail {message} {
+    puts stderr $message
+    exit 1
+}
+
+proc wait_prompt {} {
+    expect {
+        -re {# } { return }
+        -re {Kernel panic|panic|PANIC|ASSERTION|Assertion} { fail "OP-TEE/QEMU panic while waiting for prompt" }
+        timeout { fail "timeout waiting for OP-TEE guest prompt" }
+        eof { fail "QEMU exited before guest prompt" }
+    }
+}
+
+open "serial1.log" "w+"
+spawn -open [open "|tail -f serial1.log"]
+
+spawn sh -c "$::env(QEMU) $::env(QEMU_CHECK_ARGS)"
+expect {
+    -re {Kernel panic|panic|PANIC|ASSERTION|Assertion} { fail "OP-TEE/QEMU panic during boot" }
+    timeout { fail "timeout booting OP-TEE guest" }
+    eof { fail "QEMU exited before login" }
+    "ogin:" {}
+}
+send -- "root\r\r"
+wait_prompt
+
+send -- "export LD_LIBRARY_PATH=/lib:/lib/arm-linux-gnueabihf\r"
+wait_prompt
+send -- "mkdir -p /mnt/pkcs11-check /var/lib/tee\r"
+wait_prompt
+send -- "mount -t 9p -o trans=virtio,version=9p2000.L host /mnt/pkcs11-check\r"
+wait_prompt
+send -- "mount -t 9p -o trans=virtio,version=9p2000.L secure /var/lib/tee\r"
+wait_prompt
+send -- "pidof tee-supplicant >/dev/null || tee-supplicant -d /dev/tee0 &\r"
+wait_prompt
+send -- ". /mnt/pkcs11-check/runner.env && pkcs11-tool --module \"\$PKCS11_CHECK_MODULE\" --show-info >/mnt/pkcs11-check/artifacts/pkcs11-tool-info.txt\r"
+wait_prompt
+send -- "cd /mnt/pkcs11-check && . ./runner.env && PYTHONPATH=/mnt/pkcs11-check/site python3 /mnt/pkcs11-check/guest-runner.py; echo OPTEE_PKCS11_EXIT:\$?\r"
+
+expect {
+    -re {OPTEE_PKCS11_EXIT:([0-9]+)} {
+        set rc $expect_out(1,string)
+        if {$rc ne "0"} {
+            fail "guest runner failed with exit $rc"
+        }
+    }
+    -re {Kernel panic|panic|PANIC|ASSERTION|Assertion} { fail "OP-TEE/QEMU panic during pkcs11-check" }
+    timeout { fail "timeout running pkcs11-check in OP-TEE guest" }
+    eof { fail "QEMU exited during pkcs11-check" }
+}
+
+wait_prompt
+send -- "sync\r"
+wait_prompt
+send -- "poweroff -f\r"
+expect {
+    eof { exit 0 }
+    timeout { exit 0 }
+}

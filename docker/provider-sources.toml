@@ -104,6 +104,70 @@ commit = "ccc78afee1716436cca832dd3d9388ead2ba05b0"
 commit_date = "2026-02-24T05:23:57Z"
 role = "corepkcs11_release"
 
+[sources.optee_manifest_release]
+kind = "git_tag"
+repo = "https://github.com/OP-TEE/manifest.git"
+selector = "4.10.0"
+commit = "6d5849d5c1e4054980bf430ce1e96ebd0f532590"
+commit_date = "2026-04-17T09:59:45Z"
+role = "optee_qemu_v8_manifest"
+
+[sources.optee_os_release]
+kind = "git_tag"
+repo = "https://github.com/OP-TEE/optee_os.git"
+selector = "4.10.0"
+commit = "753afbbee1682f5d16fd30e87b31058a4fd4f4b8"
+commit_date = "2026-04-17T09:49:20Z"
+role = "optee_secure_world_and_pkcs11_ta"
+
+[sources.optee_client_release]
+kind = "git_tag"
+repo = "https://github.com/OP-TEE/optee_client.git"
+selector = "4.10.0"
+commit = "9f5e90918093c1d1cd264d8149081b64ab7ba672"
+commit_date = "2026-01-05T08:42:34Z"
+role = "optee_libckteec"
+
+[sources.optee_build_release]
+kind = "git_tag"
+repo = "https://github.com/OP-TEE/build.git"
+selector = "4.10.0"
+commit = "53bfd321ee7fd47e450fb88c04b08ea27819f9bc"
+commit_date = "2026-04-14T11:39:40Z"
+role = "optee_qemu_v8_build"
+
+[sources.optee_test_release]
+kind = "git_tag"
+repo = "https://github.com/OP-TEE/optee_test.git"
+selector = "4.10.0"
+commit = "88c93e87a5c172363ee986ded036a25cafcc9d2c"
+commit_date = "2026-03-19T12:52:46Z"
+role = "optee_xtest_reference"
+
+[sources.optee_examples_release]
+kind = "git_tag"
+repo = "https://github.com/linaro-swg/optee_examples.git"
+selector = "4.10.0"
+commit = "934c7edb74a26e90f68024cf441073528444177f"
+commit_date = "2025-12-29T16:12:43Z"
+role = "optee_example_reference"
+
+[sources.optee_buildroot_manifest_pin]
+kind = "git_tag"
+repo = "https://github.com/buildroot/buildroot.git"
+selector = "2025.05"
+commit = "fcde5363aa35220a1f201159a05de652ec6f811f"
+commit_date = "2025-06-09T20:21:47Z"
+role = "optee_manifest_buildroot_pin"
+
+[sources.optee_qemu_manifest_pin]
+kind = "git_tag"
+repo = "https://github.com/qemu/qemu.git"
+selector = "v10.0.0"
+commit = "7c949c53e936aa3a658d84ab53bae5cadaa5d59c"
+commit_date = "2025-04-22T13:32:33Z"
+role = "optee_manifest_qemu_pin"
+
 [sources.opencryptoki_release]
 kind = "git_tag"
 repo = "https://github.com/opencryptoki/opencryptoki.git"
@@ -341,6 +405,23 @@ result_tag = "corePKCS11 v3.6.4 MbedTLS software mock"
 openssl = "not OpenSSL-based: provider builds against MbedTLS 3.6.5 through upstream STANDALONE_TEST_BUILD_UNIX"
 build_features = "custom test config raises object/session capacity and leaves ECDSA enabled; adapter exposes upstream RSA/ECDSA/SHA-256 plus operational SHA256-HMAC and AES-CMAC sign/verify mechanisms"
 build_evidence = "2026-06-06 bash docker/test.sh corepkcs11 --rebuild -- test_interface.py test_digest.py test_mech_digest.py test_operation_termination.py passed"
+
+[targets.optee_pkcs11]
+service = "test-optee-pkcs11"
+provider = "OP-TEE PKCS#11 TA"
+release_source = "optee_manifest_release"
+supporting_sources = [
+  "optee_os_release",
+  "optee_client_release",
+  "optee_build_release",
+  "optee_test_release",
+  "optee_examples_release",
+  "optee_buildroot_manifest_pin",
+  "optee_qemu_manifest_pin",
+]
+openssl = "not OpenSSL-based: OP-TEE manifest uses Mbed TLS mbedtls-3.6.5"
+build_features = "OP-TEE qemu_v8 with CFG_PKCS11_TA, digest-key, TEE-identity auth, check-value, RSA_X_509, enlarged TA heap, virtfs, persistent secure storage, Buildroot Python 3 with pyexpat/xml and zlib, upstream Rust examples disabled"
+build_evidence = "2026-06-07 bash docker/test.sh optee-pkcs11 --timeout 120 -- src/pkcs11_check/testcases/test_interface.py passed"
 
 [targets.bouncyhsm]
 service = "test-bouncyhsm"

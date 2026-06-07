@@ -19,6 +19,7 @@
 # Additional/experimental:
 #   docker compose -f docker/docker-compose.test.yml run test-tpm2
 #   docker compose -f docker/docker-compose.test.yml run test-bouncyhsm
+#   docker compose -f docker/docker-compose.test.yml run test-optee-pkcs11
 #   docker compose -f docker/docker-compose.test.yml run test-pkcs11-mock
 
 x-common: &common
@@ -258,6 +259,22 @@ services:
   # ==========================================================
   # Additional implementations
   # ==========================================================
+
+  # OP-TEE PKCS#11 TA 4.10.0 (QEMU v8 guest, v2.40)
+  test-optee-pkcs11:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: docker/optee-pkcs11/Dockerfile
+      args:
+        OPTEE_REF: "4.10.0"
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/optee-pkcs11
+      PKCS11_CHECK_MODULE: /usr/lib/libckteec.so
+      PKCS11_CHECK_INTERFACE: "2.40"
+      PKCS11_CHECK_PIN: "1234"
+      PKCS11_CHECK_SO_PIN: "87654321"
+      PKCS11_CHECK_SLOT: "0"
 
   # tpm2-pkcs11 with swtpm + tpm2-abrmd
   test-tpm2:

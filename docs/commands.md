@@ -57,7 +57,7 @@ case — `slow` is a *selection* profile, never a way to hide a finding.
 
 ### Available providers
 
-OpenSSL 4.0.0 preferred / 3.6.2 fallback, Kryoptic 1.5.1+PQC, SoftHSM2 2.7.0, OpenCryptoki 3.27.0, NSS softoken, pkcs11-mock 2.0.0, tpm2-pkcs11 1.10.0, BouncyHSM 2.1.1, wolfPKCS11 2.0.0-stable/master, corePKCS11 3.6.4, swtpm 0.10.1, libtpms 0.10.2
+OpenSSL 4.0.0 preferred / 3.6.2 fallback, Kryoptic 1.5.1+PQC, SoftHSM2 2.7.0, OpenCryptoki 3.27.0, NSS softoken, pkcs11-mock 2.0.0, tpm2-pkcs11 1.10.0, BouncyHSM 2.1.1, wolfPKCS11 2.0.0-stable/master, corePKCS11 3.6.4, OP-TEE PKCS#11 4.10.0 QEMU target, swtpm 0.10.1, libtpms 0.10.2
 
 ### Worktree Kryoptic testing
 
@@ -87,9 +87,15 @@ bash docker/test.sh opencryptoki
 bash docker/test.sh wolfpkcs11 -- src/pkcs11_check/testcases/test_interface.py
 bash docker/test.sh wolfpkcs11-master -- src/pkcs11_check/testcases/test_interface.py
 bash docker/test.sh corepkcs11 -- src/pkcs11_check/testcases/test_interface.py
+bash docker/test.sh optee-pkcs11 -- src/pkcs11_check/testcases/test_interface.py
 bash docker/test.sh nss --timeout 30 -- src/pkcs11_check/testcases/test_interface.py
 docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2
 docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2-generated-iv
 ```
+
+`optee-pkcs11` is a heavy/manual Docker target. It builds and boots OP-TEE
+`qemu_v8`, so it is callable by name and through `bash docker/test-all.sh
+--heavy`, but it is intentionally excluded from default Docker runs and ordinary
+`--all`.
 
 See [docker-artifacts.md](docker-artifacts.md) for the runner contract and artifact layout.

@@ -7,6 +7,7 @@
 #   bash docker/test-all.sh -- src/pkcs11_check/testcases/test_interface.py
 #   bash docker/test-all.sh softhsm2 nss -- test_interop
 #   bash docker/test-all.sh --all                              # every target
+#   bash docker/test-all.sh --heavy                            # heavy/manual targets
 #
 # Arguments before "--" that match a known provider are treated as targets.
 # Everything else (before and after "--") is forwarded to docker/test.sh.
@@ -35,11 +36,24 @@ ALL_PROVIDERS=(
     bouncyhsm
 )
 
-_is_provider() {
+HEAVY_PROVIDERS=(
+    optee-pkcs11
+)
+
+_contains_provider() {
     local name="${1#test-}"
-    for t in "${ALL_PROVIDERS[@]}"; do
+    shift
+    local t
+    for t in "$@"; do
         [[ "$name" == "$t" ]] && return 0
     done
+    return 1
+}
+
+_is_provider() {
+    local name="${1#test-}"
+    _contains_provider "$name" "${ALL_PROVIDERS[@]}" && return 0
+    _contains_provider "$name" "${HEAVY_PROVIDERS[@]}" && return 0
     return 1
 }
 
@@ -59,6 +73,8 @@ for arg in "$@"; do
         shared_args+=("$arg")
     elif [[ "$arg" == "--all" ]]; then
         providers=("${ALL_PROVIDERS[@]}")
+    elif [[ "$arg" == "--heavy" || "$arg" == "--all-heavy" ]]; then
+        providers=("${HEAVY_PROVIDERS[@]}")
     elif [[ $past_separator -eq 0 ]] && _is_provider "$arg"; then
         providers+=("${arg#test-}")
     else

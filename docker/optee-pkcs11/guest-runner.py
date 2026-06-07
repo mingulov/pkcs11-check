@@ -31,7 +31,9 @@ DEFAULT_MODULE = "/usr/lib/libckteec.so"
 DEFAULT_SLOT = "0"
 DEFAULT_INTERFACE = "2.40"
 DEFAULT_ARTIFACT_DIR = "/mnt/artifacts"
-DEFAULT_TARGET = "src/pkcs11_check/testcases/"
+DEFAULT_SITE = "/mnt/pkcs11-check/site"
+DEFAULT_TARGET = "pkcs11_check/testcases"
+SOURCE_TESTCASE_PREFIX = "src/pkcs11_check/testcases"
 DEFAULT_TOKEN_LABEL = "pkcs11-check"
 DEFAULT_SO_PIN = "87654321"
 DEFAULT_USER_PIN = "1234"
@@ -46,6 +48,18 @@ def _shlex_split(value: str | None) -> list[str]:
 def _artifact_path(env: Mapping[str, str], name: str) -> str:
     artifact_dir = Path(env.get("PKCS11_CHECK_ARTIFACT_DIR", DEFAULT_ARTIFACT_DIR))
     return str(artifact_dir / name)
+
+
+def normalize_target(env: Mapping[str, str], target: str) -> str:
+    source_prefix = SOURCE_TESTCASE_PREFIX.rstrip("/")
+    normalized = target.rstrip("/")
+    site = Path(env.get("PKCS11_CHECK_SITE", DEFAULT_SITE))
+    if normalized == source_prefix:
+        return str(site / DEFAULT_TARGET)
+    testcase_prefix = f"{source_prefix}/"
+    if target.startswith(testcase_prefix):
+        return str(site / target.removeprefix("src/"))
+    return target
 
 
 def build_cli_args(env: Mapping[str, str]) -> list[str]:
@@ -98,12 +112,14 @@ def build_cli_args(env: Mapping[str, str]) -> list[str]:
 
     args.extend(_shlex_split(env.get("PKCS11_CHECK_EXTRA_ARGS")))
     targets = _shlex_split(env.get("PKCS11_CHECK_TARGETS"))
-    args.extend(targets if targets else [DEFAULT_TARGET])
+    args.extend(normalize_target(env, target) for target in targets)
+    if not targets:
+        args.append(str(Path(env.get("PKCS11_CHECK_SITE", DEFAULT_SITE)) / DEFAULT_TARGET))
     return args
 
 
 def render_serial_command(env: Mapping[str, str]) -> str:
-    python_path = env.get("PKCS11_CHECK_SITE", "/mnt/pkcs11-check/site")
+    python_path = env.get("PKCS11_CHECK_SITE", DEFAULT_SITE)
     runner = env.get("PKCS11_CHECK_GUEST_RUNNER", "/mnt/pkcs11-check/guest-runner.py")
     return f"PYTHONPATH={shlex.quote(python_path)} python3 {shlex.quote(runner)}"
 
