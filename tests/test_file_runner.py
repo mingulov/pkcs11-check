@@ -2600,6 +2600,80 @@ def test_run_isolated_pytest_units_extracts_per_unit_details(
     assert report["units"][0]["counts"]["passed"] == 1
 
 
+def test_run_isolated_pytest_units_does_not_retain_cached_report_records(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Large file-level report logs are cached on disk, not retained in state memory."""
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        unit = next((arg for arg in cmd if arg.startswith("test_")), "test_unknown.py")
+        for index, arg in enumerate(cmd):
+            if arg == "--report-log" and index + 1 < len(cmd):
+                jsonl_path = Path(cmd[index + 1])
+                jsonl_path.write_text(
+                    "\n".join(
+                        json.dumps(
+                            {
+                                "$report_type": "TestReport",
+                                "nodeid": f"{unit}::test_{case}",
+                                "when": "call",
+                                "outcome": "passed",
+                                "duration": 0.01,
+                            }
+                        )
+                        for case in range(10)
+                    )
+                    + "\n"
+                )
+                break
+        return (0, "", "")
+
+    seen_record_sizes: list[int] = []
+    real_save_run_state = file_runner_mod.save_run_state
+
+    def observing_save_run_state(path: Path, state: FileRunState) -> None:
+        seen_record_sizes.append(
+            sum(len(records) for records in state.report_records_by_unit.values())
+        )
+        real_save_run_state(path, state)
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(file_runner_mod, "save_run_state", observing_save_run_state)
+
+    report_path = tmp_path / "results.json"
+    state_file = tmp_path / "state.json"
+
+    exit_code = run_isolated_pytest_units(
+        ["test_a.py", "test_b.py"],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=IsolatedReportConfig(
+            "json",
+            report_path,
+            jsonl_path=tmp_path / "report.jsonl",
+        ),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    assert seen_record_sizes
+    assert max(seen_record_sizes) == 0
+    report = json.loads(report_path.read_text())
+    assert report["summary"]["passed"] == 20
+    assert len(_load_cached_report_records_by_unit(state_file, ["test_a.py", "test_b.py"])) == 2
+
+
 def test_run_isolated_pytest_units_writes_quality_report(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

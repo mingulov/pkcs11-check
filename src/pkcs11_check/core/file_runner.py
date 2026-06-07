@@ -1415,9 +1415,9 @@ def save_run_state(path: Path, state: FileRunState) -> None:
     them back from those shards. Embedding the records in state.json made the
     payload grow to hundreds of MB and turned the per-unit save into an O(n^2)
     re-serialization (~14 min on a full bouncyhsm round) for data that is never
-    the sole source of truth. The in-memory dict remains available as a
-    same-process fallback in the merge step; on resume the records are
-    reconstructed from the shards (and the prior report.jsonl).
+    the sole source of truth. The in-memory dict is retained only as a
+    legacy/debug inline-state fallback; normal runs reconstruct records from
+    the shards (and the prior report.jsonl on resume).
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     payload: dict[str, Any] = {
@@ -2240,7 +2240,6 @@ def run_isolated_pytest_units(
         )
 
     per_unit_details: dict[str, dict[str, Any]] = {}
-    report_records_by_unit: dict[str, list[dict[str, Any]]] = {}
     executed_units: set[str] = set()
     available_mechanisms = _load_available_mechanisms(pytest_args)
 
@@ -2393,8 +2392,6 @@ def run_isolated_pytest_units(
                     if unit_jsonl_path is not None:
                         unit_records = _load_report_log_records(unit_jsonl_path)
                         if unit_records:
-                            report_records_by_unit[unit] = unit_records
-                            state.report_records_by_unit[unit] = unit_records
                             if report_config is not None and report_config.jsonl_path is not None:
                                 _write_unit_report_record_cache(state_file, unit, unit_records)
                     result = FileRunResult(
@@ -2650,8 +2647,6 @@ def run_isolated_pytest_units(
                                     if not tmp.exists():
                                         continue
                                     to_aggr_records.extend(_load_report_log_records(tmp))
-                                report_records_by_unit[unit] = to_aggr_records
-                                state.report_records_by_unit[unit] = to_aggr_records
                                 _write_unit_report_record_cache(state_file, unit, to_aggr_records)
                                 save_run_state(state_file, state)
                             for tmp in all_iter_jsonls:
@@ -2731,8 +2726,6 @@ def run_isolated_pytest_units(
                 detail: dict[str, Any] | None = None
                 if unit_jsonl_path is not None:
                     unit_records = _load_report_log_records(unit_jsonl_path)
-                    report_records_by_unit[unit] = unit_records
-                    state.report_records_by_unit[unit] = unit_records
                     if report_config is not None and report_config.jsonl_path is not None:
                         _write_unit_report_record_cache(state_file, unit, unit_records)
                     # Reuse the records loaded just above rather than re-reading
@@ -3073,8 +3066,6 @@ def run_isolated_pytest_units(
                                     if not tmp.exists():
                                         continue
                                     unit_records.extend(_load_report_log_records(tmp))
-                                report_records_by_unit[unit] = unit_records
-                                state.report_records_by_unit[unit] = unit_records
                                 _write_unit_report_record_cache(state_file, unit, unit_records)
                                 save_run_state(state_file, state)
                             for tmp in all_iter_jsonls:
@@ -3156,9 +3147,10 @@ def run_isolated_pytest_units(
         merged_details = dict(per_unit_details)
         if report_config is not None:
             if report_config.jsonl_path is not None:
-                merged_report_records_by_unit = _load_cached_report_records_by_unit(
+                cached_report_records_by_unit = _load_cached_report_records_by_unit(
                     state_file, state.units
                 )
+                merged_report_records_by_unit = dict(cached_report_records_by_unit)
                 for unit, records in state.report_records_by_unit.items():
                     merged_report_records_by_unit.setdefault(unit, records)
                 if resume and report_config.jsonl_path.exists():
@@ -3172,8 +3164,12 @@ def run_isolated_pytest_units(
                     for unit, records in parsed_report_records.items():
                         merged_report_records_by_unit.setdefault(unit, records)
                     for unit in executed_units:
-                        merged_report_records_by_unit.pop(unit, None)
-                    merged_report_records_by_unit.update(report_records_by_unit)
+                        if unit in cached_report_records_by_unit:
+                            merged_report_records_by_unit[unit] = (
+                                cached_report_records_by_unit[unit]
+                            )
+                        else:
+                            merged_report_records_by_unit.pop(unit, None)
                 if merged_report_records_by_unit:
                     _write_report_jsonl_from_record_map(
                         merged_report_records_by_unit,

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -522,6 +526,128 @@ def test_optee_pkcs11_runtime_copies_guest_artifacts_even_on_failure() -> None:
     assert 'cp -a "$share_dir/artifacts/." "$artifact_dir/"' in script
     assert 'cp /optee/out/bin/serial0.log "$artifact_dir/serial0.log"' in script
     assert 'cp /optee/out/bin/serial1.log "$artifact_dir/serial1.log"' in script
+
+
+def test_optee_pkcs11_runtime_salvages_state_cache_before_artifact_gate() -> None:
+    script = (ROOT / "docker/optee-pkcs11/run-optee-pkcs11.sh").read_text()
+
+    assert "salvage_optee_artifacts()" in script
+    assert "docker/optee-pkcs11/salvage-artifacts.py" in script
+    assert script.index("salvage_optee_artifacts") < script.index("for required in")
+
+
+def test_optee_salvage_artifacts_reconstructs_partial_results(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "optee-pkcs11-shard-0"
+    cache_dir = artifact_dir / ".state.json.report-records"
+    cache_dir.mkdir(parents=True)
+    units = ["test_alpha.py", "test_beta.py", "test_pending.py"]
+    state = {
+        "fingerprint": "demo",
+        "units": units,
+        "results": [
+            {
+                "target": "test_alpha.py",
+                "status": "failed",
+                "returncode": 1,
+                "duration_s": 12.3,
+                "stdout": "",
+                "stderr": "pytest failed",
+            },
+            {
+                "target": "test_beta.py",
+                "status": "passed",
+                "returncode": 0,
+                "duration_s": 1.5,
+                "stdout": "",
+                "stderr": "",
+            },
+        ],
+    }
+    (artifact_dir / "state.json").write_text(json.dumps(state) + "\n")
+
+    def write_cache(unit: str, records: list[dict[str, object]]) -> None:
+        digest = hashlib.sha256(unit.encode("utf-8")).hexdigest()
+        (cache_dir / f"{digest}.jsonl").write_text(
+            "".join(json.dumps(record) + "\n" for record in records)
+        )
+
+    write_cache(
+        "test_alpha.py",
+        [
+            {
+                "$report_type": "TestReport",
+                "nodeid": "test_alpha.py::test_ok",
+                "when": "setup",
+                "outcome": "passed",
+                "duration": 0.01,
+            },
+            {
+                "$report_type": "TestReport",
+                "nodeid": "test_alpha.py::test_ok",
+                "when": "call",
+                "outcome": "passed",
+                "duration": 0.1,
+            },
+            {
+                "$report_type": "TestReport",
+                "nodeid": "test_alpha.py::test_bad",
+                "when": "call",
+                "outcome": "failed",
+                "duration": 0.2,
+                "longrepr": "assert False",
+            },
+        ],
+    )
+    write_cache(
+        "test_beta.py",
+        [
+            {
+                "$report_type": "TestReport",
+                "nodeid": "test_beta.py::test_ok",
+                "when": "setup",
+                "outcome": "passed",
+                "duration": 0.01,
+            },
+            {
+                "$report_type": "TestReport",
+                "nodeid": "test_beta.py::test_ok",
+                "when": "call",
+                "outcome": "passed",
+                "duration": 0.1,
+            }
+        ],
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "docker/optee-pkcs11/salvage-artifacts.py"),
+            str(artifact_dir),
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads((artifact_dir / "results.json").read_text())
+    assert payload["summary"] == {
+        "passed": 2,
+        "failed": 1,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 3,
+    }
+    assert [unit["target"] for unit in payload["units"]] == ["test_alpha.py", "test_beta.py"]
+    assert payload["units"][0]["tests"][0]["nodeid"] == "test_alpha.py::test_bad"
+    assert len((artifact_dir / "report.jsonl").read_text().splitlines()) == 5
+    quality = json.loads((artifact_dir / "quality.json").read_text())
+    assert quality["schema_version"] == "1"
+    assert "partial OP-TEE artifact salvage" in quality["data_quality_warnings"]
 
 
 def test_optee_pkcs11_runtime_live_syncs_progress_for_long_runs() -> None:

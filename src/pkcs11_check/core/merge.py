@@ -273,6 +273,15 @@ def _load_shard_payload(shard_dir: Path, warnings: list[str]) -> dict[str, Any] 
             )
         else:
             if isinstance(data, dict):
+                partial = data.get("partial")
+                if isinstance(partial, dict):
+                    completed = partial.get("completed_units", "?")
+                    planned = partial.get("planned_units", "?")
+                    reason = str(partial.get("reason", "partial shard results"))
+                    warnings.append(
+                        f"{shard_dir.name}: partial results ({completed}/{planned} "
+                        f"units completed): {reason}"
+                    )
                 return data
             warnings.append(
                 f"{shard_dir.name}: results.json is not an object; "

@@ -91,6 +91,7 @@ COPY . .
 
 RUN chmod +x \
     /app/docker/optee-pkcs11/build-guest-site.sh \
+    /app/docker/optee-pkcs11/salvage-artifacts.py \
     /app/docker/optee-pkcs11/run-optee-pkcs11.sh \
     /app/docker/optee-pkcs11/optee-pkcs11.exp
 

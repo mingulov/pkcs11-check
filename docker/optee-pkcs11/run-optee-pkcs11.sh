@@ -40,6 +40,10 @@ copy_optee_artifacts() {
     fi
 }
 
+salvage_optee_artifacts() {
+    python3 /app/docker/optee-pkcs11/salvage-artifacts.py "$artifact_dir" || true
+}
+
 print_optee_progress_summary() {
     python3 - "$share_dir/artifacts/state.json" <<'PY' || true
 from __future__ import annotations
@@ -112,6 +116,7 @@ copy_optee_artifacts_on_exit() {
     rc=$?
     stop_optee_progress_sync
     copy_optee_artifacts
+    salvage_optee_artifacts
     exit "$rc"
 }
 
@@ -245,6 +250,7 @@ fi
 
 stop_optee_progress_sync
 copy_optee_artifacts
+salvage_optee_artifacts
 
 for required in results.json state.json quality.json report.jsonl serial0.log serial1.log; do
     if [[ ! -s "$artifact_dir/$required" ]]; then
