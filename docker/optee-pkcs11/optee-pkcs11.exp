@@ -1,5 +1,8 @@
 #!/usr/bin/env expect
-set timeout 900
+set timeout 7200
+if {[info exists env(PKCS11_CHECK_OPTEE_EXPECT_TIMEOUT)]} {
+    set timeout $env(PKCS11_CHECK_OPTEE_EXPECT_TIMEOUT)
+}
 
 log_user 0
 log_file -a -noappend "serial0.log"

@@ -104,6 +104,14 @@ commit = "ccc78afee1716436cca832dd3d9388ead2ba05b0"
 commit_date = "2026-02-24T05:23:57Z"
 role = "corepkcs11_release"
 
+[sources.corepkcs11_main]
+kind = "git_branch"
+repo = "https://github.com/FreeRTOS/corePKCS11.git"
+selector = "main"
+commit = "ccc78afee1716436cca832dd3d9388ead2ba05b0"
+commit_date = "2026-02-24T05:23:57Z"
+role = "corepkcs11_main"
+
 [sources.optee_manifest_release]
 kind = "git_tag"
 repo = "https://github.com/OP-TEE/manifest.git"
@@ -111,6 +119,14 @@ selector = "4.10.0"
 commit = "6d5849d5c1e4054980bf430ce1e96ebd0f532590"
 commit_date = "2026-04-17T09:59:45Z"
 role = "optee_qemu_v8_manifest"
+
+[sources.optee_manifest_master]
+kind = "git_branch"
+repo = "https://github.com/OP-TEE/manifest.git"
+selector = "master"
+commit = "055c16fc03028e36a44cb6c1c91ba8bf368702a1"
+commit_date = "2026-06-04T06:48:09Z"
+role = "optee_qemu_v8_manifest_master"
 
 [sources.optee_os_release]
 kind = "git_tag"
@@ -401,15 +417,26 @@ build_evidence = "2026-06-06 bash docker/test.sh wolfpkcs11-master full run comp
 service = "test-corepkcs11"
 provider = "corePKCS11"
 release_source = "corepkcs11_release"
+branch_source = "corepkcs11_main"
 result_tag = "corePKCS11 v3.6.4 MbedTLS software mock"
 openssl = "not OpenSSL-based: provider builds against MbedTLS 3.6.5 through upstream STANDALONE_TEST_BUILD_UNIX"
 build_features = "custom test config raises object/session capacity and leaves ECDSA enabled; adapter exposes upstream RSA/ECDSA/SHA-256 plus operational SHA256-HMAC and AES-CMAC sign/verify mechanisms"
 build_evidence = "2026-06-06 bash docker/test.sh corepkcs11 --rebuild -- test_interface.py test_digest.py test_mech_digest.py test_operation_termination.py passed"
 
+[targets.corepkcs11_main]
+service = "test-corepkcs11-main"
+provider = "corePKCS11 main"
+branch_source = "corepkcs11_main"
+result_tag = "corePKCS11 main MbedTLS software mock"
+openssl = "not OpenSSL-based: provider builds against MbedTLS through upstream STANDALONE_TEST_BUILD_UNIX"
+build_features = "same adapter/config as release target; currently corePKCS11 main resolves to the same commit as v3.6.4"
+build_evidence = "target wired for branch comparison; full Docker validation pending"
+
 [targets.optee_pkcs11]
 service = "test-optee-pkcs11"
 provider = "OP-TEE PKCS#11 TA"
 release_source = "optee_manifest_release"
+branch_source = "optee_manifest_master"
 supporting_sources = [
   "optee_os_release",
   "optee_client_release",
@@ -422,6 +449,14 @@ supporting_sources = [
 openssl = "not OpenSSL-based: OP-TEE manifest uses Mbed TLS mbedtls-3.6.5"
 build_features = "OP-TEE qemu_v8 with CFG_PKCS11_TA, digest-key, TEE-identity auth, check-value, RSA_X_509, enlarged TA heap, virtfs, persistent secure storage, Buildroot Python 3 with pyexpat/xml and zlib, upstream Rust examples disabled"
 build_evidence = "2026-06-07 bash docker/test.sh optee-pkcs11 --timeout 120 -- src/pkcs11_check/testcases/test_interface.py passed"
+
+[targets.optee_pkcs11_master]
+service = "test-optee-pkcs11-master"
+provider = "OP-TEE PKCS#11 TA master"
+branch_source = "optee_manifest_master"
+openssl = "not OpenSSL-based: OP-TEE manifest uses its pinned Mbed TLS revision"
+build_features = "same qemu_v8 PKCS#11 TA feature flags as release target, built from OP-TEE manifest master"
+build_evidence = "target wired for branch comparison; full Docker validation pending"
 
 [targets.bouncyhsm]
 service = "test-bouncyhsm"

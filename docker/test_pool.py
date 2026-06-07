@@ -65,6 +65,12 @@ DEFAULT_PROVIDERS = [
     "pkcs11-mock",
     "tpm2",
 ]
+# Additional stable providers that are tracked but intentionally not part of the
+# default quick matrix because they are slower, narrower, or non-system tokens.
+ADDITIONAL_PROVIDERS = [
+    "wolfpkcs11",
+    "corepkcs11",
+]
 # Development-branch / variant images (cold builds; some may build-fail and be skipped).
 VARIANT_PROVIDERS = [
     "softhsm2-main",
@@ -74,10 +80,22 @@ VARIANT_PROVIDERS = [
     "nss-main",
     "nss-main-slot0",
     "opencryptoki-master",
+    "wolfpkcs11-master",
+    "corepkcs11-main",
 ]
-ALL_PROVIDERS = DEFAULT_PROVIDERS + VARIANT_PROVIDERS
+# Heavy/manual providers are runnable through the pool, but not included in
+# default or normal --all sweeps.
+HEAVY_PROVIDERS = [
+    "optee-pkcs11",
+]
+HEAVY_VARIANT_PROVIDERS = [
+    "optee-pkcs11-master",
+]
+ALL_HEAVY_PROVIDERS = HEAVY_PROVIDERS + HEAVY_VARIANT_PROVIDERS
+ALL_PROVIDERS = DEFAULT_PROVIDERS + ADDITIONAL_PROVIDERS + VARIANT_PROVIDERS
 TESTCASES = "src/pkcs11_check/testcases"
 COMPOSE = ["docker", "compose", "-f", "docker/docker-compose.test.yml"]
+VECTOR_DATA_DIRS = ("wycheproof", "acvp", "cctv", "x509-limbo")
 
 # NSS exposes the digest / bulk-cipher / KDF mechanisms only on slot 0 (Internal
 # Cryptographic Services); the default slot-1 (cert/key DB) pass skips them. The
@@ -137,6 +155,33 @@ def discover_files(testcases: str) -> list[str]:
     return sorted(str(p) for p in Path(testcases).rglob("test_*.py"))
 
 
+def has_vector_data(data_dir: Path) -> bool:
+    return any((data_dir / name).is_dir() for name in VECTOR_DATA_DIRS)
+
+
+def resolve_host_data_dir(project_root: Path) -> Path:
+    explicit = os.environ.get("PKCS11_CHECK_HOST_DATA_DIR")
+    if explicit:
+        return Path(explicit)
+
+    repo_data = project_root / "data"
+    if has_vector_data(repo_data):
+        return repo_data
+
+    xdg_data_home = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share")))
+    user_data = xdg_data_home / "pkcs11-check" / "data"
+    if has_vector_data(user_data):
+        return user_data
+
+    return repo_data
+
+
+def compose_env(project_root: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    env["PKCS11_CHECK_HOST_DATA_DIR"] = str(resolve_host_data_dir(project_root))
+    return env
+
+
 def files_for_provider(provider: str, all_files: list[str], testcases: str) -> list[str]:
     """Scope the `*-slot0` NSS passes to the slot-0-unique files (coverage-neutral);
     every other provider runs the full suite."""
@@ -155,16 +200,21 @@ def files_for_provider(provider: str, all_files: list[str], testcases: str) -> l
     return sorted(f for f in all_files if f in wanted)
 
 
-def build_image(provider: str) -> tuple[str, bool]:
+def build_image(provider: str, env: dict[str, str]) -> tuple[str, bool]:
     log = Path(f"/tmp/pool-build-{provider}.log")
     with log.open("w") as fh:
         rc = subprocess.run(  # noqa: S603
-            [*COMPOSE, "build", f"test-{provider}"], stdout=fh, stderr=subprocess.STDOUT
+            [*COMPOSE, "build", f"test-{provider}"],
+            stdout=fh,
+            stderr=subprocess.STDOUT,
+            env=env,
         ).returncode
     return provider, rc == 0
 
 
-def run_item(provider: str, idx: int, files: list[str]) -> tuple[str, int, int]:
+def run_item(
+    provider: str, idx: int, files: list[str], env: dict[str, str]
+) -> tuple[str, int, int]:
     """Run one (provider, batch) container. Returns (provider, idx, returncode)."""
     log = Path(f"/tmp/pool-{provider}-{idx}.log")
     rv_trace_env = (
@@ -192,6 +242,7 @@ def run_item(provider: str, idx: int, files: list[str]) -> tuple[str, int, int]:
             ],
             stdout=fh,
             stderr=subprocess.STDOUT,
+            env=env,
         ).returncode
     return provider, idx, rc
 
@@ -230,8 +281,17 @@ def main() -> int:
     ap.add_argument(
         "--all",
         action="store_true",
-        help="run the stable set PLUS the dev/variant images (softhsm2-main, kryoptic-main, "
-        "kryoptic-fips, nss-main, opencryptoki-master, softhsm2-generated-iv)",
+        help="run the stable tracked set PLUS dev/variant images; excludes heavy/manual targets",
+    )
+    ap.add_argument(
+        "--heavy",
+        action="store_true",
+        help="run heavy/manual targets only (currently optee-pkcs11)",
+    )
+    ap.add_argument(
+        "--all-heavy",
+        action="store_true",
+        help="run heavy/manual release and dev/variant targets",
     )
     ap.add_argument(
         "--dry-run",
@@ -252,9 +312,25 @@ def main() -> int:
         if n:
             shard_map[name] = int(n)
     if not providers:
-        providers = list(ALL_PROVIDERS if args.all else DEFAULT_PROVIDERS)
+        if args.all_heavy:
+            providers = list(ALL_HEAVY_PROVIDERS)
+        elif args.heavy:
+            providers = list(HEAVY_PROVIDERS)
+        else:
+            providers = list(ALL_PROVIDERS if args.all else DEFAULT_PROVIDERS)
 
     project_root = Path.cwd()
+    docker_env = compose_env(project_root)
+    host_data_dir = Path(docker_env["PKCS11_CHECK_HOST_DATA_DIR"])
+    if not has_vector_data(host_data_dir):
+        print(
+            "WARNING: no test vector data found; full vector-backed collection may be incomplete. "
+            "Run: uv run pkcs11-check fetch-data all",
+            file=sys.stderr,
+        )
+    elif "PKCS11_CHECK_HOST_DATA_DIR" not in os.environ and host_data_dir != project_root / "data":
+        print(f"Using fetched test vector data: {host_data_dir}", file=sys.stderr)
+
     files = discover_files(args.testcases)
     if not files:
         print(f"ERROR: no test_*.py under {args.testcases}", file=sys.stderr)
@@ -267,7 +343,7 @@ def main() -> int:
     if not args.no_build and not args.dry_run:
         for p in providers:
             print(f"--- build test-{p} ---")
-            _, ok = build_image(p)
+            _, ok = build_image(p, docker_env)
             if not ok:
                 print(f"  BUILD FAILED (see /tmp/pool-build-{p}.log)")
 
@@ -303,7 +379,7 @@ def main() -> int:
     print(f"=== running {len(workitems)} items through {args.concurrency} workers (mixed) ===")
     start = time.time()
     with ThreadPoolExecutor(max_workers=args.concurrency) as ex:
-        results = list(ex.map(lambda w: run_item(*w), workitems))
+        results = list(ex.map(lambda w: run_item(*w, docker_env), workitems))
     wall = int(time.time() - start)
     nonzero = sum(1 for _, _, rc in results if rc not in (0, 1))  # 1 == failing tests (expected)
     if nonzero:
@@ -317,6 +393,7 @@ def main() -> int:
     )
     print(hdr)
     print("-" * len(hdr))
+    incomplete_results = False
     for p in providers:
         n = shard_map.get(p, 1)
         dirs = [Path(f"artifacts/{p}-shard-{i}") for i in range(n)]
@@ -331,6 +408,7 @@ def main() -> int:
         ]
         complete = sum(1 for d in dirs if (d / "results.json").exists())
         if complete != n:
+            incomplete_results = True
             salvageable = len(present) - complete
             print(
                 f"  WARN: {p} produced {complete}/{n} complete shard results "
@@ -347,13 +425,14 @@ def main() -> int:
                 f"{s.get('failed', 0):>8} {s.get('crashed', 0):>8} {s.get('timeout', 0):>8}"
             )
         else:
+            incomplete_results = True
             print(f"{p:<20} {n:>6} {'NO-RESULTS':>8}")
 
     print(
         f"=== GLOBAL wall: {wall // 60}m{wall % 60}s for {len(providers)} providers / "
         f"{len(workitems)} items / K={args.concurrency} ==="
     )
-    return 0
+    return 1 if nonzero or incomplete_results else 0
 
 
 if __name__ == "__main__":

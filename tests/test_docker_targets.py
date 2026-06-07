@@ -237,6 +237,21 @@ def test_corepkcs11_compose_service_uses_latest_release_tag() -> None:
     assert 'PKCS11_CHECK_PIN: "0000"' in block
 
 
+def test_corepkcs11_main_compose_service_tracks_development_branch() -> None:
+    compose = (ROOT / "docker/docker-compose.test.yml").read_text()
+
+    assert "test-corepkcs11-main:" in compose
+
+    block = compose.split("test-corepkcs11-main:")[1].split("test-", maxsplit=1)[0]
+
+    assert "dockerfile: docker/corepkcs11/Dockerfile" in block
+    assert 'COREPKCS11_REF: "main"' in block
+    assert "PKCS11_CHECK_ARTIFACT_DIR: /artifacts/corepkcs11-main" in block
+    assert "PKCS11_CHECK_MODULE: /usr/local/lib/libcorepkcs11_adapter.so" in block
+    assert 'PKCS11_CHECK_SLOT: "0"' in block
+    assert 'PKCS11_CHECK_PIN: "0000"' in block
+
+
 def test_corepkcs11_dockerfile_builds_release_with_adapter_and_max_config() -> None:
     dockerfile_path = ROOT / "docker/corepkcs11/Dockerfile"
 
@@ -311,10 +326,12 @@ def test_corepkcs11_targets_are_tracked_but_not_default_matrix() -> None:
     all_block = script.split("ALL_PROVIDERS=(")[1].split(")", maxsplit=1)[0]
 
     assert "corepkcs11" not in default_block
+    assert "corepkcs11-main" not in default_block
     assert "corepkcs11" in all_block
+    assert "corepkcs11-main" in all_block
 
 
-def test_corepkcs11_source_manifest_tracks_latest_release() -> None:
+def test_corepkcs11_source_manifest_tracks_latest_release_and_main() -> None:
     manifest = tomllib.loads((ROOT / "docker/provider-sources.toml").read_text())
 
     source = manifest["sources"]["corepkcs11_release"]
@@ -323,10 +340,22 @@ def test_corepkcs11_source_manifest_tracks_latest_release() -> None:
     assert source["selector"] == "v3.6.4"
     assert source["commit"] == "ccc78afee1716436cca832dd3d9388ead2ba05b0"
 
+    main_source = manifest["sources"]["corepkcs11_main"]
+    assert main_source["kind"] == "git_branch"
+    assert main_source["repo"] == "https://github.com/FreeRTOS/corePKCS11.git"
+    assert main_source["selector"] == "main"
+    assert main_source["commit"] == "ccc78afee1716436cca832dd3d9388ead2ba05b0"
+
     target = manifest["targets"]["corepkcs11"]
     assert target["service"] == "test-corepkcs11"
     assert target["release_source"] == "corepkcs11_release"
+    assert target["branch_source"] == "corepkcs11_main"
     assert target["result_tag"] == "corePKCS11 v3.6.4 MbedTLS software mock"
+
+    main_target = manifest["targets"]["corepkcs11_main"]
+    assert main_target["service"] == "test-corepkcs11-main"
+    assert main_target["branch_source"] == "corepkcs11_main"
+    assert main_target["result_tag"] == "corePKCS11 main MbedTLS software mock"
 
 
 def test_optee_pkcs11_compose_service_is_heavy_qemu_target() -> None:
@@ -339,6 +368,22 @@ def test_optee_pkcs11_compose_service_is_heavy_qemu_target() -> None:
     assert "dockerfile: docker/optee-pkcs11/Dockerfile" in block
     assert 'OPTEE_REF: "4.10.0"' in block
     assert "PKCS11_CHECK_ARTIFACT_DIR: /artifacts/optee-pkcs11" in block
+    assert "PKCS11_CHECK_MODULE: /usr/lib/libckteec.so" in block
+    assert 'PKCS11_CHECK_INTERFACE: "2.40"' in block
+    assert 'PKCS11_CHECK_SLOT: "0"' in block
+    assert 'PKCS11_CHECK_PIN: "1234"' in block
+
+
+def test_optee_pkcs11_master_compose_service_is_heavy_qemu_branch_target() -> None:
+    compose = (ROOT / "docker/docker-compose.test.yml").read_text()
+
+    assert "test-optee-pkcs11-master:" in compose
+
+    block = compose.split("test-optee-pkcs11-master:")[1].split("test-", maxsplit=1)[0]
+
+    assert "dockerfile: docker/optee-pkcs11/Dockerfile" in block
+    assert 'OPTEE_REF: "master"' in block
+    assert "PKCS11_CHECK_ARTIFACT_DIR: /artifacts/optee-pkcs11-master" in block
     assert "PKCS11_CHECK_MODULE: /usr/lib/libckteec.so" in block
     assert 'PKCS11_CHECK_INTERFACE: "2.40"' in block
     assert 'PKCS11_CHECK_SLOT: "0"' in block
@@ -386,10 +431,15 @@ def test_optee_pkcs11_target_is_heavy_and_not_regular_all() -> None:
     default_block = script.split("DEFAULT_PROVIDERS=(")[1].split(")", maxsplit=1)[0]
     all_block = script.split("ALL_PROVIDERS=(")[1].split(")", maxsplit=1)[0]
     heavy_block = script.split("HEAVY_PROVIDERS=(")[1].split(")", maxsplit=1)[0]
+    heavy_variant_block = script.split("HEAVY_VARIANT_PROVIDERS=(")[1].split(")", maxsplit=1)[0]
 
     assert "optee-pkcs11" not in default_block
+    assert "optee-pkcs11-master" not in default_block
     assert "optee-pkcs11" not in all_block
+    assert "optee-pkcs11-master" not in all_block
     assert "optee-pkcs11" in heavy_block
+    assert "optee-pkcs11-master" not in heavy_block
+    assert "optee-pkcs11-master" in heavy_variant_block
     assert "--heavy" in script
     assert "--all-heavy" in script
 
@@ -423,6 +473,86 @@ def test_optee_pkcs11_runtime_reuses_build_feature_flags() -> None:
     assert '"${optee_make_args[@]}"' in script
 
 
+def test_optee_pkcs11_runtime_uses_prebuilt_qemu_by_default() -> None:
+    script = (ROOT / "docker/optee-pkcs11/run-optee-pkcs11.sh").read_text()
+    prebuilt_body = script.split("run_prebuilt_qemu() {", maxsplit=1)[1].split(
+        "\n}\n\nrun_make_check()",
+        maxsplit=1,
+    )[0]
+
+    assert (
+        'if [[ "${PKCS11_CHECK_OPTEE_USE_MAKE_CHECK:-0}" == "1" ]]; then\n'
+        "    run_make_check\n"
+        "else\n"
+        "    run_prebuilt_qemu\n"
+        "fi"
+    ) in script
+    assert "make -C /optee/build" not in prebuilt_body
+    assert "QEMU_CHECK_ARGS" in prebuilt_body
+    assert "/optee/qemu/build/qemu-system-aarch64" in prebuilt_body
+
+
+def test_optee_pkcs11_runtime_forwards_full_suite_data_and_disabled_tests() -> None:
+    script = (ROOT / "docker/optee-pkcs11/run-optee-pkcs11.sh").read_text()
+
+    assert 'data_dir="${PKCS11_CHECK_DATA_DIR:-/app/data}"' in script
+    assert 'cp -a "$data_dir" "$share_dir/data"' in script
+    assert "export PKCS11_CHECK_DATA_DIR=/mnt/pkcs11-check/data" in script
+    assert 'disabled_tests_file="${P11TEST_DISABLED_TESTS_FILE:-/app/disabled-tests.txt}"' in script
+    assert 'cp "$disabled_tests_file" "$share_dir/disabled-tests.txt"' in script
+    assert "export P11TEST_DISABLED_TESTS_FILE=/mnt/pkcs11-check/disabled-tests.txt" in script
+
+
+def test_optee_pkcs11_runtime_copies_guest_artifacts_even_on_failure() -> None:
+    script = (ROOT / "docker/optee-pkcs11/run-optee-pkcs11.sh").read_text()
+
+    assert "copy_optee_artifacts()" in script
+    assert "trap copy_optee_artifacts_on_exit EXIT" in script
+    assert 'cp -a "$share_dir/artifacts/." "$artifact_dir/"' in script
+    assert 'cp /optee/out/bin/serial0.log "$artifact_dir/serial0.log"' in script
+    assert 'cp /optee/out/bin/serial1.log "$artifact_dir/serial1.log"' in script
+
+
+def test_optee_pkcs11_runtime_forwards_pool_trace_environment() -> None:
+    script = (ROOT / "docker/optee-pkcs11/run-optee-pkcs11.sh").read_text()
+
+    for name in (
+        "PKCS11_CHECK_RV_TRACE_COMPACT",
+        "PKCS11_CHECK_RV_TRACE_JOURNAL_DIR",
+        "PKCS11_CHECK_RV_TRACE",
+        "PKCS11_CHECK_RV_TRACE_JOURNAL",
+        "PKCS11_CHECK_NO_COLLECTION_CACHE",
+    ):
+        assert f'"{name}"' in script
+
+
+def test_optee_pkcs11_runtime_disables_guest_collection_cache_by_default() -> None:
+    script = (ROOT / "docker/optee-pkcs11/run-optee-pkcs11.sh").read_text()
+
+    assert 'export PKCS11_CHECK_NO_COLLECTION_CACHE="${PKCS11_CHECK_NO_COLLECTION_CACHE:-1}"' in (
+        script
+    )
+
+
+def test_optee_pkcs11_runtime_defaults_to_file_isolation() -> None:
+    script = (ROOT / "docker/optee-pkcs11/run-optee-pkcs11.sh").read_text()
+
+    assert 'export PKCS11_CHECK_ISOLATION="${PKCS11_CHECK_ISOLATION:-file}"' in script
+    assert '"PKCS11_CHECK_ISOLATION"' in script
+
+
+def test_optee_pkcs11_expect_timeout_is_configurable_for_full_suite() -> None:
+    wrapper = (ROOT / "docker/optee-pkcs11/run-optee-pkcs11.sh").read_text()
+    expect_script = (ROOT / "docker/optee-pkcs11/optee-pkcs11.exp").read_text()
+
+    assert (
+        'export PKCS11_CHECK_OPTEE_EXPECT_TIMEOUT="${PKCS11_CHECK_OPTEE_EXPECT_TIMEOUT:-7200}"'
+        in wrapper
+    )
+    assert 'env(PKCS11_CHECK_OPTEE_EXPECT_TIMEOUT)' in expect_script
+    assert "set timeout 7200" in expect_script
+
+
 def test_optee_pkcs11_expect_matches_plain_root_prompt() -> None:
     script = (ROOT / "docker/optee-pkcs11/optee-pkcs11.exp").read_text()
 
@@ -446,10 +576,16 @@ def test_optee_pkcs11_source_manifest_tracks_release_refs() -> None:
     assert manifest["sources"]["optee_build_release"]["selector"] == "4.10.0"
     assert manifest["sources"]["optee_buildroot_manifest_pin"]["selector"] == "2025.05"
     assert manifest["sources"]["optee_qemu_manifest_pin"]["selector"] == "v10.0.0"
+    assert manifest["sources"]["optee_manifest_master"]["selector"] == "master"
+    assert manifest["sources"]["optee_manifest_master"]["kind"] == "git_branch"
+    assert manifest["sources"]["optee_manifest_master"]["commit"] == (
+        "055c16fc03028e36a44cb6c1c91ba8bf368702a1"
+    )
 
     target = manifest["targets"]["optee_pkcs11"]
     assert target["service"] == "test-optee-pkcs11"
     assert target["release_source"] == "optee_manifest_release"
+    assert target["branch_source"] == "optee_manifest_master"
     assert "optee_os_release" in target["supporting_sources"]
     assert "optee_client_release" in target["supporting_sources"]
     assert (
@@ -457,3 +593,7 @@ def test_optee_pkcs11_source_manifest_tracks_release_refs() -> None:
         == "2026-06-07 bash docker/test.sh optee-pkcs11 --timeout 120 -- "
         "src/pkcs11_check/testcases/test_interface.py passed"
     )
+
+    master_target = manifest["targets"]["optee_pkcs11_master"]
+    assert master_target["service"] == "test-optee-pkcs11-master"
+    assert master_target["branch_source"] == "optee_manifest_master"

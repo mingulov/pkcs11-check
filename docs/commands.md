@@ -87,15 +87,28 @@ bash docker/test.sh opencryptoki
 bash docker/test.sh wolfpkcs11 -- src/pkcs11_check/testcases/test_interface.py
 bash docker/test.sh wolfpkcs11-master -- src/pkcs11_check/testcases/test_interface.py
 bash docker/test.sh corepkcs11 -- src/pkcs11_check/testcases/test_interface.py
+bash docker/test.sh corepkcs11-main -- src/pkcs11_check/testcases/test_interface.py
 bash docker/test.sh optee-pkcs11 -- src/pkcs11_check/testcases/test_interface.py
+bash docker/test.sh optee-pkcs11-master -- src/pkcs11_check/testcases/test_interface.py
 bash docker/test.sh nss --timeout 30 -- src/pkcs11_check/testcases/test_interface.py
 docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2
 docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2-generated-iv
+uv run python docker/test_pool.py --dry-run wolfpkcs11 wolfpkcs11-master corepkcs11 corepkcs11-main
+uv run python docker/test_pool.py --dry-run --heavy
+uv run python docker/test_pool.py --dry-run --all-heavy
+uv run python docker/test_pool.py -j 3 optee-pkcs11:3
 ```
 
-`optee-pkcs11` is a heavy/manual Docker target. It builds and boots OP-TEE
-`qemu_v8`, so it is callable by name and through `bash docker/test-all.sh
---heavy`, but it is intentionally excluded from default Docker runs and ordinary
-`--all`.
+`optee-pkcs11` is a heavy/manual Docker target. The OP-TEE `qemu_v8` tree is
+built into the Docker image once; runtime runs boot the prebuilt QEMU/kernel/rootfs
+with fresh shared storage and artifacts, so changing shard counts does not
+rebuild OP-TEE. It is callable by name and through `bash docker/test-all.sh
+--heavy` or `uv run python docker/test_pool.py --heavy`, but it is intentionally
+excluded from default Docker runs and ordinary `--all`. `optee-pkcs11-master`
+tracks the OP-TEE manifest `master` branch and is included only by `--all-heavy`
+or when named explicitly. For a full OP-TEE release pool run, `optee-pkcs11:3 -j
+3` splits the test files into three independent QEMU containers. Set
+`PKCS11_CHECK_OPTEE_USE_MAKE_CHECK=1` only when debugging the upstream OP-TEE
+`make check` path itself.
 
 See [docker-artifacts.md](docker-artifacts.md) for the runner contract and artifact layout.

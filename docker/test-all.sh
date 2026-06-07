@@ -30,7 +30,7 @@ ALL_PROVIDERS=(
     nss nss-slot0 nss-pqc nss-pqc-slot0 nss-main nss-main-slot0
     opencryptoki opencryptoki-master
     wolfpkcs11 wolfpkcs11-master
-    corepkcs11
+    corepkcs11 corepkcs11-main
     tpm2
     pkcs11-mock
     bouncyhsm
@@ -38,6 +38,15 @@ ALL_PROVIDERS=(
 
 HEAVY_PROVIDERS=(
     optee-pkcs11
+)
+
+HEAVY_VARIANT_PROVIDERS=(
+    optee-pkcs11-master
+)
+
+ALL_HEAVY_PROVIDERS=(
+    "${HEAVY_PROVIDERS[@]}"
+    "${HEAVY_VARIANT_PROVIDERS[@]}"
 )
 
 _contains_provider() {
@@ -53,7 +62,7 @@ _contains_provider() {
 _is_provider() {
     local name="${1#test-}"
     _contains_provider "$name" "${ALL_PROVIDERS[@]}" && return 0
-    _contains_provider "$name" "${HEAVY_PROVIDERS[@]}" && return 0
+    _contains_provider "$name" "${ALL_HEAVY_PROVIDERS[@]}" && return 0
     return 1
 }
 
@@ -73,8 +82,10 @@ for arg in "$@"; do
         shared_args+=("$arg")
     elif [[ "$arg" == "--all" ]]; then
         providers=("${ALL_PROVIDERS[@]}")
-    elif [[ "$arg" == "--heavy" || "$arg" == "--all-heavy" ]]; then
+    elif [[ "$arg" == "--heavy" ]]; then
         providers=("${HEAVY_PROVIDERS[@]}")
+    elif [[ "$arg" == "--all-heavy" ]]; then
+        providers=("${ALL_HEAVY_PROVIDERS[@]}")
     elif [[ $past_separator -eq 0 ]] && _is_provider "$arg"; then
         providers+=("${arg#test-}")
     else

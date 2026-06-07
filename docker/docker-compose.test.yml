@@ -15,11 +15,13 @@
 #   docker compose -f docker/docker-compose.test.yml run test-kryoptic-main
 #   docker compose -f docker/docker-compose.test.yml run test-kryoptic-fips
 #   docker compose -f docker/docker-compose.test.yml run test-wolfpkcs11-master
+#   docker compose -f docker/docker-compose.test.yml run test-corepkcs11-main
 #
 # Additional/experimental:
 #   docker compose -f docker/docker-compose.test.yml run test-tpm2
 #   docker compose -f docker/docker-compose.test.yml run test-bouncyhsm
 #   docker compose -f docker/docker-compose.test.yml run test-optee-pkcs11
+#   docker compose -f docker/docker-compose.test.yml run test-optee-pkcs11-master
 #   docker compose -f docker/docker-compose.test.yml run test-pkcs11-mock
 
 x-common: &common
@@ -183,6 +185,20 @@ services:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/opencryptoki-master
       PKCS11_CHECK_PIN: "1234"
 
+  # corePKCS11 main branch (FreeRTOS MbedTLS software mock, v2.40 subset)
+  test-corepkcs11-main:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: docker/corepkcs11/Dockerfile
+      args:
+        COREPKCS11_REF: "main"
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/corepkcs11-main
+      PKCS11_CHECK_MODULE: /usr/local/lib/libcorepkcs11_adapter.so
+      PKCS11_CHECK_PIN: "0000"
+      PKCS11_CHECK_SLOT: "0"
+
   # NSS main branch (source tip, full PQC)
   test-nss-main:
     <<: *common
@@ -270,6 +286,22 @@ services:
         OPTEE_REF: "4.10.0"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/optee-pkcs11
+      PKCS11_CHECK_MODULE: /usr/lib/libckteec.so
+      PKCS11_CHECK_INTERFACE: "2.40"
+      PKCS11_CHECK_PIN: "1234"
+      PKCS11_CHECK_SO_PIN: "87654321"
+      PKCS11_CHECK_SLOT: "0"
+
+  # OP-TEE PKCS#11 TA master branch (QEMU v8 guest, v2.40)
+  test-optee-pkcs11-master:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: docker/optee-pkcs11/Dockerfile
+      args:
+        OPTEE_REF: "master"
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/optee-pkcs11-master
       PKCS11_CHECK_MODULE: /usr/lib/libckteec.so
       PKCS11_CHECK_INTERFACE: "2.40"
       PKCS11_CHECK_PIN: "1234"
