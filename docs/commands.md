@@ -107,7 +107,11 @@ rebuild OP-TEE. It is callable by name and through `bash docker/test-all.sh
 excluded from default Docker runs and ordinary `--all`. `optee-pkcs11-master`
 tracks the OP-TEE manifest `master` branch and is included only by `--all-heavy`
 or when named explicitly. For a full OP-TEE release pool run, `optee-pkcs11:3 -j
-3` splits the test files into three independent QEMU containers. Set
+3` splits the test files into three independent QEMU containers. The Expect
+wrapper treats boot/setup panics as target bring-up failures, but once
+`pkcs11-check` is running it waits for the runner's exit marker instead of
+aborting on OP-TEE TA panic text or on an outer whole-suite timer; per-test and
+per-file outcomes stay owned by `pkcs11-check`. Set
 `PKCS11_CHECK_OPTEE_USE_MAKE_CHECK=1` only when debugging the upstream OP-TEE
 `make check` path itself.
 

@@ -541,7 +541,7 @@ def test_optee_pkcs11_runtime_defaults_to_file_isolation() -> None:
     assert '"PKCS11_CHECK_ISOLATION"' in script
 
 
-def test_optee_pkcs11_expect_timeout_is_configurable_for_full_suite() -> None:
+def test_optee_pkcs11_expect_timeout_is_configurable_for_guest_setup() -> None:
     wrapper = (ROOT / "docker/optee-pkcs11/run-optee-pkcs11.sh").read_text()
     expect_script = (ROOT / "docker/optee-pkcs11/optee-pkcs11.exp").read_text()
 
@@ -550,7 +550,34 @@ def test_optee_pkcs11_expect_timeout_is_configurable_for_full_suite() -> None:
         in wrapper
     )
     assert 'env(PKCS11_CHECK_OPTEE_EXPECT_TIMEOUT)' in expect_script
-    assert "set timeout 7200" in expect_script
+    assert "set setup_timeout 7200" in expect_script
+    assert "set timeout $setup_timeout" in expect_script
+
+
+def test_optee_pkcs11_expect_does_not_abort_test_run_on_ta_panic_text() -> None:
+    script = (ROOT / "docker/optee-pkcs11/optee-pkcs11.exp").read_text()
+
+    test_run_block = script.split("python3 /mnt/pkcs11-check/guest-runner.py", maxsplit=1)[
+        1
+    ].split("\n\nwait_prompt", maxsplit=1)[0]
+
+    assert "OPTEE_PKCS11_EXIT" in test_run_block
+    assert "Kernel panic" not in test_run_block
+    assert "panic" not in test_run_block
+    assert "ASSERTION" not in test_run_block
+    assert "Assertion" not in test_run_block
+    assert "timeout running pkcs11-check in OP-TEE guest" not in test_run_block
+    assert "set timeout -1" in test_run_block
+
+
+def test_optee_pkcs11_expect_still_fails_fast_for_boot_and_setup_panics() -> None:
+    script = (ROOT / "docker/optee-pkcs11/optee-pkcs11.exp").read_text()
+    before_guest_runner = script.split("python3 /mnt/pkcs11-check/guest-runner.py", maxsplit=1)[
+        0
+    ]
+
+    assert "OP-TEE/QEMU panic during boot" in before_guest_runner
+    assert "OP-TEE/QEMU panic while waiting for prompt" in before_guest_runner
 
 
 def test_optee_pkcs11_expect_matches_plain_root_prompt() -> None:
