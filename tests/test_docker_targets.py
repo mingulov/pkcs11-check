@@ -425,6 +425,17 @@ def test_optee_pkcs11_dockerfile_builds_release_qemu_target() -> None:
     assert "run-optee-pkcs11.sh" in dockerfile
 
 
+def test_optee_pkcs11_guest_site_uses_buildroot_python_abi() -> None:
+    script = (ROOT / "docker/optee-pkcs11/build-guest-site.sh").read_text()
+
+    assert "PKCS11_CHECK_GUEST_PYTHON_VERSION" in script
+    assert "/optee/out-br/target" in script
+    assert "readlink" in script
+    assert '--python-version "$guest_python_version"' in script
+    assert "cpython-${guest_python_tag}" in script
+    assert "--python-version 3.13" not in script
+
+
 def test_optee_pkcs11_target_is_heavy_and_not_regular_all() -> None:
     script = (ROOT / "docker/test-all.sh").read_text()
 
@@ -511,6 +522,29 @@ def test_optee_pkcs11_runtime_copies_guest_artifacts_even_on_failure() -> None:
     assert 'cp -a "$share_dir/artifacts/." "$artifact_dir/"' in script
     assert 'cp /optee/out/bin/serial0.log "$artifact_dir/serial0.log"' in script
     assert 'cp /optee/out/bin/serial1.log "$artifact_dir/serial1.log"' in script
+
+
+def test_optee_pkcs11_runtime_live_syncs_progress_for_long_runs() -> None:
+    script = (ROOT / "docker/optee-pkcs11/run-optee-pkcs11.sh").read_text()
+
+    assert 'progress_interval="${PKCS11_CHECK_OPTEE_PROGRESS_INTERVAL:-30}"' in script
+    assert "print_optee_progress_summary()" in script
+    assert "start_optee_progress_sync()" in script
+    assert "stop_optee_progress_sync()" in script
+    assert 'sleep "$progress_interval"' in script
+    assert 'copy_optee_artifacts' in script
+    assert 'trap - EXIT' in script
+    assert "OP-TEE progress:" in script
+    assert "files complete" in script
+    assert "last=" in script
+    assert "start_optee_progress_sync" in script.split(
+        'if [[ "${PKCS11_CHECK_OPTEE_USE_MAKE_CHECK:-0}" == "1" ]]',
+        maxsplit=1,
+    )[0]
+    assert "stop_optee_progress_sync" in script.split(
+        'for required in results.json state.json quality.json report.jsonl serial0.log serial1.log',
+        maxsplit=1,
+    )[0]
 
 
 def test_optee_pkcs11_runtime_forwards_pool_trace_environment() -> None:

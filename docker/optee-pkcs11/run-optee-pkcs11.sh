@@ -7,6 +7,8 @@ secure_dir="${PKCS11_CHECK_OPTEE_SECURE_DIR:-/tmp/optee-pkcs11-secure}"
 site_dir="${PKCS11_CHECK_GUEST_SITE_DIR:-/opt/pkcs11-check-site}"
 data_dir="${PKCS11_CHECK_DATA_DIR:-/app/data}"
 disabled_tests_file="${P11TEST_DISABLED_TESTS_FILE:-/app/disabled-tests.txt}"
+progress_interval="${PKCS11_CHECK_OPTEE_PROGRESS_INTERVAL:-30}"
+progress_pid=""
 
 rm -rf "$share_dir" "$secure_dir"
 mkdir -p "$artifact_dir" "$share_dir/artifacts" "$secure_dir"
@@ -38,8 +40,77 @@ copy_optee_artifacts() {
     fi
 }
 
+print_optee_progress_summary() {
+    python3 - "$share_dir/artifacts/state.json" <<'PY' || true
+from __future__ import annotations
+
+import json
+import sys
+from collections import Counter
+from pathlib import Path
+
+state_path = Path(sys.argv[1])
+if not state_path.exists():
+    print("OP-TEE progress: waiting for guest runner artifacts")
+    raise SystemExit
+
+try:
+    state = json.loads(state_path.read_text())
+except json.JSONDecodeError:
+    print("OP-TEE progress: guest runner state is updating")
+    raise SystemExit
+
+results = state.get("results") or []
+units = state.get("units") or []
+total = len(units) if units else "?"
+counts = Counter(str(result.get("status", "unknown")) for result in results)
+count_text = ", ".join(f"{status}={counts[status]}" for status in sorted(counts))
+if not count_text:
+    count_text = "no completed files yet"
+
+last_text = "last=none"
+if results:
+    last = results[-1]
+    target = Path(str(last.get("target", "unknown"))).name
+    status = str(last.get("status", "unknown"))
+    last_text = f"last={status} {target}"
+
+print(f"OP-TEE progress: {len(results)}/{total} files complete ({count_text}); {last_text}")
+PY
+}
+
+start_optee_progress_sync() {
+    if [[ ! "$progress_interval" =~ ^[0-9]+$ ]]; then
+        echo "invalid PKCS11_CHECK_OPTEE_PROGRESS_INTERVAL: $progress_interval" >&2
+        exit 1
+    fi
+    if ((progress_interval == 0)); then
+        return
+    fi
+
+    echo "OP-TEE progress: syncing artifacts every ${progress_interval}s to $artifact_dir"
+    (
+        trap - EXIT
+        while true; do
+            sleep "$progress_interval"
+            copy_optee_artifacts
+            print_optee_progress_summary
+        done
+    ) &
+    progress_pid=$!
+}
+
+stop_optee_progress_sync() {
+    if [[ -n "$progress_pid" ]]; then
+        kill "$progress_pid" 2>/dev/null || true
+        wait "$progress_pid" 2>/dev/null || true
+        progress_pid=""
+    fi
+}
+
 copy_optee_artifacts_on_exit() {
     rc=$?
+    stop_optee_progress_sync
     copy_optee_artifacts
     exit "$rc"
 }
@@ -165,12 +236,14 @@ run_make_check() {
         check
 }
 
+start_optee_progress_sync
 if [[ "${PKCS11_CHECK_OPTEE_USE_MAKE_CHECK:-0}" == "1" ]]; then
     run_make_check
 else
     run_prebuilt_qemu
 fi
 
+stop_optee_progress_sync
 copy_optee_artifacts
 
 for required in results.json state.json quality.json report.jsonl serial0.log serial1.log; do
