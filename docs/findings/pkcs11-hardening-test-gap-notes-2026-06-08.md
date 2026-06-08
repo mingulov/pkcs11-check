@@ -198,6 +198,11 @@ not by implementation identity:
   querying a nonsense mechanism ID is not the same as querying a real standard
   `CKM_*` value absent from the slot's `C_GetMechanismList`. Coverage now picks
   a common absent standard mechanism and requires `CKR_MECHANISM_INVALID`.
+- An encrypt/decrypt lifecycle history pass found that invalid argument
+  validation can leave stale operation state behind. Coverage now starts a real
+  AES-CBC encrypt/decrypt operation, calls the one-shot or update function with
+  either a NULL input pointer or NULL output-length pointer, then verifies the
+  rejected operation no longer blocks a fresh init.
 - Several histories also converged on caller-pointer alignment bugs. The
   provider-neutral lesson is not provider identity but API shape: modules should
   not assume that foreign-function callers always provide naturally aligned

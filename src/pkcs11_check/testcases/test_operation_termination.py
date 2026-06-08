@@ -39,7 +39,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.ec import encode_named_curve_parameters
-from pkcs11_check.raw.pack import mech_simple
+from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import (
     _cancel_operation,
     destroy_quietly,
@@ -49,10 +49,12 @@ from pkcs11_check.raw.recipes import (
 )
 from pkcs11_check.raw.rv import ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
+    CKF_DECRYPT,
     CKF_DIGEST,
     CKF_ENCRYPT,
     CKF_VERIFY,
     CKM,
+    CKM_AES_CBC,
     CKM_ECDSA,
     CKM_SHA224,
     CKM_SHA256,
@@ -72,6 +74,8 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.conftest import (
     classify_lifecycle_effect,
+    classify_negative_rv,
+    gen_aes_key_or_xfail,
     gen_ec_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
     xfail_if_known_ckr,
@@ -390,3 +394,97 @@ def test_c_encrypt_terminates_after_multipart(
         )
     finally:
         destroy_quietly(rs.raw, rs.sh, enc_key)
+
+
+_NULL_ARG_ENC_DEC_CASES = (
+    pytest.param("encrypt", "single", "input", id="encrypt-input"),
+    pytest.param("encrypt", "single", "length", id="encrypt-length"),
+    pytest.param("encrypt", "update", "input", id="encrypt-update-input"),
+    pytest.param("encrypt", "update", "length", id="encrypt-update-length"),
+    pytest.param("decrypt", "single", "input", id="decrypt-input"),
+    pytest.param("decrypt", "single", "length", id="decrypt-length"),
+    pytest.param("decrypt", "update", "input", id="decrypt-update-input"),
+    pytest.param("decrypt", "update", "length", id="decrypt-update-length"),
+)
+
+
+def _start_aes_cbc_op(rs: Any, operation: str, key: int, mech: Any) -> int:
+    if operation == "encrypt":
+        return int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
+    if operation == "decrypt":
+        return int(rs.raw.C_DecryptInit(rs.sh, mech.byref(), key))
+    raise ValueError(f"unknown operation: {operation}")
+
+
+def _enc_dec_cancel_flag(operation: str) -> int:
+    if operation == "encrypt":
+        return int(CKF_ENCRYPT)
+    if operation == "decrypt":
+        return int(CKF_DECRYPT)
+    raise ValueError(f"unknown operation: {operation}")
+
+
+def _call_null_arg_enc_dec(rs: Any, operation: str, call_kind: str, null_arg: str) -> int:
+    data = to_ubyte_buf(bytes(range(16)))
+    out = (ctypes.c_ubyte * 64)()
+    out_len = ctypes.c_ulong(64)
+    data_arg = None if null_arg == "input" else data
+    len_arg = None if null_arg == "length" else ctypes.byref(out_len)
+    if operation == "encrypt":
+        if call_kind == "single":
+            return int(rs.raw.C_Encrypt(rs.sh, data_arg, 16, out, len_arg))
+        if call_kind == "update":
+            return int(rs.raw.C_EncryptUpdate(rs.sh, data_arg, 16, out, len_arg))
+    if operation == "decrypt":
+        if call_kind == "single":
+            return int(rs.raw.C_Decrypt(rs.sh, data_arg, 16, out, len_arg))
+        if call_kind == "update":
+            return int(rs.raw.C_DecryptUpdate(rs.sh, data_arg, 16, out, len_arg))
+    raise ValueError(f"unknown operation/call kind: {operation}/{call_kind}")
+
+
+@pytest.mark.parametrize("operation,call_kind,null_arg", _NULL_ARG_ENC_DEC_CASES)
+def test_null_argument_rejection_terminates_encrypt_decrypt_operation(
+    p11_raw_session: Any,
+    operation: str,
+    call_kind: str,
+    null_arg: str,
+) -> None:
+    """Clean invalid-argument rejections in encrypt/decrypt paths must terminate state."""
+    rs = p11_raw_session
+    if not rs.has_mechanism("AES_CBC"):
+        pytest.skip("AES_CBC not supported by module")
+
+    key = gen_aes_key_or_xfail(rs, 128, purpose="AES-CBC null-argument lifecycle")
+    mech = mech_bytes(CKM_AES_CBC, bytes(16))
+    label = f"C_{operation.capitalize()}{'Update' if call_kind == 'update' else ''}"
+    try:
+        expect_rv(_start_aes_cbc_op(rs, operation, key, mech), CKR_OK)
+        rv = _call_null_arg_enc_dec(rs, operation, call_kind, null_arg)
+        restart_rv = _start_aes_cbc_op(rs, operation, key, mech)
+        if restart_rv == CKR_OPERATION_ACTIVE:
+            _cancel_operation(rs.raw, rs.sh, _enc_dec_cancel_flag(operation))
+            classify_lifecycle_effect(
+                claimed_success=True,
+                effect_observed=True,
+                label=(
+                    f"{label} with NULL {null_arg} pointer returned {ckr_name(rv)} but "
+                    f"left the {operation} operation active (next init -> "
+                    "CKR_OPERATION_ACTIVE)"
+                ),
+            )
+        if restart_rv != CKR_OK:
+            pytest.fail(
+                f"{label} with NULL {null_arg} pointer returned {ckr_name(rv)}; "
+                f"fresh {operation} init after rejection returned {ckr_name(restart_rv)}"
+            )
+        _cancel_operation(rs.raw, rs.sh, _enc_dec_cancel_flag(operation))
+        if rv == CKR_OK:
+            pytest.fail(f"{label} accepted NULL {null_arg} pointer with non-zero length")
+        classify_negative_rv(
+            rv,
+            (CKR_ARGUMENTS_BAD,),
+            label=f"{label} with NULL {null_arg} pointer and non-zero length",
+        )
+    finally:
+        destroy_quietly(rs.raw, rs.sh, key)
