@@ -3506,6 +3506,105 @@ cleanup()
 
 
 # ---------------------------------------------------------------------------
+# TestCcmAadLengthBoundary
+# ---------------------------------------------------------------------------
+
+
+class TestCcmAadLengthBoundary:
+    """AES-CCM ulAADLen must not turn a tiny AAD buffer into a huge read.
+
+    Mirrors the GCM AAD-length probe for CK_AES_CCM_PARAMS.pAAD/ulAADLen: a tiny
+    real AAD buffer with an impossible claimed length must be rejected, not
+    over-read; crash/abnormal-exit is a finding and CKR_OK accepts a nonsensical
+    length.
+    """
+
+    @pytest.mark.parametrize("aad_len", _ISIZE_BOUNDARY_LENGTHS)
+    def test_ccm_aad_length_boundary(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        aad_len: int,
+    ) -> None:
+        """C_EncryptInit/C_Encrypt(AES_CCM) with tiny pAAD + huge ulAADLen."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CCM"):
+            pytest.skip("CKM_AES_CCM not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-CCM AAD-length crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + f"""
+import ctypes
+from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_AES_CCM_PARAMS,
+    CK_MECHANISM,
+    CK_ULONG,
+    CKM_AES_CCM,
+    CKR_OK,
+)
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+try:
+    nonce = (ctypes.c_ubyte * 13)(*range(13))
+    aad = (ctypes.c_ubyte * 16)(*range(16))
+    params = CK_AES_CCM_PARAMS()
+    params.ulDataLen = 16
+    params.pNonce = ctypes.cast(nonce, ctypes.c_void_p)
+    params.ulNonceLen = 13
+    params.pAAD = ctypes.cast(aad, ctypes.c_void_p)
+    params.ulAADLen = {aad_len}
+    params.ulMACLen = 16
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_CCM
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
+    if rv == CKR_OK:
+        pt = (ctypes.c_ubyte * 16)(*range(16))
+        out_len = CK_ULONG(64)
+        out = (ctypes.c_ubyte * 64)()
+        print("TARGET_CALL:C_Encrypt(AES_CCM,ulAADLen={aad_len:#x})", flush=True)
+        rv = raw.C_Encrypt(sh, pt, 16, out, ctypes.byref(out_len))
+    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
+    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Encrypt(AES_CCM, ulAADLen={aad_len:#x})",
+        )
+        if "SETUP_XFAIL:" in stdout:
+            pytest.xfail(stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0])
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Encrypt(AES_CCM, ulAADLen={aad_len:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
 # TestPbkdf2NestedLengthBoundary
 # ---------------------------------------------------------------------------
 
