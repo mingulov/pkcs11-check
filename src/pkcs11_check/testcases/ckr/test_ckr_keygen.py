@@ -18,17 +18,19 @@ from pkcs11_check.raw.pack import (
     mech_simple,
     template,
 )
-from pkcs11_check.raw.recipes import destroy_quietly
+from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
+    CKA_CLASS,
     CKA_DECAPSULATE,
     CKA_DECRYPT,
     CKA_EC_PARAMS,
     CKA_ENCAPSULATE,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
     CKA_MODULUS_BITS,
     CKA_PARAMETER_SET,
     CKA_PRIVATE,
@@ -38,13 +40,20 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VALUE_LEN,
     CKA_VERIFY,
+    CKK_DES,
+    CKK_DES2,
+    CKK_DES3,
     CKM_AES_ECB,
     CKM_AES_KEY_GEN,
+    CKM_DES2_KEY_GEN,
+    CKM_DES3_KEY_GEN,
+    CKM_DES_KEY_GEN,
     CKM_EC_KEY_PAIR_GEN,
     CKM_ML_DSA_KEY_PAIR_GEN,
     CKM_ML_KEM_KEY_PAIR_GEN,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SHA256,
+    CKO_SECRET_KEY,
     CKP_ML_DSA_65,
     CKP_ML_KEM_768,
     CKR_OK,
@@ -59,9 +68,50 @@ from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = pytest.mark.access
 
+_FIXED_LENGTH_SECRET_KEYGEN_CASES: tuple[tuple[str, int, int], ...] = (
+    ("DES_KEY_GEN", CKM_DES_KEY_GEN, CKK_DES),
+    ("DES2_KEY_GEN", CKM_DES2_KEY_GEN, CKK_DES2),
+    ("DES3_KEY_GEN", CKM_DES3_KEY_GEN, CKK_DES3),
+)
+
 
 class TestGenerateKeyErrors:
     """Error conditions for C_GenerateKey (Sec.5.14.1)."""
+
+    def test_fixed_length_generate_key_accepts_null_empty_template(
+        self, p11_raw_session: Any
+    ) -> None:
+        """Fixed-length C_GenerateKey may use pTemplate=NULL when ulCount is zero."""
+        rs = p11_raw_session
+        selected = next(
+            (
+                (name, mechanism, expected_key_type)
+                for name, mechanism, expected_key_type in _FIXED_LENGTH_SECRET_KEYGEN_CASES
+                if rs.has_mechanism(name)
+            ),
+            None,
+        )
+        if selected is None:
+            pytest.skip("No fixed-length secret key generation mechanism supported")
+
+        name, mechanism, expected_key_type = selected
+        mech = mech_simple(mechanism)
+        key = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), None, 0, byref(key))
+        if rv != CKR_OK:
+            pytest.xfail(
+                f"{name} advertised but C_GenerateKey(NULL, 0) returned "
+                f"{ckr_name(rv)}"
+            )
+
+        try:
+            if not key.value:
+                pytest.fail("C_GenerateKey(NULL, 0) returned CKR_OK without a key handle")
+            attrs = read_attributes(rs.raw, rs.sh, key.value, [CKA_CLASS, CKA_KEY_TYPE])
+            assert attrs[CKA_CLASS] == CKO_SECRET_KEY
+            assert attrs[CKA_KEY_TYPE] == expected_key_type
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key.value)
 
     def test_mechanism_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Using hash mechanism for keygen -> CKR_MECHANISM_INVALID."""

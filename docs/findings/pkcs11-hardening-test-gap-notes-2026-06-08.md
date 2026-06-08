@@ -211,6 +211,10 @@ not by implementation identity:
   crash/reject behavior. Coverage now starts a digest operation, calls
   `C_DigestInit(NULL)`, and fails if `CKR_OK` is reported without making a fresh
   digest init possible.
+- A key-generation template pass found that NULL-template error probes did not
+  cover the valid empty-template path. Coverage now tries fixed-length secret
+  key generation with `pTemplate=NULL` and `ulCount=0`, then verifies the
+  generated object class and key type after `CKR_OK`.
 - Several histories also converged on caller-pointer alignment bugs. The
   provider-neutral lesson is not provider identity but API shape: modules should
   not assume that foreign-function callers always provide naturally aligned
