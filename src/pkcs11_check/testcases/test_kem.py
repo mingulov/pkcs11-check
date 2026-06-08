@@ -33,6 +33,7 @@ from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKA_CLASS,
     CKA_DECAPSULATE,
+    CKA_DERIVE,
     CKA_ENCAPSULATE,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -240,6 +241,23 @@ class TestMLKEMKeyGeneration:
             priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             assert pub_kt == CKK_ML_KEM
             assert priv_kt == CKK_ML_KEM
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_ml_kem_private_key_derive_false(self, p11_raw_session: Any) -> None:
+        """Generated ML-KEM private keys must not claim CKA_DERIVE=True."""
+        rs = p11_raw_session
+        _skip_if_no_ml_kem(rs)
+        pub, priv = _generate_ml_kem_keypair(rs)
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_DERIVE])
+            if CKA_DERIVE not in attrs:
+                pytest.xfail("ML-KEM private key does not expose CKA_DERIVE")
+            assert attrs[CKA_DERIVE] is False, (
+                "ML-KEM private key reported CKA_DERIVE=True; ML-KEM keys "
+                "encapsulate/decapsulate and must not be usable as derive keys"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

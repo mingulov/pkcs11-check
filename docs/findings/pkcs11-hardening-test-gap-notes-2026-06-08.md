@@ -166,6 +166,11 @@ not by implementation identity:
   corrupted unwrap and DH right-truncation are covered, and v3.0 operation
   cancellation is exercised through `C_SessionCancel` tests plus
   NULL-mechanism boundary probes.
+- A later exact-history pass found one small public-API gap in ML-KEM key
+  generation: generated ML-KEM private keys should not claim `CKA_DERIVE=True`.
+  The provider-neutral test now reads `CKA_DERIVE` from a generated ML-KEM
+  private key and fails only if the module reports the forbidden derive
+  capability.
 - Several histories also converged on caller-pointer alignment bugs. The
   provider-neutral lesson is not provider identity but API shape: modules should
   not assume that foreign-function callers always provide naturally aligned
