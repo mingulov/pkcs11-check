@@ -180,6 +180,11 @@ not by implementation identity:
   known sensitive AES key with a real `CKA_VALUE` output buffer and fails if the
   module copies the protected bytes even while returning a sensitive-attribute
   rejection.
+- A digest-key history pass found an old `C_DigestKey` protected-key edge:
+  `CKA_SENSITIVE=True` / `CKA_EXTRACTABLE=False` key material can still be
+  digested internally without exposing `CKA_VALUE`. Coverage now imports a known
+  protected AES key, accepts clean provider-policy rejections as visible xfail
+  evidence, and verifies the exact SHA-256 digest if the operation succeeds.
 - Several histories also converged on caller-pointer alignment bugs. The
   provider-neutral lesson is not provider identity but API shape: modules should
   not assume that foreign-function callers always provide naturally aligned

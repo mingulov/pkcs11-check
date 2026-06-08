@@ -20,6 +20,7 @@ from pkcs11_check.raw.recipes import (
     digest_single,
     digest_single_with_key,
     gen_aes_key,
+    import_secret_key,
     read_attributes,
 )
 from pkcs11_check.raw.rv import expect_rv
@@ -28,6 +29,7 @@ from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
     CKA_SENSITIVE,
     CKA_VALUE,
+    CKK_AES,
     CKM_SHA224,
     CKM_SHA256,
     CKM_SHA384,
@@ -39,6 +41,8 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_INDIGESTIBLE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
@@ -60,6 +64,13 @@ _DIGEST_RUNTIME_REJECT_RVS = (
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+)
+
+_DIGEST_KEY_PROTECTED_REJECT_RVS = (
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_INDIGESTIBLE,
 )
 
 
@@ -304,5 +315,49 @@ class TestDigestKey:
             assert isinstance(key_bytes, bytes)
             ref_digest = hashlib.sha256(key_bytes).digest()
             assert p11_digest == ref_digest
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_digest_key_sensitive_non_extractable_imported_key(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """DigestKey may use protected key material without exposing CKA_VALUE."""
+        rs = p11_raw_session
+        _require_digest_mechanism(rs, CKM_SHA256)
+        secret = bytes.fromhex("07192a3b4c5d6e7f8091a2b3c4d5e6f7")
+        try:
+            key = import_secret_key(
+                rs.raw,
+                rs.sh,
+                CKK_AES,
+                secret,
+                attrs={CKA_SENSITIVE: True, CKA_EXTRACTABLE: False},
+            )
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _DIGEST_RUNTIME_REJECT_RVS,
+                "C_CreateObject rejected protected AES key setup for C_DigestKey",
+            )
+            raise
+
+        try:
+            try:
+                p11_digest = digest_single_with_key(rs.raw, rs.sh, CKM_SHA256, key)
+            except NotImplementedError:
+                pytest.skip("C_DigestKey not supported by this module")
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _DIGEST_KEY_PROTECTED_REJECT_RVS,
+                    "SHA256 C_DigestKey rejected a protected AES key",
+                )
+                raise
+            expected = hashlib.sha256(secret).digest()
+            assert p11_digest == expected, (
+                "C_DigestKey accepted a protected imported AES key but digested "
+                f"{p11_digest.hex()!r}, expected {expected.hex()!r}"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
