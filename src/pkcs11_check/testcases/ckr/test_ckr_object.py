@@ -8,7 +8,7 @@ Source: PKCS#11 v3.1 Sec.5.7.1-5.7.9.
 
 from __future__ import annotations
 
-from ctypes import byref
+from ctypes import byref, sizeof
 from typing import Any
 
 import pytest
@@ -45,7 +45,10 @@ from pkcs11_check.raw.types_std import (
     CKR_SESSION_HANDLE_INVALID,
 )
 from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS
-from pkcs11_check.testcases.ckr._malformed_attrs import make_bool_attr_overlong
+from pkcs11_check.testcases.ckr._malformed_attrs import (
+    make_bool_attr_overlong,
+    make_ulong_attr_with_length,
+)
 from pkcs11_check.testcases.conftest import (
     classify_lifecycle_effect,
     classify_negative_rv,
@@ -121,6 +124,71 @@ class TestCreateObjectErrors:
             rv,
             TEMPLATE_ERRORS,
             label="C_CreateObject with CK_ULONG-sized CKA_TOKEN boolean attribute",
+        )
+
+    @pytest.mark.parametrize(
+        ("attr_len", "case_name"),
+        [
+            pytest.param(1, "underlong", id="underlong"),
+            pytest.param(sizeof(CK_ULONG) + 1, "overlong", id="overlong"),
+        ],
+    )
+    def test_class_ulong_malformed_length(
+        self,
+        p11_raw_session: Any,
+        attr_len: int,
+        case_name: str,
+    ) -> None:
+        """CKA_CLASS with non-CK_ULONG-sized storage must be rejected."""
+        rs = p11_raw_session
+        tmpl = template(
+            attr_ulong(CKA_CLASS, CKO_DATA),
+            attr_bytes(CKA_LABEL, b"bad-class-len-create"),
+            attr_bytes(CKA_VALUE, b"value"),
+            attr_bool(CKA_TOKEN, False),
+        )
+        _storage = make_ulong_attr_with_length(tmpl, 0, CKO_DATA, attr_len)
+        handle = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, handle.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label=f"C_CreateObject with {case_name} CKA_CLASS CK_ULONG attribute",
+        )
+
+    @pytest.mark.parametrize(
+        ("attr_len", "case_name"),
+        [
+            pytest.param(1, "underlong", id="underlong"),
+            pytest.param(sizeof(CK_ULONG) + 1, "overlong", id="overlong"),
+        ],
+    )
+    def test_key_type_ulong_malformed_length(
+        self,
+        p11_raw_session: Any,
+        attr_len: int,
+        case_name: str,
+    ) -> None:
+        """CKA_KEY_TYPE with non-CK_ULONG-sized storage must be rejected."""
+        rs = p11_raw_session
+        tmpl = template(
+            attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_AES),
+            attr_bytes(CKA_VALUE, b"\x01" * 16),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SENSITIVE, False),
+        )
+        _storage = make_ulong_attr_with_length(tmpl, 1, CKK_AES, attr_len)
+        handle = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, handle.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label=f"C_CreateObject with {case_name} CKA_KEY_TYPE CK_ULONG attribute",
         )
 
 

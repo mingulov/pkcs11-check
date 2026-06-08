@@ -97,6 +97,9 @@ Recent provider histories point to the same public-API bug classes across
 multiple implementations. These should be converted into tests by API surface,
 not by implementation identity:
 
+- A targeted refresh of recent commit messages was enough for this pass; a
+  broad full-diff archaeology pass is not needed until the remaining API
+  surfaces below need deeper prioritization.
 - Operation initialization must validate both key type and key usage before
   storing active operation state. Existing mechanism-negative tests cover many
   wrong-key paths; remaining hardening value is crash-safe child probes for
@@ -116,7 +119,11 @@ not by implementation identity:
   persisted. This includes missing required attributes, optional RSA private-key
   CRT fields, EC/Ed/Montgomery/PQC public-key encodings, nested wrap/unwrap/
   derive templates, private/sensitive/default attributes, and scalar attribute
-  values whose `ulValueLen` does not match the PKCS#11 type width.
+  values whose `ulValueLen` does not match the PKCS#11 type width. The newest
+  scalar-length additions cover object-class and key-type `CK_ULONG` template
+  attributes in `C_CreateObject` and ML-KEM `CKA_PARAMETER_SET` keypair
+  templates, plus AES `CKA_VALUE_LEN` key-size templates in `C_GenerateKey`;
+  additional scalar types still need broader mechanism-specific coverage.
 - Derived-key output length is a recurring correctness and memory-safety
   surface. DH/ECDH/HKDF/TLS/PBE outputs should be checked for exact requested
   length, spec-correct truncation or padding, and clean rejection of impossible
@@ -262,6 +269,23 @@ Initial coverage added:
   positive-control P-256 setup, and public-key or private-key templates
   containing a `CK_ULONG`-sized `CKA_TOKEN` value. A template rejection passes;
   `CKR_OK` fails after both generated keys are destroyed.
+- `C_CreateObject` with otherwise valid data-object templates whose
+  `CKA_CLASS` value is stored in undersized or oversized `CK_ULONG` storage. A
+  template rejection passes; `CKR_OK` fails after the created object is
+  destroyed.
+- `C_CreateObject` with otherwise valid AES secret-key templates whose
+  `CKA_KEY_TYPE` value is stored in undersized or oversized `CK_ULONG` storage.
+  A template rejection passes; `CKR_OK` fails after the created key is
+  destroyed.
+- `C_GenerateKeyPair` with an advertised ML-KEM key-pair-generation mechanism,
+  positive-control ML-KEM-768 setup, and public-key or private-key templates
+  whose `CKA_PARAMETER_SET` value is stored in undersized or oversized
+  `CK_ULONG` storage. A template rejection passes; `CKR_OK` fails after both
+  generated keys are destroyed.
+- `C_GenerateKey` with an advertised AES key-generation mechanism and an output
+  template whose `CKA_VALUE_LEN` value is stored in undersized or oversized
+  `CK_ULONG` storage. A template rejection passes; `CKR_OK` fails after the
+  generated key is destroyed.
 
 Remaining useful expansion:
 
@@ -271,7 +295,8 @@ Remaining useful expansion:
 - Additional `C_UnwrapKey` variants that avoid earlier class/key-type template
   rejection on modules that do not accept those attributes in unwrap templates.
 - Integer-valued scalar attributes with undersized or oversized lengths,
-  especially key-size, object-class, key-type, and parameter-set attributes.
+  especially create/copy/generate/unwrap surfaces beyond the initial
+  object-class, key-type, AES value-length, and ML-KEM parameter-set coverage.
 
 Expected outcome: clean attribute/template rejection. Accepting a malformed
 scalar attribute as valid is a hard failure; a different clean rejection is

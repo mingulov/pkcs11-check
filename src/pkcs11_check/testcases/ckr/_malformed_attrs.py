@@ -14,3 +14,15 @@ def make_bool_attr_overlong(tmpl: Any, index: int, value: int = 0) -> CK_ULONG:
     tmpl.array[index].pValue = ctypes.cast(ctypes.pointer(storage), ctypes.c_void_p)
     tmpl.array[index].ulValueLen = ctypes.sizeof(storage)
     return storage
+
+
+def make_ulong_attr_with_length(tmpl: Any, index: int, value: int, length: int) -> Any:
+    """Replace a CK_ULONG template value with storage of an explicit byte length."""
+    storage = (ctypes.c_ubyte * length)()
+    source = CK_ULONG(value)
+    copy_len = min(length, ctypes.sizeof(source))
+    if copy_len:
+        ctypes.memmove(storage, ctypes.byref(source), copy_len)
+    tmpl.array[index].pValue = ctypes.cast(storage, ctypes.c_void_p)
+    tmpl.array[index].ulValueLen = length
+    return storage
