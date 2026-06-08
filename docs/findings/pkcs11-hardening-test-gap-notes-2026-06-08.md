@@ -190,6 +190,10 @@ not by implementation identity:
   Coverage now requests sensitive `CKA_VALUE` followed by safe `CKA_LABEL` and
   fails if the later safe attribute is left unfilled after
   `CKR_ATTRIBUTE_SENSITIVE`.
+- A `C_SetAttributeValue` history pass found partial-update risk when one row
+  succeeds before a later row fails. Coverage now proves mutable label updates
+  are operational, then submits `CKA_LABEL` followed by read-only `CKA_CLASS` in
+  one template and fails if the rejected call leaves the new label behind.
 - Several histories also converged on caller-pointer alignment bugs. The
   provider-neutral lesson is not provider identity but API shape: modules should
   not assume that foreign-function callers always provide naturally aligned

@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.pack import attr_bytes, template
+from pkcs11_check.raw.pack import attr_bytes, attr_ulong, template
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     find_objects,
@@ -26,10 +26,27 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKK_RSA,
     CKO_PUBLIC_KEY,
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_OK,
 )
-from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.keymgmt
+
+_SET_ATTR_REJECT_RVS = (
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+)
 
 
 def _classify_readonly_write(
@@ -121,6 +138,63 @@ class TestSetAttributePositive:
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
+
+
+class TestSetAttributeAtomicity:
+    """Verify that rejected multi-row updates do not leave partial state behind."""
+
+    def test_set_attribute_mixed_template_is_atomic(self, p11_raw_session: Any) -> None:
+        """A failing SetAttribute template must not partially apply earlier rows."""
+        rs = p11_raw_session
+        original = "atomic-before"
+        control = "atomic-control"
+        target = "atomic-after"
+        key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_LABEL: original},
+            purpose="set-attribute atomicity",
+        )
+        try:
+            try:
+                set_attributes(rs.raw, rs.sh, key, {CKA_LABEL: control})
+                set_attributes(rs.raw, rs.sh, key, {CKA_LABEL: original})
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _SET_ATTR_REJECT_RVS,
+                    "C_SetAttributeValue rejected mutable CKA_LABEL setup",
+                )
+                raise
+
+            mixed = template(
+                attr_bytes(CKA_LABEL, target.encode("utf-8")),
+                attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY),
+            )
+            rv = rs.raw.C_SetAttributeValue(rs.sh, key, mixed.ptr, mixed.count)
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LABEL, CKA_CLASS])
+            label_after = attrs.get(CKA_LABEL)
+            class_after = attrs.get(CKA_CLASS)
+
+            if label_after == target:
+                pytest.fail(
+                    "C_SetAttributeValue partially applied CKA_LABEL before rejecting "
+                    "a later read-only CKA_CLASS row"
+                )
+            if class_after == CKO_PUBLIC_KEY:
+                pytest.fail("C_SetAttributeValue changed read-only CKA_CLASS on an AES key")
+            if rv == CKR_OK:
+                pytest.xfail(
+                    "C_SetAttributeValue returned CKR_OK for a mixed template containing "
+                    "read-only CKA_CLASS, but left the object unchanged"
+                )
+            classify_negative_rv(
+                rv,
+                _SET_ATTR_REJECT_RVS,
+                label="C_SetAttributeValue mixed mutable/read-only template",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 class TestSetAttributeNegative:
