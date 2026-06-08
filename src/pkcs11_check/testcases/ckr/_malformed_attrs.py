@@ -26,3 +26,9 @@ def make_ulong_attr_with_length(tmpl: Any, index: int, value: int, length: int) 
     tmpl.array[index].pValue = ctypes.cast(storage, ctypes.c_void_p)
     tmpl.array[index].ulValueLen = length
     return storage
+
+
+def make_attr_null_pointer(tmpl: Any, index: int, length: int) -> None:
+    """Replace an attribute value with NULL_PTR and an explicit length."""
+    tmpl.array[index].pValue = None
+    tmpl.array[index].ulValueLen = length

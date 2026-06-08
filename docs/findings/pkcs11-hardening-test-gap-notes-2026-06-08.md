@@ -159,11 +159,13 @@ not by implementation identity:
   output sizing, and derive output size. The useful pkcs11-check translation is
   effect-based: after `CKR_OK`, read the object attributes or verify the crypto
   output; after a clean reject, classify the rejection rather than hiding it.
-- The latest exact-history pass did not justify another immediate broad test
-  family: `CKA_TOKEN` scalar-length checks already cover create/copy/unwrap/
-  generate paths, HKDF null-pointer probes exist, AES-KWP corrupted unwrap and
-  DH right-truncation are covered, and v3.0 operation cancellation is exercised
-  through `C_SessionCancel` tests plus NULL-mechanism boundary probes.
+- The latest exact-history pass justified one narrow array-valued attribute
+  pointer probe for `CKA_ALLOWED_MECHANISMS`, but did not justify another
+  immediate broad test family: `CKA_TOKEN` scalar-length checks already cover
+  create/copy/unwrap/generate paths, HKDF null-pointer probes exist, AES-KWP
+  corrupted unwrap and DH right-truncation are covered, and v3.0 operation
+  cancellation is exercised through `C_SessionCancel` tests plus
+  NULL-mechanism boundary probes.
 - Several histories also converged on caller-pointer alignment bugs. The
   provider-neutral lesson is not provider identity but API shape: modules should
   not assume that foreign-function callers always provide naturally aligned
@@ -315,6 +317,34 @@ visible xfail evidence.
 
 Best locations: `testcases/ckr/test_ckr_object.py` for create/copy coverage and
 mechanism-specific CKR tests for generate/unwrap paths.
+
+### Attribute Array Pointer Validation
+
+Bug class: a module accepts an array-valued template attribute whose `pValue`
+is `NULL_PTR` while `ulValueLen` is nonzero, then either treats the malformed
+attribute as valid or dereferences it while parsing or persisting the object.
+
+Initial coverage added:
+
+- `C_CreateObject` with an otherwise valid AES secret-key template whose
+  `CKA_ALLOWED_MECHANISMS` attribute has `pValue=NULL_PTR` and
+  `ulValueLen=sizeof(CK_ULONG)`. A clean template or argument rejection passes;
+  `CKR_OK` fails after the created key is destroyed.
+
+Remaining useful expansion:
+
+- Additional array-valued attributes where setup is practical, especially
+  attributes used in copy, unwrap, derive, and v3.2 KEM templates.
+- The zero-length `NULL_PTR` case separately, where some array-valued
+  attributes may legitimately represent an empty array depending on the
+  attribute and operation.
+
+Expected outcome: clean attribute/template/argument rejection for nonzero
+length with a NULL pointer. Accepting that malformed input as valid, crashing,
+or persisting malformed object state is a hard failure.
+
+Best location: `testcases/ckr/test_ckr_object.py` for create/copy coverage and
+mechanism-specific CKR tests for generate/unwrap/derive paths.
 
 ### Data Length Truncation Beyond One-Shot Encrypt/Decrypt/Sign/Digest
 

@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.pack import (
+    attr_array,
     attr_bool,
     attr_bytes,
     attr_ulong,
@@ -31,13 +32,16 @@ from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
     CK_OBJECT_HANDLE,
     CK_ULONG,
+    CKA_ALLOWED_MECHANISMS,
     CKA_CLASS,
+    CKA_ENCRYPT,
     CKA_KEY_TYPE,
     CKA_LABEL,
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKA_VALUE,
     CKK_AES,
+    CKM_AES_ECB,
     CKO_DATA,
     CKO_SECRET_KEY,
     CKR_OBJECT_HANDLE_INVALID,
@@ -46,6 +50,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS
 from pkcs11_check.testcases.ckr._malformed_attrs import (
+    make_attr_null_pointer,
     make_bool_attr_overlong,
     make_ulong_attr_with_length,
 )
@@ -189,6 +194,35 @@ class TestCreateObjectErrors:
             rv,
             TEMPLATE_ERRORS,
             label=f"C_CreateObject with {case_name} CKA_KEY_TYPE CK_ULONG attribute",
+        )
+
+    def test_allowed_mechanisms_null_pointer_nonzero_length(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKA_ALLOWED_MECHANISMS must reject NULL_PTR with nonzero length."""
+        rs = p11_raw_session
+        tmpl = template(
+            attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_AES),
+            attr_bytes(CKA_VALUE, b"\x01" * 16),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_ENCRYPT, True),
+            attr_array(CKA_ALLOWED_MECHANISMS, [CKM_AES_ECB]),
+        )
+        make_attr_null_pointer(tmpl, 6, sizeof(CK_ULONG))
+        handle = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, handle.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label=(
+                "C_CreateObject with CKA_ALLOWED_MECHANISMS NULL_PTR and "
+                "nonzero ulValueLen"
+            ),
         )
 
 
