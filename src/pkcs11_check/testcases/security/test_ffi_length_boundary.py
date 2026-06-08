@@ -3170,6 +3170,140 @@ cleanup()
 
 
 # ---------------------------------------------------------------------------
+# TestAesCbcEncryptDataMalformedParams
+# ---------------------------------------------------------------------------
+
+_AES_CBC_ENCRYPT_DATA_PARAM_CASES = (
+    pytest.param("pData=NULL,length=16", "None", 16, id="null_data_nonzero_length"),
+    pytest.param(
+        "pData=tiny,length=isize_max_plus_1",
+        "ctypes.cast(data_buf, ctypes.c_void_p)",
+        _ISIZE_MAX_PLUS_1_64,
+        id="tiny_data_huge_length",
+    ),
+)
+
+
+class TestAesCbcEncryptDataMalformedParams:
+    """CKM_AES_CBC_ENCRYPT_DATA must reject malformed nested data safely."""
+
+    @pytest.mark.parametrize(
+        ("case_label", "p_data_expr", "data_len"),
+        _AES_CBC_ENCRYPT_DATA_PARAM_CASES,
+    )
+    def test_aes_cbc_encrypt_data_malformed_params(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        case_label: str,
+        p_data_expr: str,
+        data_len: int,
+    ) -> None:
+        """C_DeriveKey(AES_CBC_ENCRYPT_DATA) validates inner pData/length pairs."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CBC_ENCRYPT_DATA"):
+            pytest.skip("CKM_AES_CBC_ENCRYPT_DATA not supported")
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + f"""
+import ctypes
+from pkcs11_check.raw.pack import attr_bool, attr_ulong, template
+from pkcs11_check.raw.recipes import destroy_quietly, import_secret_key
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_AES_CBC_ENCRYPT_DATA_PARAMS,
+    CK_MECHANISM,
+    CK_OBJECT_HANDLE,
+    CKA_CLASS,
+    CKA_DERIVE,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKA_VALUE_LEN,
+    CKK_AES,
+    CKM_AES_CBC_ENCRYPT_DATA,
+    CKO_SECRET_KEY,
+    CKR_OK,
+)
+
+data_len = {data_len}
+data_buf = (ctypes.c_ubyte * 16)(*range(16))
+base_key = 0
+try:
+    base_key = import_secret_key(
+        raw,
+        sh,
+        CKK_AES,
+        bytes(range(32)),
+        attrs={{
+            CKA_DERIVE: True,
+            CKA_TOKEN: False,
+        }},
+    )
+except AssertionError as exc:
+    print(f"SETUP_XFAIL:AES derive base-key import rejected: {{exc}}")
+    cleanup()
+    raise SystemExit(0)
+
+try:
+    params = CK_AES_CBC_ENCRYPT_DATA_PARAMS()
+    for idx in range(16):
+        params.iv[idx] = idx
+    params.pData = {p_data_expr}
+    params.length = data_len
+
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_CBC_ENCRYPT_DATA
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+
+    derived_template = template(
+        attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+        attr_ulong(CKA_KEY_TYPE, CKK_AES),
+        attr_ulong(CKA_VALUE_LEN, 16),
+        attr_bool(CKA_SENSITIVE, False),
+        attr_bool(CKA_EXTRACTABLE, True),
+        attr_bool(CKA_TOKEN, False),
+    )
+    derived = CK_OBJECT_HANDLE(0)
+    print("TARGET_CALL:C_DeriveKey(AES_CBC_ENCRYPT_DATA,{case_label})", flush=True)
+    rv = raw.C_DeriveKey(
+        sh,
+        ctypes.byref(mech),
+        base_key,
+        derived_template.ptr,
+        derived_template.count,
+        ctypes.byref(derived),
+    )
+    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
+    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
+    if rv == CKR_OK:
+        destroy_quietly(raw, sh, derived.value)
+finally:
+    destroy_quietly(raw, sh, base_key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_DeriveKey(AES_CBC_ENCRYPT_DATA, {case_label})",
+        )
+        if "SETUP_XFAIL:" in stdout:
+            pytest.xfail(stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0])
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _KDF_LENGTH_REJECT_RVS,
+            label=f"C_DeriveKey(AES_CBC_ENCRYPT_DATA, {case_label})",
+        )
+
+
+# ---------------------------------------------------------------------------
 # TestPbkdf2NestedLengthBoundary
 # ---------------------------------------------------------------------------
 

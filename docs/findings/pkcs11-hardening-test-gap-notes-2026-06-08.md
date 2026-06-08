@@ -114,7 +114,9 @@ not by implementation identity:
 - Mechanism parameter serializers and decoders need length and pointer
   cross-checks. Useful targets include RSA-PSS, RSA-OAEP, AES-GCM, AES-CBC
   encrypt-data, EdDSA, TLS KDFs, PBE, HKDF, ECDH-AESKW, RSA-AES key wrap, and
-  v3.2 KEM/PQC mechanisms.
+  v3.2 KEM/PQC mechanisms. Initial AES-CBC encrypt-data derive coverage now
+  probes malformed nested `pData`/length pairs through the public `C_DeriveKey`
+  API.
 - Size-query and undersized-buffer behavior still needs broader guard-byte
   checks. The history scan repeatedly points at `C_GetAttributeValue`,
   `C_Encrypt`, `C_Decrypt`, `C_Sign`, `C_WrapKey`, unwrap/decrypt error paths,
