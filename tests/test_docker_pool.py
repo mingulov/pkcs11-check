@@ -38,6 +38,13 @@ def test_pool_heavy_targets_are_explicit_not_regular_all() -> None:
     assert "optee-pkcs11-master" not in test_pool.ALL_PROVIDERS
 
 
+def test_pool_discover_files_accepts_single_test_file(tmp_path: Path) -> None:
+    test_file = tmp_path / "test_one.py"
+    test_file.write_text("def test_one():\n    pass\n")
+
+    assert test_pool.discover_files(str(test_file)) == [str(test_file)]
+
+
 def test_pool_dry_run_heavy_uses_optee_manual_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

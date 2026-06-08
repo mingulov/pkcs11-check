@@ -157,7 +157,10 @@ _RECONNECT_INITIAL_DELAY_S = 0.1  # first backoff sleep
 _RECONNECT_MAX_DELAY_S = 2.0  # backoff cap
 
 
-def _restart_signature_rvs() -> frozenset[int]:
+def _restart_signature_rvs(
+    *,
+    include_ambiguous_general_error: bool = False,
+) -> frozenset[int]:
     """CK_RVs that, *at session bootstrap*, mean "the connection/session is gone".
 
     Recovery triggers ONLY at the fixture open/login layer, where these codes
@@ -170,25 +173,32 @@ def _restart_signature_rvs() -> frozenset[int]:
         CKR_CRYPTOKI_NOT_INITIALIZED,
         CKR_DEVICE_ERROR,
         CKR_DEVICE_REMOVED,
+        CKR_GENERAL_ERROR,
         CKR_SESSION_CLOSED,
         CKR_SESSION_HANDLE_INVALID,
     )
 
-    return frozenset(
-        int(rv)
-        for rv in (
-            CKR_CRYPTOKI_NOT_INITIALIZED,
-            CKR_SESSION_HANDLE_INVALID,
-            CKR_SESSION_CLOSED,
-            CKR_DEVICE_ERROR,
-            CKR_DEVICE_REMOVED,
-        )
-    )
+    values = [
+        CKR_CRYPTOKI_NOT_INITIALIZED,
+        CKR_SESSION_HANDLE_INVALID,
+        CKR_SESSION_CLOSED,
+        CKR_DEVICE_ERROR,
+        CKR_DEVICE_REMOVED,
+    ]
+    if include_ambiguous_general_error:
+        # CKR_GENERAL_ERROR is too broad to mean "dead provider" in normal
+        # operation or initial bootstrap. During a reopen after an already-held
+        # session became unhealthy, it is an ambiguous bootstrap symptom worth
+        # one bounded reconnect path before surfacing as a finding.
+        values.append(CKR_GENERAL_ERROR)
+    return frozenset(int(rv) for rv in values)
 
 
 def _open_or_reinit(
     p11_module: P11Module,
     p11_config: P11TestConfig,
+    *,
+    recover_ambiguous_bootstrap_general_error: bool = False,
 ) -> tuple[RawPKCS11, int, int, bool]:
     """Open a session; bridge a provider/proxy restart with a bounded wait loop.
 
@@ -203,10 +213,16 @@ def _open_or_reinit(
     infinite loop). Any *non*-restart CKR (e.g. a clean CKR_PIN_INCORRECT)
     propagates unchanged. The triggering test still records its own result; this
     only un-cascades the *subsequent* tests in the file.
+
+    ``CKR_GENERAL_ERROR`` is included only when explicitly requested by a caller
+    that is reopening after a previously healthy session became unusable. The
+    same CKR during initial bootstrap still propagates immediately.
     """
     from pkcs11_check.raw.rv import CkrAssertionError
 
-    restart_rvs = _restart_signature_rvs()
+    restart_rvs = _restart_signature_rvs(
+        include_ambiguous_general_error=recover_ambiguous_bootstrap_general_error
+    )
 
     def _is_restart(exc: BaseException) -> bool:
         # A transport failure (OSError) or a bootstrap-layer "connection gone"
@@ -491,8 +507,13 @@ class _ModuleSessionHolder:
         return True
 
     def _reopen(self) -> None:
+        recover_general_error = self._sh is not None
         self._close()
-        raw, sh, slot_id, logged_in = _open_or_reinit(self._module, self._config)
+        raw, sh, slot_id, logged_in = _open_or_reinit(
+            self._module,
+            self._config,
+            recover_ambiguous_bootstrap_general_error=recover_general_error,
+        )
         self._sh = sh
         self._slot_id = slot_id
         self._logged_in = logged_in

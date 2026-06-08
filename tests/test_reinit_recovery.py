@@ -34,6 +34,7 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKR_CRYPTOKI_NOT_INITIALIZED,
     CKR_DEVICE_ERROR,
+    CKR_GENERAL_ERROR,
     CKR_OK,
     CKR_PIN_INCORRECT,
     CKR_SESSION_HANDLE_INVALID,
@@ -143,6 +144,74 @@ def test_open_or_reinit_recovers_on_restart_signature(
     assert result == ("raw", 7, 0, True)
     assert fake_open.calls["n"] == 2  # type: ignore[attr-defined]  # failed once, then retried
     assert module.reinit_count == 1
+
+
+def test_open_or_reinit_does_not_retry_general_error_on_initial_bootstrap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_open = _restart_then_ok(fail_times=1, rv=int(CKR_GENERAL_ERROR))
+    monkeypatch.setattr(fixtures, "_open_raw_session", fake_open)
+    delays = _spy_sleep(monkeypatch)
+    module = _FakeModule()
+
+    with pytest.raises(CkrAssertionError):
+        fixtures._open_or_reinit(module, None)
+
+    assert fake_open.calls["n"] == 1  # type: ignore[attr-defined]
+    assert module.reinit_count == 0
+    assert delays == []
+
+
+def test_open_or_reinit_recovers_general_error_when_reopen_allows_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_open = _restart_then_ok(fail_times=1, rv=int(CKR_GENERAL_ERROR))
+    monkeypatch.setattr(fixtures, "_open_raw_session", fake_open)
+    _spy_sleep(monkeypatch)
+    module = _FakeModule()
+
+    with pytest.warns(UserWarning, match="reconnect|re-initialized"):
+        result = fixtures._open_or_reinit(
+            module,
+            None,
+            recover_ambiguous_bootstrap_general_error=True,
+        )
+
+    assert result == ("raw", 7, 0, True)
+    assert fake_open.calls["n"] == 2  # type: ignore[attr-defined]
+    assert module.reinit_count == 1
+
+
+def test_module_session_holder_allows_general_error_recovery_only_after_existing_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Raw:
+        call_log: dict[str, int] = {}
+
+        def C_GetSessionInfo(self, *_args: Any) -> int:  # noqa: N802
+            return CKR_GENERAL_ERROR
+
+    class _Mod:
+        raw = _Raw()
+
+    recover_flags: list[bool] = []
+
+    def fake_open(
+        _module: Any,
+        _config: Any,
+        *,
+        recover_ambiguous_bootstrap_general_error: bool = False,
+    ) -> tuple[Any, int, int, bool]:
+        recover_flags.append(recover_ambiguous_bootstrap_general_error)
+        return (_module.raw, 9, 0, False)
+
+    monkeypatch.setattr(fixtures, "_open_or_reinit", fake_open)
+    holder = fixtures._ModuleSessionHolder(_Mod(), object())  # type: ignore[arg-type]
+
+    holder.get_session()
+    holder.get_session()
+
+    assert recover_flags == [False, True]
 
 
 # --------------------------------------------------------------------------

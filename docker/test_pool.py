@@ -152,7 +152,10 @@ SLOT0_UNIQUE_FILES: tuple[str, ...] = (
 
 
 def discover_files(testcases: str) -> list[str]:
-    return sorted(str(p) for p in Path(testcases).rglob("test_*.py"))
+    root = Path(testcases)
+    if root.is_file():
+        return [str(root)] if root.match("test_*.py") else []
+    return sorted(str(p) for p in root.rglob("test_*.py"))
 
 
 def has_vector_data(data_dir: Path) -> bool:
