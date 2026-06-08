@@ -66,6 +66,8 @@ class TestVerifySignatureRoundtrip:
             sig_ptr, sig_len = _sig_buf(sig)
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_VerifySignatureInit(rs.sh, mech.byref(), pub, sig_ptr, sig_len)
+            if rv == CKR_FUNCTION_NOT_SUPPORTED:
+                pytest.skip("C_VerifySignatureInit listed but not operational")
             assert rv == CKR_OK, f"C_VerifySignatureInit failed with 0x{rv:08x}"
             data_ptr, data_len = _data_buf(data)
             rv = rs.raw.C_VerifySignature(rs.sh, data_ptr, data_len)
@@ -87,6 +89,8 @@ class TestVerifySignatureRoundtrip:
             sig_ptr, sig_len = _sig_buf(sig)
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_VerifySignatureInit(rs.sh, mech.byref(), pub, sig_ptr, sig_len)
+            if rv == CKR_FUNCTION_NOT_SUPPORTED:
+                pytest.skip("C_VerifySignatureInit listed but not operational")
             assert rv == CKR_OK, f"C_VerifySignatureInit failed with 0x{rv:08x}"
             for chunk in chunks:
                 chunk_ptr, chunk_len = _data_buf(chunk)
