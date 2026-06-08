@@ -343,6 +343,24 @@ Inherits all quirks from NSS 3.120.1 above. Additional findings below.
 - Affected test: `test_api_security.py::TestWrapDecryptOracle::test_wrap_decrypt_combination_prevented`
 - Impact: Enables wrap-then-decrypt attack to extract key material from the token
 
+**HIGH: ML-KEM permission flags not enforced (CKA_ENCAPSULATE / CKA_DECAPSULATE)**
+
+- A v3.2 ML-KEM keypair created with `CKA_ENCAPSULATE=False` (public key) or
+  `CKA_DECAPSULATE=False` (private key) still completes `C_EncapsulateKey` /
+  `C_DecapsulateKey` — the key reads the flag back as `False` and the module
+  performs the operation anyway (Type-B self-contradiction).
+- Ref: PKCS#11 v3.2 Sec.5.14.7 / Sec.5.14.8 require `CKR_KEY_FUNCTION_NOT_PERMITTED`
+  when the corresponding flag is `False`.
+- Affected tests: `test_kem.py::TestMLKEMNegative::test_encapsulate_missing_permission_flag`,
+  `test_kem.py::TestMLKEMNegative::test_decapsulate_missing_permission_flag`
+- Note: the encapsulate case was previously masked — the test only did a
+  `pCiphertext=NULL` size query, which this module answers with
+  `CKR_BUFFER_TOO_SMALL` before reaching the permission check, and the old
+  assertion tolerated `CKR_OK`. The test now drives the full operation, so the
+  flag is actually exercised (kryoptic enforces it and passes; this module does
+  not and fails as a finding).
+- Impact: KEM key-usage policy not enforced; a key marked encapsulate/decapsulate-disabled can still be used.
+
 **MEDIUM: RSA-OAEP padding oracle (non-uniform error codes)**
 
 - Different CKR codes returned for different invalid OAEP ciphertexts

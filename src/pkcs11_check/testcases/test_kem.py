@@ -884,30 +884,92 @@ class TestMLKEMNegative:
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_encapsulate_missing_permission_flag(self, p11_raw_session: Any) -> None:
-        """Encapsulate fails if CKA_ENCAPSULATE is False on public key."""
+        """Encapsulate fails if CKA_ENCAPSULATE is False on public key.
+
+        Spec (PKCS#11 v3.2 Sec.5.14.7): CKR_KEY_FUNCTION_NOT_PERMITTED when
+        CKA_ENCAPSULATE is False.  Some modules validate output buffer
+        availability before checking key permissions and return
+        CKR_BUFFER_TOO_SMALL on the size-query call.
+
+        Mirrors ``test_decapsulate_missing_permission_flag``: a clean rejection
+        classifies 3-way, while a *full* successful encapsulation against a key
+        that reads back CKA_ENCAPSULATE=False is a Type-B self-contradiction and
+        must fail (not silently pass on CKR_OK).
+        """
         rs = p11_raw_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs, CKA_ENCAPSULATE_OVERRIDE=False)
+        handle = CK_OBJECT_HANDLE(0)
         try:
-            handle = CK_OBJECT_HANDLE(0)
-            ct_len = CK_ULONG(0)
             mech = mech_simple(CKM_ML_KEM)
             tmpl = template(
                 attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
                 attr_ulong(CKA_KEY_TYPE, CKK_AES),
             )
+            # Drive the FULL operation, not just the size query: a non-conformant
+            # size query (some modules answer CKR_BUFFER_TOO_SMALL to a NULL
+            # pCiphertext query instead of reporting the required length) must
+            # not mask whether the permission flag is actually enforced.  Use the
+            # queried length when the module reports one, else a buffer
+            # comfortably larger than the largest standard ML-KEM ciphertext so
+            # the permission check is reached on every module.
+            ct_len = CK_ULONG(0)
+            size_rv = rs.raw.C_EncapsulateKey(
+                rs.sh,
+                mech.byref(),
+                pub,
+                *template_ptr_count(tmpl),
+                None,  # pCiphertext (size query)
+                byref(ct_len),
+                byref(handle),
+            )
+            if size_rv == CKR_KEY_FUNCTION_NOT_PERMITTED:
+                # Permission enforced already at the size query: spec-correct.
+                classify_negative_rv(
+                    size_rv,
+                    (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                    label="encapsulate with CKA_ENCAPSULATE=False on public key "
+                    "(PKCS#11 v3.2 Sec.5.14.7 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+                )
+                return
+            buf_len = ct_len.value if (size_rv == CKR_OK and ct_len.value) else 4096
+            ct_buf = (ctypes.c_ubyte * buf_len)()
+            ct_len = CK_ULONG(buf_len)
             rv = rs.raw.C_EncapsulateKey(
                 rs.sh,
                 mech.byref(),
                 pub,
                 *template_ptr_count(tmpl),
-                None,  # pCiphertext (query for size)
+                ct_buf,
                 byref(ct_len),
                 byref(handle),
             )
-            # NSS-PQC checks buffer availability before permission flags and returns
-            # CKR_BUFFER_TOO_SMALL when pCiphertext=None is passed on the size-query call.
-            assert rv in (CKR_OK, CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_BUFFER_TOO_SMALL)
+            if rv == CKR_OK and handle.value:
+                destroy_quietly(rs.raw, rs.sh, handle.value)
+
+            if rv != CKR_OK:
+                # A rejection: the spec code passes, another clean code xfails.
+                classify_negative_rv(
+                    rv,
+                    (CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_BUFFER_TOO_SMALL),
+                    label="encapsulate with CKA_ENCAPSULATE=False on public key "
+                    "(PKCS#11 v3.2 Sec.5.14.7 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+                )
+                return
+
+            # rv == CKR_OK -- Type-B claim/effect-check. The protection is only
+            # claimed if the public key actually reads back CKA_ENCAPSULATE=False
+            # (a module that did not honor the flag at create has not claimed the
+            # protection -> honest non-support -> xfail). If it was claimed and
+            # encapsulation still succeeded, the module contradicted itself.
+            encap_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_ENCAPSULATE])
+            claimed = encap_attrs.get(CKA_ENCAPSULATE) is False
+            classify_policy_enforcement(
+                claimed=claimed,
+                violated=True,
+                label="encapsulate with CKA_ENCAPSULATE=False on public key "
+                "(PKCS#11 v3.2 Sec.5.14.7 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
