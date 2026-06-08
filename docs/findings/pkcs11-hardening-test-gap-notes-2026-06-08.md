@@ -171,6 +171,10 @@ not by implementation identity:
   The provider-neutral test now reads `CKA_DERIVE` from a generated ML-KEM
   private key and fails only if the module reports the forbidden derive
   capability.
+- The same optimized review found one valid search-path gap:
+  `C_FindObjectsInit(NULL_PTR, 0)` is an empty-template match-all search, not a
+  NULL-template error. Coverage now creates a session object, starts the search
+  with a literal NULL pointer and zero count, and verifies the object is returned.
 - Several histories also converged on caller-pointer alignment bugs. The
   provider-neutral lesson is not provider identity but API shape: modules should
   not assume that foreign-function callers always provide naturally aligned

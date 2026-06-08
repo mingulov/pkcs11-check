@@ -395,6 +395,69 @@ class TestFindObjectsErrors:
         rs.raw.C_FindObjectsFinal(rs.sh)
         assert count.value == 0  # Empty is valid - not an error
 
+    def test_find_objects_null_template_zero_count_matches_all(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """C_FindObjectsInit(NULL_PTR, 0) is a valid match-all search."""
+        rs = p11_raw_session
+        handle = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: "ckr-find-null-template-zero-count",
+                CKA_VALUE: b"test",
+                CKA_TOKEN: False,
+            },
+        )
+        search_started = False
+        try:
+            rv = rs.raw.C_FindObjectsInit(rs.sh, None, 0)
+            if rv != CKR_OK:
+                pytest.xfail(
+                    "C_FindObjectsInit(NULL_PTR, 0) rejected a valid match-all search: "
+                    f"{ckr_name(rv)}"
+                )
+            search_started = True
+
+            found: list[int] = []
+            for _ in range(128):
+                handles = (CK_OBJECT_HANDLE * 16)()
+                count = CK_ULONG(0)
+                rv = rs.raw.C_FindObjects(rs.sh, handles, len(handles), byref(count))
+                if rv != CKR_OK:
+                    pytest.xfail(
+                        "C_FindObjects after C_FindObjectsInit(NULL_PTR, 0) rejected "
+                        f"a valid search: {ckr_name(rv)}"
+                    )
+                assert count.value <= len(handles), (
+                    "C_FindObjects returned more handles than the caller's "
+                    "ulMaxObjectCount"
+                )
+                found.extend(int(handles[i]) for i in range(count.value))
+                if count.value == 0:
+                    break
+            else:
+                pytest.fail("C_FindObjects(NULL_PTR, 0) did not finish within 2048 handles")
+
+            rv = rs.raw.C_FindObjectsFinal(rs.sh)
+            search_started = False
+            if rv != CKR_OK:
+                pytest.xfail(
+                    "C_FindObjectsFinal after C_FindObjectsInit(NULL_PTR, 0) rejected "
+                    f"a valid search: {ckr_name(rv)}"
+                )
+
+            assert handle in found, (
+                "C_FindObjectsInit(NULL_PTR, 0) did not match a session object "
+                "created before the search"
+            )
+        finally:
+            if search_started:
+                rs.raw.C_FindObjectsFinal(rs.sh)
+            destroy_quietly(rs.raw, rs.sh, handle)
+
     def test_find_by_class(self, p11_raw_session: Any) -> None:
         """FindObjects with CKA_CLASS filter works correctly."""
         rs = p11_raw_session
