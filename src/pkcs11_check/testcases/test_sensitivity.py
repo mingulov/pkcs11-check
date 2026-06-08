@@ -20,8 +20,10 @@ from pkcs11_check.raw.recipes import (
 )
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
+    CK_UNAVAILABLE_INFORMATION,
     CKA_ALWAYS_SENSITIVE,
     CKA_EXTRACTABLE,
+    CKA_LABEL,
     CKA_PRIVATE_EXPONENT,
     CKA_SENSITIVE,
     CKA_VALUE,
@@ -31,6 +33,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
     classify_policy_enforcement,
     gen_rsa_keypair_or_xfail,
     is_known_error,
@@ -115,6 +118,63 @@ class TestSensitiveKeyValue:
                     "raw C_GetAttributeValue copied CKA_VALUE bytes for a "
                     "CKA_SENSITIVE=True AES key"
                 ),
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_get_attribute_value_mixed_sensitive_template_continues(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """A sensitive template row must not prevent later safe rows from filling."""
+        rs = p11_raw_session
+        secret = bytes.fromhex("2031425364758697a8b9cadbecfd0e1f")
+        label = b"p11chk-mixed-sensitive"
+        try:
+            key = import_secret_key(
+                rs.raw,
+                rs.sh,
+                CKK_AES,
+                secret,
+                attrs={CKA_SENSITIVE: True, CKA_EXTRACTABLE: False, CKA_LABEL: label},
+            )
+        except AssertionError as exc:
+            pytest.xfail(f"Cannot import sensitive AES key for mixed-attribute probe: {exc}")
+
+        try:
+            sens_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
+            if sens_attrs.get(CKA_SENSITIVE) is not True:
+                pytest.xfail(
+                    "mixed C_GetAttributeValue probe requires a key that reports "
+                    "CKA_SENSITIVE=True"
+                )
+
+            label_buf = (ctypes.c_ubyte * len(label))()
+            attr = (CK_ATTRIBUTE * 2)()
+            attr[0].type = CKA_VALUE
+            attr[0].pValue = None
+            attr[0].ulValueLen = 0
+            attr[1].type = CKA_LABEL
+            attr[1].pValue = ctypes.cast(label_buf, ctypes.c_void_p)
+            attr[1].ulValueLen = len(label)
+
+            rv = rs.raw.C_GetAttributeValue(rs.sh, key, attr, 2)
+            classify_negative_rv(
+                rv,
+                (CKR_ATTRIBUTE_SENSITIVE,),
+                label="C_GetAttributeValue mixed sensitive/safe template",
+            )
+            assert attr[0].ulValueLen == CK_UNAVAILABLE_INFORMATION, (
+                "sensitive CKA_VALUE row should report CK_UNAVAILABLE_INFORMATION; "
+                f"got {attr[0].ulValueLen}"
+            )
+            assert attr[1].ulValueLen == len(label), (
+                f"safe CKA_LABEL row reported length {attr[1].ulValueLen}, "
+                f"expected {len(label)}"
+            )
+            assert bytes(label_buf[: attr[1].ulValueLen]) == label, (
+                "C_GetAttributeValue returned CKR_ATTRIBUTE_SENSITIVE but did not "
+                "populate the later safe CKA_LABEL row"
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

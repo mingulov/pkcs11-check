@@ -185,6 +185,11 @@ not by implementation identity:
   digested internally without exposing `CKA_VALUE`. Coverage now imports a known
   protected AES key, accepts clean provider-policy rejections as visible xfail
   evidence, and verifies the exact SHA-256 digest if the operation succeeds.
+- A mixed-attribute `C_GetAttributeValue` history pass found the spec-mandated
+  "continue filling the template" behavior after benign per-attribute errors.
+  Coverage now requests sensitive `CKA_VALUE` followed by safe `CKA_LABEL` and
+  fails if the later safe attribute is left unfilled after
+  `CKR_ATTRIBUTE_SENSITIVE`.
 - Several histories also converged on caller-pointer alignment bugs. The
   provider-neutral lesson is not provider identity but API shape: modules should
   not assume that foreign-function callers always provide naturally aligned
