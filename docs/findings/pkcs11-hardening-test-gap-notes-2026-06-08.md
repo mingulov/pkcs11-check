@@ -97,14 +97,20 @@ Recent provider histories point to the same public-API bug classes across
 multiple implementations. These should be converted into tests by API surface,
 not by implementation identity:
 
-- A targeted refresh of recent commit messages was enough for this pass; a
-  broad full-diff archaeology pass is not needed until the remaining API
-  surfaces below need deeper prioritization.
+- A targeted refresh of recent commit messages was enough for this pass. The
+  latest optimized provider-history review stayed local and exact-keyword
+  based: public PKCS#11 API names, `CKR_`/`CKA_`/`CKM_` identifiers,
+  buffer/length/null/overflow/crash terms, and commit subjects that already
+  pointed at concrete findings. A broad full-diff archaeology pass is not
+  needed until the remaining API surfaces below need deeper prioritization.
 - Operation initialization must validate both key type and key usage before
   storing active operation state. Existing mechanism-negative tests cover many
-  wrong-key paths; remaining hardening value is crash-safe child probes for
-  less-common operations and a follow-up valid operation after each clean
-  rejection.
+  wrong-key paths. The new representative hardening coverage uses a crash-safe
+  child process for `C_SignInit(CKM_ECDSA, RSA private key)` and
+  `C_VerifyInit(CKM_ECDSA, RSA public key)`, then continues into `C_Sign` or
+  `C_Verify` if init incorrectly returns `CKR_OK`. Remaining value is
+  less-common operations and follow-up valid-operation probes after clean
+  rejections.
 - Mechanism parameter serializers and decoders need length and pointer
   cross-checks. Useful targets include RSA-PSS, RSA-OAEP, AES-GCM, AES-CBC
   encrypt-data, EdDSA, TLS KDFs, PBE, HKDF, ECDH-AESKW, RSA-AES key wrap, and
@@ -153,6 +159,11 @@ not by implementation identity:
   output sizing, and derive output size. The useful pkcs11-check translation is
   effect-based: after `CKR_OK`, read the object attributes or verify the crypto
   output; after a clean reject, classify the rejection rather than hiding it.
+- The latest exact-history pass did not justify another immediate broad test
+  family: `CKA_TOKEN` scalar-length checks already cover create/copy/unwrap/
+  generate paths, HKDF null-pointer probes exist, AES-KWP corrupted unwrap and
+  DH right-truncation are covered, and v3.0 operation cancellation is exercised
+  through `C_SessionCancel` tests plus NULL-mechanism boundary probes.
 - Several histories also converged on caller-pointer alignment bugs. The
   provider-neutral lesson is not provider identity but API shape: modules should
   not assume that foreign-function callers always provide naturally aligned

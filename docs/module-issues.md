@@ -92,6 +92,15 @@ provider package versions where the finding was first recorded.
   The same issue is also visible on EC P-256 public-key and private-key
   templates via
   `test_ckr_keygen.py::TestGenerateKeyPairErrors::test_ec_token_bool_overlong_length`.
+- **Wrong asymmetric key type accepted by operation init (NEW 2026-06-08)**:
+  `C_SignInit(CKM_ECDSA, RSA private key)` returns `CKR_OK` instead of rejecting
+  the mismatched key/mechanism combination, then the subsequent `C_Sign` returns
+  `CKR_GENERAL_ERROR`. `C_VerifyInit(CKM_ECDSA, RSA public key)` similarly
+  returns `CKR_OK`, and the subsequent `C_Verify` returns
+  `CKR_SIGNATURE_LEN_RANGE` for a fake ECDSA signature. This is a
+  self-contradiction: once operation init accepts the key, the provider has
+  claimed the operation is valid. Detected by
+  `test_ckr_wrong_key_type_hardening.py::TestWrongAsymmetricKeyTypeContinuation`.
 
 ### Known quirks
 - `C_GetObjectSize` returns `CK_UNAVAILABLE_INFORMATION` (not implemented)
