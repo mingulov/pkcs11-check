@@ -215,6 +215,11 @@ not by implementation identity:
   cover the valid empty-template path. Coverage now tries fixed-length secret
   key generation with `pTemplate=NULL` and `ulCount=0`, then verifies the
   generated object class and key type after `CKR_OK`.
+- A derive-key handle pass found that existing derive tests covered wrong
+  mechanisms and wrong key types but not a literal invalid base-key handle.
+  Coverage now calls `C_DeriveKey` with an advertised no-parameter key
+  derivation mechanism, a valid output template, and `hBaseKey=0`, requiring a
+  clean handle rejection.
 - Several histories also converged on caller-pointer alignment bugs. The
   provider-neutral lesson is not provider identity but API shape: modules should
   not assume that foreign-function callers always provide naturally aligned

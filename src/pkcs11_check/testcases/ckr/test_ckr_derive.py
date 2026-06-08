@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.pack import (
+    attr_bool,
     attr_ulong,
     mech_bytes,
     mech_simple,
@@ -19,10 +20,16 @@ from pkcs11_check.raw.pack import (
 from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key, gen_rsa_keypair
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
+    CKA_CLASS,
     CKA_DERIVE,
+    CKA_KEY_TYPE,
+    CKA_TOKEN,
     CKA_VALUE_LEN,
+    CKK_GENERIC_SECRET,
     CKM_ECDH1_DERIVE,
     CKM_SHA256,
+    CKM_SHA256_KEY_DERIVATION,
+    CKO_SECRET_KEY,
     CKR_OK,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_DERIVE, assert_ckr
@@ -32,6 +39,33 @@ pytestmark = pytest.mark.access
 
 class TestDeriveKeyErrors:
     """Error conditions for C_DeriveKey (Sec.5.14.5)."""
+
+    def test_null_base_key_handle(self, p11_raw_session: Any, ckr_strict: bool) -> None:
+        """C_DeriveKey with hBaseKey=0 -> CKR_KEY_HANDLE_INVALID."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("SHA256_KEY_DERIVATION"):
+            pytest.skip("SHA256_KEY_DERIVATION not supported")
+
+        mech = mech_simple(CKM_SHA256_KEY_DERIVATION)
+        tmpl = template(
+            attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
+            attr_ulong(CKA_VALUE_LEN, 16),
+            attr_bool(CKA_TOKEN, False),
+        )
+        derived = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_DeriveKey(
+            rs.sh,
+            mech.byref(),
+            0,
+            tmpl.ptr,
+            tmpl.count,
+            byref(derived),
+        )
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, derived.value)
+            pytest.fail("C_DeriveKey accepted hBaseKey=0")
+        assert_ckr(CKR_DERIVE["key_handle_invalid"], rv, ckr_strict)
 
     def test_mechanism_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Using hash mechanism for derive -> CKR_MECHANISM_INVALID."""
