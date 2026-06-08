@@ -203,6 +203,10 @@ not by implementation identity:
   AES-CBC encrypt/decrypt operation, calls the one-shot or update function with
   either a NULL input pointer or NULL output-length pointer, then verifies the
   rejected operation no longer blocks a fresh init.
+- A wrap-policy attribute pass found that wrap enforcement alone does not prove
+  `CKA_WRAP_WITH_TRUSTED` transition rules. Coverage now creates a key with
+  `CKA_WRAP_WITH_TRUSTED=True`, attempts to clear it with
+  `C_SetAttributeValue`, and fails if the stricter policy is actually removed.
 - Several histories also converged on caller-pointer alignment bugs. The
   provider-neutral lesson is not provider identity but API shape: modules should
   not assume that foreign-function callers always provide naturally aligned

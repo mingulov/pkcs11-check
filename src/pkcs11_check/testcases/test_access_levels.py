@@ -117,6 +117,13 @@ _TRUSTED_SETATTR_REJECT_RVS = (
     CKR_USER_NOT_LOGGED_IN,
 )
 
+_WRAP_WITH_TRUSTED_SETATTR_REJECT_RVS = (
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+)
+
 _ALWAYS_AUTH_TEMPLATE_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_READ_ONLY,
@@ -910,6 +917,54 @@ class TestTrustedAttribute:
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
+
+    def test_wrap_with_trusted_cannot_be_cleared_once_true(
+        self, p11_raw_session: Any
+    ) -> None:
+        """CKA_WRAP_WITH_TRUSTED can only move toward stricter wrapping policy."""
+        rs = p11_raw_session
+        try:
+            target_h = _gen_access_aes_key(
+                rs,
+                rs.sh,
+                attrs={
+                    CKA_WRAP_WITH_TRUSTED: True,
+                    CKA_TOKEN: False,
+                },
+            )
+        except AssertionError as exc:
+            pytest.skip(f"CKA_WRAP_WITH_TRUSTED not supported: {exc}")
+            return
+
+        try:
+            try:
+                attrs = read_attributes(rs.raw, rs.sh, target_h, [CKA_WRAP_WITH_TRUSTED])
+            except AssertionError as exc:
+                if is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                    pytest.skip(f"Module does not expose CKA_WRAP_WITH_TRUSTED: {exc}")
+                raise
+            if attrs.get(CKA_WRAP_WITH_TRUSTED) is not True:
+                pytest.skip("Module did not honour CKA_WRAP_WITH_TRUSTED=True")
+
+            try:
+                set_attributes(rs.raw, rs.sh, target_h, {CKA_WRAP_WITH_TRUSTED: False})
+            except AssertionError as exc:
+                if is_known_error(exc, _WRAP_WITH_TRUSTED_SETATTR_REJECT_RVS):
+                    return
+                raise
+
+            after = read_attributes(rs.raw, rs.sh, target_h, [CKA_WRAP_WITH_TRUSTED])
+            if after.get(CKA_WRAP_WITH_TRUSTED) is False:
+                pytest.fail(
+                    "SECURITY: CKA_WRAP_WITH_TRUSTED downgraded from True to False "
+                    "via C_SetAttributeValue"
+                )
+            pytest.fail(
+                "C_SetAttributeValue returned CKR_OK for CKA_WRAP_WITH_TRUSTED "
+                "True->False but left the stricter value unchanged"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, target_h)
 
     def test_wrap_with_trusted_rejects_untrusted(self, p11_raw_session: Any) -> None:
         """Without CKA_TRUSTED, wrapping a CKA_WRAP_WITH_TRUSTED key fails."""
