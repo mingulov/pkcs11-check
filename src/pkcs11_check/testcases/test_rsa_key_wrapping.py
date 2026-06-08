@@ -41,9 +41,13 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS_OAEP,
     CKM_SHA_1,
     CKO_SECRET_KEY,
+    CKR_ACTION_PROHIBITED,
+    CKR_KEY_NOT_WRAPPABLE,
 )
 from pkcs11_check.testcases.conftest import (
+    classify_policy_enforcement,
     gen_rsa_keypair_or_xfail,
+    reject_or_classify,
     require_operational_aes_keygen,
 )
 
@@ -323,15 +327,12 @@ class TestWrappedKeyUsability:
         CKR_ACTION_PROHIBITED if the key has CKA_EXTRACTABLE=False.
 
         SECURITY: A module that wraps a non-extractable key allows key material
-        exfiltration in violation of the PKCS#11 security model.
-
-        NSS deviation: NSS allows C_WrapKey to succeed on a non-extractable key,
-        bypassing the CKA_EXTRACTABLE=False protection.
-        This is a SECURITY BUG in NSS's key wrapping implementation.
-        Tracked in docs/module-issues.md under NSS (SECURITY).
+        exfiltration in violation of the PKCS#11 security model. This is a Type-B
+        self-contradiction (the key reads back CKA_EXTRACTABLE=False, then its
+        material leaves the token) and must FAIL, not xfail -- consistent with
+        the sensitive-value and Tookan extractable-escalation security tests.
+        Findings are tracked in docs/module-issues.md.
         """
-        from pkcs11_check.compliance import ComplianceLevel, note
-
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
@@ -345,6 +346,16 @@ class TestWrappedKeyUsability:
         )
 
         try:
+            # Establish the claim: the key must actually read back
+            # CKA_EXTRACTABLE=False. If the module did not honour the flag at
+            # creation, it never claimed the protection -> honest non-support.
+            extractable = read_attributes(rs.raw, rs.sh, non_extractable, [CKA_EXTRACTABLE]).get(
+                CKA_EXTRACTABLE
+            )
+            if extractable is not False:
+                pytest.xfail("Module did not honour CKA_EXTRACTABLE=False at key creation")
+                return
+
             try:
                 wrap_key_recipe(
                     rs.raw,
@@ -353,21 +364,23 @@ class TestWrappedKeyUsability:
                     non_extractable,
                     CKM_RSA_PKCS,
                 )
-                # Wrapping succeeded -- this is a SECURITY bug
-                note(
-                    "C_WrapKey succeeded on a CKA_EXTRACTABLE=False key -- "
-                    "key material can be exfiltrated despite non-extractable flag (SECURITY)",
-                    ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 spec C_WrapKey, CKA_EXTRACTABLE",
+            except AssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (CKR_KEY_NOT_WRAPPABLE, CKR_ACTION_PROHIBITED),
+                    label="C_WrapKey of a CKA_EXTRACTABLE=False key",
                 )
-                pytest.xfail(
-                    "SECURITY: module allowed C_WrapKey on a non-extractable "
-                    "(CKA_EXTRACTABLE=False) "
-                    "key -- key material exfiltration is possible in violation of the PKCS#11 "
-                    "security model (expected CKR_KEY_NOT_WRAPPABLE or CKR_ACTION_PROHIBITED)"
-                )
-            except AssertionError:
-                pass  # Expected: expect_rv raises AssertionError for CKR error
+                return
+
+            # Wrap succeeded on a verified non-extractable key -- Type-B: claimed
+            # the protection (CKA_EXTRACTABLE=False) then violated it (material
+            # left the token).
+            classify_policy_enforcement(
+                claimed=True,
+                violated=True,
+                label="C_WrapKey succeeded on a CKA_EXTRACTABLE=False key -- key "
+                "material exfiltration (PKCS#11 requires CKR_KEY_NOT_WRAPPABLE)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

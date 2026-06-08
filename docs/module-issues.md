@@ -343,6 +343,25 @@ Inherits all quirks from NSS 3.120.1 above. Additional findings below.
 - Affected test: `test_api_security.py::TestWrapDecryptOracle::test_wrap_decrypt_combination_prevented`
 - Impact: Enables wrap-then-decrypt attack to extract key material from the token
 
+**HIGH: Non-extractable key is wrappable (CKA_EXTRACTABLE=False bypass)**
+
+- `C_WrapKey` succeeds on a key that reads back `CKA_EXTRACTABLE=False`, so key
+  material leaves the token despite the non-extractable flag (Type-B).
+- Ref: PKCS#11 C_WrapKey / CKA_EXTRACTABLE; expected `CKR_KEY_NOT_WRAPPABLE`.
+- Affected test: `test_rsa_key_wrapping.py::TestWrappedKeyUsability::test_non_extractable_key_cannot_be_wrapped`
+- Note: this test previously xfailed the violation; it now fails it (consistent
+  with the sensitive-value / Tookan security tests). Verified failing on the NSS
+  softokn Docker targets; compliant software tokens (e.g. softhsm2) pass.
+
+**HIGH: CKA_WRAP_WITH_TRUSTED not enforced**
+
+- A key that reads back `CKA_WRAP_WITH_TRUSTED=True` is still wrapped by an
+  untrusted (non-`CKA_TRUSTED`) wrapping key (Type-B). Expected
+  `CKR_KEY_NOT_WRAPPABLE`.
+- Affected test: `test_access_levels.py::TestTrustedAttribute::test_wrap_with_trusted_rejects_untrusted`
+- Note: previously xfail-hidden; now fails. Verified on the NSS softokn Docker
+  targets; softhsm2 enforces it and passes.
+
 **HIGH: ML-KEM permission flags not enforced (CKA_ENCAPSULATE / CKA_DECAPSULATE)**
 
 - A v3.2 ML-KEM keypair created with `CKA_ENCAPSULATE=False` (public key) or
