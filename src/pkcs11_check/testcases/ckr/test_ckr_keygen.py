@@ -41,9 +41,11 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_AES_KEY_GEN,
     CKM_EC_KEY_PAIR_GEN,
+    CKM_ML_DSA_KEY_PAIR_GEN,
     CKM_ML_KEM_KEY_PAIR_GEN,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SHA256,
+    CKP_ML_DSA_65,
     CKP_ML_KEM_768,
     CKR_OK,
 )
@@ -642,6 +644,100 @@ class TestGenerateKeyPairErrors:
             TEMPLATE_ERRORS,
             label=(
                 f"ML-KEM C_GenerateKeyPair with {case_name} {malformed_template} "
+                "CKA_PARAMETER_SET CK_ULONG attribute"
+            ),
+        )
+
+    @pytest.mark.pqc
+    @pytest.mark.requires_v32
+    @pytest.mark.parametrize(
+        ("malformed_template", "attr_len", "case_name"),
+        [
+            pytest.param("public", 1, "underlong", id="public-underlong"),
+            pytest.param("public", sizeof(CK_ULONG) + 1, "overlong", id="public-overlong"),
+            pytest.param("private", 1, "underlong", id="private-underlong"),
+            pytest.param("private", sizeof(CK_ULONG) + 1, "overlong", id="private-overlong"),
+        ],
+    )
+    def test_ml_dsa_parameter_set_ulong_malformed_length(
+        self,
+        p11_raw_session: Any,
+        malformed_template: str,
+        attr_len: int,
+        case_name: str,
+    ) -> None:
+        """ML-DSA CKA_PARAMETER_SET with non-CK_ULONG-sized storage must be rejected."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("ML_DSA_KEY_PAIR_GEN"):
+            pytest.skip("ML_DSA_KEY_PAIR_GEN not supported")
+
+        mech = mech_simple(CKM_ML_DSA_KEY_PAIR_GEN)
+        control_pub_tmpl = template(
+            attr_bool(CKA_VERIFY, True),
+            attr_ulong(CKA_PARAMETER_SET, CKP_ML_DSA_65),
+            attr_bool(CKA_TOKEN, False),
+        )
+        control_priv_tmpl = template(
+            attr_bool(CKA_SIGN, True),
+            attr_ulong(CKA_PARAMETER_SET, CKP_ML_DSA_65),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, False),
+        )
+        control_pub = CK_OBJECT_HANDLE(0)
+        control_priv = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            control_pub_tmpl.ptr,
+            control_pub_tmpl.count,
+            control_priv_tmpl.ptr,
+            control_priv_tmpl.count,
+            byref(control_pub),
+            byref(control_priv),
+        )
+        if rv != CKR_OK:
+            pytest.xfail(f"ML-DSA-65 keypair generation is not operational: {ckr_name(rv)}")
+        destroy_quietly(rs.raw, rs.sh, control_pub.value)
+        destroy_quietly(rs.raw, rs.sh, control_priv.value)
+
+        pub_tmpl = template(
+            attr_bool(CKA_VERIFY, True),
+            attr_ulong(CKA_PARAMETER_SET, CKP_ML_DSA_65),
+            attr_bool(CKA_TOKEN, False),
+        )
+        priv_tmpl = template(
+            attr_bool(CKA_SIGN, True),
+            attr_ulong(CKA_PARAMETER_SET, CKP_ML_DSA_65),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, False),
+        )
+        if malformed_template == "public":
+            _storage = make_ulong_attr_with_length(pub_tmpl, 1, CKP_ML_DSA_65, attr_len)
+        else:
+            _storage = make_ulong_attr_with_length(priv_tmpl, 1, CKP_ML_DSA_65, attr_len)
+
+        pub = CK_OBJECT_HANDLE(0)
+        priv = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            pub_tmpl.ptr,
+            pub_tmpl.count,
+            priv_tmpl.ptr,
+            priv_tmpl.count,
+            byref(pub),
+            byref(priv),
+        )
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, pub.value)
+            destroy_quietly(rs.raw, rs.sh, priv.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label=(
+                f"ML-DSA C_GenerateKeyPair with {case_name} {malformed_template} "
                 "CKA_PARAMETER_SET CK_ULONG attribute"
             ),
         )

@@ -290,11 +290,11 @@ Initial coverage added:
   `CKA_KEY_TYPE` value is stored in undersized or oversized `CK_ULONG` storage.
   A template rejection passes; `CKR_OK` fails after the created key is
   destroyed.
-- `C_GenerateKeyPair` with an advertised ML-KEM key-pair-generation mechanism,
-  positive-control ML-KEM-768 setup, and public-key or private-key templates
-  whose `CKA_PARAMETER_SET` value is stored in undersized or oversized
-  `CK_ULONG` storage. A template rejection passes; `CKR_OK` fails after both
-  generated keys are destroyed.
+- `C_GenerateKeyPair` with advertised ML-KEM and ML-DSA key-pair-generation
+  mechanisms, positive-control ML-KEM-768 / ML-DSA-65 setup, and public-key or
+  private-key templates whose `CKA_PARAMETER_SET` value is stored in undersized
+  or oversized `CK_ULONG` storage. A template rejection passes; `CKR_OK` fails
+  after both generated keys are destroyed.
 - `C_GenerateKey` with an advertised AES key-generation mechanism and an output
   template whose `CKA_VALUE_LEN` value is stored in undersized or oversized
   `CK_ULONG` storage. A template rejection passes; `CKR_OK` fails after the
@@ -309,7 +309,8 @@ Remaining useful expansion:
   rejection on modules that do not accept those attributes in unwrap templates.
 - Integer-valued scalar attributes with undersized or oversized lengths,
   especially create/copy/generate/unwrap surfaces beyond the initial
-  object-class, key-type, AES value-length, and ML-KEM parameter-set coverage.
+  object-class, key-type, AES value-length, ML-KEM parameter-set, and ML-DSA
+  parameter-set coverage.
 
 Expected outcome: clean attribute/template rejection. Accepting a malformed
 scalar attribute as valid is a hard failure; a different clean rejection is
