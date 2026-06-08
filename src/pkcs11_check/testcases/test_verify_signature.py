@@ -133,19 +133,20 @@ class TestVerifySignatureRoundtrip:
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_verify_signature_wrong_key(self, p11_raw_session: Any) -> None:
-        """Wrong key returns CKR_KEY_HANDLE_INVALID or CKR_SIGNATURE_INVALID.
+        """A signature created with a different key must not verify.
 
-        SECURITY: A module that returns CKR_OK when verifying with a mismatched
-        key silently accepts forged signatures.
+        SECURITY: a module that ultimately returns CKR_OK when verifying a
+        signature against a mismatched public key silently accepts forged
+        signatures (Type-A crypto-correctness break).
 
-        NSS deviation: NSS C_VerifySignatureInit returns CKR_OK even when the
-        signature was created with a different key pair (pub2 vs priv1).
-        This is a SECURITY BUG in NSS's C_VerifySignatureInit -- it does not
-        validate key-signature correspondence at init time.
-        Tracked in docs/module-issues.md under NSS (SECURITY).
+        The verification verdict is produced by C_VerifySignature, not by
+        C_VerifySignatureInit: for same-size RSA keys the signature length matches
+        the modulus, so the key/signature mismatch can only be detected once the
+        data is supplied. A CKR_OK from C_VerifySignatureInit alone is therefore
+        NOT a finding -- the operation is driven to C_VerifySignature and that
+        outcome is classified (mirrors test_verify_signature_wrong_sig). Forgery
+        acceptance is a hard failure, not an xfail.
         """
-        from pkcs11_check.compliance import ComplianceLevel, note
-
         rs = p11_raw_session
         self._skip_unless_available(rs)
         if not rs.has_mechanism("RSA_PKCS"):
@@ -158,24 +159,32 @@ class TestVerifySignatureRoundtrip:
             sig_ptr, sig_len = _sig_buf(sig)
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_VerifySignatureInit(rs.sh, mech.byref(), pub2, sig_ptr, sig_len)
-            if rv == CKR_OK:
-                note(
-                    "C_VerifySignatureInit returned CKR_OK for a signature created with a "
-                    "different key -- module does not validate key-signature correspondence "
-                    "at init time (SECURITY)",
-                    ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 spec C_VerifySignatureInit",
+            if rv != CKR_OK:
+                # Some modules validate the key/signature correspondence at init.
+                if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
+                    pytest.xfail(
+                        f"C_VerifySignatureInit rejected the mismatched key with a "
+                        f"non-clean CKR: {ckr_name(rv)}"
+                    )
+                classify_negative_rv(
+                    rv,
+                    (CKR_KEY_HANDLE_INVALID, CKR_SIGNATURE_INVALID),
+                    label="C_VerifySignatureInit with a signature created under a different key",
                 )
+                return
+            # Init accepted; the forgery must be caught at C_VerifySignature.
+            data_ptr, data_len = _data_buf(data)
+            rv = rs.raw.C_VerifySignature(rs.sh, data_ptr, data_len)
+            if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
                 pytest.xfail(
-                    "SECURITY: C_VerifySignatureInit returned CKR_OK when verifying "
-                    "with a mismatched public key -- silent acceptance of forged signatures "
-                    "(expected CKR_KEY_HANDLE_INVALID or CKR_SIGNATURE_INVALID)"
+                    f"C_VerifySignature rejected the mismatched-key signature with a "
+                    f"non-clean CKR: {ckr_name(rv)}"
                 )
             classify_negative_rv(
                 rv,
-                (CKR_KEY_HANDLE_INVALID, CKR_SIGNATURE_INVALID),
-                label="C_VerifySignatureInit with a signature created under a different key "
-                "(CKR_OK accepts a forged signature; handled above as a CRITICAL deviation)",
+                SIGNATURE_REJECT_RVS,
+                label="C_VerifySignature of a signature created under a different key "
+                "(CKR_OK accepts a forgery)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub1)

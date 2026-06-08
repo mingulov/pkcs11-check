@@ -391,6 +391,19 @@ Inherits all quirks from NSS 3.120.1 above. Additional findings below.
 - Affected test: `test_padding_oracle.py::TestRSAPaddingOracle::test_oaep_error_uniformity`
 - Impact: Potential plaintext recovery via error oracle (~O(log n) queries for 2048-bit RSA)
 
+**CORRECTION (2026-06-08): "C_VerifySignatureInit accepts mismatched key" is NOT a finding**
+
+- Earlier triage rows (Group 9 / xfail tables below) recorded a suspected NSS
+  security bug where `C_VerifySignatureInit` returns `CKR_OK` for a signature
+  created with a different key. This was a TEST ARTIFACT: in PKCS#11 v3.2 the
+  verification verdict is produced by `C_VerifySignature`, not by
+  `C_VerifySignatureInit` (for same-size RSA keys the signature length matches
+  the modulus, so the mismatch is only detectable once the data is supplied).
+  The corrected `test_verify_signature.py::test_verify_signature_wrong_key`
+  drives the operation through `C_VerifySignature` and confirms NSS softokn
+  correctly **rejects** the forgery (test passes on nss-pqc). No NSS security
+  bug here. Kryoptic rejects with a non-clean code (honest xfail).
+
 ### Spec Deviations
 
 Findings from Phases 2-3 investigation and ongoing testing. All references are to PKCS#11 v3.1
