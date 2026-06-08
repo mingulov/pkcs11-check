@@ -483,6 +483,7 @@ from pkcs11_check.testcases.conftest import AES_KEYGEN_RUNTIME_REJECT_RVS
 from pkcs11_check.testcases.security.conftest import child_setup_reject_known
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
+    CK_MECHANISM,
     CKA_CLASS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
