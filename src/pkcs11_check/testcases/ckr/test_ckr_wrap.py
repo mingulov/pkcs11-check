@@ -12,8 +12,9 @@ from typing import Any
 import pytest
 
 from pkcs11_check.compliance import ComplianceLevel, note
-from pkcs11_check.raw.pack import attr_ulong, mech_simple, template
+from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
 from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key, import_secret_key
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
     CK_BBOOL,
@@ -23,6 +24,7 @@ from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_SENSITIVE,
+    CKA_TOKEN,
     CKA_UNWRAP,
     CKA_VALUE_LEN,
     CKA_WRAP,
@@ -41,9 +43,15 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPING_KEY_SIZE_RANGE,
     CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
 )
+from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS
 from pkcs11_check.testcases._module_quirks import quirk_extras
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_WRAP, assert_ckr
-from pkcs11_check.testcases.conftest import classify_policy_enforcement, gen_aes_key_or_xfail
+from pkcs11_check.testcases.ckr._malformed_attrs import make_bool_attr_overlong
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    classify_policy_enforcement,
+    gen_aes_key_or_xfail,
+)
 
 pytestmark = pytest.mark.access
 
@@ -403,3 +411,66 @@ class TestUnwrapKeyErrors:
             # CKR_WRAPPED_KEY_INVALID or CKR_WRAPPED_KEY_LEN_RANGE
         finally:
             destroy_quietly(rs.raw, rs.sh, unwrap_key)
+
+    def test_unwrap_token_bool_overlong_length(self, p11_raw_session: Any) -> None:
+        """C_UnwrapKey must reject CK_ULONG-sized CKA_TOKEN template value."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_WRAP"):
+            pytest.skip("AES_KEY_WRAP not supported")
+
+        wrapping_key = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_WRAP: True, CKA_UNWRAP: True},
+        )
+        target = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+        )
+        try:
+            mech = mech_simple(CKM_AES_KEY_WRAP)
+            wrapped_len = CK_ULONG(256)
+            wrapped_buf = (ctypes.c_ubyte * 256)()
+            rv = rs.raw.C_WrapKey(
+                rs.sh,
+                mech.byref(),
+                wrapping_key,
+                target,
+                wrapped_buf,
+                byref(wrapped_len),
+            )
+            if rv != CKR_OK:
+                pytest.xfail(f"CKM_AES_KEY_WRAP wrap not operational: {ckr_name(rv)}")
+            assert wrapped_len.value > 0, "CKM_AES_KEY_WRAP returned an empty wrapped blob"
+
+            tmpl = template(
+                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+                attr_ulong(CKA_KEY_TYPE, CKK_AES),
+                attr_ulong(CKA_VALUE_LEN, 16),
+                attr_bool(CKA_TOKEN, False),
+            )
+            _storage = make_bool_attr_overlong(tmpl, 3)
+            new_key = CK_OBJECT_HANDLE(0)
+            rv = rs.raw.C_UnwrapKey(
+                rs.sh,
+                mech.byref(),
+                wrapping_key,
+                wrapped_buf,
+                wrapped_len.value,
+                tmpl.ptr,
+                tmpl.count,
+                byref(new_key),
+            )
+            if rv == CKR_OK:
+                destroy_quietly(rs.raw, rs.sh, new_key.value)
+            classify_negative_rv(
+                rv,
+                TEMPLATE_ERRORS,
+                label="C_UnwrapKey with CK_ULONG-sized CKA_TOKEN boolean attribute",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, target)
+            destroy_quietly(rs.raw, rs.sh, wrapping_key)

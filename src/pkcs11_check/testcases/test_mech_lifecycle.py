@@ -63,7 +63,6 @@ from pkcs11_check.raw.types_std import (
     CKG_MGF1_SHA256,
     CKK_AES,
     CKK_HKDF,
-    CKM,
     CKM_AES_ECB,
     CKM_SHA256,
     CKO_SECRET_KEY,
@@ -156,7 +155,7 @@ class TestAESWrapUnwrapUse:
             ciphertext = encrypt_single(rs.raw, rs.sh, target, CKM_AES_ECB, plaintext)
 
             # Wrap the target key
-            wrapped = wrap_key(rs.raw, rs.sh, wrap_key_handle, target, CKM(int(CKM_AES_KEY_WRAP)))
+            wrapped = wrap_key(rs.raw, rs.sh, wrap_key_handle, target, CKM_AES_KEY_WRAP)
             assert len(wrapped) > 0, "wrap produced empty blob"
 
             # Destroy original -- only the wrapped copy remains
@@ -171,7 +170,7 @@ class TestAESWrapUnwrapUse:
                 rs.sh,
                 wrap_key_handle,
                 wrapped,
-                CKM(int(CKM_AES_KEY_WRAP)),
+                CKM_AES_KEY_WRAP,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
@@ -231,9 +230,7 @@ class TestECDHDerivedKeyUse:
             if not peer_point or not isinstance(peer_point, bytes):
                 pytest.skip("Cannot read CKA_EC_POINT from peer public key")
 
-            ecdh_param = mech_ecdh(
-                CKM(int(CKM_ECDH1_DERIVE)), kdf=int(CKD_NULL), public_data=peer_point
-            )
+            ecdh_param = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=peer_point)
 
             # CKA_CLASS is required by PKCS#11 spec for C_DeriveKey -- Kryoptic
             # returns CKR_TEMPLATE_INCONSISTENT when it is absent.
@@ -241,7 +238,7 @@ class TestECDHDerivedKeyUse:
                 rs.raw,
                 rs.sh,
                 priv_a,
-                CKM(int(CKM_ECDH1_DERIVE)),
+                CKM_ECDH1_DERIVE,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
@@ -261,13 +258,13 @@ class TestECDHDerivedKeyUse:
 
             iv = os.urandom(16)
 
-            cbc_param = mech_bytes(CKM(int(CKM_AES_CBC)), iv)
+            cbc_param = mech_bytes(CKM_AES_CBC, iv)
             plaintext = b"ecdh lifecycle test padded 32byt"
             ct = encrypt_single(
-                rs.raw, rs.sh, derived, CKM(int(CKM_AES_CBC)), plaintext, mech_param=cbc_param
+                rs.raw, rs.sh, derived, CKM_AES_CBC, plaintext, mech_param=cbc_param
             )
             pt = decrypt_single(
-                rs.raw, rs.sh, derived, CKM(int(CKM_AES_CBC)), ct, mech_param=cbc_param
+                rs.raw, rs.sh, derived, CKM_AES_CBC, ct, mech_param=cbc_param
             )
             assert pt == plaintext, (
                 f"ECDH-derived key encrypt/decrypt mismatch: "
@@ -317,7 +314,7 @@ class TestHKDFDerivedKeyUse:
             packed = [attr_ulong(CKA_VALUE_LEN, 32)]
             packed.extend(pack_attrs(hkdf_attrs, skip={CKA_VALUE_LEN}))
             tmpl = template(*packed)
-            gen_mech = mech_simple(CKM(CKM_HKDF_KEY_GEN))
+            gen_mech = mech_simple(CKM_HKDF_KEY_GEN)
             handle = CK_OBJECT_HANDLE(0)
             rv = rs.raw.C_GenerateKey(rs.sh, gen_mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
             try:
@@ -332,8 +329,8 @@ class TestHKDFDerivedKeyUse:
             base_key = handle.value
 
             hkdf_param = mech_hkdf(
-                CKM(int(CKM_HKDF_DERIVE)),
-                hash_mech=int(CKM_SHA256),
+                CKM_HKDF_DERIVE,
+                hash_mech=CKM_SHA256,
                 extract=True,
                 expand=True,
                 salt=os.urandom(16),
@@ -346,7 +343,7 @@ class TestHKDFDerivedKeyUse:
                 rs.raw,
                 rs.sh,
                 base_key,
-                CKM(int(CKM_HKDF_DERIVE)),
+                CKM_HKDF_DERIVE,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
@@ -423,7 +420,7 @@ class TestRSAOAEPWrapLifecycle:
 
             # OAEP param
             oaep_param = mech_oaep(
-                CKM(int(CKM_RSA_PKCS_OAEP)), hash_mech=int(CKM_SHA256), mgf=int(CKG_MGF1_SHA256)
+                CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA256, mgf=CKG_MGF1_SHA256
             )
 
             try:
@@ -432,7 +429,7 @@ class TestRSAOAEPWrapLifecycle:
                     rs.sh,
                     rsa_pub,
                     target,
-                    CKM(int(CKM_RSA_PKCS_OAEP)),
+                    CKM_RSA_PKCS_OAEP,
                     mech_param=oaep_param,
                 )
             except AssertionError as exc:
@@ -454,7 +451,7 @@ class TestRSAOAEPWrapLifecycle:
                     rs.sh,
                     rsa_priv,
                     wrapped,
-                    CKM(int(CKM_RSA_PKCS_OAEP)),
+                    CKM_RSA_PKCS_OAEP,
                     attrs={
                         CKA_CLASS: CKO_SECRET_KEY,
                         CKA_KEY_TYPE: CKK_AES,
@@ -600,8 +597,8 @@ class TestRSASignVerifyLifecycle:
         try:
             pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
             data = b"rsa lifecycle test message" * 4
-            sig = sign_single(rs.raw, rs.sh, priv, CKM(int(CKM_SHA256_RSA_PKCS)), data)
-            ok = verify_single(rs.raw, rs.sh, pub, CKM(int(CKM_SHA256_RSA_PKCS)), data, sig)
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
+            ok = verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, data, sig)
             assert ok, "RSA SHA256-RSA-PKCS verify failed after sign"
         finally:
             for h in (pub, priv):
@@ -631,8 +628,8 @@ class TestECSignVerifyLifecycle:
         try:
             pub, priv = gen_ec_keypair_or_xfail(rs, p256_oid)
             data = b"ecdsa lifecycle test" * 3
-            sig = sign_single(rs.raw, rs.sh, priv, CKM(int(CKM_ECDSA_SHA256)), data)
-            ok = verify_single(rs.raw, rs.sh, pub, CKM(int(CKM_ECDSA_SHA256)), data, sig)
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA_SHA256, data)
+            ok = verify_single(rs.raw, rs.sh, pub, CKM_ECDSA_SHA256, data, sig)
             assert ok, "ECDSA SHA256 verify failed after sign"
         finally:
             for h in (pub, priv):
@@ -659,13 +656,13 @@ class TestAESGCMFullCycle:
             key = gen_aes_key_or_xfail(rs, 256, purpose="AES-GCM lifecycle setup")
             plaintext = b"aes-gcm lifecycle test data!!!!!"  # 32 bytes
             iv = os.urandom(12)
-            gcm_param = mech_gcm(CKM(int(CKM_AES_GCM)), iv, tag_bits=128)
+            gcm_param = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
 
             ct = encrypt_single(
                 rs.raw,
                 rs.sh,
                 key,
-                CKM(int(CKM_AES_GCM)),
+                CKM_AES_GCM,
                 plaintext,
                 mech_param=gcm_param,
                 output_overhead=16,
@@ -674,7 +671,7 @@ class TestAESGCMFullCycle:
                 rs.raw,
                 rs.sh,
                 key,
-                CKM(int(CKM_AES_GCM)),
+                CKM_AES_GCM,
                 ct,
                 mech_param=gcm_param,
             )

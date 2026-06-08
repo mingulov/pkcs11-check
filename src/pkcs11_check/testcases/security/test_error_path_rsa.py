@@ -78,7 +78,7 @@ import ctypes
 from pkcs11_check.raw.types_std import CK_MECHANISM, CK_ULONG, CKM_RSA_PKCS
 
 mech = CK_MECHANISM()
-mech.mechanism = int(CKM_RSA_PKCS)
+mech.mechanism = CKM_RSA_PKCS
 mech.pParameter = None
 mech.ulParameterLen = 0
 rv = raw.C_DecryptInit(sh, ctypes.byref(mech), priv)
@@ -100,14 +100,14 @@ from pkcs11_check.raw.types_std import (
 )
 
 params = CK_RSA_PKCS_OAEP_PARAMS()
-params.hashAlg = int(CKM_SHA256)
-params.mgf = int(CKG_MGF1_SHA256)
+params.hashAlg = CKM_SHA256
+params.mgf = CKG_MGF1_SHA256
 params.source = 0
 params.pSourceData = None
 params.ulSourceDataLen = 0
 
 mech = CK_MECHANISM()
-mech.mechanism = int(CKM_RSA_PKCS_OAEP)
+mech.mechanism = CKM_RSA_PKCS_OAEP
 mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
 mech.ulParameterLen = ctypes.sizeof(params)
 
@@ -376,7 +376,7 @@ try:
     # Attempt verify with corrupted signature
     data = b"test data for verification"
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_SHA256_RSA_PKCS)
+    mech.mechanism = CKM_SHA256_RSA_PKCS
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_VerifyInit(sh, ctypes.byref(mech), pub)

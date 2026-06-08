@@ -77,6 +77,21 @@ provider package versions where the finding was first recorded.
   `ulDataLen` is `0x7fffffffffffffff` or `0x8000000000000000`. These are not
   signal crashes, but they are still abnormal subprocess failures from the
   malformed-boundary probes and should remain visible.
+- **CKA_TOKEN scalar-length validation missing on key generation (NEW 2026-06-08)**:
+  `C_GenerateKey(CKM_AES_KEY_GEN)` and
+  `C_GenerateKeyPair(CKM_RSA_PKCS_KEY_PAIR_GEN)` accept a `CKA_TOKEN` template
+  attribute whose `pValue` points to `CK_ULONG` storage and whose `ulValueLen`
+  is `sizeof(CK_ULONG)`, returning `CKR_OK` and creating keys. `CKA_TOKEN` is a
+  `CK_BBOOL` attribute, so the malformed scalar length should be rejected with a
+  template or attribute error. Detected by
+  `test_ckr_keygen.py::TestGenerateKeyErrors::test_token_bool_overlong_length`
+  and
+  `test_ckr_keygen.py::TestGenerateKeyPairErrors::test_public_token_bool_overlong_length`
+  /
+  `test_ckr_keygen.py::TestGenerateKeyPairErrors::test_private_token_bool_overlong_length`.
+  The same issue is also visible on EC P-256 public-key and private-key
+  templates via
+  `test_ckr_keygen.py::TestGenerateKeyPairErrors::test_ec_token_bool_overlong_length`.
 
 ### Known quirks
 - `C_GetObjectSize` returns `CK_UNAVAILABLE_INFORMATION` (not implemented)

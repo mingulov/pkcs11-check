@@ -348,7 +348,7 @@ def _gen_hkdf_base_key(rs: RawSession) -> int:
     packed = [attr_ulong(CKA_VALUE_LEN, 32)]
     packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
     tmpl = template(*packed)
-    mech = mech_simple(CKM(CKM_HKDF_KEY_GEN))
+    mech = mech_simple(CKM_HKDF_KEY_GEN)
     handle = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
     assert rv == CKR_OK, f"HKDF base key gen failed: {rv}"
@@ -394,7 +394,7 @@ def _derive_hkdf(rs: RawSession, entry: MechEntry) -> None:
         salt = os.urandom(16)
         hkdf_param = mech_hkdf(
             CKM(mech_id),
-            hash_mech=int(CKM_SHA256),
+            hash_mech=CKM_SHA256,
             extract=True,
             expand=True,
             salt=salt,
@@ -441,7 +441,7 @@ def _derive_ecdh(rs: RawSession, entry: MechEntry) -> None:
             pytest.skip(f"{entry.mech_name}: cannot read CKA_EC_POINT from peer key")
         ecdh_param = mech_ecdh(
             CKM(mech_id),
-            kdf=int(CKD_NULL),
+            kdf=CKD_NULL,
             public_data=peer_point,
         )
         # CKA_CLASS required; no CKA_VALUE_LEN -- ECDH output length is curve-fixed
@@ -510,7 +510,7 @@ def _gen_des_base_key(rs: RawSession, des3: bool) -> int:
     from ctypes import byref
 
     key_type = CKK_DES3 if des3 else CKK_DES
-    keygen_ckm = CKM(CKM_DES3_KEY_GEN) if des3 else CKM(CKM_DES_KEY_GEN)
+    keygen_ckm = CKM_DES3_KEY_GEN if des3 else CKM_DES_KEY_GEN
     attrs: dict[int, Any] = {
         CKA_KEY_TYPE: key_type,
         CKA_DERIVE: True,

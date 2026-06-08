@@ -151,7 +151,7 @@ key = gen_aes_key(raw, sh, 256)
 try:
     iv = (ctypes.c_ubyte * 16)(*range(16))
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_AES_CBC)
+    mech.mechanism = CKM_AES_CBC
     mech.pParameter = ctypes.cast(
         ctypes.pointer(iv), ctypes.c_void_p
     )
@@ -186,7 +186,7 @@ key = import_secret_key(raw, sh, CKK_GENERIC_SECRET, b'\\x00' * 32,
     attrs={CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False})
 try:
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_SHA256_HMAC)
+    mech.mechanism = CKM_SHA256_HMAC
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_SignInit(sh, ctypes.byref(mech), key)
@@ -215,7 +215,7 @@ key = import_secret_key(raw, sh, CKK_GENERIC_SECRET, b'\\x00' * 32,
     attrs={CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False})
 try:
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_SHA256_HMAC)
+    mech.mechanism = CKM_SHA256_HMAC
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_VerifyInit(sh, ctypes.byref(mech), key)
@@ -236,7 +236,7 @@ import ctypes
 from pkcs11_check.raw.types_std import CK_MECHANISM, CKM_SHA256, CKR_OK
 
 mech = CK_MECHANISM()
-mech.mechanism = int(CKM_SHA256)
+mech.mechanism = CKM_SHA256
 mech.pParameter = None
 mech.ulParameterLen = 0
 rv = raw.C_DigestInit(sh, ctypes.byref(mech))
@@ -335,7 +335,7 @@ key = gen_aes_key(raw, sh, 256)
 try:
     iv = (ctypes.c_ubyte * 16)(*range(16))
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_AES_CBC)
+    mech.mechanism = CKM_AES_CBC
     mech.pParameter = ctypes.cast(
         ctypes.pointer(iv), ctypes.c_void_p
     )
@@ -381,7 +381,7 @@ key = gen_aes_key(raw, sh, 256)
 try:
     iv = (ctypes.c_ubyte * 16)(*range(16))
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_AES_CBC)
+    mech.mechanism = CKM_AES_CBC
     mech.pParameter = ctypes.cast(
         ctypes.pointer(iv), ctypes.c_void_p
     )
@@ -425,7 +425,7 @@ key = import_secret_key(raw, sh, CKK_GENERIC_SECRET, b'\\x00' * 32,
     attrs={CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False})
 try:
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_SHA256_HMAC)
+    mech.mechanism = CKM_SHA256_HMAC
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_SignInit(sh, ctypes.byref(mech), key)
@@ -457,7 +457,7 @@ from pkcs11_check.raw.types_std import (
 )
 
 mech = CK_MECHANISM()
-mech.mechanism = int(CKM_SHA256)
+mech.mechanism = CKM_SHA256
 mech.pParameter = None
 mech.ulParameterLen = 0
 rv = raw.C_DigestInit(sh, ctypes.byref(mech))
@@ -699,14 +699,14 @@ from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 wrap_key = gen_aes_key(raw, sh, 256, attrs={CKA_UNWRAP: True})
 try:
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_AES_ECB)
+    mech.mechanism = CKM_AES_ECB
     mech.pParameter = None
     mech.ulParameterLen = 0
 
     # Minimal template for the unwrapped key
     token_false = ctypes.c_ubyte(0)
     attr = CK_ATTRIBUTE()
-    attr.type = int(CKA_TOKEN)
+    attr.type = CKA_TOKEN
     attr.pValue = ctypes.cast(
         ctypes.pointer(token_false), ctypes.c_void_p,
     )
@@ -770,7 +770,7 @@ key = import_secret_key(raw, sh, CKK_GENERIC_SECRET, b'\\x00' * 32,
     attrs={CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False})
 try:
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_SHA256_HMAC_GENERAL)
+    mech.mechanism = CKM_SHA256_HMAC_GENERAL
     mech.pParameter = None
     mech.ulParameterLen = 8  # sizeof(CK_ULONG) on 64-bit
     rv = raw.C_SignInit(sh, ctypes.byref(mech), key)
@@ -869,7 +869,7 @@ from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 key = gen_aes_key(raw, sh, 256)
 try:
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_AES_ECB)
+    mech.mechanism = CKM_AES_ECB
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.{init_func}(sh, ctypes.byref(mech), key)
@@ -902,7 +902,7 @@ key = import_secret_key(raw, sh, CKK_GENERIC_SECRET, b'\\x00' * 32,
     attrs={CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False})
 try:
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_SHA256_HMAC)
+    mech.mechanism = CKM_SHA256_HMAC
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_SignInit(sh, ctypes.byref(mech), key)
@@ -935,7 +935,7 @@ key = import_secret_key(raw, sh, CKK_GENERIC_SECRET, b'\\x00' * 32,
     attrs={CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False})
 try:
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_SHA256_HMAC)
+    mech.mechanism = CKM_SHA256_HMAC
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_VerifyInit(sh, ctypes.byref(mech), key)
@@ -959,7 +959,7 @@ from pkcs11_check.raw.types_std import (
 )
 
 mech = CK_MECHANISM()
-mech.mechanism = int(CKM_SHA256)
+mech.mechanism = CKM_SHA256
 mech.pParameter = None
 mech.ulParameterLen = 0
 rv = raw.C_DigestInit(sh, ctypes.byref(mech))
@@ -1034,7 +1034,7 @@ if "C_MessageEncryptInit" not in raw.available_function_names():
 key = gen_aes_key(raw, sh, 256)
 try:
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_AES_GCM)
+    mech.mechanism = CKM_AES_GCM
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_MessageEncryptInit(sh, ctypes.byref(mech), key)
@@ -1048,7 +1048,7 @@ try:
         )
         params.ulIvLen = 12
         params.ulIvFixedBits = 0
-        params.ivGenerator = int(CKG_GENERATE)
+        params.ivGenerator = CKG_GENERATE
         params.pTag = ctypes.cast(
             ctypes.pointer(tag_buf), ctypes.c_void_p,
         )
@@ -1110,7 +1110,7 @@ if "C_MessageDecryptInit" not in raw.available_function_names():
 key = gen_aes_key(raw, sh, 256)
 try:
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_AES_GCM)
+    mech.mechanism = CKM_AES_GCM
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_MessageDecryptInit(sh, ctypes.byref(mech), key)
@@ -1124,7 +1124,7 @@ try:
         )
         params.ulIvLen = 12
         params.ulIvFixedBits = 0
-        params.ivGenerator = int(CKG_GENERATE)
+        params.ivGenerator = CKG_GENERATE
         params.pTag = ctypes.cast(
             ctypes.pointer(tag_buf), ctypes.c_void_p,
         )
@@ -1204,33 +1204,33 @@ if "C_DecapsulateKey" not in raw.available_function_names():
 key = gen_aes_key(raw, sh, 256)
 try:
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_AES_ECB)
+    mech.mechanism = CKM_AES_ECB
     mech.pParameter = None
     mech.ulParameterLen = 0
 
     # Minimal template for the derived key
     token_false = ctypes.c_ubyte(0)
-    cls_val = CK_ULONG(int(CKO_SECRET_KEY))
-    kt_val = CK_ULONG(int(CKK_AES))
+    cls_val = CK_ULONG(CKO_SECRET_KEY)
+    kt_val = CK_ULONG(CKK_AES)
     vl_val = CK_ULONG(16)
 
     attrs = (CK_ATTRIBUTE * 4)()
-    attrs[0].type = int(CKA_CLASS)
+    attrs[0].type = CKA_CLASS
     attrs[0].pValue = ctypes.cast(
         ctypes.pointer(cls_val), ctypes.c_void_p,
     )
     attrs[0].ulValueLen = ctypes.sizeof(CK_ULONG)
-    attrs[1].type = int(CKA_KEY_TYPE)
+    attrs[1].type = CKA_KEY_TYPE
     attrs[1].pValue = ctypes.cast(
         ctypes.pointer(kt_val), ctypes.c_void_p,
     )
     attrs[1].ulValueLen = ctypes.sizeof(CK_ULONG)
-    attrs[2].type = int(CKA_TOKEN)
+    attrs[2].type = CKA_TOKEN
     attrs[2].pValue = ctypes.cast(
         ctypes.pointer(token_false), ctypes.c_void_p,
     )
     attrs[2].ulValueLen = 1
-    attrs[3].type = int(CKA_VALUE_LEN)
+    attrs[3].type = CKA_VALUE_LEN
     attrs[3].pValue = ctypes.cast(
         ctypes.pointer(vl_val), ctypes.c_void_p,
     )

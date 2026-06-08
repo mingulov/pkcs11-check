@@ -202,7 +202,7 @@ class TestAuthenticatedWrap:
             wrap_mech = mech_gcm_message_generated_iv(
                 CKM_AES_GCM,
                 iv_len=12,
-                iv_generator=int(CKG_GENERATE),
+                iv_generator=CKG_GENERATE,
                 tag_bits=128,
             )
             try:

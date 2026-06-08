@@ -171,6 +171,9 @@ def test_wolfpkcs11_compose_services_cover_release_and_master_targets() -> None:
 def test_wolfpkcs11_dockerfile_enables_optional_mechanism_families() -> None:
     dockerfile = (ROOT / "docker/wolfpkcs11/Dockerfile").read_text()
 
+    assert 'ARG WOLFPKCS11_REPO="https://github.com/wolfSSL/wolfPKCS11.git"' in dockerfile
+    assert 'git clone --depth 1 --branch "$WOLFPKCS11_REF" \\\n    "$WOLFPKCS11_REPO"' in dockerfile
+
     for flag in (
         "--enable-aescfb",
         "--enable-aesccm",

@@ -45,6 +45,7 @@ from pkcs11_check.raw.types_std import (
     CKR_SESSION_HANDLE_INVALID,
 )
 from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS
+from pkcs11_check.testcases.ckr._malformed_attrs import make_bool_attr_overlong
 from pkcs11_check.testcases.conftest import (
     classify_lifecycle_effect,
     classify_negative_rv,
@@ -101,6 +102,26 @@ class TestCreateObjectErrors:
             destroy_quietly(rs.raw, rs.sh, handle.value)
         else:
             assert rv in TEMPLATE_ERRORS, f"Unexpected CKR {ckr_name(rv)}"
+
+    def test_token_bool_overlong_length(self, p11_raw_session: Any) -> None:
+        """CKA_TOKEN with CK_ULONG-sized value storage must be rejected."""
+        rs = p11_raw_session
+        tmpl = template(
+            attr_ulong(CKA_CLASS, CKO_DATA),
+            attr_bytes(CKA_LABEL, b"bad-bbool-create"),
+            attr_bytes(CKA_VALUE, b"value"),
+            attr_bool(CKA_TOKEN, False),
+        )
+        _storage = make_bool_attr_overlong(tmpl, 3)
+        handle = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, handle.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label="C_CreateObject with CK_ULONG-sized CKA_TOKEN boolean attribute",
+        )
 
 
 class TestGetAttributeErrors:
@@ -220,6 +241,40 @@ class TestCopyObjectErrors:
             effect_observed=produced,
             label="copy an object via its destroyed handle (use-after-destroy)",
         )
+
+    def test_copy_token_bool_overlong_length(self, p11_raw_session: Any) -> None:
+        """C_CopyObject must reject CK_ULONG-sized CKA_TOKEN template value."""
+        rs = p11_raw_session
+        source = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: "bad-bbool-copy-source",
+                CKA_VALUE: b"value",
+                CKA_TOKEN: False,
+            },
+        )
+        try:
+            tmpl = template(attr_bool(CKA_TOKEN, False))
+            _storage = make_bool_attr_overlong(tmpl, 0)
+            new_handle = CK_OBJECT_HANDLE(0)
+            rv = rs.raw.C_CopyObject(
+                rs.sh,
+                source,
+                tmpl.ptr,
+                tmpl.count,
+                byref(new_handle),
+            )
+            if rv == CKR_OK:
+                destroy_quietly(rs.raw, rs.sh, new_handle.value)
+            classify_negative_rv(
+                rv,
+                TEMPLATE_ERRORS,
+                label="C_CopyObject with CK_ULONG-sized CKA_TOKEN boolean attribute",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, source)
 
 
 class TestFindObjectsErrors:

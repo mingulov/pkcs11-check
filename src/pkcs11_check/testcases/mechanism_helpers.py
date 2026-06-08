@@ -990,7 +990,7 @@ def gen_generic_secret(
     packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
 
     tmpl = template(*packed)
-    mech = mech_simple(CKM(CKM_GENERIC_SECRET_KEY_GEN))
+    mech = mech_simple(CKM_GENERIC_SECRET_KEY_GEN)
     handle = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
     assert rv == CKR_OK, f"Generic secret key gen failed: {rv}"

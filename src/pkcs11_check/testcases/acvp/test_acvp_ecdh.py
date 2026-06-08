@@ -342,7 +342,7 @@ def test_acvp_ecdh_shared_secret(
 
         mech_param = mech_ecdh(
             CKM_ECDH1_DERIVE,
-            kdf=int(CKD_NULL),  # No KDF, raw shared secret
+            kdf=CKD_NULL,  # No KDF, raw shared secret
             public_data=point_data,
         )
 
@@ -451,7 +451,7 @@ class TestEcdhKeyAgreement:
             # Derive shared secrets
             mech_param_alice = mech_ecdh(
                 CKM_ECDH1_DERIVE,
-                kdf=int(CKD_NULL),
+                kdf=CKD_NULL,
                 public_data=bob_point_raw,
             )
 

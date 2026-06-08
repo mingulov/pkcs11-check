@@ -39,7 +39,6 @@ from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKA_WRAP,
     CKK_GENERIC_SECRET,
-    CKM,
     CKM_AES_ECB,
     CKM_ECDSA,
     CKM_GENERIC_SECRET_KEY_GEN,
@@ -218,7 +217,7 @@ class TestMissingPermission:
         packed = [attr_ulong(CKA_VALUE_LEN, 32)]
         packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
         tmpl = template(*packed)
-        mech = mech_simple(CKM(CKM_GENERIC_SECRET_KEY_GEN))
+        mech = mech_simple(CKM_GENERIC_SECRET_KEY_GEN)
         handle = CK_OBJECT_HANDLE(0)
         rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
         assert rv == CKR_OK, f"Key gen failed: {rv}"
@@ -247,7 +246,7 @@ class TestMissingPermission:
         packed = [attr_ulong(CKA_VALUE_LEN, 32)]
         packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
         tmpl = template(*packed)
-        mech = mech_simple(CKM(CKM_GENERIC_SECRET_KEY_GEN))
+        mech = mech_simple(CKM_GENERIC_SECRET_KEY_GEN)
         handle = CK_OBJECT_HANDLE(0)
         rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
         assert rv == CKR_OK, f"Key gen failed: {rv}"
@@ -319,7 +318,7 @@ class TestMissingPermission:
         packed = [attr_ulong(CKA_VALUE_LEN, 32)]
         packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
         tmpl = template(*packed)
-        mech = mech_simple(CKM(CKM_GENERIC_SECRET_KEY_GEN))
+        mech = mech_simple(CKM_GENERIC_SECRET_KEY_GEN)
         handle = CK_OBJECT_HANDLE(0)
         rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
         assert rv == CKR_OK, f"Key gen failed: {rv}"

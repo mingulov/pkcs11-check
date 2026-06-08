@@ -154,7 +154,7 @@ class TestObjectHandleBoundary:
 import ctypes
 from pkcs11_check.raw.types_std import CK_ATTRIBUTE, CKA_CLASS
 attr = CK_ATTRIBUTE()
-attr.type = int(CKA_CLASS)
+attr.type = CKA_CLASS
 attr.pValue = None
 attr.ulValueLen = 0
 rv = raw.C_GetAttributeValue(sh, {handle}, ctypes.pointer(attr), 1)
@@ -167,7 +167,7 @@ import ctypes
 from pkcs11_check.raw.types_std import CK_ATTRIBUTE, CKA_TOKEN
 val = ctypes.c_ubyte(0)
 attr = CK_ATTRIBUTE()
-attr.type = int(CKA_TOKEN)
+attr.type = CKA_TOKEN
 attr.pValue = ctypes.cast(ctypes.pointer(val), ctypes.c_void_p)
 attr.ulValueLen = 1
 rv = raw.C_SetAttributeValue(sh, {handle}, ctypes.pointer(attr), 1)
@@ -283,7 +283,7 @@ class TestMechanismParamNullWithLength:
 import ctypes
 from pkcs11_check.raw.types_std import CK_MECHANISM, CKM_AES_CBC
 mech = CK_MECHANISM()
-mech.mechanism = int(CKM_AES_CBC)
+mech.mechanism = CKM_AES_CBC
 mech.pParameter = None              # NULL pointer
 mech.ulParameterLen = 16             # Non-zero length -- mismatch!
 rv = raw.{func_name}(sh, ctypes.byref(mech), 0)
@@ -346,7 +346,7 @@ cleanup()
 import ctypes
 from pkcs11_check.raw.types_std import CK_MECHANISM, CKM_AES_KEY_GEN, CK_OBJECT_HANDLE
 mech = CK_MECHANISM()
-mech.mechanism = int(CKM_AES_KEY_GEN)
+mech.mechanism = CKM_AES_KEY_GEN
 mech.pParameter = None
 mech.ulParameterLen = 0
 key = CK_OBJECT_HANDLE(0)
@@ -434,7 +434,7 @@ from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 key = gen_aes_key(raw, sh, 256)
 try:
     mech = CK_MECHANISM()
-    mech.mechanism = int({mech_name})
+    mech.mechanism = {mech_name}
     mech.pParameter = None
     mech.ulParameterLen = 0
 {iv_setup}
@@ -473,7 +473,7 @@ pub, priv = gen_rsa_keypair(raw, sh, 2048,
 )
 try:
     mech = CK_MECHANISM()
-    mech.mechanism = int({mech_name})
+    mech.mechanism = {mech_name}
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_SignInit(sh, ctypes.byref(mech), priv)
@@ -513,7 +513,7 @@ pub, priv = gen_ec_keypair(raw, sh, curve_oid,
 )
 try:
     mech = CK_MECHANISM()
-    mech.mechanism = int({mech_name})
+    mech.mechanism = {mech_name}
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_SignInit(sh, ctypes.byref(mech), priv)
@@ -600,7 +600,7 @@ from pkcs11_check.raw.types_std import (
 )
 
 mech = CK_MECHANISM()
-mech.mechanism = int(CKM_RSA_PKCS_KEY_PAIR_GEN)
+mech.mechanism = CKM_RSA_PKCS_KEY_PAIR_GEN
 mech.pParameter = None
 mech.ulParameterLen = 0
 
@@ -610,27 +610,27 @@ exp_bytes = (ctypes.c_ubyte * 3)(0x01, 0x00, 0x01)  # 65537
 token_false = ctypes.c_ubyte(0)
 
 pub_attrs = (CK_ATTRIBUTE * 4)()
-pub_attrs[0].type = int(CKA_MODULUS_BITS)
+pub_attrs[0].type = CKA_MODULUS_BITS
 pub_attrs[0].pValue = ctypes.cast(ctypes.pointer(bits_val), ctypes.c_void_p)
 pub_attrs[0].ulValueLen = ctypes.sizeof(bits_val)
-pub_attrs[1].type = int(CKA_PUBLIC_EXPONENT)
+pub_attrs[1].type = CKA_PUBLIC_EXPONENT
 pub_attrs[1].pValue = ctypes.cast(ctypes.pointer(exp_bytes), ctypes.c_void_p)
 pub_attrs[1].ulValueLen = 3
-pub_attrs[2].type = int(CKA_TOKEN)
+pub_attrs[2].type = CKA_TOKEN
 pub_attrs[2].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
 pub_attrs[2].ulValueLen = 1
-pub_attrs[3].type = int(CKA_ENCRYPT)
+pub_attrs[3].type = CKA_ENCRYPT
 enc_true = ctypes.c_ubyte(1)
 pub_attrs[3].pValue = ctypes.cast(ctypes.pointer(enc_true), ctypes.c_void_p)
 pub_attrs[3].ulValueLen = 1
 
 priv_attrs = (CK_ATTRIBUTE * 2)()
 priv_token = ctypes.c_ubyte(0)
-priv_attrs[0].type = int(CKA_TOKEN)
+priv_attrs[0].type = CKA_TOKEN
 priv_attrs[0].pValue = ctypes.cast(ctypes.pointer(priv_token), ctypes.c_void_p)
 priv_attrs[0].ulValueLen = 1
 dec_true = ctypes.c_ubyte(1)
-priv_attrs[1].type = int(CKA_DECRYPT)
+priv_attrs[1].type = CKA_DECRYPT
 priv_attrs[1].pValue = ctypes.cast(ctypes.pointer(dec_true), ctypes.c_void_p)
 priv_attrs[1].ulValueLen = 1
 
@@ -679,7 +679,7 @@ from pkcs11_check.raw.types_std import (
 )
 
 mech = CK_MECHANISM()
-mech.mechanism = int(CKM_RSA_PKCS_KEY_PAIR_GEN)
+mech.mechanism = CKM_RSA_PKCS_KEY_PAIR_GEN
 mech.pParameter = None
 mech.ulParameterLen = 0
 
@@ -689,27 +689,27 @@ exp_bytes = (ctypes.c_ubyte * 3)(0x01, 0x00, 0x01)  # 65537
 token_false = ctypes.c_ubyte(0)
 
 pub_attrs = (CK_ATTRIBUTE * 4)()
-pub_attrs[0].type = int(CKA_MODULUS_BITS)
+pub_attrs[0].type = CKA_MODULUS_BITS
 pub_attrs[0].pValue = ctypes.cast(ctypes.pointer(bits_val), ctypes.c_void_p)
 pub_attrs[0].ulValueLen = ctypes.sizeof(bits_val)
-pub_attrs[1].type = int(CKA_PUBLIC_EXPONENT)
+pub_attrs[1].type = CKA_PUBLIC_EXPONENT
 pub_attrs[1].pValue = ctypes.cast(ctypes.pointer(exp_bytes), ctypes.c_void_p)
 pub_attrs[1].ulValueLen = 3
-pub_attrs[2].type = int(CKA_TOKEN)
+pub_attrs[2].type = CKA_TOKEN
 pub_attrs[2].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
 pub_attrs[2].ulValueLen = 1
-pub_attrs[3].type = int(CKA_ENCRYPT)
+pub_attrs[3].type = CKA_ENCRYPT
 enc_true = ctypes.c_ubyte(1)
 pub_attrs[3].pValue = ctypes.cast(ctypes.pointer(enc_true), ctypes.c_void_p)
 pub_attrs[3].ulValueLen = 1
 
 priv_attrs = (CK_ATTRIBUTE * 2)()
 priv_token = ctypes.c_ubyte(0)
-priv_attrs[0].type = int(CKA_TOKEN)
+priv_attrs[0].type = CKA_TOKEN
 priv_attrs[0].pValue = ctypes.cast(ctypes.pointer(priv_token), ctypes.c_void_p)
 priv_attrs[0].ulValueLen = 1
 dec_true = ctypes.c_ubyte(1)
-priv_attrs[1].type = int(CKA_DECRYPT)
+priv_attrs[1].type = CKA_DECRYPT
 priv_attrs[1].pValue = ctypes.cast(ctypes.pointer(dec_true), ctypes.c_void_p)
 priv_attrs[1].ulValueLen = 1
 
@@ -758,7 +758,7 @@ from pkcs11_check.raw.types_std import (
 )
 
 mech = CK_MECHANISM()
-mech.mechanism = int(CKM_AES_KEY_GEN)
+mech.mechanism = CKM_AES_KEY_GEN
 mech.pParameter = None
 mech.ulParameterLen = 0
 
@@ -768,13 +768,13 @@ token_false = ctypes.c_ubyte(0)
 enc_true = ctypes.c_ubyte(1)
 
 attrs = (CK_ATTRIBUTE * 3)()
-attrs[0].type = int(CKA_VALUE_LEN)
+attrs[0].type = CKA_VALUE_LEN
 attrs[0].pValue = ctypes.cast(ctypes.pointer(val_len), ctypes.c_void_p)
 attrs[0].ulValueLen = ctypes.sizeof(val_len)
-attrs[1].type = int(CKA_TOKEN)
+attrs[1].type = CKA_TOKEN
 attrs[1].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
 attrs[1].ulValueLen = 1
-attrs[2].type = int(CKA_ENCRYPT)
+attrs[2].type = CKA_ENCRYPT
 attrs[2].pValue = ctypes.cast(ctypes.pointer(enc_true), ctypes.c_void_p)
 attrs[2].ulValueLen = 1
 

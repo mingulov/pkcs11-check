@@ -140,7 +140,7 @@ class TestMlKemKeyGen:
             pub_key, priv_key = gen_keypair(
                 rs.raw,
                 rs.sh,
-                mechanism=int(CKM_ML_KEM_KEY_PAIR_GEN),
+                mechanism=CKM_ML_KEM_KEY_PAIR_GEN,
                 pub_base=[attr_ulong(CKA_PARAMETER_SET, vec["parameter_set"])],
                 priv_base=[],
                 public_attrs={CKA_ENCAPSULATE: True, CKA_TOKEN: False},

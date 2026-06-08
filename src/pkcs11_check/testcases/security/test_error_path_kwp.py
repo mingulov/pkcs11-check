@@ -121,7 +121,7 @@ for i, (atype, aval) in enumerate(tmpl_attrs):
     attrs[i].ulValueLen = ctypes.sizeof(v)
 
 mech = CK_MECHANISM()
-mech.mechanism = int({ckm_name})
+mech.mechanism = {ckm_name}
 mech.pParameter = None
 mech.ulParameterLen = 0
 
@@ -146,7 +146,7 @@ from pkcs11_check.raw.types_std import (
 import ctypes
 
 mech = CK_MECHANISM()
-mech.mechanism = int({ckm_name})
+mech.mechanism = {ckm_name}
 mech.pParameter = None
 mech.ulParameterLen = 0
 

@@ -326,7 +326,7 @@ key = gen_aes_key(raw, sh, 256)
 """
             + _GCM_NULL_AAD_PARAMS_SNIPPET
             + """mech = CK_MECHANISM()
-mech.mechanism = int(CKM_AES_GCM)
+mech.mechanism = CKM_AES_GCM
 mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
 mech.ulParameterLen = ctypes.sizeof(params)
 try:

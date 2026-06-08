@@ -45,13 +45,27 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKK_AES,
+    CKK_GENERIC_SECRET,
     CKM_AES_ECB,
     CKM_DH_PKCS_DERIVE,
     CKM_DH_PKCS_KEY_PAIR_GEN,
     CKM_DH_PKCS_PARAMETER_GEN,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
 
@@ -70,6 +84,21 @@ DH_PRIME_2048 = bytes.fromhex(
     "15728E5A8AACAA68FFFFFFFFFFFFFFFF"
 )
 DH_GEN = bytes([0x02])
+
+_DH_DERIVE_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 
 def _skip_no_dh(p11_raw_session: Any) -> None:
@@ -273,6 +302,65 @@ class TestDHKeyAgreement:
             finally:
                 destroy_quietly(rs.raw, rs.sh, shared_key)
         finally:
+            destroy_quietly(rs.raw, rs.sh, alice_pub)
+            destroy_quietly(rs.raw, rs.sh, alice_priv)
+            destroy_quietly(rs.raw, rs.sh, bob_pub)
+            destroy_quietly(rs.raw, rs.sh, bob_priv)
+
+    def test_dh_derive_respects_requested_value_len_truncation(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """DH derived secret must honor CKA_VALUE_LEN by left truncation."""
+        rs = p11_raw_session
+        _skip_no_dh(rs)
+
+        alice_pub, alice_priv = _gen_dh_keypair(rs.raw, rs.sh)
+        bob_pub, bob_priv = _gen_dh_keypair(rs.raw, rs.sh)
+        derived_keys: list[int] = []
+        try:
+            bob_value = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])[CKA_VALUE]
+            derived_values: dict[int, bytes] = {}
+
+            for requested_len in (32, 16):
+                try:
+                    key = derive_key(
+                        rs.raw,
+                        rs.sh,
+                        alice_priv,
+                        CKM_DH_PKCS_DERIVE,
+                        attrs={
+                            CKA_CLASS: CKO_SECRET_KEY,
+                            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                            CKA_VALUE_LEN: requested_len,
+                            CKA_SENSITIVE: False,
+                            CKA_EXTRACTABLE: True,
+                            CKA_TOKEN: False,
+                        },
+                        mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, bob_value),
+                    )
+                except AssertionError as exc:
+                    xfail_if_known_ckr(
+                        exc,
+                        _DH_DERIVE_RUNTIME_REJECT_RVS,
+                        f"DH derive advertised but not operational for {requested_len} bytes",
+                    )
+                    raise  # unreachable
+                derived_keys.append(key)
+                value = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
+                assert len(value) == requested_len, (
+                    f"DH derived key reported {len(value)} bytes for "
+                    f"CKA_VALUE_LEN={requested_len}"
+                )
+                derived_values[requested_len] = value
+
+            assert derived_values[16] == derived_values[32][-16:], (
+                "DH CKA_VALUE_LEN=16 must keep the rightmost bytes of the "
+                "longer derived secret"
+            )
+        finally:
+            for key in derived_keys:
+                destroy_quietly(rs.raw, rs.sh, key)
             destroy_quietly(rs.raw, rs.sh, alice_pub)
             destroy_quietly(rs.raw, rs.sh, alice_priv)
             destroy_quietly(rs.raw, rs.sh, bob_pub)

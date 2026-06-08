@@ -175,7 +175,7 @@ class TestEdDsaKeyGen:
                 pub_key, priv_key = gen_keypair(
                     rs.raw,
                     rs.sh,
-                    mechanism=int(CKM_EC_EDWARDS_KEY_PAIR_GEN),
+                    mechanism=CKM_EC_EDWARDS_KEY_PAIR_GEN,
                     pub_base=[attr_bytes(CKA_EC_PARAMS, vec["ec_params"])],
                     priv_base=[],
                     public_attrs={CKA_VERIFY: True},

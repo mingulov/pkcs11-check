@@ -128,7 +128,7 @@ class TestHashMLDSAGeneric:
         _skip_if_no(rs, "HASH_ML_DSA")
         _skip_if_no(rs, "ML_DSA")  # need keygen
 
-        mech_param = mech_hash_sign_context(CKM_HASH_ML_DSA, hash_mech=int(CKM_SHA256))
+        mech_param = mech_hash_sign_context(CKM_HASH_ML_DSA, hash_mech=CKM_SHA256)
         pub, priv = _generate_ml_dsa_keypair(rs)
         try:
             try:

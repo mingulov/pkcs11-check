@@ -56,7 +56,10 @@ from .types_std import (
     CK_WTLS_KEY_MAT_PARAMS,
     CK_WTLS_MASTER_KEY_DERIVE_PARAMS,
     CK_WTLS_PRF_PARAMS,
+    CKD,
+    CKG,
     CKG_GENERATE_RANDOM,
+    CKH,
     CKH_HEDGE_PREFERRED,
     CKM,
     CKZ_DATA_SPECIFIED,
@@ -172,7 +175,7 @@ def mech_gcm_message(
     iv: bytes,
     *,
     iv_fixed_bits: int = 0,
-    iv_generator: int = 0,
+    iv_generator: CKG | int = 0,
     tag_bits: int = 128,
 ) -> PackedMechanism:
     """Pack CK_GCM_MESSAGE_PARAMS for v3.0 message-based AEAD.
@@ -201,7 +204,7 @@ def mech_gcm_message_inherit_tag(
     *,
     source: PackedMechanism,
     iv_fixed_bits: int = 0,
-    iv_generator: int = 0,
+    iv_generator: CKG | int = 0,
 ) -> PackedMechanism:
     """Pack CK_GCM_MESSAGE_PARAMS that shares its pTag with ``source``.
 
@@ -233,7 +236,7 @@ def mech_gcm_message_generated_iv(
     *,
     iv_len: int = 12,
     iv_fixed_bits: int = 0,
-    iv_generator: int = int(CKG_GENERATE_RANDOM),
+    iv_generator: CKG | int = CKG_GENERATE_RANDOM,
     tag_bits: int = 128,
 ) -> PackedMechanism:
     """Pack CK_GCM_MESSAGE_PARAMS with writable IV and tag buffers."""
@@ -298,7 +301,7 @@ def mech_gcm_wrap_generated_iv(
     *,
     iv_len: int = 12,
     iv_fixed_bits: int = 0,
-    iv_generator: int = int(CKG_GENERATE_RANDOM),
+    iv_generator: CKG | int = CKG_GENERATE_RANDOM,
     aad: bytes | None = None,
     aad_len: int = 0,
     tag_bits: int = 128,
@@ -336,7 +339,7 @@ def mech_ccm_message_generated_nonce(
     data_len: int,
     nonce_len: int = 12,
     nonce_fixed_bits: int = 0,
-    nonce_generator: int = int(CKG_GENERATE_RANDOM),
+    nonce_generator: CKG | int = CKG_GENERATE_RANDOM,
     mac_len: int = 16,
 ) -> PackedMechanism:
     """Pack CK_CCM_MESSAGE_PARAMS with writable nonce and MAC buffers."""
@@ -407,7 +410,7 @@ def mech_ccm_wrap_generated_nonce(
     data_len: int,
     nonce_len: int = 12,
     nonce_fixed_bits: int = 0,
-    nonce_generator: int = int(CKG_GENERATE_RANDOM),
+    nonce_generator: CKG | int = CKG_GENERATE_RANDOM,
     aad: bytes | None = None,
     aad_len: int = 0,
     mac_len: int = 16,
@@ -473,8 +476,8 @@ def mech_ccm(
 def mech_pss(
     mechanism_type: CKM | int,
     *,
-    hash_mech: int,
-    mgf: int,
+    hash_mech: CKM | int,
+    mgf: CKG | int,
     salt_len: int,
 ) -> PackedMechanism:
     """Pack CK_RSA_PKCS_PSS_PARAMS."""
@@ -493,8 +496,8 @@ def mech_pss(
 def mech_oaep(
     mechanism_type: CKM | int,
     *,
-    hash_mech: int,
-    mgf: int,
+    hash_mech: CKM | int,
+    mgf: CKG | int,
     source_data: bytes | None = None,
 ) -> PackedMechanism:
     """Pack CK_RSA_PKCS_OAEP_PARAMS."""
@@ -516,7 +519,7 @@ def mech_oaep(
 def mech_ecdh(
     mechanism_type: CKM | int,
     *,
-    kdf: int,
+    kdf: CKD | int,
     public_data: bytes,
     shared_data: bytes | None = None,
 ) -> PackedMechanism:
@@ -539,7 +542,7 @@ def mech_ecdh_aes_kw(
     mechanism_type: CKM | int,
     *,
     aes_key_bits: int,
-    kdf: int,
+    kdf: CKD | int,
     shared_data: bytes | None = None,
 ) -> PackedMechanism:
     """Pack CK_ECDH_AES_KEY_WRAP_PARAMS for CKM_ECDH_AES_KEY_WRAP family.
@@ -572,7 +575,7 @@ def mech_ecdh_aes_kw(
 def mech_hkdf(
     mechanism_type: CKM | int,
     *,
-    hash_mech: int,
+    hash_mech: CKM | int,
     extract: bool = True,
     expand: bool = True,
     salt_type: int | None = None,
@@ -867,7 +870,7 @@ def mech_tls12_master_key_derive(
     mechanism_type: CKM | int,
     client_random: bytes,
     server_random: bytes,
-    hash_mech: int,
+    hash_mech: CKM | int,
     *,
     with_version: bool = True,
 ) -> PackedMechanism:
@@ -899,7 +902,7 @@ def mech_tls12_key_mat(
     mechanism_type: CKM | int,
     client_random: bytes,
     server_random: bytes,
-    hash_mech: int,
+    hash_mech: CKM | int,
     *,
     mac_size_bits: int = 0,
     key_size_bits: int = 128,
@@ -950,7 +953,7 @@ def mech_tls12_key_mat(
 
 def mech_tls12_extended_master_key_derive(
     mechanism_type: CKM | int,
-    hash_mech: int,
+    hash_mech: CKM | int,
     session_hash: bytes,
     *,
     with_version: bool = True,
@@ -1178,9 +1181,9 @@ def mech_wtls_prf(
 
 def mech_hash_sign_context(
     mechanism_type: CKM | int,
-    hash_mech: int,
+    hash_mech: CKM | int,
     *,
-    hedge: int | None = None,
+    hedge: CKH | int | None = None,
     context: bytes | None = None,
 ) -> PackedMechanism:
     """Pack CK_HASH_SIGN_ADDITIONAL_CONTEXT for CKM_HASH_ML_DSA / CKM_HASH_SLH_DSA.
@@ -1191,7 +1194,7 @@ def mech_hash_sign_context(
     """
     ka: list[Any] = []
     params = CK_HASH_SIGN_ADDITIONAL_CONTEXT()
-    params.hedgeVariant = int(CKH_HEDGE_PREFERRED) if hedge is None else hedge
+    params.hedgeVariant = CKH_HEDGE_PREFERRED if hedge is None else hedge
     if context is not None:
         params.pContext, params.ulContextLen = _pack_bytes(context, ka)
     else:
@@ -1204,7 +1207,7 @@ def mech_hash_sign_context(
 def mech_sign_context(
     mechanism_type: CKM | int,
     *,
-    hedge: int | None = None,
+    hedge: CKH | int | None = None,
     context: bytes | None = None,
 ) -> PackedMechanism:
     """Pack CK_SIGN_ADDITIONAL_CONTEXT for CKM_ML_DSA / CKM_SLH_DSA (pure).
@@ -1215,7 +1218,7 @@ def mech_sign_context(
     """
     ka: list[Any] = []
     params = CK_SIGN_ADDITIONAL_CONTEXT()
-    params.hedgeVariant = int(CKH_HEDGE_PREFERRED) if hedge is None else hedge
+    params.hedgeVariant = CKH_HEDGE_PREFERRED if hedge is None else hedge
     if context is not None:
         params.pContext, params.ulContextLen = _pack_bytes(context, ka)
     else:

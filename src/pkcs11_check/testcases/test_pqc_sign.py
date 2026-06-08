@@ -258,7 +258,7 @@ class TestMLDSAHedgeVariants:
         _skip_if_no(rs, "ML_DSA")
         pub, priv = _generate_ml_dsa_keypair(rs)
         try:
-            mech_param = mech_sign_context(CKM_ML_DSA, hedge=int(CKH_HEDGE_PREFERRED))
+            mech_param = mech_sign_context(CKM_ML_DSA, hedge=CKH_HEDGE_PREFERRED)
             sig = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT, mech_param=mech_param)
             assert len(sig) > 0
             result = verify_single(
@@ -281,7 +281,7 @@ class TestMLDSAHedgeVariants:
         _skip_if_no(rs, "ML_DSA")
         pub, priv = _generate_ml_dsa_keypair(rs)
         try:
-            mech_param = mech_sign_context(CKM_ML_DSA, hedge=int(CKH_HEDGE_REQUIRED))
+            mech_param = mech_sign_context(CKM_ML_DSA, hedge=CKH_HEDGE_REQUIRED)
             sig = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT, mech_param=mech_param)
             assert len(sig) > 0
             result = verify_single(
@@ -306,7 +306,7 @@ class TestMLDSAHedgeVariants:
         try:
             mech_param = mech_sign_context(
                 CKM_ML_DSA,
-                hedge=int(CKH_DETERMINISTIC_REQUIRED),
+                hedge=CKH_DETERMINISTIC_REQUIRED,
             )
             sig1 = sign_single(
                 rs.raw,

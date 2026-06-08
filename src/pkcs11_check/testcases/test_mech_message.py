@@ -304,10 +304,27 @@ class TestMessageEncrypt:
             msg_mech = mech_gcm_message_generated_iv(
                 CKM_AES_GCM,
                 iv_len=12,
-                iv_generator=int(CKG_GENERATE),
+                iv_generator=CKG_GENERATE,
                 tag_bits=128,
             )
             msg_params = msg_mech.params
+            guard = 0x9C
+            guard_size = 32
+
+            class GeneratedOutputProbe(ctypes.Structure):
+                _fields_ = [
+                    ("iv", ctypes.c_ubyte * 12),
+                    ("iv_guard", ctypes.c_ubyte * guard_size),
+                    ("tag", ctypes.c_ubyte * 16),
+                    ("tag_guard", ctypes.c_ubyte * guard_size),
+                ]
+
+            probe = GeneratedOutputProbe()
+            for idx in range(guard_size):
+                probe.iv_guard[idx] = guard
+                probe.tag_guard[idx] = guard
+            msg_params.pIv = ctypes.cast(probe.iv, ctypes.c_void_p)
+            msg_params.pTag = ctypes.cast(probe.tag, ctypes.c_void_p)
 
             plaintext = b"generated IV through message API"
             aad = b"message-generated-iv-aad"
@@ -332,8 +349,18 @@ class TestMessageEncrypt:
             rv = rs.raw.C_MessageEncryptFinal(rs.sh)
             assert rv == CKR_OK, f"C_MessageEncryptFinal failed: 0x{rv:08x}"
 
-            iv = msg_mech.buffer_bytes("iv")
-            tag = msg_mech.buffer_bytes("tag")
+            iv_overwritten = sum(1 for byte in probe.iv_guard if byte != guard)
+            tag_overwritten = sum(1 for byte in probe.tag_guard if byte != guard)
+            assert iv_overwritten == 0, (
+                "C_EncryptMessage wrote past CK_GCM_MESSAGE_PARAMS.pIv: "
+                f"{iv_overwritten} guard byte(s) changed"
+            )
+            assert tag_overwritten == 0, (
+                "C_EncryptMessage wrote past CK_GCM_MESSAGE_PARAMS.pTag: "
+                f"{tag_overwritten} guard byte(s) changed"
+            )
+            iv = bytes(probe.iv)
+            tag = bytes(probe.tag)
             ciphertext = bytes(ct_buf[: ct_len.value])
             assert any(iv), "C_EncryptMessage did not write generated IV to pIv"
             assert any(tag), "C_EncryptMessage did not write GCM tag to pTag"
@@ -400,7 +427,7 @@ class TestMessageEncrypt:
                 CKM_AES_CCM,
                 data_len=len(plaintext),
                 nonce_len=12,
-                nonce_generator=int(CKG_GENERATE),
+                nonce_generator=CKG_GENERATE,
                 mac_len=16,
             )
             msg_params = msg_mech.params

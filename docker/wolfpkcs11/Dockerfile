@@ -2,12 +2,14 @@
 #
 # Build args:
 #   WOLFSSL_REF          wolfSSL git tag or branch
+#   WOLFPKCS11_REPO      wolfPKCS11 git repository URL
 #   WOLFPKCS11_REF       wolfPKCS11 git tag or branch
 #   WOLFPKCS11_ENABLE_PQC=1 enables wolfPKCS11 PKCS#11 v3.2 + ML-DSA/ML-KEM
 
 FROM debian:trixie AS builder
 
 ARG WOLFSSL_REF="v5.9.1-stable"
+ARG WOLFPKCS11_REPO="https://github.com/wolfSSL/wolfPKCS11.git"
 ARG WOLFPKCS11_REF="v2.0.0-stable"
 ARG WOLFPKCS11_ENABLE_PQC="0"
 
@@ -47,7 +49,7 @@ RUN ./autogen.sh && \
     make install
 
 RUN git clone --depth 1 --branch "$WOLFPKCS11_REF" \
-    https://github.com/wolfSSL/wolfPKCS11.git /build/wolfpkcs11
+    "$WOLFPKCS11_REPO" /build/wolfpkcs11
 WORKDIR /build/wolfpkcs11
 RUN ./autogen.sh && \
     wolfpkcs11_pqc_args="" && \

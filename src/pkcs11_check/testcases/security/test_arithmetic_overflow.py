@@ -10,6 +10,7 @@ Covers:
 - GCM tag bits overflow ((ulTagBits + 7) / 8 wraps to 0)
 - PSS salt length overflow (hash_len + sLen + 2 wraps)
 - Template count overflow (count * sizeof(CK_ATTRIBUTE) wraps)
+- KEM output-template count overflow in C_EncapsulateKey / C_DecapsulateKey
 - Key value length overflow (CKA_VALUE_LEN = ULONG_MAX)
 - Attribute value length overflow (ulValueLen = ULONG_MAX)
 - GenerateKeyPair template count overflow
@@ -140,7 +141,7 @@ except AssertionError as exc:
     )
 try:
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_AES_ECB)
+    mech.mechanism = CKM_AES_ECB
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.{init_func}(sh, ctypes.byref(mech), key)
@@ -221,7 +222,7 @@ except AssertionError as exc:
 try:
     param_buf = (ctypes.c_ubyte * {real_size})(*range({real_size}))
     mech = CK_MECHANISM()
-    mech.mechanism = int({mech_name})
+    mech.mechanism = {mech_name}
     mech.pParameter = ctypes.cast(param_buf, ctypes.c_void_p)
     mech.ulParameterLen = {_ULONG_MAX}  # Real buffer is only {real_size} bytes!
     rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
@@ -305,7 +306,7 @@ try:
     params.ulAADLen = 0
     params.ulTagBits = {tag_bits}
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_AES_GCM)
+    mech.mechanism = CKM_AES_GCM
     mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
     mech.ulParameterLen = ctypes.sizeof(params)
     rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
@@ -382,11 +383,11 @@ except AssertionError as exc:
     )
 try:
     params = CK_RSA_PKCS_PSS_PARAMS()
-    params.hashAlg = int(CKM_SHA256)
-    params.mgf = int(CKG_MGF1_SHA256)
+    params.hashAlg = CKM_SHA256
+    params.mgf = CKG_MGF1_SHA256
     params.sLen = {salt_len}
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_SHA256_RSA_PKCS_PSS)
+    mech.mechanism = CKM_SHA256_RSA_PKCS_PSS
     mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
     mech.ulParameterLen = ctypes.sizeof(params)
     rv = raw.C_SignInit(sh, ctypes.byref(mech), priv)
@@ -463,8 +464,8 @@ from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE, CK_ULONG, CKA_CLASS, CKO_DATA, CK_OBJECT_HANDLE,
 )
 attr = CK_ATTRIBUTE()
-attr.type = int(CKA_CLASS)
-cls_val = CK_ULONG(int(CKO_DATA))
+attr.type = CKA_CLASS
+cls_val = CK_ULONG(CKO_DATA)
 attr.pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
 attr.ulValueLen = ctypes.sizeof(cls_val)
 handle = CK_OBJECT_HANDLE(0)
@@ -480,12 +481,12 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN, CK_OBJECT_HANDLE,
 )
 attr = CK_ATTRIBUTE()
-attr.type = int(CKA_VALUE_LEN)
+attr.type = CKA_VALUE_LEN
 vlen = CK_ULONG(32)
 attr.pValue = ctypes.cast(ctypes.pointer(vlen), ctypes.c_void_p)
 attr.ulValueLen = ctypes.sizeof(vlen)
 mech = CK_MECHANISM()
-mech.mechanism = int(CKM_AES_KEY_GEN)
+mech.mechanism = CKM_AES_KEY_GEN
 mech.pParameter = None
 mech.ulParameterLen = 0
 key = CK_OBJECT_HANDLE(0)
@@ -500,8 +501,8 @@ cleanup()
 import ctypes
 from pkcs11_check.raw.types_std import CK_ATTRIBUTE, CK_ULONG, CKA_CLASS, CKO_DATA
 attr = CK_ATTRIBUTE()
-attr.type = int(CKA_CLASS)
-cls_val = CK_ULONG(int(CKO_DATA))
+attr.type = CKA_CLASS
+cls_val = CK_ULONG(CKO_DATA)
 attr.pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
 attr.ulValueLen = ctypes.sizeof(cls_val)
 rv = raw.C_FindObjectsInit(sh, ctypes.byref(attr), {count})
@@ -513,8 +514,8 @@ cleanup()
 import ctypes
 from pkcs11_check.raw.types_std import CK_ATTRIBUTE, CK_ULONG, CKA_CLASS, CKO_DATA
 attr = CK_ATTRIBUTE()
-attr.type = int(CKA_CLASS)
-cls_val = CK_ULONG(int(CKO_DATA))
+attr.type = CKA_CLASS
+cls_val = CK_ULONG(CKO_DATA)
 attr.pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
 attr.ulValueLen = ctypes.sizeof(cls_val)
 # Use object handle 0 -- the huge count should be rejected first
@@ -540,12 +541,12 @@ except AssertionError as exc:
     )
 try:
     attr = CK_ATTRIBUTE()
-    attr.type = int(CKA_CLASS)
-    cls_val = CK_ULONG(int(CKO_SECRET_KEY))
+    attr.type = CKA_CLASS
+    cls_val = CK_ULONG(CKO_SECRET_KEY)
     attr.pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
     attr.ulValueLen = ctypes.sizeof(cls_val)
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_AES_ECB)
+    mech.mechanism = CKM_AES_ECB
     mech.pParameter = None
     mech.ulParameterLen = 0
     fake_wrapped = (ctypes.c_ubyte * 32)(*range(32))
@@ -571,6 +572,514 @@ cleanup()
             stdout,
             stderr,
             context=f"{op}(template_count={count:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestTemplateCountOverflowValidHandles -- 3 counts x 3 ops = 9 cases
+# ---------------------------------------------------------------------------
+
+_VALID_HANDLE_TEMPLATE_OPS = [
+    pytest.param("C_GetAttributeValue", id="get_attribute_value"),
+    pytest.param("C_SetAttributeValue", id="set_attribute_value"),
+    pytest.param("C_CopyObject", id="copy_object"),
+]
+
+_IMPORT_DATA_OBJECT_FOR_COUNT_PROBE = """
+import ctypes
+from pkcs11_check.raw.recipes import destroy_quietly
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_ATTRIBUTE,
+    CKA_APPLICATION,
+    CKA_CLASS,
+    CKA_LABEL,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKO_DATA,
+    CKR_OK,
+    CK_OBJECT_HANDLE,
+    CK_ULONG,
+)
+
+value = (ctypes.c_ubyte * 16)(*range(16))
+label = (ctypes.c_ubyte * 9)(*b"count-key")
+application = (ctypes.c_ubyte * 12)(*b"pkcs11-check")
+cls_val = CK_ULONG(CKO_DATA)
+token_false = ctypes.c_ubyte(0)
+
+base_tmpl = (CK_ATTRIBUTE * 5)()
+base_tmpl[0].type = CKA_CLASS
+base_tmpl[0].pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
+base_tmpl[0].ulValueLen = ctypes.sizeof(cls_val)
+base_tmpl[1].type = CKA_TOKEN
+base_tmpl[1].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
+base_tmpl[1].ulValueLen = 1
+base_tmpl[2].type = CKA_LABEL
+base_tmpl[2].pValue = ctypes.cast(label, ctypes.c_void_p)
+base_tmpl[2].ulValueLen = len(label)
+base_tmpl[3].type = CKA_APPLICATION
+base_tmpl[3].pValue = ctypes.cast(application, ctypes.c_void_p)
+base_tmpl[3].ulValueLen = len(application)
+base_tmpl[4].type = CKA_VALUE
+base_tmpl[4].pValue = ctypes.cast(value, ctypes.c_void_p)
+base_tmpl[4].ulValueLen = len(value)
+
+base_object = CK_OBJECT_HANDLE(0)
+rv = raw.C_CreateObject(
+    sh,
+    ctypes.cast(base_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
+    5,
+    ctypes.byref(base_object),
+)
+if rv != CKR_OK:
+    print(f"SETUP_XFAIL:data-object import rejected: {ckr_name(rv)}")
+    cleanup()
+    raise SystemExit(0)
+"""
+
+
+class TestTemplateCountOverflowValidHandles:
+    """Template-count overflow probes that reach real object-handle paths."""
+
+    @pytest.mark.parametrize("count", _TEMPLATE_COUNTS)
+    @pytest.mark.parametrize("op", _VALID_HANDLE_TEMPLATE_OPS)
+    def test_template_count_overflow_with_valid_object_handle(
+        self,
+        p11_config: Any,
+        count: int,
+        op: str,
+    ) -> None:
+        """A huge template count must not walk beyond a one-attribute template."""
+        preamble = _preamble(p11_config)
+
+        if op == "C_GetAttributeValue":
+            body = (
+                _IMPORT_DATA_OBJECT_FOR_COUNT_PROBE
+                + f"""
+try:
+    out_class = CK_ULONG(0)
+    attr = CK_ATTRIBUTE()
+    attr.type = CKA_CLASS
+    attr.pValue = ctypes.cast(ctypes.pointer(out_class), ctypes.c_void_p)
+    attr.ulValueLen = ctypes.sizeof(out_class)
+    rv = raw.C_GetAttributeValue(sh, base_object.value, ctypes.byref(attr), {count})
+    print(f"rv={{rv}}")
+finally:
+    destroy_quietly(raw, sh, base_object.value)
+cleanup()
+"""
+            )
+        elif op == "C_SetAttributeValue":
+            body = (
+                _IMPORT_DATA_OBJECT_FOR_COUNT_PROBE
+                + f"""
+try:
+    label = (ctypes.c_ubyte * 8)(*b"countchk")
+    attr = CK_ATTRIBUTE()
+    attr.type = CKA_LABEL
+    attr.pValue = ctypes.cast(label, ctypes.c_void_p)
+    attr.ulValueLen = 8
+    rv = raw.C_SetAttributeValue(sh, base_object.value, ctypes.byref(attr), {count})
+    print(f"rv={{rv}}")
+finally:
+    destroy_quietly(raw, sh, base_object.value)
+cleanup()
+"""
+            )
+        elif op == "C_CopyObject":
+            body = (
+                _IMPORT_DATA_OBJECT_FOR_COUNT_PROBE
+                + f"""
+copy_object = CK_OBJECT_HANDLE(0)
+try:
+    attr = CK_ATTRIBUTE()
+    attr.type = CKA_TOKEN
+    attr.pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
+    attr.ulValueLen = 1
+    rv = raw.C_CopyObject(
+        sh,
+        base_object.value,
+        ctypes.byref(attr),
+        {count},
+        ctypes.byref(copy_object),
+    )
+    print(f"rv={{rv}}")
+finally:
+    if copy_object.value:
+        destroy_quietly(raw, sh, copy_object.value)
+    destroy_quietly(raw, sh, base_object.value)
+cleanup()
+"""
+            )
+        else:
+            raise ValueError(f"Unhandled op: {op}")
+
+        script = preamble + body
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"{op}(valid object, template_count={count:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestDeriveTemplateCountOverflowValidBase -- 3 cases
+# ---------------------------------------------------------------------------
+
+
+class TestDeriveTemplateCountOverflowValidBase:
+    """Template-count overflow probes that reach a valid C_DeriveKey base key path."""
+
+    @pytest.mark.parametrize("count", _TEMPLATE_COUNTS)
+    def test_derive_key_template_count_overflow_with_valid_base_key(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        count: int,
+    ) -> None:
+        """A huge derived-key template count must not walk beyond one attribute."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CONCATENATE_BASE_AND_DATA"):
+            pytest.skip("CKM_CONCATENATE_BASE_AND_DATA not supported")
+
+        preamble = _preamble(p11_config)
+        body = f"""
+import ctypes
+from pkcs11_check.raw.recipes import destroy_quietly
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_ATTRIBUTE,
+    CK_KEY_DERIVATION_STRING_DATA,
+    CK_MECHANISM,
+    CKA_CLASS,
+    CKA_DERIVE,
+    CKA_KEY_TYPE,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKK_GENERIC_SECRET,
+    CKM_CONCATENATE_BASE_AND_DATA,
+    CKO_SECRET_KEY,
+    CKR_OK,
+    CK_OBJECT_HANDLE,
+    CK_ULONG,
+)
+
+base_value = (ctypes.c_ubyte * 32)(*range(32))
+cls_val = CK_ULONG(CKO_SECRET_KEY)
+kt_val = CK_ULONG(CKK_GENERIC_SECRET)
+derive_true = ctypes.c_ubyte(1)
+token_false = ctypes.c_ubyte(0)
+
+base_tmpl = (CK_ATTRIBUTE * 5)()
+base_tmpl[0].type = CKA_CLASS
+base_tmpl[0].pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
+base_tmpl[0].ulValueLen = ctypes.sizeof(cls_val)
+base_tmpl[1].type = CKA_KEY_TYPE
+base_tmpl[1].pValue = ctypes.cast(ctypes.pointer(kt_val), ctypes.c_void_p)
+base_tmpl[1].ulValueLen = ctypes.sizeof(kt_val)
+base_tmpl[2].type = CKA_VALUE
+base_tmpl[2].pValue = ctypes.cast(base_value, ctypes.c_void_p)
+base_tmpl[2].ulValueLen = len(base_value)
+base_tmpl[3].type = CKA_DERIVE
+base_tmpl[3].pValue = ctypes.cast(ctypes.pointer(derive_true), ctypes.c_void_p)
+base_tmpl[3].ulValueLen = 1
+base_tmpl[4].type = CKA_TOKEN
+base_tmpl[4].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
+base_tmpl[4].ulValueLen = 1
+
+base_key = CK_OBJECT_HANDLE(0)
+rv = raw.C_CreateObject(
+    sh,
+    ctypes.cast(base_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
+    5,
+    ctypes.byref(base_key),
+)
+if rv != CKR_OK:
+    print(f"SETUP_XFAIL:derive base-key import rejected: {{ckr_name(rv)}}")
+    cleanup()
+    raise SystemExit(0)
+
+derived = CK_OBJECT_HANDLE(0)
+try:
+    data = (ctypes.c_ubyte * 16)(*range(16))
+    params = CK_KEY_DERIVATION_STRING_DATA()
+    params.pData = ctypes.cast(data, ctypes.c_void_p)
+    params.ulLen = len(data)
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_CONCATENATE_BASE_AND_DATA
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+
+    out_class = CK_ULONG(CKO_SECRET_KEY)
+    attr = CK_ATTRIBUTE()
+    attr.type = CKA_CLASS
+    attr.pValue = ctypes.cast(ctypes.pointer(out_class), ctypes.c_void_p)
+    attr.ulValueLen = ctypes.sizeof(out_class)
+
+    rv = raw.C_DeriveKey(
+        sh,
+        ctypes.byref(mech),
+        base_key.value,
+        ctypes.byref(attr),
+        {count},
+        ctypes.byref(derived),
+    )
+    print(f"rv={{rv}}")
+finally:
+    if derived.value:
+        destroy_quietly(raw, sh, derived.value)
+    destroy_quietly(raw, sh, base_key.value)
+cleanup()
+"""
+
+        script = preamble + body
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_DeriveKey(valid base, template_count={count:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestKemTemplateCountOverflow -- 3 counts x 2 ops = 6 cases
+# ---------------------------------------------------------------------------
+
+_KEM_TEMPLATE_COUNT_OPS = [
+    pytest.param("C_EncapsulateKey", id="encapsulate_key"),
+    pytest.param("C_DecapsulateKey", id="decapsulate_key"),
+]
+
+_ML_KEM_KEYPAIR_FOR_COUNT_PROBE = """
+import ctypes
+from pkcs11_check.raw.recipes import destroy_quietly
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_ATTRIBUTE,
+    CKA_DECAPSULATE,
+    CKA_ENCAPSULATE,
+    CKA_EXTRACTABLE,
+    CKA_PARAMETER_SET,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKM_ML_KEM_KEY_PAIR_GEN,
+    CK_OBJECT_HANDLE,
+    CK_MECHANISM,
+    CKP_ML_KEM_768,
+    CKR_OK,
+    CK_ULONG,
+)
+
+
+def _set_bool_attr(attr, attr_type, value_ref):
+    attr.type = attr_type
+    attr.pValue = ctypes.cast(ctypes.pointer(value_ref), ctypes.c_void_p)
+    attr.ulValueLen = 1
+
+
+def _set_ulong_attr(attr, attr_type, value_ref):
+    attr.type = attr_type
+    attr.pValue = ctypes.cast(ctypes.pointer(value_ref), ctypes.c_void_p)
+    attr.ulValueLen = ctypes.sizeof(value_ref)
+
+
+param_set = CK_ULONG(CKP_ML_KEM_768)
+pub_encapsulate = ctypes.c_ubyte(1)
+pub_token = ctypes.c_ubyte(0)
+priv_decapsulate = ctypes.c_ubyte(1)
+priv_token = ctypes.c_ubyte(0)
+priv_sensitive = ctypes.c_ubyte(0)
+priv_extractable = ctypes.c_ubyte(0)
+
+pub_tmpl = (CK_ATTRIBUTE * 3)()
+_set_bool_attr(pub_tmpl[0], CKA_ENCAPSULATE, pub_encapsulate)
+_set_ulong_attr(pub_tmpl[1], CKA_PARAMETER_SET, param_set)
+_set_bool_attr(pub_tmpl[2], CKA_TOKEN, pub_token)
+
+priv_tmpl = (CK_ATTRIBUTE * 5)()
+_set_bool_attr(priv_tmpl[0], CKA_DECAPSULATE, priv_decapsulate)
+_set_ulong_attr(priv_tmpl[1], CKA_PARAMETER_SET, param_set)
+_set_bool_attr(priv_tmpl[2], CKA_TOKEN, priv_token)
+_set_bool_attr(priv_tmpl[3], CKA_SENSITIVE, priv_sensitive)
+_set_bool_attr(priv_tmpl[4], CKA_EXTRACTABLE, priv_extractable)
+
+keygen = CK_MECHANISM()
+keygen.mechanism = CKM_ML_KEM_KEY_PAIR_GEN
+keygen.pParameter = None
+keygen.ulParameterLen = 0
+pub = CK_OBJECT_HANDLE(0)
+priv = CK_OBJECT_HANDLE(0)
+rv = raw.C_GenerateKeyPair(
+    sh,
+    ctypes.byref(keygen),
+    ctypes.cast(pub_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
+    3,
+    ctypes.cast(priv_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
+    5,
+    ctypes.byref(pub),
+    ctypes.byref(priv),
+)
+if rv != CKR_OK:
+    print(f"SETUP_XFAIL:ML-KEM keypair generation rejected: {ckr_name(rv)}")
+    cleanup()
+    raise SystemExit(0)
+"""
+
+
+class TestKemTemplateCountOverflow:
+    """Template-count overflow probes for v3.2 KEM output templates."""
+
+    @pytest.mark.requires_v32
+    @pytest.mark.parametrize("count", _TEMPLATE_COUNTS)
+    @pytest.mark.parametrize("op", _KEM_TEMPLATE_COUNT_OPS)
+    def test_kem_output_template_count_overflow(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        count: int,
+        op: str,
+    ) -> None:
+        """A huge KEM output-template count must not walk beyond one attribute."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("ML_KEM"):
+            pytest.skip("CKM_ML_KEM not supported")
+        if "C_EncapsulateKey" not in rs.raw.available_function_names():
+            pytest.skip("C_EncapsulateKey not available")
+        if op == "C_DecapsulateKey" and "C_DecapsulateKey" not in rs.raw.available_function_names():
+            pytest.skip("C_DecapsulateKey not available")
+
+        preamble = _preamble(p11_config)
+        if op == "C_EncapsulateKey":
+            body = (
+                _ML_KEM_KEYPAIR_FOR_COUNT_PROBE
+                + f"""
+try:
+    from pkcs11_check.raw.types_std import (
+        CK_ATTRIBUTE,
+        CKA_CLASS,
+        CKO_SECRET_KEY,
+        CKM_ML_KEM,
+        CK_OBJECT_HANDLE,
+        CK_MECHANISM,
+        CK_ULONG,
+    )
+
+    out_class = CK_ULONG(CKO_SECRET_KEY)
+    attr = CK_ATTRIBUTE()
+    attr.type = CKA_CLASS
+    attr.pValue = ctypes.cast(ctypes.pointer(out_class), ctypes.c_void_p)
+    attr.ulValueLen = ctypes.sizeof(out_class)
+
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_ML_KEM
+    mech.pParameter = None
+    mech.ulParameterLen = 0
+    ct_len = CK_ULONG(0)
+    secret = CK_OBJECT_HANDLE(0)
+    rv = raw.C_EncapsulateKey(
+        sh,
+        ctypes.byref(mech),
+        pub.value,
+        ctypes.byref(attr),
+        {count},
+        None,
+        ctypes.byref(ct_len),
+        ctypes.byref(secret),
+    )
+    print(f"rv={{rv}}")
+finally:
+    if "secret" in locals() and secret.value:
+        destroy_quietly(raw, sh, secret.value)
+    destroy_quietly(raw, sh, pub.value)
+    destroy_quietly(raw, sh, priv.value)
+cleanup()
+"""
+            )
+        elif op == "C_DecapsulateKey":
+            body = (
+                _ML_KEM_KEYPAIR_FOR_COUNT_PROBE
+                + f"""
+try:
+    from pkcs11_check.raw.recipes import encapsulate_key
+    from pkcs11_check.raw.types_std import (
+        CK_ATTRIBUTE,
+        CKA_CLASS,
+        CKA_KEY_TYPE,
+        CKA_VALUE_LEN,
+        CKA_TOKEN,
+        CKK_AES,
+        CKM_ML_KEM,
+        CKO_SECRET_KEY,
+        CK_OBJECT_HANDLE,
+        CK_MECHANISM,
+        CK_ULONG,
+    )
+
+    try:
+        setup_secret, ciphertext = encapsulate_key(
+            raw,
+            sh,
+            pub.value,
+            CKM_ML_KEM,
+            attrs={{
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_VALUE_LEN: 32,
+                CKA_TOKEN: False,
+            }},
+        )
+    except AssertionError as exc:
+        print(f"SETUP_XFAIL:ML-KEM encapsulate rejected: {{exc}}")
+        cleanup()
+        raise SystemExit(0)
+
+    out_class = CK_ULONG(CKO_SECRET_KEY)
+    attr = CK_ATTRIBUTE()
+    attr.type = CKA_CLASS
+    attr.pValue = ctypes.cast(ctypes.pointer(out_class), ctypes.c_void_p)
+    attr.ulValueLen = ctypes.sizeof(out_class)
+
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_ML_KEM
+    mech.pParameter = None
+    mech.ulParameterLen = 0
+    ct_buf = (ctypes.c_ubyte * len(ciphertext))(*ciphertext)
+    secret = CK_OBJECT_HANDLE(0)
+    rv = raw.C_DecapsulateKey(
+        sh,
+        ctypes.byref(mech),
+        priv.value,
+        ctypes.byref(attr),
+        {count},
+        ct_buf,
+        len(ciphertext),
+        ctypes.byref(secret),
+    )
+    print(f"rv={{rv}}")
+finally:
+    if "secret" in locals() and secret.value:
+        destroy_quietly(raw, sh, secret.value)
+    if "setup_secret" in locals() and setup_secret:
+        destroy_quietly(raw, sh, setup_secret)
+    destroy_quietly(raw, sh, pub.value)
+    destroy_quietly(raw, sh, priv.value)
+cleanup()
+"""
+            )
+        else:
+            raise ValueError(f"Unhandled op: {op}")
+
+        script = preamble + body
+        rc, stdout, stderr = run_with_coverage(script, timeout=15, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"{op}(ML-KEM output template_count={count:#x})",
         )
 
 
@@ -613,7 +1122,7 @@ from pkcs11_check.raw.types_std import (
 )
 
 mech = CK_MECHANISM()
-mech.mechanism = int({mech_name})
+mech.mechanism = {mech_name}
 mech.pParameter = None
 mech.ulParameterLen = 0
 
@@ -622,13 +1131,13 @@ token_false = ctypes.c_ubyte(0)
 enc_true = ctypes.c_ubyte(1)
 
 attrs = (CK_ATTRIBUTE * 3)()
-attrs[0].type = int(CKA_VALUE_LEN)
+attrs[0].type = CKA_VALUE_LEN
 attrs[0].pValue = ctypes.cast(ctypes.pointer(val_len), ctypes.c_void_p)
 attrs[0].ulValueLen = ctypes.sizeof(val_len)
-attrs[1].type = int(CKA_TOKEN)
+attrs[1].type = CKA_TOKEN
 attrs[1].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
 attrs[1].ulValueLen = 1
-attrs[2].type = int(CKA_ENCRYPT)
+attrs[2].type = CKA_ENCRYPT
 attrs[2].pValue = ctypes.cast(ctypes.pointer(enc_true), ctypes.c_void_p)
 attrs[2].ulValueLen = 1
 
@@ -685,7 +1194,7 @@ from pkcs11_check.raw.types_std import CK_ATTRIBUTE, CKA_CLASS, CK_ULONG
 # Small buffer, huge claimed length
 buf = (ctypes.c_ubyte * 8)()
 attr = CK_ATTRIBUTE()
-attr.type = int(CKA_CLASS)
+attr.type = CKA_CLASS
 attr.pValue = ctypes.cast(buf, ctypes.c_void_p)
 attr.ulValueLen = {_ULONG_MAX}
 # Object handle 0 -- module may reject handle before reading attr
@@ -699,7 +1208,7 @@ import ctypes
 from pkcs11_check.raw.types_std import CK_ATTRIBUTE, CKA_TOKEN
 buf = (ctypes.c_ubyte * 8)()
 attr = CK_ATTRIBUTE()
-attr.type = int(CKA_TOKEN)
+attr.type = CKA_TOKEN
 attr.pValue = ctypes.cast(buf, ctypes.c_void_p)
 attr.ulValueLen = {_ULONG_MAX}
 rv = raw.C_SetAttributeValue(sh, 0, ctypes.pointer(attr), 1)
@@ -714,7 +1223,7 @@ from pkcs11_check.raw.types_std import (
 )
 buf = (ctypes.c_ubyte * 8)()
 attr = CK_ATTRIBUTE()
-attr.type = int(CKA_CLASS)
+attr.type = CKA_CLASS
 attr.pValue = ctypes.cast(buf, ctypes.c_void_p)
 attr.ulValueLen = {_ULONG_MAX}
 handle = CK_OBJECT_HANDLE(0)
@@ -782,7 +1291,7 @@ from pkcs11_check.raw.types_std import (
 )
 
 mech = CK_MECHANISM()
-mech.mechanism = int(CKM_RSA_PKCS_KEY_PAIR_GEN)
+mech.mechanism = CKM_RSA_PKCS_KEY_PAIR_GEN
 mech.pParameter = None
 mech.ulParameterLen = 0
 
@@ -790,13 +1299,13 @@ mech.ulParameterLen = 0
 token_false = ctypes.c_ubyte(0)
 
 pub_attr = CK_ATTRIBUTE()
-pub_attr.type = int(CKA_TOKEN)
+pub_attr.type = CKA_TOKEN
 pub_attr.pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
 pub_attr.ulValueLen = 1
 
 priv_token = ctypes.c_ubyte(0)
 priv_attr = CK_ATTRIBUTE()
-priv_attr.type = int(CKA_TOKEN)
+priv_attr.type = CKA_TOKEN
 priv_attr.pValue = ctypes.cast(ctypes.pointer(priv_token), ctypes.c_void_p)
 priv_attr.ulValueLen = 1
 

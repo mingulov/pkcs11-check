@@ -7,6 +7,7 @@ import sys
 import tarfile
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -25,7 +26,7 @@ from pkcs11_check.raw.types_std import (
 )
 
 
-def _provider_write(ptr: object, data: bytes) -> None:
+def _provider_write(ptr: Any, data: bytes) -> None:
     assert ptr is not None
     ctypes.memmove(ptr, data, len(data))
 
@@ -1095,7 +1096,7 @@ def test_key_mat_mechanism_iv_buffers_round_trip_provider_writes() -> None:
         CKM_TLS12_KEY_AND_MAC_DERIVE,
         client_random=bytes(32),
         server_random=bytes(32),
-        hash_mech=int(CKM_SHA256),
+        hash_mech=CKM_SHA256,
         mac_size_bits=256,
         key_size_bits=128,
         iv_size_bits=128,

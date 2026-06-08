@@ -310,7 +310,7 @@ def _make_wrap_mech_param(entry: MechEntry) -> Any:
         if mech_id == int(CKM_RSA_PKCS_OAEP):
             from pkcs11_check.raw.pack_mechanisms import mech_oaep
 
-            return mech_oaep(CKM(mech_id), hash_mech=int(CKM_SHA_1), mgf=int(CKG_MGF1_SHA1))
+            return mech_oaep(CKM(mech_id), hash_mech=CKM_SHA_1, mgf=CKG_MGF1_SHA1)
     except ImportError:
         pass
 
@@ -458,7 +458,7 @@ def _build_generic_cipher_wrap_key(rs: RawSession, entry: MechEntry, config: Mec
         packed.extend(pack_attrs(attrs))
 
     tmpl = template(*packed)
-    mech = mech_simple(CKM(int(keygen_mech)))
+    mech = mech_simple(CKM(keygen_mech))
     handle = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
     try:
