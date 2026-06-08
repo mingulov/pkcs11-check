@@ -7,6 +7,7 @@ keys must not be wrappable.
 
 from __future__ import annotations
 
+import ctypes
 from typing import Any
 
 import pytest
@@ -14,15 +15,20 @@ import pytest
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_aes_key,
+    import_secret_key,
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
+    CK_ATTRIBUTE,
     CKA_ALWAYS_SENSITIVE,
     CKA_EXTRACTABLE,
     CKA_PRIVATE_EXPONENT,
     CKA_SENSITIVE,
     CKA_VALUE,
+    CKK_AES,
+    CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_OK,
 )
 from pkcs11_check.testcases.conftest import (
     classify_policy_enforcement,
@@ -61,6 +67,54 @@ class TestSensitiveKeyValue:
                 violated=violated,
                 label="read CKA_VALUE on a CKA_SENSITIVE=True AES key "
                 "(PKCS#11 v3.1 Sec.4.9.2: sensitive attributes cannot be revealed)",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_sensitive_value_not_copied_on_rejected_get_attribute(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """A rejected sensitive-value read must not copy bytes into pValue."""
+        rs = p11_raw_session
+        secret = bytes.fromhex("00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f")
+        try:
+            key = import_secret_key(
+                rs.raw,
+                rs.sh,
+                CKK_AES,
+                secret,
+                attrs={CKA_SENSITIVE: True, CKA_EXTRACTABLE: False},
+            )
+        except AssertionError as exc:
+            pytest.xfail(f"Cannot import sensitive AES key for raw CKA_VALUE probe: {exc}")
+
+        try:
+            sens_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
+            claimed = sens_attrs.get(CKA_SENSITIVE) is True
+
+            sentinel = b"\xA5" * len(secret)
+            value_buf = (ctypes.c_ubyte * len(secret)).from_buffer_copy(sentinel)
+            attr = (CK_ATTRIBUTE * 1)()
+            attr[0].type = CKA_VALUE
+            attr[0].pValue = ctypes.cast(value_buf, ctypes.c_void_p)
+            attr[0].ulValueLen = len(secret)
+
+            rv = rs.raw.C_GetAttributeValue(rs.sh, key, attr, 1)
+            observed = bytes(value_buf)
+            leaked = observed == secret or observed.startswith(secret[:16])
+            if rv not in (CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID):
+                pytest.xfail(
+                    "C_GetAttributeValue(CKA_VALUE on sensitive key) rejected with "
+                    f"non-standard CKR {rv:#x}"
+                )
+            classify_policy_enforcement(
+                claimed=claimed,
+                violated=rv == CKR_OK or leaked,
+                label=(
+                    "raw C_GetAttributeValue copied CKA_VALUE bytes for a "
+                    "CKA_SENSITIVE=True AES key"
+                ),
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

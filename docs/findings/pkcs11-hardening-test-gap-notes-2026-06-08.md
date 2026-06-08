@@ -175,6 +175,11 @@ not by implementation identity:
   `C_FindObjectsInit(NULL_PTR, 0)` is an empty-template match-all search, not a
   NULL-template error. Coverage now creates a session object, starts the search
   with a literal NULL pointer and zero count, and verifies the object is returned.
+- A sensitivity-history pass found that return-code-only sensitive-attribute
+  tests are incomplete. Coverage now calls `C_GetAttributeValue` directly on a
+  known sensitive AES key with a real `CKA_VALUE` output buffer and fails if the
+  module copies the protected bytes even while returning a sensitive-attribute
+  rejection.
 - Several histories also converged on caller-pointer alignment bugs. The
   provider-neutral lesson is not provider identity but API shape: modules should
   not assume that foreign-function callers always provide naturally aligned
