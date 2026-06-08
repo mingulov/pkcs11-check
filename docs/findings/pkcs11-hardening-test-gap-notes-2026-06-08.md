@@ -141,7 +141,9 @@ not by implementation identity:
   `CKA_ALLOWED_MECHANISMS`, `CKA_EXTRACTABLE`, `CKA_ALWAYS_SENSITIVE`,
   `CKA_NEVER_EXTRACTABLE`, `CKA_PRIVATE`, `CKA_COPYABLE`,
   `CKA_DESTROYABLE`, `CKA_WRAP_WITH_TRUSTED`, and v3.2 KEM permission
-  attributes.
+  attributes. Empty `CKA_ALLOWED_MECHANISMS` array coverage now distinguishes
+  unsupported templates from accepted-and-enforced empty allowlists, and fails
+  only if a module claims the empty allowlist then still permits mechanism use.
 - Session, login, and operation lifetime bugs show up as stale locks, leaked
   active operations, double-close behavior, and inconsistent login state under
   concurrency. These need small bounded subprocess stress probes rather than
@@ -387,14 +389,18 @@ Initial coverage added:
   `CKA_ALLOWED_MECHANISMS` attribute has `pValue=NULL_PTR` and
   `ulValueLen=sizeof(CK_ULONG)`. A clean template or argument rejection passes;
   `CKR_OK` fails after the created key is destroyed.
+- `C_CreateObject` with an otherwise valid AES secret-key template whose
+  `CKA_ALLOWED_MECHANISMS` attribute is represented as the empty array
+  (`pValue=NULL_PTR`, `ulValueLen=0`). If the module rejects the template, the
+  rejection is classified. If the module accepts and reports an empty array
+  back, the test verifies that a listed mechanism is not still usable.
 
 Remaining useful expansion:
 
 - Additional array-valued attributes where setup is practical, especially
   attributes used in copy, unwrap, derive, and v3.2 KEM templates.
-- The zero-length `NULL_PTR` case separately, where some array-valued
-  attributes may legitimately represent an empty array depending on the
-  attribute and operation.
+- Additional zero-length `NULL_PTR` cases where array-valued attributes may
+  legitimately represent empty arrays depending on the attribute and operation.
 
 Expected outcome: clean attribute/template/argument rejection for nonzero
 length with a NULL pointer. Accepting that malformed input as valid, crashing,
@@ -972,6 +978,84 @@ Before converting this scratch note into tests, add or reuse a few small helpers
 
 These helpers are not abstractions for style; they prevent false positives and
 keep hardening tests provider-neutral.
+
+## Stop Point And Continuation Backlog
+
+Further provider-history investigation should stop here for now. The useful
+commit-message signals from the current pass have already been reduced to
+provider-neutral API bug classes. Continue by implementing tests from the list
+below, not by repeating broad history searches. Reopen history only for a new
+provider target, a new release with a relevant fix cluster, or a specific
+unexplained crash/failure from the Docker matrix.
+
+Current evidence scope:
+
+- The review was intentionally optimized: exact local history searches for
+  public PKCS#11 API names, `CKA_`/`CKM_`/`CKR_` identifiers, and
+  buffer/length/null/overflow/crash terms. It was not a full diff audit.
+- The findings were translated to API shapes only. This note should remain
+  provider-neutral and should not grow provider names, external commit IDs, or
+  issue references.
+- Several exact-history classes are now covered by committed tests: mixed
+  sensitive attribute filling, `C_SetAttributeValue` atomicity,
+  unadvertised-but-standard mechanism info, operation-state cleanup after NULL
+  data/output pointers, `CKA_WRAP_WITH_TRUSTED` transition rules,
+  NULL-mechanism digest cancellation, valid empty key-generation templates,
+  invalid derive base handles, AES-CBC encrypt-data nested parameters, and
+  empty `CKA_ALLOWED_MECHANISMS` enforcement.
+- A focused Docker run found a real provider-boundary finding for the AES-CBC
+  encrypt-data huge nested length case: the child reaches the target
+  `C_DeriveKey` call and exits before reporting a return value. That should
+  remain a provider finding, not an xfail.
+
+Add the following tests from existing information before doing more source
+history review:
+
+1. Extend nested mechanism-parameter length probes in
+   `testcases/security/test_ffi_length_boundary.py` for RSA-PSS, RSA-OAEP,
+   AES-GCM, AES-CCM, EdDSA, ECDH-AESKW, RSA-AES wrap, and v3.2 KEM/PQC
+   mechanisms where a real setup key exists. Use child processes, tiny real
+   buffers, and impossible claimed lengths.
+2. Add more array-valued attribute checks in
+   `testcases/ckr/test_ckr_object.py` and mechanism-specific CKR files:
+   `CKA_WRAP_TEMPLATE`, `CKA_UNWRAP_TEMPLATE`, `CKA_DERIVE_TEMPLATE`, and
+   v3.2 KEM template arrays in create/copy/unwrap/derive paths. For accepted
+   empty arrays, verify the effect instead of failing on `CKR_OK` alone.
+3. Broaden scalar attribute length checks beyond the current object-class,
+   key-type, token, AES value-length, and PQC parameter-set coverage. Priority
+   attributes are operation permissions, sensitivity/extractability booleans,
+   object-size-like integers, and mechanism-specific integer attributes in
+   generate, unwrap, derive, and copy templates.
+4. Add guard-byte checks for remaining output-buffer paths:
+   `C_Sign`/`C_VerifyRecover`, `C_EncryptUpdate`/`C_DecryptUpdate`,
+   `C_EncryptFinal`/`C_DecryptFinal`, `C_WrapKey`, and v3.0/v3.2 message or KEM
+   output buffers. Keep size-query, undersized non-NULL, retry, and guard-byte
+   assertions in the same test.
+5. Add operation-state follow-up probes after cleanly rejected update/final
+   calls. Each test must state whether the spec requires retry preservation or
+   operation termination, then verify the next retry, finalizer, or fresh init.
+6. Extend KDF output-effect checks: TLS key material returned buffers,
+   PBKDF2/PBE boundary variants, returned additional-derived-key arrays, and
+   exact derived output length for mechanisms beyond DH and HKDF.
+7. Add access-control invariants not yet covered across all creation paths:
+   `CKA_COPYABLE`, `CKA_DESTROYABLE`, `CKA_PRIVATE`, `CKA_EXTRACTABLE`,
+   `CKA_ALWAYS_SENSITIVE`, `CKA_NEVER_EXTRACTABLE`, and v3.2 KEM permissions.
+   The test should fail only on self-contradiction after a claimed protection.
+8. Add small non-default stress probes for session/search/lifetime races only
+   after a bounded subprocess helper exists. Do not put broad soak tests in the
+   default fast path.
+9. Add destructive SO PIN and provider-state corruption harnesses only behind
+   disposable-token metadata. These are not normal conformance tests and must
+   never run against user-owned token stores.
+
+Do not add at this stage:
+
+- Provider allowlists, provider-specific xfails, or tests that hide crashes.
+- More release-statistics documentation; this is not an official release
+  results update.
+- Another broad provider-history sweep without a new input signal.
+- Tests that use invalid handles when the intended bug class is template,
+  serializer, or output-buffer parsing on valid objects.
 
 ## Priority
 

@@ -8,7 +8,7 @@ Source: PKCS#11 v3.1 Sec.5.7.1-5.7.9.
 
 from __future__ import annotations
 
-from ctypes import byref, sizeof
+from ctypes import byref, c_ubyte, sizeof
 from typing import Any
 
 import pytest
@@ -18,6 +18,7 @@ from pkcs11_check.raw.pack import (
     attr_bool,
     attr_bytes,
     attr_ulong,
+    mech_simple,
     template,
 )
 from pkcs11_check.raw.recipes import (
@@ -224,6 +225,66 @@ class TestCreateObjectErrors:
                 "nonzero ulValueLen"
             ),
         )
+
+    def test_allowed_mechanisms_empty_null_pointer_enforced(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """Accepted empty CKA_ALLOWED_MECHANISMS arrays must block mechanism use."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB"):
+            pytest.skip("CKM_AES_ECB not supported")
+        tmpl = template(
+            attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_AES),
+            attr_bytes(CKA_VALUE, b"\x01" * 16),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_ENCRYPT, True),
+            attr_array(CKA_ALLOWED_MECHANISMS, [CKM_AES_ECB]),
+        )
+        make_attr_null_pointer(tmpl, 6, 0)
+        handle = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+        if rv != CKR_OK:
+            classify_negative_rv(
+                rv,
+                TEMPLATE_ERRORS,
+                label=(
+                    "C_CreateObject with empty CKA_ALLOWED_MECHANISMS "
+                    "NULL_PTR array"
+                ),
+            )
+            return
+
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, handle.value, [CKA_ALLOWED_MECHANISMS])
+            claimed = attrs.get(CKA_ALLOWED_MECHANISMS) == []
+            mech = mech_simple(CKM_AES_ECB)
+            init_rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), handle.value)
+            encrypted = False
+            if init_rv == CKR_OK:
+                plaintext = (c_ubyte * 16)(*range(16))
+                ciphertext = (c_ubyte * 32)()
+                ciphertext_len = CK_ULONG(32)
+                encrypt_rv = rs.raw.C_Encrypt(
+                    rs.sh,
+                    plaintext,
+                    16,
+                    ciphertext,
+                    byref(ciphertext_len),
+                )
+                encrypted = encrypt_rv == CKR_OK
+            classify_policy_enforcement(
+                claimed=claimed,
+                violated=encrypted,
+                label=(
+                    "CKA_ALLOWED_MECHANISMS empty-array enforcement for "
+                    "C_EncryptInit/C_Encrypt"
+                ),
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, handle.value)
 
 
 class TestGetAttributeErrors:
