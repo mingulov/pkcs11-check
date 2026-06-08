@@ -70,6 +70,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
     CKR_OPERATION_ACTIVE,
+    CKR_OPERATION_CANCEL_FAILED,
     CKR_OPERATION_NOT_INITIALIZED,
 )
 from pkcs11_check.testcases.conftest import (
@@ -289,6 +290,48 @@ _DIGEST_MECHS: tuple[tuple[str, int], ...] = (
     ("SHA224", CKM_SHA224),
     ("SHA_1", CKM_SHA_1),
 )
+
+
+def _finish_active_digest(raw: Any, sh: int) -> None:
+    out = (ctypes.c_ubyte * 64)()
+    out_len = ctypes.c_ulong(64)
+    raw.C_DigestFinal(sh, out, ctypes.byref(out_len))
+
+
+@pytest.mark.requires_v30
+def test_digest_init_null_mechanism_cancels_active_digest(p11_raw_session: Any) -> None:
+    """On v3+ interfaces, C_DigestInit(NULL) is an operation-cancel path."""
+    rs = p11_raw_session
+    for name, digest_mech in _DIGEST_MECHS:
+        if not rs.has_mechanism(name):
+            continue
+        mech = mech_simple(digest_mech)
+        expect_rv(rs.raw.C_DigestInit(rs.sh, mech.byref()), CKR_OK)
+        rv = int(rs.raw.C_DigestInit(rs.sh, None))
+        if rv != CKR_OK:
+            _finish_active_digest(rs.raw, rs.sh)
+            classify_negative_rv(
+                rv,
+                (CKR_OPERATION_CANCEL_FAILED,),
+                label=f"{name}: C_DigestInit(NULL) cancel of active digest operation",
+            )
+            return
+
+        restart_rv = int(rs.raw.C_DigestInit(rs.sh, mech.byref()))
+        if restart_rv != CKR_OK:
+            _finish_active_digest(rs.raw, rs.sh)
+            classify_lifecycle_effect(
+                claimed_success=True,
+                effect_observed=True,
+                label=(
+                    f"{name}: C_DigestInit(NULL) returned CKR_OK but did not leave the "
+                    f"session ready for a fresh digest init (next C_DigestInit -> "
+                    f"{ckr_name(restart_rv)})"
+                ),
+            )
+        _finish_active_digest(rs.raw, rs.sh)
+        return
+    pytest.skip("no SHA-1/SHA-224/SHA-256 digest mechanism supported by module")
 
 
 def _assert_digest_terminates(rs: Any, digest_mech: int, label: str) -> None:

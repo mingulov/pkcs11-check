@@ -207,6 +207,10 @@ not by implementation identity:
   `CKA_WRAP_WITH_TRUSTED` transition rules. Coverage now creates a key with
   `CKA_WRAP_WITH_TRUSTED=True`, attempts to clear it with
   `C_SetAttributeValue`, and fails if the stricter policy is actually removed.
+- A v3 operation-cancel pass found that NULL mechanism init probes only checked
+  crash/reject behavior. Coverage now starts a digest operation, calls
+  `C_DigestInit(NULL)`, and fails if `CKR_OK` is reported without making a fresh
+  digest init possible.
 - Several histories also converged on caller-pointer alignment bugs. The
   provider-neutral lesson is not provider identity but API shape: modules should
   not assume that foreign-function callers always provide naturally aligned
