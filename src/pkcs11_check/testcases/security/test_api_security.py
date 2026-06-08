@@ -53,6 +53,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_NOT_WRAPPABLE,
+    CKR_KEY_UNEXTRACTABLE,
     CKR_MECHANISM_INVALID,
     CKR_SESSION_COUNT,
     CKR_TEMPLATE_INCOMPLETE,
@@ -98,6 +99,9 @@ _WRAP_DECRYPT_POLICY_BLOCK_RVS = (
     CKR_ACTION_PROHIBITED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_NOT_WRAPPABLE,
+    # Refusing to wrap a non-extractable target is itself a valid way to block
+    # the wrap-decrypt oracle (the secure outcome), not a test failure.
+    CKR_KEY_UNEXTRACTABLE,
 )
 
 _WRAP_DECRYPT_RUNTIME_REJECT_RVS = (
