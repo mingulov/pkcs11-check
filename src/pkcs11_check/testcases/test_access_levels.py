@@ -1586,3 +1586,62 @@ class TestPublicSessionRestrictions:
                 destroy_quietly(rs.raw, s1, h)
         finally:
             close_session_quietly(rs.raw, s1)
+
+    def test_public_create_private_session_object_rejected(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
+        """Public session must not C_CreateObject a CKA_PRIVATE=True object.
+
+        Complements the C_GenerateKey path: the private-object login rule applies
+        to direct object creation and to session (not only token) objects.
+        Expected CKR_USER_NOT_LOGGED_IN; creating a usable private object without
+        authentication is a Type-B self-contradiction, not a soft note.
+        """
+        rs = p11_raw_session
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
+            pytest.skip("No PIN configured; cannot establish an unauthenticated session")
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
+        label = f"pub-create-priv-{id(self)}"
+
+        # Clear application-wide (token-wide) login so the probe session is public.
+        pre_sh = _open_access_session_or_skip(rs, flags_rw)
+        rs.raw.C_Logout(pre_sh)
+        close_session_quietly(rs.raw, pre_sh)
+
+        s1 = _open_access_session_or_skip(rs, flags_rw)
+        created = None
+        try:
+            try:
+                created = create_object(
+                    rs.raw,
+                    s1,
+                    {
+                        CKA_CLASS: CKO_DATA,
+                        CKA_LABEL: label,
+                        CKA_VALUE: b"private-no-login",
+                        CKA_TOKEN: False,
+                        CKA_PRIVATE: True,
+                    },
+                )
+            except AssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (CKR_USER_NOT_LOGGED_IN,),
+                    label="C_CreateObject CKA_PRIVATE=True session object in a public "
+                    "(unauthenticated) session",
+                )
+                return
+            # Created without login -- Type-B claim/effect check.
+            priv = read_attributes(rs.raw, s1, created, [CKA_PRIVATE]).get(CKA_PRIVATE)
+            classify_policy_enforcement(
+                claimed=priv is True,
+                violated=True,
+                label="public (unauthenticated) session created a CKA_PRIVATE=True "
+                "session object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
+            )
+        finally:
+            # Session objects are discarded on close; destroy first if it exists.
+            if created is not None:
+                destroy_quietly(rs.raw, s1, created)
+            close_session_quietly(rs.raw, s1)
