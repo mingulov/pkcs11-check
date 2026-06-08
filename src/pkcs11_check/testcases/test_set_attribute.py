@@ -49,6 +49,25 @@ _SET_ATTR_REJECT_RVS = (
 )
 
 
+def _read_back_or_fail(rs: Any, handle: int, attrs: list[int], *, label: str) -> dict[int, Any]:
+    """Read attributes back for an effect check, failing clearly on a bad read.
+
+    ``read_attributes`` already tolerates ``CKR_ATTRIBUTE_SENSITIVE`` /
+    ``CKR_ATTRIBUTE_TYPE_INVALID`` (those attributes are simply omitted). Any
+    *other* clean error from ``C_GetAttributeValue`` after a write means the
+    object can no longer be read back consistently -- a Type-C self-contradiction
+    (the write was accepted, then the object was left in a bad state). Surface it
+    as a clear finding instead of an opaque ``CkrAssertionError`` from the recipe.
+    """
+    try:
+        return read_attributes(rs.raw, rs.sh, handle, attrs)
+    except AssertionError as exc:
+        pytest.fail(
+            f"{label}: attribute(s) could not be read back after the write ({exc}) "
+            "-- the object was left in an inconsistent state"
+        )
+
+
 def _classify_readonly_write(
     rs: Any, handle: int, attr: int, new_value: Any, *, label: str
 ) -> None:
@@ -68,7 +87,7 @@ def _classify_readonly_write(
         set_attributes(rs.raw, rs.sh, handle, {attr: new_value})
     except AssertionError:
         return  # Rejected the read-only write -- correct.
-    after = read_attributes(rs.raw, rs.sh, handle, [attr])
+    after = _read_back_or_fail(rs, handle, [attr], label=label)
     if after.get(attr) == new_value:
         pytest.fail(f"{label}: claimed success and the read-only value actually changed")
     pytest.xfail(
@@ -172,7 +191,12 @@ class TestSetAttributeAtomicity:
                 attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY),
             )
             rv = rs.raw.C_SetAttributeValue(rs.sh, key, mixed.ptr, mixed.count)
-            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LABEL, CKA_CLASS])
+            attrs = _read_back_or_fail(
+                rs,
+                key,
+                [CKA_LABEL, CKA_CLASS],
+                label="C_SetAttributeValue mixed mutable/read-only template",
+            )
             label_after = attrs.get(CKA_LABEL)
             class_after = attrs.get(CKA_CLASS)
 
