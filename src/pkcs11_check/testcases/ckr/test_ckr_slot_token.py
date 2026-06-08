@@ -13,10 +13,19 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.recipes import get_mechanism_list
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_MECHANISM_INFO,
     CK_ULONG,
+    CKM_AES_GCM,
+    CKM_AES_XTS,
+    CKM_CHACHA20,
+    CKM_CHACHA20_POLY1305,
+    CKM_ECDSA_SHA3_512,
+    CKM_RSA_AES_KEY_WRAP,
+    CKM_SHA3_512,
+    CKM_SHAKE_256_KEY_DERIVE,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_MECHANISM_INVALID,
     CKR_NO_EVENT,
@@ -39,6 +48,37 @@ class TestGetMechanismInfoErrors:
             rv,
             (CKR_MECHANISM_INVALID,),
             label="C_GetMechanismInfo for a non-existent mechanism",
+        )
+
+    def test_mechanism_info_rejects_standard_unadvertised_mechanism(
+        self, p11_raw_session: Any
+    ) -> None:
+        """A standard CKM absent from C_GetMechanismList must not return info."""
+        rs = p11_raw_session
+        advertised = set(get_mechanism_list(rs.raw, rs.slot_id))
+        candidates = (
+            CKM_CHACHA20_POLY1305,
+            CKM_CHACHA20,
+            CKM_AES_XTS,
+            CKM_RSA_AES_KEY_WRAP,
+            CKM_ECDSA_SHA3_512,
+            CKM_SHAKE_256_KEY_DERIVE,
+            CKM_SHA3_512,
+            CKM_AES_GCM,
+        )
+        mechanism = next(
+            (candidate for candidate in candidates if candidate not in advertised),
+            None,
+        )
+        if mechanism is None:
+            pytest.skip("No standard absent mechanism available for C_GetMechanismInfo probe")
+
+        info = CK_MECHANISM_INFO()
+        rv = rs.raw.C_GetMechanismInfo(rs.slot_id, mechanism, byref(info))
+        classify_negative_rv(
+            rv,
+            (CKR_MECHANISM_INVALID,),
+            label=f"C_GetMechanismInfo for unadvertised standard mechanism {mechanism}",
         )
 
 

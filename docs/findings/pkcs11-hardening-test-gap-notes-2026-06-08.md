@@ -194,6 +194,10 @@ not by implementation identity:
   succeeds before a later row fails. Coverage now proves mutable label updates
   are operational, then submits `CKA_LABEL` followed by read-only `CKA_CLASS` in
   one template and fails if the rejected call leaves the new label behind.
+- A mechanism-list filtering pass found a narrower `C_GetMechanismInfo` gap:
+  querying a nonsense mechanism ID is not the same as querying a real standard
+  `CKM_*` value absent from the slot's `C_GetMechanismList`. Coverage now picks
+  a common absent standard mechanism and requires `CKR_MECHANISM_INVALID`.
 - Several histories also converged on caller-pointer alignment bugs. The
   provider-neutral lesson is not provider identity but API shape: modules should
   not assume that foreign-function callers always provide naturally aligned
