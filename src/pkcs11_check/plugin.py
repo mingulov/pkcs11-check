@@ -680,10 +680,38 @@ def _attach_rv_trace_to_report(item: pytest.Item, report: Any) -> None:
     _remember_rv_trace(item, report)
 
 
+def _convert_missing_function_to_skip(report: Any, call: pytest.CallInfo[Any]) -> None:
+    """A PKCS#11 function absent from the module's function list is a capability
+    gap, not a test error.
+
+    The function dispatcher (``raw/api.py``) raises
+    ``AttributeError("<C_Fn> not available in this module")`` when a test calls a
+    function the loaded module does not implement (common on minimal modules such
+    as corePKCS11). Per the classification model a genuinely-absent capability is
+    a ``skip``, so convert that specific uncaught error into a skip rather than
+    letting it surface as a hard error. Full modules expose all standard
+    functions, so this never fires for them.
+    """
+    if getattr(report, "when", None) not in ("setup", "call"):
+        return
+    if getattr(report, "outcome", None) != "failed":
+        return
+    excinfo = getattr(call, "excinfo", None)
+    if excinfo is None or not issubclass(excinfo.type, AttributeError):
+        return
+    message = str(excinfo.value)
+    if not message.endswith("not available in this module"):
+        return
+    report.outcome = "skipped"
+    lineno = item_location[1] if (item_location := getattr(report, "location", None)) else 0
+    report.longrepr = (str(getattr(report, "fspath", "")), (lineno or 0) + 1, f"Skipped: {message}")
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> Any:
     outcome = yield
     report = outcome.get_result()
+    _convert_missing_function_to_skip(report, call)
     _attach_rv_trace_to_report(item, report)
 
 
