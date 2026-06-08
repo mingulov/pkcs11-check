@@ -800,14 +800,22 @@ functional tests where the setup already exists.
 Useful probes should fill only missing variants, because several access-control
 classes are already covered:
 
-- `CKA_DERIVE=False` must prevent `C_DeriveKey`.
+- `CKA_DERIVE=False` must prevent `C_DeriveKey`. (Covered.)
 - `CKA_ENCAPSULATE=False` and `CKA_DECAPSULATE=False` must prevent v3.2 KEM
-  operations when those attributes and entry points are available.
+  operations when those attributes and entry points are available. (Covered as a
+  Type-B claim/effect check on both sides. A negative KEM permission probe must
+  drive the **full** operation with a real output buffer — a size-query-only
+  probe can be masked by a module whose `pCiphertext=NULL` query rejects before
+  the permission check, and must never tolerate `CKR_OK` via a catch-all
+  assertion.)
 - `CKA_COPYABLE=False` must prevent copying; if a copy is allowed before the
-  flag is false, later false-to-true escalation must be rejected.
-- `CKA_DESTROYABLE=False` must prevent destruction.
+  flag is false, later false-to-true escalation must be rejected. (Covered.)
+- `CKA_DESTROYABLE=False` must prevent destruction. (Covered.)
 - Public sessions without login must not create private token or private session
-  objects through KEM, unwrap, derive, copy, or direct create paths.
+  objects through KEM, unwrap, derive, copy, or direct create paths. (**Gap:**
+  public-session *visibility* of private objects is covered, but *creation*
+  rejection across these paths is not — this is the genuine remaining
+  access-control item.)
 
 Expected outcome: clean access-control rejection. Creating or using an object
 after claiming the relevant operation is prohibited is a self-contradiction and
@@ -979,6 +987,28 @@ Before converting this scratch note into tests, add or reuse a few small helpers
 These helpers are not abstractions for style; they prevent false positives and
 keep hardening tests provider-neutral.
 
+## Verification Pass (2026-06-08)
+
+An evidence-based review cross-checked the coverage claims in this note (and its
+two companion docs) against the actual test bodies, not just commit subjects.
+Result: the claims are overwhelmingly accurate — almost every "coverage added"
+line maps to a real test with a genuine effect check (guard-byte sentinels,
+`classify_*` helpers, subprocess isolation), confirmed by file:line. Four
+initial "not found" flags were false alarms (DH truncation lives in
+`test_dh_key_agreement.py`, the GCM ivGenerator guard in `test_mech_message.py`,
+the null-arg encrypt/decrypt lifecycle in `test_operation_termination.py`, and
+the unwrap `CKA_TOKEN` scalar in `ckr/test_ckr_wrap.py`).
+
+The pass surfaced **one finding-hiding regression** and fixed it: the v3.2 KEM
+*encapsulate* permission test used a catch-all `assert rv in (CKR_OK, ...)` and
+only a size query, so a module ignoring `CKA_ENCAPSULATE=False` passed silently.
+It now drives the full operation and classifies 3-way like the decapsulate test
+(see the KEM permission note in *Access-Control And Object-Policy Gaps*). This is
+the general lesson for any negative permission/length probe: drive the real
+operation and classify by effect; never tolerate `CKR_OK` through a catch-all.
+
+The genuinely outstanding work is narrow — see the revised backlog below.
+
 ## Stop Point And Continuation Backlog
 
 Further provider-history investigation should stop here for now. The useful
@@ -1057,26 +1087,47 @@ Do not add at this stage:
 - Tests that use invalid handles when the intended bug class is template,
   serializer, or output-buffer parsing on valid objects.
 
-## Priority
+## Priority (revised 2026-06-08 after the verification pass)
 
-1. Shared hardening helpers for child execution, guard buffers, valid handles,
-   disposable-token gating, and operation-state probes.
-2. Secret-key `CKA_VALUE_LEN` over-capacity tests across create, generate,
-   derive, unwrap, and set-attribute paths.
-3. Valid-handle template-count overflow probes for remaining object and derive
-   entry points, plus additional v3.2 KEM variants as more mechanisms become
-   available.
-4. Data-length truncation probes for update, verify-data, wrap, message,
-   random, and PIN/token-management paths.
-5. AES-CBC-PAD decrypt buffer sizing and operation-state retry tests.
-6. Attribute required-size reporting tests, starting with public key point
-   attributes.
-7. TLS, PBKDF2, PBE, and nested-KDF length-boundary probes.
-8. Missing access-control variants for derive, KEM, copy, destroy, private
-   object creation, and public-session behavior.
-9. Nested template constraint enforcement for wrap, unwrap, and derive.
-10. Generated output parameter guard-byte tests.
-11. Operation-state cleanup after early errors in update/final/digest-key paths.
-12. Non-default thread/lifetime stress probes.
-13. Destructive SO PIN policy tests on disposable tokens.
-14. Optional provider-state fuzz harness for disposable token stores.
+**Done and verified — extend, do not re-add.** Shared child/guard/valid-handle
+helpers; secret-key `CKA_VALUE_LEN`; valid-handle template-count overflow;
+data-length truncation (update / verify / recover / message / random/seed);
+AES-CBC-PAD decrypt buffer sizing + retry; scalar attribute length; array-pointer
+validation; nested-template enforcement (wrap/unwrap/derive); generated-output
+guard (GCM ivGenerator); operation-state cleanup after NULL args and
+digest-init-NULL; ML-KEM derive-false; mechanism-list filtering; find-objects
+NULL match-all; derive NULL base handle; misaligned-pointer probes;
+wrong-key-type init + continuation; KDF/PBE/TLS/SP800-108 length probes; DH/HKDF
+derive-length effect checks; v3.2 KEM encapsulate/decapsulate permission (Type-B,
+encapsulate fixed this pass).
+
+**Remaining, in priority order:**
+
+1. Public-session (no-login) private-object **creation** rejection across direct
+   create / unwrap / derive / copy / KEM paths. Self-contradiction = fail.
+   (Visibility is already covered; creation is the gap.)
+2. Sweep for other catch-all `assert rv in (...)` sites that tolerate `CKR_OK`
+   on a negative op (the class the KEM encapsulate bug belonged to); convert each
+   to 3-way effect-based classification.
+3. Remaining nested mechanism-parameter length probes: RSA-PSS, RSA-OAEP,
+   AES-GCM, AES-CCM, EdDSA — extend `test_ffi_length_boundary.py`.
+4. Broaden scalar attribute length checks to operation-permission /
+   sensitivity / extractability booleans and mechanism-specific integers in
+   generate / unwrap / derive / copy templates.
+5. More nested-template enforcement families (RSA/OAEP unwrap, ECDH/HKDF derive,
+   v3.2 KEM templates) and constraints beyond `CKA_LABEL`.
+6. Remaining guard-byte/retry coverage: `C_EncryptUpdate`/`C_DecryptUpdate` and
+   recover outputs; operation-state terminate-vs-preserve for remaining
+   update/final paths.
+7. KDF output-effect breadth: TLS returned key-material buffers, PBKDF2
+   iteration-count boundaries, returned additional-derived-key arrays, exact
+   derived length beyond DH/HKDF.
+8. Destructive token policy on disposable tokens: SO-PIN lockout via
+   `C_InitToken`, plus PIN / SO-PIN / label / username length surfaces. New file
+   `testcases/test_destructive_token_policy.py`.
+9. Subprocess-isolated, bounded thread/lifetime race probes — the current
+   `test_stress.py` probes run in-process; wrap them per the stress design rules.
+   Non-default marker.
+10. Optional provider-state fuzz harness, disposable-token-gated only.
+11. Minor API edge cases: `C_WaitForSlotEvent` / `C_GetFunctionStatus` /
+    `C_CancelFunction`; a systematic stale-handle probe across all operations.
