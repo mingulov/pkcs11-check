@@ -89,13 +89,9 @@ _MESSAGE_LENGTH_REJECT_RVS = (
     CKR_MECHANISM_PARAM_INVALID,
 )
 
-_MESSAGE_DECRYPT_LENGTH_REJECT_RVS = _MESSAGE_LENGTH_REJECT_RVS + (
-    CKR_ENCRYPTED_DATA_LEN_RANGE,
-)
+_MESSAGE_DECRYPT_LENGTH_REJECT_RVS = _MESSAGE_LENGTH_REJECT_RVS + (CKR_ENCRYPTED_DATA_LEN_RANGE,)
 
-_MESSAGE_VERIFY_LENGTH_REJECT_RVS = _MESSAGE_LENGTH_REJECT_RVS + (
-    CKR_SIGNATURE_LEN_RANGE,
-)
+_MESSAGE_VERIFY_LENGTH_REJECT_RVS = _MESSAGE_LENGTH_REJECT_RVS + (CKR_SIGNATURE_LEN_RANGE,)
 
 
 def _preamble(p11_config: Any) -> str:
@@ -3304,6 +3300,112 @@ cleanup()
 
 
 # ---------------------------------------------------------------------------
+# TestRsaPssSaltLengthBoundary
+# ---------------------------------------------------------------------------
+
+
+class TestRsaPssSaltLengthBoundary:
+    """RSA-PSS sLen (salt length) must reject impossible values safely.
+
+    CK_RSA_PKCS_PSS_PARAMS.sLen is a caller-controlled CK_ULONG. A module that
+    uses it without bounds-checking against the modulus and hash sizes can
+    over-read or over-allocate. For RSA-2048/SHA-256 the maximum salt length is
+    ~222 bytes, so isize::MAX / isize::MAX+1 is impossible and must be cleanly
+    rejected; a crash/hang is a finding and CKR_OK accepts a nonsensical param.
+    """
+
+    @pytest.mark.parametrize("salt_len", _ISIZE_BOUNDARY_LENGTHS)
+    def test_rsa_pss_salt_length_boundary(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        salt_len: int,
+    ) -> None:
+        """C_Sign(SHA256_RSA_PKCS_PSS) must reject an impossible sLen safely."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
+        if not rs.has_mechanism("SHA256_RSA_PKCS_PSS"):
+            pytest.skip("CKM_SHA256_RSA_PKCS_PSS not supported")
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + f"""
+import ctypes
+from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM,
+    CK_RSA_PKCS_PSS_PARAMS,
+    CK_ULONG,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKG_MGF1_SHA256,
+    CKM_SHA256,
+    CKM_SHA256_RSA_PKCS_PSS,
+    CKR_OK,
+)
+
+pub = priv = 0
+try:
+    pub, priv = gen_rsa_keypair(
+        raw,
+        sh,
+        2048,
+        public_attrs={{CKA_TOKEN: False}},
+        private_attrs={{CKA_SIGN: True, CKA_TOKEN: False}},
+    )
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "RSA keypair generation rejected",
+    )
+
+try:
+    params = CK_RSA_PKCS_PSS_PARAMS()
+    params.hashAlg = CKM_SHA256
+    params.mgf = CKG_MGF1_SHA256
+    params.sLen = {salt_len}
+
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_SHA256_RSA_PKCS_PSS
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+
+    rv = raw.C_SignInit(sh, ctypes.byref(mech), priv)
+    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
+    if rv == CKR_OK:
+        data = (ctypes.c_ubyte * 16)(*range(16))
+        sig_len = CK_ULONG(512)
+        sig_buf = (ctypes.c_ubyte * 512)()
+        print("TARGET_CALL:C_Sign(SHA256_RSA_PKCS_PSS,sLen={salt_len:#x})", flush=True)
+        rv = raw.C_Sign(sh, data, 16, sig_buf, ctypes.byref(sig_len))
+    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
+    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
+finally:
+    destroy_quietly(raw, sh, pub)
+    destroy_quietly(raw, sh, priv)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Sign(SHA256_RSA_PKCS_PSS, sLen={salt_len:#x})",
+        )
+        if "SETUP_XFAIL:" in stdout:
+            pytest.xfail(stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0])
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _KDF_LENGTH_REJECT_RVS,
+            label=f"C_Sign(SHA256_RSA_PKCS_PSS, sLen={salt_len:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
 # TestPbkdf2NestedLengthBoundary
 # ---------------------------------------------------------------------------
 
@@ -4440,8 +4542,7 @@ cleanup()
             stdout,
             stderr,
             context=(
-                "C_DeriveKey(SP800_108_COUNTER_KDF, "
-                f"additional-derived-key count={data_len:#x})"
+                f"C_DeriveKey(SP800_108_COUNTER_KDF, additional-derived-key count={data_len:#x})"
             ),
         )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
@@ -4449,7 +4550,6 @@ cleanup()
             rv,
             _KDF_LENGTH_REJECT_RVS,
             label=(
-                "C_DeriveKey(SP800_108_COUNTER_KDF, "
-                f"additional-derived-key count={data_len:#x})"
+                f"C_DeriveKey(SP800_108_COUNTER_KDF, additional-derived-key count={data_len:#x})"
             ),
         )
