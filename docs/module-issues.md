@@ -77,6 +77,16 @@ provider package versions where the finding was first recorded.
   `ulDataLen` is `0x7fffffffffffffff` or `0x8000000000000000`. These are not
   signal crashes, but they are still abnormal subprocess failures from the
   malformed-boundary probes and should remain visible.
+- **GCM huge-AAD-length child exit (NEW 2026-06-09)**:
+  `test_ffi_length_boundary.py::TestGcmAadLengthBoundary::test_gcm_aad_length_boundary`
+  calls `C_EncryptInit(CKM_AES_GCM)` with a valid 12-byte IV and a tiny real
+  `pAAD` buffer but `ulAADLen` set to `0x7fffffffffffffff` / `0x8000000000000000`.
+  Stock SoftHSM2 2.7.0 abnormally terminates the child (positive exit code 5, no
+  stdout/stderr — dies inside `C_EncryptInit` before any return) instead of
+  rejecting the impossible AAD length with a CKR. Kryoptic rejects cleanly (the
+  probe passes there), confirming the test is sound. Same abnormal-exit class as
+  the huge data-length `C_Sign`/`C_Digest` rows above; caller-controlled length →
+  abnormal process termination. Reportable upstream.
 - **CKA_TOKEN scalar-length validation missing on key generation (NEW 2026-06-08)**:
   `C_GenerateKey(CKM_AES_KEY_GEN)` and
   `C_GenerateKeyPair(CKM_RSA_PKCS_KEY_PAIR_GEN)` accept a `CKA_TOKEN` template
