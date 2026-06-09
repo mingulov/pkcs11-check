@@ -465,3 +465,17 @@ def test_import_ec_public_key_negotiated_builds_canonical_template(
     assert calls[0][CKA_VERIFY] is True
     assert CKA_LABEL not in calls[0]
     assert calls[2][CKA_TOKEN] is True
+
+
+def test_limbo_portable_label_fits_embedded_stores() -> None:
+    """Labels stay within the 32-byte floor (corePKCS11 rejects longer with
+    CKR_DATA_LEN_RANGE before parsing the cert), short ids pass through,
+    long ids map deterministically and without collision."""
+    from pkcs11_check.testcases.x509.test_limbo_import import _portable_label
+
+    assert _portable_label("short-id") == "short-id"
+    long_a = "webpki::san::exact-localhost-ip-and-very-long-testcase-name"
+    long_b = long_a + "-2"
+    assert len(_portable_label(long_a).encode()) <= 32
+    assert _portable_label(long_a) == _portable_label(long_a)
+    assert _portable_label(long_a) != _portable_label(long_b)

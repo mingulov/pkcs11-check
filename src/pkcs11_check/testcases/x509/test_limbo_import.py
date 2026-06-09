@@ -10,6 +10,7 @@ the module parse the cert itself.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import pytest
@@ -38,6 +39,21 @@ from pkcs11_check.testcases.x509.conftest import (
 pytestmark = [pytest.mark.cert, pytest.mark.object]
 
 _all_cases = load_limbo_testcases()
+
+
+def _portable_label(raw_label: str) -> str:
+    """CKA_LABEL within the 32-byte floor common to embedded object stores.
+
+    corePKCS11 caps labels at pkcs11configMAX_LABEL_LENGTH (32) and rejects
+    longer ones with CKR_DATA_LEN_RANGE before looking at the certificate at
+    all (493 limbo vectors hard-failed on the label, not the DER). The label
+    is the harness's own bookkeeping, so send a deterministic short form for
+    long testcase ids; modules with roomier stores see identical behavior for
+    ids that already fit.
+    """
+    if len(raw_label.encode()) <= 32:
+        return raw_label
+    return "limbo-" + hashlib.sha256(raw_label.encode()).hexdigest()[:16]
 
 
 def _build_testcase_sample(
@@ -119,7 +135,7 @@ class TestLimboCertImport:
                 rs.sh,
                 der,
                 extra_attrs={
-                    CKA_LABEL: tc["id"],
+                    CKA_LABEL: _portable_label(tc["id"]),
                     CKA_TOKEN: False,
                 },
             )
@@ -127,7 +143,7 @@ class TestLimboCertImport:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_LABEL])
             label = attrs[CKA_LABEL]
             if label != "Pkcs11Interop":
-                assert label == tc["id"]
+                assert label == _portable_label(tc["id"])
 
             if needed_attrs:
                 note(
@@ -182,7 +198,7 @@ class TestLimboCertImport:
             if not der:
                 continue
 
-            label = f"{tc['id']}-ca-{i}"
+            label = _portable_label(f"{tc['id']}-ca-{i}")
             h = None
             try:
                 try:
@@ -256,7 +272,7 @@ def test_import_limbo_failure_cert_raw(
             rs.sh,
             der,
             extra_attrs={
-                CKA_LABEL: tc["id"],
+                CKA_LABEL: _portable_label(tc["id"]),
                 CKA_TOKEN: False,
             },
         )
