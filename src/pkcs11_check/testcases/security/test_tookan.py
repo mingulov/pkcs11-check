@@ -33,6 +33,7 @@ from pkcs11_check.raw.types_std import (
     CKA_UNWRAP,
     CKA_VALUE,
     CKA_WRAP,
+    CKK_AES,
     CKK_DES3,
     CKM_AES_ECB,
     CKM_AES_KEY_WRAP,
@@ -51,8 +52,10 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases.conftest import (
+    classify_discrimination,
     classify_policy_enforcement,
     is_known_error,
+    unwrap_key_for_mechanism_roundtrip,
     xfail_if_known_ckr,
 )
 
@@ -350,7 +353,9 @@ class TestKeyTypeConfusionOnUnwrap:
             256,
             attrs={CKA_WRAP: True, CKA_UNWRAP: True},
         )
-        # Target: an AES-128 secret key. Wrap output will be 24 bytes.
+        # Target: an AES-128 secret key, created EXTRACTABLE / non-SENSITIVE so
+        # its CKA_VALUE is readable for the material comparison below. Wrap
+        # output will be 24 bytes.
         target_h = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -358,6 +363,10 @@ class TestKeyTypeConfusionOnUnwrap:
             attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
         try:
+            # Capture the original AES-128 key bytes so the valid leg can be
+            # confirmed by material comparison (never a literal valid_accepted).
+            original = read_attributes(rs.raw, rs.sh, target_h, [CKA_VALUE]).get(CKA_VALUE)
+
             try:
                 wrapped = wrap_key(rs.raw, rs.sh, wrap_h, target_h, CKM_AES_KEY_WRAP)
             except AssertionError as exc:
@@ -370,8 +379,44 @@ class TestKeyTypeConfusionOnUnwrap:
                 )
                 raise
 
+            # Valid leg (D4): unwrap the SAME blob as its CORRECT type (CKK_AES),
+            # negotiating the accepted template, and recover the original bytes.
+            # An advertised-but-not-operational unwrap is routed to xfail (D5),
+            # never to valid_accepted=False.
             try:
-                fake_des3 = unwrap_key(
+                good = unwrap_key_for_mechanism_roundtrip(
+                    rs,
+                    p11_config,
+                    unwrapping_key=wrap_h,
+                    wrapped_key=wrapped,
+                    mechanism=CKM_AES_KEY_WRAP,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_EXTRACTABLE: True,
+                        CKA_SENSITIVE: False,
+                    },
+                    value_len=len(original) if original is not None else None,
+                    purpose="tookan AES valid leg",
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _TYPE_CONFUSION_WRAP_RUNTIME_REJECT_RVS,
+                    "Tookan key-type-confusion valid-leg AES unwrap not operational",
+                )
+                raise
+            good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
+            destroy_quietly(rs.raw, rs.sh, good)
+            valid_accepted = good_value is not None and good_value == original
+
+            # Invalid leg (D3): unwrap the SAME blob while requesting CKK_DES3.
+            # The wrapped blob carries an AES-128 (16-byte) key, but DES3 requires
+            # 24 bytes (with parity). A returned handle == type-confusion accepted
+            # == break; a clean CkrAssertionError == correctly refused.
+            invalid_outcome: Any
+            try:
+                h = unwrap_key(
                     rs.raw,
                     rs.sh,
                     wrap_h,
@@ -380,79 +425,20 @@ class TestKeyTypeConfusionOnUnwrap:
                     attrs={
                         CKA_CLASS: CKO_SECRET_KEY,
                         CKA_KEY_TYPE: CKK_DES3,
-                        # CKA_VALUE_LEN deliberately omitted: the wrapped
-                        # blob carries an AES-128 (16-byte) key, but DES3
-                        # requires 24 bytes (with parity). A type-aware
-                        # module rejects the unwrap on size mismatch.
+                        # CKA_VALUE_LEN deliberately omitted: the size mismatch
+                        # is exactly what a type-aware module rejects on.
                         CKA_EXTRACTABLE: True,
                     },
                 )
+                invalid_outcome = h
+                destroy_quietly(rs.raw, rs.sh, h)
             except AssertionError as exc:
-                # Expected: module rejected the type-confused unwrap.
-                # Note: CKR_MECHANISM_INVALID is deliberately NOT
-                # accepted here. has_mechanism("AES_KEY_WRAP") was
-                # checked at the top of the test, so a sudden
-                # mechanism-disappear on unwrap (after a successful
-                # wrap with the same mechanism) is itself a module
-                # bug, not a legitimate type-confusion rejection.
-                msg = str(exc)
-                accepted: tuple[str, ...] = (
-                    "CKR_TEMPLATE_INCONSISTENT",
-                    "CKR_ATTRIBUTE_VALUE_INVALID",
-                    "CKR_KEY_TYPE_INCONSISTENT",
-                    "CKR_KEY_SIZE_RANGE",
-                    "CKR_WRAPPED_KEY_INVALID",
-                    "CKR_WRAPPED_KEY_LEN_RANGE",
-                )
-                # OC's CKR_ATTRIBUTE_READ_ONLY rejection of unwrap
-                # templates containing CKA_CLASS / CKA_KEY_TYPE is
-                # routed through the per-module quirk registry rather
-                # than hard-coded here — this prevents OTHER modules
-                # from silently masking a real type-confusion bug
-                # behind the same CKR.
-                from pkcs11_check.raw.rv import ckr_name as _ckr_name
-                from pkcs11_check.testcases._module_quirks import quirk_extras
+                invalid_outcome = exc
 
-                accepted += tuple(
-                    _ckr_name(c)
-                    for c in quirk_extras(p11_config, "unwrap_template_class_keytype_rejected")
-                )
-                if any(code in msg for code in accepted):
-                    return
-                raise
-
-            # Module accepted the wrong type — confirm whether the
-            # resulting "DES3" key has the AES-128 bytes (the security
-            # signature of the Tookan §3.2 attack).
-            read_error: str | None = None
-            try:
-                bad_attrs: dict[int, Any] = read_attributes(
-                    rs.raw, rs.sh, fake_des3, [CKA_VALUE, CKA_KEY_TYPE]
-                )
-            except AssertionError as exc:
-                # Module produced an opaque key — still wrong type,
-                # but at least the bytes are not directly readable.
-                # Capture the error so triage isn't done blind.
-                bad_attrs = {}
-                read_error = str(exc)
-
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                f"Module unwrapped AES-wrapped blob as CKK_DES3 — "
-                f"key-type confusion (Tookan §3.2). Resulting key has "
-                f"CKA_KEY_TYPE={bad_attrs.get(CKA_KEY_TYPE)} and value of "
-                f"length {len(bad_attrs.get(CKA_VALUE, b''))}."
-                + (f" (read-back error: {read_error})" if read_error else ""),
-                ComplianceLevel.CRITICAL,
-                reference="Tookan paper §3.2 / PKCS#11 v3.1 Sec.5.14.4",
-            )
-            destroy_quietly(rs.raw, rs.sh, fake_des3)
-            pytest.fail(
-                "SECURITY: Tookan §3.2 — module unwrapped an AES-wrapped "
-                "blob as CKK_DES3 (key-type confusion). Attacker can run "
-                "DES3 operations on bytes that were originally an AES key, "
-                "creating a side-channel into the AES key material."
+            classify_discrimination(
+                valid_accepted=valid_accepted,
+                invalid_outcome=invalid_outcome,
+                label="Tookan: unwrap AES-KW blob as CKK_DES3 must be refused",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
