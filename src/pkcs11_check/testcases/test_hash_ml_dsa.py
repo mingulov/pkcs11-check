@@ -42,7 +42,10 @@ from pkcs11_check.raw.types_std import (
     CKM_HASH_ML_DSA_SHAKE128,
     CKM_HASH_ML_DSA_SHAKE256,
     CKM_ML_DSA_KEY_PAIR_GEN,
+    CKM_SHA3_256,
     CKM_SHA256,
+    CKM_SHA384,
+    CKM_SHA512,
     CKP_ML_DSA_65,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
@@ -122,13 +125,26 @@ class TestHashMLDSAGeneric:
         """Check that CKM_HASH_ML_DSA is advertised by the module."""
         _skip_if_no(p11_raw_session, "HASH_ML_DSA")
 
-    def test_sign_verify_roundtrip(self, p11_raw_session: Any) -> None:
-        """CKM_HASH_ML_DSA sign + verify with CK_HASH_SIGN_ADDITIONAL_CONTEXT (SHA-256)."""
+    # Exercise the provider's hash-dispatch branch in the generic prehash path
+    # across the SHA-2 sizes and the SHA-3 family, not just SHA-256.
+    @pytest.mark.parametrize(
+        "hash_name,hash_mech",
+        [
+            ("SHA-256", CKM_SHA256),
+            ("SHA-384", CKM_SHA384),
+            ("SHA-512", CKM_SHA512),
+            ("SHA3-256", CKM_SHA3_256),
+        ],
+    )
+    def test_sign_verify_roundtrip(
+        self, p11_raw_session: Any, hash_name: str, hash_mech: int
+    ) -> None:
+        """CKM_HASH_ML_DSA sign + verify with CK_HASH_SIGN_ADDITIONAL_CONTEXT."""
         rs = p11_raw_session
         _skip_if_no(rs, "HASH_ML_DSA")
         _skip_if_no(rs, "ML_DSA")  # need keygen
 
-        mech_param = mech_hash_sign_context(CKM_HASH_ML_DSA, hash_mech=CKM_SHA256)
+        mech_param = mech_hash_sign_context(CKM_HASH_ML_DSA, hash_mech=hash_mech)
         pub, priv = _generate_ml_dsa_keypair(rs)
         try:
             try:
@@ -136,7 +152,11 @@ class TestHashMLDSAGeneric:
                     rs.raw, rs.sh, priv, CKM_HASH_ML_DSA, _MESSAGE, mech_param=mech_param
                 )
             except AssertionError as exc:
-                xfail_if_known_ckr(exc, _SIGN_ERROR_CKRS, "CKM_HASH_ML_DSA sign not operational")
+                xfail_if_known_ckr(
+                    exc,
+                    _SIGN_ERROR_CKRS,
+                    f"CKM_HASH_ML_DSA sign not operational ({hash_name})",
+                )
                 raise
             assert isinstance(sig, bytes) and len(sig) > 0
             result = verify_single(
