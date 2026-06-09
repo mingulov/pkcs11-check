@@ -1118,11 +1118,13 @@ this deviation since iter 44.
 exception → CKR_GENERAL_ERROR translation rather than mapping the
 RFC-3394 ICV mismatch to a specific code. Reportable upstream.
 
-A SoftHSM2-specific quirk could be registered in `_module_quirks.py`
-to silence this on the test, but per the project guardrails this is
-NOT done — `CKR_GENERAL_ERROR` is too generic to mask globally for a
-module, and the deviation is real enough to keep surfacing in CI
-until SoftHSM2 fixes it upstream.
+This is NOT masked: the undersized-wrap test classifies the reject
+with the 3-way negative classifier (spec `CKR_WRAPPING_KEY_SIZE_RANGE`
+→ pass, any other clean code → xfail), so SoftHSM2's
+`CKR_GENERAL_ERROR` surfaces as an honest **xfail** (a recorded
+deviation) — never accepted as a pass. `CKR_GENERAL_ERROR` is too
+generic to ever treat as the expected code, and the deviation keeps
+surfacing in CI until SoftHSM2 fixes it upstream.
 
 ### Vaudenay 2002 / POODLE channel on AES-CBC-PAD (NEW iter-48 2026-04-30)
 `test_padding_oracle.py::TestAESPaddingOracle::test_cbc_pad_all_last_block_positions`
@@ -1450,11 +1452,14 @@ CKA_CLASS / CKA_KEY_TYPE as read-only-after-creation rather than
 treating them as type-identification hints permitted in unwrap
 templates. Reportable upstream.
 
-A per-module quirk is registered in
-`src/pkcs11_check/testcases/_module_quirks.py`
-(key `unwrap_template_class_keytype_rejected`) so that affected
-tests can route this CKR through the quirk registry rather than
-hard-coding it in their accepted-rejection lists.
+This is absorbed provider-generally (no module identity): the
+mechanism-level unwrap helper `unwrap_key_for_mechanism_roundtrip`
+negotiates the template — it tries the canonical template first and,
+on a clean template-shape reject, retries a variant dropping only
+CKA_CLASS (CKA_KEY_TYPE is spec-mandatory and kept). A module that
+rejects the CKA_CLASS-bearing template thus still completes the
+roundtrip; one that rejects every spec-equivalent template routes the
+positive leg to xfail. No per-module quirk registry is involved.
 
 ---
 

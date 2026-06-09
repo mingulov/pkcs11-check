@@ -16,7 +16,6 @@ from pkcs11_check.raw.recipes import (
     gen_aes_key,
     generate_random,
     read_attributes,
-    unwrap_key,
     unwrap_key_authenticated,
     wrap_key,
     wrap_key_authenticated,
@@ -36,10 +35,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_KEY_WRAP,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
-    CKR_ATTRIBUTE_READ_ONLY,
-    CKR_DATA_INVALID,
     CKR_DEVICE_ERROR,
-    CKR_ENCRYPTED_DATA_INVALID,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
@@ -47,20 +43,25 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_NOT_WRAPPABLE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
-    CKR_SIGNATURE_INVALID,
-    CKR_WRAPPED_KEY_INVALID,
-    CKR_WRAPPED_KEY_LEN_RANGE,
 )
+from pkcs11_check.testcases._negotiation import TEMPLATE_SHAPE_REJECTS
 from pkcs11_check.testcases.conftest import (
+    classify_discrimination,
     gen_ec_keypair_or_xfail,
     is_known_error,
-    reject_or_classify,
     require_operational_aes_keygen,
+    unwrap_key_for_mechanism_roundtrip,
     xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.keymgmt
 
+# Clean codes that mean a wrap/unwrap PRECONDITION could not be established:
+# the operation is advertised-but-not-operational, OR (after negotiation exhausts
+# every spec-equivalent template) the module refuses the unwrap template shape -- e.g.
+# opencryptoki returns CKR_TEMPLATE_INCOMPLETE for an AES-KW unwrap into CKK_AES because
+# it demands CKA_VALUE_LEN, which footnote 6 forbids us to supply. A cleanly-rejected
+# valid leg is an operational deviation -> xfail (discrimination undecidable), never a fail.
 _WRAP_RUNTIME_REJECT_RVS = (
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
@@ -70,24 +71,12 @@ _WRAP_RUNTIME_REJECT_RVS = (
     CKR_KEY_NOT_WRAPPABLE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
-)
+) + TEMPLATE_SHAPE_REJECTS
 
 
 def _xfail_if_wrap_runtime_reject(exc: AssertionError, msg: str) -> NoReturn:
     xfail_if_known_ckr(exc, _WRAP_RUNTIME_REJECT_RVS, msg)
     raise
-
-
-def _aead_integrity_reject_rvs(p11_config: Any) -> set[Any]:
-    from pkcs11_check.testcases._module_quirks import quirk_extras
-
-    return {
-        CKR_ENCRYPTED_DATA_INVALID,
-        CKR_WRAPPED_KEY_INVALID,
-        CKR_SIGNATURE_INVALID,
-        CKR_DATA_INVALID,
-        *quirk_extras(p11_config, "verify_or_integrity_failure"),
-    }
 
 
 class TestAuthenticatedWrap:
@@ -260,7 +249,13 @@ class TestAuthenticatedWrap:
         p11_interface_version: str,
         p11_config: Any,
     ) -> None:
-        """Unwrap with tampered authentication tag must fail."""
+        """Unwrap with tampered authentication tag must fail.
+
+        Discrimination (Pillar 2): the un-tampered blob must unwrap and
+        recover the original material (valid leg); the tag-tampered blob
+        must be rejected (invalid leg). A produced object on the invalid
+        leg is an AEAD authentication break.
+        """
         rs = p11_raw_session
         if p11_interface_version not in ("3.2",):
             pytest.skip("Authenticated wrapping requires v3.2 interface")
@@ -280,6 +275,7 @@ class TestAuthenticatedWrap:
             attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
         try:
+            original = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
             iv = generate_random(rs.raw, rs.sh, 12)
             wrap_mech = mech_gcm_message(CKM_AES_GCM, iv, tag_bits=128)
             try:
@@ -302,29 +298,50 @@ class TestAuthenticatedWrap:
                 pytest.skip("Module did not write an authentication tag to pTag")
                 return
 
-            # Tamper with the tag in-place via the shared pTag buffer.
-            unwrap_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
-            tag_storage, _ = unwrap_mech.buffer_storage("tag")
-            tag_storage[0] ^= 0xFF
+            # Valid leg (D4/D5): unwrap the UN-tampered blob and recover original.
+            good_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
             try:
-                unwrapped = unwrap_key_authenticated(
+                good = unwrap_key_authenticated(
                     rs.raw,
                     rs.sh,
                     wrap_h,
                     wrapped,
                     CKM_AES_GCM,
                     attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
-                    mech_param=unwrap_mech,
-                )
-                destroy_quietly(rs.raw, rs.sh, unwrapped)
-                pytest.fail(
-                    "Unwrap with tampered authentication tag should have been rejected -- "
-                    "this is a security vulnerability"
+                    mech_param=good_mech,
                 )
             except AssertionError as exc:
-                if is_known_error(exc, _aead_integrity_reject_rvs(p11_config)):
-                    return
-                raise
+                _xfail_if_wrap_runtime_reject(
+                    exc, "AES-GCM authenticated unwrap (valid leg) not operational"
+                )
+            good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
+            destroy_quietly(rs.raw, rs.sh, good)
+            valid_accepted = good_value is not None and good_value == original
+
+            # Invalid leg (D3): tamper the tag in-place via a shared pTag buffer.
+            bad_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
+            tag_storage, _ = bad_mech.buffer_storage("tag")
+            tag_storage[0] ^= 0xFF
+            invalid_outcome: Any
+            try:
+                h = unwrap_key_authenticated(
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    wrapped,
+                    CKM_AES_GCM,
+                    attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+                    mech_param=bad_mech,
+                )
+                invalid_outcome = h
+                destroy_quietly(rs.raw, rs.sh, h)
+            except AssertionError as exc:
+                invalid_outcome = exc
+            classify_discrimination(
+                valid_accepted=valid_accepted,
+                invalid_outcome=invalid_outcome,
+                label="AES-GCM authenticated unwrap of tag-tampered blob",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
             destroy_quietly(rs.raw, rs.sh, target)
@@ -414,6 +431,7 @@ class TestAuthenticatedWrapAAD:
             attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
         try:
+            original = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
             iv = generate_random(rs.raw, rs.sh, 12)
             aad_x = b"context-X-" + b"\xaa" * 16
             aad_y = b"context-Y-" + b"\xbb" * 16
@@ -454,10 +472,32 @@ class TestAuthenticatedWrapAAD:
                     return
                 raise
 
-            # Unwrap with a DIFFERENT AAD — AEAD must reject.
-            unwrap_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
+            # Valid leg (D4/D5): unwrap with the SAME AAD and recover original.
+            good_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
             try:
-                bad_unwrap = unwrap_key_authenticated(
+                good = unwrap_key_authenticated(
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    wrapped,
+                    CKM_AES_GCM,
+                    attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+                    aad=aad_x,
+                    mech_param=good_mech,
+                )
+            except AssertionError as exc:
+                _xfail_if_wrap_runtime_reject(
+                    exc, "AES-GCM authenticated unwrap (valid AAD leg) not operational"
+                )
+            good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
+            destroy_quietly(rs.raw, rs.sh, good)
+            valid_accepted = good_value is not None and good_value == original
+
+            # Invalid leg (D3): unwrap with a DIFFERENT AAD — AEAD must reject.
+            bad_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
+            invalid_outcome: Any
+            try:
+                h = unwrap_key_authenticated(
                     rs.raw,
                     rs.sh,
                     wrap_h,
@@ -465,33 +505,16 @@ class TestAuthenticatedWrapAAD:
                     CKM_AES_GCM,
                     attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
                     aad=aad_y,
-                    mech_param=unwrap_mech,
+                    mech_param=bad_mech,
                 )
+                invalid_outcome = h
+                destroy_quietly(rs.raw, rs.sh, h)
             except AssertionError as exc:
-                # Expected: AEAD detected the AAD mismatch. Match against
-                # specific rejection CKRs so a recipe-side assert (buffer
-                # shape, ctypes mismatch, etc.) cannot silently pass as
-                # "AAD detected".  Plus per-module documented quirks
-                # (e.g. Kryoptic returns CKR_DEVICE_ERROR for any
-                # verification failure).
-                if is_known_error(exc, _aead_integrity_reject_rvs(p11_config)):
-                    return
-                raise
-
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                "Authenticated unwrap accepted a different-AAD GCM blob "
-                "(AAD did not participate in tag computation, or AAD "
-                "tampering was not validated).",
-                ComplianceLevel.CRITICAL,
-                reference="NIST SP 800-38D §7.2 / PKCS#11 v3.2 Sec.6.13.7",
-            )
-            destroy_quietly(rs.raw, rs.sh, bad_unwrap)
-            pytest.fail(
-                "SECURITY: AES-GCM authenticated unwrap accepted a wrap "
-                "produced under a different AAD — AAD integrity not "
-                "enforced (CWE-354)."
+                invalid_outcome = exc
+            classify_discrimination(
+                valid_accepted=valid_accepted,
+                invalid_outcome=invalid_outcome,
+                label="AES-GCM authenticated unwrap under a different AAD (CWE-354)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
@@ -513,14 +536,12 @@ class TestWrapIntegrity:
     def test_aes_key_wrap_bit_flip_detected(self, p11_raw_session: Any, p11_config: Any) -> None:
         """AES-KEY-WRAP RFC-3394 magic-field integrity check.
 
-        Wrap a real key, flip a middle byte of the ciphertext, attempt to
-        unwrap. Per RFC 3394 §2.2.2, the unwrap MUST verify the A6A6A6A6
-        integrity check value and reject mismatches. A module that
-        silently produces a different unwrapped key (or returns CKR_OK
-        with garbage bytes) is malleable.
+        Discrimination (Pillar 2): the un-tampered ciphertext must unwrap and
+        recover the original key (valid leg); a bit-flipped middle byte must be
+        rejected (invalid leg). Per RFC 3394 §2.2.2, unwrap MUST verify the
+        A6A6A6A6 integrity check value and reject mismatches. A module that
+        produces a key from tampered ciphertext is malleable — a break.
         """
-        from pkcs11_check.testcases._module_quirks import quirk_extras
-
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
             pytest.skip("AES_KEY_WRAP not supported")
@@ -538,6 +559,7 @@ class TestWrapIntegrity:
             attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
         try:
+            original = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
             try:
                 wrapped = wrap_key(rs.raw, rs.sh, wrap_h, target, CKM_AES_KEY_WRAP)
             except AssertionError as exc:
@@ -548,65 +570,62 @@ class TestWrapIntegrity:
 
             assert len(wrapped) >= 16, "Unexpectedly short wrap output"
 
-            # Flip a bit in a middle byte (avoiding the first 8 bytes which
-            # carry the integrity ICV — flipping there is a different test).
+            unwrap_attrs = {
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
+            }
+
+            # Valid leg (D4/D5): unwrap the UN-tampered blob (negotiating the
+            # accepted template) and recover the original key bytes.
+            try:
+                good = unwrap_key_for_mechanism_roundtrip(
+                    rs,
+                    p11_config,
+                    unwrapping_key=wrap_h,
+                    wrapped_key=wrapped,
+                    mechanism=CKM_AES_KEY_WRAP,
+                    attrs=unwrap_attrs,
+                    value_len=len(original),
+                    purpose="AES-KEY-WRAP unwrap (valid leg)",
+                )
+            except AssertionError as exc:
+                _xfail_if_wrap_runtime_reject(
+                    exc, "AES_KEY_WRAP unwrap (valid leg) not operational"
+                )
+            good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
+            destroy_quietly(rs.raw, rs.sh, good)
+            valid_accepted = good_value is not None and good_value == original
+
+            # Invalid leg (D3): flip a bit in a middle byte (avoiding the first
+            # 8 bytes which carry the integrity ICV — flipping there is a
+            # different test) and attempt the same unwrap.
             mid = len(wrapped) // 2
             tampered = bytearray(wrapped)
             tampered[mid] ^= 0xFF
             tampered_bytes = bytes(tampered)
 
+            invalid_outcome: Any
             try:
-                unwrapped = unwrap_key(
-                    rs.raw,
-                    rs.sh,
-                    wrap_h,
-                    tampered_bytes,
-                    CKM_AES_KEY_WRAP,
-                    attrs={
-                        CKA_CLASS: CKO_SECRET_KEY,
-                        CKA_KEY_TYPE: CKK_AES,
-                        CKA_EXTRACTABLE: True,
-                    },
+                h = unwrap_key_for_mechanism_roundtrip(
+                    rs,
+                    p11_config,
+                    unwrapping_key=wrap_h,
+                    wrapped_key=tampered_bytes,
+                    mechanism=CKM_AES_KEY_WRAP,
+                    attrs=unwrap_attrs,
+                    value_len=len(original),
+                    purpose="AES-KEY-WRAP unwrap of bit-flipped ciphertext",
                 )
+                invalid_outcome = h
+                destroy_quietly(rs.raw, rs.sh, h)
             except AssertionError as exc:
-                # Spec-preferred = RFC 3394 ICV-specific reject codes.
-                # Quirk-registry extras stay (documented per-module
-                # fallbacks: Kryoptic CKR_DEVICE_ERROR-on-integrity-fail,
-                # OpenCryptoki CKR_ATTRIBUTE_READ_ONLY-on-unwrap-template).
-                # Any OTHER clean reject (e.g. softhsm2 CKR_GENERAL_ERROR)
-                # becomes xfail via the classification model -- surfaced as
-                # a noted deviation, never silenced. The post-`except`
-                # `pytest.fail` below still triggers Type-A on acceptance
-                # (CKR_OK on bit-flipped ciphertext).
-                reject_or_classify(
-                    exc,
-                    (
-                        CKR_WRAPPED_KEY_INVALID,
-                        CKR_ENCRYPTED_DATA_INVALID,
-                        CKR_WRAPPED_KEY_LEN_RANGE,
-                        *quirk_extras(p11_config, "verify_or_integrity_failure"),
-                        *quirk_extras(p11_config, "unwrap_template_class_keytype_rejected"),
-                    ),
-                    label=(
-                        "AES-KEY-WRAP unwrap of bit-flipped ciphertext "
-                        "(expected RFC 3394 ICV reject)"
-                    ),
-                )
-                return
-
-            # Unwrap returned CKR_OK on tampered ciphertext — security violation.
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                "C_UnwrapKey accepted bit-flipped AES-KEY-WRAP ciphertext "
-                "(expected CKR_WRAPPED_KEY_INVALID per RFC 3394 §2.2.2 ICV check).",
-                ComplianceLevel.CRITICAL,
-                reference="RFC 3394 §2.2.2 / PKCS#11 v3.1 Sec.6.13.6",
-            )
-            destroy_quietly(rs.raw, rs.sh, unwrapped)
-            pytest.fail(
-                "SECURITY: AES-KEY-WRAP unwrap accepted bit-flipped "
-                "ciphertext — RFC 3394 integrity check missing or bypassed"
+                invalid_outcome = exc
+            classify_discrimination(
+                valid_accepted=valid_accepted,
+                invalid_outcome=invalid_outcome,
+                label="AES-KEY-WRAP unwrap of bit-flipped ciphertext (RFC 3394 ICV)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
@@ -650,6 +669,7 @@ class TestWrapIntegrity:
             attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
         try:
+            original = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
             iv = generate_random(rs.raw, rs.sh, 12)
             wrap_mech = mech_gcm_message(CKM_AES_GCM, iv, tag_bits=128)
             try:
@@ -669,42 +689,51 @@ class TestWrapIntegrity:
 
             assert len(wrapped) >= 1, "Unexpectedly empty wrap ciphertext"
 
-            # Flip a bit in the ciphertext, NOT the tag.
+            # Valid leg (D4/D5): unwrap the UN-tampered ciphertext, recover original.
+            good_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
+            try:
+                good = unwrap_key_authenticated(
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    wrapped,
+                    CKM_AES_GCM,
+                    attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+                    mech_param=good_mech,
+                )
+            except AssertionError as exc:
+                _xfail_if_wrap_runtime_reject(
+                    exc, "AES-GCM authenticated unwrap (valid leg) not operational"
+                )
+            good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
+            destroy_quietly(rs.raw, rs.sh, good)
+            valid_accepted = good_value is not None and good_value == original
+
+            # Invalid leg (D3): flip a bit in the ciphertext, NOT the tag.
             tampered_ct = bytearray(wrapped)
             tampered_ct[0] ^= 0x01
             tampered_bytes = bytes(tampered_ct)
 
-            unwrap_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
+            bad_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
+            invalid_outcome: Any
             try:
-                unwrapped = unwrap_key_authenticated(
+                h = unwrap_key_authenticated(
                     rs.raw,
                     rs.sh,
                     wrap_h,
                     tampered_bytes,
                     CKM_AES_GCM,
                     attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
-                    mech_param=unwrap_mech,
+                    mech_param=bad_mech,
                 )
+                invalid_outcome = h
+                destroy_quietly(rs.raw, rs.sh, h)
             except AssertionError as exc:
-                # Expected: AEAD detected the ciphertext tampering.
-                if is_known_error(exc, _aead_integrity_reject_rvs(p11_config)):
-                    return
-                raise
-
-            # Unwrap returned CKR_OK on tampered AEAD ciphertext —
-            # AEAD authentication broken.
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                "Authenticated unwrap accepted bit-flipped AES-GCM "
-                "ciphertext (AEAD tag verification missing or bypassed).",
-                ComplianceLevel.CRITICAL,
-                reference="NIST SP 800-38D / PKCS#11 v3.2 Sec.6.13.7",
-            )
-            destroy_quietly(rs.raw, rs.sh, unwrapped)
-            pytest.fail(
-                "SECURITY: AES-GCM authenticated unwrap accepted "
-                "bit-flipped ciphertext — AEAD integrity check missing"
+                invalid_outcome = exc
+            classify_discrimination(
+                valid_accepted=valid_accepted,
+                invalid_outcome=invalid_outcome,
+                label="AES-GCM authenticated unwrap of bit-flipped ciphertext",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
@@ -726,16 +755,16 @@ class TestEcdhAesKeyWrap:
 
     def test_ecdh_aes_kw_roundtrip(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Wrap an AES key with CKM_ECDH_AES_KEY_WRAP, unwrap, verify
-        roundtrip succeeds. The bit-flip integrity assertion is in a
-        separate test (`test_ecdh_aes_kw_bit_flip_integrity`) so that
-        a skip on this test doesn't quietly hide the integrity check
-        from pytest output."""
+        roundtrip recovers the original key. The unwrap template is
+        negotiated (canonical CKA_CLASS+CKA_KEY_TYPE first; on a shape
+        reject, retry dropping only CKA_CLASS) so a module that rejects
+        CKA_CLASS in unwrap templates still completes the roundtrip
+        instead of being silently skipped. The bit-flip integrity
+        assertion is in a separate test
+        (`test_ecdh_aes_kw_bit_flip_integrity`)."""
         from pkcs11_check.raw.ec import encode_named_curve_parameters
         from pkcs11_check.raw.pack import mech_ecdh_aes_kw
-        from pkcs11_check.raw.recipes import (
-            unwrap_key,
-            wrap_key,
-        )
+        from pkcs11_check.raw.recipes import wrap_key
         from pkcs11_check.raw.types_std import (
             CKA_DERIVE,
             CKA_KEY_TYPE,
@@ -765,6 +794,7 @@ class TestEcdhAesKeyWrap:
             attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
         try:
+            original = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
             mech = mech_ecdh_aes_kw(
                 CKM_ECDH_AES_KEY_WRAP,
                 aes_key_bits=256,
@@ -805,34 +835,31 @@ class TestEcdhAesKeyWrap:
                 kdf=CKD_SHA256_KDF,
             )
             try:
-                unwrapped = unwrap_key(
-                    rs.raw,
-                    rs.sh,
-                    priv,
-                    wrapped,
-                    CKM_ECDH_AES_KEY_WRAP,
+                unwrapped = unwrap_key_for_mechanism_roundtrip(
+                    rs,
+                    p11_config,
+                    unwrapping_key=priv,
+                    wrapped_key=wrapped,
+                    mechanism=CKM_ECDH_AES_KEY_WRAP,
                     attrs={
                         CKA_CLASS: CKO_SECRET_KEY,
                         CKA_KEY_TYPE: CKK_AES,
                         CKA_EXTRACTABLE: True,
+                        CKA_SENSITIVE: False,
                     },
                     mech_param=mech2,
+                    purpose="ECDH-AES-KW unwrap roundtrip",
                 )
             except AssertionError as exc:
-                # OpenCryptoki quirk: rejects unwrap templates that
-                # include CKA_CLASS / CKA_KEY_TYPE with
-                # CKR_ATTRIBUTE_READ_ONLY. The wrap already succeeded,
-                # which validates the wrap-side construction; the
-                # unwrap-template quirk is a different code path.
-                if is_known_error(exc, {CKR_ATTRIBUTE_READ_ONLY}):
-                    pytest.skip(
-                        f"Module rejects unwrap template (likely OC's "
-                        f"CKA_CLASS/CKA_KEY_TYPE quirk): {exc}"
-                    )
-                    return
-                raise
-            # Round-trip succeeded — basic happy-path coverage.
+                _xfail_if_wrap_runtime_reject(
+                    exc, "ECDH-AES-KW unwrap (roundtrip) not operational"
+                )
+            # Round-trip succeeded — verify it recovered the original key.
+            unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE]).get(CKA_VALUE)
             destroy_quietly(rs.raw, rs.sh, unwrapped)
+            assert unwrapped_value == original, (
+                "ECDH-AES-KW roundtrip recovered a different key than was wrapped"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -851,10 +878,7 @@ class TestEcdhAesKeyWrap:
         """
         from pkcs11_check.raw.ec import encode_named_curve_parameters
         from pkcs11_check.raw.pack import mech_ecdh_aes_kw
-        from pkcs11_check.raw.recipes import (
-            unwrap_key,
-            wrap_key,
-        )
+        from pkcs11_check.raw.recipes import wrap_key
         from pkcs11_check.raw.types_std import (
             CKA_DERIVE,
             CKA_KEY_TYPE,
@@ -883,6 +907,7 @@ class TestEcdhAesKeyWrap:
             attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
         try:
+            original = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
             mech = mech_ecdh_aes_kw(
                 CKM_ECDH_AES_KEY_WRAP,
                 aes_key_bits=256,
@@ -903,6 +928,40 @@ class TestEcdhAesKeyWrap:
                     return
                 raise
 
+            unwrap_attrs = {
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
+            }
+
+            # Valid leg (D4/D5): unwrap the UN-tampered blob (negotiating the
+            # accepted template) and recover the original key.
+            mech_good = mech_ecdh_aes_kw(
+                CKM_ECDH_AES_KEY_WRAP,
+                aes_key_bits=256,
+                kdf=CKD_SHA256_KDF,
+            )
+            try:
+                good = unwrap_key_for_mechanism_roundtrip(
+                    rs,
+                    p11_config,
+                    unwrapping_key=priv,
+                    wrapped_key=wrapped,
+                    mechanism=CKM_ECDH_AES_KEY_WRAP,
+                    attrs=unwrap_attrs,
+                    mech_param=mech_good,
+                    purpose="ECDH-AES-KW unwrap (valid leg)",
+                )
+            except AssertionError as exc:
+                _xfail_if_wrap_runtime_reject(
+                    exc, "ECDH-AES-KW unwrap (valid leg) not operational"
+                )
+            good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
+            destroy_quietly(rs.raw, rs.sh, good)
+            valid_accepted = good_value is not None and good_value == original
+
+            # Invalid leg (D3): flip a byte in the AES-KW ciphertext region.
             tampered = bytearray(wrapped)
             tampered[-2] ^= 0xFF
             mech_t = mech_ecdh_aes_kw(
@@ -910,51 +969,26 @@ class TestEcdhAesKeyWrap:
                 aes_key_bits=256,
                 kdf=CKD_SHA256_KDF,
             )
+            invalid_outcome: Any
             try:
-                bad = unwrap_key(
-                    rs.raw,
-                    rs.sh,
-                    priv,
-                    bytes(tampered),
-                    CKM_ECDH_AES_KEY_WRAP,
-                    attrs={
-                        CKA_CLASS: CKO_SECRET_KEY,
-                        CKA_KEY_TYPE: CKK_AES,
-                        CKA_EXTRACTABLE: True,
-                    },
+                h = unwrap_key_for_mechanism_roundtrip(
+                    rs,
+                    p11_config,
+                    unwrapping_key=priv,
+                    wrapped_key=bytes(tampered),
+                    mechanism=CKM_ECDH_AES_KEY_WRAP,
+                    attrs=unwrap_attrs,
                     mech_param=mech_t,
+                    purpose="ECDH-AES-KW unwrap of bit-flipped ciphertext",
                 )
+                invalid_outcome = h
+                destroy_quietly(rs.raw, rs.sh, h)
             except AssertionError as exc:
-                # Per-module quirks via the registry — Kryoptic's
-                # CKR_DEVICE_ERROR for verify failures, OpenCryptoki's
-                # CKR_ATTRIBUTE_READ_ONLY rejecting unwrap templates that
-                # contain CKA_CLASS/CKA_KEY_TYPE before crypto check.
-                from pkcs11_check.testcases._module_quirks import quirk_extras
-
-                accepted_rvs = {
-                    CKR_WRAPPED_KEY_INVALID,
-                    CKR_ENCRYPTED_DATA_INVALID,
-                    CKR_WRAPPED_KEY_LEN_RANGE,
-                    *quirk_extras(p11_config, "verify_or_integrity_failure"),
-                    *quirk_extras(p11_config, "unwrap_template_class_keytype_rejected"),
-                }
-                if is_known_error(exc, accepted_rvs):
-                    return
-                raise
-
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                "C_UnwrapKey accepted bit-flipped CKM_ECDH_AES_KEY_WRAP "
-                "ciphertext (AES-KW RFC 3394 ICV check missing).",
-                ComplianceLevel.CRITICAL,
-                reference="RFC 3394 §2.2.2 / PKCS#11 v3.1 Sec.6.13.6",
-            )
-            destroy_quietly(rs.raw, rs.sh, bad)
-            pytest.fail(
-                "SECURITY: CKM_ECDH_AES_KEY_WRAP unwrap accepted "
-                "bit-flipped ciphertext — RFC 3394 ICV check missing "
-                "in the AES-KW step of the hybrid mechanism."
+                invalid_outcome = exc
+            classify_discrimination(
+                valid_accepted=valid_accepted,
+                invalid_outcome=invalid_outcome,
+                label="ECDH-AES-KW unwrap of bit-flipped ciphertext (RFC 3394 ICV)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

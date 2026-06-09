@@ -13,12 +13,13 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_EC_PARAMS,
     CKA_KEY_TYPE,
     CKA_SIGN,
+    CKA_VALUE_LEN,
     CKA_VERIFY,
     CKM_EC_EDWARDS_KEY_PAIR_GEN,
     CKR_ARGUMENTS_BAD,
@@ -162,54 +163,47 @@ def unwrap_key_for_mechanism_roundtrip(
     mechanism: Any,
     attrs: Mapping[Any, Any],
     mech_param: Any | None = None,
+    value_len: int | None = None,
     purpose: str = "mechanism unwrap roundtrip",
 ) -> int:
-    """Unwrap for mechanism-level crypto checks, retrying documented template quirks.
+    """Unwrap for mechanism-level crypto checks, negotiating the accepted template.
 
-    Some modules reject CKA_CLASS/CKA_KEY_TYPE in C_UnwrapKey templates even
-    though the mechanism can still unwrap a valid provider-generated blob when
-    those type identifiers are omitted. Mechanism-level tests care about the
-    cryptographic roundtrip; stricter attribute-template behavior belongs in
-    dedicated attribute/security tests.
+    The canonical template (variant 0) carries both CKA_CLASS and CKA_KEY_TYPE.
+    CKA_KEY_TYPE is spec-mandatory on C_UnwrapKey and is never dropped; only
+    CKA_CLASS may be relaxed for modules that reject it in an unwrap template, so a
+    second variant omitting CKA_CLASS is tried only if the module shape-rejects the
+    canonical one. Mechanism-level tests care about the cryptographic roundtrip;
+    stricter attribute-template behavior belongs in dedicated attribute/security
+    tests. No provider identity is consulted.
     """
-    from pkcs11_check.compliance import ComplianceLevel, note
     from pkcs11_check.raw.recipes import unwrap_key
-    from pkcs11_check.testcases._module_quirks import quirk_extras
+    from pkcs11_check.testcases._negotiation import negotiate_request, value_len_variant_allowed
 
-    try:
+    base = dict(attrs)
+    variants = [base]
+    relaxed = {k: v for k, v in base.items() if k != CKA_CLASS}  # keep CKA_KEY_TYPE
+    if relaxed != base:
+        variants.append(relaxed)
+    if (
+        value_len is not None
+        and CKA_KEY_TYPE in base
+        and value_len_variant_allowed(base[CKA_KEY_TYPE], int(mechanism))
+    ):
+        variants = [{**v, CKA_VALUE_LEN: value_len} for v in variants] + variants
+
+    def attempt(delta: Mapping[Any, Any]) -> int:
         return unwrap_key(
             rs.raw,
             rs.sh,
             unwrapping_key,
             wrapped_key,
             mechanism,
-            attrs=attrs,
+            attrs=delta,
             mech_param=mech_param,
         )
-    except AssertionError as exc:
-        allowed_errors = quirk_extras(p11_config, "unwrap_template_class_keytype_rejected")
-        if not is_known_error(exc, allowed_errors):
-            raise
-        relaxed_attrs = {
-            key: value for key, value in attrs.items() if key not in (CKA_CLASS, CKA_KEY_TYPE)
-        }
-        if relaxed_attrs == attrs:
-            raise
-        note(
-            f"{purpose}: provider rejected CKA_CLASS/CKA_KEY_TYPE in unwrap template; "
-            "retried without CKA_CLASS/CKA_KEY_TYPE for mechanism-level crypto check",
-            ComplianceLevel.VENDOR,
-            reference="docs/module-issues.md OpenCryptoki unwrap-template attribute rejection",
-        )
-        return unwrap_key(
-            rs.raw,
-            rs.sh,
-            unwrapping_key,
-            wrapped_key,
-            mechanism,
-            attrs=relaxed_attrs,
-            mech_param=mech_param,
-        )
+
+    result, _idx = negotiate_request(attempt, variants, label=purpose)
+    return result
 
 
 def gen_rsa_keypair_or_xfail(
@@ -532,6 +526,39 @@ def classify_lifecycle_effect(*, claimed_success: bool, effect_observed: bool, l
         pytest.xfail(f"{label}: prior operation did not claim success")
     if effect_observed:
         pytest.fail(f"{label}: success claimed then contradicted (self-contradiction)")
+
+
+def classify_discrimination(*, valid_accepted: bool, invalid_outcome: Any, label: str) -> None:
+    """Outcome-based discrimination classifier (Pillar 2, guardrails D1-D5).
+
+    For integrity/forgery/type-confusion negative tests where the spec mandates no
+    specific failure code: the verdict is the security EFFECT, not the CKR named.
+
+    Args:
+        valid_accepted: the un-tampered operation succeeded AND its result was verified
+            (a real, material-checked positive leg). Advertised-but-not-operational
+            positive legs are routed to xfail by the caller BEFORE this call (D5); a
+            ``False`` here means CKR_OK-but-wrong/unverifiable output -- a real break.
+        invalid_outcome: the invalid leg's outcome -- either the caught exception, or the
+            produced object (handle/bytes) when the module ACCEPTED the bad input.
+            A ``CkrAssertionError`` (clean ``.rv``) -> rejected (any code, D3). Any other
+            exception (no ``.rv``) -> re-raised (D2: a harness/ctypes bug, not detection).
+            A produced object (not an exception) -> accepted -> break.
+    """
+    if isinstance(invalid_outcome, CkrAssertionError):
+        invalid_rejected = True
+    elif isinstance(invalid_outcome, BaseException):
+        raise invalid_outcome
+    else:
+        invalid_rejected = False
+
+    if not valid_accepted:
+        pytest.fail(
+            f"{label}: the valid/un-tampered operation did not verify -- cannot "
+            "distinguish 'detected tampering' from 'cannot do the operation'"
+        )
+    if not invalid_rejected:
+        pytest.fail(f"{label}: accepted the tampered/forged/confused input (security break)")
 
 
 def destroy_returned_handles(rs: Any, *handles: int) -> None:

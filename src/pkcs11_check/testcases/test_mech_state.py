@@ -68,8 +68,9 @@ pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.state_machine]
 # CKR_GENERAL_ERROR are EXPLICITLY NOT accepted here: a module that crashes or
 # panics during cross-session probing and recovers with one of those codes is
 # exhibiting exactly the state-confusion bug class the test is meant to catch.
-# If a real module legitimately needs a fallback, register it as a quirk in
-# `_module_quirks.py` and call `quirk_extras(...)` instead of widening this set.
+# If a real module legitimately needs a different clean code here, the 3-way
+# negative classifier records it as an xfail (a noted deviation) -- never widen
+# this set to mask it.
 _CROSS_SESSION_NOT_INIT_RVCS: frozenset[int] = frozenset(
     {
         CKR_OPERATION_NOT_INITIALIZED,

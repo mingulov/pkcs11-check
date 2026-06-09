@@ -20,10 +20,10 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.conftest import reject_or_classify
 
-# The accepted set in production combines RFC 3394 ICV codes + per-module
-# quirk_extras. The meta-test exercises the classifier semantics with a
-# minimal subset; the production code passes the full set including
-# quirk_extras() output.
+# Production classifies these via the 3-way classifier (RFC 3394 ICV codes ->
+# pass, any other clean reject -> xfail, acceptance -> fail) -- there is no
+# per-module quirk splice. This meta-test exercises the classifier semantics
+# with a minimal ICV subset.
 _SPEC_ICV_CKRS = (int(CKR_WRAPPED_KEY_INVALID),)
 
 

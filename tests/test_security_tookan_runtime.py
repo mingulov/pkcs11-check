@@ -10,6 +10,7 @@ from _pytest.outcomes import Failed, XFailed
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
+    CKA_VALUE,
     CKR_DEVICE_ERROR,
     CKR_KEY_NOT_WRAPPABLE,
     CKR_KEY_UNEXTRACTABLE,
@@ -28,6 +29,14 @@ def _run_key_type_confusion_until_wrap(
 ) -> None:
     monkeypatch.setattr(test_tookan, "gen_aes_key", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(test_tookan, "destroy_quietly", lambda *_args: None)
+    # The valid leg reads the target's CKA_VALUE before the wrap; these two
+    # tests only exercise the wrap-reject path (skip / xfail before unwrap), so
+    # a stub value is sufficient.
+    monkeypatch.setattr(
+        test_tookan,
+        "read_attributes",
+        lambda *_a, **_k: {CKA_VALUE: b"\x00" * 16},
+    )
     monkeypatch.setattr(
         test_tookan,
         "wrap_key",
