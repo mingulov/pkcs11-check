@@ -529,10 +529,30 @@ a whole security-test category across all providers (outward-facing) — **Denis
 | 10 | wycheproof_x25519 | "derived a secret for invalid vector" (×93) | ⚖️ **strong over-strict** — X25519/X448 (RFC 7748 §6.1) is safe-by-design with NO invalid-curve attack and is a TOTAL function; deriving on a malformed/special point is not a crypto break (the 72 invalid vectors are `InvalidPublic`/`PublicKeyTooLong` encoding cases, not low-order). Rejecting malformed keys is optional robustness. But a prior author deliberately set "any derive on invalid → fail" (Phase-2 V1) → **flag, don't unilaterally overturn**. Model-aligned fix = `fail` only on a WRONG output (shared != expected). |
 | 10 | test_padding_oracle | "AES-CBC-PAD padding oracle (Vaudenay)" | ⚠️ **investigated — criterion questionable, needs crypto review.** `test_cbc_pad_error_uniformity` flags when corrupting the last byte vs a middle byte yields *different* error codes. But for a 16-byte plaintext (2-block CBC-PAD) both corruptions hit the padding block, and two distinct *failure* codes (e.g. ENCRYPTED_DATA_INVALID vs DATA_LEN_RANGE) is not a Vaudenay oracle unless one specifically signals *valid* padding — which this comparison (bad-vs-bad, never bad-vs-valid) does not establish. The RSA oracle tests in the same file ARE sound (error-uniformity across padding *categories*). Likely over-strict, but confirming requires careful Vaudenay analysis — do NOT reclassify blind. |
 | 10 | test_cve_regression | "Tookan unwrap CKA_SENSITIVE" | ⚠️ Tookan attribute-attack regression — likely real intent; verify not over-strict. |
-| 9 | ffi_null_pointer | C_GenerateRandom/SeedRandom/SetOperationState(NULL) crash | ❓ borderline UB (NULL ptr w/ nonzero len) vs real null-check finding — adjacent to the C1-C3 UB class; determine buffer honesty. |
+| 9 | ffi_null_pointer | C_GenerateRandom/SeedRandom/SetOperationState(NULL) crash | 🔧→💥 **DETERMINED = C1-C3 harness-UB class** (consolidate the decision). The test passes `NULL` with **nonzero length** to ops that have NO NULL length-query mode (`C_GenerateRandom(sh, None, 32)` etc.) and the file itself calls this *"always a crash vector"* — i.e. it provokes a guaranteed NULL-deref by violating the PKCS#11 buffer contract (the pointer must address `ulLen` bytes), then reports the crash. Same as C1-C3: harness-provoked UB, not a module finding. **Precise scope:** ONLY the NULL-with-nonzero-length cases for no-query ops; the *other* tests in the file (NULL **output** buffer for the standard length-query path, lines ~265-309) are FAIR and a crash there IS a real finding. Caveat for the user's call: defensive NULL-checks on pointer args are more common than ULONG_MAX length-sanity-checks, so this subset is a slightly stronger "keep as a robustness probe" candidate than the lying-length C1-C3 cases — but mechanically it's the same contract-violating UB. |
 | 9 | wycheproof_mldsa_sign | "Invalid ML-DSA sign vector" (×50) | ⚠️ ML-DSA deterministic-sign with invalid input — determine. |
 | 7 | ckr_keygen | "C_GenerateKeyPair with CK_ULONG-sized CKA_…" | 💥→🔧 the ULONG-overflow UB class (C-cluster, flagged). |
-| 9 | test_set_attribute | "C_SetAttributeValue partially applied CKA_LABEL" | ⚠️ partial-attribute-apply (atomicity) — possibly real Type-C; determine. |
+| 9 | test_set_attribute | "C_SetAttributeValue partially applied CKA_LABEL" | ⚖️ **DETERMINED = deliberate stricter-than-spec hardening (policy, flag).** `TestSetAttributeAtomicity` requires C_SetAttributeValue to be atomic (a mixed `{CKA_LABEL, read-only CKA_CLASS}` template must roll back CKA_LABEL when the CKA_CLASS row is rejected). PKCS#11 §5.7 does NOT guarantee atomicity — processing rows in order and leaving earlier ones applied is spec-permitted; applying a benign CKA_LABEL (not a security attr like CKA_SENSITIVE) while rejecting a structural read-only row is neither a crypto break nor a Type-C self-contradiction. 9 providers exhibit the natural non-atomic behavior. Same class as parameter-validation: an intentional hardening check that conflicts with the model's "fail only on crypto break / self-contradiction". Reclassify fail→note/xfail is defensible (and the security-relevant variant — partial-apply of CKA_SENSITIVE/EXTRACTABLE — would still be a real finding worth a separate targeted test); flag for decision. |
+
+### Determinations summary (every cross-cutting item is now categorized)
+
+After two cross-provider sweeps + per-item investigation, the not-yet-actioned signatures resolve to exactly three buckets — **no un-investigated clear harness bug remains**:
+
+1. **⚖️ Deliberate stricter-than-spec hardening checks (policy call — flag, don't auto-change):**
+   RSA-PSS sLen=0*, AES-GCM short IV / short tag / IV-reuse, X25519/X448 invalid-vector, EdDSA
+   keyver, C_SetAttributeValue atomicity, (CBC-PAD oracle = ambiguous, leans here). All conflict
+   with the model ("fail only on crypto break / self-contradiction") but were chosen deliberately.
+   *Footnote: **PSS sLen=0 is the one I judge a genuine harness BUG, not a defensible policy** —
+   deterministic PSS (sLen=0) is RFC 8017 §9.1 / FIPS 186-5 standard and produces correct,
+   verifiable, non-forgeable signatures, so the "Type-A crypto break" label is factually wrong
+   (unlike a 32-bit GCM tag, which is genuinely weaker). Recommend fixing this one.
+2. **💥→🔧 Harness-provoked UB (the C1-C3 decision):** the lying-buffer overflow probes
+   (`test_arithmetic_overflow`, `test_ffi_length_boundary` near-SIZE_MAX) AND the NULL-pointer
+   crashes (`test_ffi_null_pointer` NULL+nonzero-len, no-query ops). One decision; per-case sort
+   (CKA_VALUE_LEN-as-keygen-size and NULL-output length-query tests stay; buffer-read UB goes).
+3. **✅ Genuine findings — KEEP failing (already correct):** bouncyhsm CCM no-auth, opencryptoki
+   ulCounterBits accept, corePKCS11 EC silent-rebind + secret-key non-operability, NSS
+   output-buffer overruns, wolfpkcs11 HKDF crash, corePKCS11 minimal-impl long-tail.
 
 **(B) ECDH / EdDSA invalid-vector acceptance (⚠️ SECURITY — determine, do not assume).**
 `test_wycheproof_ecdh` `fail`s when a module derives a secret for an "invalid" vector (×92 / 13 prov).

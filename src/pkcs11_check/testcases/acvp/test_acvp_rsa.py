@@ -216,6 +216,51 @@ class TestRsaPss:
             destroy_quietly(rs.raw, rs.sh, priv_key)
 
 
+# Cache: (mech_name, key_bits) -> whether the module verifies the canonical
+# known-valid ACVP vector of that class (imported public key + single verify).
+# H2-style canonical operability probe: a module that rejects EVERY valid
+# vector of a (mechanism, key-size) class is "advertised but not operational"
+# (classification model: xfail), not a pile of per-vector findings. tpm2
+# rejects all 27 valid SHA-1 SigVer vectors this way while still rejecting
+# every invalid one.
+_PKCS15_SIGVER_OPERATIONAL: dict[tuple[str, int], bool] = {}
+
+
+def _pkcs15_sigver_operational(rs: Any, mech_name: str, key_bits: int) -> bool:
+    """Whether the canonical known-valid (mech, key-size) SigVer vector verifies."""
+    cache_key = (mech_name, key_bits)
+    cached = _PKCS15_SIGVER_OPERATIONAL.get(cache_key)
+    if cached is not None:
+        return cached
+    operational = False
+    for _vec_id, vec in _PKCS15_VER:
+        if (
+            vec["mech_name"] != mech_name
+            or not vec["expected_pass"]
+            or len(vec["n"]) * 8 != key_bits
+        ):
+            continue
+        pub_key = 0
+        try:
+            try:
+                pub_key = import_rsa_public_key_negotiated(
+                    rs, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
+                )
+            except AssertionError:
+                break
+            try:
+                operational = verify_single(
+                    rs.raw, rs.sh, pub_key, vec["mech_int"], vec["message"], vec["signature"]
+                )
+            except AssertionError:
+                operational = False
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub_key)
+        break  # canonical = first importable valid vector of this class
+    _PKCS15_SIGVER_OPERATIONAL[cache_key] = operational
+    return operational
+
+
 class TestRsaSigVer:
     """RSA signature verification tests with valid/invalid vectors."""
 
@@ -250,6 +295,13 @@ class TestRsaSigVer:
             if not expected_pass and verified:
                 pytest.fail(f"{vec_id}: ACCEPTED INVALID signature - security concern")
             if expected_pass and not verified:
+                key_bits = len(vec["n"]) * 8
+                if not _pkcs15_sigver_operational(rs, mech_name, key_bits):
+                    pytest.xfail(
+                        f"{vec_id}: {mech_name} verify rejects the canonical known-valid "
+                        f"ACVP vector for {key_bits}-bit imported keys -- advertised but "
+                        "not operational"
+                    )
                 pytest.fail(f"{vec_id}: rejected VALID signature")
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
