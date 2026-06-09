@@ -442,5 +442,30 @@ Net: ~22,610 corepkcs11 KAT hard-failures eliminated (ECDSA 21,906 + HMAC 148 + 
 AES 63) by harness fixes, plus bouncyhsm CCM no-auth + opencryptoki ulCounterBits surfaced as
 REAL findings, with controls unchanged.
 
-Next: triage the corepkcs11 long-tail (harness-fixable vs genuine minimal-impl limits),
-secret-key coherence root-cause (stock-PAL repro), C1-C3 removal pending Denis's nod, merge to dev.
+### corepkcs11 long-tail triage conclusion (2026-06-09)
+
+The remaining ~200 corepkcs11 failures were categorized by direct probe + v3.6.4 source read.
+**They split into a small harness-fixable subset (DONE) and a genuine-findings majority (KEEP).**
+
+- **Harness-fixable storage-shape subset — FIXED:** general (non-KAT) conformance tests that used
+  the raw import recipes and so hit corePKCS11's label/token requirement
+  (`test_rsa_key_import` 5F → 1P/2skip/2xf; the KAT suites earlier). Same negotiation pattern.
+- **Genuine minimal-impl limitations — KEEP AS FINDINGS (do NOT suppress):**
+  - `test_data_objects` (12): corePKCS11 `C_CreateObject` has no `CKO_DATA` case
+    (`default: CKR_ATTRIBUTE_VALUE_INVALID`, source-confirmed) — it genuinely cannot create data
+    objects. Correct finding.
+  - `test_sign` / `test_buffers` (13): unadvertised mechanisms + two-call buffer-size protocol
+    quirks (e.g. `pulSize` reports 8 where 32 is required). Real corePKCS11 behaviors.
+  - `x509/test_core_ops`, `ckr/*`, `test_aead`, `test_kdf`, … : minimal-impl operation gaps.
+  - corePKCS11 secret-key import (CMAC/HMAC) advertised-but-not-operational (sign →
+    `KEY_TYPE_INCONSISTENT`, readback → `OBJECT_HANDLE_INVALID`) — documented in module-issues.md.
+
+  **These are the conformance suite working as intended** — corePKCS11 is a minimal embedded
+  impl and the suite correctly reports the features it lacks. Per "failures ARE findings,"
+  converting them to xfail/skip would HIDE findings; they stay as failures. The classification
+  model's xfail bucket ("advertised but not operational") applies to *mechanisms*, not to a
+  minimal impl missing a core object class — that's a genuine non-conformance, reported as such.
+
+**Harness-fix scope is therefore COMPLETE for the discovered bug classes.** What remains is not
+harness work: (a) C1-C3 UB-probe removal — flagged for Denis's nod (outward-facing); (b) secret-key
+coherence stock-PAL root-cause; (c) merge to dev (user milestone decision — CLAUDE.md: never auto-merge).
