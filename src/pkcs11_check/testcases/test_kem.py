@@ -91,6 +91,13 @@ _PARAM_MAP = {
     "ML_KEM_1024": CKP_ML_KEM_1024,
 }
 
+# FIPS 203: the ML-KEM shared secret is always 32 bytes for every parameter set.
+# PKCS#11 v3.2 says the KEM contributes CKA_VALUE but "other attributes required by the
+# key type must be specified in the template" — so the output template must declare
+# CKA_VALUE_LEN. Strict-but-conformant modules (opencryptoki) reject a template without it
+# (CKR_TEMPLATE_INCONSISTENT); lenient ones (kryoptic/nss) infer it. Always supply it.
+_ML_KEM_SHARED_SECRET_BYTES = 32
+
 _KEM_OPERATION_REJECT_RVS = (
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
@@ -151,8 +158,16 @@ def _generate_ml_kem_keypair(
     )
 
 
-def _encap_attrs(key_type: int = CKK_AES, value_len: int | None = None) -> dict[int, Any]:
-    """Standard template for encapsulated key. Kryoptic mandates Class/KeyType."""
+def _encap_attrs(
+    key_type: int = CKK_AES, value_len: int | None = _ML_KEM_SHARED_SECRET_BYTES
+) -> dict[int, Any]:
+    """Standard template for an encapsulated/decapsulated key.
+
+    Declares CKA_CLASS/CKA_KEY_TYPE and, by default, CKA_VALUE_LEN=32 (the ML-KEM shared
+    secret size). The length is required by strict-but-conformant modules (opencryptoki)
+    per PKCS#11 v3.2; pass ``value_len`` to request a different size (AES-128/192) or
+    ``None`` to omit it deliberately.
+    """
     attrs: dict[int, Any] = {
         CKA_CLASS: CKO_SECRET_KEY,
         CKA_KEY_TYPE: key_type,

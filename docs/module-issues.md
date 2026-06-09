@@ -308,8 +308,8 @@ Inherits all quirks from NSS 3.120.1 above. Additional findings below.
 
 ### PQC Issues
 
-- **ML-KEM buffer sizing:** C_EncapsulateKey/C_DecapsulateKey return CKR_BUFFER_TOO_SMALL — under investigation
-- **ML-KEM-512:** Wycheproof semi-expanded decapsulation fails — may not support semi-expanded key format
+- **ML-KEM buffer sizing:** C_EncapsulateKey/C_DecapsulateKey return CKR_BUFFER_TOO_SMALL on the NULL-buffer size query — valid two-call PKCS#11 behavior, handled by the recipes.
+- **ML-KEM-512 raw private-key import:** rejected with `CKR_ATTRIBUTE_VALUE_INVALID`. The Wycheproof "semi_expanded" vectors carry only the decapsulation key `dk` (the *full* FIPS 203 form — **not** a seed, despite the old note here); PKCS#11 v3.2 (ML-KEM private key) permits a token to require both `CKA_SEED` and `CKA_VALUE`, so a dk-only import rejection is a **spec-permitted operational deviation → xfail**, not a failure. 768/1024 import and decapsulate fine.
 
 ### Security Findings
 
@@ -1626,3 +1626,31 @@ exercises the upgraded version, surfacing the long-known leak as a
 hard CI failure. Not a NEW finding — the bug has been public since at
 least the v0.1.0 release report. Reportable upstream as a security
 finding (already in upstream NSS Bugzilla per the v0.1.0 report).
+
+## OpenCryptoki 3.27.0 (v3.2)
+
+**Library:** `libopencryptoki.so` (soft token) · **Docker targets:** `test-opencryptoki` (v3.27.0), `test-opencryptoki-master`
+
+### ML-KEM output template requires `CKA_VALUE_LEN` (strict-but-conformant)
+
+OpenCryptoki advertises full **standard** PQC since 3.27 (`CKM_ML_DSA`, `CKM_ML_KEM`,
+`CKM_HASH_ML_DSA` family) and its ML-KEM encapsulate/decapsulate are **fully operational**.
+
+`C_EncapsulateKey`/`C_DecapsulateKey` require the output-key template to declare
+**`CKA_VALUE_LEN`**; without it OpenCryptoki returns `CKR_TEMPLATE_INCONSISTENT`. This is a
+defensible strict reading of PKCS#11 v3.2 — for `CKM_ML_KEM` the spec says the mechanism
+contributes `CKA_VALUE` but *"other attributes required by the key type must be specified in
+the template."* Lenient modules (kryoptic, NSS) infer the 32-byte length; OpenCryptoki does not.
+
+This was previously **mis-reported by the harness as "ML-KEM encapsulate not operational"**:
+`testcases/test_kem.py::_encap_attrs` and `wycheproof/test_wycheproof_mlkem.py` omitted
+`CKA_VALUE_LEN`, so every `_encap_attrs`-based op false-xfailed (16 in `test_kem`) and the
+Wycheproof decaps false-failed (3) on OpenCryptoki, while `test_decapsulate_aes_key_sizes`
+(which *does* pass `CKA_VALUE_LEN`) passed. Fixed by always supplying `CKA_VALUE_LEN=32` (the
+ML-KEM shared-secret size, FIPS 203) in the KEM output template; OpenCryptoki now passes
+ML-KEM encaps/decaps cleanly with no module change. The harness fix is locked by
+`tests/test_kem_output_template.py`.
+
+> Provider-general lesson: a KEM/derive output template must declare the length attribute the
+> key type requires; relying on a module to infer it (kryoptic's leniency) masks working PQC on
+> strict-but-conformant modules.
