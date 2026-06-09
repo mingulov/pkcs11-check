@@ -55,7 +55,7 @@ from pkcs11_check.testcases._raw_subprocess import run_raw_script
 from pkcs11_check.testcases._subprocess_preamble import _P11CHECK_PIN_ENV
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 
-pytestmark = [pytest.mark.requires_v30, pytest.mark.access]
+pytestmark = [pytest.mark.access]
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +108,6 @@ _LOGIN_REJECT = {
 }
 
 
-@pytest.mark.requires_v30
 class TestCLoginUser:
     """C_LoginUser (v3.0+) exercises the username parameter path.
 
@@ -116,6 +115,7 @@ class TestCLoginUser:
     On v2.40 modules the function does not exist in the function list.
     """
 
+    @pytest.mark.needs_function("C_LoginUser")
     def test_c_login_user_empty_username_user_type(
         self,
         p11_raw_session: Any,
@@ -172,6 +172,7 @@ class TestCLoginUser:
             "C_LoginUser should not be in the v2.40 function list"
         )
 
+    @pytest.mark.needs_function("C_LoginUser")
     def test_c_login_user_non_empty_username(
         self,
         p11_raw_session: Any,
@@ -205,6 +206,7 @@ class TestCLoginUser:
         else:
             pytest.xfail(f"C_LoginUser returned an unexpected clean CKR: {ckr_name(rv)}")
 
+    @pytest.mark.needs_function("C_LoginUser")
     def test_c_login_user_utf8_multibyte_username(
         self,
         p11_raw_session: Any,
@@ -240,6 +242,7 @@ class TestCLoginUser:
                 f"unexpected clean CKR: {ckr_name(rv)}"
             )
 
+    @pytest.mark.needs_function("C_LoginUser")
     def test_c_login_user_long_username(
         self,
         p11_raw_session: Any,
@@ -276,6 +279,7 @@ class TestCLoginUser:
                 f"unexpected clean CKR: {ckr_name(rv)}"
             )
 
+    @pytest.mark.needs_function("C_LoginUser")
     def test_c_login_user_username_with_embedded_nul(
         self,
         p11_raw_session: Any,
@@ -317,7 +321,6 @@ class TestCLoginUser:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.requires_v30
 class TestContextSpecificLogin:
     """CKU_CONTEXT_SPECIFIC (user type 2) exercises the reaffirm-credentials path.
 
@@ -398,6 +401,7 @@ class TestContextSpecificLogin:
         else:
             pytest.xfail(f"context-specific login returned an unexpected clean CKR: {ckr_name(rv)}")
 
+    @pytest.mark.needs_function("C_LoginUser")
     def test_context_specific_via_c_login_user(
         self,
         p11_raw_session: Any,
@@ -447,7 +451,6 @@ class TestContextSpecificLogin:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.requires_v30
 class TestLoginLogoutCycle:
     """Basic login/logout cycle verification for v3.0+ modules.
 
@@ -479,6 +482,7 @@ class TestLoginLogoutCycle:
         finally:
             close_session_quietly(rs.raw, sh2)
 
+    @pytest.mark.needs_function("C_LoginUser")
     def test_c_login_user_then_logout(self, p11_raw_session: Any, p11_config: Any) -> None:
         """C_LoginUser login followed by C_Logout is a clean round-trip.
 
@@ -514,6 +518,7 @@ class TestLoginLogoutCycle:
         finally:
             close_session_quietly(rs.raw, sh2)
 
+    @pytest.mark.needs_function("C_LoginUser")
     def test_double_login_rejected(self, p11_raw_session: Any, p11_config: Any) -> None:
         """A second CKU_USER login on an already-logged-in session is rejected.
 
@@ -565,7 +570,7 @@ class TestLoginLogoutCycle:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.requires_v30
+@pytest.mark.needs_function("C_SessionCancel")
 class TestSessionCancel:
     """C_SessionCancel (v3.0+) cancels active cryptographic operations.
 
@@ -811,6 +816,7 @@ class TestSessionCancel:
         )
 
 
+@pytest.mark.needs_function("C_LoginUser")
 class TestLoginUserWithNameRecipe:
     """Tests exercising the login_user_with_name() bootstrap recipe."""
 
