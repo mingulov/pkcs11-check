@@ -29,6 +29,7 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_UNWRAP,
     CKA_VALUE,
+    CKA_VALUE_LEN,
     CKA_VERIFY,
     CKA_WRAP,
     CKK_AES,
@@ -42,6 +43,9 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_XTS,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
@@ -49,8 +53,10 @@ from pkcs11_check.raw.types_std import (
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = pytest.mark.wycheproof
@@ -75,6 +81,53 @@ def _xfail_if_aes_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
         f"{label}: advertised AES operation is not operational",
     )
     raise exc
+
+
+# Modules disagree on the AES-KW unwrap template for a variable-length generic
+# secret: lenient modules (softhsm2) derive the recovered length from the wrapped
+# blob and reject CKA_VALUE_LEN as read-only, while strict modules (NSS) require it
+# and otherwise return a template-shape error. These are the codes that mean "state
+# the recovered length explicitly"; we retry with CKA_VALUE_LEN rather than mis-fail
+# a module that can actually unwrap. No provider identity is consulted.
+_TEMPLATE_SHAPE_REJECTS = (
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+)
+
+
+def _unwrap_aes_kw_adaptive(
+    rs: Any, unwrapping_key: int, wrapped: bytes, base_attrs: dict[int, Any], value_len: int | None
+) -> int:
+    """Unwrap an AES-KW blob, retrying with CKA_VALUE_LEN on a template-shape reject.
+
+    The first attempt uses the minimal template (no CKA_VALUE_LEN), which lenient
+    modules accept unchanged. Only when the module rejects that template with a
+    "shape" code do we restate the recovered length explicitly. Any other rejection
+    (e.g. an integrity failure on a forged blob) propagates to the caller for normal
+    classification, so forgery detection is preserved.
+
+    ``value_len`` is ``None`` for *invalid* vectors: a forged blob must never be
+    coerced through a restated length (that would let the module recover a wrongly
+    sized object and accept material it should reject), so no retry is attempted and
+    the module's own rejection stands.
+    """
+    try:
+        return unwrap_key(
+            rs.raw, rs.sh, unwrapping_key, wrapped, CKM_AES_KEY_WRAP, attrs=base_attrs
+        )
+    except AssertionError as exc:
+        if value_len is None or not is_known_error(exc, _TEMPLATE_SHAPE_REJECTS):
+            raise
+        return unwrap_key(
+            rs.raw,
+            rs.sh,
+            unwrapping_key,
+            wrapped,
+            CKM_AES_KEY_WRAP,
+            attrs={**base_attrs, CKA_VALUE_LEN: value_len},
+        )
 
 
 def _load_flat(filename: str) -> list[tuple[str, dict[str, Any]]]:
@@ -198,23 +251,35 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
     # Unwrap the supplied blob and verify the recovered key material
     unwrapped = None
     try:
-        unwrapped = unwrap_key(
-            rs.raw,
-            rs.sh,
+        unwrapped = _unwrap_aes_kw_adaptive(
+            rs,
             wrap_key_h,
             ct,
-            CKM_AES_KEY_WRAP,
-            attrs={
+            {
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                 CKA_EXTRACTABLE: True,
                 CKA_SENSITIVE: False,
                 CKA_TOKEN: False,
             },
+            # Restate the recovered length only for VALID vectors. Invalid (forged)
+            # blobs pass None so they are never coerced through an explicit length.
+            len(msg_expected) if result == "valid" else None,
         )
     except AssertionError as exc:
         if result == "valid":
-            _xfail_if_aes_runtime_reject(exc, f"AES-KW {vec_id}")
+            # The adaptive unwrap already tried both the minimal template and one with an
+            # explicit CKA_VALUE_LEN, so a remaining clean template/attribute reject is an
+            # operational deviation, not a crypto break: the module cannot create the
+            # generic-secret object either way. Examples seen across modules: NSS refuses
+            # the oversized 384-byte CounterOverflow vectors (TEMPLATE_INCONSISTENT) and
+            # opencryptoki/softhsm2 reject CKA_VALUE_LEN itself (ATTRIBUTE_READ_ONLY).
+            # softhsm2 and kryoptic unwrap these vectors, so the inputs are valid.
+            xfail_if_known_ckr(
+                exc,
+                _AES_RUNTIME_REJECT_CKRS + _TEMPLATE_SHAPE_REJECTS + (CKR_ATTRIBUTE_READ_ONLY,),
+                f"AES-KW {vec_id}: unwrap into a generic secret not operational",
+            )
             pytest.fail(f"AES-KW unwrap failed for valid vector {vec_id}: {exc}")
         # acceptable: reject of an invalid wrapped blob is fine
         return

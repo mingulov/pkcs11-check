@@ -276,6 +276,16 @@ cascade stays bounded), but `C_EncryptFinal` itself not terminating is the bug.
   EdDSA, contrary to PKCS#11 v3.0 which mandates explicit `CK_EDDSA_PARAMS`. Tests in
   `test_eddsa.py` xfail with a descriptive message on both NSS 3.120.1 and NSS-PQC 3.121.0.
 - **AES-XCBC-MAC verification**: NSS returns `CKR_KEY_TYPE_INCONSISTENT` on verify operations even with `CKA_VERIFY=True` key attribute. XCBC-MAC sign works but verify fails. This is an NSS softoken quirk.
+- **AES-KEY-WRAP unwrap into a generic secret requires `CKA_VALUE_LEN`**: unwrapping with
+  `CKM_AES_KEY_WRAP` into a `CKK_GENERIC_SECRET` is rejected with `CKR_TEMPLATE_INCONSISTENT`
+  unless the recovered length is stated explicitly. softhsm2/opencryptoki instead *reject*
+  `CKA_VALUE_LEN` here as `CKR_ATTRIBUTE_READ_ONLY` (they derive the length from the blob), so
+  there is no single template that satisfies every module. `test_wycheproof_aes.py` now unwraps
+  adaptively: it tries the minimal template first and, only on a template-shape reject for a
+  **valid** vector, retries once with `CKA_VALUE_LEN`. The retry is never applied to invalid
+  (forged) vectors, so a too-short/empty wrapped blob is still rejected on its own merits. NSS
+  still refuses the oversized 384-byte `CounterOverflow` vectors (a clean operational deviation,
+  recorded as xfail; softhsm2 and kryoptic unwrap them).
 - **NULL-buffer size probe does not set output length (AES-GCM / AES-KEY-WRAP-KWP)**:
   NSS softoken returns `CKR_OK` from the standard PKCS#11 size-query call
   (output buffer `NULL`, `*pulLen=0`) but does not write the required size
@@ -1654,3 +1664,13 @@ ML-KEM encaps/decaps cleanly with no module change. The harness fix is locked by
 > Provider-general lesson: a KEM/derive output template must declare the length attribute the
 > key type requires; relying on a module to infer it (kryoptic's leniency) masks working PQC on
 > strict-but-conformant modules.
+
+### AES-KEY-WRAP unwrap rejects `CKA_VALUE_LEN` as read-only
+
+In contrast to ML-KEM, OpenCryptoki's `CKM_AES_KEY_WRAP` unwrap *rejects* `CKA_VALUE_LEN`
+(`CKR_ATTRIBUTE_READ_ONLY`) for some key sizes — it derives the recovered length from the
+wrapped blob, like softhsm2 — while NSS *requires* it (see the NSS section). The adaptive
+unwrap in `test_wycheproof_aes.py` tries the minimal template first and only restates the
+length for valid vectors when the module asks; where the module cannot create the
+generic-secret object either way (larger AES-KW payloads here), that valid vector is recorded
+as a clean operational-deviation xfail rather than a failure.
