@@ -134,7 +134,7 @@ def test_invalid_ecdh_without_shared_secret_success_is_reported(
         if vec_id == "ecdh_secp256r1_ecpoint_test.json:tc332-invalid"
     )
 
-    with pytest.raises(pytest.fail.Exception, match="invalid-point accepted"):
+    with pytest.raises(pytest.fail.Exception, match="invalid-curve attack"):
         ecdh.test_ecdh(_EcdhSession(), "ecdh_secp256r1_ecpoint_test.json:tc332-invalid", vec)
 
 
@@ -284,5 +284,61 @@ def test_off_curve_invalid_vector_acceptance_still_fails(
     monkeypatch.setattr(ecdh, "read_attributes", lambda *_a, **_k: {CKA_VALUE: b"\xab" * 32})
     monkeypatch.setattr(ecdh, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(pytest.fail.Exception, match="invalid-point accepted"):
+    with pytest.raises(pytest.fail.Exception, match="invalid-curve attack"):
         ecdh.test_ecdh(_EcdhSession(), "synthetic:tc0-invalid", vec)
+
+
+def _first_invalid_ecdh() -> tuple[str, dict[str, Any]]:
+    hit = next(
+        (
+            (vid, v)
+            for vid, v in ecdh._ALL_ECDH_VECTORS
+            if v["result"] == "invalid" and not v.get("_pkcs11_duplicate_of")
+        ),
+        None,
+    )
+    if hit is None:
+        pytest.skip("Wycheproof ECDH vectors not available (run `fetch-data wycheproof`)")
+    return hit
+
+
+def _wire_successful_derive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ecdh, "import_ec_private_key", _handle)
+    monkeypatch.setattr(ecdh, "derive_key", _handle)
+    monkeypatch.setattr(ecdh, "read_attributes", _read_zeros)
+    monkeypatch.setattr(ecdh, "destroy_quietly", lambda *_a, **_k: None)
+
+
+def test_ecdh_invalid_derive_on_base_curve_point_is_not_a_finding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the peer point IS on the base curve, the vector's invalidity lives in
+    the X.509 encoding layer that the raw PKCS#11 ECDH path never sees -- a
+    correct derive is NOT an invalid-curve attack, so it must not fail."""
+    vec_id, vec = _first_invalid_ecdh()
+    _wire_successful_derive(monkeypatch)
+    monkeypatch.setattr(ecdh, "_point_on_base_curve", lambda *_a: True)
+
+    ecdh.test_ecdh(_EcdhSession(), vec_id, vec)  # no exception
+
+
+def test_ecdh_invalid_derive_on_off_curve_point_is_a_finding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the peer point is OFF the base curve, deriving a secret is the genuine
+    invalid-curve attack -> must fail (the real finding is preserved)."""
+    vec_id, vec = _first_invalid_ecdh()
+    _wire_successful_derive(monkeypatch)
+    monkeypatch.setattr(ecdh, "_point_on_base_curve", lambda *_a: False)
+
+    with pytest.raises(pytest.fail.Exception, match="invalid-curve"):
+        ecdh.test_ecdh(_EcdhSession(), vec_id, vec)
+
+
+def test_point_on_base_curve_validates_against_cryptography() -> None:
+    """The on-curve helper accepts a genuine P-256 point and rejects an
+    off-curve one (real cryptography validation, no mock)."""
+    on = ecdh._point_on_base_curve(_p256_point(_P256_GX, _P256_GY), "secp256r1")
+    assert on is True
+    off = ecdh._point_on_base_curve(_p256_point(_P256_GX, _P256_GY ^ 1), "secp256r1")
+    assert off is False
