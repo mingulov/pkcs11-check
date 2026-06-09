@@ -553,7 +553,6 @@ def test_runtime_skip_reason_uses_manifest() -> None:
     item = _FakeItem(
         Path("/tmp/testcases/test_demo.py"),
         {
-            "requires_v32": SimpleNamespace(args=()),
             "needs_mechanism": SimpleNamespace(args=("CKM_AES_ECB",)),
         },
     )
@@ -572,7 +571,7 @@ def test_runtime_skip_reason_uses_manifest() -> None:
 
     reason = plugin_mod._runtime_skip_reason(item, config, manifest)
 
-    assert reason == "Requires v32, module has v3.0"
+    assert reason == "Mechanism CKM_AES_ECB not supported by module"
 
 
 def _manifest_with(functions: list[str], *, version: str = "2.40") -> CapabilityManifest:

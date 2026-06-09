@@ -29,7 +29,7 @@ from pkcs11_check.fixtures import (  # noqa: F401
     p11_raw_session,
     p11_session,
 )
-from pkcs11_check.markers import MARKER_DEFINITIONS, should_skip_for_version
+from pkcs11_check.markers import MARKER_DEFINITIONS
 from pkcs11_check.raw.types_std import (
     CKF_DERIVE,
     CKF_DIGEST,
@@ -212,8 +212,6 @@ def _has_dynamic_markers(item: pytest.Item) -> bool:
     return any(
         item.get_closest_marker(marker_name)
         for marker_name in (
-            "requires_v30",
-            "requires_v32",
             "needs_mechanism",
             "needs_function",
         )
@@ -223,10 +221,6 @@ def _has_dynamic_markers(item: pytest.Item) -> bool:
 def _manifest_failure_message(manifest: CapabilityManifest) -> str:
     detail = manifest.error or "unknown error"
     return f"PKCS#11 preflight {manifest.status}: {detail}"
-
-
-def _marker_version_label(marker_name: str) -> str:
-    return marker_name.removeprefix("requires_")
 
 
 def _ensure_manifest(config: pytest.Config) -> CapabilityManifest | None:
@@ -414,14 +408,6 @@ def _runtime_skip_reason(
 ) -> str | None:
     if manifest is None:
         return None
-
-    for marker_name in ("requires_v30", "requires_v32"):
-        if item.get_closest_marker(marker_name) and manifest.interface_version is not None:
-            if should_skip_for_version(marker_name, manifest.interface_version):
-                return (
-                    f"Requires {_marker_version_label(marker_name)}, "
-                    f"module has v{manifest.interface_version}"
-                )
 
     function_marker = item.get_closest_marker("needs_function")
     if function_marker and function_marker.args:
