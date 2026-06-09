@@ -31,7 +31,6 @@ from pkcs11_check.raw.recipes import (
     gen_rsa_keypair,
     read_attributes,
     sign_single,
-    unwrap_key,
     verify_single,
     wrap_key,
 )
@@ -70,6 +69,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    unwrap_key_for_mechanism_roundtrip,
     xfail_if_known_ckr,
 )
 
@@ -437,7 +437,7 @@ def _mech_rsa_aes_key_wrap(aes_key_bits: int = 256) -> PackedMechanism:
 class TestRSAAESKeyWrap:
     """CKM_RSA_AES_KEY_WRAP - wraps a key with AES, then wraps the AES key with RSA-OAEP."""
 
-    def test_wrap_unwrap_aes128(self, p11_raw_session: Any) -> None:
+    def test_wrap_unwrap_aes128(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Wrap an AES-128 key using RSA_AES_KEY_WRAP and unwrap it."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_AES_KEY_WRAP"):
@@ -471,12 +471,12 @@ class TestRSAAESKeyWrap:
             assert len(wrapped) > 0
 
             unwrap_param = _mech_rsa_aes_key_wrap(256)
-            unwrapped = unwrap_key(
-                rs.raw,
-                rs.sh,
-                priv,
-                wrapped,
-                CKM_RSA_AES_KEY_WRAP,
+            unwrapped = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=priv,
+                wrapped_key=wrapped,
+                mechanism=CKM_RSA_AES_KEY_WRAP,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
@@ -485,6 +485,7 @@ class TestRSAAESKeyWrap:
                     CKA_TOKEN: False,
                 },
                 mech_param=unwrap_param,
+                purpose="RSA-AES-KEY-WRAP AES-128 roundtrip",
             )
             try:
                 unwrapped_attrs = read_attributes(
@@ -501,7 +502,7 @@ class TestRSAAESKeyWrap:
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, aes_key)
 
-    def test_wrap_unwrap_aes256(self, p11_raw_session: Any) -> None:
+    def test_wrap_unwrap_aes256(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Wrap an AES-256 key using RSA_AES_KEY_WRAP."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_AES_KEY_WRAP"):
@@ -532,12 +533,12 @@ class TestRSAAESKeyWrap:
                 raise
 
             unwrap_param = _mech_rsa_aes_key_wrap(256)
-            unwrapped = unwrap_key(
-                rs.raw,
-                rs.sh,
-                priv,
-                wrapped,
-                CKM_RSA_AES_KEY_WRAP,
+            unwrapped = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=priv,
+                wrapped_key=wrapped,
+                mechanism=CKM_RSA_AES_KEY_WRAP,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
@@ -546,6 +547,7 @@ class TestRSAAESKeyWrap:
                     CKA_TOKEN: False,
                 },
                 mech_param=unwrap_param,
+                purpose="RSA-AES-KEY-WRAP AES-256 roundtrip",
             )
             try:
                 unwrapped_attrs = read_attributes(
