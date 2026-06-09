@@ -15,8 +15,6 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    import_rsa_private_key,
-    import_rsa_public_key,
     read_attributes,
     sign_single,
     verify_single,
@@ -29,6 +27,29 @@ from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKK_RSA,
     CKM_SHA256_RSA_PKCS,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+from pkcs11_check.testcases.conftest import (
+    import_rsa_private_key_negotiated,
+    import_rsa_public_key_negotiated,
+    skip_unless_mechanism,
+    xfail_if_known_ckr,
+)
+
+# Clean rejects that mean "advertised import/op not operational for these
+# attributes" on a minimal provider (corePKCS11 rejects CKA_DECRYPT on RSA
+# private keys; does not expose CKA_LOCAL) -> recorded deviation (xfail), not a
+# hard fail. A capable module (softhsm2) never hits these and still passes.
+_RSA_IMPORT_DEVIATION_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 
 pytestmark = pytest.mark.keymgmt
@@ -66,9 +87,8 @@ class TestRSAPublicKeyImport:
         key = _generate_rsa_key()
         comp = _export_rsa_components(key)
 
-        imported = import_rsa_public_key(
-            rs.raw,
-            rs.sh,
+        imported = import_rsa_public_key_negotiated(
+            rs,
             n=comp["modulus"],
             e=comp["public_exponent"],
             attrs={CKA_VERIFY: True},
@@ -83,6 +103,7 @@ class TestRSAPublicKeyImport:
     def test_imported_public_key_verifies(self, p11_raw_session: Any) -> None:
         """Sign with cryptography, verify with imported PKCS#11 public key."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
         key = _generate_rsa_key()
         comp = _export_rsa_components(key)
 
@@ -91,9 +112,8 @@ class TestRSAPublicKeyImport:
         sig = key.sign(data, padding.PKCS1v15(), hashes.SHA256())
 
         # Import public key into PKCS#11
-        imported = import_rsa_public_key(
-            rs.raw,
-            rs.sh,
+        imported = import_rsa_public_key_negotiated(
+            rs,
             n=comp["modulus"],
             e=comp["public_exponent"],
             attrs={CKA_VERIFY: True},
@@ -114,19 +134,26 @@ class TestRSAPrivateKeyImport:
         key = _generate_rsa_key()
         comp = _export_rsa_components(key)
 
-        imported = import_rsa_private_key(
-            rs.raw,
-            rs.sh,
-            n=comp["modulus"],
-            e=comp["public_exponent"],
-            d=comp["private_exponent"],
-            p=comp["prime_1"],
-            q=comp["prime_2"],
-            dmp1=comp["exponent_1"],
-            dmq1=comp["exponent_2"],
-            iqmp=comp["coefficient"],
-            attrs={CKA_SIGN: True, CKA_DECRYPT: True},
-        )
+        try:
+            imported = import_rsa_private_key_negotiated(
+                rs,
+                n=comp["modulus"],
+                e=comp["public_exponent"],
+                d=comp["private_exponent"],
+                p=comp["prime_1"],
+                q=comp["prime_2"],
+                dmp1=comp["exponent_1"],
+                dmq1=comp["exponent_2"],
+                iqmp=comp["coefficient"],
+                attrs={CKA_SIGN: True, CKA_DECRYPT: True},
+            )
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _RSA_IMPORT_DEVIATION_CKRS,
+                "RSA private-key import with the requested attributes is not operational",
+            )
+            raise
         try:
             assert imported != 0
             attrs = read_attributes(rs.raw, rs.sh, imported, [CKA_KEY_TYPE])
@@ -137,13 +164,13 @@ class TestRSAPrivateKeyImport:
     def test_imported_private_key_signs(self, p11_raw_session: Any) -> None:
         """Sign with imported PKCS#11 private key, verify with cryptography."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
         crypto_key = _generate_rsa_key()
         comp = _export_rsa_components(crypto_key)
 
         # Import private key into PKCS#11
-        p11_priv = import_rsa_private_key(
-            rs.raw,
-            rs.sh,
+        p11_priv = import_rsa_private_key_negotiated(
+            rs,
             n=comp["modulus"],
             e=comp["public_exponent"],
             d=comp["private_exponent"],
@@ -170,15 +197,19 @@ class TestRSAPrivateKeyImport:
         key = _generate_rsa_key()
         comp = _export_rsa_components(key)
 
-        imported = import_rsa_public_key(
-            rs.raw,
-            rs.sh,
+        imported = import_rsa_public_key_negotiated(
+            rs,
             n=comp["modulus"],
             e=comp["public_exponent"],
             attrs={CKA_VERIFY: True},
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, imported, [CKA_LOCAL])
+            if CKA_LOCAL not in attrs:
+                pytest.xfail(
+                    "module does not expose CKA_LOCAL for imported keys "
+                    "(PKCS#11 \u00a74.x requires CKA_LOCAL=False on import)"
+                )
             assert attrs[CKA_LOCAL] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, imported)

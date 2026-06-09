@@ -359,6 +359,55 @@ def import_rsa_public_key_negotiated(
     return create_object_negotiated(rs, base, purpose=purpose)
 
 
+def import_rsa_private_key_negotiated(
+    rs: Any,
+    *,
+    n: bytes,
+    e: bytes,
+    d: bytes,
+    p: bytes,
+    q: bytes,
+    dmp1: bytes,
+    dmq1: bytes,
+    iqmp: bytes,
+    attrs: Mapping[Any, Any] | None = None,
+    purpose: str = "RSA private key import",
+) -> int:
+    """Import an RSA private key from CRT components, negotiating storage shape.
+
+    Same canonical template as ``raw.recipes.import_rsa_private_key``; clean
+    storage-shape rejects retry via ``create_object_negotiated`` variants.
+    """
+    from pkcs11_check.raw.types_std import (
+        CKA_COEFFICIENT,
+        CKA_EXPONENT_1,
+        CKA_EXPONENT_2,
+        CKA_PRIME_1,
+        CKA_PRIME_2,
+        CKA_PRIVATE_EXPONENT,
+        CKO_PRIVATE_KEY,
+    )
+
+    base: dict[Any, Any] = {
+        CKA_CLASS: CKO_PRIVATE_KEY,
+        CKA_KEY_TYPE: CKK_RSA,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_MODULUS: n,
+        CKA_PUBLIC_EXPONENT: e,
+        CKA_PRIVATE_EXPONENT: d,
+        CKA_PRIME_1: p,
+        CKA_PRIME_2: q,
+        CKA_EXPONENT_1: dmp1,
+        CKA_EXPONENT_2: dmq1,
+        CKA_COEFFICIENT: iqmp,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object_negotiated(rs, base, purpose=purpose)
+
+
 def ec_public_key_binding_defect(rs: Any, handle: int, requested_params: bytes) -> str | None:
     """Effect-check a just-created EC public key: is it bound to the requested curve?
 
