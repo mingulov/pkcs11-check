@@ -622,3 +622,36 @@ def test_needs_function_registered_as_dynamic_marker() -> None:
         {"needs_function": SimpleNamespace(args=("C_EncapsulateKey",))},
     )
     assert plugin_mod._has_dynamic_markers(item) is True
+
+
+def test_mldsa_runs_but_mlkem_encaps_skips_on_v240_module() -> None:
+    """A v2.40 module advertising CKM_ML_DSA but lacking C_EncapsulateKey:
+    ML-DSA (mechanism-gated, no version/function marker) runs; ML-KEM encaps
+    (needs_function) skips. Locks the silent-skip regression."""
+    config = SimpleNamespace(
+        getoption=lambda name, default=None: {"p11_skip_unsupported": True}.get(name, default)
+    )
+    manifest = CapabilityManifest(
+        status="ok",
+        module_path="/tmp/module.so",
+        requested_interface="auto",
+        interface_version="2.40",
+        slot_index=0,
+        slot_count=1,
+        mechanisms=["CKM_ML_DSA", "CKM_ML_DSA_KEY_PAIR_GEN"],
+        functions=["C_Sign", "C_Verify", "C_GenerateKeyPair"],  # no C_EncapsulateKey
+    )
+
+    # ML-DSA test post-migration carries NO version/function marker (mechanism-gated in-test)
+    mldsa_item = _FakeItem(Path("/tmp/testcases/test_mldsa.py"), {})
+    assert plugin_mod._runtime_skip_reason(mldsa_item, config, manifest) is None
+
+    # ML-KEM encaps test carries needs_function
+    mlkem_item = _FakeItem(
+        Path("/tmp/testcases/test_kem.py"),
+        {"needs_function": SimpleNamespace(args=("C_EncapsulateKey",))},
+    )
+    assert (
+        plugin_mod._runtime_skip_reason(mlkem_item, config, manifest)
+        == "Function C_EncapsulateKey not present in module"
+    )
