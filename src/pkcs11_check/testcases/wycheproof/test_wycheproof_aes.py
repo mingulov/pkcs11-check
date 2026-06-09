@@ -58,6 +58,8 @@ from pkcs11_check.testcases._negotiation import (
     negotiate_request,
     value_len_variant_allowed,
 )
+from pkcs11_check.testcases._operability import classify_kat_clean_error
+from pkcs11_check.testcases.acvp.aes.base_runner_aead import _aead_operability as _ccm_operability
 from pkcs11_check.testcases.conftest import import_secret_key_negotiated, xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
@@ -428,7 +430,16 @@ def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     except (AssertionError, TypeError, NotImplementedError) as exc:
         if result == "valid":
             if isinstance(exc, AssertionError):
-                _xfail_if_aes_runtime_reject(exc, f"AES-CCM {vec_id}")
+                # Effect-based (triage H2): a clean decrypt error on a valid CCM
+                # vector is classified against the canonical CCM-decrypt probe.
+                # Non-operational (bouncyhsm CCM -> GENERAL_ERROR) or an honest
+                # clean reject -> xfail; a working probe with WRONG canonical
+                # output (a real break) re-raises. The real CCM findings
+                # (accepted-invalid, wrong plaintext) are caught below, not here.
+                classify_kat_clean_error(
+                    exc, result=_ccm_operability(rs, "AES_CCM", "decrypt"),
+                    label=f"AES-CCM {vec_id}",
+                )
             pytest.fail(f"AES-CCM decrypt failed for valid vector {vec_id}: {exc}")
         # acceptable: reject of an invalid vector is fine
         return

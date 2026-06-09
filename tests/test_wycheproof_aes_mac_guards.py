@@ -144,6 +144,36 @@ def test_ccm_valid_vector_decrypts(monkeypatch: pytest.MonkeyPatch) -> None:
     aes.test_aes_ccm(_AesSession("AES_CCM"), vec_id, vec)
 
 
+def test_ccm_valid_vector_clean_reject_xfails_when_not_operational(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid CCM vector cleanly rejected (ENCRYPTED_DATA_INVALID) when the
+    canonical CCM probe is NOT operational is an advertised-but-not-operational
+    deviation -> xfail, not a hard fail. (bouncyhsm CCM: 357 such rejects.)"""
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.raw.types_std import CKR_ENCRYPTED_DATA_INVALID
+    from pkcs11_check.testcases._operability import Operability, OperabilityResult
+
+    vec_id, vec = _first(aes._AES_CCM_VECTORS, "valid")
+    monkeypatch.setattr(aes, "import_secret_key_negotiated", _handle)
+
+    def _reject(*_a: Any, **_k: Any) -> bytes:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_ENCRYPTED_DATA_INVALID", int(CKR_ENCRYPTED_DATA_INVALID)
+        )
+
+    monkeypatch.setattr(aes, "decrypt_single", _reject)
+    monkeypatch.setattr(aes, "destroy_quietly", lambda *_a: None)
+    monkeypatch.setattr(
+        aes,
+        "_ccm_operability",
+        lambda *_a: OperabilityResult(Operability.NOT_OPERATIONAL, "canonical CCM rejected"),
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="not operational"):
+        aes.test_aes_ccm(_AesSession("AES_CCM"), vec_id, vec)
+
+
 def test_ccm_valid_vector_wrong_plaintext_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     """A valid CCM vector that decrypts to the wrong plaintext is a finding (fail)."""
     vec_id = "tc2-valid"
