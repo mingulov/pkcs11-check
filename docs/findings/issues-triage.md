@@ -506,8 +506,8 @@ single-provider findings. Ranked by provider-count:
 | 14 | parameter_validation | AES-GCM IV reuse "accepted" | ⚖️ module can't track IV history → unreasonable to require; **flag** |
 | 14 | parameter_validation | RSA-PSS sLen=0 "accepted" | ⚖️ **sLen=0 is VALID deterministic PSS (RFC 8017)**, not a Type-A break — strongest reclassify candidate; **flag** |
 | 12 | parameter_validation | AES-GCM short tag "accepted" | ⚖️ spec-legal (NIST advisory); **flag** |
-| 13 | wycheproof_ecdh | "derived a secret for invalid vector" (×92) | ⚠️ **SECURITY — needs per-vector on-curve determination, do NOT touch blind** |
-| 11 | acvp_eddsa | "ACCEPTED an INVALID EdDSA key" | ⚠️ needs the same valid-vs-invalid determination as ECDH |
+| 13 | wycheproof_ecdh | "derived a secret for invalid vector" (×92) | 🔧 **FIXED** — off-base-curve gate; softhsm2 42F→0F (all on-curve encoding-invalid), real off-curve finding preserved |
+| 11 | acvp_eddsa | "ACCEPTED an INVALID EdDSA key" | ⚠️ same determination as ECDH (next) |
 
 ### The two categories among the not-yet-fixed cross-cutting signatures
 
@@ -537,4 +537,24 @@ dangerous direction (from_encoded_point never accepts an off-curve point, so a r
 hidden) — but whether softhsm2/NSS genuinely derive on **off-base-curve** points (a serious, real
 finding to KEEP) vs only on-curve ones (harness over-flag) must be **determined per vector before
 acting**. Not auto-fixed this pass: getting invalid-curve classification wrong either hides a real
-vuln or cries wolf. EdDSA-keyver (×11 prov) needs the same valid-vs-genuinely-invalid determination.
+vuln or cries wolf. EdDSA-keyver (×11 prov) needs the same valid-vs-genuinely-invalid determination — **but it is
+murkier and likely over-strict**: `test_eddsa_keyver` fails when a module imports+uses an "invalid"
+ACVP EdDSA public key, yet RFC 8032 does NOT require a verifier to reject non-canonical or
+small-order EdDSA public keys (verification is defined to work regardless). ACVP KeyVer tests an
+*optional* key-validation capability, not a PKCS#11 requirement. The vectors carry no reason field
+(8 vectors / 4 invalid), so an Edwards-point analysis (off-curve vs non-canonical/small-order) is
+needed: off-curve acceptance is arguably questionable, but canonical/small-order acceptance is
+RFC-permitted and should not hard-`fail`. Treat with the parameter-validation philosophy items
+(⚖️, flag) pending that analysis — do NOT blindly reclassify.
+
+### ✅ ECDH RESOLVED (off-base-curve gate) — the determination came out clean
+
+The ECDH ⚠️ item above is now FIXED and the security question answered: gating the
+"derived-on-invalid" finding on `_point_on_base_curve` (cryptography.from_encoded_point) reduced
+softhsm2 ECDH **42 F → 0 F** and NSS to 0 F — **every** failing vector was an on-curve point flagged
+invalid only at the X.509-encoding layer the raw PKCS#11 ECDH path never sees. softhsm2/NSS both
+correctly REJECT genuine off-curve points (those were already in the reject→pass path), so neither
+has an invalid-curve weakness. The real-finding path is preserved: a provider that DID derive on an
+off-base-curve point still `fail`s (verified via tc332 `InvalidCurveAttack`, off-curve, still fails).
+This is the model for the EdDSA item: implement a *safe* gate (never masks an off-curve/real case),
+let the fresh run reveal whether any residual failures are genuine.
