@@ -14,7 +14,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
     generate_random,
-    import_secret_key,
     read_attributes,
     unwrap_key,
     verify_single,
@@ -50,6 +49,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_HANDLE_INVALID,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
@@ -58,7 +58,7 @@ from pkcs11_check.testcases._negotiation import (
     negotiate_request,
     value_len_variant_allowed,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import import_secret_key_negotiated, xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = pytest.mark.wycheproof
@@ -70,6 +70,11 @@ _AES_RUNTIME_REJECT_CKRS = (
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    # Imported-with-CKR_OK key not honored at use time (corePKCS11 returns
+    # KEY_HANDLE_INVALID for CMAC keys it claimed to import) -- the deviation
+    # is recorded here; the self-contradiction itself belongs to the dedicated
+    # object-coherence conformance coverage. Same precedent as wycheproof ECDSA.
+    CKR_KEY_HANDLE_INVALID,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
@@ -162,9 +167,8 @@ def test_aes_cmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
     result = vec["result"]
 
     try:
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -224,9 +228,8 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
 
     # Import unwrapping key
     try:
-        wrap_key_h = import_secret_key(
-            rs.raw,
-            rs.sh,
+        wrap_key_h = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -315,9 +318,8 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
 
     # Import wrapping key
     try:
-        wrap_key_h = import_secret_key(
-            rs.raw,
-            rs.sh,
+        wrap_key_h = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -389,9 +391,8 @@ def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     result = vec["result"]
 
     try:
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -466,9 +467,8 @@ def test_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
     result = vec["result"]
 
     try:
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -533,9 +533,8 @@ def test_aes_xts(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
 
     # XTS uses AES_XTS key type with double-size key
     try:
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES_XTS,
             key_bytes,
             attrs={

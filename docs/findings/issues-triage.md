@@ -382,3 +382,18 @@ de-identification are routing clean deviations correctly; no provider-identity l
 2. wolfpkcs11 / corepkcs11 — not yet reached this run (no prior baseline either).
 3. Adjudicate the C1–C3 crash clusters (UB vs module) by reading the two overflow test files.
 4. Confirm H2/H3 fork (advertised? error-vs-wrong-output) before any fix.
+
+## Fix-pass progress (2026-06-09, branch fix/triage-harness-improvements)
+
+| Item | Provider file | Before (pool) | After (fresh) | Class |
+|---|---|---|---|---|
+| H6 | corepkcs11 wycheproof_ecdsa | 21,906 F / 0 P | **0 F / 8,662 P** / 632 xf | harness+target 🔧 + Type-C finding (coherence test ×2 F) |
+| H2 | bouncyhsm test_ccm | 7,370 F | **1,691 F (real: no-auth CCM decrypt)** / 5,679 xf, passes = | probe 🔧 + Type-A finding 📋 |
+| H2w2 | wolfpkcs11 test_cts | 2,079 F | **0 F** / 2,079 xf, 399 P = | probe 🔧 |
+| sweep | corepkcs11 acvp_hmac | 148 F | **0 F** / 148 xf | negotiation 🔧 |
+| sweep | corepkcs11 limbo_import | 493 F / 156 P | **0 F / 589 P** / 74 xf | portable label 🔧 |
+| sweep | corepkcs11 wycheproof_aes | 63 F / 248 P | **0 F / 269 P** / 42 xf | negotiation + KEY_HANDLE_INVALID reclass 🔧 |
+
+Controls byte-identical on every step: softhsm2 (ecdsa 21,906P, wrap 3,600xf, hmac 470P,
+aes 476P, limbo 663P), kryoptic (ccm 4,890P/3,508xf ×2 runs, ecdsa 0F), opencryptoki (0F).
+Next: RSA/data-object import migrations, coherence coverage for secret keys, H3-H5, C1-C4.
