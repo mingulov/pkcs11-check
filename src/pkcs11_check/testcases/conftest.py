@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_EC_PARAMS,
@@ -526,6 +526,39 @@ def classify_lifecycle_effect(*, claimed_success: bool, effect_observed: bool, l
         pytest.xfail(f"{label}: prior operation did not claim success")
     if effect_observed:
         pytest.fail(f"{label}: success claimed then contradicted (self-contradiction)")
+
+
+def classify_discrimination(*, valid_accepted: bool, invalid_outcome: Any, label: str) -> None:
+    """Outcome-based discrimination classifier (Pillar 2, guardrails D1-D5).
+
+    For integrity/forgery/type-confusion negative tests where the spec mandates no
+    specific failure code: the verdict is the security EFFECT, not the CKR named.
+
+    Args:
+        valid_accepted: the un-tampered operation succeeded AND its result was verified
+            (a real, material-checked positive leg). Advertised-but-not-operational
+            positive legs are routed to xfail by the caller BEFORE this call (D5); a
+            ``False`` here means CKR_OK-but-wrong/unverifiable output -- a real break.
+        invalid_outcome: the invalid leg's outcome -- either the caught exception, or the
+            produced object (handle/bytes) when the module ACCEPTED the bad input.
+            A ``CkrAssertionError`` (clean ``.rv``) -> rejected (any code, D3). Any other
+            exception (no ``.rv``) -> re-raised (D2: a harness/ctypes bug, not detection).
+            A produced object (not an exception) -> accepted -> break.
+    """
+    if isinstance(invalid_outcome, CkrAssertionError):
+        invalid_rejected = True
+    elif isinstance(invalid_outcome, BaseException):
+        raise invalid_outcome
+    else:
+        invalid_rejected = False
+
+    if not valid_accepted:
+        pytest.fail(
+            f"{label}: the valid/un-tampered operation did not verify -- cannot "
+            "distinguish 'detected tampering' from 'cannot do the operation'"
+        )
+    if not invalid_rejected:
+        pytest.fail(f"{label}: accepted the tampered/forged/confused input (security break)")
 
 
 def destroy_returned_handles(rs: Any, *handles: int) -> None:
