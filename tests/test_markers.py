@@ -1,4 +1,4 @@
-"""Tests for pytest marker definitions and version-check logic."""
+"""Tests for pytest marker definitions and registration."""
 
 from __future__ import annotations
 
@@ -32,3 +32,28 @@ class TestMarkerDefinitions:
             if marker not in _BUILTIN_MARKERS
         }
         assert used <= names
+
+
+def test_no_testcase_uses_interface_version_markers() -> None:
+    """Capability gating is provider-general: no test may gate on interface version.
+    Any future requires_v30/v31/v32 reintroduces the silent-skip bug this refactor fixed."""
+    import pkcs11_check.testcases as testcases_pkg
+
+    root = Path(testcases_pkg.__file__).parent
+    # Match the MARKER form, not a bare substring — the inverse-test method name
+    # `test_authenticated_wrap_requires_v32` is intentionally retained and must not trip this.
+    pattern = re.compile(r"mark\.requires_v3[012]")
+    offenders = [
+        str(p.relative_to(root))
+        for p in root.rglob("test_*.py")
+        if pattern.search(p.read_text())
+    ]
+    assert offenders == [], f"interface-version markers must not be used: {offenders}"
+
+
+def test_requires_version_markers_are_unregistered() -> None:
+    """The requires_v30/v31/v32 markers are gone from the registry."""
+    names = {m.name for m in MARKER_DEFINITIONS}
+    assert "requires_v30" not in names
+    assert "requires_v32" not in names
+    assert "needs_function" in names
