@@ -31,7 +31,7 @@ from pkcs11_check.raw.types_std import (
     CKV_TYPE_UNSPECIFIED,
 )
 
-pytestmark = [pytest.mark.requires_v30, pytest.mark.object]
+pytestmark = [pytest.mark.object]
 
 # Known CKV_TYPE values
 _KNOWN_VALIDATION_TYPES = {
