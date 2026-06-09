@@ -1797,3 +1797,29 @@ Minimal embedded implementation; storage-oriented object model. Root-caused 2026
   designated porting point — corePKCS11's own PKCS#11 logic is untouched.
 - The adapter shim (`corepkcs11_adapter.c`) only overrides GetInfo/SlotInfo/TokenInfo/
   MechanismList/MechanismInfo/Digest; C_CreateObject and C_Verify pass straight through.
+
+## wolfpkcs11 (wolfSSL in-process C library)
+
+Fresh full run on dev 2026-06-10: **400 failed** (pool baseline 3,067; the fix-pass cleared
+test_cts 2,079, wycheproof_rsa_oaep 209, wycheproof 144, wycheproof_rsa 21 -> 0). Remaining are
+genuine wolfpkcs11 findings + flagged UB probes.
+
+### Known bugs
+- **Digest path leaks a raw wolfSSL error as the CK_RV (H7)**: `C_Digest`/`C_DigestFinal` for
+  SHA-2/SHA-3 return `0xfffffffffffffff7c` (= -132 sign-extended, a raw negative wolfSSL internal
+  error) instead of a defined `CKR_*`. The whole digest path is affected: `test_acvp_hash` ~161,
+  `test_acvp_sha3` ~81, `test_digest`/`test_mech_digest`/`test_mech_multipart`/`test_sha3` ~67
+  (~309 total). Returning a non-`CKR_*` value violates the spec; the suite surfaces it as a clean
+  (non-crash) return.
+- **AES-CCM decrypt accepts an invalid tag (tag-auth bypass, Type A)**: `test_ccm` -- "accepted
+  invalid (CKR_OK) -- must reject" (same no-authentication class as bouncyhsm CCM). CCM is also
+  partly non-operational (the H2 operability probe xfails those vectors); the ops that complete
+  expose the missing authentication.
+- **Output-buffer size-protocol violations** (`test_ckr_raw_buffer`, fresh): `C_GetMechanismList`
+  returns `CKR_BUFFER_TOO_SMALL` but reports required count **1 when the real count is 65** (caller
+  can never size the buffer); `C_GetAttributeValue` **writes 13 bytes past a declared 1-byte buffer**
+  (real OOB write); `C_WrapKey` reports a **garbage required length (isize_max / 0x7FFF...FF)**.
+  PKCS#11 §5.2 requires the true required length with no write on `CKR_BUFFER_TOO_SMALL`.
+- **Crashes (genuine, on normal input)**: `test_wycheproof_hkdf` SIGABRT after 10 valid vectors;
+  `test_ckr_keygen` SIGSEGV. wolfpkcs11-master fixed most crashes (4 vs stable's 18) -- report
+  against current master.
