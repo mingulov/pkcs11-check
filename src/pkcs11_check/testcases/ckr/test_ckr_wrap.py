@@ -35,16 +35,13 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_HANDLE_INVALID,
-    CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
     CKR_WRAPPING_KEY_HANDLE_INVALID,
-    CKR_WRAPPING_KEY_SIZE_RANGE,
     CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
 )
 from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS
-from pkcs11_check.testcases._module_quirks import quirk_extras
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_WRAP, assert_ckr
 from pkcs11_check.testcases.ckr._malformed_attrs import make_bool_attr_overlong
 from pkcs11_check.testcases.conftest import (
@@ -353,18 +350,15 @@ class TestWrapKeyErrors:
                     "Module accepted a 64-bit AES wrap key for CKM_AES_KEY_WRAP "
                     "(expected CKR_WRAPPING_KEY_SIZE_RANGE)"
                 )
-            accepted = (
-                CKR_WRAPPING_KEY_SIZE_RANGE,
-                CKR_KEY_SIZE_RANGE,
-                # Some modules treat undersized AES as type-inconsistent
-                CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
-                CKR_KEY_TYPE_INCONSISTENT,
-                *(() if ckr_strict else quirk_extras(p11_config, "size_range_on_wrap")),
-            )
-            assert rv in accepted, (
-                f"Unexpected CK_RV 0x{rv:08x} on undersized wrap key; "
-                f"expected one of {[hex(c) for c in accepted]}"
-            )
+            # Code-conformance: the spec mandates CKR_WRAPPING_KEY_SIZE_RANGE for a
+            # too-small wrapping key. Classify the reject three ways (assert_ckr):
+            #   * a size-or-type spec code -> pass,
+            #   * any other clean reject (e.g. softhsm2's catch-all
+            #     CKR_GENERAL_ERROR) -> xfail (an honest, recorded deviation),
+            #   * CKR_OK -> fail (already handled above as the Type-A break).
+            # In strict mode (ckr_strict) a non-spec code is promoted to a hard
+            # fail, preserving the strict/compat distinction.
+            assert_ckr(CKR_WRAP["wrap_wrapping_key_size_range"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, undersized_wrap)
             destroy_quietly(rs.raw, rs.sh, target)

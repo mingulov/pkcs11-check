@@ -1834,9 +1834,17 @@ def test_ckr_wrap_mechanism_invalid_skips_without_aes_key_wrap(
         test_ckr_wrap.TestWrapKeyErrors().test_mechanism_invalid(rs, ckr_strict=False)
 
 
-def test_ckr_wrap_size_range_uses_documented_softhsm2_quirk(
+def test_ckr_wrap_size_range_general_error_is_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Undersized-wrap stays a 3-way code-conformance check.
+
+    The PKCS#11 spec mandates CKR_WRAPPING_KEY_SIZE_RANGE for C_WrapKey with a
+    too-small wrapping key. softhsm2 returns the catch-all CKR_GENERAL_ERROR
+    here; the classifier records that as an honest xfail (a documented
+    conformance deviation), NOT a silent pass (the old size_range_on_wrap quirk
+    masked it as a pass).
+    """
     raw = SimpleNamespace(C_WrapKey=lambda *_args: int(CKR_GENERAL_ERROR))
     rs = SimpleNamespace(
         raw=raw,
@@ -1849,11 +1857,12 @@ def test_ckr_wrap_size_range_uses_documented_softhsm2_quirk(
     monkeypatch.setattr(test_ckr_wrap, "gen_aes_key", lambda *_args, **_kwargs: 12)
     monkeypatch.setattr(test_ckr_wrap, "destroy_quietly", lambda *_args, **_kwargs: None)
 
-    test_ckr_wrap.TestWrapKeyErrors().test_wrapping_key_size_range(
-        rs,
-        p11_config,
-        ckr_strict=False,
-    )
+    with pytest.raises(pytest.xfail.Exception, match="WRAPPING_KEY_SIZE_RANGE"):
+        test_ckr_wrap.TestWrapKeyErrors().test_wrapping_key_size_range(
+            rs,
+            p11_config,
+            ckr_strict=False,
+        )
 
 
 def test_attribute_enforcement_date_setup_python_bug_propagates(

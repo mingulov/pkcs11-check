@@ -105,6 +105,8 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_TYPE_INVALID,
     CKR_WRAPPED_KEY_INVALID,
     CKR_WRAPPED_KEY_LEN_RANGE,
+    CKR_WRAPPING_KEY_SIZE_RANGE,
+    CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
 )
 from pkcs11_check.testcases._error_tuples import (
     DATA_ERRORS,
@@ -4016,6 +4018,32 @@ CKR_WRAP: dict[str, CkrExpectation] = {
             CKR_FUNCTION_FAILED,
         ),
         spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+    ),
+    "wrap_wrapping_key_size_range": CkrExpectation(
+        function="C_WrapKey",
+        condition="wrapping_key_size_out_of_range",
+        # Spec mandates CKR_WRAPPING_KEY_SIZE_RANGE; the size-or-type family of
+        # codes is accepted as spec-correct (some modules classify an undersized
+        # AES key as type-inconsistent rather than size-out-of-range).
+        spec_ckr=(
+            CKR_WRAPPING_KEY_SIZE_RANGE,
+            CKR_KEY_SIZE_RANGE,
+            CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
+            CKR_KEY_TYPE_INCONSISTENT,
+        ),
+        # Universal codes (CKR_GENERAL_ERROR / CKR_FUNCTION_FAILED) are injected
+        # by full_compat(), so a catch-all reject (e.g. softhsm2's
+        # CKR_GENERAL_ERROR) is an honest xfail, not a pass.
+        compat_tuple=(
+            CKR_WRAPPING_KEY_SIZE_RANGE,
+            CKR_KEY_SIZE_RANGE,
+            CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
+            CKR_KEY_TYPE_INCONSISTENT,
+            CKR_FUNCTION_FAILED,
+        ),
+        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        kind="metadata",
+        testable=True,  # Testable via RawPKCS11
     ),
     "wrap_mechanism_param_invalid": CkrExpectation(
         function="C_WrapKey",
