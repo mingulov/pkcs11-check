@@ -727,16 +727,22 @@ def test_wycheproof_hmac_invalid_tags_are_reported() -> None:
 
 
 def test_wycheproof_rsa_decrypt_invalid_ciphertexts_are_reported() -> None:
-    """Invalid RSA decrypt vectors must fail if decrypt succeeds."""
-    paths = (
-        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_decrypt.py"),
-        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_oaep.py"),
-    )
+    """Invalid RSA decrypt vectors must still be reported on a real break.
 
-    for path in paths:
-        source = path.read_text()
-        assert "accepted invalid ciphertext" in source
-        assert 'result == "invalid"' in source
+    RSA PKCS#1 v1.5 is the Bleichenbacher case: returning a SYNTHETIC plaintext
+    for invalid padding is the recommended mitigation, not a finding, so the
+    PKCS#1 path flags only the padding-bypass break (recovering the target msg).
+    RSA-OAEP (Manger) still rejects invalid ciphertext, so its accept->report
+    guard stays. Both paths must still branch on the invalid result.
+    """
+    pkcs1 = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_decrypt.py").read_text()
+    assert "recovered the target message" in pkcs1  # real Bleichenbacher break
+    assert 'plaintext == msg_expected' in pkcs1
+    assert 'result == "invalid"' in pkcs1
+
+    oaep = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_oaep.py").read_text()
+    assert "accepted invalid ciphertext" in oaep
+    assert 'result == "invalid"' in oaep
 
 
 def test_wycheproof_symmetric_invalid_outputs_are_reported() -> None:
