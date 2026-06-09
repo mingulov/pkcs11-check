@@ -1039,12 +1039,10 @@ class TestShakeXof:
 class TestMlDsaExternalMu:
     """CKM_ML_DSA_EXTERNAL_MU and CKM_ML_DSA_EXTERNAL_MU_GEN."""
 
-    @pytest.mark.requires_v32
     def test_external_mu_availability(self, p11_raw_session: Any) -> None:
         if not p11_raw_session.has_mechanism("ML_DSA_EXTERNAL_MU"):
             pytest.skip("CKM_ML_DSA_EXTERNAL_MU not supported")
 
-    @pytest.mark.requires_v32
     def test_external_mu_gen_availability(self, p11_raw_session: Any) -> None:
         if not p11_raw_session.has_mechanism("ML_DSA_EXTERNAL_MU_GEN"):
             pytest.skip("CKM_ML_DSA_EXTERNAL_MU_GEN not supported")

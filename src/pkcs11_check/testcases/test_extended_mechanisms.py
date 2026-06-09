@@ -295,19 +295,16 @@ class TestKMAC:
     Most current modules do not yet support KMAC. Tests skip cleanly.
     """
 
-    @pytest.mark.requires_v32
     def test_kmac_128_availability(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("KMAC_128"):
             pytest.skip("CKM_KMAC_128 not supported")
 
-    @pytest.mark.requires_v32
     def test_kmac_256_availability(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("KMAC_256"):
             pytest.skip("CKM_KMAC_256 not supported")
 
-    @pytest.mark.requires_v32
     def test_kmac_128_sign_roundtrip(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("KMAC_128"):
@@ -317,7 +314,6 @@ class TestKMAC:
             "not yet available in pkcs11_check.raw bindings"
         )
 
-    @pytest.mark.requires_v32
     def test_kmac_256_sign_roundtrip(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("KMAC_256"):
@@ -341,13 +337,11 @@ class TestMLDSAExternalMU:
     document the limitation.
     """
 
-    @pytest.mark.requires_v32
     def test_external_mu_availability(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("ML_DSA_EXTERNAL_MU"):
             pytest.skip("CKM_ML_DSA_EXTERNAL_MU not supported")
 
-    @pytest.mark.requires_v32
     def test_external_mu_sign_verify_with_dummy_mu(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("ML_DSA_EXTERNAL_MU"):
