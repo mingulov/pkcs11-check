@@ -46,6 +46,7 @@ from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_ENCAPSULATE,
     CKA_KEY_TYPE,
+    CKA_VALUE_LEN,
     CKK_AES,
     CKK_ML_KEM,
     CKM_ML_KEM,
@@ -139,7 +140,13 @@ def _raw_ek_import_supported(rs: Any, ps_bits: int) -> bool:
                 rs.sh,
                 pub,
                 CKM_ML_KEM,
-                attrs={CKA_CLASS: CKO_SECRET_KEY, CKA_KEY_TYPE: CKK_AES},
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    # Required by strict-but-conformant modules (opencryptoki) per PKCS#11
+                    # v3.2; the ML-KEM shared secret is 32 bytes (FIPS 203).
+                    CKA_VALUE_LEN: 32,
+                },
             )[0]
             ok = True
         except CkrAssertionError:
@@ -198,7 +205,13 @@ def test_mlkem_encaps_modulus_overflow(
                 rs.sh,
                 pub,
                 CKM_ML_KEM,
-                attrs={CKA_CLASS: CKO_SECRET_KEY, CKA_KEY_TYPE: CKK_AES},
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    # Required by strict-but-conformant modules (opencryptoki) per PKCS#11
+                    # v3.2; the ML-KEM shared secret is 32 bytes (FIPS 203).
+                    CKA_VALUE_LEN: 32,
+                },
             )[0]
         except CkrAssertionError as e:
             exc = e

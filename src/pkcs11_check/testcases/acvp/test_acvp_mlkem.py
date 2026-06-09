@@ -36,6 +36,7 @@ from pkcs11_check.raw.types_std import (
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKA_VALUE,
+    CKA_VALUE_LEN,
     CKK_AES,
     CKK_ML_KEM,
     CKM_ML_KEM_KEY_PAIR_GEN,
@@ -76,6 +77,10 @@ if not ACVP_AVAILABLE:
 _SECRET_KEY_ATTRS: dict[int, object] = {
     CKA_CLASS: CKO_SECRET_KEY,
     CKA_KEY_TYPE: CKK_AES,
+    # PKCS#11 v3.2: CKM_ML_KEM contributes CKA_VALUE but the length attribute required by the
+    # key type must be specified; strict-but-conformant modules (opencryptoki) reject its
+    # absence with CKR_TEMPLATE_INCONSISTENT. The ML-KEM shared secret is 32 bytes (FIPS 203).
+    CKA_VALUE_LEN: 32,
     CKA_SENSITIVE: False,
     CKA_EXTRACTABLE: True,
 }
