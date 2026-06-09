@@ -58,12 +58,14 @@ class OperabilityResult:
     detail: str
 
 
-# Request-shape rejects that are xfail material even when the mechanism is
-# operational: the module cleanly refused THIS request shape (e.g. kryoptic
-# rejects 7-byte CCM nonces; corePKCS11-style impls use ARGUMENTS_BAD for
-# input-shape constraints) -- a recorded deviation, not a crypto failure.
-# Data-verdict and generic-failure codes stay OUT: on an operational mechanism
-# those are findings (meta-test pinned).
+# Request-shape rejects that remain xfail material when the probe is
+# INCONCLUSIVE (no effect evidence; e.g. the import path is broken, see H6):
+# the module cleanly refused THIS request shape (kryoptic rejects 7-byte CCM
+# nonces; corePKCS11-style impls use ARGUMENTS_BAD for input-shape
+# constraints). Data-verdict and generic-failure codes stay OUT (meta-test
+# pinned): with no canonical evidence, blanket-xfailing those would have
+# hidden the H6 mass-import failure. With an OPERATIONAL canonical, ANY clean
+# CKR is the model's honest-deviation xfail and this set is not consulted.
 PARAM_SHAPE_REJECTS: tuple[int, ...] = (
     CKR_ARGUMENTS_BAD,
     CKR_MECHANISM_INVALID,
@@ -107,9 +109,20 @@ def classify_kat_clean_error(
         raise exc
     if result.status is Operability.NOT_OPERATIONAL:
         pytest.xfail(f"{label}: advertised but not operational ({result.detail}); vector: {exc}")
-    if result.status is not Operability.WRONG_OUTPUT and exc.rv in PARAM_SHAPE_REJECTS:
-        # OPERATIONAL: the mechanism works, this parameter shape was cleanly
-        # refused. INCONCLUSIVE: no effect evidence either way -- keep the
-        # legacy param-shape classification rather than inventing findings.
+    if result.status is Operability.OPERATIONAL:
+        # Classification model, positive-op row: a clean error is an honest
+        # deviation (the module refused; it produced no wrong crypto) -> xfail,
+        # whatever the code. Only wrong output / crash / self-contradiction
+        # fail; decrypt-side false-rejects of VALID data are verdict errors and
+        # are handled by the runners before reaching here.
+        pytest.xfail(
+            f"{label}: mechanism operational but this request cleanly rejected "
+            f"({result.detail}); vector: {exc}"
+        )
+    if result.status is Operability.INCONCLUSIVE and exc.rv in PARAM_SHAPE_REJECTS:
+        # No effect evidence either way (canonical staging failed -- e.g. a
+        # broken import path, triage H6). Keep the narrow legacy param-shape
+        # classification; blanket-xfailing here would have hidden H6.
         pytest.xfail(f"{label}: this parameter shape rejected ({result.detail}); vector: {exc}")
+    # INCONCLUSIVE with a non-shape code, or canonical WRONG_OUTPUT: surface it.
     raise exc

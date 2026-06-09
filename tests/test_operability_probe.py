@@ -80,19 +80,22 @@ def test_not_operational_xfails_any_clean_ckr() -> None:
 
 def test_operational_param_shape_reject_is_xfail() -> None:
     """kryoptic CCM: canonical works, 7-byte-nonce vector cleanly rejected ->
-    recorded parameter-shape deviation, not a hard fail."""
-    with pytest.raises(pytest.xfail.Exception, match="parameter shape"):
+    recorded deviation, not a hard fail."""
+    with pytest.raises(pytest.xfail.Exception, match="cleanly rejected"):
         classify_kat_clean_error(
             _ckr(CKR_MECHANISM_PARAM_INVALID), result=OPERATIONAL, label="AES_CCM encrypt"
         )
 
 
-def test_operational_unexpected_ckr_stays_a_finding() -> None:
-    """A working mechanism erroring on a specific valid vector is a finding."""
-    exc = _ckr(CKR_GENERAL_ERROR)
-    with pytest.raises(CkrAssertionError) as ei:
-        classify_kat_clean_error(exc, result=OPERATIONAL, label="AES_CCM encrypt")
-    assert ei.value is exc
+def test_operational_clean_reject_is_recorded_deviation() -> None:
+    """Per the classification model, a clean error on a positive op is an
+    honest deviation (xfail) even when the canonical works — only wrong
+    output, crashes and self-contradictions fail. (wolfpkcs11 rejects
+    unaligned CTS input with ENCRYPTED_DATA_INVALID while aligned works.)"""
+    with pytest.raises(pytest.xfail.Exception, match="cleanly rejected"):
+        classify_kat_clean_error(
+            _ckr(CKR_GENERAL_ERROR), result=OPERATIONAL, label="AES_CCM encrypt"
+        )
 
 
 def test_wrong_output_never_masks_vector_failures() -> None:

@@ -92,14 +92,16 @@ def test_ccm_param_shape_reject_on_operational_mech_xfails(
 
     monkeypatch.setattr(runner, "encrypt_single", _encrypt)
 
-    with pytest.raises(pytest.xfail.Exception, match="parameter shape"):
+    with pytest.raises(pytest.xfail.Exception, match="cleanly rejected"):
         runner.run_ccm_encrypt_test(_AeadSession(), "tc7b", _ckm_ccm_vec(nonce_len=7))
 
 
-def test_ccm_vector_error_on_operational_mech_stays_finding(
+def test_ccm_vector_clean_error_on_operational_mech_is_recorded_deviation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Canonical works; a valid vector erroring with GENERAL_ERROR is a finding."""
+    """Canonical works; a vector cleanly erroring with GENERAL_ERROR is an
+    honest deviation (model positive-op row): xfail, with the operational
+    canonical recorded in the reason. Wrong OUTPUT (asserts) still fails."""
     monkeypatch.setattr(runner, "import_secret_key", lambda *a, **k: 7)
     monkeypatch.setattr(runner, "destroy_quietly", lambda *a, **k: None)
     canonical_ct = _expected_canonical_ccm_ct()
@@ -111,7 +113,7 @@ def test_ccm_vector_error_on_operational_mech_stays_finding(
 
     monkeypatch.setattr(runner, "encrypt_single", _encrypt)
 
-    with pytest.raises(CkrAssertionError):
+    with pytest.raises(pytest.xfail.Exception, match="mechanism operational"):
         runner.run_ccm_encrypt_test(_AeadSession(), "tc1", _ckm_ccm_vec())
 
 

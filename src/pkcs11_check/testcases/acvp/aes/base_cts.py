@@ -27,8 +27,11 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_CBC,
     CKM_AES_CTS,
     CKR_DEVICE_ERROR,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
+)
+from pkcs11_check.testcases._operability import (
+    Operability,
+    OperabilityResult,
+    classify_kat_clean_error,
 )
 from pkcs11_check.testcases.acvp.aes.base import _import_aes_key, _load_vectors
 from pkcs11_check.testcases.conftest import is_known_error
@@ -255,10 +258,24 @@ def skip_unless_cts_variant(rs: Any, expected_cs: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _handle_cts_error(exc: AssertionError, vec_id: str, direction: str) -> None:
+def _cts_operability(rs: Any) -> OperabilityResult:
+    """CTS operability from the existing variant-detection canonical probe.
+
+    Variant detection runs canonical CKM_AES_CTS encrypts and classifies the
+    EFFECT (CS1/CS2/CS3); a None result means the canonical op itself was
+    rejected or produced a non-standard variant -> not operational evidence.
+    """
+    detected = get_detected_variant(rs)
+    if detected is None:
+        return OperabilityResult(
+            Operability.NOT_OPERATIONAL,
+            "canonical CTS variant-detection encrypt rejected or non-standard",
+        )
+    return OperabilityResult(Operability.OPERATIONAL, f"CTS variant CS{detected} detected")
+
+
+def _handle_cts_error(rs: Any, exc: AssertionError, vec_id: str, direction: str) -> None:
     """Handle CTS encrypt/decrypt errors with appropriate reporting."""
-    if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-        pytest.xfail(f"CKM_AES_CTS advertised but CBC-CS {direction} is not operational: {exc}")
     if is_known_error(exc, {CKR_DEVICE_ERROR}):
         note(
             f"CKM_AES_CTS {direction} returned CKR_DEVICE_ERROR for {vec_id}. "
@@ -267,7 +284,9 @@ def _handle_cts_error(exc: AssertionError, vec_id: str, direction: str) -> None:
             reference="PKCS#11 v3.1 CKM_AES_CTS",
         )
         pytest.xfail(f"CKM_AES_CTS advertised but CBC-CS {direction} failed: {exc}")
-    raise exc
+    classify_kat_clean_error(
+        exc, result=_cts_operability(rs), label=f"CKM_AES_CTS CBC-CS {direction}"
+    )
 
 
 def run_cbc_cs_encrypt_test(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
@@ -290,7 +309,7 @@ def run_cbc_cs_encrypt_test(p11_module_session: Any, vec_id: str, vec: dict[str,
                 mech_param=mech,
             )
         except AssertionError as exc:
-            _handle_cts_error(exc, vec_id, "encrypt")
+            _handle_cts_error(rs, exc, vec_id, "encrypt")
 
         assert ct == vec["ct_expected"], (
             f"{vec_id}: ciphertext mismatch.\n"
@@ -322,7 +341,7 @@ def run_cbc_cs_decrypt_test(p11_module_session: Any, vec_id: str, vec: dict[str,
                 mech_param=mech,
             )
         except AssertionError as exc:
-            _handle_cts_error(exc, vec_id, "decrypt")
+            _handle_cts_error(rs, exc, vec_id, "decrypt")
 
         assert pt == vec["pt_expected"], (
             f"{vec_id}: plaintext mismatch.\n"

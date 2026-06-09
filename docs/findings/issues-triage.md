@@ -160,8 +160,20 @@ This is the same effect-over-return-code principle as the discrimination model
     xfails preserved; canonical works so nothing else got masked).
   - softhsm2: GCM 80 passed, CCM skipped (no mechanism) — unchanged; bouncyhsm GCM 80/120/30
     unchanged.
-  - Remaining H2 surface (`test_wrap.py`, `base_cts.py`, `test_xts.py`, HMAC/SHA3/RSA KAT
-    paths, H3 per-hash OAEP) is the sweep's next step using the same probe module.
+  - **Wave 2 (same pass): `test_wrap.py` (KW/KWP ×4 sites), `base_cts.py`, `test_xts.py`**
+    routed through the same probe (KW/KWP canonical via `cryptography.keywrap`, XTS via
+    AES-128-XTS `cryptography` cipher, CTS via the existing variant-detection effect probe).
+    **Classifier corrected to match the model's positive-op row** during wolfpkcs11
+    verification: with an OPERATIONAL canonical, ANY clean CKR on a positive op is the
+    honest-deviation xfail (only wrong output / crash / self-contradiction fail; decrypt
+    false-rejects of valid data are verdict errors handled in the runners). The
+    param-shape-only narrowing now applies only to INCONCLUSIVE probes (no effect
+    evidence — blanket-xfail there would have hidden H6). wolfpkcs11 `test_cts.py`
+    2,079 hard-fails (unaligned-input `ENCRYPTED_DATA_INVALID`/`FUNCTION_FAILED` while
+    aligned CTS works) reclassify to deviation xfails; softhsm2 `test_wrap.py`
+    3,600 xfail / 3,600 skip byte-identical to pool. Fresh numbers in run log.
+  - Remaining H2 surface (HMAC/SHA3/RSA KAT paths, H3 per-hash OAEP) is the sweep's next
+    step using the same probe module.
 - **Spec:** [classification-model-design.md](../classification-model-design.md) positive-op row.
 
 ### H3 — opencryptoki RSA-OAEP SHA-512/224 | SHA-512/256 hard-fail (newly-added vectors)  ·  MEDIUM
