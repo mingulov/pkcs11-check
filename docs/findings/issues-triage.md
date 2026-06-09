@@ -609,3 +609,15 @@ Full `docker/test.sh softhsm2` on dev after merging the complete fix-pass:
 
 Confirms the merged fix-pass is correct, complete for clear bugs, and regression-free; what remains
 on softhsm2 is precisely the documented policy/UB decisions awaiting the user.
+
+## Post-merge regression gate #2 — wolfpkcs11 full suite on dev (2026-06-10)
+
+**3,067 (pool) → 400 failed** (87% reduction). Every fixed file is 0: `test_cts` 2,079→0,
+`test_wycheproof_rsa_oaep` 209→0, `test_wycheproof` 144→0, `test_wycheproof_rsa` 21→0,
+`test_wycheproof_aes`/`_ecdh`/`_rsa_decrypt` 0. Zero regressions (no fixed file fails). The 400
+remaining are GENUINE wolfpkcs11 findings + flagged UB: digest H7 malformed-CK_RV ~309, CCM
+tag-auth bypass + non-operability 45, output-buffer size-protocol violations 6 (wrong required
+count / OOB write / garbage length — characterized in module-issues.md), GCM 9, plus the flagged
+UB probes (`test_ffi_length_boundary` 21 + `test_secret_key_value_len` 8). Determination note: the
+buffer-guard failures were verified REAL (LEN values prove wrong-size-query / OOB / garbage),
+NOT the benign CKR_OK+0-overwrite deviation the C_Digest guard now xfails — so no harness change.
