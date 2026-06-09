@@ -15,9 +15,10 @@ import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
     CKA_EC_PARAMS,
+    CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
+    CKA_SENSITIVE,
     CKA_SIGN,
     CKA_VALUE_LEN,
     CKA_VERIFY,
@@ -168,20 +169,22 @@ def unwrap_key_for_mechanism_roundtrip(
 ) -> int:
     """Unwrap for mechanism-level crypto checks, negotiating the accepted template.
 
-    The canonical template (variant 0) carries both CKA_CLASS and CKA_KEY_TYPE.
-    CKA_KEY_TYPE is spec-mandatory on C_UnwrapKey and is never dropped; only
-    CKA_CLASS may be relaxed for modules that reject it in an unwrap template, so a
-    second variant omitting CKA_CLASS is tried only if the module shape-rejects the
-    canonical one. Mechanism-level tests care about the cryptographic roundtrip;
-    stricter attribute-template behavior belongs in dedicated attribute/security
-    tests. No provider identity is consulted.
+    The canonical template (variant 0) carries CKA_CLASS, CKA_KEY_TYPE and whatever
+    policy attributes the caller supplied. Both CKA_CLASS and CKA_KEY_TYPE are kept in
+    every variant (opencryptoki requires CKA_CLASS on C_UnwrapKey and CKA_KEY_TYPE is
+    spec-mandatory). What modules disagree on is the *policy* attributes: opencryptoki
+    rejects CKA_EXTRACTABLE/CKA_SENSITIVE in an unwrap template (CKR_ATTRIBUTE_READ_ONLY)
+    whereas lenient modules (softhsm2) need CKA_EXTRACTABLE for the unwrapped value to be
+    readable. So on a clean template-shape reject, a second variant drops those policy
+    attributes. Provider-general: a module that accepts the policy attrs succeeds on
+    variant 0 and never retries; no provider identity is consulted. (Probed 2026-06-09.)
     """
     from pkcs11_check.raw.recipes import unwrap_key
     from pkcs11_check.testcases._negotiation import negotiate_request, value_len_variant_allowed
 
     base = dict(attrs)
     variants = [base]
-    relaxed = {k: v for k, v in base.items() if k != CKA_CLASS}  # keep CKA_KEY_TYPE
+    relaxed = {k: v for k, v in base.items() if k not in (CKA_EXTRACTABLE, CKA_SENSITIVE)}
     if relaxed != base:
         variants.append(relaxed)
     if (

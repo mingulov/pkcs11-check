@@ -2,9 +2,11 @@
 
 ``unwrap_key_for_mechanism_roundtrip`` negotiates the accepted unwrap template
 provider-generally (no provider identity, no compliance note). The canonical
-variant carries both CKA_CLASS and CKA_KEY_TYPE; on a clean template-shape reject
-it retries a variant that drops ONLY CKA_CLASS. CKA_KEY_TYPE is spec-mandatory on
-C_UnwrapKey and is never dropped. A non-shape reject propagates immediately.
+variant carries CKA_CLASS, CKA_KEY_TYPE and any policy attributes the caller
+supplied. CKA_CLASS and CKA_KEY_TYPE are kept in every variant; on a clean
+template-shape reject it retries a variant that drops only the *policy* attributes
+(CKA_EXTRACTABLE / CKA_SENSITIVE) that some modules reject in an unwrap template
+(e.g. opencryptoki -> CKR_ATTRIBUTE_READ_ONLY). A non-shape reject propagates.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import pytest
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
+    CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_SENSITIVE,
     CKR_ATTRIBUTE_READ_ONLY,
@@ -37,10 +40,10 @@ class _UnknownConfig:
     module = "/tmp/vendor-pkcs11.so"
 
 
-def test_mechanism_unwrap_retries_dropping_only_class(
+def test_mechanism_unwrap_retries_dropping_policy_attrs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A shape-reject of the canonical template retries with CKA_CLASS dropped, KEY_TYPE kept."""
+    """A shape-reject retries dropping the policy attrs, keeping CKA_CLASS+CKA_KEY_TYPE."""
     calls: list[dict[Any, Any]] = []
 
     def _unwrap_key(*_args: Any, attrs: dict[Any, Any], **_kwargs: Any) -> int:
@@ -60,16 +63,16 @@ def test_mechanism_unwrap_retries_dropping_only_class(
         unwrapping_key=1,
         wrapped_key=b"wrapped",
         mechanism=0x2109,
-        attrs={CKA_CLASS: 4, CKA_KEY_TYPE: 31, CKA_SENSITIVE: False},
+        attrs={CKA_CLASS: 4, CKA_KEY_TYPE: 31, CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         purpose="test mechanism unwrap",
     )
 
     assert handle == 77
-    # Canonical variant first, then the relaxed variant which keeps CKA_KEY_TYPE
-    # (spec-mandatory) and drops only CKA_CLASS.
+    # Canonical variant first, then the relaxed variant which keeps CKA_CLASS and
+    # CKA_KEY_TYPE and drops only the policy attrs CKA_EXTRACTABLE / CKA_SENSITIVE.
     assert calls == [
-        {CKA_CLASS: 4, CKA_KEY_TYPE: 31, CKA_SENSITIVE: False},
-        {CKA_KEY_TYPE: 31, CKA_SENSITIVE: False},
+        {CKA_CLASS: 4, CKA_KEY_TYPE: 31, CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+        {CKA_CLASS: 4, CKA_KEY_TYPE: 31},
     ]
 
 
@@ -96,13 +99,13 @@ def test_mechanism_unwrap_negotiates_provider_generally(
         unwrapping_key=1,
         wrapped_key=b"wrapped",
         mechanism=0x2109,
-        attrs={CKA_CLASS: 4, CKA_KEY_TYPE: 31},
+        attrs={CKA_CLASS: 4, CKA_KEY_TYPE: 31, CKA_SENSITIVE: False},
     )
 
     assert handle == 99
     assert calls == [
+        {CKA_CLASS: 4, CKA_KEY_TYPE: 31, CKA_SENSITIVE: False},
         {CKA_CLASS: 4, CKA_KEY_TYPE: 31},
-        {CKA_KEY_TYPE: 31},
     ]
 
 
@@ -129,7 +132,7 @@ def test_mechanism_unwrap_non_shape_reject_propagates(
             unwrapping_key=1,
             wrapped_key=b"wrapped",
             mechanism=0x2109,
-            attrs={CKA_CLASS: 4, CKA_KEY_TYPE: 31},
+            attrs={CKA_CLASS: 4, CKA_KEY_TYPE: 31, CKA_EXTRACTABLE: True},
         )
 
     assert calls == 1
