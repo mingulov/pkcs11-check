@@ -1679,3 +1679,24 @@ unwrap in `test_wycheproof_aes.py` tries the minimal template first and only res
 length for valid vectors when the module asks; where the module cannot create the
 generic-secret object either way (larger AES-KW payloads here), that valid vector is recorded
 as a clean operational-deviation xfail rather than a failure.
+
+### `C_UnwrapKey` template: rejects policy attributes, requires `CKA_CLASS` (probed 2026-06-09)
+
+A direct template-ladder probe (stable + master, identical) established OpenCryptoki's
+`C_UnwrapKey` template rules for `CKM_AES_KEY_WRAP` into `CKK_AES`:
+
+| template | result |
+|---|---|
+| `{CKA_CLASS, CKA_KEY_TYPE}` (± `CKA_VALUE_LEN`, `CKA_ENCRYPT/DECRYPT`, `CKA_TOKEN`) | **OK** (default key is readable) |
+| drop `CKA_CLASS` | `CKR_TEMPLATE_INCOMPLETE` (CKA_CLASS is required) |
+| add `CKA_EXTRACTABLE` / `CKA_SENSITIVE` | **`CKR_ATTRIBUTE_READ_ONLY`** |
+
+So OpenCryptoki rejects the *policy* attributes (`CKA_EXTRACTABLE`/`CKA_SENSITIVE`) in an
+unwrap template and requires `CKA_CLASS`. softhsm2 is the mirror: it *needs* `CKA_EXTRACTABLE`
+for the unwrapped value to be readable. This is handled provider-generally by
+`unwrap_key_for_mechanism_roundtrip`, which keeps `CKA_CLASS`/`CKA_KEY_TYPE` in every variant
+and, on a clean shape reject, drops only the policy attributes — so OpenCryptoki's
+authenticated-wrap / ECDH-AES-KW forgery detection is actually exercised. (An earlier
+mis-attribution blamed `CKA_CLASS`/`CKA_KEY_TYPE` for this `READ_ONLY`; the probe shows the
+real cause is the policy attributes.) OpenCryptoki does not implement AES-GCM authenticated
+wrap (`CKR_FUNCTION_NOT_SUPPORTED`), so those forgery tests xfail on a genuine capability gap.
