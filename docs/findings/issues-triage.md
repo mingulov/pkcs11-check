@@ -29,6 +29,7 @@ docker provider pool. Each issue is classified by the project's one rule
 | Pass | Date | Pool run | Shards done | Notes |
 |---|---|---|---|---|
 | 1 | 2026-06-09 | `--all --concurrency 4` (PID 1250142, **still running**) | 20 / 24 | kryoptic + tpm2 + (pkcs11-mock report pending) still executing. wolfpkcs11/corepkcs11 shards not yet reached. **Pool used `--no-build` → some provider images stale (see warning above).** |
+| 2 | 2026-06-09 | same run (still running) | 33 shards | New providers landed: kryoptic/-main/-fips, tpm2, softhsm2-main/-generated-iv, corepkcs11, nss-main. wolfpkcs11/-master still running. **Staleness re-confirmed:** completed kryoptic shard shows CCM 3,420 xfail / 0 pass, but fresh rebuild = 4,890 pass → the pool kryoptic image is genuinely stale for CCM. New signal: **corepkcs11 22,756 failed** (21,906 = `ARGUMENTS_BAD` in `test_wycheproof_ecdsa.py`) — see H6. |
 
 **Method:** parse each completed shard's `artifacts/<shard>/results.json` (`tool=pkcs11-check`, structured
 per-test outcomes), merge shards by provider, group failed/error tests by `(outcome, file, normalised
@@ -171,6 +172,19 @@ This is the same effect-over-return-code principle as the discrimination model
 - CTS `MECHANISM_INVALID` = not supported → should be a `has_mechanism` **skip** (or xfail). CTR
   `DATA_LEN_RANGE` = clean operational error → xfail. `test_aes_modes` already uses the helper, so this
   is a *different* gap (capability gating / clean-error on the non-unwrap path), not H1. Verify gating.
+
+### H6 — corepkcs11: ~22k `ARGUMENTS_BAD` on wycheproof ECDSA KAT  ·  NEW (pass 2), NEEDS FRESH VERIFY
+
+- **Provider:** corepkcs11 (FreeRTOS corePKCS11, mbedTLS-backed minimal impl). 22,756 failed total;
+  **21,906** are `CKR_ARGUMENTS_BAD; expected CKR_OK` in `test_wycheproof_ecdsa.py`; the rest small
+  (`test_limbo_import` DATA_LEN_RANGE ×493, `test_acvp_hmac` ×148).
+- **Class:** same as H2 — a clean error on a positive-op KAT. corePKCS11 likely rejects the wycheproof
+  ECDSA input shape (e.g. requires pre-hashed input / a specific signature encoding) → "advertised but
+  not operational" for that call shape → xfail per model, currently hard-fail.
+- **⚠️ Per the staleness rule: re-confirm with a fresh `docker/test.sh corepkcs11 -- test_wycheproof_ecdsa.py`
+  before acting.** corepkcs11 is new this run; verify it isn't a stale image or a harness input-shape bug.
+- **Folds into the H2 fix:** the effect-based operability probe would handle this identically (canonical
+  ECDSA-verify probe → clean error ⇒ xfail the suite; works ⇒ real failures stay fail). No separate fix.
 
 ---
 
