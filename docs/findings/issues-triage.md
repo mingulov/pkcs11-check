@@ -179,7 +179,8 @@ This is the same effect-over-return-code principle as the discrimination model
 ### H6 — corepkcs11: ~22k `ARGUMENTS_BAD` on wycheproof ECDSA KAT  ·  ✅ FRESH-VERIFIED REAL (pass 6)
 
 > **2026-06-09 fresh rebuild** (`docker/test.sh corepkcs11 -- wycheproof/test_wycheproof_ecdsa.py`) =
-> ~all `F` (failing) — **not stale**. corePKCS11 genuinely rejects the wycheproof ECDSA-verify call
+> **21,906 failed / 7,009 skipped** (identical to the pool count) — **not stale**. corePKCS11 genuinely
+> rejects the wycheproof ECDSA-verify call
 > shape (`ARGUMENTS_BAD`). Real provider deviation (minimal impl / input-shape constraint) → folds into
 > the H2 operability probe (canonical ECDSA-verify probe → clean error ⇒ xfail the suite).
 
