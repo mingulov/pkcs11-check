@@ -177,7 +177,8 @@ This is the same effect-over-return-code principle as the discrimination model
 
 - **Provider:** corepkcs11 (FreeRTOS corePKCS11, mbedTLS-backed minimal impl). 22,756 failed total;
   **21,906** are `CKR_ARGUMENTS_BAD; expected CKR_OK` in `test_wycheproof_ecdsa.py`; the rest small
-  (`test_limbo_import` DATA_LEN_RANGE ×493, `test_acvp_hmac` ×148).
+  (`test_limbo_import` DATA_LEN_RANGE ×493, `test_acvp_hmac` ×148). **corepkcs11-main is byte-identical**
+  (same 22,756 / 21,906) → stable corePKCS11 trait, not version-specific.
 - **Class:** same as H2 — a clean error on a positive-op KAT. corePKCS11 likely rejects the wycheproof
   ECDSA input shape (e.g. requires pre-hashed input / a specific signature encoding) → "advertised but
   not operational" for that call shape → xfail per model, currently hard-fail.
