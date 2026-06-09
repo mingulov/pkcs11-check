@@ -40,7 +40,7 @@ BouncyHSM v2.1.0 · pkcs11-mock v2.0.0
 
 ### Test Results
 
-Latest full provider matrix (`artifacts/_matrix/baseline-2026-06-04.json`,
+Latest full provider matrix (`docs/matrix/baseline-2026-06-04.json`,
 2026-06-04), one row per distinct build. Validated by **two independent full
 sweeps** that agree; failures held or decreased on every provider vs the v0.1.2
 baseline (PC-6 keygen reclassification + gap-triage), crashes stable.

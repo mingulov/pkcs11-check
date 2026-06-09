@@ -3,7 +3,7 @@
  "description": "Combined provider baseline: 2026-05-30 full sweep. FIRST full sweep with the CKR_OPERATION_ACTIVE recovery in place across ALL providers (the 2026-05-29 baseline's slot-1 sweep was PRE-fix and had inflated failures). Supersedes baseline-2026-05-29.json.",
  "provenance": {
   "sweep": "artifacts/*-pooled, 2026-05-30 ~01:20 \u2014 POST cascade fix",
-  "prior_baseline": "artifacts/_matrix/baseline-2026-05-29.json (slot-1 pre-fix)",
+  "prior_baseline": "docs/matrix/baseline-2026-05-29.json (slot-1 pre-fix)",
   "note": "Suite grew vs 2026-05-29 (more mechanism/conformance tests) \u2014 totals not 1:1."
  },
  "records": [

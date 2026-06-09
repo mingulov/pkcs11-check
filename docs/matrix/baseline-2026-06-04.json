@@ -3,7 +3,7 @@
   "description": "Combined provider baseline: 2026-06-04 full sweep for the v0.1.3 release. Run on the post-review-fix code (R1-R7: merge/crash/timeout finding-preservation, zero-collection guard, JSONL double-parse removal). NSS *-slot0 targets are now SCOPED to the slot-0-unique files (coverage-neutral; the slot-1 pass covers the rest), so their totals drop from ~90k to ~2.3k vs the 2026-05-30 baseline. All other targets are numerically within single-digit flaky variance of 2026-05-30 (probabilistic security oracle/overflow probes). No genuine regression; failures held or decreased.",
   "provenance": {
     "sweep": "artifacts/*-pooled, 2026-06-04 - post review-fix (HEAD 682392f3), K=4 pooled",
-    "prior_baseline": "artifacts/_matrix/baseline-2026-05-30.json",
+    "prior_baseline": "docs/matrix/baseline-2026-05-30.json",
     "validation": "two independent full runs agree; compared vs _base with scripts/compare-results.py",
     "note": "slot0 scoping (F2) reduces *-slot0 totals; NSS C_FindObjectsInit(ULONG_MAX) SIGSEGV and softhsm2 AES-CBC-PAD oracle are real, near-deterministic module findings the suite surfaces (not pkcs11-check regressions)."
   },

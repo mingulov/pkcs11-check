@@ -1,9 +1,9 @@
 # Current PKCS#11 Provider State Under pkcs11-check
 
 Draft report from the 2026-05-24/25 Docker provider matrix. Raw console output
-is in `artifacts/_matrix/console.log`; detailed working notes are in
-`artifacts/_matrix/analysis-notes.md`; a compact artifact-derived summary is in
-`artifacts/_matrix/provider-summary.json`; per-provider artifacts are under
+is in `docs/matrix/console.log`; detailed working notes are in
+`docs/matrix/analysis-notes.md`; a compact artifact-derived summary is in
+`docs/matrix/provider-summary.json`; per-provider artifacts are under
 `artifacts/<provider>/`.
 
 This is release/article evidence, not a marketing summary. Some providers have

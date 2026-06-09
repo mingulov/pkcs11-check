@@ -12,7 +12,7 @@ source and result snapshot.
 
 Source artifacts:
 
-- `artifacts/_matrix/provider-summary.json`
+- `docs/matrix/provider-summary.json`
 - per-provider `artifacts/*/results.json`
 - segmented BouncyHSM `artifacts/bouncyhsm-*/*results.json` and
   `artifacts/_focused/bouncyhsm-*/*results.json`

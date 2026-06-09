@@ -30,7 +30,7 @@
 ## Validation model (every phase)
 
 1. **Offline mock-`raw` meta-test per flip** in `tests/*_runtime_classification.py` — drive the function with a fake `raw` returning a chosen `CK_RV`, assert all three branches (`CKR_OK`→`fail`, expected→pass, other→`xfail`). Run `uv run pytest tests/` (no provider). **This is the per-phase acceptance gate.**
-2. **Per-provider count delta** from `artifacts/_matrix/provider-summary.json` (`records[].passed/failed/xfailed/skipped`) before/after. "Better" = no new signal/crash `fail`, no finding demoted to `skip`/silent-pass, every `fail`→`xfail` offset by an `xfail` gain (not a `pass` gain).
+2. **Per-provider count delta** from `docs/matrix/provider-summary.json` (`records[].passed/failed/xfailed/skipped`) before/after. "Better" = no new signal/crash `fail`, no finding demoted to `skip`/silent-pass, every `fail`→`xfail` offset by an `xfail` gain (not a `pass` gain).
 3. **Provider-neutral messages** — `tests/test_provider_neutral_findings.py` bans `NSS`/`softoken`; helper messages cite the attribute/behavior only.
 4. **Reversibility** — each phase is one squashable, independently-revertible PR; the `assert_ckr` change (Phase 1 Task 2) ships only with its meta-tests green.
 5. **Doc sync** — any phase that flips a finding documented in `docs/module-issues.md` updates that entry in the same PR.

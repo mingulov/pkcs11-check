@@ -14,7 +14,7 @@ For focused crash, timeout, and broad failure classification, see
 > total `failed` 49,592 → 11,103; `CKR_OPERATION_ACTIVE` failures 38,808 → 39). Reference
 > implementations (softhsm2, opencryptoki) are unchanged vs the prior run; the remaining
 > failures are genuine provider findings. Combined baseline:
-> `artifacts/_matrix/baseline-2026-05-30.json` (supersedes `baseline-2026-05-29.json`).
+> `docs/matrix/baseline-2026-05-30.json` (supersedes `baseline-2026-05-29.json`).
 >
 > **Re-confirmed for the v0.1.2 release (2026-05-31, `artifacts/20260530_3/`):** SoftHSM2
 > was re-run after the threading conformance test was switched to the spec-valid
@@ -24,7 +24,7 @@ For focused crash, timeout, and broad failure classification, see
 > [module-issues.md](module-issues.md)). SoftHSM2 is crash-free in the re-run; all other
 > rows are numerically equivalent to the 2026-05-30 sweep (single-digit flaky variance).
 >
-> **Refreshed for the v0.1.3 release (2026-06-04, `artifacts/_matrix/baseline-2026-06-04.json`).**
+> **Refreshed for the v0.1.3 release (2026-06-04, `docs/matrix/baseline-2026-06-04.json`).**
 > Re-run on the post-review-fix code (the runner no longer drops a crashed shard's findings,
 > mis-reports a crash as a timeout, or hides an unattributed timeout; a zero-collection run now
 > fails instead of passing green). **Two independent full sweeps agree — no genuine regression:**
@@ -44,7 +44,7 @@ For focused crash, timeout, and broad failure classification, see
 | Source manifest | `docker/provider-sources.toml` |
 | Source manifest observed at | `2026-06-06T07:33:21Z` |
 | Current release pin refresh | 2026-06-06: Kryoptic `v1.5.1` and BouncyHSM `v2.1.1` pins updated; wolfPKCS11 `v2.0.0-stable` / `master` Docker targets added with wolfSSL `v5.9.1-stable` / `master`; corePKCS11 `v3.6.4` Docker target added with focused build/run smoke only; wolfPKCS11 rows are 2026-06-06 single-target full validations, while the rest of the matrix rows remain the 2026-06-04 artifact set |
-| Provider summary artifact | `artifacts/_matrix/baseline-2026-06-04.json` (supersedes `baseline-2026-05-30.json`) |
+| Provider summary artifact | `docs/matrix/baseline-2026-06-04.json` (supersedes `baseline-2026-05-30.json`) |
 | Provider summary generated at | `2026-06-04` (combined from per-provider `artifacts/<target>-pooled/results.json`) |
 | Cascade-fix status | POST-fix — `CKR_OPERATION_ACTIVE` recovery active for all providers |
 | Artifact source | per-provider `artifacts/<target>-pooled/results.json` summaries (pooled/sharded run) |

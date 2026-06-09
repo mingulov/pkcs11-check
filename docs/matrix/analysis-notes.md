@@ -1,7 +1,7 @@
 # Docker Matrix Analysis Notes
 
 Run started after `docker buildx prune --all --force` on 2026-05-24. The
-console stream is in `artifacts/_matrix/console.log`; per-provider artifacts
+console stream is in `docs/matrix/console.log`; per-provider artifacts
 are under `artifacts/<provider>/`.
 
 ## Current Scope
@@ -693,7 +693,7 @@ Current assessment:
 Source/config:
 
 - Docker target `test-nss` uses Fedora 44 packages, not an NSS source checkout.
-- Build evidence in `artifacts/_matrix/console.log` reports
+- Build evidence in `docs/matrix/console.log` reports
   `nss-3.123.1-1.fc44.x86_64` and `nss-softokn-3.123.1-1.fc44.x86_64`.
 - `PKCS11_CHECK_SLOT=1` is configured, matching the NSS certificate DB slot.
 
