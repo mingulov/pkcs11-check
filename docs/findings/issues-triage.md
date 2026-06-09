@@ -176,7 +176,12 @@ This is the same effect-over-return-code principle as the discrimination model
   `DATA_LEN_RANGE` = clean operational error → xfail. `test_aes_modes` already uses the helper, so this
   is a *different* gap (capability gating / clean-error on the non-unwrap path), not H1. Verify gating.
 
-### H6 — corepkcs11: ~22k `ARGUMENTS_BAD` on wycheproof ECDSA KAT  ·  NEW (pass 2), NEEDS FRESH VERIFY
+### H6 — corepkcs11: ~22k `ARGUMENTS_BAD` on wycheproof ECDSA KAT  ·  ✅ FRESH-VERIFIED REAL (pass 6)
+
+> **2026-06-09 fresh rebuild** (`docker/test.sh corepkcs11 -- wycheproof/test_wycheproof_ecdsa.py`) =
+> ~all `F` (failing) — **not stale**. corePKCS11 genuinely rejects the wycheproof ECDSA-verify call
+> shape (`ARGUMENTS_BAD`). Real provider deviation (minimal impl / input-shape constraint) → folds into
+> the H2 operability probe (canonical ECDSA-verify probe → clean error ⇒ xfail the suite).
 
 - **Provider:** corepkcs11 (FreeRTOS corePKCS11, mbedTLS-backed minimal impl). 22,756 failed total;
   **21,906** are `CKR_ARGUMENTS_BAD; expected CKR_OK` in `test_wycheproof_ecdsa.py`; the rest small
@@ -190,7 +195,12 @@ This is the same effect-over-return-code principle as the discrimination model
 - **Folds into the H2 fix:** the effect-based operability probe would handle this identically (canonical
   ECDSA-verify probe → clean error ⇒ xfail the suite; works ⇒ real failures stay fail). No separate fix.
 
-### H7 — wolfpkcs11: digest ops return a malformed CK_RV (raw wolfSSL error leak)  ·  NEW (pass 4), NEEDS FRESH VERIFY
+### H7 — wolfpkcs11: digest ops return a malformed CK_RV (raw wolfSSL error leak)  ·  ✅ FRESH-VERIFIED REAL (pass 6)
+
+> **2026-06-09 fresh rebuild** (`docker/test.sh wolfpkcs11 -- acvp/test_acvp_hash.py`) = **160 failed**,
+> all `Unexpected CK_RV 0xffffffffffffff7c` (e.g. SHA3-512 tc117/tc118). **Not stale** — wolfpkcs11
+> genuinely leaks a raw negative wolfSSL error (-132) as the `CK_RV` on digest. Real provider bug
+> (returning a non-`CKR_*` value violates the spec). Document; the suite surfaces it as a clean return.
 
 - **Provider:** wolfpkcs11 (wolfSSL in-process C lib). 3,071 failed, **18 crashed**, 38,882 passed.
 - **Signature:** `Unexpected CK_RV 0xffffffffffffff7c` ×103+ — `0x…ff7c` = **-132 sign-extended**, i.e. a raw
