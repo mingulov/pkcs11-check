@@ -14,6 +14,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OPERATION_ACTIVE,
     CKR_SIGNATURE_INVALID,
     CKR_SIGNATURE_LEN_RANGE,
 )
@@ -40,6 +41,12 @@ NON_CLEAN_SIGNATURE_REJECT_RVS = (
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    # Collateral of a stale verify operation the provider leaked after a prior
+    # reject (kryoptic/tpm2 spec violation; reported as a FAIL by
+    # test_operation_termination.py): the poisoned C_*Init never evaluated this
+    # vector's signature, so the invalid vector was not accepted -- xfail
+    # evidence attributed to the leak, not a finding on the innocent vector.
+    CKR_OPERATION_ACTIVE,
 )
 
 

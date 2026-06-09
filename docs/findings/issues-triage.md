@@ -522,6 +522,18 @@ These are deliberate hardening checks (documented NIST citations) that conflict 
 fail 12-14 providers each. Reclassifying fail→note/xfail is defensible and model-aligned but changes
 a whole security-test category across all providers (outward-facing) — **Denis's call**, like C1-C3.
 
+### Second cross-provider sweep (resolved-files excluded) — more candidates
+
+| #prov | file | signature | verdict |
+|---|---|---|---|
+| 10 | wycheproof_x25519 | "derived a secret for invalid vector" (×93) | ⚖️ **strong over-strict** — X25519/X448 (RFC 7748 §6.1) is safe-by-design with NO invalid-curve attack and is a TOTAL function; deriving on a malformed/special point is not a crypto break (the 72 invalid vectors are `InvalidPublic`/`PublicKeyTooLong` encoding cases, not low-order). Rejecting malformed keys is optional robustness. But a prior author deliberately set "any derive on invalid → fail" (Phase-2 V1) → **flag, don't unilaterally overturn**. Model-aligned fix = `fail` only on a WRONG output (shared != expected). |
+| 10 | test_padding_oracle | "AES-CBC-PAD padding oracle (Vaudenay)" | ⚠️ same family as H8 — CBC-PAD decrypt returning a clean reject for bad padding is normal; whether it's a *distinguishable* oracle needs the timing/behavior determination, not a single return value. Investigate like H8 before acting. |
+| 10 | test_cve_regression | "Tookan unwrap CKA_SENSITIVE" | ⚠️ Tookan attribute-attack regression — likely real intent; verify not over-strict. |
+| 9 | ffi_null_pointer | C_GenerateRandom/SeedRandom/SetOperationState(NULL) crash | ❓ borderline UB (NULL ptr w/ nonzero len) vs real null-check finding — adjacent to the C1-C3 UB class; determine buffer honesty. |
+| 9 | wycheproof_mldsa_sign | "Invalid ML-DSA sign vector" (×50) | ⚠️ ML-DSA deterministic-sign with invalid input — determine. |
+| 7 | ckr_keygen | "C_GenerateKeyPair with CK_ULONG-sized CKA_…" | 💥→🔧 the ULONG-overflow UB class (C-cluster, flagged). |
+| 9 | test_set_attribute | "C_SetAttributeValue partially applied CKA_LABEL" | ⚠️ partial-attribute-apply (atomicity) — possibly real Type-C; determine. |
+
 **(B) ECDH / EdDSA invalid-vector acceptance (⚠️ SECURITY — determine, do not assume).**
 `test_wycheproof_ecdh` `fail`s when a module derives a secret for an "invalid" vector (×92 / 13 prov).
 The intent is RIGHT (deriving on an off-curve point IS the invalid-curve attack). But softhsm2 — a
