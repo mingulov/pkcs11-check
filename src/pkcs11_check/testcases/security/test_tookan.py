@@ -51,6 +51,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases._negotiation import TEMPLATE_SHAPE_REJECTS
 from pkcs11_check.testcases.conftest import (
     classify_discrimination,
     classify_policy_enforcement,
@@ -67,6 +68,9 @@ _TYPE_CONFUSION_WRAP_INAPPLICABLE_RVS = {
     CKR_KEY_NOT_WRAPPABLE,
 }
 
+# Includes the template-shape rejects so a module that refuses the spec-conservative
+# unwrap template for the AES valid leg (e.g. opencryptoki -> CKR_TEMPLATE_INCOMPLETE,
+# demanding a footnote-6-forbidden CKA_VALUE_LEN) routes that leg to xfail, not a false fail.
 _TYPE_CONFUSION_WRAP_RUNTIME_REJECT_RVS = {
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
@@ -75,6 +79,7 @@ _TYPE_CONFUSION_WRAP_RUNTIME_REJECT_RVS = {
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    *TEMPLATE_SHAPE_REJECTS,
 }
 
 # A module that refuses to wrap a non-extractable / sensitive key with one of

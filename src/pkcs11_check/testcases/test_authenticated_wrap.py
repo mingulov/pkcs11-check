@@ -44,6 +44,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases._negotiation import TEMPLATE_SHAPE_REJECTS
 from pkcs11_check.testcases.conftest import (
     classify_discrimination,
     gen_ec_keypair_or_xfail,
@@ -55,6 +56,12 @@ from pkcs11_check.testcases.conftest import (
 
 pytestmark = pytest.mark.keymgmt
 
+# Clean codes that mean a wrap/unwrap PRECONDITION could not be established:
+# the operation is advertised-but-not-operational, OR (after negotiation exhausts
+# every spec-equivalent template) the module refuses the unwrap template shape -- e.g.
+# opencryptoki returns CKR_TEMPLATE_INCOMPLETE for an AES-KW unwrap into CKK_AES because
+# it demands CKA_VALUE_LEN, which footnote 6 forbids us to supply. A cleanly-rejected
+# valid leg is an operational deviation -> xfail (discrimination undecidable), never a fail.
 _WRAP_RUNTIME_REJECT_RVS = (
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
@@ -64,7 +71,7 @@ _WRAP_RUNTIME_REJECT_RVS = (
     CKR_KEY_NOT_WRAPPABLE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
-)
+) + TEMPLATE_SHAPE_REJECTS
 
 
 def _xfail_if_wrap_runtime_reject(exc: AssertionError, msg: str) -> NoReturn:
