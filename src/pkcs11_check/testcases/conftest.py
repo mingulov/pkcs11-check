@@ -8,6 +8,7 @@ collection-safe capability manifest before test setup.
 from __future__ import annotations
 
 import functools
+import itertools
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -15,14 +16,20 @@ import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
     CKA_EC_PARAMS,
+    CKA_EC_POINT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
+    CKA_LABEL,
     CKA_SENSITIVE,
     CKA_SIGN,
+    CKA_TOKEN,
     CKA_VALUE_LEN,
     CKA_VERIFY,
+    CKK_EC,
     CKM_EC_EDWARDS_KEY_PAIR_GEN,
+    CKO_PUBLIC_KEY,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_CURVE_NOT_SUPPORTED,
@@ -207,6 +214,116 @@ def unwrap_key_for_mechanism_roundtrip(
 
     result, _idx = negotiate_request(attempt, variants, label=purpose)
     return result
+
+
+# C_CreateObject storage-shape rejects: the template rejects plus the two clean codes
+# storage-oriented modules use for storage-model constraints (probed corePKCS11 2026-06-09:
+# missing CKA_LABEL -> CKR_ARGUMENTS_BAD, CKA_TOKEN=False -> CKR_ATTRIBUTE_VALUE_INVALID).
+# Import-site only: at other sites these codes stay real findings (see negotiate_request).
+IMPORT_STORAGE_SHAPE_REJECTS: tuple[int, ...] = (
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+)
+
+_import_label_counter = itertools.count(1)
+
+
+def _next_import_label() -> bytes:
+    """Unique short label for label-keyed object stores (max 32 bytes)."""
+    return f"p11chk-import-{next(_import_label_counter)}".encode()
+
+
+def create_object_negotiated(
+    rs: Any,
+    attrs: Mapping[Any, Any],
+    *,
+    purpose: str = "key import",
+) -> int:
+    """Create an object, negotiating storage-shape requirements (label / token).
+
+    Variant 0 is the caller's spec-minimal template. Storage-oriented modules reject
+    it cleanly: corePKCS11 requires CKA_LABEL on every key object (CKR_ARGUMENTS_BAD
+    when absent) and supports only token objects (CKR_ATTRIBUTE_VALUE_INVALID for
+    CKA_TOKEN=False). The retry variants add a unique CKA_LABEL, then CKA_TOKEN=True
+    -- spec-equivalent storage attributes only; crypto-visible attributes are never
+    changed and no provider identity is consulted. Callers destroy the object in
+    their cleanup path regardless of which variant won.
+    """
+    from pkcs11_check.raw.recipes import create_object
+    from pkcs11_check.testcases._negotiation import negotiate_request
+
+    base = dict(attrs)
+    variants: list[dict[Any, Any]] = [base]
+    labeled = base if CKA_LABEL in base else {**base, CKA_LABEL: _next_import_label()}
+    if labeled is not base:
+        variants.append(labeled)
+    if not base.get(CKA_TOKEN, False):
+        variants.append({**labeled, CKA_TOKEN: True})
+
+    def attempt(delta: Mapping[Any, Any]) -> int:
+        return create_object(rs.raw, rs.sh, dict(delta))
+
+    result, _idx = negotiate_request(
+        attempt, variants, label=purpose, shape_rejects=IMPORT_STORAGE_SHAPE_REJECTS
+    )
+    return result
+
+
+def ec_public_key_binding_defect(rs: Any, handle: int, requested_params: bytes) -> str | None:
+    """Effect-check a just-created EC public key: is it bound to the requested curve?
+
+    Some modules accept a foreign-curve import with CKR_OK but bind the key to
+    their only supported group (corePKCS11 binds everything to P-256; the object
+    is then incoherent -- attribute readback returns CKR_OBJECT_HANDLE_INVALID --
+    or reports different CKA_EC_PARAMS). Verify the effect, not the return code:
+    a CKR_OK whose object does not round-trip the requested curve is a defect.
+    Returns None when coherent, else a reason string. KAT suites skip vectors of
+    a defective curve (capability genuinely absent); the self-contradiction
+    itself is surfaced by the dedicated object-coherence conformance test.
+    """
+    from pkcs11_check.raw.recipes import read_attributes
+
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, handle, [int(CKA_EC_PARAMS)])
+    except CkrAssertionError as exc:
+        return f"object incoherent after CKR_OK create: {exc}"
+    got = attrs.get(int(CKA_EC_PARAMS))
+    if got is None:
+        return "CKA_EC_PARAMS unavailable after CKR_OK create"
+    if bytes(got) != bytes(requested_params):
+        return (
+            f"module silently rebound curve: requested CKA_EC_PARAMS "
+            f"{bytes(requested_params).hex()}, object reports {bytes(got).hex()}"
+        )
+    return None
+
+
+def import_ec_public_key_negotiated(
+    rs: Any,
+    *,
+    ec_params: bytes,
+    ec_point: bytes,
+    key_type: int = int(CKK_EC),
+    attrs: Mapping[Any, Any] | None = None,
+    purpose: str = "EC public key import",
+) -> int:
+    """Import an EC public key, negotiating storage-shape template requirements.
+
+    Same canonical template as ``raw.recipes.import_ec_public_key``; on a clean
+    storage-shape reject it retries via ``create_object_negotiated`` variants.
+    """
+    base: dict[Any, Any] = {
+        CKA_CLASS: CKO_PUBLIC_KEY,
+        CKA_KEY_TYPE: key_type,
+        CKA_TOKEN: False,
+        CKA_EC_PARAMS: ec_params,
+        CKA_EC_POINT: ec_point,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object_negotiated(rs, base, purpose=purpose)
 
 
 def gen_rsa_keypair_or_xfail(

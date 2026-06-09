@@ -6,6 +6,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_INVALID,
+    CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
@@ -27,6 +28,11 @@ NON_CLEAN_SIGNATURE_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_INVALID,
+    # Digest-length pinning (corePKCS11 accepts exactly 32B for CKM_ECDSA): the
+    # module rejected the request before evaluating the signature -- xfail
+    # evidence, never a clean signature-reject pass (PKCS#11 §2.3.1 requires
+    # accepting any hash length, truncating to the group order).
+    CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,

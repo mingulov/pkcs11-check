@@ -1700,3 +1700,55 @@ authenticated-wrap / ECDH-AES-KW forgery detection is actually exercised. (An ea
 mis-attribution blamed `CKA_CLASS`/`CKA_KEY_TYPE` for this `READ_ONLY`; the probe shows the
 real cause is the policy attributes.) OpenCryptoki does not implement AES-GCM authenticated
 wrap (`CKR_FUNCTION_NOT_SUPPORTED`), so those forgery tests xfail on a genuine capability gap.
+
+## corePKCS11 3.6.4 (FreeRTOS, mbedTLS port, docker target with generic in-memory PAL)
+
+Minimal embedded implementation; storage-oriented object model. Root-caused 2026-06-09
+(triage H6) by in-container probing + v3.6.4 source reading (`core_pkcs11_mbedtls.c`).
+
+### Storage-model traits (negotiated by the harness, not bugs to hard-fail)
+- **`CKA_LABEL` is mandatory on every key object**: `C_CreateObject` without a label returns
+  `CKR_ARGUMENTS_BAD` (`prvCreateECKey`/`prvCreateRsaKey`: "Received a NULL label pointer").
+  The spec makes CKA_LABEL optional → deviation; the harness's
+  `create_object_negotiated` retries with a unique label.
+- **Token objects only**: `CKA_TOKEN=False` in a key template returns
+  `CKR_ATTRIBUTE_VALUE_INVALID` ("Expected token type to be true"). Session objects are
+  spec-mandatory → deviation; negotiated to `CKA_TOKEN=TRUE` (objects are destroyed in test
+  cleanup).
+- **Public/private keys share one label slot**: importing one after the other merges them
+  (`prvGetExistingKeyComponent`); the harness uses unique per-import labels.
+
+### Crypto constraints (xfail-classified deviations)
+- **P-256 only**: `CKA_EC_PARAMS` must equal the P-256 OID, else `CKR_TEMPLATE_INCONSISTENT`
+  (skip via `_EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS`). Curves whose OID length differs bypass the
+  check (see Known bugs below); curves with different coordinate sizes fail at point parse
+  (`CKR_FUNCTION_FAILED` → skip).
+
+### Known bugs
+- **Silent curve rebind on EC public key import (Type-C self-contradiction)**: the
+  `CKA_EC_PARAMS` check only runs when the supplied OID has the same DER length as the
+  P-256 OID (`prvEcKeyAttParse` compares only on equal `ulValueLen`), and
+  `mbedtls_ecp_point_read_binary` performs no curve-membership check. A secp256k1 or
+  brainpoolP256r1 public key (32-byte coordinates) is therefore accepted with `CKR_OK` —
+  but the object is unusable: `C_GetAttributeValue` → `CKR_OBJECT_HANDLE_INVALID`,
+  `C_Verify` → `CKR_KEY_HANDLE_INVALID`. Claimed success, not honored → **fail** per the
+  classification model. Detected by: `test_ec_import_coherence.py` (2 failures, fresh
+  2026-06-09). KAT suites skip such curves via the same effect check
+  (`ec_public_key_binding_defect`) so the bug is reported once, not 22k times.
+- **CKM_ECDSA digest length pinned to 32 bytes**: `C_Verify` returns `CKR_DATA_LEN_RANGE`
+  unless `ulDataLen == 32`, and `CKR_SIGNATURE_LEN_RANGE` unless `ulSignatureLen == 64`.
+  PKCS#11 §2.3.1 requires accepting any hash length (truncated to the group order bit
+  length) → deviation, xfailed via `_ECDSA_RUNTIME_REJECT_CKRS` /
+  `NON_CLEAN_SIGNATURE_REJECT_RVS`.
+- ECDSA verify itself is correct for the supported shape: valid P-256/SHA-256 signature →
+  `CKR_OK`; corrupted signature → clean verify-False (probed in-container).
+
+### Docker-target deployment notes
+- The stock posix demo PAL stores only the 8 labels fixed in `core_pkcs11_config.h`; any
+  other label fails `PKCS11_PAL_SaveObject` → `C_CreateObject` = `CKR_DEVICE_MEMORY`. The
+  docker target replaces it with a generic in-memory PAL
+  (`docker/corepkcs11/corepkcs11_pal_generic.c`): arbitrary labels, honest `isPrivate`
+  (DER-shape discrimination), real `PKCS11_PAL_DestroyObject`. The PAL is corePKCS11's
+  designated porting point — corePKCS11's own PKCS#11 logic is untouched.
+- The adapter shim (`corepkcs11_adapter.c`) only overrides GetInfo/SlotInfo/TokenInfo/
+  MechanismList/MechanismInfo/Digest; C_CreateObject and C_Verify pass straight through.

@@ -58,6 +58,7 @@ def negotiate_request[T](
     variants: Sequence[Mapping[int, Any]],
     *,
     label: str,
+    shape_rejects: Sequence[int] = TEMPLATE_SHAPE_REJECTS,
 ) -> tuple[T, int]:
     """Try spec-equivalent request variants against the live module, canonical-first.
 
@@ -67,13 +68,18 @@ def negotiate_request[T](
     a clean template-shape reject (G2); any other rejection propagates immediately. If every
     variant is shape-rejected, the last exception is re-raised. Positive ops only (G6);
     single-shot recipe ops only (G5).
+
+    shape_rejects is the per-call-site set of clean rejects that mean "request shape",
+    not "operation failed". The default stays the narrow template set; widening it is a
+    per-site decision (e.g. C_CreateObject storage-shape rejects) so codes that are real
+    findings at one site never become retryable everywhere.
     """
     last_exc: CkrAssertionError | None = None
     for idx, delta in enumerate(variants):
         try:
             return attempt(delta), idx
         except CkrAssertionError as exc:
-            if exc.rv not in TEMPLATE_SHAPE_REJECTS:
+            if exc.rv not in shape_rejects:
                 raise
             last_exc = exc
     assert last_exc is not None

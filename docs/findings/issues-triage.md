@@ -176,25 +176,70 @@ This is the same effect-over-return-code principle as the discrimination model
   `DATA_LEN_RANGE` = clean operational error → xfail. `test_aes_modes` already uses the helper, so this
   is a *different* gap (capability gating / clean-error on the non-unwrap path), not H1. Verify gating.
 
-### H6 — corepkcs11: ~22k `ARGUMENTS_BAD` on wycheproof ECDSA KAT  ·  ✅ FRESH-VERIFIED REAL (pass 6)
+### H6 — corepkcs11: ~22k `ARGUMENTS_BAD` on wycheproof ECDSA KAT  ·  🔧 ROOT-CAUSED + FIXED (pass 7, 2026-06-09)
 
-> **2026-06-09 fresh rebuild** (`docker/test.sh corepkcs11 -- wycheproof/test_wycheproof_ecdsa.py`) =
-> **21,906 failed / 7,009 skipped** (identical to the pool count) — **not stale**. corePKCS11 genuinely
-> rejects the wycheproof ECDSA-verify call
-> shape (`ARGUMENTS_BAD`). Real provider deviation (minimal impl / input-shape constraint) → folds into
-> the H2 operability probe (canonical ECDSA-verify probe → clean error ⇒ xfail the suite).
+> **Verdict overturned by deep root-cause (user prompt: "perhaps a bad wrapper?").** The earlier
+> "real provider deviation, fold into H2 probe" classification was WRONG. corePKCS11's ECDSA verify
+> **works** (probed in-container: valid sig → CKR_OK/True, corrupted sig → clean False). The 21,906
+> hard-fails were a three-layer **call-shape/deployment mismatch**, none of them a crypto failure:
+>
+> 1. **Harness 🔧:** `import_ec_public_key` sends no `CKA_LABEL`; corePKCS11 (`prvCreateECKey`,
+>    v3.6.4 `core_pkcs11_mbedtls.c`) requires one and returns `CKR_ARGUMENTS_BAD` — which is not in
+>    the test's import-skip tuples → every vector hard-failed **at C_CreateObject**, before any
+>    verify. (Verify-path ARGUMENTS_BAD was already xfail-classified; the import path wasn't.)
+> 2. **Provider trait 📋:** corePKCS11 supports only **token objects** (`CKA_TOKEN=False` →
+>    `CKR_ATTRIBUTE_VALUE_INVALID`) and only **P-256 + 32-byte digests** for CKM_ECDSA
+>    (`CKR_DATA_LEN_RANGE` otherwise — a §2.3.1 deviation: spec requires truncating long hashes).
+> 3. **Our docker target 🔧:** the stock posix demo PAL stores only the 8 fixed configured labels;
+>    any other label → save fails → `CKR_DEVICE_MEMORY`. The PAL is corePKCS11's designated porting
+>    point — the target, not the provider, made arbitrary-label storage impossible.
+>
+> **Fixes shipped (branch `fix/triage-harness-improvements`):**
+> - `create_object_negotiated` / `import_ec_public_key_negotiated` (testcases/conftest.py):
+>   provider-general storage-shape negotiation — canonical minimal template first, then
+>   `+CKA_LABEL` (unique), then `+CKA_TOKEN=TRUE`, retrying only on clean storage-shape rejects
+>   (`IMPORT_STORAGE_SHAPE_REJECTS`); crypto attrs never change, no provider identity.
+>   `negotiate_request` gained a per-site `shape_rejects` param (default unchanged — guarded by
+>   meta-test). Wired into `test_wycheproof_ecdsa.py` (wiring guarded by meta-test).
+> - `CKR_DATA_LEN_RANGE` added to `_ECDSA_RUNTIME_REJECT_CKRS` (valid-vector xfail) and
+>   `NON_CLEAN_SIGNATURE_REJECT_RVS` (invalid-vector xfail evidence) with §2.3.1 rationale.
+> - Generic in-memory PAL (`docker/corepkcs11/corepkcs11_pal_generic.c`): any label, honest
+>   `isPrivate` (DER-shape), real `PKCS11_PAL_DestroyObject` (store slots are reclaimed).
+> - Meta-tests: `tests/test_import_template_negotiation.py` (8 tests) + classification guards.
+>
+> **Post-fix probe (rebuilt image):** arbitrary-label import OK → verify valid True / corrupted
+> False / 64B digest `DATA_LEN_RANGE` (now xfail).
+>
+> **Two follow-on defects found and fixed during fresh verification:**
+> - **Harness object leak (all providers):** `test_ecdsa_wycheproof` decoded the DER signature
+>   *after* importing the key but *outside* the destroying try/finally — every invalid-DER vector
+>   leaked one object. Fatal on a bounded store (corePKCS11's 128-slot list filled →
+>   6,551 `CKR_DEVICE_MEMORY`/`HOST_MEMORY` failures). Fixed: decode before import.
+> - **corePKCS11 silent curve rebind (REAL provider bug, Type-C):** C_CreateObject returns
+>   `CKR_OK` for foreign-curve EC keys whose coordinate size matches P-256 (secp256k1,
+>   brainpoolP256r1 — the OID length check is bypassed and `mbedtls_ecp_point_read_binary` does
+>   no curve-membership check); the object is then **unusable** (readback →
+>   `CKR_OBJECT_HANDLE_INVALID`, verify → `CKR_KEY_HANDLE_INVALID`). Handled effect-based:
+>   `ec_public_key_binding_defect` (conftest) readback-checks each curve once per process — KAT
+>   vectors of an unhonored curve **skip** (capability absent), and the contradiction itself is a
+>   dedicated conformance test `test_ec_import_coherence.py` that **fails** (Type-C), once per
+>   curve instead of 22k noise-fails.
+>
+> **Fresh verified result (corepkcs11, rebuilt image + fixed harness):**
+> `test_wycheproof_ecdsa.py`: **21,906 failed / 0 passed → 0 failed / 8,662 passed /
+> 19,621 skipped / 632 xfailed** (327s → 59s). `test_ec_import_coherence.py`: 1 passed
+> (P-256 honored), 1 skipped (secp224r1 cleanly rejected), **2 failed = the real corePKCS11
+> finding** (secp256k1/brainpoolP256r1 silent-rebind self-contradiction).
 
 - **Provider:** corepkcs11 (FreeRTOS corePKCS11, mbedTLS-backed minimal impl). 22,756 failed total;
-  **21,906** are `CKR_ARGUMENTS_BAD; expected CKR_OK` in `test_wycheproof_ecdsa.py`; the rest small
-  (`test_limbo_import` DATA_LEN_RANGE ×493, `test_acvp_hmac` ×148). **corepkcs11-main is byte-identical**
-  (same 22,756 / 21,906) → stable corePKCS11 trait, not version-specific.
-- **Class:** same as H2 — a clean error on a positive-op KAT. corePKCS11 likely rejects the wycheproof
-  ECDSA input shape (e.g. requires pre-hashed input / a specific signature encoding) → "advertised but
-  not operational" for that call shape → xfail per model, currently hard-fail.
-- **⚠️ Per the staleness rule: re-confirm with a fresh `docker/test.sh corepkcs11 -- test_wycheproof_ecdsa.py`
-  before acting.** corepkcs11 is new this run; verify it isn't a stale image or a harness input-shape bug.
-- **Folds into the H2 fix:** the effect-based operability probe would handle this identically (canonical
-  ECDSA-verify probe → clean error ⇒ xfail the suite; works ⇒ real failures stay fail). No separate fix.
+  **21,906** were `CKR_ARGUMENTS_BAD; expected CKR_OK` in `test_wycheproof_ecdsa.py`; the rest small
+  (`test_limbo_import` DATA_LEN_RANGE ×493, `test_acvp_hmac` ×148 — same storage-shape class, to be
+  migrated to the negotiated import in the sweep). **corepkcs11-main is byte-identical** (same
+  22,756 / 21,906) → stable corePKCS11 trait, not version-specific.
+- **Lesson recorded:** a uniform clean error across an entire KAT suite at the *same call site* is a
+  **pre-crypto setup failure**, not an operability statement about the mechanism — check the first
+  raw call (here C_CreateObject) before classifying. This also re-scopes what the H2 probe must
+  cover: the probe must distinguish "import path broken" from "mechanism not operational".
 
 ### H7 — wolfpkcs11: digest ops return a malformed CK_RV (raw wolfSSL error leak)  ·  ✅ FRESH-VERIFIED REAL (pass 6)
 

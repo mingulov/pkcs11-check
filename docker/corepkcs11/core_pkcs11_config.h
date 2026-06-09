@@ -29,7 +29,9 @@ void vPkcs11Free( void * ptr );
 #define pkcs11configMAX_SESSIONS                           ( ( CK_ULONG ) 32 )
 
 #define pkcs11configIMPORT_PRIVATE_KEYS_SUPPORTED          1
-#define pkcs11configPAL_DESTROY_SUPPORTED                  0
+/* The generic in-memory PAL (corepkcs11_pal_generic.c) implements
+ * PKCS11_PAL_DestroyObject, so destroyed objects release their store slot. */
+#define pkcs11configPAL_DESTROY_SUPPORTED                  1
 #define pkcs11configOTA_SUPPORTED                          0
 #define pkcs11configJITP_CODEVERIFY_ROOT_CERT_SUPPORTED    0
 

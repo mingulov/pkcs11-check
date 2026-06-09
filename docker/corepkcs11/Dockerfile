@@ -15,10 +15,16 @@ RUN git clone --depth 1 --branch "$COREPKCS11_REF" \
     https://github.com/FreeRTOS/corePKCS11.git /build/corePKCS11
 
 COPY docker/corepkcs11/corepkcs11_malloc.c /build/corepkcs11_malloc.c
+COPY docker/corepkcs11/corepkcs11_pal_generic.c /build/corepkcs11_pal_generic.c
 COPY docker/corepkcs11/core_pkcs11_config.h /build/core_pkcs11_config.h
 
 WORKDIR /build/corePKCS11
+# The stock posix PAL only stores the eight fixed configured labels (anything else
+# fails C_CreateObject with CKR_DEVICE_MEMORY); swap in the generic in-memory PAL
+# so corePKCS11 is exercisable as a general provider. See corepkcs11_pal_generic.c.
 RUN cp /build/core_pkcs11_config.h test/include/core_pkcs11_config.h && \
+    perl -0pi -e 's#set\( PKCS_PAL_POSIX_SOURCES.*?\)#set( PKCS_PAL_POSIX_SOURCES\n     "/build/corepkcs11_pal_generic.c"\n     )#s' pkcsFilePaths.cmake && \
+    grep -q corepkcs11_pal_generic pkcsFilePaths.cmake && \
     perl -0pi -e 's#target_sources\( core_pkcs PUBLIC \$\{PKCS_SOURCES\}\n#target_sources( core_pkcs PUBLIC \${PKCS_SOURCES}\n                                      /build/corepkcs11_malloc.c\n#' CMakeLists.txt && \
     cmake -S . -B /build/corePKCS11-build -GNinja \
         -DSTANDALONE_TEST_BUILD_UNIX=ON \

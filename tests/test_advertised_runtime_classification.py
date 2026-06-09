@@ -182,6 +182,14 @@ def test_acvp_signature_rejects_stay_spec_specific() -> None:
     assert set(non_clean_rejects).issubset(NON_CLEAN_SIGNATURE_REJECT_RVS)
 
 
+def test_digest_length_pinning_reject_is_non_clean_xfail_evidence() -> None:
+    """A module pinning the verify digest length (corePKCS11: CKR_DATA_LEN_RANGE
+    unless exactly 32B) never evaluated the signature: not a clean signature
+    reject (no silent pass), but recorded xfail evidence, not a hard fail."""
+    assert CKR_DATA_LEN_RANGE not in SIGNATURE_REJECT_RVS
+    assert CKR_DATA_LEN_RANGE in NON_CLEAN_SIGNATURE_REJECT_RVS
+
+
 def test_acvp_capability_skips_do_not_accept_runtime_failure_ckrs() -> None:
     """Capability skips should not swallow provider runtime failures."""
     paths = (
@@ -670,9 +678,15 @@ def test_wycheproof_ecdh_valid_runtime_rejects_are_xfail(rv: int) -> None:
         )
 
 
-@pytest.mark.parametrize("rv", [CKR_DEVICE_ERROR, CKR_GENERAL_ERROR])
+@pytest.mark.parametrize("rv", [CKR_DEVICE_ERROR, CKR_GENERAL_ERROR, CKR_DATA_LEN_RANGE])
 def test_wycheproof_ecdsa_valid_runtime_rejects_are_xfail(rv: int) -> None:
-    """Advertised Wycheproof ECDSA verify runtime rejects are findings."""
+    """Advertised Wycheproof ECDSA verify runtime rejects are findings.
+
+    CKR_DATA_LEN_RANGE: PKCS#11 §2.3.1 requires CKM_ECDSA to accept any hash
+    length (truncating to the group order bit length); a module pinning the
+    digest length (corePKCS11: exactly 32 bytes) cleanly rejects valid longer
+    digests -- a recorded deviation (xfail), not a hard fail.
+    """
     exc = CkrAssertionError("Unexpected CK_RV", int(rv))
 
     with pytest.raises(pytest.xfail.Exception, match="advertised ECDSA verify"):
