@@ -1761,6 +1761,18 @@ Minimal embedded implementation; storage-oriented object model. Root-caused 2026
   PKCS#11 §2.3.1 requires accepting any hash length (truncated to the group order bit
   length) → deviation, xfailed via `_ECDSA_RUNTIME_REJECT_CKRS` /
   `NON_CLEAN_SIGNATURE_REJECT_RVS`.
+- **Imported secret keys (AES-CMAC / SHA256-HMAC) are advertised but not operational**:
+  `C_CreateObject` for a `CKO_SECRET_KEY` returns `CKR_OK` and a handle, but the key cannot
+  then be used — `C_Sign` returns `CKR_KEY_TYPE_INCONSISTENT` and `C_GetAttributeValue` on the
+  just-returned handle returns `CKR_OBJECT_HANDLE_INVALID`. **Verified consistent** (2026-06-09)
+  across the corePKCS11-native configured label (`"HMAC Key"`) and arbitrary labels, so it is a
+  stable corePKCS11 secret-key-use limitation rather than a per-vector handle bug; the KAT clean
+  error returns are model-conformant xfails (advertised-but-not-operational). **Caveat: the
+  `CKR_OK`-create-then-invalid-handle readback is a Type-C self-contradiction, but its root cause
+  (corePKCS11's own object-list handling vs the docker target's generic in-memory PAL storing a
+  raw, non-DER secret blob) is not yet isolated — so it is documented here, not asserted as a
+  module `fail`, pending a stock-PAL repro.** (Contrast the EC silent-curve-rebind bug above,
+  which is in corePKCS11's native `mbedtls_ecp_point_read_binary` path and IS asserted as a fail.)
 - ECDSA verify itself is correct for the supported shape: valid P-256/SHA-256 signature →
   `CKR_OK`; corrupted signature → clean verify-False (probed in-container).
 
