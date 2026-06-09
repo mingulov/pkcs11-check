@@ -230,6 +230,23 @@ This is the same effect-over-return-code principle as the discrimination model
 > 19,621 skipped / 632 xfailed** (327s → 59s). `test_ec_import_coherence.py`: 1 passed
 > (P-256 honored), 1 skipped (secp224r1 cleanly rejected), **2 failed = the real corePKCS11
 > finding** (secp256k1/brainpoolP256r1 silent-rebind self-contradiction).
+>
+> **Cross-provider regression verification (user-requested, fresh runs, same files):**
+> - softhsm2: **byte-identical** (21,906 passed / 7,009 skipped, 0 failed; coherence 4/4).
+> - opencryptoki: 0 failed, xfail identical to pool (186); coherence 4/4.
+> - kryoptic: 0 failed, xfail identical to pool (1,012); coherence 1 passed / 3 skipped
+>   (cleanly rejects unsupported curves — correct).
+> - kryoptic/opencryptoki show MORE passes than the pool (+7,202 / +1,149) with equally
+>   fewer skips. Attributed exactly (old-harness-vs-new on the same fresh image,
+>   brainpoolP224r1 slice: 1,153 skipped → 468 passed + 685 skipped; host recount of
+>   undecodable-invalid vectors = 468): the **leak-fix reorder** moved DER decoding before
+>   key import, so wycheproof vectors that are invalid at the encoding level (sig
+>   undecodable → vacuous pass, module never involved — the pre-existing semantic wherever
+>   import succeeded) no longer hide behind the unsupported-curve import skip. Outcomes are
+>   now uniform across providers for those vectors; no module behavior changed, no findings
+>   hidden. Probe confirmed kryoptic rejects brainpool imports with
+>   `CKR_ATTRIBUTE_VALUE_INVALID` for ALL template variants — negotiation does not engage
+>   usefully there and the result is the same skip as before.
 
 - **Provider:** corepkcs11 (FreeRTOS corePKCS11, mbedTLS-backed minimal impl). 22,756 failed total;
   **21,906** were `CKR_ARGUMENTS_BAD; expected CKR_OK` in `test_wycheproof_ecdsa.py`; the rest small
