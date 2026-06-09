@@ -378,6 +378,11 @@ def test_authenticated_wrap_aes_kw_baseline_wrap_runtime_reject_is_xfail(
     rs = _session_with_mechanisms("AES_KEY_WRAP")
     p11_config = SimpleNamespace(module="/tmp/mock-pkcs11.so")
     monkeypatch.setattr(test_authenticated_wrap, "gen_aes_key", lambda *_args, **_kwargs: 10)
+    monkeypatch.setattr(
+        test_authenticated_wrap,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_authenticated_wrap.CKA_VALUE: b"\x5a" * 16},
+    )
     monkeypatch.setattr(test_authenticated_wrap, "destroy_quietly", lambda *_args: None)
     monkeypatch.setattr(
         test_authenticated_wrap.pytest,
@@ -403,6 +408,11 @@ def test_authenticated_wrap_gcm_bitflip_baseline_wrap_runtime_reject_is_xfail(
     p11_config = SimpleNamespace(module="/tmp/mock-pkcs11.so")
     monkeypatch.setattr(test_authenticated_wrap, "gen_aes_key", lambda *_args, **_kwargs: 10)
     monkeypatch.setattr(test_authenticated_wrap, "generate_random", lambda *_args: b"\x01" * 12)
+    monkeypatch.setattr(
+        test_authenticated_wrap,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_authenticated_wrap.CKA_VALUE: b"\x5a" * 16},
+    )
     monkeypatch.setattr(test_authenticated_wrap, "destroy_quietly", lambda *_args: None)
     monkeypatch.setattr(
         test_authenticated_wrap.pytest,
@@ -428,6 +438,11 @@ def test_authenticated_wrap_gcm_bitflip_unknown_unwrap_error_propagates(
     p11_config = SimpleNamespace(module="/tmp/mock-pkcs11.so")
     monkeypatch.setattr(test_authenticated_wrap, "gen_aes_key", lambda *_args, **_kwargs: 10)
     monkeypatch.setattr(test_authenticated_wrap, "generate_random", lambda *_args: b"\x01" * 12)
+    monkeypatch.setattr(
+        test_authenticated_wrap,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_authenticated_wrap.CKA_VALUE: b"\x5a" * 16},
+    )
     monkeypatch.setattr(test_authenticated_wrap, "destroy_quietly", lambda *_args: None)
     monkeypatch.setattr(
         test_authenticated_wrap,
@@ -453,6 +468,11 @@ def test_authenticated_wrap_tampered_tag_unknown_unwrap_error_propagates(
     p11_config = SimpleNamespace(module="/tmp/mock-pkcs11.so")
     monkeypatch.setattr(test_authenticated_wrap, "gen_aes_key", lambda *_args, **_kwargs: 10)
     monkeypatch.setattr(test_authenticated_wrap, "generate_random", lambda *_args: b"\x01" * 12)
+    monkeypatch.setattr(
+        test_authenticated_wrap,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_authenticated_wrap.CKA_VALUE: b"\x5a" * 16},
+    )
     monkeypatch.setattr(test_authenticated_wrap, "destroy_quietly", lambda *_args: None)
 
     def _wrap_success(*_args: Any, **kwargs: Any) -> bytes:
