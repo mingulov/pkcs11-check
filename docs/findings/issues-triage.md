@@ -187,6 +187,22 @@ This is the same effect-over-return-code principle as the discrimination model
 - **Folds into the H2 fix:** the effect-based operability probe would handle this identically (canonical
   ECDSA-verify probe → clean error ⇒ xfail the suite; works ⇒ real failures stay fail). No separate fix.
 
+### H7 — wolfpkcs11: digest ops return a malformed CK_RV (raw wolfSSL error leak)  ·  NEW (pass 4), NEEDS FRESH VERIFY
+
+- **Provider:** wolfpkcs11 (wolfSSL in-process C lib). 3,071 failed, **18 crashed**, 38,882 passed.
+- **Signature:** `Unexpected CK_RV 0xffffffffffffff7c` ×103+ — `0x…ff7c` = **-132 sign-extended**, i.e. a raw
+  negative wolfSSL internal error code leaking out as the `CK_RV` instead of a defined `CKR_*`. Sites:
+  `test_acvp_hash` ×158, `test_acvp_sha3` ×79, `test_mech_digest`, `test_mech_multipart` — i.e. the
+  **digest path wholesale**.
+- **Class:** if real, this is a genuine **provider deviation/bug** (returning a non-CKR value violates the
+  spec — `CK_RV` must be a defined code) — document, and it's a clean *return* (not a crash) so the suite
+  surfaces it correctly. **BUT digest is the most basic op; wholesale digest failure smells like a STALE
+  `--no-build` image.** ⚠️ **Re-confirm with `docker/test.sh wolfpkcs11 -- test_acvp_hash.py` (fresh
+  rebuild) before classifying.** wolfpkcs11 stable lacks PQC; wolfpkcs11-master shard still pending.
+- **Also on wolfpkcs11 (fold into existing buckets):** `test_cts.py` ×2,079 (CTS
+  `ENCRYPTED_DATA_INVALID`/`FUNCTION_FAILED` → H2 operability-probe class); `test_wycheproof_rsa_oaep`
+  ×209. All need the same fresh-rebuild re-confirmation.
+
 ---
 
 ## 💥 CRASHES (report) — **pending UB-vs-module determination**
@@ -212,6 +228,15 @@ This is the same effect-over-return-code principle as the discrimination model
   `C_FindObjectsInit(template_count=ULONG_MAX): signal 7` (SIGBUS) ×3
 - `...TestTemplateCountOverflowValidHandles...` — `C_GetAttributeValue(valid object,
   template_count=ULONG_MAX): signal 11` ×3
+
+### C4 — wolfpkcs11: 18 crashes — split into genuine vs UB-fork  ·  NEW (pass 4)
+- **Genuine module crashes (not overflow-input) — likely real findings, verify fresh:**
+  `test_wycheproof_hkdf.py: Fatal Python error: Aborted` ×2 (SIGABRT during HKDF);
+  `test_ckr_keygen.py` signal 11 + Aborted ×2 (keygen). These crash on *normal* inputs → real
+  wolfpkcs11 bugs worth reporting (after a fresh-rebuild re-confirm — wolfpkcs11 pool image is `--no-build`).
+- **UB-fork (join the determination below):** `test_arithmetic_overflow` C_GenerateKeyPair(count=ULONG_MAX);
+  `test_secret_key_value_len` C_CreateObject(CKA_VALUE_LEN=huge); `test_ffi_length_boundary`
+  Sign/Verify/Digest/*Update(ulDataLen=0x7fffffffffffffff) ×6 — same isize/overflow pattern as C1–C3.
 
 **Determination needed (next pass):** read `test_arithmetic_overflow.py` / `test_ffi_length_boundary.py`
 buffer construction. If they allocate a real buffer and only *declare* an oversized length → these are
