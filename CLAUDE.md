@@ -36,9 +36,9 @@ See [docs/architecture.md](docs/architecture.md) for codebase structure, modules
 ### Test coverage philosophy — CRITICAL
 - **NEVER skip, disable, or suppress real failures or crashes.** pkcs11-check exists to find and report module bugs. A segfault IS the finding.
 - If a module crashes on valid parameters, that is a module bug to be reported, not a test to be skipped.
-- Tests may only be skipped for **missing capabilities** (mechanism not advertised, interface version too old) — never to hide broken behavior.
+- Tests may only be skipped for **missing capabilities** (mechanism not advertised, v3.x function absent from the module) — never to hide broken behavior.
 - Do not add `pytest.skip()` or `pytest.xfail()` for crashes, segfaults, or unexpected errors.
-- Acceptable skips: `rs.has_mechanism()` returns False, `@pytest.mark.requires_v30` on v2.40 module, optional test data not present.
+- Acceptable skips: `rs.has_mechanism()` returns False, `@pytest.mark.needs_function("C_X")` when the module lacks that v3.x function, optional test data not present.
 - Unacceptable skips: module segfaults, module returns wrong error code, module hangs.
 
 ### Test-outcome classification model — ONE RULE
