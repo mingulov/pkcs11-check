@@ -933,7 +933,7 @@ if rv != CKR_OK:
 class TestKemTemplateCountOverflow:
     """Template-count overflow probes for v3.2 KEM output templates."""
 
-    @pytest.mark.requires_v32
+    @pytest.mark.needs_function("C_EncapsulateKey")
     @pytest.mark.parametrize("count", _TEMPLATE_COUNTS)
     @pytest.mark.parametrize("op", _KEM_TEMPLATE_COUNT_OPS)
     def test_kem_output_template_count_overflow(

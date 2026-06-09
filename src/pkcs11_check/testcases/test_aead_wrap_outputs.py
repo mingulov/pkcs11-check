@@ -43,7 +43,7 @@ from pkcs11_check.testcases.conftest import (
     unwrap_key_for_mechanism_roundtrip,
 )
 
-pytestmark = [pytest.mark.keymgmt, pytest.mark.wrap, pytest.mark.requires_v32]
+pytestmark = [pytest.mark.keymgmt, pytest.mark.wrap]
 
 
 def _require_wrap_flags(rs: Any, mechanism: CKM | int, name: str) -> None:

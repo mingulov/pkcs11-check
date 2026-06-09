@@ -58,7 +58,11 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import reject_or_classify
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
-pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc, pytest.mark.requires_v32]
+pytestmark = [
+    pytest.mark.wycheproof,
+    pytest.mark.pqc,
+    pytest.mark.needs_function("C_EncapsulateKey"),
+]
 
 _PARAM_SETS: dict[int, int] = {
     512: CKP_ML_KEM_512,

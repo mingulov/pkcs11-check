@@ -908,13 +908,13 @@ class TestMessageFinalizers:
     message-based ops auto-finalize, so explicit finalize may not be needed.
     """
 
-    @pytest.mark.requires_v30
+    @pytest.mark.needs_function("C_MessageEncryptFinal")
     def test_message_encrypt_final_availability(self, p11_raw_session: Any) -> None:
         """Check if message-based encrypt final is accessible."""
         rs = p11_raw_session
         assert "C_MessageEncryptFinal" in rs.raw.available_function_names()
 
-    @pytest.mark.requires_v30
+    @pytest.mark.needs_function("C_MessageVerifyFinal")
     def test_message_verify_final_availability(self, p11_raw_session: Any) -> None:
         """Check if message-based verify final is accessible."""
         rs = p11_raw_session
@@ -941,7 +941,7 @@ class TestAsyncLifecycle:
     Currently no tested module supports async operations.
     """
 
-    @pytest.mark.requires_v30
+    @pytest.mark.needs_function("C_AsyncComplete")
     def test_async_function_availability(self, p11_raw_session: Any) -> None:
         """All three async functions should be in the v3.0 function list."""
         rs = p11_raw_session
@@ -951,7 +951,7 @@ class TestAsyncLifecycle:
         if missing:
             pytest.skip(f"Async functions not available: {', '.join(missing)}")
 
-    @pytest.mark.requires_v30
+    @pytest.mark.needs_function("C_AsyncComplete")
     def test_async_complete_no_active_operation(self, p11_raw_session: Any) -> None:
         """C_AsyncComplete with no active async op should return a defined CKR."""
         rs = p11_raw_session
@@ -961,7 +961,7 @@ class TestAsyncLifecycle:
         # No CKR assertion -- presence check only (function returned without crash)
         assert rv is not None
 
-    @pytest.mark.requires_v30
+    @pytest.mark.needs_function("C_AsyncJoin")
     def test_async_join_no_active_operation(self, p11_raw_session: Any) -> None:
         """C_AsyncJoin with no active async op should return a defined CKR."""
         rs = p11_raw_session
@@ -971,7 +971,7 @@ class TestAsyncLifecycle:
         # No CKR assertion -- presence check only (function returned without crash)
         assert rv is not None
 
-    @pytest.mark.requires_v30
+    @pytest.mark.needs_function("C_AsyncGetID")
     def test_async_get_id_no_active_operation(self, p11_raw_session: Any) -> None:
         """C_AsyncGetID with no active async op should return a defined CKR."""
         rs = p11_raw_session
@@ -1039,12 +1039,10 @@ class TestShakeXof:
 class TestMlDsaExternalMu:
     """CKM_ML_DSA_EXTERNAL_MU and CKM_ML_DSA_EXTERNAL_MU_GEN."""
 
-    @pytest.mark.requires_v32
     def test_external_mu_availability(self, p11_raw_session: Any) -> None:
         if not p11_raw_session.has_mechanism("ML_DSA_EXTERNAL_MU"):
             pytest.skip("CKM_ML_DSA_EXTERNAL_MU not supported")
 
-    @pytest.mark.requires_v32
     def test_external_mu_gen_availability(self, p11_raw_session: Any) -> None:
         if not p11_raw_session.has_mechanism("ML_DSA_EXTERNAL_MU_GEN"):
             pytest.skip("CKM_ML_DSA_EXTERNAL_MU_GEN not supported")

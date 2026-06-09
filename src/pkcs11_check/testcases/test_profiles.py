@@ -28,8 +28,6 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
-pytestmark = pytest.mark.requires_v30
-
 # CKR codes acceptable when profile attribute reads fail
 _PROFILE_ATTR_ERROR_CKRS = (
     CKR_ATTRIBUTE_TYPE_INVALID,

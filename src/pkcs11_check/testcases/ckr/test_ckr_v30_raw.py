@@ -21,7 +21,7 @@ import pytest
 from pkcs11_check.testcases._subprocess_trace import record_subprocess_rv_trace
 from pkcs11_check.testcases.ckr._subprocess import ckr_subprocess_cleanup_setup
 
-pytestmark = [pytest.mark.access, pytest.mark.subprocess, pytest.mark.requires_v30]
+pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
 _RV_TRACE_SETUP = """\
 import atexit as _p11check_atexit
@@ -136,6 +136,7 @@ def _check(rc: int, out: str, err: str, func: str) -> None:
     assert "OK" in out, f"{func}: {out} | {err[-200:]}"
 
 
+@pytest.mark.needs_function("C_MessageEncryptInit")
 class TestMessageEncryptErrors:
     """v3.0 C_MessageEncryptInit error conditions."""
 
@@ -183,6 +184,7 @@ print("OK")
         _check(rc, out, err, "C_EncryptMessage")
 
 
+@pytest.mark.needs_function("C_MessageDecryptInit")
 class TestMessageDecryptErrors:
     """v3.0 C_MessageDecryptInit error conditions."""
 
@@ -203,6 +205,7 @@ print("OK")
         _check(rc, out, err, "C_MessageDecryptInit")
 
 
+@pytest.mark.needs_function("C_MessageSignInit")
 class TestMessageSignErrors:
     """v3.0 C_MessageSignInit error conditions."""
 
@@ -223,6 +226,7 @@ print("OK")
         _check(rc, out, err, "C_MessageSignInit")
 
 
+@pytest.mark.needs_function("C_MessageVerifyInit")
 class TestMessageVerifyErrors:
     """v3.0 C_MessageVerifyInit error conditions."""
 
@@ -243,6 +247,7 @@ print("OK")
         _check(rc, out, err, "C_MessageVerifyInit")
 
 
+@pytest.mark.needs_function("C_SessionCancel")
 class TestSessionCancelErrors:
     """v3.0 C_SessionCancel error conditions."""
 

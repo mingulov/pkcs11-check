@@ -38,7 +38,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_KEM, assert_ckr
 
-pytestmark = [pytest.mark.access, pytest.mark.pqc, pytest.mark.requires_v32]
+pytestmark = [pytest.mark.access, pytest.mark.pqc]
 
 
 def _generate_ml_kem_keypair(raw: Any, sh: int) -> tuple[int, int]:
@@ -74,6 +74,7 @@ def _generate_ml_kem_keypair(raw: Any, sh: int) -> tuple[int, int]:
     return pub.value, priv.value
 
 
+@pytest.mark.needs_function("C_EncapsulateKey")
 class TestEncapsulateKeyErrors:
     """Error conditions for C_EncapsulateKey (Sec.5.14.7)."""
 
@@ -140,6 +141,7 @@ class TestEncapsulateKeyErrors:
             destroy_quietly(rs.raw, rs.sh, _priv)
 
 
+@pytest.mark.needs_function("C_DecapsulateKey")
 class TestDecapsulateKeyErrors:
     """Error conditions for C_DecapsulateKey (Sec.5.14.8)."""
 

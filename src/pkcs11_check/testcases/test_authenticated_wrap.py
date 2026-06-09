@@ -93,6 +93,7 @@ def _aead_integrity_reject_rvs(p11_config: Any) -> set[Any]:
 class TestAuthenticatedWrap:
     """Test AES-GCM authenticated key wrapping (v3.2)."""
 
+    @pytest.mark.needs_function("C_WrapKeyAuthenticated")
     def test_aes_gcm_wrap_unwrap(self, p11_raw_session: Any, p11_interface_version: str) -> None:
         """Wrap/unwrap AES key with AES-GCM authenticated wrapping."""
         rs = p11_raw_session
@@ -170,6 +171,7 @@ class TestAuthenticatedWrap:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
             destroy_quietly(rs.raw, rs.sh, target)
 
+    @pytest.mark.needs_function("C_WrapKeyAuthenticated")
     def test_aes_gcm_authenticated_wrap_generated_iv_and_tag(
         self, p11_raw_session: Any, p11_interface_version: str
     ) -> None:
@@ -251,6 +253,7 @@ class TestAuthenticatedWrap:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
             destroy_quietly(rs.raw, rs.sh, target)
 
+    @pytest.mark.needs_function("C_WrapKeyAuthenticated")
     def test_tampered_tag_rejected(
         self,
         p11_raw_session: Any,
@@ -379,6 +382,7 @@ class TestAuthenticatedWrapAAD:
     Closes Phase 4.5 GAP-W4 (MED).
     """
 
+    @pytest.mark.needs_function("C_WrapKeyAuthenticated")
     def test_aes_gcm_unwrap_with_different_aad_rejected(
         self,
         p11_raw_session: Any,
@@ -608,6 +612,7 @@ class TestWrapIntegrity:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
             destroy_quietly(rs.raw, rs.sh, target)
 
+    @pytest.mark.needs_function("C_WrapKeyAuthenticated")
     def test_aes_gcm_wrap_bit_flip_detected(
         self,
         p11_raw_session: Any,

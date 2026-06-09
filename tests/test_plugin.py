@@ -553,7 +553,6 @@ def test_runtime_skip_reason_uses_manifest() -> None:
     item = _FakeItem(
         Path("/tmp/testcases/test_demo.py"),
         {
-            "requires_v32": SimpleNamespace(args=()),
             "needs_mechanism": SimpleNamespace(args=("CKM_AES_ECB",)),
         },
     )
@@ -572,4 +571,86 @@ def test_runtime_skip_reason_uses_manifest() -> None:
 
     reason = plugin_mod._runtime_skip_reason(item, config, manifest)
 
-    assert reason == "Requires v32, module has v3.0"
+    assert reason == "Mechanism CKM_AES_ECB not supported by module"
+
+
+def _manifest_with(functions: list[str], *, version: str = "2.40") -> CapabilityManifest:
+    return CapabilityManifest(
+        status="ok",
+        module_path="/tmp/module.so",
+        requested_interface="auto",
+        interface_version=version,
+        slot_index=0,
+        slot_count=1,
+        mechanisms=["CKM_ML_DSA"],
+        functions=functions,
+    )
+
+
+def test_needs_function_skips_when_function_absent() -> None:
+    item = _FakeItem(
+        Path("/tmp/testcases/test_demo.py"),
+        {"needs_function": SimpleNamespace(args=("C_EncapsulateKey",))},
+    )
+    config = SimpleNamespace(
+        getoption=lambda name, default=None: {"p11_skip_unsupported": True}.get(name, default)
+    )
+    manifest = _manifest_with(["C_Sign", "C_Verify"])  # no C_EncapsulateKey
+
+    reason = plugin_mod._runtime_skip_reason(item, config, manifest)
+
+    assert reason == "Function C_EncapsulateKey not present in module"
+
+
+def test_needs_function_runs_when_function_present() -> None:
+    item = _FakeItem(
+        Path("/tmp/testcases/test_demo.py"),
+        {"needs_function": SimpleNamespace(args=("C_EncapsulateKey",))},
+    )
+    config = SimpleNamespace(
+        getoption=lambda name, default=None: {"p11_skip_unsupported": True}.get(name, default)
+    )
+    manifest = _manifest_with(["C_EncapsulateKey", "C_DecapsulateKey"], version="3.2")
+
+    assert plugin_mod._runtime_skip_reason(item, config, manifest) is None
+
+
+def test_needs_function_registered_as_dynamic_marker() -> None:
+    item = _FakeItem(
+        Path("/tmp/testcases/test_demo.py"),
+        {"needs_function": SimpleNamespace(args=("C_EncapsulateKey",))},
+    )
+    assert plugin_mod._has_dynamic_markers(item) is True
+
+
+def test_mldsa_runs_but_mlkem_encaps_skips_on_v240_module() -> None:
+    """A v2.40 module advertising CKM_ML_DSA but lacking C_EncapsulateKey:
+    ML-DSA (mechanism-gated, no version/function marker) runs; ML-KEM encaps
+    (needs_function) skips. Locks the silent-skip regression."""
+    config = SimpleNamespace(
+        getoption=lambda name, default=None: {"p11_skip_unsupported": True}.get(name, default)
+    )
+    manifest = CapabilityManifest(
+        status="ok",
+        module_path="/tmp/module.so",
+        requested_interface="auto",
+        interface_version="2.40",
+        slot_index=0,
+        slot_count=1,
+        mechanisms=["CKM_ML_DSA", "CKM_ML_DSA_KEY_PAIR_GEN"],
+        functions=["C_Sign", "C_Verify", "C_GenerateKeyPair"],  # no C_EncapsulateKey
+    )
+
+    # ML-DSA test post-migration carries NO version/function marker (mechanism-gated in-test)
+    mldsa_item = _FakeItem(Path("/tmp/testcases/test_mldsa.py"), {})
+    assert plugin_mod._runtime_skip_reason(mldsa_item, config, manifest) is None
+
+    # ML-KEM encaps test carries needs_function
+    mlkem_item = _FakeItem(
+        Path("/tmp/testcases/test_kem.py"),
+        {"needs_function": SimpleNamespace(args=("C_EncapsulateKey",))},
+    )
+    assert (
+        plugin_mod._runtime_skip_reason(mlkem_item, config, manifest)
+        == "Function C_EncapsulateKey not present in module"
+    )

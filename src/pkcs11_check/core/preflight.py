@@ -24,6 +24,7 @@ class CapabilityManifest:
     slot_index: int
     slot_count: int | None
     mechanisms: list[str]
+    functions: list[str] = field(default_factory=list)
     error: str | None = None
     mechanism_info: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -72,6 +73,7 @@ def probe_capabilities(module: Path, interface: str, slot: int) -> CapabilityMan
             slot_index=slot,
             slot_count=len(slots),
             mechanisms=mechanisms,
+            functions=sorted(p11.raw.available_function_names()),
             mechanism_info=mech_info,
         )
     except Exception as exc:

@@ -22,7 +22,6 @@ from pkcs11_check.raw.recipes import to_ubyte_buf
 pytestmark = [
     pytest.mark.mechanism_coverage,
     pytest.mark.message_based,
-    pytest.mark.requires_v30,
 ]
 
 
@@ -67,6 +66,7 @@ def _xfail_if_message_init_rejected(rv: int, *, label: str) -> None:
 class TestMessageEncrypt:
     """v3.0 C_MessageEncrypt* API tests."""
 
+    @pytest.mark.needs_function("C_MessageEncryptInit")
     def test_message_encrypt_decrypt_aes_gcm(self, p11_module_session: RawSession) -> None:
         """Single-message AES-GCM encrypt/decrypt roundtrip via message-based API.
 
@@ -240,6 +240,7 @@ class TestMessageEncrypt:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
+    @pytest.mark.needs_function("C_MessageEncryptInit")
     def test_message_encrypt_aes_gcm_generated_iv_writeback(
         self, p11_module_session: RawSession
     ) -> None:
@@ -368,6 +369,7 @@ class TestMessageEncrypt:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
+    @pytest.mark.needs_function("C_MessageEncryptInit")
     def test_message_encrypt_aes_ccm_generated_nonce_writeback(
         self, p11_module_session: RawSession
     ) -> None:
@@ -463,6 +465,7 @@ class TestMessageEncrypt:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
+    @pytest.mark.needs_function("C_MessageEncryptInit")
     def test_message_encrypt_rejects_decrypt_only_key(self, p11_module_session: RawSession) -> None:
         """C_MessageEncryptInit must reject a key with CKA_ENCRYPT=False.
 
@@ -550,6 +553,7 @@ class TestMessageEncrypt:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
+    @pytest.mark.needs_function("C_MessageSignInit")
     def test_message_sign_aes_gmac(self, p11_module_session: RawSession) -> None:
         """Message-based sign init/final roundtrip for CKM_AES_GMAC.
 

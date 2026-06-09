@@ -173,7 +173,6 @@ def _hkdf_data_derive(rs: Any, base_key: int, salt: bytes, info: bytes) -> int:
     )
 
 
-@pytest.mark.requires_v30
 class TestHKDFKeyGen:
     """CKM_HKDF_KEY_GEN tests - generate keys for HKDF input keying material."""
 
@@ -269,7 +268,6 @@ class TestHKDFKeyGen:
                 destroy_quietly(rs.raw, rs.sh, derived)
 
 
-@pytest.mark.requires_v30
 class TestHKDFData:
     """CKM_HKDF_DATA tests - derive data objects via HKDF."""
 

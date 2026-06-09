@@ -605,7 +605,6 @@ class TestGenerateKeyPairErrors:
         )
 
     @pytest.mark.pqc
-    @pytest.mark.requires_v32
     @pytest.mark.parametrize(
         ("malformed_template", "attr_len", "case_name"),
         [
@@ -699,7 +698,6 @@ class TestGenerateKeyPairErrors:
         )
 
     @pytest.mark.pqc
-    @pytest.mark.requires_v32
     @pytest.mark.parametrize(
         ("malformed_template", "attr_len", "case_name"),
         [

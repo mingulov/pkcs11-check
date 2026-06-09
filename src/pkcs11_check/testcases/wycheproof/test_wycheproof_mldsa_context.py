@@ -54,7 +54,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import reject_or_classify
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
-pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc, pytest.mark.requires_v32]
+pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc]
 
 _SIGN_FILES = [
     ("mldsa_44_sign_noseed_test.json", CKP_ML_DSA_44),

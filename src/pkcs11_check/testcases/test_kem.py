@@ -76,7 +76,7 @@ from pkcs11_check.testcases.conftest import (
     xfail_if_known_ckr,
 )
 
-pytestmark = [pytest.mark.pqc, pytest.mark.keymgmt, pytest.mark.requires_v32]
+pytestmark = [pytest.mark.pqc, pytest.mark.keymgmt]
 
 # ML-KEM parameter set sizes (ciphertext, shared-secret bytes)
 _ML_KEM_CIPHERTEXT_SIZES = {
@@ -177,7 +177,7 @@ def _encapsulate_ml_kem_or_xfail(
 ) -> tuple[int, bytes]:
     try:
         return encapsulate_key(rs.raw, rs.sh, public_key, CKM_ML_KEM, attrs=attrs)
-    except NotImplementedError:
+    except (NotImplementedError, AttributeError):
         pytest.skip("encapsulate_key not available")
     except AssertionError as exc:
         _xfail_kem_operation_reject(exc, operation)
@@ -192,7 +192,7 @@ def _decapsulate_ml_kem_or_xfail(
 ) -> int:
     try:
         return decapsulate_key(rs.raw, rs.sh, private_key, CKM_ML_KEM, ciphertext, attrs=attrs)
-    except NotImplementedError:
+    except (NotImplementedError, AttributeError):
         pytest.skip("decapsulate_key not available")
     except AssertionError as exc:
         _xfail_kem_operation_reject(exc, operation)
@@ -284,6 +284,7 @@ class TestMLKEMKeyGeneration:
 
 
 @pytest.mark.v32
+@pytest.mark.needs_function("C_EncapsulateKey")
 class TestMLKEMEncapsulateDecapsulate:
     """ML-KEM encapsulate/decapsulate round-trip tests."""
 
@@ -443,6 +444,7 @@ class TestMLKEMEncapsulateDecapsulate:
 
 @pytest.mark.v32
 @pytest.mark.kat
+@pytest.mark.needs_function("C_EncapsulateKey")
 class TestMLKEMCiphertextSize:
     """Verify ciphertext sizes match FIPS 203 spec for each ML-KEM parameter set."""
 
@@ -489,6 +491,7 @@ class TestMLKEMCiphertextSize:
 
 
 @pytest.mark.v32
+@pytest.mark.needs_function("C_EncapsulateKey")
 class TestMLKEMKeyDerivation:
     """ML-KEM encapsulation producing specific key types (AES-128, AES-256)."""
 
@@ -617,6 +620,7 @@ class TestMLKEMKeyDerivation:
 
 
 @pytest.mark.v32
+@pytest.mark.needs_function("C_EncapsulateKey")
 class TestMLKEMDecapsulation:
     """ML-KEM decapsulation tests with various target templates."""
 
@@ -732,6 +736,7 @@ class TestMLKEMDecapsulation:
 
 
 @pytest.mark.v32
+@pytest.mark.needs_function("C_EncapsulateKey")
 class TestMLKEMNegative:
     """Negative tests for ML-KEM KEM operations."""
 

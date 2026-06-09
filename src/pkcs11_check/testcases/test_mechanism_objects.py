@@ -25,7 +25,7 @@ from pkcs11_check.raw.types_std import (
     CKO_MECHANISM,
 )
 
-pytestmark = [pytest.mark.requires_v30, pytest.mark.object]
+pytestmark = [pytest.mark.object]
 
 
 class TestMechanismObjects:
