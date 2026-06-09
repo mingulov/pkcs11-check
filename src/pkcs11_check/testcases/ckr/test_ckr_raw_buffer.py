@@ -359,8 +359,7 @@ else:
         retry_rv = _parse_output_value(out, "RETRY_CKR:")
         retry_len = _parse_output_value(out, "RETRY_LEN:")
         assert retry_rv == CKR_OK, (
-            "C_Sign was not retryable after CKR_BUFFER_TOO_SMALL; "
-            f"retry returned 0x{retry_rv:08x}"
+            f"C_Sign was not retryable after CKR_BUFFER_TOO_SMALL; retry returned 0x{retry_rv:08x}"
         )
         assert retry_len == 256, f"C_Sign retry length {retry_len}, expected 256"
 
@@ -1051,16 +1050,14 @@ finally:
                 f"retry returned 0x{retry_rv:08x}"
             )
             assert final_rv == CKR_OK, (
-                "C_DecryptFinal after C_DecryptUpdate retry failed; "
-                f"returned 0x{final_rv:08x}"
+                f"C_DecryptFinal after C_DecryptUpdate retry failed; returned 0x{final_rv:08x}"
             )
             assert retry_match == 1, "C_DecryptUpdate retry returned wrong plaintext"
         elif rv == CKR_OK:
             final_rv = _parse_output_value(out, "FINAL_CKR:")
             match = _parse_output_value(out, "MATCH:")
             assert final_rv == CKR_OK, (
-                "C_DecryptFinal after CKR_OK C_DecryptUpdate failed; "
-                f"returned 0x{final_rv:08x}"
+                f"C_DecryptFinal after CKR_OK C_DecryptUpdate failed; returned 0x{final_rv:08x}"
             )
             assert match == 1, "C_DecryptUpdate/Final returned wrong plaintext"
         else:
@@ -1731,9 +1728,7 @@ finally:
                 label="ECDH-AES C_WrapKey with a one-byte output buffer",
             )
 
-    def test_get_operation_state_buffer_too_small_preserves_guard(
-        self, p11_config: Any
-    ) -> None:
+    def test_get_operation_state_buffer_too_small_preserves_guard(self, p11_config: Any) -> None:
         """C_GetOperationState with one declared byte must preserve adjacent guard bytes."""
         rc, out, err = _run_raw(
             str(p11_config.module),
@@ -1812,8 +1807,7 @@ else:
             needed = _parse_output_value(out, "NEEDED:")
             out_len = _parse_output_value(out, "LEN:")
             assert out_len == needed, (
-                "C_GetOperationState reported required length "
-                f"{out_len}, expected {needed}"
+                f"C_GetOperationState reported required length {out_len}, expected {needed}"
             )
             retry_rv = _parse_output_value(out, "RETRY_CKR:")
             retry_len = _parse_output_value(out, "RETRY_LEN:")

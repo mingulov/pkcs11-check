@@ -77,14 +77,10 @@ def _canonical_xts_probe(rs: Any, direction: str) -> OperabilityResult:
         mech = mech_bytes(CKM_AES_XTS, PROBE_XTS_TWEAK)
         try:
             if direction == "encrypt":
-                got = encrypt_single(
-                    rs.raw, rs.sh, key, CKM_AES_XTS, PROBE_XTS_PT, mech_param=mech
-                )
+                got = encrypt_single(rs.raw, rs.sh, key, CKM_AES_XTS, PROBE_XTS_PT, mech_param=mech)
                 want = expected_ct
             else:
-                got = decrypt_single(
-                    rs.raw, rs.sh, key, CKM_AES_XTS, expected_ct, mech_param=mech
-                )
+                got = decrypt_single(rs.raw, rs.sh, key, CKM_AES_XTS, expected_ct, mech_param=mech)
                 want = PROBE_XTS_PT
         except CkrAssertionError as exc:
             return OperabilityResult(
@@ -104,9 +100,7 @@ def _canonical_xts_probe(rs: Any, direction: str) -> OperabilityResult:
 
 
 def _xts_operability(rs: Any, direction: str) -> OperabilityResult:
-    return probe_operability(
-        f"AES_XTS:{direction}", lambda: _canonical_xts_probe(rs, direction)
-    )
+    return probe_operability(f"AES_XTS:{direction}", lambda: _canonical_xts_probe(rs, direction))
 
 
 def _load_xts_vectors(

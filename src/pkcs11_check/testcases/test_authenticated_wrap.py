@@ -852,9 +852,7 @@ class TestEcdhAesKeyWrap:
                     purpose="ECDH-AES-KW unwrap roundtrip",
                 )
             except AssertionError as exc:
-                _xfail_if_wrap_runtime_reject(
-                    exc, "ECDH-AES-KW unwrap (roundtrip) not operational"
-                )
+                _xfail_if_wrap_runtime_reject(exc, "ECDH-AES-KW unwrap (roundtrip) not operational")
             # Round-trip succeeded — verify it recovered the original key.
             unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE]).get(CKA_VALUE)
             destroy_quietly(rs.raw, rs.sh, unwrapped)
@@ -955,9 +953,7 @@ class TestEcdhAesKeyWrap:
                     purpose="ECDH-AES-KW unwrap (valid leg)",
                 )
             except AssertionError as exc:
-                _xfail_if_wrap_runtime_reject(
-                    exc, "ECDH-AES-KW unwrap (valid leg) not operational"
-                )
+                _xfail_if_wrap_runtime_reject(exc, "ECDH-AES-KW unwrap (valid leg) not operational")
             good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
             destroy_quietly(rs.raw, rs.sh, good)
             valid_accepted = good_value is not None and good_value == original

@@ -93,9 +93,7 @@ def test_retries_label_then_token_for_storage_oriented_module(
 ) -> None:
     """corePKCS11 shape: no-label -> ARGUMENTS_BAD, session obj -> ATTRIBUTE_VALUE_INVALID."""
     calls: list[dict[Any, Any]] = []
-    monkeypatch.setattr(
-        "pkcs11_check.raw.recipes.create_object", _storage_oriented_module(calls)
-    )
+    monkeypatch.setattr("pkcs11_check.raw.recipes.create_object", _storage_oriented_module(calls))
 
     handle = tc.create_object_negotiated(_Session(), _BASE_TEMPLATE, purpose="t")
 
@@ -133,9 +131,7 @@ def test_non_shape_reject_propagates_without_retry(monkeypatch: pytest.MonkeyPat
 def test_negotiated_labels_are_unique_per_call(monkeypatch: pytest.MonkeyPatch) -> None:
     """Label-keyed stores must not see two imports collide on one label."""
     calls: list[dict[Any, Any]] = []
-    monkeypatch.setattr(
-        "pkcs11_check.raw.recipes.create_object", _storage_oriented_module(calls)
-    )
+    monkeypatch.setattr("pkcs11_check.raw.recipes.create_object", _storage_oriented_module(calls))
 
     tc.create_object_negotiated(_Session(), _BASE_TEMPLATE, purpose="t")
     tc.create_object_negotiated(_Session(), _BASE_TEMPLATE, purpose="t")
@@ -147,9 +143,7 @@ def test_negotiated_labels_are_unique_per_call(monkeypatch: pytest.MonkeyPatch) 
 def test_caller_supplied_label_is_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
     """An explicit CKA_LABEL is never replaced; only CKA_TOKEN may be negotiated."""
     calls: list[dict[Any, Any]] = []
-    monkeypatch.setattr(
-        "pkcs11_check.raw.recipes.create_object", _storage_oriented_module(calls)
-    )
+    monkeypatch.setattr("pkcs11_check.raw.recipes.create_object", _storage_oriented_module(calls))
 
     template = {**_BASE_TEMPLATE, CKA_LABEL: b"caller-label"}
     handle = tc.create_object_negotiated(_Session(), template, purpose="t")
@@ -161,9 +155,7 @@ def test_caller_supplied_label_is_preserved(monkeypatch: pytest.MonkeyPatch) -> 
 def test_token_true_template_gets_no_token_variant(monkeypatch: pytest.MonkeyPatch) -> None:
     """CKA_TOKEN=True templates only negotiate the label, never duplicate variants."""
     calls: list[dict[Any, Any]] = []
-    monkeypatch.setattr(
-        "pkcs11_check.raw.recipes.create_object", _storage_oriented_module(calls)
-    )
+    monkeypatch.setattr("pkcs11_check.raw.recipes.create_object", _storage_oriented_module(calls))
 
     template = {**_BASE_TEMPLATE, CKA_TOKEN: True}
     handle = tc.create_object_negotiated(_Session(), template, purpose="t")
@@ -196,9 +188,7 @@ def test_winning_variant_is_cached_per_shape(monkeypatch: pytest.MonkeyPatch) ->
     no re-walking rejected variants thousands of times (one C_CreateObject per
     subsequent import instead of three on a storage-oriented module)."""
     calls: list[dict[Any, Any]] = []
-    monkeypatch.setattr(
-        "pkcs11_check.raw.recipes.create_object", _storage_oriented_module(calls)
-    )
+    monkeypatch.setattr("pkcs11_check.raw.recipes.create_object", _storage_oriented_module(calls))
 
     tc.create_object_negotiated(_Session(), _BASE_TEMPLATE, purpose="t")
     first_round = len(calls)
@@ -333,9 +323,7 @@ def test_ec_import_coherence_defect_is_fail_not_xfail(
             return True
 
     monkeypatch.setattr(coherence, "import_ec_public_key_negotiated", lambda *a, **k: 7)
-    monkeypatch.setattr(
-        coherence, "ec_public_key_binding_defect", lambda *_a: "silently rebound"
-    )
+    monkeypatch.setattr(coherence, "ec_public_key_binding_defect", lambda *_a: "silently rebound")
     monkeypatch.setattr(coherence, "destroy_quietly", lambda *_a: None)
 
     with pytest.raises(pytest.fail.Exception, match="self-contradiction"):
@@ -400,9 +388,7 @@ def test_import_secret_key_negotiated_builds_canonical_template(
     from pkcs11_check.raw.types_std import CKA_SIGN, CKA_VALUE, CKO_SECRET_KEY
 
     calls: list[dict[Any, Any]] = []
-    monkeypatch.setattr(
-        "pkcs11_check.raw.recipes.create_object", _storage_oriented_module(calls)
-    )
+    monkeypatch.setattr("pkcs11_check.raw.recipes.create_object", _storage_oriented_module(calls))
 
     handle = tc.import_secret_key_negotiated(
         _Session(), 21, b"\x01" * 16, attrs={CKA_SIGN: True, CKA_TOKEN: False}, purpose="t"
@@ -424,10 +410,7 @@ def test_acvp_hmac_uses_negotiated_import() -> None:
     import ast
     from pathlib import Path
 
-    path = (
-        Path(__file__).resolve().parents[1]
-        / "src/pkcs11_check/testcases/acvp/test_acvp_hmac.py"
-    )
+    path = Path(__file__).resolve().parents[1] / "src/pkcs11_check/testcases/acvp/test_acvp_hmac.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     raw_calls = [
         node.lineno
@@ -444,9 +427,7 @@ def test_import_ec_public_key_negotiated_builds_canonical_template(
 ) -> None:
     """The EC import helper presents the same canonical template as the raw recipe."""
     calls: list[dict[Any, Any]] = []
-    monkeypatch.setattr(
-        "pkcs11_check.raw.recipes.create_object", _storage_oriented_module(calls)
-    )
+    monkeypatch.setattr("pkcs11_check.raw.recipes.create_object", _storage_oriented_module(calls))
 
     handle = tc.import_ec_public_key_negotiated(
         _Session(),
@@ -488,9 +469,7 @@ def test_ro_session_object_readonly_reject_is_xfail() -> None:
     from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR, CKR_SESSION_READ_ONLY
     from pkcs11_check.testcases import test_ro_session_restrictions as ro
 
-    exc = CkrAssertionError(
-        "Unexpected CK_RV CKR_SESSION_READ_ONLY", int(CKR_SESSION_READ_ONLY)
-    )
+    exc = CkrAssertionError("Unexpected CK_RV CKR_SESSION_READ_ONLY", int(CKR_SESSION_READ_ONLY))
     with pytest.raises(pytest.xfail.Exception, match="deviation"):
         ro._xfail_if_session_object_rejected_readonly(exc)
 

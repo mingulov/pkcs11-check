@@ -181,9 +181,7 @@ class TestWrongAsymmetricKeyTypeContinuation:
             rc,
             stdout,
             stderr,
-            context=(
-                "C_SignInit(CKM_ECDSA, RSA private key) followed by C_Sign if accepted"
-            ),
+            context=("C_SignInit(CKM_ECDSA, RSA private key) followed by C_Sign if accepted"),
         )
 
     def test_wrong_asymmetric_key_type_verify_continuation_no_crash(
@@ -197,15 +195,11 @@ class TestWrongAsymmetricKeyTypeContinuation:
             pytest.skip("CKM_ECDSA not supported")
         _require_rsa_sign_verify_setup(rs)
 
-        script = (
-            _preamble(p11_config) + dedent(_RSA_KEYPAIR_SETUP + _VERIFY_WITH_RSA_UNDER_ECDSA)
-        )
+        script = _preamble(p11_config) + dedent(_RSA_KEYPAIR_SETUP + _VERIFY_WITH_RSA_UNDER_ECDSA)
         rc, stdout, stderr = run_with_coverage(script, timeout=15, pin=pin_from_config(p11_config))
         assert_ckr_subprocess_ok(
             rc,
             stdout,
             stderr,
-            context=(
-                "C_VerifyInit(CKM_ECDSA, RSA public key) followed by C_Verify if accepted"
-            ),
+            context=("C_VerifyInit(CKM_ECDSA, RSA public key) followed by C_Verify if accepted"),
         )

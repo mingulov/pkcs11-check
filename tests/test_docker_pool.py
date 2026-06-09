@@ -101,9 +101,7 @@ def test_pool_uses_fetched_user_data_cache_when_repo_data_is_empty(
     assert test_pool.resolve_host_data_dir(project_root) == user_data
 
 
-def test_pool_keeps_explicit_host_data_dir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pool_keeps_explicit_host_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     explicit = tmp_path / "explicit-data"
     explicit.mkdir()
 

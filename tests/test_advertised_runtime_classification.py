@@ -737,7 +737,7 @@ def test_wycheproof_rsa_decrypt_invalid_ciphertexts_are_reported() -> None:
     """
     pkcs1 = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_decrypt.py").read_text()
     assert "recovered the target message" in pkcs1  # real Bleichenbacher break
-    assert 'plaintext == msg_expected' in pkcs1
+    assert "plaintext == msg_expected" in pkcs1
     assert 'result == "invalid"' in pkcs1
 
     oaep = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_oaep.py").read_text()

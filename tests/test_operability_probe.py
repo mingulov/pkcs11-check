@@ -64,9 +64,7 @@ def test_probe_runs_once_per_key() -> None:
 
 def test_probe_keys_are_independent() -> None:
     assert probe_operability("a", lambda: OPERATIONAL).status is Operability.OPERATIONAL
-    assert (
-        probe_operability("b", lambda: NOT_OPERATIONAL).status is Operability.NOT_OPERATIONAL
-    )
+    assert probe_operability("b", lambda: NOT_OPERATIONAL).status is Operability.NOT_OPERATIONAL
 
 
 def test_not_operational_xfails_any_clean_ckr() -> None:
@@ -135,8 +133,12 @@ def test_param_shape_reject_set_is_request_shape_only() -> None:
     assert CKR_MECHANISM_INVALID in PARAM_SHAPE_REJECTS
     assert CKR_MECHANISM_PARAM_INVALID in PARAM_SHAPE_REJECTS
     assert CKR_ARGUMENTS_BAD in PARAM_SHAPE_REJECTS
-    for forbidden in (CKR_ENCRYPTED_DATA_INVALID, CKR_GENERAL_ERROR, CKR_DEVICE_ERROR,
-                      CKR_FUNCTION_FAILED):
+    for forbidden in (
+        CKR_ENCRYPTED_DATA_INVALID,
+        CKR_GENERAL_ERROR,
+        CKR_DEVICE_ERROR,
+        CKR_FUNCTION_FAILED,
+    ):
         assert forbidden not in PARAM_SHAPE_REJECTS
 
 
@@ -177,24 +179,37 @@ def test_oaep_combo_probe_classifies_by_canonical_effect(
 
     monkeypatch.setattr(oaep, "decrypt_single", _reject)
     res = oaep._oaep_combo_probe(
-        _Rs(), 7, modulus=modulus, pub_exponent=pub_exp,
-        sha="SHA-256", mgf_sha="SHA-256", hash_mech=int(CKM_SHA256),
+        _Rs(),
+        7,
+        modulus=modulus,
+        pub_exponent=pub_exp,
+        sha="SHA-256",
+        mgf_sha="SHA-256",
+        hash_mech=int(CKM_SHA256),
         mgf=int(CKG_MGF1_SHA256),
     )
     assert res.status is Operability.NOT_OPERATIONAL
 
-    def _roundtrip(_raw: object, _sh: int, _key: int, _mech: object, ct: bytes,
-                   **_k: object) -> bytes:
+    def _roundtrip(
+        _raw: object, _sh: int, _key: int, _mech: object, ct: bytes, **_k: object
+    ) -> bytes:
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.asymmetric import padding
 
-        return priv.decrypt(ct, padding.OAEP(
-            mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
+        return priv.decrypt(
+            ct,
+            padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None),
+        )
 
     monkeypatch.setattr(oaep, "decrypt_single", _roundtrip)
     res = oaep._oaep_combo_probe(
-        _Rs(), 7, modulus=modulus, pub_exponent=pub_exp,
-        sha="SHA-256", mgf_sha="SHA-256", hash_mech=int(CKM_SHA256),
+        _Rs(),
+        7,
+        modulus=modulus,
+        pub_exponent=pub_exp,
+        sha="SHA-256",
+        mgf_sha="SHA-256",
+        hash_mech=int(CKM_SHA256),
         mgf=int(CKG_MGF1_SHA256),
     )
     assert res.status is Operability.OPERATIONAL

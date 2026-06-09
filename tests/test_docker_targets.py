@@ -411,18 +411,18 @@ def test_optee_pkcs11_dockerfile_builds_release_qemu_target() -> None:
     assert "storage.googleapis.com/git-repo-downloads/repo" in dockerfile
     assert "https://github.com/OP-TEE/manifest.git" in dockerfile
     assert "-m qemu_v8.xml" in dockerfile
-    assert 'CFG_PKCS11_TA=y' in dockerfile
-    assert 'CFG_PKCS11_TA_ALLOW_DIGEST_KEY=y' in dockerfile
-    assert 'CFG_PKCS11_TA_AUTH_TEE_IDENTITY=y' in dockerfile
-    assert 'CFG_PKCS11_TA_CHECK_VALUE_ATTRIBUTE=y' in dockerfile
-    assert 'CFG_PKCS11_TA_RSA_X_509=y' in dockerfile
-    assert 'QEMU_VIRTFS_ENABLE=y' in dockerfile
-    assert 'QEMU_PSS_ENABLE=y' in dockerfile
-    assert 'RUST_ENABLE=n' in dockerfile
-    assert 'BR2_PACKAGE_PYTHON3=y' in dockerfile
-    assert 'BR2_PACKAGE_PYTHON3_PYEXPAT=y' in dockerfile
-    assert 'BR2_PACKAGE_PYTHON3_ZLIB=y' in dockerfile
-    assert 'BR2_PACKAGE_OPENSC=y' in dockerfile
+    assert "CFG_PKCS11_TA=y" in dockerfile
+    assert "CFG_PKCS11_TA_ALLOW_DIGEST_KEY=y" in dockerfile
+    assert "CFG_PKCS11_TA_AUTH_TEE_IDENTITY=y" in dockerfile
+    assert "CFG_PKCS11_TA_CHECK_VALUE_ATTRIBUTE=y" in dockerfile
+    assert "CFG_PKCS11_TA_RSA_X_509=y" in dockerfile
+    assert "QEMU_VIRTFS_ENABLE=y" in dockerfile
+    assert "QEMU_PSS_ENABLE=y" in dockerfile
+    assert "RUST_ENABLE=n" in dockerfile
+    assert "BR2_PACKAGE_PYTHON3=y" in dockerfile
+    assert "BR2_PACKAGE_PYTHON3_PYEXPAT=y" in dockerfile
+    assert "BR2_PACKAGE_PYTHON3_ZLIB=y" in dockerfile
+    assert "BR2_PACKAGE_OPENSC=y" in dockerfile
     assert "COPY LICENSE-APACHE LICENSE-MIT THIRD_PARTY_LICENSES.md ./" in dockerfile
     assert "COPY src/ src/" in dockerfile
     assert "build-guest-site.sh /opt/pkcs11-check-site" in dockerfile
@@ -617,7 +617,7 @@ def test_optee_salvage_artifacts_reconstructs_partial_results(tmp_path: Path) ->
                 "when": "call",
                 "outcome": "passed",
                 "duration": 0.1,
-            }
+            },
         ],
     )
 
@@ -661,19 +661,26 @@ def test_optee_pkcs11_runtime_live_syncs_progress_for_long_runs() -> None:
     assert "start_optee_progress_sync()" in script
     assert "stop_optee_progress_sync()" in script
     assert 'sleep "$progress_interval"' in script
-    assert 'copy_optee_artifacts' in script
-    assert 'trap - EXIT' in script
+    assert "copy_optee_artifacts" in script
+    assert "trap - EXIT" in script
     assert "OP-TEE progress:" in script
     assert "files complete" in script
     assert "last=" in script
-    assert "start_optee_progress_sync" in script.split(
-        'if [[ "${PKCS11_CHECK_OPTEE_USE_MAKE_CHECK:-0}" == "1" ]]',
-        maxsplit=1,
-    )[0]
-    assert "stop_optee_progress_sync" in script.split(
-        'for required in results.json state.json quality.json report.jsonl serial0.log serial1.log',
-        maxsplit=1,
-    )[0]
+    assert (
+        "start_optee_progress_sync"
+        in script.split(
+            'if [[ "${PKCS11_CHECK_OPTEE_USE_MAKE_CHECK:-0}" == "1" ]]',
+            maxsplit=1,
+        )[0]
+    )
+    assert (
+        "stop_optee_progress_sync"
+        in script.split(
+            "for required in results.json state.json "
+            "quality.json report.jsonl serial0.log serial1.log",
+            maxsplit=1,
+        )[0]
+    )
 
 
 def test_optee_pkcs11_runtime_forwards_pool_trace_environment() -> None:
@@ -712,7 +719,7 @@ def test_optee_pkcs11_expect_timeout_is_configurable_for_guest_setup() -> None:
         'export PKCS11_CHECK_OPTEE_EXPECT_TIMEOUT="${PKCS11_CHECK_OPTEE_EXPECT_TIMEOUT:-7200}"'
         in wrapper
     )
-    assert 'env(PKCS11_CHECK_OPTEE_EXPECT_TIMEOUT)' in expect_script
+    assert "env(PKCS11_CHECK_OPTEE_EXPECT_TIMEOUT)" in expect_script
     assert "set setup_timeout 7200" in expect_script
     assert "set timeout $setup_timeout" in expect_script
 
@@ -720,9 +727,9 @@ def test_optee_pkcs11_expect_timeout_is_configurable_for_guest_setup() -> None:
 def test_optee_pkcs11_expect_does_not_abort_test_run_on_ta_panic_text() -> None:
     script = (ROOT / "docker/optee-pkcs11/optee-pkcs11.exp").read_text()
 
-    test_run_block = script.split("python3 /mnt/pkcs11-check/guest-runner.py", maxsplit=1)[
-        1
-    ].split("\n\nwait_prompt", maxsplit=1)[0]
+    test_run_block = script.split("python3 /mnt/pkcs11-check/guest-runner.py", maxsplit=1)[1].split(
+        "\n\nwait_prompt", maxsplit=1
+    )[0]
 
     assert "OPTEE_PKCS11_EXIT" in test_run_block
     assert "Kernel panic" not in test_run_block
@@ -735,9 +742,7 @@ def test_optee_pkcs11_expect_does_not_abort_test_run_on_ta_panic_text() -> None:
 
 def test_optee_pkcs11_expect_still_fails_fast_for_boot_and_setup_panics() -> None:
     script = (ROOT / "docker/optee-pkcs11/optee-pkcs11.exp").read_text()
-    before_guest_runner = script.split("python3 /mnt/pkcs11-check/guest-runner.py", maxsplit=1)[
-        0
-    ]
+    before_guest_runner = script.split("python3 /mnt/pkcs11-check/guest-runner.py", maxsplit=1)[0]
 
     assert "OP-TEE/QEMU panic during boot" in before_guest_runner
     assert "OP-TEE/QEMU panic while waiting for prompt" in before_guest_runner
@@ -779,8 +784,7 @@ def test_optee_pkcs11_source_manifest_tracks_release_refs() -> None:
     assert "optee_os_release" in target["supporting_sources"]
     assert "optee_client_release" in target["supporting_sources"]
     assert (
-        target["build_evidence"]
-        == "2026-06-07 bash docker/test.sh optee-pkcs11 --timeout 120 -- "
+        target["build_evidence"] == "2026-06-07 bash docker/test.sh optee-pkcs11 --timeout 120 -- "
         "src/pkcs11_check/testcases/test_interface.py passed"
     )
 

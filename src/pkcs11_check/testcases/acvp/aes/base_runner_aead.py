@@ -98,8 +98,13 @@ def _canonical_aead_probe(rs: Any, mech_name: str, direction: str) -> Operabilit
             if direction == "encrypt":
                 overhead = 16 if mech_name == "AES_GCM" else 0
                 got = encrypt_single(
-                    rs.raw, rs.sh, key, mech, PROBE_PT,
-                    mech_param=param, output_overhead=overhead,
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    mech,
+                    PROBE_PT,
+                    mech_param=param,
+                    output_overhead=overhead,
                 )
                 want = expected_ct
             else:
@@ -116,9 +121,7 @@ def _canonical_aead_probe(rs: Any, mech_name: str, direction: str) -> Operabilit
                 f"canonical {mech_name} {direction} output mismatch: "
                 f"got {got.hex()}, want {want.hex()}",
             )
-        return OperabilityResult(
-            Operability.OPERATIONAL, f"canonical {mech_name} {direction} OK"
-        )
+        return OperabilityResult(Operability.OPERATIONAL, f"canonical {mech_name} {direction} OK")
     finally:
         if key:
             destroy_quietly(rs.raw, rs.sh, key)

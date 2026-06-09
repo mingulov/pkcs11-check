@@ -263,9 +263,7 @@ class TestECDHDerivedKeyUse:
             ct = encrypt_single(
                 rs.raw, rs.sh, derived, CKM_AES_CBC, plaintext, mech_param=cbc_param
             )
-            pt = decrypt_single(
-                rs.raw, rs.sh, derived, CKM_AES_CBC, ct, mech_param=cbc_param
-            )
+            pt = decrypt_single(rs.raw, rs.sh, derived, CKM_AES_CBC, ct, mech_param=cbc_param)
             assert pt == plaintext, (
                 f"ECDH-derived key encrypt/decrypt mismatch: "
                 f"expected {plaintext.hex()!r}, got {pt.hex()!r}"
@@ -419,9 +417,7 @@ class TestRSAOAEPWrapLifecycle:
             ciphertext = encrypt_single(rs.raw, rs.sh, target, CKM_AES_ECB, plaintext)
 
             # OAEP param
-            oaep_param = mech_oaep(
-                CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA256, mgf=CKG_MGF1_SHA256
-            )
+            oaep_param = mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA256, mgf=CKG_MGF1_SHA256)
 
             try:
                 wrapped = wrap_key(
