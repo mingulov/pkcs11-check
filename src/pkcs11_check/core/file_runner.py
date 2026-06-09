@@ -3165,9 +3165,9 @@ def run_isolated_pytest_units(
                         merged_report_records_by_unit.setdefault(unit, records)
                     for unit in executed_units:
                         if unit in cached_report_records_by_unit:
-                            merged_report_records_by_unit[unit] = (
-                                cached_report_records_by_unit[unit]
-                            )
+                            merged_report_records_by_unit[unit] = cached_report_records_by_unit[
+                                unit
+                            ]
                         else:
                             merged_report_records_by_unit.pop(unit, None)
                 if merged_report_records_by_unit:

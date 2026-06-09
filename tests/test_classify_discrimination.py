@@ -1,4 +1,5 @@
 """Meta-tests for classify_discrimination (Pillar 2). No module needed."""
+
 from __future__ import annotations
 
 import pytest

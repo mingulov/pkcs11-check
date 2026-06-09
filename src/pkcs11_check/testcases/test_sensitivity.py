@@ -96,7 +96,7 @@ class TestSensitiveKeyValue:
             sens_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
             claimed = sens_attrs.get(CKA_SENSITIVE) is True
 
-            sentinel = b"\xA5" * len(secret)
+            sentinel = b"\xa5" * len(secret)
             value_buf = (ctypes.c_ubyte * len(secret)).from_buffer_copy(sentinel)
             attr = (CK_ATTRIBUTE * 1)()
             attr[0].type = CKA_VALUE
@@ -145,8 +145,7 @@ class TestSensitiveKeyValue:
             sens_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
             if sens_attrs.get(CKA_SENSITIVE) is not True:
                 pytest.xfail(
-                    "mixed C_GetAttributeValue probe requires a key that reports "
-                    "CKA_SENSITIVE=True"
+                    "mixed C_GetAttributeValue probe requires a key that reports CKA_SENSITIVE=True"
                 )
 
             label_buf = (ctypes.c_ubyte * len(label))()
@@ -169,8 +168,7 @@ class TestSensitiveKeyValue:
                 f"got {attr[0].ulValueLen}"
             )
             assert attr[1].ulValueLen == len(label), (
-                f"safe CKA_LABEL row reported length {attr[1].ulValueLen}, "
-                f"expected {len(label)}"
+                f"safe CKA_LABEL row reported length {attr[1].ulValueLen}, expected {len(label)}"
             )
             assert bytes(label_buf[: attr[1].ulValueLen]) == label, (
                 "C_GetAttributeValue returned CKR_ATTRIBUTE_SENSITIVE but did not "

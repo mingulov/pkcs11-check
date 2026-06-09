@@ -220,10 +220,7 @@ class TestCreateObjectErrors:
         classify_negative_rv(
             rv,
             TEMPLATE_ERRORS,
-            label=(
-                "C_CreateObject with CKA_ALLOWED_MECHANISMS NULL_PTR and "
-                "nonzero ulValueLen"
-            ),
+            label=("C_CreateObject with CKA_ALLOWED_MECHANISMS NULL_PTR and nonzero ulValueLen"),
         )
 
     def test_allowed_mechanisms_empty_null_pointer_enforced(
@@ -250,10 +247,7 @@ class TestCreateObjectErrors:
             classify_negative_rv(
                 rv,
                 TEMPLATE_ERRORS,
-                label=(
-                    "C_CreateObject with empty CKA_ALLOWED_MECHANISMS "
-                    "NULL_PTR array"
-                ),
+                label=("C_CreateObject with empty CKA_ALLOWED_MECHANISMS NULL_PTR array"),
             )
             return
 
@@ -279,8 +273,7 @@ class TestCreateObjectErrors:
                 claimed=claimed,
                 violated=encrypted,
                 label=(
-                    "CKA_ALLOWED_MECHANISMS empty-array enforcement for "
-                    "C_EncryptInit/C_Encrypt"
+                    "CKA_ALLOWED_MECHANISMS empty-array enforcement for C_EncryptInit/C_Encrypt"
                 ),
             )
         finally:
@@ -493,8 +486,7 @@ class TestFindObjectsErrors:
                         f"a valid search: {ckr_name(rv)}"
                     )
                 assert count.value <= len(handles), (
-                    "C_FindObjects returned more handles than the caller's "
-                    "ulMaxObjectCount"
+                    "C_FindObjects returned more handles than the caller's ulMaxObjectCount"
                 )
                 found.extend(int(handles[i]) for i in range(count.value))
                 if count.value == 0:

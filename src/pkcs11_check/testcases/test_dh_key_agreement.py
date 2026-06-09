@@ -349,14 +349,12 @@ class TestDHKeyAgreement:
                 derived_keys.append(key)
                 value = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
                 assert len(value) == requested_len, (
-                    f"DH derived key reported {len(value)} bytes for "
-                    f"CKA_VALUE_LEN={requested_len}"
+                    f"DH derived key reported {len(value)} bytes for CKA_VALUE_LEN={requested_len}"
                 )
                 derived_values[requested_len] = value
 
             assert derived_values[16] == derived_values[32][-16:], (
-                "DH CKA_VALUE_LEN=16 must keep the rightmost bytes of the "
-                "longer derived secret"
+                "DH CKA_VALUE_LEN=16 must keep the rightmost bytes of the longer derived secret"
             )
         finally:
             for key in derived_keys:

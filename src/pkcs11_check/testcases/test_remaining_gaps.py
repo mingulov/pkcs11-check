@@ -438,9 +438,7 @@ class TestTemplateConstraintAttributes:
                 if handle:
                     destroy_quietly(rs.raw, rs.sh, handle)
 
-    def test_unwrap_template_enforces_created_object_attributes(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_unwrap_template_enforces_created_object_attributes(self, p11_raw_session: Any) -> None:
         """CKA_UNWRAP_TEMPLATE must block unwrapping to a violating object template."""
         from pkcs11_check.raw.pack import (
             attr_bool,
@@ -490,9 +488,7 @@ class TestTemplateConstraintAttributes:
 
             claimed = False
             try:
-                attrs = read_attributes(
-                    rs.raw, rs.sh, unwrapping_key.value, [CKA_UNWRAP_TEMPLATE]
-                )
+                attrs = read_attributes(rs.raw, rs.sh, unwrapping_key.value, [CKA_UNWRAP_TEMPLATE])
                 raw_template = attrs.get(CKA_UNWRAP_TEMPLATE)
                 claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
                     CK_ATTRIBUTE
@@ -607,9 +603,7 @@ class TestTemplateConstraintAttributes:
                 if handle:
                     destroy_quietly(rs.raw, rs.sh, handle)
 
-    def test_derive_template_enforces_created_object_attributes(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_derive_template_enforces_created_object_attributes(self, p11_raw_session: Any) -> None:
         """CKA_DERIVE_TEMPLATE must block deriving to a violating object template."""
         from pkcs11_check.raw.pack import (
             attr_bool,

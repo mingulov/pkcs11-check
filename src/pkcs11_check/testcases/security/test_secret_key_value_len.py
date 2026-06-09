@@ -453,10 +453,7 @@ cleanup()
             rc,
             stdout,
             stderr,
-            context=(
-                "C_DigestKey(secret key imported with "
-                f"CKA_VALUE_LEN={_ULONG_MAX:#x})"
-            ),
+            context=(f"C_DigestKey(secret key imported with CKA_VALUE_LEN={_ULONG_MAX:#x})"),
         )
 
 
@@ -1035,8 +1032,5 @@ cleanup()
             rc,
             stdout,
             stderr,
-            context=(
-                "C_DeriveKey(HKDF_SHA256, "
-                f"CKA_VALUE_LEN={output_value_len:#x})"
-            ),
+            context=(f"C_DeriveKey(HKDF_SHA256, CKA_VALUE_LEN={output_value_len:#x})"),
         )

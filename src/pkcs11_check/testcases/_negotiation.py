@@ -3,6 +3,7 @@
 The module's own clean reject tells us our request shape is wrong; we retry with a
 spec-equivalent variant. No provider identity. See the design spec, guardrails G1-G6.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence

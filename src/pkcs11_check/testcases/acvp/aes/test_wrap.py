@@ -93,8 +93,13 @@ def _canonical_wrap_probe(rs: Any, mech_name: str, direction: str) -> Operabilit
         try:
             if direction == "encrypt":
                 got = encrypt_single(
-                    rs.raw, rs.sh, key, mech, pt,
-                    mech_param=mech_simple(mech), output_overhead=16,
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    mech,
+                    pt,
+                    mech_param=mech_simple(mech),
+                    output_overhead=16,
                 )
                 want = expected_ct
             else:
@@ -113,9 +118,7 @@ def _canonical_wrap_probe(rs: Any, mech_name: str, direction: str) -> Operabilit
                 f"canonical {mech_name} {direction} output mismatch: "
                 f"got {got.hex()}, want {want.hex()}",
             )
-        return OperabilityResult(
-            Operability.OPERATIONAL, f"canonical {mech_name} {direction} OK"
-        )
+        return OperabilityResult(Operability.OPERATIONAL, f"canonical {mech_name} {direction} OK")
     finally:
         if key:
             destroy_quietly(rs.raw, rs.sh, key)

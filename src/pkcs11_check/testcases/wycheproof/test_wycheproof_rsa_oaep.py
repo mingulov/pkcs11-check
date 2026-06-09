@@ -281,9 +281,7 @@ def _oaep_combo_probe(
     mgf: int,
 ) -> OperabilityResult:
     """Decrypt a spec-truth (RFC 8017 hashlib-made) OAEP ciphertext for this combo."""
-    canonical_ct = _oaep_encrypt_rfc8017(
-        modulus, pub_exponent, _PROBE_OAEP_MSG, sha, mgf_sha
-    )
+    canonical_ct = _oaep_encrypt_rfc8017(modulus, pub_exponent, _PROBE_OAEP_MSG, sha, mgf_sha)
     if canonical_ct is None:
         return OperabilityResult(
             Operability.INCONCLUSIVE,

@@ -437,7 +437,8 @@ def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
                 # output (a real break) re-raises. The real CCM findings
                 # (accepted-invalid, wrong plaintext) are caught below, not here.
                 classify_kat_clean_error(
-                    exc, result=_ccm_operability(rs, "AES_CCM", "decrypt"),
+                    exc,
+                    result=_ccm_operability(rs, "AES_CCM", "decrypt"),
                     label=f"AES-CCM {vec_id}",
                 )
             pytest.fail(f"AES-CCM decrypt failed for valid vector {vec_id}: {exc}")

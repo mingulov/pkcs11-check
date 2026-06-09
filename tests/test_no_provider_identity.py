@@ -11,6 +11,7 @@ the masking shapes it used to enable. The guard scans every `.py` file under
 `src/pkcs11_check/` and `tests/` (excluding this file, which names the banned
 symbols inside regex strings, and `__pycache__`).
 """
+
 from __future__ import annotations
 
 import pathlib

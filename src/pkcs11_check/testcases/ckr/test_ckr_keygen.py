@@ -99,10 +99,7 @@ class TestGenerateKeyErrors:
         key = CK_OBJECT_HANDLE(0)
         rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), None, 0, byref(key))
         if rv != CKR_OK:
-            pytest.xfail(
-                f"{name} advertised but C_GenerateKey(NULL, 0) returned "
-                f"{ckr_name(rv)}"
-            )
+            pytest.xfail(f"{name} advertised but C_GenerateKey(NULL, 0) returned {ckr_name(rv)}")
 
         try:
             if not key.value:
