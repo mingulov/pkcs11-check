@@ -10,9 +10,11 @@ from typing import Any
 
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKK_AES,
     CKK_GENERIC_SECRET,
     CKM_AES_KEY_WRAP,
     CKM_AES_KEY_WRAP_KWP,
+    CKM_ECDH_AES_KEY_WRAP,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
@@ -26,15 +28,30 @@ TEMPLATE_SHAPE_REJECTS: tuple[int, ...] = (
     CKR_ATTRIBUTE_TYPE_INVALID,
 )
 
-VALUE_LEN_ON_UNWRAP_OK: frozenset[int] = frozenset({int(CKK_GENERIC_SECRET)})
+# G3: key types for which a CKA_VALUE_LEN variant is permitted in a C_UnwrapKey template.
+# PKCS#11 v3.2 removed the v3.0 footnote-6 prohibition from AES CKA_VALUE_LEN (it now carries
+# footnotes 2,3 only) and C_UnwrapKey (v3.2 Sec.5.18.4) MAY specify CKA_VALUE_LEN when the
+# length is unambiguously determined; a length conflict SHALL return CKR_WRAPPED_KEY_LEN_RANGE
+# (so a wrong length is rejected, never silently truncated). CKK_AES is therefore safe here.
+VALUE_LEN_ON_UNWRAP_OK: frozenset[int] = frozenset({int(CKK_GENERIC_SECRET), int(CKK_AES)})
 
+# G3: mechanisms whose recovered length is unambiguously determined, so a supplied
+# CKA_VALUE_LEN is a redundant restatement (rejected on conflict), not a truncation control.
+# Excludes every C_DeriveKey length-bearing mech (ECDH1_DERIVE, HKDF, PBKDF2) and every *_PAD
+# unwrap mech by omission -- there CKA_VALUE_LEN IS the length control and present-vs-absent
+# changes the output, so the per-MECHANISM gate is what keeps derive/PAD out even for CKK_AES.
 MECH_DETERMINED_LENGTH: frozenset[int] = frozenset(
-    {int(CKM_AES_KEY_WRAP), int(CKM_AES_KEY_WRAP_KWP)}
+    {int(CKM_AES_KEY_WRAP), int(CKM_AES_KEY_WRAP_KWP), int(CKM_ECDH_AES_KEY_WRAP)}
 )
 
 
 def value_len_variant_allowed(key_type: int, mechanism: int) -> bool:
-    """G3: a CKA_VALUE_LEN variant is only permitted for an allowlisted (key_type, mech)."""
+    """G3: a CKA_VALUE_LEN variant is only permitted for an allowlisted (key_type, mech).
+
+    Both gates must pass: the key type must permit CKA_VALUE_LEN on unwrap, AND the mechanism
+    must determine the recovered length. The mechanism gate is what excludes derive/PAD mechs
+    (where CKA_VALUE_LEN controls output length) even when the target key type is allowlisted.
+    """
     return int(key_type) in VALUE_LEN_ON_UNWRAP_OK and int(mechanism) in MECH_DETERMINED_LENGTH
 
 

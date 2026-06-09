@@ -10,6 +10,7 @@ from pkcs11_check.raw.types_std import (
     CKK_GENERIC_SECRET,
     CKM_AES_KEY_WRAP,
     CKM_ECDH1_DERIVE,
+    CKM_ECDH_AES_KEY_WRAP,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_ENCRYPTED_DATA_INVALID,
@@ -70,6 +71,12 @@ def test_all_variants_shape_rejected_raises_last():
 
 
 def test_value_len_variant_allowlist():
+    # Determined-length UNWRAP mechs: CKA_VALUE_LEN permitted for generic-secret AND AES
+    # (PKCS#11 v3.2 removed footnote 6 for AES; a length conflict -> CKR_WRAPPED_KEY_LEN_RANGE).
     assert value_len_variant_allowed(CKK_GENERIC_SECRET, CKM_AES_KEY_WRAP) is True
-    assert value_len_variant_allowed(CKK_AES, CKM_AES_KEY_WRAP) is False
+    assert value_len_variant_allowed(CKK_AES, CKM_AES_KEY_WRAP) is True
+    assert value_len_variant_allowed(CKK_AES, CKM_ECDH_AES_KEY_WRAP) is True
+    # The MECHANISM gate excludes derive mechs even for an allowlisted key type: a derive
+    # mechanism's CKA_VALUE_LEN controls (truncates) the output, so it must NOT be negotiated.
     assert value_len_variant_allowed(CKK_GENERIC_SECRET, CKM_ECDH1_DERIVE) is False
+    assert value_len_variant_allowed(CKK_AES, CKM_ECDH1_DERIVE) is False
