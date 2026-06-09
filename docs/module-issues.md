@@ -878,6 +878,14 @@ All skips are legitimate capability-based skips; none hide broken behavior.
 **Status: Segfault on stale-handle attribute read (BouncyHSM PKCS#11 shim bug)**
 
 ### Known bugs
+- **AES-CCM decrypt does not authenticate (tag-auth bypass, Type A)**: fresh 2026-06-09
+  (`test_ccm.py` with the H2 operability probe): **423×** "module accepted CCM ciphertext
+  with invalid tag" and ~1,268× plaintext mismatches where the returned plaintext is the
+  expected one **plus the unstripped tag bytes** — i.e. BouncyHSM's CCM decrypt path
+  decrypts without verifying or stripping the tag. Its CCM single-shot is otherwise
+  largely non-operational (canonical known-answer encrypt → `CKR_GENERAL_ERROR`; 5,679
+  vectors xfail "advertised but not operational"); the ops that DO complete expose the
+  missing authentication. AES-GCM is unaffected (80 passed / 30 xfailed, clean).
 - **Segfault on `C_GetAttributeValue` after `C_DestroyObject`**: reproduced on `key.destroy(); key[Attribute.LABEL]` and also via a direct `ctypes` call to `libbouncyhsm_pkcs11.so`. Root cause is in BouncyHSM's native PKCS#11 shim (`src/Src/BouncyHsm.Pkcs11Lib/bouncy-pkcs11.c`): `C_GetAttributeValue()` stores the real PKCS#11 return value in `rvMethod`, but checks `if (rv == CKR_OK || ...)` using the RPC transport status instead. Because `rv` is `0` on RPC success, the shim always enters the response-processing block and dereferences `envelope.Data` even when the method return is `CKR_OBJECT_HANDLE_INVALID`.
 - **Correct shim fix**: change the condition to use `rvMethod`, not `rv`, and guard `envelope.Data != NULL` before dereferencing it. The server side already reports `CKR_OBJECT_HANDLE_INVALID` correctly.
 

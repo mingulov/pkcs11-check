@@ -141,8 +141,27 @@ This is the same effect-over-return-code principle as the discrimination model
 ([[project_behavioral_module_adaptation]]), extended to KAT suites. It removes the narrow
 `{MECHANISM_INVALID, MECHANISM_PARAM_INVALID}` allowlist (the actual root flaw) and is provider-general.
 
-- **Status:** design agreed in principle; needs the user's go-ahead. Surface area = the AEAD/KAT runners
-  (`base_runner_aead.py`, `test_wrap.py`, `base_cts.py`, `test_xts.py`, HMAC/SHA3/RSA KAT paths).
+- **Status:** ✅ **IMPLEMENTED + fresh-verified for the AEAD runners (pass 7, 2026-06-09).**
+  `testcases/_operability.py`: per-(mechanism, direction) canonical known-answer probe with
+  OPERATIONAL / NOT_OPERATIONAL / WRONG_OUTPUT / INCONCLUSIVE verdicts (INCONCLUSIVE = staging/
+  import failed — the H6 lesson: setup failure is not mechanism evidence) and
+  `classify_kat_clean_error` (xfail on NOT_OPERATIONAL regardless of CKR; param-shape rejects
+  {MECHANISM_INVALID, MECHANISM_PARAM_INVALID, ARGUMENTS_BAD} xfail on an operational mech; all
+  else re-raises; non-CKR AssertionErrors always re-raise). Canonical truth is computed with
+  `cryptography`, so it is spec-derived, not provider-derived. Wired into
+  `base_runner_aead.py` (GCM/CCM, all four directions); meta-tests
+  `tests/test_operability_probe.py` + `tests/test_aead_operability_classification.py`.
+  **Fresh verification:**
+  - **bouncyhsm CCM: 7,370 failed → 1,691 failed / 5,679 xfailed / 1,028 passed (passes
+    unchanged)** — and the surviving failures are a REAL Type-A finding: 423× invalid-tag
+    CCM ciphertext ACCEPTED + ~1,268× plaintext returned with unstripped tag bytes ⇒
+    BouncyHSM CCM decrypt does not authenticate (documented in module-issues.md).
+  - kryoptic CCM: 4,890 passed / 3,508 xfailed — **byte-identical to baseline** (param-shape
+    xfails preserved; canonical works so nothing else got masked).
+  - softhsm2: GCM 80 passed, CCM skipped (no mechanism) — unchanged; bouncyhsm GCM 80/120/30
+    unchanged.
+  - Remaining H2 surface (`test_wrap.py`, `base_cts.py`, `test_xts.py`, HMAC/SHA3/RSA KAT
+    paths, H3 per-hash OAEP) is the sweep's next step using the same probe module.
 - **Spec:** [classification-model-design.md](../classification-model-design.md) positive-op row.
 
 ### H3 — opencryptoki RSA-OAEP SHA-512/224 | SHA-512/256 hard-fail (newly-added vectors)  ·  MEDIUM
