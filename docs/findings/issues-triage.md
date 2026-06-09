@@ -15,13 +15,20 @@ docker provider pool. Each issue is classified by the project's one rule
 
 > **ANALYSIS ONLY.** This file records and classifies. No test/source changes are made while building it.
 
+> ⚠️ **POOL-STALENESS WARNING (proven 2026-06-09).** The pool ran `--all --no-build`, so each
+> provider used a **pre-built image** that may predate fixes already on `dev`. Confirmed concrete:
+> the pool reported kryoptic AES-CCM as **0 pass / 3,420 xfail**, but a **fresh rebuild**
+> (`docker/test.sh kryoptic -- test_ccm.py`) gives **4,890 pass / 3,508 xfail** — kryoptic CCM works
+> fine. **Pool numbers can grossly overstate issues. Every candidate MUST be re-confirmed with a fresh
+> targeted rebuild before any fix.** (Reinforces the earlier full-results-audit staleness gotcha.)
+
 ---
 
 ## Run log
 
 | Pass | Date | Pool run | Shards done | Notes |
 |---|---|---|---|---|
-| 1 | 2026-06-09 | `--all --concurrency 4` (PID 1250142, **still running**) | 20 / 24 | kryoptic + tpm2 + (pkcs11-mock report pending) still executing. wolfpkcs11/corepkcs11 shards not yet reached. |
+| 1 | 2026-06-09 | `--all --concurrency 4` (PID 1250142, **still running**) | 20 / 24 | kryoptic + tpm2 + (pkcs11-mock report pending) still executing. wolfpkcs11/corepkcs11 shards not yet reached. **Pool used `--no-build` → some provider images stale (see warning above).** |
 
 **Method:** parse each completed shard's `artifacts/<shard>/results.json` (`tool=pkcs11-check`, structured
 per-test outcomes), merge shards by provider, group failed/error tests by `(outcome, file, normalised
@@ -85,35 +92,54 @@ delta is **not** by itself a regression — the *signature* is what matters belo
 - **Why it matters:** this is the clearest "pkcs11-check's own fault" item — a known gap left by the
   refactor I shipped, provider-general, directly verifiable.
 
-### H2 — ACVP / Wycheproof positive-op KATs hard-fail on a *clean* error (model says xfail)  ·  HIGH (large)
+### H2 — KAT clean-error classification  ·  RE-SCOPED after deep investigation (2026-06-09)
 
-- **Providers:** bouncyhsm (dominant), some on opencryptoki.
-- **Tests / effect (positive op, valid vector, clean non-OK CK_RV → hard `fail`):**
-  - `test_ccm.py::test_acvp_aes_ccm_encrypt` — `CKR_GENERAL_ERROR; expected CKR_OK` ×2,518
-  - `test_ccm.py::test_acvp_aes_ccm_decrypt` — `CKR_ENCRYPTED_DATA_INVALID; expected CKR_OK` ×3,161
-  - `test_wycheproof_aes.py::test_aes_ccm[*-valid]` — `CKR_ENCRYPTED_DATA_INVALID` ×357
-  - `test_wycheproof_hmac.py::test_hmac_wycheproof[...sha1...valid]` — `CKR_ARGUMENTS_BAD` ×48
-  - `test_sha3.py::TestSHA3Digest::test_sha3_empty` — `CKR_ARGUMENTS_BAD` ×4
-  - `test_wycheproof_rsa_siggen.py::test_rsa_pkcs1_siggen` — `CKR_GENERAL_ERROR` ×10
-- **Why candidate:** per the classification table, a *clean error* on a **positive op for an advertised
-  mechanism** = "advertised but not operational" = **xfail**, not fail. These KAT runners hard-fail it.
-  This looks like a coverage gap in the classification rework ([[project_classification_rework]]) — the
-  ACVP-AES / wycheproof-KAT positive-op paths never got the advertised-but-not-operational downgrade
-  that other suites did.
-- **MUST VERIFY before fixing (two forks, both harness-bugs but different fix):**
-  1. Is the mechanism **advertised**? softhsm2/kryoptic pass these CCM/HMAC vectors (not in their
-     failure lists) → the harness param-encoding is correct and the failures are bouncyhsm-specific. If
-     bouncyhsm *advertises* CKM_AES_CCM but errors → xfail downgrade is right. If it does **not**
-     advertise it, the test failed to gate on `has_mechanism()` → that's the bug instead.
-  2. Confirm these are **error returns**, not `CKR_OK`+wrong-output. The signatures are all CK_RV
-     errors (GENERAL_ERROR / ENCRYPTED_DATA_INVALID / ARGUMENTS_BAD), so xfail is indicated — but the
-     fix must **preserve `CKR_OK`+wrong-output as `fail` (Type A)**.
-- **Spec:** [classification-model-design.md](../classification-model-design.md) positive-op row; CLAUDE.md
-  "right thing done imperfectly = xfail."
-- **Proposed direction:** a shared KAT helper that downgrades a clean non-OK CK_RV on an advertised
-  mechanism to xfail ("advertised but not operational"), reserving `fail` for wrong-output and
-  crash/hang. Large surface — one helper, not per-test edits. **This is ~⅔ of bouncyhsm's failures**, so
-  resolving it would mostly explain the 8,197 count.
+**The original "broaden the xfail set" framing was wrong** — a deep, fresh-rebuild investigation
+(probing kryoptic + bouncyhsm directly) disproved the "⅔ of bouncyhsm is a clean-error misclassification"
+hypothesis and split it into three very different things:
+
+**(a) CCM mass-failure was mostly STALE POOL DATA.** Pool showed kryoptic CCM 0 pass / 3,420 xfail and
+bouncyhsm 7,282 fail, suggesting "CCM broken everywhere." Fresh evidence:
+- `docker/test.sh kryoptic -- test_ccm.py` → **4,890 pass / 3,508 xfail**. kryoptic CCM **works**; the
+  pool ran a stale `--no-build` image. The 3,508 xfails are real param rejections (e.g. kryoptic rejects
+  7-byte CCM nonce → `MECHANISM_PARAM_INVALID`, correctly xfailed by the existing narrow guard).
+- Direct probe (canonical n13/tag16 vector, fresh build): kryoptic CCM single-shot → **CKR_OK + ct**;
+  bouncyhsm CCM single-shot → **CKR_GENERAL_ERROR on every variant**, while bouncyhsm **GCM works**.
+  Both advertise CCM with `CKF_ENCRYPT` (kryoptic 0x60326, bouncyhsm 0x60301).
+- **Conclusion:** kryoptic CCM = healthy (no action). bouncyhsm CCM single-shot = **genuinely
+  non-operational** (advertised but `GENERAL_ERROR`) → the model says **xfail**, currently `fail`
+  because `GENERAL_ERROR` isn't in the runner's narrow `{MECHANISM_INVALID, MECHANISM_PARAM_INVALID}`
+  xfail set. This is the *only* real CCM issue, and it is **bouncyhsm-specific and modest**, not 5,700.
+
+**(b) HMAC-wycheproof zero-pass is mostly a known deviation, not a bug.** Every provider shows pass=0;
+the xfail reason is "module did not verify a valid HMAC tag" on high-index `hmac_sha1` vectors =
+wycheproof **truncated-tag** valid vectors, a legitimate provider-dependent deviation already xfailed by
+`_xfail_if_hmac_runtime_reject`. The only outliers are **bouncyhsm's 48 `CKR_ARGUMENTS_BAD`** (bouncyhsm
+rejects some HMAC inputs differently) — bouncyhsm-specific, small.
+
+**(c) Genuine small bouncyhsm-specific tail:** `test_sha3_empty` `ARGUMENTS_BAD` ×4, `rsa_pkcs1_siggen`
+`GENERAL_ERROR` ×10 — advertised mechanism, clean error on a valid vector → xfail per model. (bouncyhsm
+images in the pool are fresh — built 16:42 this run — so these are reliable; CCM proven via fresh probe.)
+
+**Better fix than a wider CKR allowlist (the "how to do it better"): an effect-based operability probe.**
+Instead of enumerating "which error codes count as not-operational" (brittle; and a too-wide list could
+mask a real break), the runner should probe the mechanism **once** with a canonical known-answer vector:
+- canonical → **CKR_OK + correct output** ⇒ mechanism is **operational** ⇒ every real vector failure
+  stays a genuine `fail` (this is what catches a true crypto break — e.g. it would NOT have masked a
+  kryoptic CCM bug, because kryoptic's canonical passes).
+- canonical → **clean error (any CK_RV)** ⇒ mechanism **advertised but not operational** ⇒ xfail the
+  suite, **independent of which CKR** (handles bouncyhsm's `GENERAL_ERROR` and kryoptic's
+  `PARAM_INVALID` identically — no per-provider, no CKR allowlist).
+- canonical → **CKR_OK + wrong output** ⇒ **crypto break** ⇒ `fail` (never xfailed).
+- non-CKR exception ⇒ re-raise (a harness/ctypes bug must never be read as "not operational").
+
+This is the same effect-over-return-code principle as the discrimination model
+([[project_behavioral_module_adaptation]]), extended to KAT suites. It removes the narrow
+`{MECHANISM_INVALID, MECHANISM_PARAM_INVALID}` allowlist (the actual root flaw) and is provider-general.
+
+- **Status:** design agreed in principle; needs the user's go-ahead. Surface area = the AEAD/KAT runners
+  (`base_runner_aead.py`, `test_wrap.py`, `base_cts.py`, `test_xts.py`, HMAC/SHA3/RSA KAT paths).
+- **Spec:** [classification-model-design.md](../classification-model-design.md) positive-op row.
 
 ### H3 — opencryptoki RSA-OAEP SHA-512/224 | SHA-512/256 hard-fail (newly-added vectors)  ·  MEDIUM
 
