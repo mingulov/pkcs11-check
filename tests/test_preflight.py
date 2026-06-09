@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from pkcs11_check.core.preflight import (
     CapabilityManifest,
     load_manifest,
@@ -73,3 +75,67 @@ def test_manifest_round_trip(tmp_path: Path) -> None:
     save_manifest(path, manifest)
 
     assert load_manifest(path) == manifest
+
+
+def test_probe_capabilities_records_functions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """probe_capabilities populates manifest.functions from available_function_names()."""
+    import pkcs11_check.core.preflight as preflight_mod
+
+    class _FakeSlot:
+        def get_mechanisms(self) -> list[object]:
+            return []
+
+        def get_mechanism_info(self, mech: object) -> None:
+            return None
+
+    class _FakeRaw:
+        def available_function_names(self) -> set[str]:
+            return {"C_Sign", "C_Verify", "C_GenerateKeyPair"}
+
+    class _FakeP11:
+        interface_version = "2.40"
+        raw = _FakeRaw()
+
+        def get_slots(self, token_present: bool = True) -> list[_FakeSlot]:
+            return [_FakeSlot()]
+
+    monkeypatch.setattr(preflight_mod, "load_module", lambda module, interface: _FakeP11())
+
+    manifest = preflight_mod.probe_capabilities(Path("/tmp/m.so"), interface="auto", slot=0)
+
+    assert manifest.status == "ok"
+    assert manifest.functions == ["C_GenerateKeyPair", "C_Sign", "C_Verify"]  # sorted
+
+
+def test_manifest_serialization_roundtrip_with_and_without_functions(tmp_path: Path) -> None:
+    """Old manifests (no functions key) deserialize to []; new ones round-trip."""
+    import json
+
+    # Forward: a manifest WITH functions survives asdict->json->load
+    m = CapabilityManifest(
+        status="ok",
+        module_path="/tmp/m.so",
+        requested_interface="auto",
+        interface_version="3.2",
+        slot_index=0,
+        slot_count=1,
+        mechanisms=["CKM_ML_KEM"],
+        functions=["C_EncapsulateKey"],
+    )
+    path = tmp_path / "m.json"
+    save_manifest(path, m)
+    assert load_manifest(path).functions == ["C_EncapsulateKey"]
+
+    # Backward: a manifest file lacking "functions" loads with [] default
+    legacy = {
+        "status": "ok",
+        "module_path": "/tmp/m.so",
+        "requested_interface": "auto",
+        "interface_version": "2.40",
+        "slot_index": 0,
+        "slot_count": 1,
+        "mechanisms": [],
+    }
+    legacy_path = tmp_path / "legacy.json"
+    legacy_path.write_text(json.dumps(legacy))
+    assert load_manifest(legacy_path).functions == []
