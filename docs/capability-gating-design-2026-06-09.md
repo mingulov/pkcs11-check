@@ -1,7 +1,7 @@
 # Capability-based test gating — design
 
 **Date:** 2026-06-09
-**Status:** implemented (2026-06-09) — plan: docs/superpowers/plans/2026-06-09-capability-based-test-gating.md
+**Status:** implemented (2026-06-09)
 **Author:** brainstormed with Claude
 
 ## Problem
