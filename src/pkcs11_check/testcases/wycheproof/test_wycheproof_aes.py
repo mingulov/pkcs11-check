@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any, NoReturn
 
 import pytest
@@ -43,8 +44,6 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_XTS,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
-    CKR_ATTRIBUTE_READ_ONLY,
-    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
@@ -53,10 +52,13 @@ from pkcs11_check.raw.types_std import (
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
-    CKR_TEMPLATE_INCOMPLETE,
-    CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases._negotiation import (
+    TEMPLATE_SHAPE_REJECTS,
+    negotiate_request,
+    value_len_variant_allowed,
+)
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = pytest.mark.wycheproof
@@ -83,18 +85,10 @@ def _xfail_if_aes_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
     raise exc
 
 
-# Modules disagree on the AES-KW unwrap template for a variable-length generic
-# secret: lenient modules (softhsm2) derive the recovered length from the wrapped
-# blob and reject CKA_VALUE_LEN as read-only, while strict modules (NSS) require it
-# and otherwise return a template-shape error. These are the codes that mean "state
-# the recovered length explicitly"; we retry with CKA_VALUE_LEN rather than mis-fail
-# a module that can actually unwrap. No provider identity is consulted.
-_TEMPLATE_SHAPE_REJECTS = (
-    CKR_TEMPLATE_INCOMPLETE,
-    CKR_TEMPLATE_INCONSISTENT,
-    CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_ATTRIBUTE_TYPE_INVALID,
-)
+# Clean reject codes that, on a VALID AES-KW vector after negotiation is exhausted,
+# indicate an operational deviation (module cannot create the generic-secret object) ->
+# xfail, not fail. Broader than the negotiation retry-trigger set on purpose.
+_AES_KW_VALID_VECTOR_CLEAN_REJECTS = TEMPLATE_SHAPE_REJECTS + (CKR_ATTRIBUTE_VALUE_INVALID,)
 
 
 def _unwrap_aes_kw_adaptive(
@@ -102,32 +96,29 @@ def _unwrap_aes_kw_adaptive(
 ) -> int:
     """Unwrap an AES-KW blob, retrying with CKA_VALUE_LEN on a template-shape reject.
 
-    The first attempt uses the minimal template (no CKA_VALUE_LEN), which lenient
+    The first variant uses the minimal template (no CKA_VALUE_LEN), which lenient
     modules accept unchanged. Only when the module rejects that template with a
-    "shape" code do we restate the recovered length explicitly. Any other rejection
-    (e.g. an integrity failure on a forged blob) propagates to the caller for normal
-    classification, so forgery detection is preserved.
+    "shape" code does :func:`negotiate_request` move on to a variant that restates
+    the recovered length explicitly. Any other rejection (e.g. an integrity failure
+    on a forged blob) propagates to the caller for normal classification, so forgery
+    detection is preserved.
 
     ``value_len`` is ``None`` for *invalid* vectors: a forged blob must never be
     coerced through a restated length (that would let the module recover a wrongly
-    sized object and accept material it should reject), so no retry is attempted and
-    the module's own rejection stands.
+    sized object and accept material it should reject), so no length variant is added
+    and the module's own rejection stands.
     """
-    try:
-        return unwrap_key(
-            rs.raw, rs.sh, unwrapping_key, wrapped, CKM_AES_KEY_WRAP, attrs=base_attrs
-        )
-    except AssertionError as exc:
-        if value_len is None or not is_known_error(exc, _TEMPLATE_SHAPE_REJECTS):
-            raise
-        return unwrap_key(
-            rs.raw,
-            rs.sh,
-            unwrapping_key,
-            wrapped,
-            CKM_AES_KEY_WRAP,
-            attrs={**base_attrs, CKA_VALUE_LEN: value_len},
-        )
+    variants = [dict(base_attrs)]
+    if value_len is not None and value_len_variant_allowed(
+        base_attrs[CKA_KEY_TYPE], CKM_AES_KEY_WRAP
+    ):
+        variants.append({**base_attrs, CKA_VALUE_LEN: value_len})
+
+    def attempt(delta: Mapping[int, Any]) -> int:
+        return unwrap_key(rs.raw, rs.sh, unwrapping_key, wrapped, CKM_AES_KEY_WRAP, attrs=delta)
+
+    result, _idx = negotiate_request(attempt, variants, label="AES-KW unwrap")
+    return result
 
 
 def _load_flat(filename: str) -> list[tuple[str, dict[str, Any]]]:
@@ -277,7 +268,7 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
             # softhsm2 and kryoptic unwrap these vectors, so the inputs are valid.
             xfail_if_known_ckr(
                 exc,
-                _AES_RUNTIME_REJECT_CKRS + _TEMPLATE_SHAPE_REJECTS + (CKR_ATTRIBUTE_READ_ONLY,),
+                _AES_RUNTIME_REJECT_CKRS + _AES_KW_VALID_VECTOR_CLEAN_REJECTS,
                 f"AES-KW {vec_id}: unwrap into a generic secret not operational",
             )
             pytest.fail(f"AES-KW unwrap failed for valid vector {vec_id}: {exc}")
@@ -296,8 +287,9 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
     finally:
         destroy_quietly(rs.raw, rs.sh, unwrapped)
     recovered = attrs.get(CKA_VALUE)
-    if recovered is not None:
-        assert recovered == msg_expected, f"AES-KW {vec_id}: unwrapped key material mismatch"
+    if recovered is None:
+        pytest.xfail(f"AES-KW {vec_id}: unwrapped key material unreadable; cannot verify")
+    assert recovered == msg_expected, f"AES-KW {vec_id}: unwrapped key material mismatch"
 
 
 # --- AES Key Wrap with Padding (RFC 5649) ---
