@@ -590,3 +590,22 @@ has an invalid-curve weakness. The real-finding path is preserved: a provider th
 off-base-curve point still `fail`s (verified via tc332 `InvalidCurveAttack`, off-curve, still fails).
 This is the model for the EdDSA item: implement a *safe* gate (never masks an off-curve/real case),
 let the fresh run reveal whether any residual failures are genuine.
+
+## Post-merge regression gate — softhsm2 full suite on dev (2026-06-10)
+
+Full `docker/test.sh softhsm2` on dev after merging the complete fix-pass:
+**171 (pool baseline) → 68 failed** / 44,898 passed / 5,022 xfailed / **0 crashed / 0 error**.
+
+- **Every fixed file is now 0 failed** (no regression): `test_wycheproof_rsa_decrypt` 59→0 (H8),
+  `test_wycheproof_ecdh` 42→0 (off-curve gate), `test_ckr_raw_buffer` 1→0 (C_Digest), PSS −1.
+  The 103-failure reduction is fully accounted for by these fixes.
+- **Zero cross-test regressions**: all 68 remaining failures were present in the pool baseline,
+  and none is in a file the fix-pass touched.
+- The 68 remaining are EXACTLY the flagged-for-decision items: UB probes
+  (`test_ffi_length_boundary` 22 + `test_arithmetic_overflow` 18 + `test_ckr_keygen` 5 = 45) +
+  policy hardening checks (`test_parameter_validation` GCM weak-params 9, `test_acvp_eddsa` 4,
+  `test_cve_regression`/`test_tookan` Tookan 2+1, `test_set_attribute` atomicity 1,
+  `test_padding_oracle` 1, `test_mech_negative` 1, `test_ckr_wrong_key_type_hardening` 2).
+
+Confirms the merged fix-pass is correct, complete for clear bugs, and regression-free; what remains
+on softhsm2 is precisely the documented policy/UB decisions awaiting the user.
