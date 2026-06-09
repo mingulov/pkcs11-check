@@ -70,28 +70,21 @@ unchanged. Detail in `docs/findings/issues-triage.md` (fix-pass table + long-tai
   YOUR nod** (removing the deliberate overflow security suite is outward-facing). C4 wolfpkcs11
   HKDF/keygen = GENUINE crashes (real findings, kept).
 
-## In-flight at context-clear (verify, then commit)
+## State at this checkpoint
 
-**wycheproof_aes CCM → H2 operability probe.** bouncyhsm test_wycheproof_aes has 420 `test_aes_ccm`
-failures = the SAME bouncyhsm CCM bug (357 ENCRYPTED_DATA_INVALID on valid vectors = non-operational
-CCM that should xfail; 48 wrong-plaintext + 15 accept-invalid = the REAL no-auth finding, stay fail).
-Routed the valid-vector clean-error path through `classify_kat_clean_error(_ccm_operability(...))`.
-Meta-tests green (12 passed in test_wycheproof_aes_mac_guards.py incl. the new
-`test_ccm_valid_vector_clean_reject_xfails_when_not_operational`); full meta-suite 1948 passed.
-**Docker verify running at clear:** bouncyhsm (expect 420F→~63F/357xf) + softhsm2 control (expect
-unchanged all-pass). If green → commit; if softhsm2 regresses → investigate before commit.
-Uncommitted files: `src/.../wycheproof/test_wycheproof_aes.py`, `tests/test_wycheproof_aes_mac_guards.py`.
+Branch `fix/triage-harness-improvements`, **26 commits ahead of dev, working tree clean**, full
+meta-suite **1950 passed** in clean env (the 2 CLI color-env flakes are gone after the colored shell
+note above; re-check with `env -i HOME=$HOME PATH=$PATH TERM=dumb uv run pytest tests/`). The
+wycheproof_aes CCM H2 routing and the H8 RSA-decrypt fix are both committed + verified.
 
 ## Remaining queue (next angles)
 
-1. **Finish the in-flight CCM commit** (verify bouncyhsm/softhsm2 above).
-2. **Other-provider triage IN PROGRESS:** NSS rsa_decrypt DONE (H8); pkcs11-mock = mock
-   stub-storage (not findings, skip). STILL TODO: NSS remainder (ffi UB=C2, error_path_kwp
-   21, mldsa_sign 14), tpm2, kryoptic-fips, nss-pqc, softhsm2-main, qryptotoken,
-   opencryptoki-master. Extract from tpm2, kryoptic-fips,
-   nss-pqc, softhsm2-main, qryptotoken, opencryptoki-master — extract from
-   `artifacts2/<prov>-shard-*/results.json` units[].stdout, find harness-bug candidates vs genuine
-   findings. (bouncyhsm now ~CCM-only + small tails; corepkcs11 long-tail = genuine, done.)
+1. **Other-provider triage IN PROGRESS:** NSS rsa_decrypt DONE (H8); pkcs11-mock = mock
+   stub-storage (not findings, skip). STILL TODO: NSS remainder (ffi UB=C2, error_path_kwp 21,
+   mldsa_sign 14), tpm2, kryoptic-fips, nss-pqc, softhsm2-main, qryptotoken, opencryptoki-master —
+   extract from `artifacts2/<prov>-shard-*/results.json` units[].stdout, find harness-bug
+   candidates vs genuine findings. (bouncyhsm now ~CCM-only + small tails; corepkcs11 long-tail
+   = genuine, done.)
 3. **xfail audit:** confirm no xfail added this session is over-broad / hides a real fail.
 4. **C1-C3 removal** — needs your decision (outward-facing security-suite change).
 5. **Secret-key coherence** root-cause via a stock-PAL repro (corePKCS11 CMAC/HMAC import OK then
