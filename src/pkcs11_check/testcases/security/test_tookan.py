@@ -68,9 +68,9 @@ _TYPE_CONFUSION_WRAP_INAPPLICABLE_RVS = {
     CKR_KEY_NOT_WRAPPABLE,
 }
 
-# Includes the template-shape rejects so a module that refuses the spec-conservative
-# unwrap template for the AES valid leg (e.g. opencryptoki -> CKR_TEMPLATE_INCOMPLETE,
-# demanding a footnote-6-forbidden CKA_VALUE_LEN) routes that leg to xfail, not a false fail.
+# Includes the template-shape rejects as a safety net: if a module refuses the AES valid-leg
+# unwrap with every negotiated template, that leg routes to xfail rather than a false fail.
+# (The policy-attribute negotiation normally lets strict modules establish the valid leg.)
 _TYPE_CONFUSION_WRAP_RUNTIME_REJECT_RVS = {
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,

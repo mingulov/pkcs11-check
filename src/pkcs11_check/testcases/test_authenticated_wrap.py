@@ -56,12 +56,13 @@ from pkcs11_check.testcases.conftest import (
 
 pytestmark = pytest.mark.keymgmt
 
-# Clean codes that mean a wrap/unwrap PRECONDITION could not be established:
-# the operation is advertised-but-not-operational, OR (after negotiation exhausts
-# every spec-equivalent template) the module refuses the unwrap template shape -- e.g.
-# opencryptoki returns CKR_TEMPLATE_INCOMPLETE for an AES-KW unwrap into CKK_AES because
-# it demands CKA_VALUE_LEN, which footnote 6 forbids us to supply. A cleanly-rejected
+# Clean codes that mean a wrap/unwrap PRECONDITION could not be established: the operation
+# is advertised-but-not-operational, OR (after negotiation exhausts every spec-equivalent
+# template) the module refuses the unwrap template shape -- a safety net so a cleanly-rejected
 # valid leg is an operational deviation -> xfail (discrimination undecidable), never a fail.
+# Includes the template-shape rejects for that reason; in practice the policy-attribute
+# negotiation (drop CKA_EXTRACTABLE/CKA_SENSITIVE) lets strict modules (opencryptoki) establish
+# the valid leg, so this net only catches a module that refuses the unwrap entirely.
 _WRAP_RUNTIME_REJECT_RVS = (
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
