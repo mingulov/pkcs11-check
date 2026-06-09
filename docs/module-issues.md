@@ -163,6 +163,18 @@ provider package versions where the finding was first recorded.
 
 **Status: 20,723 passed, 362 failed, 8,147 skipped, 335 xfailed**
 
+### Known bugs (2026-06-09)
+- **Output-buffer overrun: ignores the caller-declared `*pulCount`/`*pulBufLen`**: with a
+  deliberately small declared output buffer, NSS softoken writes the FULL result past the
+  declared boundary instead of returning `CKR_BUFFER_TOO_SMALL`. Probed via guard bytes over an
+  over-allocation: `C_GetSlotList` (declared 1 entry, NSS found 2 → **8 guard bytes overwritten**),
+  `C_GetMechanismList`, `C_GetAttributeValue`, `C_WrapKey`, and `C_Decrypt`/`C_DecryptFinal`
+  AES-CBC-PAD. PKCS#11 §5.x two-call convention requires `CKR_BUFFER_TOO_SMALL` + setting the
+  required length WITHOUT writing. A real 1-entry caller buffer would be overflowed. Detected by:
+  `test_ckr_raw_buffer.py` (6 F on nss, fresh). Contrast `C_Digest`, where NSS returns `CKR_OK`
+  but writes **0** bytes past the boundary — a benign return-code deviation (xfail), not an
+  overflow; the probe now distinguishes the two via the guard-byte count.
+
 ### Failure breakdown (362 total)
 | Count | Area | Reason |
 |-------|------|--------|

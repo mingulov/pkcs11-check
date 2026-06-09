@@ -501,7 +501,7 @@ single-provider findings. Ranked by provider-count:
 |---|---|---|---|
 | 11 | wycheproof_rsa_decrypt | "invalid accepted" (×608) | 🔧 **FIXED (H8)** — anti-Bleichenbacher penalized |
 | 14 | ffi_length_boundary | C_Sign/Verify/Digest/*Update(huge len) crash | 💥→🔧 **C2 UB** (lying length, flagged for nod) |
-| 16 | ckr_raw_buffer | "C_Digest returns CKR_OK with 1-byte buffer" | ❓ FAIR test (declares 1B, over-allocs to detect OOB write) — likely a **real** lax-buffer finding; verify fresh, don't suppress |
+| 16 | ckr_raw_buffer | "C_Digest returns CKR_OK with 1-byte buffer" | 🔧 **FIXED** — gated on overflow evidence: CKR_OK + 0-overwrite = benign §5.10.2 deviation (xfail); >0-overwrite = real OOB write (fail). Surfaced a REAL NSS finding (see below) |
 | 14 | parameter_validation | AES-GCM short IV "accepted" | ⚖️ over-strict vs model (spec-legal; NIST advisory) — **flag for Denis** |
 | 14 | parameter_validation | AES-GCM IV reuse "accepted" | ⚖️ module can't track IV history → unreasonable to require; **flag** |
 | 14 | parameter_validation | RSA-PSS sLen=0 "accepted" | ⚖️ **sLen=0 is VALID deterministic PSS (RFC 8017)**, not a Type-A break — strongest reclassify candidate; **flag** |
