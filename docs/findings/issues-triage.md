@@ -314,13 +314,44 @@ This is the same effect-over-return-code principle as the discrimination model
 
 ---
 
-## 💥 CRASHES (report) — **pending UB-vs-module determination**
+## 💥 CRASHES — **DETERMINED 2026-06-09 (code-read + fresh repro)**
 
 > Precedent: [[project_threading_ub_finding]] — a "crash" the *harness* provokes by feeding
 > undefined-behavior input (e.g. declaring `ulDataLen = ULONG_MAX` while `pData` points at a small
-> buffer → the module reads out of bounds) is a **harness-bug**, not a module finding. Each cluster
-> below must be checked: does the test pass an honestly-sized buffer, or lie about the length? That
-> determines crash-report vs 🔧.
+> buffer → the module reads out of bounds) is a **harness-bug**, not a module finding.
+>
+> **VERDICT: C1, C2, C3 (+ the C4 UB-fork) are HARNESS-PROVOKED UB. C4 HKDF/keygen is a GENUINE
+> module crash.** The overflow-suite source was read line-by-line and the crashes fresh-reproduced:
+> - `test_arithmetic_overflow.py:149` — `# Small real buffer, but claim huge length`:
+>   `buf = (c_ubyte*16)(...)` then `C_Encrypt(sh, buf, ULONG_MAX, ...)`. The module is told the input
+>   is 2⁶⁴−1 bytes when 16 exist → it reads OOB → SIGSEGV. Fresh bouncyhsm: **24 crashed** (incl.
+>   `ulDataLen=0x80000000`, `C_EncryptInit ulParameterLen=0xffff...ff` with a 16B param, and
+>   `C_CreateObject template_count=0xaaa...`). Every signature is a *declared length/count that exceeds
+>   the real buffer/array*.
+> - `test_ffi_length_boundary.py:253` — same shape, targeting a Rust binding's `check_slice_len` panic
+>   (`buf = (c_ubyte*16)`, then `C_Sign(sh, buf, isize_max, ...)`). For a C module (NSS) this is plain
+>   OOB-read UB.
+> - PKCS#11 §5: the caller guarantees `pData`/`pTemplate` point to `ulDataLen`/`ulCount` elements.
+>   Passing a length that exceeds the buffer is **caller UB**; a module that trusts it (as the spec
+>   permits — softhsm2 happens to sanity-check and so does *not* crash) is not violating the spec.
+>   This is the exact pattern Denis already adjudicated as harness-UB in the threading finding.
+>
+> **The near-SIZE_MAX overflow class is fundamentally un-blackbox-testable through the C API**: to
+> trigger an integer-overflow in `padded_len = bs*(len/bs+1)` you must pass a near-2⁶⁴ length, which is
+> unallocatable as a real buffer — so the only way to reach it is to lie about the buffer, i.e. provoke
+> UB. There is no honest version of these specific probes.
+>
+> **⚠️ ACTION NEEDS DENIS'S NOD (outward-facing, touches the "a segfault IS the finding" core):** the
+> precedent resolution is *don't provoke UB in a test* (remove the lying-buffer probes / stop asserting
+> `crash = module finding` for them). That removes/neuters a large, deliberately-written security suite
+> (`TestDataLengthOverflow`, `TestMechanismParamLengthOverflow`, `TestTemplateCountOverflow*`,
+> `TestAttributeValueLenOverflow`, the `test_ffi_length_boundary` isize probes, C4's UB-fork). Because
+> that is hard to reverse and changes what the tool reports, it is **flagged here for approval** rather
+> than auto-applied in the fix loop. Nuance to preserve when actioned: `CKA_VALUE_LEN=ULONG_MAX` in a
+> *keygen* template is a key-*size request* (not a buffer read) — the module must validate it
+> (`CKR_KEY_SIZE_RANGE`/`CKR_HOST_MEMORY`); an unchecked `malloc(ULONG_MAX)` crash there is arguably a
+> *real* robustness finding and should be kept. Each overflow case must be sorted buffer-read-UB
+> (remove) vs value-request (keep) — not a blanket delete.
 
 ### C1 — bouncyhsm: AES encrypt/decrypt length-overflow segfault
 - `test_arithmetic_overflow.py::TestDataLengthOverflow::test_data_length_overflow[encrypt|decrypt-ulong_max]`
@@ -338,21 +369,18 @@ This is the same effect-over-return-code principle as the discrimination model
 - `...TestTemplateCountOverflowValidHandles...` — `C_GetAttributeValue(valid object,
   template_count=ULONG_MAX): signal 11` ×3
 
-### C4 — wolfpkcs11: 18 crashes — split into genuine vs UB-fork  ·  NEW (pass 4)
-- **Genuine module crashes (not overflow-input) — likely real findings, verify fresh:**
-  `test_wycheproof_hkdf.py: Fatal Python error: Aborted` ×2 (SIGABRT during HKDF);
-  `test_ckr_keygen.py` signal 11 + Aborted ×2 (keygen). These crash on *normal* inputs → real
-  wolfpkcs11 bugs worth reporting (after a fresh-rebuild re-confirm — wolfpkcs11 pool image is `--no-build`).
-- **UB-fork (join the determination below):** `test_arithmetic_overflow` C_GenerateKeyPair(count=ULONG_MAX);
-  `test_secret_key_value_len` C_CreateObject(CKA_VALUE_LEN=huge); `test_ffi_length_boundary`
-  Sign/Verify/Digest/*Update(ulDataLen=0x7fffffffffffffff) ×6 — same isize/overflow pattern as C1–C3.
-
-**Determination needed (next pass):** read `test_arithmetic_overflow.py` / `test_ffi_length_boundary.py`
-buffer construction. If they allocate a real buffer and only *declare* an oversized length → these are
-harness-provoked OOB UB (→ 🔧, document misuse per the threading precedent, don't fail-test). If the
-request is honest → real module length-validation crash (→ keep as 💥 finding). The `*_rejects_cleanly`
-sibling variants already xfail (clean reject), so the test family *expects* clean rejection — the crash
-cases are the ones to adjudicate.
+### C4 — wolfpkcs11: GENUINE module crashes (real findings) + a UB-fork  ·  ✅ FRESH-VERIFIED REAL (2026-06-09)
+- **GENUINE (keep as 💥 findings):** fresh rebuild `docker/test.sh wolfpkcs11 -- test_wycheproof_hkdf.py`
+  → `test_hkdf` runs **10 normal Wycheproof vectors green, then SIGABRT** (`Fatal Python error: Aborted`)
+  on the 11th. The input is an ordinary HKDF salt/info vector, no lying length → **real wolfpkcs11 crash
+  on valid input.** `test_ckr_keygen.py` signal 11 + Aborted ×2 likewise crash on normal keygen. These
+  are legitimate module bugs to report; **no harness change.** wolfpkcs11-master fixed most crashes
+  (4 vs stable's 18) so report against current master.
+- **UB-fork (same verdict as C1–C3, harness-provoked UB):** `test_arithmetic_overflow`
+  C_GenerateKeyPair(count=ULONG_MAX); `test_ffi_length_boundary` Sign/Verify/Digest/*Update at
+  `ulDataLen=0x7fffffffffffffff` ×6 — lying length/count. `test_secret_key_value_len`
+  C_CreateObject(CKA_VALUE_LEN=huge) is the *value-request* nuance above (keep, it's a real
+  length-validation test, not a buffer read).
 
 ---
 
