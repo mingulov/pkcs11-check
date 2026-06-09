@@ -149,7 +149,6 @@ class TestKeyDeriveSoftware:
             destroy_quietly(rs.raw, rs.sh, p11_key)
 
 
-@pytest.mark.requires_v30
 class TestHKDF:
     """HKDF tests - requires CKM_HKDF_DERIVE (PKCS#11 v3.0+)."""
 
