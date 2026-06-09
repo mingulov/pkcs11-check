@@ -422,6 +422,25 @@ de-identification are routing clean deviations correctly; no provider-identity l
 | sweep | corepkcs11 limbo_import | 493 F / 156 P | **0 F / 589 P** / 74 xf | portable label 🔧 |
 | sweep | corepkcs11 wycheproof_aes | 63 F / 248 P | **0 F / 269 P** / 42 xf | negotiation + KEY_HANDLE_INVALID reclass 🔧 |
 
+| H3 | opencryptoki rsa_oaep | 26 F | **0 F** / 26 xf (RFC8017 combo probe) | probe 🔧 |
+| H4 | bouncyhsm ro_session | 5 F | **0 F** / 5 xf | deviation 📋 |
+| H5 | opencryptoki aes_modes | 6 F | **2 F (real ulCounterBits accept)** / 4 xf | classify 🔧 + Type-A finding |
+
 Controls byte-identical on every step: softhsm2 (ecdsa 21,906P, wrap 3,600xf, hmac 470P,
-aes 476P, limbo 663P), kryoptic (ccm 4,890P/3,508xf ×2 runs, ecdsa 0F), opencryptoki (0F).
-Next: RSA/data-object import migrations, coherence coverage for secret keys, H3-H5, C1-C4.
+aes 476P, limbo 663P, oaep 439P/646xf, aes_modes 5P, ro_session 16P/2xf), kryoptic
+(ccm 4,890P/3,508xf ×2, ecdsa 0F), opencryptoki (0F where unchanged).
+
+**Quality-loop regression gate (2026-06-09, full `docker/test.sh corepkcs11`):** every fixed
+bucket 0 failed; the remaining **206 failures are corepkcs11's untouched minimal-impl long-tail**
+(`test_data_objects` 12, `x509/test_core_ops` 9, `test_buffers` 7, `test_sign` 6,
+`test_rsa_key_import` 5, `test_aead` 5, `ckr/test_ckr_object` 5, `test_kdf`/`test_profiles` 4 …)
+— **byte-identical to the pool baseline, zero regressions** from the KAT-suite changes. The 6
+`crashed with signal` are the documented C-cluster harness-UB. Provider-generality re-audited:
+no provider-identity branch in any changed logic path (only in explanatory comments).
+
+Net: ~22,610 corepkcs11 KAT hard-failures eliminated (ECDSA 21,906 + HMAC 148 + limbo 493 +
+AES 63) by harness fixes, plus bouncyhsm CCM no-auth + opencryptoki ulCounterBits surfaced as
+REAL findings, with controls unchanged.
+
+Next: triage the corepkcs11 long-tail (harness-fixable vs genuine minimal-impl limits),
+secret-key coherence root-cause (stock-PAL repro), C1-C3 removal pending Denis's nod, merge to dev.
