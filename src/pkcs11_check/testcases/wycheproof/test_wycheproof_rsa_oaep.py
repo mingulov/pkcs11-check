@@ -30,6 +30,8 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKM_SHA384,
     CKM_SHA512,
+    CKM_SHA512_224,
+    CKM_SHA512_256,
     CKM_SHA_1,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -81,6 +83,11 @@ _SHA_HASH_MECHS: dict[str, int] = {
     "SHA-256": CKM_SHA256,
     "SHA-384": CKM_SHA384,
     "SHA-512": CKM_SHA512,
+    # Truncated SHA-512 OAEP hashAlg. PKCS#11 has no CKG_MGF1_SHA512_224/256,
+    # so only vectors whose MGF hash *does* have a constant (e.g. mgf1sha1)
+    # are runnable; the rest skip cleanly via the param-mapping guard below.
+    "SHA-512/224": CKM_SHA512_224,
+    "SHA-512/256": CKM_SHA512_256,
 }
 
 _SHA_MGFS: dict[str, int] = {
@@ -112,12 +119,63 @@ _OAEP_FILES = [
     "rsa_oaep_3072_sha512_mgf1sha1_test.json",
     "rsa_oaep_4096_sha256_mgf1sha1_test.json",
     "rsa_oaep_4096_sha512_mgf1sha1_test.json",
+    # Truncated SHA-512 hashAlg (mgf1sha1 runs; mgf1sha512_224/256 skip --
+    # PKCS#11 has no CKG_MGF1_SHA512_224/256 to express those MGFs)
+    "rsa_oaep_2048_sha512_224_mgf1sha1_test.json",
+    "rsa_oaep_2048_sha512_224_mgf1sha512_224_test.json",
+    "rsa_oaep_3072_sha512_256_mgf1sha1_test.json",
+    "rsa_oaep_3072_sha512_256_mgf1sha512_256_test.json",
     "rsa_three_primes_oaep_2048_sha1_mgf1sha1_test.json",
     "rsa_three_primes_oaep_3072_sha224_mgf1sha224_test.json",
     "rsa_three_primes_oaep_4096_sha256_mgf1sha256_test.json",
     # Misc - various parameter combinations in one file
     "rsa_oaep_misc_test.json",
 ]
+
+
+# PKCS#11-visible OAEP decryption inputs: (modulus, ciphertext, hashAlg,
+# mgf, label). Two vectors that differ only in fields PKCS#11 cannot see drive
+# the identical C_Decrypt and are deduplicated (see sibling wycheproof tests).
+_OaepFingerprint = tuple[bytes, bytes, str, str, bytes]
+
+
+def _pkcs11_oaep_fingerprint(test: dict[str, Any]) -> _OaepFingerprint | None:
+    """Return PKCS#11-visible RSA-OAEP decrypt inputs for duplicate detection."""
+    try:
+        pk = test["_group"].get("privateKey", {})
+        return (
+            pkcs11_bigint_from_hex(pk.get("modulus", "")),
+            bytes.fromhex(test["ct"]),
+            str(test["_sha"]),
+            str(test["_mgfSha"]),
+            bytes.fromhex(test.get("label", "")),
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def _canonical_duplicate_id(entries: list[tuple[str, dict[str, Any]]]) -> str:
+    """Choose the most PKCS#11-meaningful representative for duplicate vectors."""
+    for preferred in ("valid", "acceptable"):
+        for vec_id, test in entries:
+            if test["result"] == preferred:
+                return vec_id
+    return entries[0][0]
+
+
+def _mark_pkcs11_duplicate_vectors(vectors: list[tuple[str, dict[str, Any]]]) -> None:
+    groups: dict[_OaepFingerprint, list[tuple[str, dict[str, Any]]]] = {}
+    for vec_id, test in vectors:
+        fingerprint = _pkcs11_oaep_fingerprint(test)
+        if fingerprint is not None:
+            groups.setdefault(fingerprint, []).append((vec_id, test))
+    for entries in groups.values():
+        if len(entries) < 2:
+            continue
+        duplicate_of = _canonical_duplicate_id(entries)
+        for vec_id, test in entries:
+            if vec_id != duplicate_of:
+                test["_pkcs11_duplicate_of"] = duplicate_of
 
 
 def _load_oaep_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -139,6 +197,7 @@ def _load_oaep_vectors() -> list[tuple[str, dict[str, Any]]]:
                 test["_mgfSha"] = mgf_sha
                 vec_id = f"{filename}:tc{test['tcId']}-{test['result']}"
                 vectors.append((vec_id, test))
+    _mark_pkcs11_duplicate_vectors(vectors)
     return vectors
 
 
@@ -177,6 +236,9 @@ def test_rsa_oaep(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
     rs = p11_module_session
     if not rs.has_mechanism("RSA_PKCS_OAEP"):
         pytest.skip("RSA_PKCS_OAEP not supported")
+
+    if duplicate_of := vec.get("_pkcs11_duplicate_of"):
+        pytest.skip(f"Duplicate PKCS#11 RSA-OAEP operation input; covered by {duplicate_of}")
 
     ct = bytes.fromhex(vec["ct"])
     msg_expected = bytes.fromhex(vec["msg"])
