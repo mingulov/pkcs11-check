@@ -18,6 +18,7 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_rsa_private_key,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKG_MGF1_SHA1,
@@ -45,6 +46,11 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+)
+from pkcs11_check.testcases._operability import (
+    Operability,
+    OperabilityResult,
+    probe_operability,
 )
 from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
@@ -204,6 +210,103 @@ def _load_oaep_vectors() -> list[tuple[str, dict[str, Any]]]:
 _ALL_OAEP_VECTORS = _load_oaep_vectors()
 
 
+# --- Canonical per-combo operability probe (triage H3) ------------------------
+# opencryptoki hard-failed 26 valid SHA-512/224|256 OAEP vectors with
+# CKR_ENCRYPTED_DATA_INVALID: the per-hash variant simply is not implemented.
+# One canonical decrypt per (sha, mgf) combo per process decides: combo dead ->
+# the valid-vector rejection is "advertised but not operational" (xfail); combo
+# works -> a valid-vector rejection is a real correctness finding (fail).
+_PROBE_OAEP_MSG = bytes(range(16))
+
+# RFC 8017 EME-OAEP implemented over hashlib: the system OpenSSL refuses some
+# spec-legal combos (UnsupportedAlgorithm for SHA-512/224 + MGF1-SHA1), and the
+# probe must be able to stage canonical ciphertext for exactly those combos.
+_HASHLIB_NAMES = {
+    "SHA-1": "sha1",
+    "SHA-224": "sha224",
+    "SHA-256": "sha256",
+    "SHA-384": "sha384",
+    "SHA-512": "sha512",
+    "SHA-512/224": "sha512_224",
+    "SHA-512/256": "sha512_256",
+}
+
+
+def _mgf1(seed: bytes, length: int, hash_name: str) -> bytes:
+    import hashlib
+
+    out = b""
+    counter = 0
+    while len(out) < length:
+        out += hashlib.new(hash_name, seed + counter.to_bytes(4, "big")).digest()
+        counter += 1
+    return out[:length]
+
+
+def _oaep_encrypt_rfc8017(
+    modulus: bytes, pub_exponent: bytes, msg: bytes, sha: str, mgf_sha: str
+) -> bytes | None:
+    """Deterministic EME-OAEP + RSAEP (RFC 8017 §7.1.1); None if msg cannot fit."""
+    import hashlib
+
+    sha_name = _HASHLIB_NAMES.get(sha)
+    mgf_name = _HASHLIB_NAMES.get(mgf_sha)
+    if sha_name is None or mgf_name is None:
+        return None
+    n_int = int.from_bytes(modulus, "big")
+    e_int = int.from_bytes(pub_exponent, "big")
+    k = (n_int.bit_length() + 7) // 8
+    h_len = hashlib.new(sha_name).digest_size
+    if len(msg) > k - 2 * h_len - 2:
+        return None
+    l_hash = hashlib.new(sha_name, b"").digest()
+    ps = b"\x00" * (k - len(msg) - 2 * h_len - 2)
+    db = l_hash + ps + b"\x01" + msg
+    seed = hashlib.new(sha_name, b"pkcs11-check OAEP probe seed").digest()
+    masked_db = bytes(a ^ b for a, b in zip(db, _mgf1(seed, k - h_len - 1, mgf_name)))
+    masked_seed = bytes(a ^ b for a, b in zip(seed, _mgf1(masked_db, h_len, mgf_name)))
+    em = b"\x00" + masked_seed + masked_db
+    return pow(int.from_bytes(em, "big"), e_int, n_int).to_bytes(k, "big")
+
+
+def _oaep_combo_probe(
+    rs: Any,
+    priv_key: int,
+    *,
+    modulus: bytes,
+    pub_exponent: bytes,
+    sha: str,
+    mgf_sha: str,
+    hash_mech: int,
+    mgf: int,
+) -> OperabilityResult:
+    """Decrypt a spec-truth (RFC 8017 hashlib-made) OAEP ciphertext for this combo."""
+    canonical_ct = _oaep_encrypt_rfc8017(
+        modulus, pub_exponent, _PROBE_OAEP_MSG, sha, mgf_sha
+    )
+    if canonical_ct is None:
+        return OperabilityResult(
+            Operability.INCONCLUSIVE,
+            f"canonical OAEP staging not possible for {sha}/{mgf_sha} at this key size",
+        )
+    param = mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=hash_mech, mgf=mgf, source_data=None)
+    try:
+        got = decrypt_single(
+            rs.raw, rs.sh, priv_key, CKM_RSA_PKCS_OAEP, canonical_ct, mech_param=param
+        )
+    except CkrAssertionError as exc:
+        return OperabilityResult(
+            Operability.NOT_OPERATIONAL,
+            f"canonical OAEP {sha}/{mgf_sha} decrypt rejected: {exc}",
+        )
+    if got != _PROBE_OAEP_MSG:
+        return OperabilityResult(
+            Operability.WRONG_OUTPUT,
+            f"canonical OAEP {sha}/{mgf_sha} decrypt output mismatch",
+        )
+    return OperabilityResult(Operability.OPERATIONAL, f"canonical OAEP {sha}/{mgf_sha} OK")
+
+
 def _xfail_if_rsa_oaep_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
     """Classify advertised RSA-OAEP parameter/runtime rejects as findings."""
     xfail_if_known_ckr(
@@ -310,12 +413,29 @@ def test_rsa_oaep(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
         )
     except AssertionError as exc:
         if result == "valid":
+            combo = probe_operability(
+                f"RSA_OAEP:{sha}:{mgf_sha}:decrypt",
+                lambda: _oaep_combo_probe(
+                    rs,
+                    priv_key,
+                    modulus=modulus,
+                    pub_exponent=pub_exponent,
+                    sha=sha,
+                    mgf_sha=mgf_sha,
+                    hash_mech=hash_mech,
+                    mgf=mgf,
+                ),
+            )
+            if combo.status is Operability.NOT_OPERATIONAL:
+                pytest.xfail(
+                    f"RSA-OAEP {sha}/{mgf_sha} advertised but not operational "
+                    f"({combo.detail}); vector: {exc}"
+                )
             _xfail_if_rsa_oaep_runtime_reject(exc, vec_id)
-            sha = vec.get("_sha", "unknown")
-            mgf_sha = vec.get("_mgfSha", "unknown")
             pytest.fail(
                 f"Valid RSA-OAEP ciphertext {vec_id} failed to decrypt "
-                f"(sha={sha}, mgf={mgf_sha}): {exc}"
+                f"(sha={sha}, mgf={mgf_sha}); canonical combo probe: "
+                f"{combo.status.value}: {combo.detail}; vector: {exc}"
             )
         # acceptable: reject is fine
         return

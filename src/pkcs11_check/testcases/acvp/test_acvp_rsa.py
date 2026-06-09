@@ -24,7 +24,6 @@ from pkcs11_check.raw.pack_mechanisms import mech_pss
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_rsa_keypair,
-    import_rsa_public_key,
     sign_single,
     verify_single,
 )
@@ -49,7 +48,11 @@ from pkcs11_check.testcases.acvp.rsa.base_loader import (
     load_sigver_pkcs15_vectors,
     load_sigver_pss_vectors,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    import_rsa_public_key_negotiated,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -232,8 +235,8 @@ class TestRsaSigVer:
         pub_key = 0
         try:
             try:
-                pub_key = import_rsa_public_key(
-                    rs.raw, rs.sh, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
+                pub_key = import_rsa_public_key_negotiated(
+                    rs, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
                 )
             except AssertionError as exc:
                 _skip_rsa_public_import_reject(exc)
@@ -270,8 +273,8 @@ class TestRsaSigVer:
         pub_key = 0
         try:
             try:
-                pub_key = import_rsa_public_key(
-                    rs.raw, rs.sh, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
+                pub_key = import_rsa_public_key_negotiated(
+                    rs, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
                 )
             except AssertionError as exc:
                 _skip_rsa_public_import_reject(exc)

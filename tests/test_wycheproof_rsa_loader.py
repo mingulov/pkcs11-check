@@ -36,18 +36,18 @@ def test_rsa_pss_import_uses_unsigned_pkcs11_bigint_encoding(
     captured: dict[str, bytes] = {}
 
     def fake_import_rsa_public_key(
-        raw: object,
-        session: int,
+        rs: object,
         *,
         n: bytes,
         e: bytes,
         attrs: dict[int, Any],
+        purpose: str = "",
     ) -> int:
         captured["n"] = n
         captured["e"] = e
         return 1
 
-    monkeypatch.setattr(rsa_pss, "import_rsa_public_key", fake_import_rsa_public_key)
+    monkeypatch.setattr(rsa_pss, "import_rsa_public_key_negotiated", fake_import_rsa_public_key)
     monkeypatch.setattr(rsa_pss, "verify_single", lambda *args, **kwargs: True)
     monkeypatch.setattr(rsa_pss, "destroy_quietly", lambda *args: None)
     monkeypatch.setattr(rsa_pss, "generate_random", lambda *args: b"")

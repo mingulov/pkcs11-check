@@ -18,7 +18,6 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     gen_aes_key,
     read_attributes,
-    unwrap_key,
 )
 from pkcs11_check.raw.recipes import (
     wrap_key as wrap_key_recipe,
@@ -49,6 +48,7 @@ from pkcs11_check.testcases.conftest import (
     gen_rsa_keypair_or_xfail,
     reject_or_classify,
     require_operational_aes_keygen,
+    unwrap_key_for_mechanism_roundtrip,
 )
 
 pytestmark = pytest.mark.keymgmt
@@ -86,7 +86,7 @@ def _make_extractable_aes(rs: Any, bits: int = 128) -> int:
 class TestRSAPKCSWrap:
     """Test RSA-PKCS (v1.5) key wrapping."""
 
-    def test_wrap_unwrap_aes128(self, p11_raw_session: Any) -> None:
+    def test_wrap_unwrap_aes128(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Wrap AES-128 key with RSA, unwrap, verify key material matches."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
@@ -107,12 +107,12 @@ class TestRSAPKCSWrap:
             assert wrapped != original_value
             assert len(wrapped) == 256  # 2048-bit RSA -> 256 bytes
 
-            unwrapped = unwrap_key(
-                rs.raw,
-                rs.sh,
-                priv,
-                wrapped,
-                CKM_RSA_PKCS,
+            unwrapped = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=priv,
+                wrapped_key=wrapped,
+                mechanism=CKM_RSA_PKCS,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_EXTRACTABLE: True,
@@ -120,6 +120,7 @@ class TestRSAPKCSWrap:
                     CKA_KEY_TYPE: CKK_AES,
                     CKA_TOKEN: False,
                 },
+                purpose="RSA-PKCS AES-128 wrap/unwrap roundtrip",
             )
             try:
                 unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
@@ -131,7 +132,7 @@ class TestRSAPKCSWrap:
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, aes_key)
 
-    def test_wrap_unwrap_aes256(self, p11_raw_session: Any) -> None:
+    def test_wrap_unwrap_aes256(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Wrap AES-256 key - larger key material still fits in RSA-2048."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
@@ -149,12 +150,12 @@ class TestRSAPKCSWrap:
                 aes_key,
                 CKM_RSA_PKCS,
             )
-            unwrapped = unwrap_key(
-                rs.raw,
-                rs.sh,
-                priv,
-                wrapped,
-                CKM_RSA_PKCS,
+            unwrapped = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=priv,
+                wrapped_key=wrapped,
+                mechanism=CKM_RSA_PKCS,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_EXTRACTABLE: True,
@@ -162,6 +163,7 @@ class TestRSAPKCSWrap:
                     CKA_KEY_TYPE: CKK_AES,
                     CKA_TOKEN: False,
                 },
+                purpose="RSA-PKCS AES-256 wrap/unwrap roundtrip",
             )
             try:
                 unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
@@ -206,7 +208,7 @@ class TestRSAPKCSWrap:
 class TestRSAOAEPWrap:
     """Test RSA-OAEP key wrapping (more secure than PKCS v1.5)."""
 
-    def test_wrap_unwrap_oaep(self, p11_raw_session: Any) -> None:
+    def test_wrap_unwrap_oaep(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Wrap/unwrap AES key with RSA-OAEP."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
@@ -235,12 +237,12 @@ class TestRSAOAEPWrap:
                 hash_mech=CKM_SHA_1,
                 mgf=CKG_MGF1_SHA1,
             )
-            unwrapped = unwrap_key(
-                rs.raw,
-                rs.sh,
-                priv,
-                wrapped,
-                CKM_RSA_PKCS_OAEP,
+            unwrapped = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=priv,
+                wrapped_key=wrapped,
+                mechanism=CKM_RSA_PKCS_OAEP,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_EXTRACTABLE: True,
@@ -249,6 +251,7 @@ class TestRSAOAEPWrap:
                     CKA_TOKEN: False,
                 },
                 mech_param=oaep2,
+                purpose="RSA-OAEP AES wrap/unwrap roundtrip",
             )
             try:
                 unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
@@ -264,7 +267,7 @@ class TestRSAOAEPWrap:
 class TestWrappedKeyUsability:
     """Verify unwrapped keys are fully functional."""
 
-    def test_unwrapped_key_encrypts(self, p11_raw_session: Any) -> None:
+    def test_unwrapped_key_encrypts(self, p11_raw_session: Any, p11_config: Any) -> None:
         """An unwrapped AES key can be used for encryption."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
@@ -294,12 +297,12 @@ class TestWrappedKeyUsability:
                 aes_key,
                 CKM_RSA_PKCS,
             )
-            unwrapped = unwrap_key(
-                rs.raw,
-                rs.sh,
-                priv,
-                wrapped,
-                CKM_RSA_PKCS,
+            unwrapped = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=priv,
+                wrapped_key=wrapped,
+                mechanism=CKM_RSA_PKCS,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_EXTRACTABLE: True,
@@ -309,6 +312,7 @@ class TestWrappedKeyUsability:
                     CKA_KEY_TYPE: CKK_AES,
                     CKA_TOKEN: False,
                 },
+                purpose="RSA-PKCS unwrapped-key usability roundtrip",
             )
             try:
                 pt = decrypt_single(rs.raw, rs.sh, unwrapped, CKM_AES_ECB, ct)

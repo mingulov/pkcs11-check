@@ -20,7 +20,6 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     import_secret_key,
     read_attributes,
-    unwrap_key,
     wrap_key,
 )
 from pkcs11_check.raw.types_std import (
@@ -62,6 +61,7 @@ from pkcs11_check.testcases.conftest import (
     gen_ec_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
     skip_unless_mechanism,
+    unwrap_key_for_mechanism_roundtrip,
     xfail_if_known_ckr,
 )
 
@@ -270,7 +270,7 @@ class TestKeyCopy:
 
 
 class TestKeyWrapUnwrap:
-    def test_wrap_unwrap_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_wrap_unwrap_roundtrip(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Wrap and unwrap a key, verify material is preserved."""
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
@@ -293,18 +293,19 @@ class TestKeyWrapUnwrap:
             wrapped = wrap_key(rs.raw, rs.sh, wrapping_key, target, CKM_AES_KEY_WRAP)
             assert len(wrapped) > 0
 
-            unwrapped = unwrap_key(
-                rs.raw,
-                rs.sh,
-                wrapping_key,
-                wrapped,
-                CKM_AES_KEY_WRAP,
+            unwrapped = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=wrapping_key,
+                wrapped_key=wrapped,
+                mechanism=CKM_AES_KEY_WRAP,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
                     CKA_EXTRACTABLE: True,
                     CKA_SENSITIVE: False,
                 },
+                purpose="AES-KEY-WRAP keymgmt roundtrip",
             )
             exported = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
             assert exported == key_bytes

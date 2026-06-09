@@ -44,7 +44,7 @@ def test_wycheproof_aes_kwp_vectors_use_rfc5649_encrypt_path(
         calls["data"] = data
         return expected_ct
 
-    monkeypatch.setattr(aes, "import_secret_key", import_secret_key)
+    monkeypatch.setattr(aes, "import_secret_key_negotiated", import_secret_key)
     monkeypatch.setattr(aes, "encrypt_single", encrypt_single, raising=False)
     # The KWP path uses C_Encrypt (RFC 5649), never C_WrapKey: the module no
     # longer imports wrap_key at all (the AES-KW family unwraps instead), so the

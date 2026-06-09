@@ -20,7 +20,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     gen_aes_key,
-    unwrap_key,
     wrap_key,
 )
 from pkcs11_check.raw.rv import expect_rv
@@ -43,6 +42,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_OK,
 )
+from pkcs11_check.testcases.conftest import unwrap_key_for_mechanism_roundtrip
 
 pytestmark = pytest.mark.full
 
@@ -173,7 +173,7 @@ class TestSHA512Truncated:
 class TestAESKeyWrapKWP:
     """CKM_AES_KEY_WRAP_KWP -- AES Key Wrap with Padding (NIST SP 800-38F)."""
 
-    def test_wrap_unwrap_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_wrap_unwrap_roundtrip(self, p11_raw_session: Any, p11_config: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP_KWP"):
             pytest.skip("CKM_AES_KEY_WRAP_KWP not supported")
@@ -209,12 +209,12 @@ class TestAESKeyWrapKWP:
             )
             assert len(wrapped) > 0, "wrap_key returned empty output"
 
-            unwrapped_h = unwrap_key(
-                rs.raw,
-                rs.sh,
-                wrapping_key,
-                wrapped,
-                CKM_AES_KEY_WRAP_KWP,
+            unwrapped_h = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=wrapping_key,
+                wrapped_key=wrapped,
+                mechanism=CKM_AES_KEY_WRAP_KWP,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
@@ -223,6 +223,7 @@ class TestAESKeyWrapKWP:
                     CKA_TOKEN: False,
                     CKA_ENCRYPT: True,
                 },
+                purpose="AES-KWP wrap/unwrap roundtrip",
             )
         finally:
             if unwrapped_h:
@@ -230,7 +231,7 @@ class TestAESKeyWrapKWP:
             destroy_quietly(rs.raw, rs.sh, target_key)
             destroy_quietly(rs.raw, rs.sh, wrapping_key)
 
-    def test_wrap_unwrap_256bit_key(self, p11_raw_session: Any) -> None:
+    def test_wrap_unwrap_256bit_key(self, p11_raw_session: Any, p11_config: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP_KWP"):
             pytest.skip("CKM_AES_KEY_WRAP_KWP not supported")
@@ -264,12 +265,12 @@ class TestAESKeyWrapKWP:
             )
             assert len(wrapped) > 0
 
-            unwrapped_h = unwrap_key(
-                rs.raw,
-                rs.sh,
-                wrapping_key,
-                wrapped,
-                CKM_AES_KEY_WRAP_KWP,
+            unwrapped_h = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=wrapping_key,
+                wrapped_key=wrapped,
+                mechanism=CKM_AES_KEY_WRAP_KWP,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
@@ -277,6 +278,7 @@ class TestAESKeyWrapKWP:
                     CKA_SENSITIVE: False,
                     CKA_TOKEN: False,
                 },
+                purpose="AES-KWP 256-bit wrap/unwrap roundtrip",
             )
         finally:
             if unwrapped_h:

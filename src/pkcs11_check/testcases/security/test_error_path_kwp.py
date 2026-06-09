@@ -210,7 +210,14 @@ target_key = gen_aes_key(raw, sh, 128, attrs={{
 
 try:
     try:
-        wrapped_blob = wrap_key_recipe(raw, sh, wrap_key, target_key, {ckm_name})
+        # output_size_hint: NSS softoken does not set the wrapped-key length on
+        # the NULL-buffer size-query pass for AES-KEY-WRAP-KWP, so the two-call
+        # protocol would fail with CKR_BUFFER_TOO_SMALL. 64 covers the 8-byte ICV
+        # + up to 15 bytes padding for AES-128/192/256 targets (same hint as
+        # test_extended_mechanisms.py). Modules that report the size ignore it.
+        wrapped_blob = wrap_key_recipe(
+            raw, sh, wrap_key, target_key, {ckm_name}, output_size_hint=64
+        )
     except AssertionError as _wrap_exc:
         if child_setup_reject_known(
             _wrap_exc, _WRAP_SETUP_REJECT_RVS, "AES key wrap setup rejected"

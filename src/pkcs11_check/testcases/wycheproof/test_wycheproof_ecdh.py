@@ -51,6 +51,7 @@ from pkcs11_check.testcases.wycheproof._key_decoders import (
     decode_ec_public_point,
     ec_key_bits,
     ec_params_for_curve,
+    ecdh_cofactor1_shared_x,
 )
 
 pytestmark = pytest.mark.wycheproof
@@ -190,6 +191,35 @@ def _xfail_if_ecdh_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
     raise exc
 
 
+def _point_on_base_curve(point: bytes, curve_name: str) -> bool | None:
+    """Whether ``point`` is a valid point on ``curve_name``.
+
+    PKCS#11 CKM_ECDH1_DERIVE receives only the raw peer-point bytes plus the
+    base key's curve -- it never sees the X.509 curve encoding. So a Wycheproof
+    "invalid" vector whose invalidity is at the encoding layer
+    (UnnamedCurve / ModifiedPrime / ModifiedGroup / WrongCurve where the point
+    still lands on the base curve) is NOT an invalid-curve attack against the
+    PKCS#11 path: the module derived correctly on an on-curve point. The genuine
+    invalid-curve attack is only when the point is OFF the base curve.
+
+    Returns True (on curve), False (off curve / unparseable -> a finding), or
+    None when ``cryptography`` cannot represent the curve (cannot determine;
+    the caller keeps the conservative finding). Uses cryptography's
+    ``from_encoded_point``, which validates curve membership and never accepts
+    an off-curve point -- so a real off-curve derive is never masked.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    curve_cls = getattr(ec, curve_name.upper(), None)
+    if curve_cls is None or not isinstance(curve_cls, type):
+        return None
+    try:
+        ec.EllipticCurvePublicKey.from_encoded_point(curve_cls(), point)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 @pytest.mark.parametrize("vec_id,vec", _ALL_ECDH_VECTORS, ids=[v[0] for v in _ALL_ECDH_VECTORS])
 def test_ecdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """ECDH key agreement from Wycheproof ecpoint vectors."""
@@ -217,6 +247,21 @@ def test_ecdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
         pytest.skip(f"Cannot decode {encoding_name} ECDH vector: {type(exc).__name__}")
     shared_expected = bytes.fromhex(vec["shared"])
     result = vec["result"]
+
+    label = vec_id
+    if result == "invalid" and shared_expected:
+        # Parameter-level invalidity (WrongCurve / UnnamedCurve with WrongOrder
+        # or ModifiedPrime) lives in the vector's ASN.1 curve parameters.
+        # CK_ECDH1_DERIVE_PARAMS carries only the raw public point -- the curve
+        # comes from the private key -- so when that point is ON the private
+        # key's (cofactor-1) curve, the module sees a fully valid derive and
+        # deriving is correct, not an accepted invalid point. Reduce to a
+        # positive check against the vector's shared secret: a module that
+        # honored the attacker-declared parameters yields a different
+        # x-coordinate and still fails the comparison below.
+        if ecdh_cofactor1_shared_x(curve, public_point, private_scalar) == shared_expected:
+            result = "valid"
+            label = f"{vec_id} (reduced: invalidity not representable in CK_ECDH1_DERIVE_PARAMS)"
 
     key_bits = ec_key_bits(curve)
 
@@ -269,8 +314,16 @@ def test_ecdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             assert shared == shared_expected, f"ECDH shared secret mismatch for {vec_id}"
         elif result == "invalid":
             destroy_quietly(rs.raw, rs.sh, derived_key)
+            # Only an OFF-base-curve derive is the genuine invalid-curve attack.
+            # If the peer point is on the base curve, the vector's invalidity is
+            # at the X.509 encoding layer the raw PKCS#11 ECDH path never sees,
+            # so a correct derive is not a finding (every careful provider does
+            # this for those vectors).
+            if _point_on_base_curve(public_point, curve) is True:
+                return
             pytest.fail(
-                f"ECDH derived a secret for an invalid vector {vec_id} (invalid-point accepted)"
+                f"ECDH derived a secret for {vec_id} from a peer point that is not on the "
+                f"base curve {curve} (invalid-curve attack: module skipped point validation)"
             )
         destroy_quietly(rs.raw, rs.sh, derived_key)
     except AssertionError as exc:
@@ -278,8 +331,8 @@ def test_ecdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
         if "mismatch" in exc_msg:
             raise
         if result == "valid":
-            _xfail_if_ecdh_runtime_reject(exc, vec_id)
-            pytest.fail(f"Valid ECDH derive failed for {vec_id}: {exc_msg}")
+            _xfail_if_ecdh_runtime_reject(exc, label)
+            pytest.fail(f"Valid ECDH derive failed for {label}: {exc_msg}")
         # acceptable: reject is fine
         return
     except (TypeError, NotImplementedError):

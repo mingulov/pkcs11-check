@@ -163,6 +163,18 @@ provider package versions where the finding was first recorded.
 
 **Status: 20,723 passed, 362 failed, 8,147 skipped, 335 xfailed**
 
+### Known bugs (2026-06-09)
+- **Output-buffer overrun: ignores the caller-declared `*pulCount`/`*pulBufLen`**: with a
+  deliberately small declared output buffer, NSS softoken writes the FULL result past the
+  declared boundary instead of returning `CKR_BUFFER_TOO_SMALL`. Probed via guard bytes over an
+  over-allocation: `C_GetSlotList` (declared 1 entry, NSS found 2 → **8 guard bytes overwritten**),
+  `C_GetMechanismList`, `C_GetAttributeValue`, `C_WrapKey`, and `C_Decrypt`/`C_DecryptFinal`
+  AES-CBC-PAD. PKCS#11 §5.x two-call convention requires `CKR_BUFFER_TOO_SMALL` + setting the
+  required length WITHOUT writing. A real 1-entry caller buffer would be overflowed. Detected by:
+  `test_ckr_raw_buffer.py` (6 F on nss, fresh). Contrast `C_Digest`, where NSS returns `CKR_OK`
+  but writes **0** bytes past the boundary — a benign return-code deviation (xfail), not an
+  overflow; the probe now distinguishes the two via the guard-byte count.
+
 ### Failure breakdown (362 total)
 | Count | Area | Reason |
 |-------|------|--------|
@@ -878,6 +890,14 @@ All skips are legitimate capability-based skips; none hide broken behavior.
 **Status: Segfault on stale-handle attribute read (BouncyHSM PKCS#11 shim bug)**
 
 ### Known bugs
+- **AES-CCM decrypt does not authenticate (tag-auth bypass, Type A)**: fresh 2026-06-09
+  (`test_ccm.py` with the H2 operability probe): **423×** "module accepted CCM ciphertext
+  with invalid tag" and ~1,268× plaintext mismatches where the returned plaintext is the
+  expected one **plus the unstripped tag bytes** — i.e. BouncyHSM's CCM decrypt path
+  decrypts without verifying or stripping the tag. Its CCM single-shot is otherwise
+  largely non-operational (canonical known-answer encrypt → `CKR_GENERAL_ERROR`; 5,679
+  vectors xfail "advertised but not operational"); the ops that DO complete expose the
+  missing authentication. AES-GCM is unaffected (80 passed / 30 xfailed, clean).
 - **Segfault on `C_GetAttributeValue` after `C_DestroyObject`**: reproduced on `key.destroy(); key[Attribute.LABEL]` and also via a direct `ctypes` call to `libbouncyhsm_pkcs11.so`. Root cause is in BouncyHSM's native PKCS#11 shim (`src/Src/BouncyHsm.Pkcs11Lib/bouncy-pkcs11.c`): `C_GetAttributeValue()` stores the real PKCS#11 return value in `rvMethod`, but checks `if (rv == CKR_OK || ...)` using the RPC transport status instead. Because `rv` is `0` on RPC success, the shim always enters the response-processing block and dereferences `envelope.Data` even when the method return is `CKR_OBJECT_HANDLE_INVALID`.
 - **Correct shim fix**: change the condition to use `rvMethod`, not `rv`, and guard `envelope.Data != NULL` before dereferencing it. The server side already reports `CKR_OBJECT_HANDLE_INVALID` correctly.
 
@@ -1042,6 +1062,19 @@ The remaining hard rows are:
 ---
 
 ## OpenCryptoki 3.26 (v3.0)
+
+### Known bugs (fresh 2026-06-09, triage H5)
+- **CKM_AES_CTR accepts out-of-range ulCounterBits**: `C_EncryptInit` returns `CKR_OK`
+  for `ulCounterBits=0` and `ulCounterBits=129` (OASIS spec range: 1-128). Detected by:
+  `test_aes_modes.py::TestAESCTR::test_aes_ctr_counter_bits_{zero,129}_rejected`
+  (3-way `classify_negative_rv`: acceptance of invalid -> fail).
+- **CKM_AES_CTR rejects spec-valid payloads with `CKR_DATA_LEN_RANGE`** (32B and 17B
+  inputs; CTR is a stream cipher per NIST SP 800-38A) and **CKM_AES_CTS is advertised but
+  `C_EncryptInit` returns `CKR_MECHANISM_INVALID`** -- both clean deviations, xfailed via
+  `CIPHER_OP_RUNTIME_REJECT_RVS`.
+- **RSA-OAEP SHA-512/224|256 + MGF1-SHA1 not operational**: valid Wycheproof vectors
+  rejected with `CKR_ENCRYPTED_DATA_INVALID`; the RFC 8017 canonical probe for those
+  combos is also cleanly rejected -> advertised-but-not-operational xfail (26 vectors).
 
 **Status: 468 passed, 24 failed, 312 skipped, 1 xfailed, 28,762 errors**
 
@@ -1700,3 +1733,67 @@ authenticated-wrap / ECDH-AES-KW forgery detection is actually exercised. (An ea
 mis-attribution blamed `CKA_CLASS`/`CKA_KEY_TYPE` for this `READ_ONLY`; the probe shows the
 real cause is the policy attributes.) OpenCryptoki does not implement AES-GCM authenticated
 wrap (`CKR_FUNCTION_NOT_SUPPORTED`), so those forgery tests xfail on a genuine capability gap.
+
+## corePKCS11 3.6.4 (FreeRTOS, mbedTLS port, docker target with generic in-memory PAL)
+
+Minimal embedded implementation; storage-oriented object model. Root-caused 2026-06-09
+(triage H6) by in-container probing + v3.6.4 source reading (`core_pkcs11_mbedtls.c`).
+
+### Storage-model traits (negotiated by the harness, not bugs to hard-fail)
+- **`CKA_LABEL` is mandatory on every key object**: `C_CreateObject` without a label returns
+  `CKR_ARGUMENTS_BAD` (`prvCreateECKey`/`prvCreateRsaKey`: "Received a NULL label pointer").
+  The spec makes CKA_LABEL optional → deviation; the harness's
+  `create_object_negotiated` retries with a unique label.
+- **Token objects only**: `CKA_TOKEN=False` in a key template returns
+  `CKR_ATTRIBUTE_VALUE_INVALID` ("Expected token type to be true"). Session objects are
+  spec-mandatory → deviation; negotiated to `CKA_TOKEN=TRUE` (objects are destroyed in test
+  cleanup).
+- **Public/private keys share one label slot**: importing one after the other merges them
+  (`prvGetExistingKeyComponent`); the harness uses unique per-import labels.
+
+### Crypto constraints (xfail-classified deviations)
+- **P-256 only**: `CKA_EC_PARAMS` must equal the P-256 OID, else `CKR_TEMPLATE_INCONSISTENT`
+  (skip via `_EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS`). Curves whose OID length differs bypass the
+  check (see Known bugs below); curves with different coordinate sizes fail at point parse
+  (`CKR_FUNCTION_FAILED` → skip).
+
+### Known bugs
+- **Silent curve rebind on EC public key import (Type-C self-contradiction)**: the
+  `CKA_EC_PARAMS` check only runs when the supplied OID has the same DER length as the
+  P-256 OID (`prvEcKeyAttParse` compares only on equal `ulValueLen`), and
+  `mbedtls_ecp_point_read_binary` performs no curve-membership check. A secp256k1 or
+  brainpoolP256r1 public key (32-byte coordinates) is therefore accepted with `CKR_OK` —
+  but the object is unusable: `C_GetAttributeValue` → `CKR_OBJECT_HANDLE_INVALID`,
+  `C_Verify` → `CKR_KEY_HANDLE_INVALID`. Claimed success, not honored → **fail** per the
+  classification model. Detected by: `test_ec_import_coherence.py` (2 failures, fresh
+  2026-06-09). KAT suites skip such curves via the same effect check
+  (`ec_public_key_binding_defect`) so the bug is reported once, not 22k times.
+- **CKM_ECDSA digest length pinned to 32 bytes**: `C_Verify` returns `CKR_DATA_LEN_RANGE`
+  unless `ulDataLen == 32`, and `CKR_SIGNATURE_LEN_RANGE` unless `ulSignatureLen == 64`.
+  PKCS#11 §2.3.1 requires accepting any hash length (truncated to the group order bit
+  length) → deviation, xfailed via `_ECDSA_RUNTIME_REJECT_CKRS` /
+  `NON_CLEAN_SIGNATURE_REJECT_RVS`.
+- **Imported secret keys (AES-CMAC / SHA256-HMAC) are advertised but not operational**:
+  `C_CreateObject` for a `CKO_SECRET_KEY` returns `CKR_OK` and a handle, but the key cannot
+  then be used — `C_Sign` returns `CKR_KEY_TYPE_INCONSISTENT` and `C_GetAttributeValue` on the
+  just-returned handle returns `CKR_OBJECT_HANDLE_INVALID`. **Verified consistent** (2026-06-09)
+  across the corePKCS11-native configured label (`"HMAC Key"`) and arbitrary labels, so it is a
+  stable corePKCS11 secret-key-use limitation rather than a per-vector handle bug; the KAT clean
+  error returns are model-conformant xfails (advertised-but-not-operational). **Caveat: the
+  `CKR_OK`-create-then-invalid-handle readback is a Type-C self-contradiction, but its root cause
+  (corePKCS11's own object-list handling vs the docker target's generic in-memory PAL storing a
+  raw, non-DER secret blob) is not yet isolated — so it is documented here, not asserted as a
+  module `fail`, pending a stock-PAL repro.** (Contrast the EC silent-curve-rebind bug above,
+  which is in corePKCS11's native `mbedtls_ecp_point_read_binary` path and IS asserted as a fail.)
+- ECDSA verify itself is correct for the supported shape: valid P-256/SHA-256 signature →
+  `CKR_OK`; corrupted signature → clean verify-False (probed in-container).
+
+### Docker-target deployment notes
+- The stock posix demo PAL stores only the 8 labels fixed in `core_pkcs11_config.h`; any
+  other label fails `PKCS11_PAL_SaveObject` → `C_CreateObject` = `CKR_DEVICE_MEMORY`. The
+  docker target replaces it with a generic in-memory PAL
+  (`docker/corepkcs11/corepkcs11_pal_generic.c`): arbitrary labels, honest `isPrivate`
+  (DER-shape discrimination), real `PKCS11_PAL_DestroyObject`. The PAL is corePKCS11's
+  designated porting point — corePKCS11's own PKCS#11 logic is untouched.
+- The adapter shim (`corepkcs11_adapter.c`) only overrides GetInfo/SlotInfo/TokenInfo/
+  MechanismList/MechanismInfo/Digest; C_CreateObject and C_Verify pass straight through.

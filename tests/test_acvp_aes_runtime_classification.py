@@ -121,4 +121,4 @@ def test_advertised_aes_cts_device_error_is_xfail() -> None:
     exc = CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))
 
     with pytest.raises(pytest.xfail.Exception, match="CKM_AES_CTS advertised"):
-        base_cts._handle_cts_error(exc, "CBC-CS1-AES-enc-tc285", "encrypt")
+        base_cts._handle_cts_error(_AesSession(), exc, "CBC-CS1-AES-enc-tc285", "encrypt")

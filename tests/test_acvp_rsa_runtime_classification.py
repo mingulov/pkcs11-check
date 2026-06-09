@@ -98,7 +98,7 @@ def test_acvp_rsa_pss_siggen_sign_runtime_reject_is_xfail(
 def test_acvp_rsa_pkcs15_public_import_reject_is_setup_skip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(test_acvp_rsa, "import_rsa_public_key", _attribute_value_invalid)
+    monkeypatch.setattr(test_acvp_rsa, "import_rsa_public_key_negotiated", _attribute_value_invalid)
 
     with pytest.raises(pytest.skip.Exception, match="RSA public key import failed"):
         test_acvp_rsa.TestRsaSigVer().test_rsa_pkcs15_verify(
@@ -111,7 +111,7 @@ def test_acvp_rsa_pkcs15_public_import_reject_is_setup_skip(
 def test_acvp_rsa_pss_public_import_reject_is_setup_skip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(test_acvp_rsa, "import_rsa_public_key", _attribute_value_invalid)
+    monkeypatch.setattr(test_acvp_rsa, "import_rsa_public_key_negotiated", _attribute_value_invalid)
 
     with pytest.raises(pytest.skip.Exception, match="RSA public key import failed"):
         test_acvp_rsa.TestRsaSigVer().test_rsa_pss_verify(
@@ -124,7 +124,9 @@ def test_acvp_rsa_pss_public_import_reject_is_setup_skip(
 def test_acvp_rsa_verify_attribute_value_invalid_is_runtime_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(test_acvp_rsa, "import_rsa_public_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(
+        test_acvp_rsa, "import_rsa_public_key_negotiated", lambda *_args, **_kwargs: 1
+    )
     monkeypatch.setattr(test_acvp_rsa, "verify_single", _attribute_value_invalid)
     monkeypatch.setattr(test_acvp_rsa, "destroy_quietly", lambda *_args: None)
 

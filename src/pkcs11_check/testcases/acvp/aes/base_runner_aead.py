@@ -13,6 +13,7 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     import_secret_key,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -25,17 +26,108 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_CCM,
     CKM_AES_GCM,
     CKR_AEAD_DECRYPT_FAILED,
-    CKR_ARGUMENTS_BAD,
     CKR_DEVICE_ERROR,
     CKR_ENCRYPTED_DATA_INVALID,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
+)
+from pkcs11_check.testcases._operability import (
+    Operability,
+    OperabilityResult,
+    classify_kat_clean_error,
+    probe_operability,
 )
 from pkcs11_check.testcases.conftest import is_known_error
 
 # GCM-SIV is not a standard PKCS#11 mechanism; use vendor extension if available
 CKM_AES_GCM_SIV = CKM(0x80000100, "CKM_AES_GCM_SIV")
+
+# Clean codes a module may use to reject AEAD ciphertext whose tag does not
+# authenticate -- the expected PASS for invalid-tag vectors. On a VALID-tag
+# vector they are only a tag-auth finding if canonical decrypt works.
+_GCM_DATA_REJECTS = (
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_AEAD_DECRYPT_FAILED,
+)
+# kryoptic reports tag-auth failure as CKR_DEVICE_ERROR (its OpenSSL-failure
+# fallback) -- accepted as an invalid-tag rejection for CCM, as before.
+_CCM_DATA_REJECTS = _GCM_DATA_REJECTS + (CKR_DEVICE_ERROR,)
+
+# --- Canonical operability probe (triage H2) ---------------------------------
+# One canonical known-answer operation per (mechanism, direction) per process
+# decides how clean vector errors classify (see testcases/_operability.py).
+# Expected outputs are derived from `cryptography`, so canonical truth is
+# spec-derived, not provider-derived.
+PROBE_KEY = bytes(range(16))
+PROBE_PT = bytes(range(24))
+PROBE_GCM_IV = bytes(range(12))
+PROBE_CCM_NONCE = bytes(range(13))
+
+
+def _probe_expected_ct(mech_name: str) -> bytes:
+    from cryptography.hazmat.primitives.ciphers.aead import AESCCM, AESGCM
+
+    if mech_name == "AES_GCM":
+        return AESGCM(PROBE_KEY).encrypt(PROBE_GCM_IV, PROBE_PT, None)
+    return AESCCM(PROBE_KEY, tag_length=16).encrypt(PROBE_CCM_NONCE, PROBE_PT, None)
+
+
+def _canonical_aead_probe(rs: Any, mech_name: str, direction: str) -> OperabilityResult:
+    mech = CKM_AES_GCM if mech_name == "AES_GCM" else CKM_AES_CCM
+    try:
+        if mech_name == "AES_GCM":
+            param = mech_gcm(CKM_AES_GCM, PROBE_GCM_IV, aad=None, tag_bits=128)
+        else:
+            param = mech_ccm(
+                CKM_AES_CCM, PROBE_CCM_NONCE, data_len=len(PROBE_PT), aad=None, mac_len=16
+            )
+        expected_ct = _probe_expected_ct(mech_name)
+    except (AssertionError, ValueError, TypeError) as exc:
+        return OperabilityResult(
+            Operability.INCONCLUSIVE, f"canonical {mech_name} staging failed: {exc}"
+        )
+    key = 0
+    try:
+        try:
+            key = _import_aes_key(rs, PROBE_KEY, encrypt=True, decrypt=True)
+        except CkrAssertionError as exc:
+            return OperabilityResult(
+                Operability.INCONCLUSIVE, f"canonical {mech_name} key import failed: {exc}"
+            )
+        try:
+            if direction == "encrypt":
+                overhead = 16 if mech_name == "AES_GCM" else 0
+                got = encrypt_single(
+                    rs.raw, rs.sh, key, mech, PROBE_PT,
+                    mech_param=param, output_overhead=overhead,
+                )
+                want = expected_ct
+            else:
+                got = decrypt_single(rs.raw, rs.sh, key, mech, expected_ct, mech_param=param)
+                want = PROBE_PT
+        except CkrAssertionError as exc:
+            return OperabilityResult(
+                Operability.NOT_OPERATIONAL,
+                f"canonical {mech_name} {direction} rejected: {exc}",
+            )
+        if got != want:
+            return OperabilityResult(
+                Operability.WRONG_OUTPUT,
+                f"canonical {mech_name} {direction} output mismatch: "
+                f"got {got.hex()}, want {want.hex()}",
+            )
+        return OperabilityResult(
+            Operability.OPERATIONAL, f"canonical {mech_name} {direction} OK"
+        )
+    finally:
+        if key:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+
+def _aead_operability(rs: Any, mech_name: str, direction: str) -> OperabilityResult:
+    return probe_operability(
+        f"{mech_name}:{direction}", lambda: _canonical_aead_probe(rs, mech_name, direction)
+    )
 
 
 def _import_aes_key(
@@ -96,8 +188,8 @@ def run_gcm_encrypt_test(
 
     key = 0
     try:
-        key = _import_aes_key(rs, vec["key"], encrypt=True, decrypt=False)
         try:
+            key = _import_aes_key(rs, vec["key"], encrypt=True, decrypt=False)
             result = encrypt_single(
                 rs.raw,
                 rs.sh,
@@ -108,12 +200,11 @@ def run_gcm_encrypt_test(
                 output_overhead=tag_bytes,
             )
         except AssertionError as exc:
-            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-                pytest.xfail(
-                    f"AES_GCM advertised but encrypt iv={len(iv)}B tag={tag_bytes}B "
-                    f"is not operational: {exc}"
-                )
-            raise
+            classify_kat_clean_error(
+                exc,
+                result=_aead_operability(rs, "AES_GCM", "encrypt"),
+                label=f"AES_GCM encrypt iv={len(iv)}B tag={tag_bytes}B",
+            )
 
         if len(result) < tag_bytes:
             pytest.fail(
@@ -167,8 +258,8 @@ def run_gcm_decrypt_test(
 
     key = 0
     try:
-        key = _import_aes_key(rs, vec["key"], encrypt=False, decrypt=True)
         try:
+            key = _import_aes_key(rs, vec["key"], encrypt=False, decrypt=True)
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -178,24 +269,23 @@ def run_gcm_decrypt_test(
                 mech_param=gcm_param,
             )
         except AssertionError as exc:
-            if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID, CKR_ARGUMENTS_BAD}):
-                pytest.xfail(
-                    f"AES_GCM advertised but decrypt iv={len(iv)}B tag={tag_bytes}B "
-                    f"is not operational: {exc}"
-                )
-            if is_known_error(
-                exc,
-                {
-                    CKR_ENCRYPTED_DATA_INVALID,
-                    CKR_ENCRYPTED_DATA_LEN_RANGE,
-                    CKR_AEAD_DECRYPT_FAILED,
-                },
-            ):
+            if is_known_error(exc, _GCM_DATA_REJECTS):
                 if not test_passed:
                     return
-                pytest.fail(f"{vec_id}: valid-tag GCM vector rejected with tag auth failure")
-                return
-            raise
+                result = _aead_operability(rs, "AES_GCM", "decrypt")
+                if result.status is Operability.NOT_OPERATIONAL:
+                    pytest.xfail(
+                        f"AES_GCM advertised but decrypt is not operational "
+                        f"({result.detail}); vector: {exc}"
+                    )
+                pytest.fail(
+                    f"{vec_id}: valid-tag GCM vector rejected with tag auth failure ({exc})"
+                )
+            classify_kat_clean_error(
+                exc,
+                result=_aead_operability(rs, "AES_GCM", "decrypt"),
+                label=f"AES_GCM decrypt iv={len(iv)}B tag={tag_bytes}B",
+            )
 
         if test_passed:
             assert pt == vec["pt_expected"], (
@@ -242,8 +332,8 @@ def run_ccm_encrypt_test(
 
     key = 0
     try:
-        key = _import_aes_key(rs, vec["key"], encrypt=True, decrypt=False)
         try:
+            key = _import_aes_key(rs, vec["key"], encrypt=True, decrypt=False)
             result = encrypt_single(
                 rs.raw,
                 rs.sh,
@@ -253,9 +343,11 @@ def run_ccm_encrypt_test(
                 mech_param=ccm_param,
             )
         except AssertionError as exc:
-            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-                pytest.xfail(f"AES_CCM advertised but encrypt is not operational: {exc}")
-            raise
+            classify_kat_clean_error(
+                exc,
+                result=_aead_operability(rs, "AES_CCM", "encrypt"),
+                label=f"AES_CCM encrypt nonce={len(nonce)}B tag={vec['tag_len']}B",
+            )
 
         tag_len = vec["tag_len"]
         if len(result) < tag_len:
@@ -320,8 +412,8 @@ def run_ccm_decrypt_test(
 
     key = 0
     try:
-        key = _import_aes_key(rs, vec["key"], encrypt=False, decrypt=True)
         try:
+            key = _import_aes_key(rs, vec["key"], encrypt=False, decrypt=True)
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -331,19 +423,23 @@ def run_ccm_decrypt_test(
                 mech_param=ccm_param,
             )
         except AssertionError as exc:
-            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-                pytest.xfail(f"AES_CCM advertised but decrypt is not operational: {exc}")
-            if not test_passed and is_known_error(
+            if is_known_error(exc, _CCM_DATA_REJECTS):
+                if not test_passed:
+                    return  # Expected: module rejected invalid-tag ciphertext
+                result = _aead_operability(rs, "AES_CCM", "decrypt")
+                if result.status is Operability.NOT_OPERATIONAL:
+                    pytest.xfail(
+                        f"AES_CCM advertised but decrypt is not operational "
+                        f"({result.detail}); vector: {exc}"
+                    )
+                pytest.fail(
+                    f"{vec_id}: valid-tag CCM vector rejected with tag auth failure ({exc})"
+                )
+            classify_kat_clean_error(
                 exc,
-                {
-                    CKR_ENCRYPTED_DATA_INVALID,
-                    CKR_ENCRYPTED_DATA_LEN_RANGE,
-                    CKR_AEAD_DECRYPT_FAILED,
-                    CKR_DEVICE_ERROR,
-                },
-            ):
-                return  # Expected: module rejected invalid-tag ciphertext
-            raise
+                result=_aead_operability(rs, "AES_CCM", "decrypt"),
+                label=f"AES_CCM decrypt nonce={len(nonce)}B tag={vec['tag_len']}B",
+            )
 
         if test_passed:
             assert pt == vec["pt_expected"], (

@@ -10,13 +10,15 @@ import json
 from typing import Any, NoReturn
 
 import pytest
+from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from pkcs11_check.raw.pack import mech_pss
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_rsa_keypair,
     generate_random,
-    import_rsa_public_key,
     sign_single,
     verify_single,
 )
@@ -60,11 +62,16 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OPERATION_ACTIVE,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    import_rsa_public_key_negotiated,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 
 pytestmark = pytest.mark.wycheproof
@@ -91,6 +98,11 @@ _RSA_PSS_RUNTIME_REJECT_CKRS = (
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    # Collateral of a stale verify op the provider leaked after a prior
+    # reject (spec violation, reported as a FAIL by
+    # test_operation_termination.py): the poisoned C_*Init never evaluated
+    # THIS vector's signature, so it is a clean non-evaluating reject.
+    CKR_OPERATION_ACTIVE,
 )
 
 # Cache of (mech, hash_mech, mgf, salt_len) tuples we have already probed
@@ -319,6 +331,51 @@ def _xfail_if_rsa_pss_runtime_reject(exc: AssertionError, label: str) -> NoRetur
     raise exc
 
 
+_CRYPTOGRAPHY_HASHES: dict[str, type[hashes.HashAlgorithm]] = {
+    "SHA-1": hashes.SHA1,
+    "SHA-224": hashes.SHA224,
+    "SHA-256": hashes.SHA256,
+    "SHA-384": hashes.SHA384,
+    "SHA-512": hashes.SHA512,
+    "SHA3-224": hashes.SHA3_224,
+    "SHA3-256": hashes.SHA3_256,
+    "SHA3-384": hashes.SHA3_384,
+    "SHA3-512": hashes.SHA3_512,
+}
+
+
+def _pss_valid_under_auto_salt(
+    n: bytes, e: bytes, msg: bytes, sig: bytes, sha: str, mgf_sha: str
+) -> bool | None:
+    """Reference RSA-PSS verification with the salt length recovered from the signature.
+
+    Discriminates the two acceptance classes of a Wycheproof "invalid" PSS
+    vector: a GENUINE signature re-signed with a different salt length than
+    the declared ``sLen`` (only producible with the private key; True) versus
+    a modified/garbage signature whose acceptance is a padding-check bypass
+    (False). Pure public-key math -- the provider is not involved. None when
+    the reference backend cannot represent the combo; callers keep the strict
+    hard-fail then (a real finding is never masked).
+    """
+    hash_cls = _CRYPTOGRAPHY_HASHES.get(sha)
+    mgf_cls = _CRYPTOGRAPHY_HASHES.get(mgf_sha)
+    if hash_cls is None or mgf_cls is None:
+        return None
+    try:
+        pub = rsa.RSAPublicNumbers(int.from_bytes(e, "big"), int.from_bytes(n, "big")).public_key()
+        pub.verify(
+            sig,
+            msg,
+            padding.PSS(mgf=padding.MGF1(mgf_cls()), salt_length=padding.PSS.AUTO),
+            hash_cls(),
+        )
+        return True
+    except InvalidSignature:
+        return False
+    except (UnsupportedAlgorithm, ValueError, TypeError):
+        return None
+
+
 @pytest.mark.parametrize("vec_id,vec", _ALL_PSS_VECTORS, ids=[v[0] for v in _ALL_PSS_VECTORS])
 def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA-PSS signature verification from Wycheproof vectors."""
@@ -354,9 +411,8 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
         pytest.skip(f"RSA {key_bits}-bit keys not supported (cached)")
 
     try:
-        pub_key = import_rsa_public_key(
-            rs.raw,
-            rs.sh,
+        pub_key = import_rsa_public_key_negotiated(
+            rs,
             n=modulus,
             e=exponent,
             attrs={CKA_VERIFY: True},
@@ -375,6 +431,24 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
         verified = verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig, mech_param=pss_param)
         if result == "invalid":
             if verified:
+                # Discriminate the acceptance class with a reference auto-salt
+                # verification (pure public-key math): a GENUINE signature whose
+                # salt length merely differs from the declared sLen is only
+                # producible with the private key -- accepting it is salt-length
+                # policy leniency (the verifier recovers the salt, RFC 8017),
+                # an honest deviation, not a forgery. Anything else that
+                # verifies is a padding-check bypass and stays a hard fail.
+                if (
+                    _pss_valid_under_auto_salt(
+                        modulus, exponent, msg, sig, vec["_sha"], vec["_mgf_sha"]
+                    )
+                    is True
+                ):
+                    pytest.xfail(
+                        f"{vec_id}: accepted a genuine PSS signature whose salt length "
+                        f"differs from the declared sLen={s_len} -- salt-length policy "
+                        "not enforced (not forgeable without the private key)"
+                    )
                 pytest.fail(f"Invalid RSA-PSS sig {vec_id} accepted by module")
             return
         if result == "valid" and not verified:

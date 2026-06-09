@@ -26,7 +26,6 @@ from pkcs11_check.raw.recipes import (
     import_secret_key,
     read_attributes,
     sign_single,
-    unwrap_key,
     verify_single,
     wrap_key,
 )
@@ -57,6 +56,7 @@ from pkcs11_check.testcases.conftest import (
     gen_rsa_keypair_or_xfail,
     is_known_error,
     skip_unless_mechanism,
+    unwrap_key_for_mechanism_roundtrip,
 )
 
 pytestmark = pytest.mark.metamorphic
@@ -142,7 +142,7 @@ class TestRoundTripInvariants:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_wrap_unwrap_preserves_material(self, p11_raw_session: Any) -> None:
+    def test_wrap_unwrap_preserves_material(self, p11_raw_session: Any, p11_config: Any) -> None:
         """wrap(key) then unwrap must produce identical key material."""
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
@@ -171,18 +171,19 @@ class TestRoundTripInvariants:
         )
         try:
             wrapped = wrap_key(rs.raw, rs.sh, wrapping_key, original, CKM_AES_KEY_WRAP)
-            unwrapped = unwrap_key(
-                rs.raw,
-                rs.sh,
-                wrapping_key,
-                wrapped,
-                CKM_AES_KEY_WRAP,
+            unwrapped = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=wrapping_key,
+                wrapped_key=wrapped,
+                mechanism=CKM_AES_KEY_WRAP,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
                     CKA_EXTRACTABLE: True,
                     CKA_SENSITIVE: False,
                 },
+                purpose="AES-KEY-WRAP metamorphic roundtrip",
             )
             try:
                 unwrapped_attrs = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])
