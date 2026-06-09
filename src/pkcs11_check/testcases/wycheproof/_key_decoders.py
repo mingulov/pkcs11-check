@@ -84,6 +84,121 @@ def ec_coord_size(curve_name: str) -> int:
     return ceil(bits / 8)
 
 
+# Short-Weierstrass domain parameters (p, a, b) for the prime-field,
+# cofactor-1 curves used by the Wycheproof ECDH suites (SEC 2 / RFC 5639).
+# Cofactor 1 matters: every on-curve point except infinity has full order,
+# so an on-curve point cannot mount a small-subgroup attack.
+_PRIME_COFACTOR1_CURVE_PARAMS: dict[str, tuple[int, int, int]] = {
+    "secp224r1": (
+        2**224 - 2**96 + 1,
+        -3,
+        0xB4050A850C04B3ABF54132565044B0B7D7BFD8BA270B39432355FFB4,
+    ),
+    "secp256k1": (2**256 - 2**32 - 977, 0, 7),
+    "secp256r1": (
+        0xFFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF,
+        -3,
+        0x5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B,
+    ),
+    "secp384r1": (
+        2**384 - 2**128 - 2**96 + 2**32 - 1,
+        -3,
+        0xB3312FA7E23EE7E4988E056BE3F82D19181D9C6EFE8141120314088F5013875AC656398D8A2ED19D2A85C8EDD3EC2AEF,
+    ),
+    "secp521r1": (
+        2**521 - 1,
+        -3,
+        0x0051953EB9618E1C9A1F929A21A0B68540EEA2DA725B99B315F3B8B489918EF109E156193951EC7E937B1652C0BD3BB1BF073573DF883D2C34F1EF451FD46B503F00,
+    ),
+    "brainpoolp224r1": (
+        0xD7C134AA264366862A18302575D1D787B09F075797DA89F57EC8C0FF,
+        0x68A5E62CA9CE6C1C299803A6C1530B514E182AD8B0042A59CAD29F43,
+        0x2580F63CCFE44138870713B1A92369E33E2135D266DBB372386C400B,
+    ),
+    "brainpoolp256r1": (
+        0xA9FB57DBA1EEA9BC3E660A909D838D726E3BF623D52620282013481D1F6E5377,
+        0x7D5A0975FC2C3057EEF67530417AFFE7FB8055C126DC5C6CE94A4B44F330B5D9,
+        0x26DC5C6CE94A4B44F330B5D9BBD77CBF958416295CF7E1CE6BCCDC18FF8C07B6,
+    ),
+    "brainpoolp320r1": (
+        0xD35E472036BC4FB7E13C785ED201E065F98FCFA6F6F40DEF4F92B9EC7893EC28FCD412B1F1B32E27,
+        0x3EE30B568FBAB0F883CCEBD46D3F3BB8A2A73513F5EB79DA66190EB085FFA9F492F375A97D860EB4,
+        0x520883949DFDBC42D3AD198640688A6FE13F41349554B49ACC31DCCD884539816F5EB4AC8FB1F1A6,
+    ),
+    "brainpoolp384r1": (
+        0x8CB91E82A3386D280F5D6F7E50E641DF152F7109ED5456B412B1DA197FB71123ACD3A729901D1A71874700133107EC53,
+        0x7BC382C63D8C150C3C72080ACE05AFA0C2BEA28E4FB22787139165EFBA91F90F8AA5814A503AD4EB04A8C7DD22CE2826,
+        0x04A8C7DD22CE28268B39B55416F0447C2FB77DE107DCD2A62E880EA53EEB62D57CB4390295DBC9943AB78696FA504C11,
+    ),
+    "brainpoolp512r1": (
+        0xAADD9DB8DBE9C48B3FD4E6AE33C9FC07CB308DB3B3C9D20ED6639CCA703308717D4D9B009BC66842AECDA12AE6A380E62881FF2F2D82C68528AA6056583A48F3,
+        0x7830A3318B603B89E2327145AC234CC594CBDD8D3DF91610A83441CAEA9863BC2DED5D5AA8253AA10A2EF1C98B9AC8B57F1117A72BF2C7B9E7C1AC4D77FC94CA,
+        0x3DF91610A83441CAEA9863BC2DED5D5AA8253AA10A2EF1C98B9AC8B57F1117A72BF2C7B9E7C1AC4D77FC94CADC083E67984050B75EBAE5DD2809BD638016F723,
+    ),
+}
+
+
+def _ec_affine_add(
+    pt1: tuple[int, int] | None,
+    pt2: tuple[int, int] | None,
+    p: int,
+    a: int,
+) -> tuple[int, int] | None:
+    """Affine point addition; None is the point at infinity."""
+    if pt1 is None:
+        return pt2
+    if pt2 is None:
+        return pt1
+    x1, y1 = pt1
+    x2, y2 = pt2
+    if x1 == x2 and (y1 + y2) % p == 0:
+        return None
+    if pt1 == pt2:
+        lam = (3 * x1 * x1 + a) * pow(2 * y1, -1, p) % p
+    else:
+        lam = (y2 - y1) * pow(x2 - x1, -1, p) % p
+    x3 = (lam * lam - x1 - x2) % p
+    return (x3, (lam * (x1 - x3) - y1) % p)
+
+
+def ecdh_cofactor1_shared_x(
+    curve_name: str,
+    public_point: bytes,
+    private_scalar: bytes,
+) -> bytes | None:
+    """x-coordinate of ``scalar * point`` on a known cofactor-1 prime curve.
+
+    Returns None when the curve is unknown, the encoding is not a canonical
+    uncompressed on-curve point, or the result is the point at infinity —
+    callers must then keep treating the vector by its original result class.
+    Used to detect Wycheproof "invalid" ECDH vectors whose invalidity lives
+    only in ASN.1 curve parameters that CK_ECDH1_DERIVE_PARAMS cannot carry.
+    """
+    canonical, _bits = normalize_ec_curve(curve_name)
+    params = _PRIME_COFACTOR1_CURVE_PARAMS.get(canonical)
+    if params is None:
+        return None
+    p, a, b = params
+    coord = ec_coord_size(curve_name)
+    if len(public_point) != 1 + 2 * coord or public_point[:1] != b"\x04":
+        return None
+    x = int.from_bytes(public_point[1 : 1 + coord], "big")
+    y = int.from_bytes(public_point[1 + coord :], "big")
+    if x >= p or y >= p or (y * y - (x * x * x + a * x + b)) % p != 0:
+        return None
+    k = int.from_bytes(private_scalar, "big")
+    result: tuple[int, int] | None = None
+    base: tuple[int, int] | None = (x, y)
+    while k:
+        if k & 1:
+            result = _ec_affine_add(result, base, p, a)
+        base = _ec_affine_add(base, base, p, a)
+        k >>= 1
+    if result is None:
+        return None
+    return result[0].to_bytes(coord, "big")
+
+
 def decode_ec_public_point(value: Any, encoding_name: str, curve_name: str) -> bytes:
     if encoding_name == "ecpoint":
         return bytes.fromhex(value)

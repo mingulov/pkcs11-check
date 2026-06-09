@@ -488,3 +488,53 @@ The remaining ~200 corepkcs11 failures were categorized by direct probe + v3.6.4
 **Harness-fix scope is therefore COMPLETE for the discovered bug classes.** What remains is not
 harness work: (a) C1-C3 UB-probe removal — flagged for Denis's nod (outward-facing); (b) secret-key
 coherence stock-PAL root-cause; (c) merge to dev (user milestone decision — CLAUDE.md: never auto-merge).
+
+---
+
+## Cross-provider signature analysis (2026-06-09) — the highest-leverage view
+
+Aggregating `(file, normalized-reason)` across ALL providers' pool baselines surfaces signatures that
+appear on MANY providers at once — those are almost always harness mis-expectations, not real
+single-provider findings. Ranked by provider-count:
+
+| #prov | file | signature | verdict |
+|---|---|---|---|
+| 11 | wycheproof_rsa_decrypt | "invalid accepted" (×608) | 🔧 **FIXED (H8)** — anti-Bleichenbacher penalized |
+| 14 | ffi_length_boundary | C_Sign/Verify/Digest/*Update(huge len) crash | 💥→🔧 **C2 UB** (lying length, flagged for nod) |
+| 16 | ckr_raw_buffer | "C_Digest returns CKR_OK with 1-byte buffer" | ❓ FAIR test (declares 1B, over-allocs to detect OOB write) — likely a **real** lax-buffer finding; verify fresh, don't suppress |
+| 14 | parameter_validation | AES-GCM short IV "accepted" | ⚖️ over-strict vs model (spec-legal; NIST advisory) — **flag for Denis** |
+| 14 | parameter_validation | AES-GCM IV reuse "accepted" | ⚖️ module can't track IV history → unreasonable to require; **flag** |
+| 14 | parameter_validation | RSA-PSS sLen=0 "accepted" | ⚖️ **sLen=0 is VALID deterministic PSS (RFC 8017)**, not a Type-A break — strongest reclassify candidate; **flag** |
+| 12 | parameter_validation | AES-GCM short tag "accepted" | ⚖️ spec-legal (NIST advisory); **flag** |
+| 13 | wycheproof_ecdh | "derived a secret for invalid vector" (×92) | ⚠️ **SECURITY — needs per-vector on-curve determination, do NOT touch blind** |
+| 11 | acvp_eddsa | "ACCEPTED an INVALID EdDSA key" | ⚠️ needs the same valid-vs-invalid determination as ECDH |
+
+### The two categories among the not-yet-fixed cross-cutting signatures
+
+**(A) Parameter-validation over-strictness (⚖️, flag for Denis — philosophy call, NOT auto-fixed).**
+`test_parameter_validation` hard-`fail`s (`reject_or_classify(None,…)`) when a module *accepts* a
+weak-but-**spec-legal** parameter: GCM IV < 12 B, GCM tag < 96 bit, GCM IV reuse, **RSA-PSS sLen=0**.
+Per the project's own classification model a negative-op acceptance `fail`s only when it is a
+*crypto-correctness break* — and none of these are: a 32-bit GCM tag is a correct (weaker) tag, a
+short IV is correct GCM, IV-reuse prevention is the *caller's* duty (the module has no IV history),
+and **sLen=0 PSS is a standardized deterministic variant (RFC 8017 §9.1), not a forgeable break.**
+These are deliberate hardening checks (documented NIST citations) that conflict with the model and
+fail 12-14 providers each. Reclassifying fail→note/xfail is defensible and model-aligned but changes
+a whole security-test category across all providers (outward-facing) — **Denis's call**, like C1-C3.
+
+**(B) ECDH / EdDSA invalid-vector acceptance (⚠️ SECURITY — determine, do not assume).**
+`test_wycheproof_ecdh` `fail`s when a module derives a secret for an "invalid" vector (×92 / 13 prov).
+The intent is RIGHT (deriving on an off-curve point IS the invalid-curve attack). But softhsm2 — a
+careful impl — rejects MOST invalid vectors and derives for only ~42, flagged
+`InvalidPublic/UnnamedCurve/WrongOrder/ModifiedPrime/WrongCurve`. Key PKCS#11 insight: ECDH1_DERIVE
+gets only the **raw peer-point bytes + the base key's curve** — the X.509 curve-encoding invalidity
+(`UnnamedCurve`/`ModifiedPrime`/`ModifiedGroup`) is at a layer PKCS#11 never sees. So the finding is
+real **only when the peer point is off the BASE curve** (genuine invalid-curve attack); if the point
+is on the base curve the module derived correctly and the flag is harness over-reach. **The fix is a
+per-vector on-curve check** (`cryptography.from_encoded_point(base_curve, point)`): on-curve → not a
+finding; off-curve → keep the `fail` (real invalid-curve weakness). This is H8-shaped and safe in the
+dangerous direction (from_encoded_point never accepts an off-curve point, so a real finding is never
+hidden) — but whether softhsm2/NSS genuinely derive on **off-base-curve** points (a serious, real
+finding to KEEP) vs only on-curve ones (harness over-flag) must be **determined per vector before
+acting**. Not auto-fixed this pass: getting invalid-curve classification wrong either hides a real
+vuln or cries wolf. EdDSA-keyver (×11 prov) needs the same valid-vs-genuinely-invalid determination.

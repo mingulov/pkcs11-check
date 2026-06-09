@@ -85,7 +85,20 @@ wycheproof_aes CCM H2 routing and the H8 RSA-decrypt fix are both committed + ve
    extract from `artifacts2/<prov>-shard-*/results.json` units[].stdout, find harness-bug
    candidates vs genuine findings. (bouncyhsm now ~CCM-only + small tails; corepkcs11 long-tail
    = genuine, done.)
-3. **xfail audit:** confirm no xfail added this session is over-broad / hides a real fail.
+3. **Cross-provider analysis DONE** (issues-triage.md "Cross-provider signature analysis"):
+   - H8 RSA decrypt FIXED; NSS error_path_kwp output_size_hint FIXED.
+   - ⚖️ **parameter_validation over-strictness** (GCM short IV/tag, IV reuse, RSA-PSS sLen=0)
+     fails 12-14 providers for SPEC-LEGAL weak params — conflicts with the classification
+     model (fail only on crypto break). Reclassify fail→note/xfail is defensible but
+     outward-facing → DENIS'S CALL (like C1-C3). sLen=0-PSS is the strongest candidate.
+   - ⚠️ **ECDH/EdDSA invalid-vector acceptance** (×92/13prov): SECURITY — fix is a per-vector
+     on-curve check (cryptography.from_encoded_point(base_curve, point)): on-curve→not a
+     finding, off-curve→keep fail (real invalid-curve attack). DETERMINE per vector before
+     acting — softhsm2 derives on ~42 incl ModifiedPrime (could be REAL invalid-curve
+     weakness to KEEP, or harness over-flag). Do NOT suppress blind.
+   - ❓ test_ckr_raw_buffer C_Digest-1-byte: FAIR OOB-write test, likely real lax-buffer
+     finding (16 prov) — verify fresh, don't suppress.
+4. **xfail audit:** confirm no xfail added this session is over-broad / hides a real fail.
 4. **C1-C3 removal** — needs your decision (outward-facing security-suite change).
 5. **Secret-key coherence** root-cause via a stock-PAL repro (corePKCS11 CMAC/HMAC import OK then
    handle invalid — documented not-asserted; P-256 round-trips through the generic PAL so likely
