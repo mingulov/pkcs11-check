@@ -40,6 +40,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.pack import mech_bytes
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     read_attributes,
@@ -1088,17 +1089,31 @@ class TestTier1Stragglers:
             },
             purpose="AES_CMAC_GENERAL setup",
         )
+        # CKM_AES_CMAC_GENERAL takes a CK_MAC_GENERAL_PARAMS (a CK_ULONG giving the
+        # requested MAC length in bytes); without it a conformant module rejects the
+        # call with CKR_MECHANISM_PARAM_INVALID. Request a half-block (8 of 16) tag so
+        # a module that ignores the length param is caught by the length assertion.
+        mac_len = 8
         try:
-            sig = sign_single(
-                rs.raw,
-                rs.sh,
-                key,
-                CKM_AES_CMAC_GENERAL,
-                b"test data for cmac general",
+            try:
+                sig = sign_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_CMAC_GENERAL,
+                    b"test data for cmac general",
+                    mech_param=mech_bytes(CKM_AES_CMAC_GENERAL, mac_len.to_bytes(8, "little")),
+                )
+            except AssertionError as e:
+                # Advertised but the operation does not complete: a clean operational
+                # deviation, not a conformance break.
+                pytest.xfail(f"AES_CMAC_GENERAL sign failed: {e}")
+            # Honoring the requested tag length is mandatory: a wrong length is the
+            # module ignoring CK_MAC_GENERAL_PARAMS (wrong output on a positive op -> fail).
+            assert len(sig) == mac_len, (
+                f"AES_CMAC_GENERAL requested {mac_len}-byte tag but got {len(sig)} bytes "
+                "(module ignored CK_MAC_GENERAL_PARAMS)"
             )
-            assert len(sig) > 0
-        except AssertionError as e:
-            pytest.xfail(f"AES_CMAC_GENERAL sign failed: {e}")
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
