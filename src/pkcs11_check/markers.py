@@ -60,6 +60,7 @@ MARKER_DEFINITIONS: list[MarkerDef] = [
     MarkerDef("smoke", "Quick smoke profile"),
     MarkerDef("slow", "Long-running test"),
     MarkerDef("needs_mechanism", "Test needs a specific PKCS#11 mechanism"),
+    MarkerDef("needs_function", "Test needs a specific PKCS#11 C_* function to be present"),
     MarkerDef("stateful", "State-machine or stateful property test"),
     MarkerDef("stress", "Concurrency, resource, or longevity stress test"),
     MarkerDef("subprocess", "Test always runs in isolated subprocess (crash-prone operations)"),

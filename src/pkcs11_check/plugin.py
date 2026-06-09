@@ -211,7 +211,12 @@ def _is_testcase_item(item: pytest.Item) -> bool:
 def _has_dynamic_markers(item: pytest.Item) -> bool:
     return any(
         item.get_closest_marker(marker_name)
-        for marker_name in ("requires_v30", "requires_v32", "needs_mechanism")
+        for marker_name in (
+            "requires_v30",
+            "requires_v32",
+            "needs_mechanism",
+            "needs_function",
+        )
     )
 
 
@@ -417,6 +422,12 @@ def _runtime_skip_reason(
                     f"Requires {_marker_version_label(marker_name)}, "
                     f"module has v{manifest.interface_version}"
                 )
+
+    function_marker = item.get_closest_marker("needs_function")
+    if function_marker and function_marker.args:
+        needed_fn = str(function_marker.args[0])
+        if needed_fn not in manifest.functions:
+            return f"Function {needed_fn} not present in module"
 
     if config.getoption("p11_skip_unsupported", default=True):
         marker = item.get_closest_marker("needs_mechanism")
