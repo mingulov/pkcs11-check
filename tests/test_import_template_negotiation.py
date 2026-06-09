@@ -39,6 +39,11 @@ class _Session:
     sh = 1
 
 
+@pytest.fixture(autouse=True)
+def _fresh_negotiation_cache() -> None:
+    tc.reset_import_negotiation_cache()
+
+
 def _raise(rv: int) -> None:
     raise CkrAssertionError(f"Unexpected CK_RV; rv={rv}", int(rv))
 
@@ -186,6 +191,85 @@ def test_default_negotiate_request_still_rejects_arguments_bad() -> None:
     assert calls == 1
 
 
+def test_winning_variant_is_cached_per_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    """After the first negotiation, the winning storage variant is reused:
+    no re-walking rejected variants thousands of times (one C_CreateObject per
+    subsequent import instead of three on a storage-oriented module)."""
+    calls: list[dict[Any, Any]] = []
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.create_object", _storage_oriented_module(calls)
+    )
+
+    tc.create_object_negotiated(_Session(), _BASE_TEMPLATE, purpose="t")
+    first_round = len(calls)
+    tc.create_object_negotiated(_Session(), _BASE_TEMPLATE, purpose="t")
+
+    assert first_round == 3
+    assert len(calls) == first_round + 1  # cached winner: single call
+    assert calls[-1].get(CKA_TOKEN) is True and CKA_LABEL in calls[-1]
+
+
+def test_cached_winner_failure_falls_back_to_full_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the cached winner stops working (clean shape reject), the full
+    canonical-first sequence runs again and re-learns."""
+    calls: list[dict[Any, Any]] = []
+    mode = {"accept": "label+token"}
+
+    def _create_object(_raw: Any, _session: int, attrs: dict[Any, Any]) -> int:
+        calls.append(dict(attrs))
+        if mode["accept"] == "label+token":
+            if CKA_LABEL not in attrs:
+                _raise(CKR_ARGUMENTS_BAD)
+            if not attrs.get(CKA_TOKEN, False):
+                _raise(CKR_ATTRIBUTE_VALUE_INVALID)
+            return 42
+        # Later the module only accepts the canonical minimal template.
+        if CKA_LABEL in attrs or attrs.get(CKA_TOKEN, False):
+            _raise(CKR_ATTRIBUTE_VALUE_INVALID)
+        return 43
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.create_object", _create_object)
+
+    assert tc.create_object_negotiated(_Session(), _BASE_TEMPLATE, purpose="t") == 42
+    mode["accept"] = "canonical"
+    assert tc.create_object_negotiated(_Session(), _BASE_TEMPLATE, purpose="t") == 43
+
+
+def test_policy_attr_drop_variant_on_attribute_type_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """corePKCS11's HMAC key parser returns CKR_ATTRIBUTE_TYPE_INVALID for
+    CKA_SENSITIVE (unknown attribute). A storage variant drops the benign
+    policy attrs (CKA_SENSITIVE/CKA_EXTRACTABLE), mirroring the unwrap
+    negotiation precedent. Crypto-visible attrs are never dropped."""
+    from pkcs11_check.raw.types_std import CKA_SENSITIVE, CKA_SIGN, CKA_VALUE
+
+    calls: list[dict[Any, Any]] = []
+
+    def _create_object(_raw: Any, _session: int, attrs: dict[Any, Any]) -> int:
+        calls.append(dict(attrs))
+        if CKA_LABEL not in attrs:
+            _raise(CKR_ARGUMENTS_BAD)
+        if not attrs.get(CKA_TOKEN, False):
+            _raise(CKR_ATTRIBUTE_VALUE_INVALID)
+        if CKA_SENSITIVE in attrs:
+            _raise(0x12)  # CKR_ATTRIBUTE_TYPE_INVALID
+        return 42
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.create_object", _create_object)
+
+    template = {**_BASE_TEMPLATE, CKA_SIGN: True, CKA_SENSITIVE: False, CKA_VALUE: b"k" * 32}
+    handle = tc.create_object_negotiated(_Session(), template, purpose="t")
+
+    assert handle == 42
+    final = calls[-1]
+    assert CKA_SENSITIVE not in final
+    # Crypto-visible attributes survive every variant.
+    assert final[CKA_VALUE] == b"k" * 32 and final[CKA_SIGN] is True
+
+
 def test_binding_defect_none_when_params_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
     """A module that honors the requested curve shows no binding defect."""
     from pkcs11_check.raw.types_std import CKA_EC_PARAMS as _P
@@ -306,6 +390,53 @@ def test_wycheproof_ecdsa_uses_negotiated_import() -> None:
         f"test_wycheproof_ecdsa.py uses raw import_ec_public_key at lines {raw_calls}; "
         "use import_ec_public_key_negotiated (conftest) so storage-shape rejects negotiate"
     )
+
+
+def test_import_secret_key_negotiated_builds_canonical_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The secret-key helper presents the same canonical template as the raw
+    recipe (CLASS/KEY_TYPE/VALUE + caller attrs) and negotiates storage shape."""
+    from pkcs11_check.raw.types_std import CKA_SIGN, CKA_VALUE, CKO_SECRET_KEY
+
+    calls: list[dict[Any, Any]] = []
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.create_object", _storage_oriented_module(calls)
+    )
+
+    handle = tc.import_secret_key_negotiated(
+        _Session(), 21, b"\x01" * 16, attrs={CKA_SIGN: True, CKA_TOKEN: False}, purpose="t"
+    )
+
+    assert handle == 42
+    assert calls[0][CKA_CLASS] == CKO_SECRET_KEY
+    assert calls[0][CKA_KEY_TYPE] == 21
+    assert calls[0][CKA_VALUE] == b"\x01" * 16
+    assert calls[0][CKA_SIGN] is True
+    assert calls[0][CKA_TOKEN] is False
+    assert CKA_LABEL not in calls[0]
+    assert calls[2][CKA_TOKEN] is True
+
+
+def test_acvp_hmac_uses_negotiated_import() -> None:
+    """Regression guard: the ACVP HMAC KAT must import keys through the
+    negotiating helper (corePKCS11: 148 hard-fails at C_CreateObject without it)."""
+    import ast
+    from pathlib import Path
+
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "src/pkcs11_check/testcases/acvp/test_acvp_hmac.py"
+    )
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    raw_calls = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "import_secret_key"
+    ]
+    assert raw_calls == []
 
 
 def test_import_ec_public_key_negotiated_builds_canonical_template(

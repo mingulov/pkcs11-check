@@ -25,12 +25,15 @@ from pkcs11_check.raw.types_std import (
     CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
+    CKA_VALUE,
     CKA_VALUE_LEN,
     CKA_VERIFY,
     CKK_EC,
     CKM_EC_EDWARDS_KEY_PAIR_GEN,
     CKO_PUBLIC_KEY,
+    CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_CURVE_NOT_SUPPORTED,
     CKR_DEVICE_ERROR,
@@ -216,23 +219,66 @@ def unwrap_key_for_mechanism_roundtrip(
     return result
 
 
-# C_CreateObject storage-shape rejects: the template rejects plus the two clean codes
-# storage-oriented modules use for storage-model constraints (probed corePKCS11 2026-06-09:
-# missing CKA_LABEL -> CKR_ARGUMENTS_BAD, CKA_TOKEN=False -> CKR_ATTRIBUTE_VALUE_INVALID).
-# Import-site only: at other sites these codes stay real findings (see negotiate_request).
+# C_CreateObject storage-shape rejects: the template rejects plus the clean codes
+# storage-oriented modules use for storage-model constraints (probed corePKCS11
+# 2026-06-09: missing CKA_LABEL -> CKR_ARGUMENTS_BAD, CKA_TOKEN=False ->
+# CKR_ATTRIBUTE_VALUE_INVALID, CKA_SENSITIVE unknown to the HMAC key parser ->
+# CKR_ATTRIBUTE_TYPE_INVALID). Import-site only: at other sites these codes stay
+# real findings (see negotiate_request).
 IMPORT_STORAGE_SHAPE_REJECTS: tuple[int, ...] = (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
 )
 
+# Benign policy attributes a storage variant may DROP on a clean shape reject
+# (mirrors unwrap_key_for_mechanism_roundtrip): their absence does not change
+# what the KAT asserts. Crypto-visible attributes are never touched.
+_IMPORT_DROPPABLE_POLICY_ATTRS: tuple[Any, ...] = (CKA_SENSITIVE, CKA_EXTRACTABLE)
+
 _import_label_counter = itertools.count(1)
+
+# Winning storage-variant cache, keyed by template shape (class, key type,
+# attr-type set). One negotiation walk per shape per process; subsequent
+# imports go straight to the learned variant instead of re-rejecting the
+# canonical thousands of times. A cached winner that stops working falls back
+# to the full canonical-first sequence and re-learns.
+_IMPORT_SHAPE_WINNERS: dict[tuple[Any, ...], int] = {}
+
+
+def reset_import_negotiation_cache() -> None:
+    """Test hook: forget learned storage-variant winners."""
+    _IMPORT_SHAPE_WINNERS.clear()
 
 
 def _next_import_label() -> bytes:
     """Unique short label for label-keyed object stores (max 32 bytes)."""
     return f"p11chk-import-{next(_import_label_counter)}".encode()
+
+
+def _storage_variants(base: dict[Any, Any]) -> list[dict[Any, Any]]:
+    """Spec-equivalent storage variants, canonical-minimal first (G1)."""
+    variants: list[dict[Any, Any]] = [base]
+    labeled = base if CKA_LABEL in base else {**base, CKA_LABEL: _next_import_label()}
+    if labeled is not base:
+        variants.append(labeled)
+    tokened = labeled if base.get(CKA_TOKEN, False) else {**labeled, CKA_TOKEN: True}
+    if tokened is not labeled:
+        variants.append(tokened)
+    dropped = {k: v for k, v in tokened.items() if k not in _IMPORT_DROPPABLE_POLICY_ATTRS}
+    if dropped != tokened:
+        variants.append(dropped)
+    return variants
+
+
+def _import_shape_key(base: Mapping[Any, Any]) -> tuple[Any, ...]:
+    return (
+        base.get(CKA_CLASS),
+        base.get(CKA_KEY_TYPE),
+        tuple(sorted(int(k) for k in base)),
+    )
 
 
 def create_object_negotiated(
@@ -245,29 +291,39 @@ def create_object_negotiated(
 
     Variant 0 is the caller's spec-minimal template. Storage-oriented modules reject
     it cleanly: corePKCS11 requires CKA_LABEL on every key object (CKR_ARGUMENTS_BAD
-    when absent) and supports only token objects (CKR_ATTRIBUTE_VALUE_INVALID for
-    CKA_TOKEN=False). The retry variants add a unique CKA_LABEL, then CKA_TOKEN=True
-    -- spec-equivalent storage attributes only; crypto-visible attributes are never
-    changed and no provider identity is consulted. Callers destroy the object in
-    their cleanup path regardless of which variant won.
+    when absent), supports only token objects (CKR_ATTRIBUTE_VALUE_INVALID for
+    CKA_TOKEN=False) and rejects policy attributes its parsers do not know
+    (CKR_ATTRIBUTE_TYPE_INVALID for CKA_SENSITIVE). Retry variants add a unique
+    CKA_LABEL, then CKA_TOKEN=True, then drop the benign policy attrs -- storage
+    shape only; crypto-visible attributes are never changed and no provider
+    identity is consulted. The winning variant is cached per template shape per
+    process (see _IMPORT_SHAPE_WINNERS); callers destroy the object in their
+    cleanup path regardless of which variant won.
     """
     from pkcs11_check.raw.recipes import create_object
+    from pkcs11_check.raw.rv import CkrAssertionError as _CkrError
     from pkcs11_check.testcases._negotiation import negotiate_request
 
     base = dict(attrs)
-    variants: list[dict[Any, Any]] = [base]
-    labeled = base if CKA_LABEL in base else {**base, CKA_LABEL: _next_import_label()}
-    if labeled is not base:
-        variants.append(labeled)
-    if not base.get(CKA_TOKEN, False):
-        variants.append({**labeled, CKA_TOKEN: True})
+    variants = _storage_variants(base)
+    shape_key = _import_shape_key(base)
 
     def attempt(delta: Mapping[Any, Any]) -> int:
         return create_object(rs.raw, rs.sh, dict(delta))
 
-    result, _idx = negotiate_request(
+    cached = _IMPORT_SHAPE_WINNERS.get(shape_key)
+    if cached is not None and 0 < cached < len(variants):
+        try:
+            return attempt(variants[cached])
+        except _CkrError as exc:
+            if exc.rv not in IMPORT_STORAGE_SHAPE_REJECTS:
+                raise
+            # The learned winner stopped working: re-learn from canonical.
+
+    result, idx = negotiate_request(
         attempt, variants, label=purpose, shape_rejects=IMPORT_STORAGE_SHAPE_REJECTS
     )
+    _IMPORT_SHAPE_WINNERS[shape_key] = idx
     return result
 
 
@@ -298,6 +354,31 @@ def ec_public_key_binding_defect(rs: Any, handle: int, requested_params: bytes) 
             f"{bytes(requested_params).hex()}, object reports {bytes(got).hex()}"
         )
     return None
+
+
+def import_secret_key_negotiated(
+    rs: Any,
+    key_type: int,
+    value: bytes,
+    *,
+    attrs: Mapping[Any, Any] | None = None,
+    purpose: str = "secret key import",
+) -> int:
+    """Import a secret key by value, negotiating storage-shape requirements.
+
+    Same canonical template as ``raw.recipes.import_secret_key``; on a clean
+    storage-shape reject it retries via ``create_object_negotiated`` variants
+    (unique CKA_LABEL, then CKA_TOKEN=TRUE -- corePKCS11-style label-keyed
+    token-only stores).
+    """
+    base: dict[Any, Any] = {
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: key_type,
+        CKA_VALUE: value,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object_negotiated(rs, base, purpose=purpose)
 
 
 def import_ec_public_key_negotiated(

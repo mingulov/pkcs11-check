@@ -14,7 +14,6 @@ import pytest
 
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    import_secret_key,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
@@ -54,7 +53,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import import_secret_key_negotiated, is_known_error
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -139,9 +138,8 @@ def _sign_hmac_with_key_fallback(rs: Any, vec: dict[str, Any]) -> bytes:
     for key_type in _hmac_key_type_candidates(vec["key_type"]):
         key = 0
         try:
-            key = import_secret_key(
-                rs.raw,
-                rs.sh,
+            key = import_secret_key_negotiated(
+                rs,
                 key_type,
                 vec["key"],
                 attrs={
@@ -149,6 +147,7 @@ def _sign_hmac_with_key_fallback(rs: Any, vec: dict[str, Any]) -> bytes:
                     CKA_TOKEN: False,
                     CKA_SENSITIVE: False,
                 },
+                purpose="ACVP HMAC key import",
             )
             return sign_single(rs.raw, rs.sh, key, vec["mechanism"], vec["msg"])
         except AssertionError as exc:
