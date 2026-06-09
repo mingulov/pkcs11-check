@@ -147,3 +147,54 @@ def test_non_ckr_assertion_errors_are_reraised() -> None:
     with pytest.raises(AssertionError) as ei:
         classify_kat_clean_error(exc, result=NOT_OPERATIONAL, label="AES_CCM encrypt")
     assert ei.value is exc
+
+
+def test_oaep_combo_probe_classifies_by_canonical_effect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H3: opencryptoki rejects valid SHA-512/224 OAEP vectors with
+    ENCRYPTED_DATA_INVALID. The combo probe decrypts a cryptography-made
+    canonical ciphertext: clean reject -> NOT_OPERATIONAL; round-trip ->
+    OPERATIONAL (so the vector rejection stays a finding)."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from pkcs11_check.raw.types_std import CKG_MGF1_SHA256, CKM_SHA256
+    from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa_oaep as oaep
+
+    priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    nums = priv.public_key().public_numbers()
+    modulus = nums.n.to_bytes(256, "big")
+    pub_exp = nums.e.to_bytes(3, "big")
+
+    class _Rs:
+        raw = object()
+        sh = 1
+
+    def _reject(*_a: object, **_k: object) -> bytes:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_ENCRYPTED_DATA_INVALID", int(CKR_ENCRYPTED_DATA_INVALID)
+        )
+
+    monkeypatch.setattr(oaep, "decrypt_single", _reject)
+    res = oaep._oaep_combo_probe(
+        _Rs(), 7, modulus=modulus, pub_exponent=pub_exp,
+        sha="SHA-256", mgf_sha="SHA-256", hash_mech=int(CKM_SHA256),
+        mgf=int(CKG_MGF1_SHA256),
+    )
+    assert res.status is Operability.NOT_OPERATIONAL
+
+    def _roundtrip(_raw: object, _sh: int, _key: int, _mech: object, ct: bytes,
+                   **_k: object) -> bytes:
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+
+        return priv.decrypt(ct, padding.OAEP(
+            mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
+
+    monkeypatch.setattr(oaep, "decrypt_single", _roundtrip)
+    res = oaep._oaep_combo_probe(
+        _Rs(), 7, modulus=modulus, pub_exponent=pub_exp,
+        sha="SHA-256", mgf_sha="SHA-256", hash_mech=int(CKM_SHA256),
+        mgf=int(CKG_MGF1_SHA256),
+    )
+    assert res.status is Operability.OPERATIONAL

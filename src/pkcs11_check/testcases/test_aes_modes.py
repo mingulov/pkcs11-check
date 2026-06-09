@@ -53,11 +53,14 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_XCBC_MAC,
     CKM_AES_XCBC_MAC_96,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
     CKR_KEY_TYPE_INCONSISTENT,
-    CKR_OK,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
+    CIPHER_OP_RUNTIME_REJECT_RVS,
+    classify_negative_rv,
     is_known_error,
     require_operational_aes_keygen,
     unwrap_key_for_mechanism_roundtrip,
@@ -153,22 +156,30 @@ class TestAESCTR:
         )
         plaintext = b"key independence test data here!!"  # 32 bytes
         try:
-            ct1 = encrypt_single(
-                rs.raw,
-                rs.sh,
-                key1,
-                CKM_AES_CTR,
-                plaintext,
-                mech_param=mech_ctr(CKM_AES_CTR),
-            )
-            ct2 = encrypt_single(
-                rs.raw,
-                rs.sh,
-                key2,
-                CKM_AES_CTR,
-                plaintext,
-                mech_param=mech_ctr(CKM_AES_CTR),
-            )
+            try:
+                ct1 = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    key1,
+                    CKM_AES_CTR,
+                    plaintext,
+                    mech_param=mech_ctr(CKM_AES_CTR),
+                )
+                ct2 = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    key2,
+                    CKM_AES_CTR,
+                    plaintext,
+                    mech_param=mech_ctr(CKM_AES_CTR),
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    "CKM_AES_CTR advertised but encrypt is not operational",
+                )
+                raise
             assert ct1 != ct2
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
@@ -197,14 +208,23 @@ class TestAESCTR:
         # 17 bytes - deliberately NOT block-aligned
         plaintext = b"seventeen chars!!"[:17]
         try:
-            ct = encrypt_single(
-                rs.raw,
-                rs.sh,
-                key,
-                CKM_AES_CTR,
-                plaintext,
-                mech_param=mech_ctr(CKM_AES_CTR),
-            )
+            try:
+                ct = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_CTR,
+                    plaintext,
+                    mech_param=mech_ctr(CKM_AES_CTR),
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    "CKM_AES_CTR advertised but non-block-aligned encrypt is not "
+                    "operational (stream-cipher requirement, NIST SP 800-38A)",
+                )
+                raise
             assert len(ct) == 17, f"CTR output must match input length, got {len(ct)}"
             pt = decrypt_single(
                 rs.raw,
@@ -227,8 +247,10 @@ class TestAESCTR:
         try:
             mech = mech_ctr(CKM_AES_CTR, bits=0)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
-            assert rv != CKR_OK, (
-                f"C_EncryptInit accepted ulCounterBits=0 (rv=0x{rv:08x}), spec requires rejection"
+            classify_negative_rv(
+                rv,
+                (CKR_MECHANISM_PARAM_INVALID, CKR_ARGUMENTS_BAD),
+                label="C_EncryptInit with ulCounterBits=0 (spec range 1-128)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -242,8 +264,10 @@ class TestAESCTR:
         try:
             mech = mech_ctr(CKM_AES_CTR, bits=129)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
-            assert rv != CKR_OK, (
-                f"C_EncryptInit accepted ulCounterBits=129 (rv=0x{rv:08x}), spec requires rejection"
+            classify_negative_rv(
+                rv,
+                (CKR_MECHANISM_PARAM_INVALID, CKR_ARGUMENTS_BAD),
+                label="C_EncryptInit with ulCounterBits=129 (spec range 1-128)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -271,14 +295,22 @@ class TestAESCTS:
         # CTS requires at least one full block; use non-block-aligned length
         plaintext = b"CTS handles non-block-aligned!" + b"\x00" * 3  # 33 bytes
         try:
-            ct = encrypt_single(
-                rs.raw,
-                rs.sh,
-                key,
-                CKM_AES_CTS,
-                plaintext,
-                mech_param=mech_bytes(CKM_AES_CTS, iv),
-            )
+            try:
+                ct = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_CTS,
+                    plaintext,
+                    mech_param=mech_bytes(CKM_AES_CTS, iv),
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    "CKM_AES_CTS advertised but encrypt is not operational",
+                )
+                raise
             assert ct != plaintext
             pt = decrypt_single(
                 rs.raw,
@@ -312,22 +344,30 @@ class TestAESCTS:
         iv = generate_random(rs.raw, rs.sh, 16)
         plaintext = b"CTS key independence test!!" + b"\x00" * 6  # 32 bytes
         try:
-            ct1 = encrypt_single(
-                rs.raw,
-                rs.sh,
-                key1,
-                CKM_AES_CTS,
-                plaintext,
-                mech_param=mech_bytes(CKM_AES_CTS, iv),
-            )
-            ct2 = encrypt_single(
-                rs.raw,
-                rs.sh,
-                key2,
-                CKM_AES_CTS,
-                plaintext,
-                mech_param=mech_bytes(CKM_AES_CTS, iv),
-            )
+            try:
+                ct1 = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    key1,
+                    CKM_AES_CTS,
+                    plaintext,
+                    mech_param=mech_bytes(CKM_AES_CTS, iv),
+                )
+                ct2 = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    key2,
+                    CKM_AES_CTS,
+                    plaintext,
+                    mech_param=mech_bytes(CKM_AES_CTS, iv),
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    "CKM_AES_CTS advertised but encrypt is not operational",
+                )
+                raise
             assert ct1 != ct2
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)

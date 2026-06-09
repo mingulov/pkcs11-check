@@ -1051,6 +1051,19 @@ The remaining hard rows are:
 
 ## OpenCryptoki 3.26 (v3.0)
 
+### Known bugs (fresh 2026-06-09, triage H5)
+- **CKM_AES_CTR accepts out-of-range ulCounterBits**: `C_EncryptInit` returns `CKR_OK`
+  for `ulCounterBits=0` and `ulCounterBits=129` (OASIS spec range: 1-128). Detected by:
+  `test_aes_modes.py::TestAESCTR::test_aes_ctr_counter_bits_{zero,129}_rejected`
+  (3-way `classify_negative_rv`: acceptance of invalid -> fail).
+- **CKM_AES_CTR rejects spec-valid payloads with `CKR_DATA_LEN_RANGE`** (32B and 17B
+  inputs; CTR is a stream cipher per NIST SP 800-38A) and **CKM_AES_CTS is advertised but
+  `C_EncryptInit` returns `CKR_MECHANISM_INVALID`** -- both clean deviations, xfailed via
+  `CIPHER_OP_RUNTIME_REJECT_RVS`.
+- **RSA-OAEP SHA-512/224|256 + MGF1-SHA1 not operational**: valid Wycheproof vectors
+  rejected with `CKR_ENCRYPTED_DATA_INVALID`; the RFC 8017 canonical probe for those
+  combos is also cleanly rejected -> advertised-but-not-operational xfail (26 vectors).
+
 **Status: 468 passed, 24 failed, 312 skipped, 1 xfailed, 28,762 errors**
 
 ### Root cause of 28K errors

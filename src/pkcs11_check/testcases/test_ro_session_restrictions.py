@@ -156,6 +156,7 @@ def _gen_ro_setup_aes_key(
     try:
         return _raw_gen_aes_key(rs.raw, sh, bits, attrs=attrs)
     except AssertionError as exc:
+        _xfail_if_session_object_rejected_readonly(exc)
         xfail_if_known_ckr(
             exc,
             AES_KEYGEN_RUNTIME_REJECT_RVS,
@@ -184,6 +185,7 @@ def _gen_ro_setup_generic_key(
             mechanism=CKM_GENERIC_SECRET_KEY_GEN,
         )
     except AssertionError as exc:
+        _xfail_if_session_object_rejected_readonly(exc)
         xfail_if_known_ckr(
             exc,
             AES_KEYGEN_RUNTIME_REJECT_RVS,
@@ -213,6 +215,7 @@ def _gen_ro_setup_rsa_keypair(
             private_attrs=private_attrs,
         )
     except AssertionError as exc:
+        _xfail_if_session_object_rejected_readonly(exc)
         xfail_if_known_ckr(
             exc,
             KEYPAIR_RUNTIME_REJECT_RVS,
@@ -351,6 +354,18 @@ class TestROTokenObjectCreation:
             close_session_quietly(rs.raw, ro_sh)
 
 
+def _xfail_if_session_object_rejected_readonly(exc: AssertionError) -> None:
+    """CKR_SESSION_READ_ONLY for a SESSION object is a deviation, not a finding
+    to hard-fail: the spec defines that code for token-object writes in R/O
+    sessions; session-scoped objects are legal there (bouncyhsm rejects them
+    anyway, triage H4). The module still refused cleanly -> recorded xfail."""
+    if is_known_error(exc, (CKR_SESSION_READ_ONLY,)):
+        pytest.xfail(
+            f"session object rejected in RO session (deviation; "
+            f"CKR_SESSION_READ_ONLY is specified for token objects): {exc}"
+        )
+
+
 class TestROSessionObjectsAllowed:
     """RO sessions must allow session-scoped (TOKEN=False) operations."""
 
@@ -363,17 +378,21 @@ class TestROSessionObjectsAllowed:
         ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
-            obj_h = import_secret_key(
-                rs.raw,
-                ro_sh,
-                CKK_AES,
-                os.urandom(16),
-                attrs={
-                    CKA_TOKEN: False,
-                    CKA_SENSITIVE: False,
-                    CKA_EXTRACTABLE: True,
-                },
-            )
+            try:
+                obj_h = import_secret_key(
+                    rs.raw,
+                    ro_sh,
+                    CKK_AES,
+                    os.urandom(16),
+                    attrs={
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                )
+            except AssertionError as exc:
+                _xfail_if_session_object_rejected_readonly(exc)
+                raise
             assert obj_h != 0
             destroy_quietly(rs.raw, ro_sh, obj_h)
         finally:

@@ -479,3 +479,20 @@ def test_limbo_portable_label_fits_embedded_stores() -> None:
     assert len(_portable_label(long_a).encode()) <= 32
     assert _portable_label(long_a) == _portable_label(long_a)
     assert _portable_label(long_a) != _portable_label(long_b)
+
+
+def test_ro_session_object_readonly_reject_is_xfail() -> None:
+    """Triage H4: bouncyhsm rejects spec-legal SESSION objects in RO sessions
+    with CKR_SESSION_READ_ONLY (defined for token objects) -> recorded
+    deviation, not a hard fail. Other codes keep propagating."""
+    from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR, CKR_SESSION_READ_ONLY
+    from pkcs11_check.testcases import test_ro_session_restrictions as ro
+
+    exc = CkrAssertionError(
+        "Unexpected CK_RV CKR_SESSION_READ_ONLY", int(CKR_SESSION_READ_ONLY)
+    )
+    with pytest.raises(pytest.xfail.Exception, match="deviation"):
+        ro._xfail_if_session_object_rejected_readonly(exc)
+
+    other = CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
+    assert ro._xfail_if_session_object_rejected_readonly(other) is None

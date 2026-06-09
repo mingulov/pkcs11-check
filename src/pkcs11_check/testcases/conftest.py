@@ -39,6 +39,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_CURVE_NOT_SUPPORTED,
+    CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_FAILED,
@@ -89,6 +90,9 @@ EC_CURVE_UNSUPPORTED_RVS = (
 # output) is NOT routed here -- that stays a hard failure (self-contradiction).
 CIPHER_OP_RUNTIME_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
+    # Clean length-range reject of spec-valid input (opencryptoki CTR with a
+    # 32B/17B payload, triage H5): advertised-but-not-operational deviation.
+    CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
