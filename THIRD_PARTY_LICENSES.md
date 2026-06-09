@@ -40,10 +40,10 @@ files referenced below land on disk alongside the test vectors.
 ### `C2SP/wycheproof` — Apache-2.0
 
 [`C2SP/wycheproof`](https://github.com/C2SP/wycheproof) at commit
-[`6d9d6de30f02e229dfc160323722c3ddac866181`](https://github.com/C2SP/wycheproof/tree/6d9d6de30f02e229dfc160323722c3ddac866181).
+[`6d7cccd0fcb1917368579adeeac10fe802f1b521`](https://github.com/C2SP/wycheproof/tree/6d7cccd0fcb1917368579adeeac10fe802f1b521).
 
 License:
-[`LICENSE`](https://github.com/C2SP/wycheproof/blob/6d9d6de30f02e229dfc160323722c3ddac866181/LICENSE)
+[`LICENSE`](https://github.com/C2SP/wycheproof/blob/6d7cccd0fcb1917368579adeeac10fe802f1b521/LICENSE)
 — Apache License, Version 2.0.
 
 After fetch the file lands at
@@ -52,7 +52,7 @@ After fetch the file lands at
 ### `C2SP/CCTV` — mixed (BSD-3-Clause and BSD-1-Clause)
 
 [`C2SP/CCTV`](https://github.com/C2SP/CCTV) at commit
-[`67c1397af2a57f935cc96ee112b446c051cdb68a`](https://github.com/C2SP/CCTV/tree/67c1397af2a57f935cc96ee112b446c051cdb68a).
+[`1e3d2860d46e94e777e1b17c7a6f2436387e3ecc`](https://github.com/C2SP/CCTV/tree/1e3d2860d46e94e777e1b17c7a6f2436387e3ecc).
 
 The CCTV repository does **not** carry a single top-level `LICENSE` file.
 pkcs11-check uses six subdirectories from this archive (`ed25519/`,
@@ -60,7 +60,7 @@ pkcs11-check uses six subdirectories from this archive (`ed25519/`,
 
 | Subdirectory | License | Record |
 |---|---|---|
-| `ed25519/` | BSD-3-Clause | [`ed25519/LICENSE`](https://github.com/C2SP/CCTV/blob/67c1397af2a57f935cc96ee112b446c051cdb68a/ed25519/LICENSE) (Google LLC / Filippo Valsorda) |
+| `ed25519/` | BSD-3-Clause | [`ed25519/LICENSE`](https://github.com/C2SP/CCTV/blob/1e3d2860d46e94e777e1b17c7a6f2436387e3ecc/ed25519/LICENSE) (Google LLC / Filippo Valsorda) |
 | `ML-DSA/`, `ML-KEM/`, `RFC6979/`, `jq255/`, `keygen/` | BSD 1-Clause (C2SP umbrella, see below) | no per-subdir LICENSE file at the pinned commit |
 
 C2SP's central spec repository
@@ -103,10 +103,10 @@ After fetch the README lands at `data/acvp/ACVP-Server-15c0f3d.../README.md`.
 ### `C2SP/x509-limbo` — Apache-2.0
 
 [`C2SP/x509-limbo`](https://github.com/C2SP/x509-limbo) at commit
-[`086b0da8b83d78ed0f491d6df6672b2673406500`](https://github.com/C2SP/x509-limbo/tree/086b0da8b83d78ed0f491d6df6672b2673406500).
+[`1983423436313a6605461056470e21242d066416`](https://github.com/C2SP/x509-limbo/tree/1983423436313a6605461056470e21242d066416).
 
 License:
-[`LICENSE`](https://github.com/C2SP/x509-limbo/blob/086b0da8b83d78ed0f491d6df6672b2673406500/LICENSE)
+[`LICENSE`](https://github.com/C2SP/x509-limbo/blob/1983423436313a6605461056470e21242d066416/LICENSE)
 — Apache License, Version 2.0.
 
 After fetch the file lands at
