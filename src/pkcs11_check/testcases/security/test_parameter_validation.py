@@ -32,6 +32,7 @@ from pkcs11_check.raw.recipes import (
     import_secret_key,
     read_attributes,
     sign_single,
+    verify_single,
 )
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
@@ -79,7 +80,11 @@ from pkcs11_check.testcases._subprocess_preamble import (
     run_with_coverage,
     subprocess_session_preamble,
 )
-from pkcs11_check.testcases.conftest import is_known_error, reject_or_classify
+from pkcs11_check.testcases.conftest import (
+    is_known_error,
+    reject_or_classify,
+    xfail_if_known_ckr,
+)
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess_per_test]
@@ -358,8 +363,14 @@ _PSS_SALT_LENGTHS = [
 class TestPssSaltLength:
     """Probe RSA-PSS salt length edge cases.
 
-    sLen=0 makes PSS deterministic (same message always produces same signature),
-    weakening the scheme. sLen > (modLen/8 - hashLen - 2) is invalid per RFC 8017.
+    sLen=0 makes PSS deterministic, but it is a STANDARDIZED variant (RFC 8017
+    §9.1 / FIPS 186-5) that yields correct, verifiable, non-forgeable signatures
+    -- accepting it is NOT a crypto-correctness break. So a module that signs
+    sLen=0 and the signature verifies is correct (pass); one that cleanly
+    declines deterministic PSS is exercising a policy choice (xfail); only a
+    module that accepts sLen=0 yet produces a signature that does NOT verify has
+    a real break (fail). (sLen > modLen/8 - hLen - 2 IS invalid and is covered
+    by test_pss_excessive_salt_length.)
     """
 
     @pytest.mark.parametrize("salt_len", _PSS_SALT_LENGTHS)
@@ -389,11 +400,13 @@ class TestPssSaltLength:
                 salt_len=salt_len,
             )
             data = b"PSS salt length test"
-            # Type-A crypto-correctness: sLen=0 collapses PSS to a deterministic
-            # scheme, removing its security margin; accepting it is a break (fail).
-            reject_exc: AssertionError | None = None
+            # sLen=0 is a VALID deterministic PSS variant (RFC 8017 §9.1 /
+            # FIPS 186-5). The finding is NOT "the module accepted it" -- that is
+            # correct -- but only "the module produced a signature that does not
+            # verify". Sign, then verify the result with the same sLen.
+            signature: bytes | None = None
             try:
-                sign_single(
+                signature = sign_single(
                     rs.raw,
                     rs.sh,
                     priv,
@@ -402,12 +415,34 @@ class TestPssSaltLength:
                     mech_param=pss,
                 )
             except AssertionError as exc:
-                reject_exc = exc
-            reject_or_classify(
-                reject_exc,
-                _WEAK_PARAM_REJECT_RVS,
-                label=f"RSA-PSS with sLen={salt_len} (deterministic signatures)",
+                # A module/policy may decline deterministic PSS with a clean
+                # reject -- a recorded capability/policy deviation, not a finding.
+                xfail_if_known_ckr(
+                    exc,
+                    _WEAK_PARAM_REJECT_RVS,
+                    f"RSA-PSS sLen={salt_len} (deterministic, RFC 8017 §9.1) declined by module",
+                )
+                raise
+            pss_verify = mech_pss(
+                CKM_SHA256_RSA_PKCS_PSS,
+                hash_mech=CKM_SHA256,
+                mgf=CKG_MGF1_SHA256,
+                salt_len=salt_len,
             )
+            verified = verify_single(
+                rs.raw,
+                rs.sh,
+                pub,
+                CKM_SHA256_RSA_PKCS_PSS,
+                data,
+                signature,
+                mech_param=pss_verify,
+            )
+            if not verified:
+                pytest.fail(
+                    f"RSA-PSS sLen={salt_len}: module accepted the deterministic-PSS sign "
+                    f"operation but the produced signature does not verify (invalid signature)"
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
