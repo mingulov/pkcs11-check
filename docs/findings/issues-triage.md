@@ -30,6 +30,9 @@ docker provider pool. Each issue is classified by the project's one rule
 |---|---|---|---|---|
 | 1 | 2026-06-09 | `--all --concurrency 4` (PID 1250142, **still running**) | 20 / 24 | kryoptic + tpm2 + (pkcs11-mock report pending) still executing. wolfpkcs11/corepkcs11 shards not yet reached. **Pool used `--no-build` → some provider images stale (see warning above).** |
 | 2 | 2026-06-09 | same run (still running) | 33 shards | New providers landed: kryoptic/-main/-fips, tpm2, softhsm2-main/-generated-iv, corepkcs11, nss-main. wolfpkcs11/-master still running. **Staleness re-confirmed:** completed kryoptic shard shows CCM 3,420 xfail / 0 pass, but fresh rebuild = 4,890 pass → the pool kryoptic image is genuinely stale for CCM. New signal: **corepkcs11 22,756 failed** (21,906 = `ARGUMENTS_BAD` in `test_wycheproof_ecdsa.py`) — see H6. |
+| 3 | 2026-06-09 | same run | +corepkcs11-main | corepkcs11-main byte-identical to corepkcs11 (H6 stable trait). |
+| 4 | 2026-06-09 | same run | +wolfpkcs11 | wolfpkcs11 stable: 3,071 fail / 18 crash — H7 (digest malformed CK_RV) + C4 (crashes). |
+| 5 | 2026-06-09 | **POOL COMPLETE** — 191m45s, 21 providers / 32 items / K=4 | 21 / 21 | wolfpkcs11-master landed: **2,673 fail / 4 crash** (vs stable 3,071 / 18) — master fixed most crashes → strongly reinforces the fresh-verify rule. **Analysis loop done; next phase = fresh-rebuild verification + user-approved fixes.** |
 
 **Method:** parse each completed shard's `artifacts/<shard>/results.json` (`tool=pkcs11-check`, structured
 per-test outcomes), merge shards by provider, group failed/error tests by `(outcome, file, normalised
@@ -198,7 +201,9 @@ This is the same effect-over-return-code principle as the discrimination model
   spec — `CK_RV` must be a defined code) — document, and it's a clean *return* (not a crash) so the suite
   surfaces it correctly. **BUT digest is the most basic op; wholesale digest failure smells like a STALE
   `--no-build` image.** ⚠️ **Re-confirm with `docker/test.sh wolfpkcs11 -- test_acvp_hash.py` (fresh
-  rebuild) before classifying.** wolfpkcs11 stable lacks PQC; wolfpkcs11-master shard still pending.
+  rebuild) before classifying.** wolfpkcs11 stable lacks PQC. **wolfpkcs11-master: 2,673 fail / 4 crash
+  (vs stable 3,071 / 18)** — master fixed most crashes, so stable's pool image is very likely behind;
+  fresh-verify is essential before reporting any wolfpkcs11 finding.
 - **Also on wolfpkcs11 (fold into existing buckets):** `test_cts.py` ×2,079 (CTS
   `ENCRYPTED_DATA_INVALID`/`FUNCTION_FAILED` → H2 operability-probe class); `test_wycheproof_rsa_oaep`
   ×209. All need the same fresh-rebuild re-confirmation.
