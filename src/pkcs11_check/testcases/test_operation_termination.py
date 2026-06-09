@@ -298,7 +298,6 @@ def _finish_active_digest(raw: Any, sh: int) -> None:
     raw.C_DigestFinal(sh, out, ctypes.byref(out_len))
 
 
-@pytest.mark.requires_v30
 def test_digest_init_null_mechanism_cancels_active_digest(p11_raw_session: Any) -> None:
     """On v3+ interfaces, C_DigestInit(NULL) is an operation-cancel path."""
     rs = p11_raw_session

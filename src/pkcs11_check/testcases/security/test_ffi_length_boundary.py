@@ -564,7 +564,7 @@ _MESSAGE_VERIFY_MULTIPART_FIELDS = [
 class TestMessageApiLengthBoundary:
     """v3.0 message APIs must reject huge claimed input lengths safely."""
 
-    @pytest.mark.requires_v30
+    @pytest.mark.needs_function("C_EncryptMessage")
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
     @pytest.mark.parametrize("field", _MESSAGE_ENCRYPT_LENGTH_FIELDS)
     def test_encrypt_message_isize_input_len(
@@ -696,7 +696,7 @@ cleanup()
             label=f"C_EncryptMessage({field}={data_len:#x})",
         )
 
-    @pytest.mark.requires_v30
+    @pytest.mark.needs_function("C_DecryptMessage")
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
     @pytest.mark.parametrize("field", _MESSAGE_DECRYPT_LENGTH_FIELDS)
     def test_decrypt_message_isize_input_len(
@@ -828,7 +828,7 @@ cleanup()
             label=f"C_DecryptMessage({field}={data_len:#x})",
         )
 
-    @pytest.mark.requires_v30
+    @pytest.mark.needs_function("C_DecryptMessageBegin")
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
     @pytest.mark.parametrize("op", _MESSAGE_DECRYPT_MULTIPART_OPS)
     def test_decrypt_message_multipart_isize_input_len(
@@ -984,7 +984,7 @@ cleanup()
             label=f"{op}(ciphertext_len={data_len:#x})",
         )
 
-    @pytest.mark.requires_v30
+    @pytest.mark.needs_function("C_SignMessage")
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
     def test_sign_message_isize_input_len(
         self,
@@ -1090,7 +1090,7 @@ cleanup()
             label=f"C_SignMessage(data_len={data_len:#x})",
         )
 
-    @pytest.mark.requires_v30
+    @pytest.mark.needs_function("C_VerifyMessage")
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
     @pytest.mark.parametrize("field", _MESSAGE_VERIFY_LENGTH_FIELDS)
     def test_verify_message_isize_input_len(
@@ -1218,7 +1218,7 @@ cleanup()
             label=f"C_VerifyMessage({field}_len={data_len:#x})",
         )
 
-    @pytest.mark.requires_v30
+    @pytest.mark.needs_function("C_SignMessageBegin")
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
     @pytest.mark.parametrize("op", _MESSAGE_SIGN_MULTIPART_OPS)
     def test_sign_message_multipart_isize_input_len(
@@ -1352,7 +1352,7 @@ cleanup()
             label=f"{op}(data_len={data_len:#x})",
         )
 
-    @pytest.mark.requires_v30
+    @pytest.mark.needs_function("C_VerifyMessageBegin")
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
     @pytest.mark.parametrize("field", _MESSAGE_VERIFY_MULTIPART_FIELDS)
     def test_verify_message_multipart_isize_input_len(
@@ -1499,7 +1499,7 @@ cleanup()
             label=f"C_VerifyMessage multipart {field}={data_len:#x}",
         )
 
-    @pytest.mark.requires_v30
+    @pytest.mark.needs_function("C_EncryptMessageBegin")
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
     @pytest.mark.parametrize("op", _MESSAGE_ENCRYPT_MULTIPART_OPS)
     def test_encrypt_message_multipart_isize_input_len(

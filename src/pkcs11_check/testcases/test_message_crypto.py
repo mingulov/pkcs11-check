@@ -83,8 +83,6 @@ ALL_MESSAGE_FUNCS = (
     MESSAGE_ENCRYPT_FUNCS + MESSAGE_DECRYPT_FUNCS + MESSAGE_SIGN_FUNCS + MESSAGE_VERIFY_FUNCS
 )
 
-pytestmark = [pytest.mark.requires_v30]
-
 _MESSAGE_UNSUPPORTED_RVS = (CKR_FUNCTION_NOT_SUPPORTED,)
 
 _MESSAGE_ADVERTISED_REJECT_RVS = (
@@ -205,6 +203,7 @@ def _message_sign_multipart(
     return bytes(sig_buf[: sig_len.value])
 
 
+@pytest.mark.needs_function("C_MessageEncryptInit")
 class TestMessageEncryptDecrypt:
     """Test message-based encrypt/decrypt lifecycle."""
 
@@ -373,6 +372,7 @@ class TestMessageEncryptDecrypt:
 class TestMessageSignVerify:
     """Test message-based sign/verify lifecycle."""
 
+    @pytest.mark.needs_function("C_MessageSignInit")
     def test_message_sign_single(self, p11_raw_session: Any) -> None:
         """C_MessageSignInit + C_SignMessage -- single-shot sign."""
         rs = p11_raw_session
@@ -389,6 +389,7 @@ class TestMessageSignVerify:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
+    @pytest.mark.needs_function("C_MessageVerifyInit")
     def test_message_verify_single(self, p11_raw_session: Any) -> None:
         """C_MessageVerifyInit + C_VerifyMessage -- single-shot verify."""
         rs = p11_raw_session
@@ -405,6 +406,7 @@ class TestMessageSignVerify:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
+    @pytest.mark.needs_function("C_MessageSignInit")
     def test_message_sign_verify_roundtrip(self, p11_raw_session: Any) -> None:
         """Sign with message API, verify with standard C_Verify API (cross-verification)."""
         rs = p11_raw_session
@@ -420,6 +422,7 @@ class TestMessageSignVerify:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
+    @pytest.mark.needs_function("C_MessageSignInit")
     def test_message_sign_multipart(self, p11_raw_session: Any) -> None:
         """C_MessageSignInit + C_SignMessageBegin + C_SignMessageNext + C_MessageSignFinal."""
         rs = p11_raw_session
@@ -439,6 +442,7 @@ class TestMessageSignVerify:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
+    @pytest.mark.needs_function("C_MessageVerifyInit")
     def test_message_verify_bad_signature(self, p11_raw_session: Any) -> None:
         """C_VerifyMessage with wrong signature should fail."""
         rs = p11_raw_session
@@ -461,6 +465,7 @@ class TestMessageSignVerify:
 class TestMessageAvailability:
     """Verify message-based functions are present in v3.0+ modules."""
 
+    @pytest.mark.needs_function("C_MessageEncryptInit")
     def test_message_functions_available(self, p11_raw_session: Any) -> None:
         """All 20 message functions should be present on v3.0+ modules."""
         rs = p11_raw_session
