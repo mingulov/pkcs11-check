@@ -425,6 +425,25 @@ de-identification are routing clean deviations correctly; no provider-identity l
 | H3 | opencryptoki rsa_oaep | 26 F | **0 F** / 26 xf (RFC8017 combo probe) | probe 🔧 |
 | H4 | bouncyhsm ro_session | 5 F | **0 F** / 5 xf | deviation 📋 |
 | H5 | opencryptoki aes_modes | 6 F | **2 F (real ulCounterBits accept)** / 4 xf | classify 🔧 + Type-A finding |
+| H8 | **NSS/softhsm2/kryoptic RSA PKCS#1 v1.5 decrypt** | 62/59/62 F | **0 F** (201P each) | 🔧 security test was BACKWARDS |
+| — | bouncyhsm wycheproof CCM | 420 F | **63 F (real no-auth)** / 366 xf | H2 probe routing 🔧 |
+
+### H8 — RSA PKCS#1 v1.5 decrypt test penalized the anti-Bleichenbacher mitigation ·  🔧 FIXED (high value)
+
+`test_wycheproof_rsa_decrypt` hard-failed **any** non-rejection of an invalid-padding PKCS#1 v1.5
+ciphertext. That is **backwards**: the recommended Bleichenbacher mitigation (RFC 8017 §7.2.2;
+"Marvin" 2023) is to NOT reveal padding validity — return a synthetic plaintext (or constant-time
+reject). The test therefore **failed every correct provider and would have passed a naive
+oracle-prone one** — the single clearest "the test is wrong, not the module" finding of the sweep.
+
+- Evidence: softhsm2 59F / kryoptic 62F / NSS 62F (every real provider). In-container probe of NSS
+  over all 25 invalid vectors: **0 returned the target message (zero breaks)**, 20 synthetic, 5
+  rejected — all secure.
+- Fix: flag a finding only when the returned plaintext **equals the target message** (each invalid
+  Wycheproof vector carries it) = the actual padding-check bypass. Synthetic plaintext or clean
+  reject = secure → pass. The real break is still caught.
+- Verified: nss/softhsm2/kryoptic **201/201 passed** (≈183 cross-provider false failures gone).
+  OAEP (Manger = constant-time reject, no synthetic) left as-is — no live false-positive.
 
 Controls byte-identical on every step: softhsm2 (ecdsa 21,906P, wrap 3,600xf, hmac 470P,
 aes 476P, limbo 663P, oaep 439P/646xf, aes_modes 5P, ro_session 16P/2xf), kryoptic

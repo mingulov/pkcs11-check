@@ -61,6 +61,11 @@ unchanged. Detail in `docs/findings/issues-triage.md` (fix-pass table + long-tai
   (+capability gating).
 - **H3** opencryptoki OAEP 26F→0F (RFC-8017 hashlib combo probe). **H4** bouncyhsm ro_session 5F→0F.
   **H5** opencryptoki aes_modes 6F→2F REAL (ulCounterBits=0/129 accepted) +4xf.
+- **H8 (high value)** RSA PKCS#1 v1.5 decrypt test was BACKWARDS — it penalized the
+  anti-Bleichenbacher mitigation (synthetic plaintext) and failed every real provider
+  (nss/softhsm2/kryoptic 62/59/62 F). Fixed: flag only when plaintext == target msg (real
+  padding bypass). All -> 201/201 P. NSS probe: 0 breaks. Also bouncyhsm wycheproof CCM
+  420F->63F via H2 probe routing.
 - **C1-C4 determined:** C1/C2/C3 = harness-provoked UB (lying buffer/array lengths) — **flagged for
   YOUR nod** (removing the deliberate overflow security suite is outward-facing). C4 wolfpkcs11
   HKDF/keygen = GENUINE crashes (real findings, kept).
@@ -80,7 +85,10 @@ Uncommitted files: `src/.../wycheproof/test_wycheproof_aes.py`, `tests/test_wych
 ## Remaining queue (next angles)
 
 1. **Finish the in-flight CCM commit** (verify bouncyhsm/softhsm2 above).
-2. **Other-provider triage not yet done:** NSS (234F), pkcs11-mock (290F), tpm2, kryoptic-fips,
+2. **Other-provider triage IN PROGRESS:** NSS rsa_decrypt DONE (H8); pkcs11-mock = mock
+   stub-storage (not findings, skip). STILL TODO: NSS remainder (ffi UB=C2, error_path_kwp
+   21, mldsa_sign 14), tpm2, kryoptic-fips, nss-pqc, softhsm2-main, qryptotoken,
+   opencryptoki-master. Extract from tpm2, kryoptic-fips,
    nss-pqc, softhsm2-main, qryptotoken, opencryptoki-master — extract from
    `artifacts2/<prov>-shard-*/results.json` units[].stdout, find harness-bug candidates vs genuine
    findings. (bouncyhsm now ~CCM-only + small tails; corepkcs11 long-tail = genuine, done.)
