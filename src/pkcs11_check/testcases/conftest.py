@@ -22,6 +22,8 @@ from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_LABEL,
+    CKA_MODULUS,
+    CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
@@ -29,6 +31,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKA_VERIFY,
     CKK_EC,
+    CKK_RSA,
     CKM_EC_EDWARDS_KEY_PAIR_GEN,
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
@@ -325,6 +328,31 @@ def create_object_negotiated(
     )
     _IMPORT_SHAPE_WINNERS[shape_key] = idx
     return result
+
+
+def import_rsa_public_key_negotiated(
+    rs: Any,
+    *,
+    n: bytes,
+    e: bytes,
+    attrs: Mapping[Any, Any] | None = None,
+    purpose: str = "RSA public key import",
+) -> int:
+    """Import an RSA public key, negotiating storage-shape template requirements.
+
+    Same canonical template as ``raw.recipes.import_rsa_public_key``; clean
+    storage-shape rejects retry via ``create_object_negotiated`` variants.
+    """
+    base: dict[Any, Any] = {
+        CKA_CLASS: CKO_PUBLIC_KEY,
+        CKA_KEY_TYPE: CKK_RSA,
+        CKA_TOKEN: False,
+        CKA_MODULUS: n,
+        CKA_PUBLIC_EXPONENT: e,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object_negotiated(rs, base, purpose=purpose)
 
 
 def ec_public_key_binding_defect(rs: Any, handle: int, requested_params: bytes) -> str | None:

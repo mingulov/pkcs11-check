@@ -20,7 +20,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     generate_random,
     import_ec_public_key,
-    import_rsa_public_key,
     import_secret_key,
     sign_single,
     verify_single,
@@ -57,7 +56,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import import_rsa_public_key_negotiated, xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: F401
 from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 from pkcs11_check.testcases.wycheproof.wycheproof_loader import load_vectors as load_wycheproof
@@ -573,9 +572,8 @@ class TestRSASigWycheproof:
         exponent = pkcs11_bigint_from_hex(exp_hex)
 
         try:
-            pub_key = import_rsa_public_key(
-                rs.raw,
-                rs.sh,
+            pub_key = import_rsa_public_key_negotiated(
+                rs,
                 n=modulus,
                 e=exponent,
                 attrs={CKA_VERIFY: True},

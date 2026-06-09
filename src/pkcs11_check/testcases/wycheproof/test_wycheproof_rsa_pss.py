@@ -16,7 +16,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_rsa_keypair,
     generate_random,
-    import_rsa_public_key,
     sign_single,
     verify_single,
 )
@@ -64,7 +63,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    import_rsa_public_key_negotiated,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 
 pytestmark = pytest.mark.wycheproof
@@ -354,9 +357,8 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
         pytest.skip(f"RSA {key_bits}-bit keys not supported (cached)")
 
     try:
-        pub_key = import_rsa_public_key(
-            rs.raw,
-            rs.sh,
+        pub_key = import_rsa_public_key_negotiated(
+            rs,
             n=modulus,
             e=exponent,
             attrs={CKA_VERIFY: True},

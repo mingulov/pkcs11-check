@@ -90,7 +90,7 @@ def test_rsa_pss_valid_rejected_xfails_when_combo_not_operational(monkeypatch: A
 
     _clear_cache()
     rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _n: True)
-    monkeypatch.setattr(twrp, "import_rsa_public_key", lambda *_a, **_kw: 99)
+    monkeypatch.setattr(twrp, "import_rsa_public_key_negotiated", lambda *_a, **_kw: 99)
     # The wycheproof verify of the test vector -> False (provider rejects).
     # The probe verify -> False (provider can't verify its own sig either).
     monkeypatch.setattr(twrp, "verify_single", lambda *_a, **_kw: False)
@@ -119,7 +119,7 @@ def test_rsa_pss_valid_rejected_fails_when_combo_operational(monkeypatch: Any) -
 
     _clear_cache()
     rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _n: True)
-    monkeypatch.setattr(twrp, "import_rsa_public_key", lambda *_a, **_kw: 99)
+    monkeypatch.setattr(twrp, "import_rsa_public_key_negotiated", lambda *_a, **_kw: 99)
     # Drive vector-verify = False but probe-verify = True (operational).
     verify_results = iter([False, True])
     monkeypatch.setattr(twrp, "verify_single", lambda *_a, **_kw: next(verify_results))

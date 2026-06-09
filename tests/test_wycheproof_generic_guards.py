@@ -79,7 +79,7 @@ def test_generic_wycheproof_skips_when_mechanism_missing(
     """Missing mechanisms are capability skips, not failed vector tests."""
     monkeypatch.setattr(wy, "import_secret_key", _fail_if_called)
     monkeypatch.setattr(wy, "import_ec_public_key", _fail_if_called)
-    monkeypatch.setattr(wy, "import_rsa_public_key", _fail_if_called)
+    monkeypatch.setattr(wy, "import_rsa_public_key_negotiated", _fail_if_called)
 
     session = _NoMechanismSession()
     method = getattr(case_factory(), method_name)

@@ -109,7 +109,7 @@ def test_dsa_der_metadata_duplicate_is_skipped(monkeypatch: pytest.MonkeyPatch) 
 
 def test_duplicate_rsa_pss_params_vector_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
     """RSA-PSS params and non-params files can encode the same PKCS#11 operation."""
-    monkeypatch.setattr(rsa_pss, "import_rsa_public_key", _fail_if_called)
+    monkeypatch.setattr(rsa_pss, "import_rsa_public_key_negotiated", _fail_if_called)
     vec_id = "rsa_pss_2048_sha1_mgf1_20_test.json:tc1-valid"
 
     with pytest.raises(pytest.skip.Exception, match="Duplicate PKCS#11 RSA-PSS operation input"):
@@ -120,7 +120,7 @@ def test_duplicate_rsa_pkcs1_signature_vector_is_skipped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """RSA PKCS#1 sig-gen and sig-ver files can duplicate the same verify input."""
-    monkeypatch.setattr(rsa, "import_rsa_public_key", _fail_if_called)
+    monkeypatch.setattr(rsa, "import_rsa_public_key_negotiated", _fail_if_called)
     vec_id = "rsa_signature_2048_sha256_test.json:tc1-valid"
 
     with pytest.raises(pytest.skip.Exception, match="Duplicate PKCS#11 RSA operation input"):
