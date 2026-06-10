@@ -762,5 +762,7 @@ class TestMechDerive:
                     "in this generic test"
                 )
         except AssertionError as exc:
+            # Spans both setup (keygen) and op (derive): dispatch helpers own their
+            # own keygen, unlike wrap/lifecycle where setup and op are separate legs.
             if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:derive"):
                 return

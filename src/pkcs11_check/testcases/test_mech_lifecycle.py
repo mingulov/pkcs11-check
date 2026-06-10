@@ -89,6 +89,7 @@ from pkcs11_check.testcases.conftest import (
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.lifecycle]
 
+# Setup-stage keygen duty only -- op-stage routes through claim_refusal_passes.
 _HKDF_KEYGEN_REJECT_CKRS = (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -424,7 +425,7 @@ class TestRSAOAEPWrapLifecycle:
                     mech_param=oaep_param,
                 )
             except AssertionError as exc:
-                if claim_refusal_passes(exc, rs, probe_key="CKM_RSA_PKCS_OAEP:encrypt"):
+                if claim_refusal_passes(exc, rs, probe_key="CKM_RSA_PKCS_OAEP:wrap"):
                     return
             assert len(wrapped) > 0
 
@@ -450,7 +451,7 @@ class TestRSAOAEPWrapLifecycle:
                     mech_param=oaep_param,
                 )
             except AssertionError as exc:
-                if claim_refusal_passes(exc, rs, probe_key="CKM_RSA_PKCS_OAEP:encrypt"):
+                if claim_refusal_passes(exc, rs, probe_key="CKM_RSA_PKCS_OAEP:unwrap"):
                     return
             assert unwrapped_key != 0
 

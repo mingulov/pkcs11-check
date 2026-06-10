@@ -85,7 +85,9 @@ class TestMultipartEncrypt:
             # verify that multipart decrypts back to plaintext.
             mech_id = CKM(entry.mech_id)
 
-            # Single-part as reference
+            # Single-part as reference -- multipart-encrypt probe key is intentional:
+            # this test's claim is the multipart capability, so the single-part call
+            # is gating setup; if it refuses, the multipart claim is not operational.
             try:
                 ct_single = encrypt_single(
                     rs.raw, rs.sh, enc_key, mech_id, plaintext, mech_param=mech_param
@@ -182,7 +184,8 @@ class TestMultipartDigest:
         data = b"multipart digest test input data" * 3  # 96 bytes
         mech_id = CKM(entry.mech_id)
 
-        # Single-part reference
+        # Single-part reference -- multipart-digest probe key is intentional:
+        # the test's claim is the multipart capability; single-part is gating setup.
         try:
             single = digest_single(rs.raw, rs.sh, mech_id, data)
         except AssertionError as exc:
@@ -227,6 +230,7 @@ class TestMultipartDigest:
         data = b"single chunk multipart test"
         mech_id = CKM(entry.mech_id)
 
+        # Single-part reference -- multipart-digest probe key is intentional.
         try:
             single = digest_single(rs.raw, rs.sh, mech_id, data)
         except AssertionError as exc:

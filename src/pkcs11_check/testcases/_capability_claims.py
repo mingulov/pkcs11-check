@@ -55,20 +55,28 @@ def _enclosing_test_qualname() -> str:
     the helper, so we skip our own frame and search outward for the first
     frame whose function name starts with ``test_``. Falls back to the
     immediate caller's qualname if none is found within a sane bound.
+
+    Failure modes: if a helper is itself named ``test_*`` it wins the walk
+    before the real test frame; non-test callers (e.g. unit tests of this
+    module) fall back to the immediate caller's qualname.
     """
     frame = inspect.currentframe()
-    # Skip this function's own frame; start at our caller (claim_refusal_passes).
-    caller = frame.f_back if frame else None
-    immediate = caller.f_back if caller else None
-    fallback = immediate.f_code.co_qualname if immediate else ""
-    cursor = immediate
-    for _ in range(10):
-        if cursor is None:
-            break
-        if cursor.f_code.co_name.startswith("test_"):
-            return cursor.f_code.co_qualname
-        cursor = cursor.f_back
-    return fallback
+    try:
+        # Skip this function's own frame; start at our caller (claim_refusal_passes).
+        caller = frame.f_back if frame else None
+        immediate = caller.f_back if caller else None
+        fallback = immediate.f_code.co_qualname if immediate else ""
+        cursor = immediate
+        for _ in range(10):
+            if cursor is None:
+                break
+            if cursor.f_code.co_name.startswith("test_"):
+                return cursor.f_code.co_qualname
+            cursor = cursor.f_back
+        return fallback
+    finally:
+        # Release frame references to avoid reference cycles (inspect hygiene).
+        del frame
 
 
 def _validation_objects_present(rs: Any) -> str:

@@ -87,6 +87,7 @@ _AES_KEY_TYPE: int = int(CKK_AES)
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.wrap]
 
+# Setup-stage keygen duty only -- op-stage wrap/unwrap routes through claim_refusal_passes.
 _WRAP_RUNTIME_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,

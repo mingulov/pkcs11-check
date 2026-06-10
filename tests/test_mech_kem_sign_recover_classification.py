@@ -1,8 +1,10 @@
 """Classification meta-tests for test_mech_kem / test_mech_sign_recover (Phase 5 P1b).
 
-The produce-leg (encapsulate / sign-recover) now xfails only on a known clean
-"advertised but not operational" reject CKR; a non-CKR error propagates. The
-dependent roundtrip that follows remains a hard failure (self-contradiction).
+The produce-leg (encapsulate / sign-recover) routes through ``claim_refusal_passes``
+(claim-layer regime): any clean CKR -> xfail (advertised but not operational; no CKR
+allowlist); ``CKR_OPERATION_NOT_VALIDATED`` -> PASS with a compliance note (sanctioned
+policy refusal per PKCS#11 v3.2); a non-CKR error propagates. The dependent roundtrip
+that follows remains a hard failure (self-contradiction).
 """
 
 from __future__ import annotations
