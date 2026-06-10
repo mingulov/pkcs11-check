@@ -27,6 +27,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_VERIFY,
@@ -221,19 +222,20 @@ class TestRsaPss:
             destroy_quietly(rs.raw, rs.sh, priv_key)
 
 
-# Canonical (mech, key-bits) SigVer operability probe (triage H2): a module
-# that rejects EVERY valid vector of a (mechanism, key-size) class is
-# "advertised but not operational" (classification model: xfail), not a pile of
-# per-vector findings. tpm2 rejects all 27 valid SHA-1 SigVer vectors this way
-# while still rejecting every invalid one. Three-state, so a STAGING failure
-# (public-key import refused -- no mechanism evidence either way) reports
-# INCONCLUSIVE instead of masquerading as NOT_OPERATIONAL.
 def _pkcs15_sigver_operability(rs: Any, mech_name: str, key_bits: int) -> OperabilityResult:
     """Canonical (mech, key-bits) SigVer probe: imported public key + single verify.
 
-    INCONCLUSIVE when staging fails (import refused / no canonical vector) --
-    no mechanism evidence either way; NOT_OPERATIONAL when the canonical
-    known-valid vector is refused or verifies False; OPERATIONAL on True.
+    INCONCLUSIVE when staging fails (import refused / no canonical vector available) --
+    no mechanism evidence either way; NOT_OPERATIONAL when the canonical known-valid vector
+    is refused (CkrAssertionError) or verifies False; OPERATIONAL on True.
+
+    Three-state design (triage H2): tpm2 rejects all 27 valid SHA-1 SigVer vectors while
+    still rejecting every invalid one.  A reject of EVERY valid vector of a (mechanism,
+    key-size) class is "advertised but not operational" (classification model: xfail), not a
+    pile of per-vector findings; a staging failure (key import refused) must not masquerade as
+    NOT_OPERATIONAL -- it is INCONCLUSIVE (no mechanism evidence either way).
+
+    Non-CkrAssertionError exceptions from the probe are harness bugs and always propagate.
     """
 
     def probe() -> OperabilityResult:
@@ -250,7 +252,7 @@ def _pkcs15_sigver_operability(rs: Any, mech_name: str, key_bits: int) -> Operab
                     pub_key = import_rsa_public_key_negotiated(
                         rs, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
                     )
-                except AssertionError as exc:
+                except CkrAssertionError as exc:
                     return OperabilityResult(
                         Operability.INCONCLUSIVE, f"canonical public-key import failed: {exc}"
                     )
@@ -258,7 +260,7 @@ def _pkcs15_sigver_operability(rs: Any, mech_name: str, key_bits: int) -> Operab
                     ok = verify_single(
                         rs.raw, rs.sh, pub_key, vec["mech_int"], vec["message"], vec["signature"]
                     )
-                except AssertionError as exc:
+                except CkrAssertionError as exc:
                     return OperabilityResult(
                         Operability.NOT_OPERATIONAL, f"canonical verify rejected: {exc}"
                     )
@@ -273,7 +275,7 @@ def _pkcs15_sigver_operability(rs: Any, mech_name: str, key_bits: int) -> Operab
             Operability.INCONCLUSIVE, f"no canonical valid vector for {mech_name}/{key_bits}"
         )
 
-    return probe_operability(f"PKCS15_SIGVER:{mech_name}:{key_bits}", probe)
+    return probe_operability(f"{mech_name}:{key_bits}:verify", probe)
 
 
 class TestRsaSigVer:
@@ -312,11 +314,16 @@ class TestRsaSigVer:
             if expected_pass and not verified:
                 key_bits = len(vec["n"]) * 8
                 result = _pkcs15_sigver_operability(rs, mech_name, key_bits)
-                if result.status is not Operability.OPERATIONAL:
+                if result.status is Operability.NOT_OPERATIONAL:
                     pytest.xfail(
                         f"{vec_id}: {mech_name} canonical known-valid ACVP vector for "
                         f"{key_bits}-bit imported keys does not verify ({result.detail}) "
                         "-- advertised but not operational"
+                    )
+                if result.status is Operability.INCONCLUSIVE:
+                    pytest.xfail(
+                        f"{vec_id}: {mech_name} canonical probe inconclusive ({result.detail})"
+                        " -- cannot distinguish deviation from module bug, recorded as xfail"
                     )
                 pytest.fail(f"{vec_id}: rejected VALID signature")
         finally:

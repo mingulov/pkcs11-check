@@ -81,3 +81,25 @@ def test_no_canonical_vector_is_inconclusive(monkeypatch: pytest.MonkeyPatch) ->
     _wire(monkeypatch, import_key=lambda *a, **k: 7, verify=lambda *a, **k: True)
     result = mod._pkcs15_sigver_operability(_rs(), "SHA256_RSA_PKCS", 4096)
     assert result.status is Operability.INCONCLUSIVE
+
+
+def test_plain_assertion_error_from_verify_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A plain AssertionError (harness bug) from verify_single must propagate, not be cached."""
+
+    def buggy_verify(*_a: Any, **_k: Any) -> bool:
+        raise AssertionError("harness bug: not a CKR error")
+
+    _wire(monkeypatch, import_key=lambda *a, **k: 7, verify=buggy_verify)
+    with pytest.raises(AssertionError, match="harness bug"):
+        mod._pkcs15_sigver_operability(_rs(), "SHA1_RSA_PKCS", 2048)
+    # Must not be cached as any verdict
+    from pkcs11_check.testcases._operability import _CACHE
+
+    assert not any("SHA1_RSA_PKCS" in k for k in _CACHE)
+
+
+def test_verify_false_is_not_operational(monkeypatch: pytest.MonkeyPatch) -> None:
+    """verify_single returning False -> NOT_OPERATIONAL."""
+    _wire(monkeypatch, import_key=lambda *a, **k: 7, verify=lambda *a, **k: False)
+    result = mod._pkcs15_sigver_operability(_rs(), "SHA1_RSA_PKCS", 2048)
+    assert result.status is Operability.NOT_OPERATIONAL

@@ -99,3 +99,32 @@ def test_invalid_acceptance_still_fails(monkeypatch: pytest.MonkeyPatch) -> None
 
     with pytest.raises(pytest.fail.Exception, match="ACCEPTED INVALID"):
         acvp_rsa.TestRsaSigVer().test_rsa_pkcs15_verify(_Session(), vec_id, vec)
+
+
+def test_valid_reject_with_inconclusive_probe_xfails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Valid-vector reject when probe is INCONCLUSIVE xfails with the inconclusive message."""
+    vecs = _valid_vectors("SHA1_RSA_PKCS")
+    vec_id, vec = vecs[1]
+
+    # Make import fail so the probe returns INCONCLUSIVE, but the test-level import
+    # succeeds (first call = test path, second call = probe path).
+    import_calls: list[int] = [0]
+
+    def _import(*_a: Any, **_k: Any) -> int:
+        import_calls[0] += 1
+        if import_calls[0] > 1:
+            # probe's import attempt -- raise a CKR error to make it INCONCLUSIVE
+            from pkcs11_check.raw.rv import CkrAssertionError
+            from pkcs11_check.raw.types_std import CKR_DEVICE_ERROR
+
+            raise CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))
+        return 1
+
+    monkeypatch.setattr(acvp_rsa, "import_rsa_public_key_negotiated", _import)
+    monkeypatch.setattr(acvp_rsa, "verify_single", lambda *_a, **_k: False)
+    monkeypatch.setattr(acvp_rsa, "destroy_quietly", lambda *_a, **_k: None)
+
+    with pytest.raises(pytest.xfail.Exception, match="inconclusive"):
+        acvp_rsa.TestRsaSigVer().test_rsa_pkcs15_verify(_Session(), vec_id, vec)
