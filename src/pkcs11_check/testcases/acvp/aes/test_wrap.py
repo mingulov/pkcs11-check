@@ -39,6 +39,7 @@ from pkcs11_check.testcases._operability import (
     OperabilityResult,
     classify_kat_clean_error,
     probe_operability,
+    xfail_vacuous_reject,
 )
 from pkcs11_check.testcases.acvp.aes.base import _import_aes_key, _load_vectors
 from pkcs11_check.testcases.conftest import is_known_error
@@ -242,6 +243,10 @@ def test_acvp_aes_kw_unwrap(p11_module_session: Any, vec_id: str, vec: dict[str,
         except AssertionError as exc:
             if isinstance(exc, CkrAssertionError) and is_known_error(exc, _UNWRAP_REJECT_RVS):
                 if not test_passed:
+                    xfail_vacuous_reject(
+                        _wrap_operability(rs, "AES_KEY_WRAP", "decrypt"),
+                        label=f"{vec_id}: AES_KEY_WRAP invalid-ciphertext reject",
+                    )
                     return  # module correctly rejected invalid ciphertext
                 result = _wrap_operability(rs, "AES_KEY_WRAP", "decrypt")
                 if result.status is Operability.NOT_OPERATIONAL:
@@ -369,6 +374,10 @@ def test_acvp_aes_kwp_unwrap(p11_module_session: Any, vec_id: str, vec: dict[str
         except AssertionError as exc:
             if isinstance(exc, CkrAssertionError) and is_known_error(exc, _UNWRAP_REJECT_RVS):
                 if not test_passed:
+                    xfail_vacuous_reject(
+                        _wrap_operability(rs, "AES_KEY_WRAP_KWP", "decrypt"),
+                        label=f"{vec_id}: AES_KEY_WRAP_KWP invalid-ciphertext reject",
+                    )
                     return  # module correctly rejected invalid ciphertext
                 result = _wrap_operability(rs, "AES_KEY_WRAP_KWP", "decrypt")
                 if result.status is Operability.NOT_OPERATIONAL:

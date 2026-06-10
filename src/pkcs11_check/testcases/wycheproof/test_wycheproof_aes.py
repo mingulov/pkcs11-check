@@ -58,7 +58,7 @@ from pkcs11_check.testcases._negotiation import (
     negotiate_request,
     value_len_variant_allowed,
 )
-from pkcs11_check.testcases._operability import classify_kat_clean_error
+from pkcs11_check.testcases._operability import classify_kat_clean_error, xfail_vacuous_reject
 from pkcs11_check.testcases.acvp.aes.base_runner_aead import _aead_operability as _ccm_operability
 from pkcs11_check.testcases.conftest import import_secret_key_negotiated, xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
@@ -442,7 +442,15 @@ def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
                     label=f"AES-CCM {vec_id}",
                 )
             pytest.fail(f"AES-CCM decrypt failed for valid vector {vec_id}: {exc}")
-        # acceptable: reject of an invalid vector is fine
+        # invalid vector rejected -- genuine only if CCM decrypt actually works.
+        # A clean op-reject (AssertionError) on a NOT_OPERATIONAL mechanism is
+        # vacuous (the module refuses everything); TypeError/NotImplementedError
+        # are not op-rejects and keep returning as before.
+        if isinstance(exc, AssertionError):
+            xfail_vacuous_reject(
+                _ccm_operability(rs, "AES_CCM", "decrypt"),
+                label=f"AES-CCM {vec_id} invalid reject",
+            )
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)

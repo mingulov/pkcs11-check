@@ -35,6 +35,7 @@ from pkcs11_check.testcases._operability import (
     OperabilityResult,
     classify_kat_clean_error,
     probe_operability,
+    xfail_vacuous_reject,
 )
 from pkcs11_check.testcases.conftest import is_known_error
 
@@ -274,6 +275,10 @@ def run_gcm_decrypt_test(
         except AssertionError as exc:
             if is_known_error(exc, _GCM_DATA_REJECTS):
                 if not test_passed:
+                    xfail_vacuous_reject(
+                        _aead_operability(rs, "AES_GCM", "decrypt"),
+                        label=f"{vec_id}: AES_GCM decrypt invalid-tag reject",
+                    )
                     return
                 result = _aead_operability(rs, "AES_GCM", "decrypt")
                 if result.status is Operability.NOT_OPERATIONAL:
@@ -428,6 +433,10 @@ def run_ccm_decrypt_test(
         except AssertionError as exc:
             if is_known_error(exc, _CCM_DATA_REJECTS):
                 if not test_passed:
+                    xfail_vacuous_reject(
+                        _aead_operability(rs, "AES_CCM", "decrypt"),
+                        label=f"{vec_id}: AES_CCM decrypt invalid-tag reject",
+                    )
                     return  # Expected: module rejected invalid-tag ciphertext
                 result = _aead_operability(rs, "AES_CCM", "decrypt")
                 if result.status is Operability.NOT_OPERATIONAL:
