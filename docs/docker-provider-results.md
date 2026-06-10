@@ -40,7 +40,7 @@ For focused crash, timeout, and broad failure classification, see
 
 | Field | Value |
 | --- | --- |
-| Report generated | 2026-06-04 |
+| Report generated | 2026-06-10/11 (Matrix Results refreshed from the validated full pool; metadata/source rows below remain the 2026-06-04/06 pin set) |
 | Source manifest | `docker/provider-sources.toml` |
 | Source manifest observed at | `2026-06-06T07:33:21Z` |
 | Current release pin refresh | 2026-06-06: Kryoptic `v1.5.1` and BouncyHSM `v2.1.1` pins updated; wolfPKCS11 `v2.0.0-stable` / `master` Docker targets added with wolfSSL `v5.9.1-stable` / `master`; corePKCS11 `v3.6.4` Docker target added with focused build/run smoke only; wolfPKCS11 rows are 2026-06-06 single-target full validations, while the rest of the matrix rows remain the 2026-06-04 artifact set |
@@ -113,31 +113,40 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 
 ## Matrix Results
 
-The `corepkcs11` Docker target is build/run-smoke validated only in this
-snapshot. It is intentionally omitted from the matrix table until a full
-single-target run is completed.
+> **Refreshed 2026-06-10/11 from the validated full pooled sweep** (`artifacts/<target>-pooled/`,
+> backed up to `artifacts3/`). This is the post-merge run carrying the advertised-capability
+> honesty package, vacuous-reject downgrade, ECDH-H9, and capability-gating retirement; it is
+> **VALIDATED** against the prior pool (`artifacts2/`) — see
+> [findings/pool-2026-06-10-comparison.md](findings/pool-2026-06-10-comparison.md). The dominant
+> shifts are the intended fail→xfail/pass reclassifications (notably the wolfPKCS11 CTS
+> operability flip and the wycheproof_ecdsa capability-gating retirement that converts large
+> skip blocks into pass). `corepkcs11`/`corepkcs11-main` now have full pooled results and are
+> included. NSS `*-slot0` crash counts reflect the per-pool exit-time scheduling (a known wolf
+> /NSS teardown pattern), not new crash targets.
 
 | Docker target | Source | Status | Total | Passed | Failed | Skipped | Xfailed | Errors | Crashed | Timeout |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `softhsm2` | SoftHSM2 2.7.0, OpenSSL 3.6.2 | full | 78,964 | 42,050 | 136 | 31,753 | 5,025 | 0 | 0 | 0 |
-| `softhsm2-generated-iv` | SoftHSM2 2.7.0 + generated-IV patch, OpenSSL 3.6.2 | full | 78,964 | 42,054 | 134 | 31,751 | 5,025 | 0 | 0 | 0 |
-| `softhsm2-main` | SoftHSM2 main, OpenSSL 4.0.0 | full | 79,743 | 42,992 | 135 | 31,506 | 5,110 | 0 | 0 | 0 |
-| `kryoptic` | Kryoptic v1.5.0, OpenSSL 4.0.0 | full | 105,469 | 48,192 | 171 | 44,687 | 12,419 | 0 | 0 | 0 |
-| `kryoptic-main` | Kryoptic main, OpenSSL 4.0.0 | full | 105,469 | 48,207 | 162 | 44,686 | 12,414 | 0 | 0 | 0 |
-| `kryoptic-fips` | Kryoptic FIPS/PQC + custom OpenSSL branch | full diagnostic | 89,388 | 34,524 | 128 | 44,489 | 10,235 | 0 | 12 | 0 |
-| `nss` | Fedora NSS softoken package (slot 1) | full | 89,842 | 35,739 | 168 | 53,117 | 815 | 0 | 3 | 0 |
-| `nss-pqc` | NSS/NSPR RTM tags (slot 1; near-identical to `nss-main`, differs only by a flaky overflow-crash case) | full | 89,149 | 34,868 | 147 | 53,396 | 734 | 0 | 4 | 0 |
-| `nss-main` | NSS/NSPR source tips (slot 1) | full | 89,149 | 34,870 | 145 | 53,396 | 734 | 0 | 4 | 0 |
-| `nss-slot0` | Fedora NSS softoken, slot 0 (Internal Crypto Services); scoped to the slot-0-unique files (coverage-neutral, see note) | slot-0-scoped | 2,301 | 1,425 | 29 | 671 | 173 | 0 | 3 | 0 |
-| `nss-pqc-slot0` | NSS/NSPR RTM tags, slot 0; scoped | slot-0-scoped | 2,352 | 1,455 | 29 | 688 | 176 | 0 | 4 | 0 |
-| `nss-main-slot0` | NSS/NSPR source tips, slot 0; scoped | slot-0-scoped | 2,352 | 1,455 | 29 | 688 | 176 | 0 | 4 | 0 |
-| `opencryptoki` | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 94,222 | 59,732 | 357 | 32,877 | 1,256 | 0 | 0 | 0 |
-| `opencryptoki-master` | OpenCryptoki master, OpenSSL 4.0.0 | full | 94,222 | 59,732 | 357 | 32,877 | 1,256 | 0 | 0 | 0 |
-| `wolfpkcs11` | wolfPKCS11 v2.0.0-stable, wolfSSL v5.9.1-stable | full (single-target 2026-06-06) | 97,345 | 38,664 | 3,050 | 52,700 | 2,918 | 0 | 13 | 0 |
-| `wolfpkcs11-master` | wolfPKCS11 master, wolfSSL master, PKCS#11 v3.2/PQC enabled | full (single-target 2026-06-06) | 97,935 | 41,044 | 2,646 | 51,185 | 3,056 | 0 | 4 | 0 |
-| `tpm2` | source-built tpm2-pkcs11 1.10.0 | full | 78,211 | 6,596 | 182 | 67,058 | 4,375 | 0 | 0 | 0 |
-| `pkcs11-mock` | pkcs11-mock v2.0.0 | full mock baseline | 29,527 | 230 | 104 | 29,135 | 58 | 0 | 0 | 0 |
-| `bouncyhsm` | BouncyHSM v2.1.0 | full (monolithic) | 104,982 | 52,626 | 8,143 | 36,204 | 8,006 | 0 | 3 | 0 |
+| `softhsm2` | SoftHSM2 2.7.0, OpenSSL 3.6.2 | full | 82,472 | 44,900 | 65 | 32,483 | 5,024 | 0 | 0 | 0 |
+| `softhsm2-generated-iv` | SoftHSM2 2.7.0 + generated-IV patch, OpenSSL 3.6.2 | full | 82,472 | 44,903 | 64 | 32,481 | 5,024 | 0 | 0 | 0 |
+| `softhsm2-main` | SoftHSM2 main, OpenSSL 4.0.0 | full | 83,401 | 47,064 | 63 | 31,786 | 4,488 | 0 | 0 | 0 |
+| `kryoptic` | Kryoptic v1.5.1, OpenSSL 4.0.0 | full | 109,127 | 58,614 | 137 | 37,762 | 12,614 | 0 | 0 | 0 |
+| `kryoptic-main` | Kryoptic main, OpenSSL 4.0.0 | full | 109,127 | 58,613 | 138 | 37,762 | 12,614 | 0 | 0 | 0 |
+| `kryoptic-fips` | Kryoptic FIPS/PQC + custom OpenSSL branch | full diagnostic | 93,046 | 43,939 | 176 | 37,565 | 11,354 | 0 | 12 | 0 |
+| `nss` | Fedora NSS softoken package (slot 1) | full | 93,498 | 38,220 | 130 | 53,323 | 1,819 | 0 | 6 | 0 |
+| `nss-pqc` | NSS/NSPR RTM tags (slot 1; near-identical to `nss-main`, differs only by a flaky overflow-crash case) | full | 92,655 | 36,750 | 119 | 54,052 | 1,727 | 0 | 7 | 0 |
+| `nss-main` | NSS/NSPR source tips (slot 1) | full | 92,655 | 36,752 | 117 | 54,052 | 1,727 | 0 | 7 | 0 |
+| `nss-slot0` | Fedora NSS softoken, slot 0 (Internal Crypto Services); scoped to the slot-0-unique files (coverage-neutral, see note) | slot-0-scoped | 2,391 | 1,440 | 61 | 693 | 191 | 0 | 6 | 0 |
+| `nss-pqc-slot0` | NSS/NSPR RTM tags, slot 0; scoped | slot-0-scoped | 2,442 | 1,470 | 61 | 710 | 194 | 0 | 7 | 0 |
+| `nss-main-slot0` | NSS/NSPR source tips, slot 0; scoped | slot-0-scoped | 2,442 | 1,470 | 61 | 710 | 194 | 0 | 7 | 0 |
+| `opencryptoki` | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 97,880 | 64,438 | 212 | 31,982 | 1,248 | 0 | 0 | 0 |
+| `opencryptoki-master` | OpenCryptoki master, OpenSSL 4.0.0 | full | 97,880 | 64,439 | 211 | 31,982 | 1,248 | 0 | 0 | 0 |
+| `wolfpkcs11` | wolfPKCS11 v2.0.0-stable, wolfSSL v5.9.1-stable | full | 97,546 | 46,524 | 879 | 44,798 | 5,329 | 0 | 15 | 1 |
+| `wolfpkcs11-master` | wolfPKCS11 master, wolfSSL master, PKCS#11 v3.2/PQC enabled | full | 98,573 | 49,028 | 482 | 43,588 | 5,471 | 0 | 4 | 0 |
+| `corepkcs11` | corePKCS11 v3.6.4 MbedTLS software mock | full | 61,833 | 10,950 | 142 | 49,679 | 1,059 | 3 | 0 | 0 |
+| `corepkcs11-main` | corePKCS11 main MbedTLS software mock | full | 61,833 | 10,950 | 142 | 49,679 | 1,059 | 3 | 0 | 0 |
+| `tpm2` | source-built tpm2-pkcs11 1.10.0 | full | 81,719 | 18,146 | 112 | 58,825 | 4,636 | 0 | 0 | 0 |
+| `pkcs11-mock` | pkcs11-mock v2.0.0 | full mock baseline | 32,945 | 737 | 288 | 31,850 | 70 | 0 | 0 | 0 |
+| `bouncyhsm` | BouncyHSM v2.1.1 | full (monolithic) | 108,640 | 54,196 | 2,132 | 36,448 | 15,858 | 0 | 6 | 0 |
 
 **NSS `*-slot0` scoping (v0.1.3):** NSS exposes the digest / bulk-cipher / KDF
 mechanisms only on slot 0 (Internal Cryptographic Services); the default slot-1
