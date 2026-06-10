@@ -19,6 +19,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_VERIFY,
@@ -45,6 +46,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
     SIGNATURE_REJECT_RVS,
@@ -77,16 +79,23 @@ _PARAM_SET_MAP: dict[str, int] = {
     "SLH-DSA-SHAKE-256f": CKP_SLH_DSA_SHAKE_256F,
 }
 
-_PQC_IMPORT_UNSUPPORTED_RVS = (
+# D3 boundary: SLH-DSA is advertised when these sites run (has_mechanism gate
+# precedes every import). For PQC the genuine-absence signal IS mechanism
+# advertisement -- there is no curve-absence CKR analogue. So once advertised,
+# ANY clean import reject is "advertised but not operational" -> xfail (mirrors
+# the ML-DSA precedent in test_wycheproof_mldsa* and the documented ML-KEM
+# raw-private import convention in docs/module-issues.md). The previous skip/xfail
+# split (CKR_FUNCTION_FAILED alone xfailed; the rest skipped) was an incoherent
+# asymmetry -- both buckets are the same not-operational signal.
+_PQC_IMPORT_NOT_OPERATIONAL_RVS = (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_KEY_SIZE_RANGE,
+    CKR_FUNCTION_FAILED,
 )
-
-_PQC_IMPORT_RUNTIME_FAILURE_RVS = (CKR_FUNCTION_FAILED,)
 
 _SLHDSA_RUNTIME_REJECT_RVS = (
     *NON_CLEAN_SIGNATURE_REJECT_RVS,
@@ -96,14 +105,16 @@ _SLHDSA_RUNTIME_REJECT_RVS = (
 )
 
 
-def _skip_if_import_unsupported(exc: AssertionError, label: str) -> None:
-    if is_known_error(exc, _PQC_IMPORT_UNSUPPORTED_RVS):
-        pytest.skip(f"Cannot import SLH-DSA {label}: {exc}")
-    xfail_if_known_ckr(
-        exc,
-        _PQC_IMPORT_RUNTIME_FAILURE_RVS,
-        f"SLH-DSA {label} import failed with non-specific CKR",
-    )
+def _xfail_if_import_not_operational(exc: AssertionError, label: str) -> None:
+    """Advertised SLH-DSA whose canonical key import is refused -> xfail.
+
+    A clean import reject (any code in ``_PQC_IMPORT_NOT_OPERATIONAL_RVS``) on an
+    advertised mechanism is "advertised but not operational" per the
+    classification model -- recorded as xfail, never hidden as skip. A non-CKR
+    AssertionError (harness/ctypes bug) propagates.
+    """
+    if isinstance(exc, CkrAssertionError) and is_known_error(exc, _PQC_IMPORT_NOT_OPERATIONAL_RVS):
+        pytest.xfail(not_operational_reason(f"SLH-DSA:import ({label})", ckr_name(exc.rv)))
     raise exc
 
 
@@ -280,7 +291,7 @@ def test_slhdsa_keygen(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
                 attrs={CKA_SIGN: True},
             )
         except AssertionError as exc:
-            _skip_if_import_unsupported(exc, f"private key ({vec['param_name']})")
+            _xfail_if_import_not_operational(exc, f"private key ({vec['param_name']})")
 
         try:
             # Import the expected public key
@@ -293,7 +304,7 @@ def test_slhdsa_keygen(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
                 attrs={CKA_VERIFY: True},
             )
         except AssertionError as exc:
-            _skip_if_import_unsupported(exc, f"public key ({vec['param_name']})")
+            _xfail_if_import_not_operational(exc, f"public key ({vec['param_name']})")
 
         try:
             # Test sign/verify roundtrip to verify keypair consistency
@@ -332,7 +343,7 @@ def test_slhdsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
                 attrs={CKA_VERIFY: True},
             )
         except AssertionError as exc:
-            _skip_if_import_unsupported(exc, f"public key ({vec['param_name']})")
+            _xfail_if_import_not_operational(exc, f"public key ({vec['param_name']})")
 
         try:
             verified = verify_single(rs.raw, rs.sh, pub_key, CKM_SLH_DSA, vec["msg"], vec["sig"])
@@ -380,7 +391,7 @@ def test_slhdsa_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
                 attrs={CKA_SIGN: True},
             )
         except AssertionError as exc:
-            _skip_if_import_unsupported(exc, f"private key ({vec['param_name']})")
+            _xfail_if_import_not_operational(exc, f"private key ({vec['param_name']})")
 
         try:
             sig = sign_single(rs.raw, rs.sh, priv_key, CKM_SLH_DSA, vec["msg"])
