@@ -61,8 +61,15 @@ over-claim ×2 docs; opencryptoki verify-final). A parallel worker also landed
    > vacuous; bouncyhsm CCM thousands P→xf with the 1,691 genuine fails INTACT (fewer =
    > downgrade leaked = STOP and investigate); kryoptic-fips test_mech_sign F→xf; wolfpkcs11
    > CTS 2,079xf unchanged; controls softhsm2/kryoptic/opencryptoki ≈ byte-identical
-   > (probabilistic oracle tests excepted — verify before alarming). Document in docs/findings/
-   > (round counts >1000), update SESSION-RESTORE.md, triage UNEXPECTED shifts as harness bugs;
+   > (probabilistic oracle tests excepted — verify before alarming). POST-POOL PROCEDURE
+   > (Denis 2026-06-10): after the comparison, (a) update internal metrics docs (Docker results
+   > table — permitted after a deliberate full validation run), (b) ensure nothing is broken and
+   > results are as intended (account for ALL intentional reclassifications: honesty package,
+   > vacuous downgrades, import-skip batches, FIPS unwrap), (c) if ALL OK → backup
+   > `cp -a artifacts artifacts3` = the validated baseline for pkcs11-proxy-ng tests,
+   > (d) if broken → investigate and fix (prefer fixing obvious breakage; intentional
+   > reclassifications are expected). Document in docs/findings/ (round counts >1000),
+   > update SESSION-RESTORE.md, triage UNEXPECTED shifts as harness bugs;
    > (3) then the queue below: test_rsa_key_wrapping FIPS unwrap, import-skip→xfail audit
    > (32 sites, negotiated-exhausted + advertised only), nss mldsa_verify 8F, opencryptoki
    > AES-CBC-PKCS5 144F, pkcs11-mock canned-CKA_VALUE module-issues entry, mechanism-registry
