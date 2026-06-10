@@ -17,7 +17,11 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKR_ENCRYPTED_DATA_INVALID, CKR_GENERAL_ERROR
+from pkcs11_check.raw.types_std import (
+    CKR_DEVICE_ERROR,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_GENERAL_ERROR,
+)
 from pkcs11_check.testcases._operability import reset_operability_cache
 from pkcs11_check.testcases.acvp.aes import base_runner_aead as aead
 from pkcs11_check.testcases.acvp.aes import test_wrap as wrap
@@ -73,26 +77,65 @@ def test_gcm_invalid_reject_on_dead_mech_xfails(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_gcm_invalid_reject_on_live_mech_passes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """OPERATIONAL mechanism rejecting an invalid tag stays a genuine pass."""
-    calls = {"n": 0}
+    """OPERATIONAL mechanism rejecting an invalid tag stays a genuine pass.
 
-    def reject_vector_only(
+    Discriminates probe vs. vector by ciphertext equality: the canonical probe
+    uses ``_probe_expected_ct`` output; the test vector uses a different ct+tag
+    blob (all-zeros).  ``encrypt_single`` is not patched because
+    ``_canonical_aead_probe`` in the decrypt direction never calls it.
+    """
+    probe_ct = aead._probe_expected_ct("AES_GCM")
+
+    def reject_vector_return_probe(
         _raw: Any, _sh: int, _key: int, _mech: Any, _ct: bytes, **_kw: Any
     ) -> bytes:
-        calls["n"] += 1
-        if calls["n"] == 1:  # the vector under test
-            raise CkrAssertionError(
-                "Unexpected CK_RV CKR_ENCRYPTED_DATA_INVALID", int(CKR_ENCRYPTED_DATA_INVALID)
-            )
-        return aead.PROBE_PT  # the canonical probe decrypt succeeds -> OPERATIONAL
+        if _ct == probe_ct:
+            # canonical probe ciphertext -> OPERATIONAL
+            return aead.PROBE_PT
+        # vector ciphertext (all-zeros ct+tag) -> reject
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_ENCRYPTED_DATA_INVALID", int(CKR_ENCRYPTED_DATA_INVALID)
+        )
 
     monkeypatch.setattr(aead, "_import_aes_key", lambda *a, **k: 7)
     monkeypatch.setattr(aead, "destroy_quietly", lambda *a, **k: None)
-    monkeypatch.setattr(aead, "decrypt_single", reject_vector_only)
-    monkeypatch.setattr(aead, "encrypt_single", lambda *a, **k: aead.PROBE_PT)
-    monkeypatch.setattr(aead, "_probe_expected_ct", lambda mech_name: aead.PROBE_PT)
+    monkeypatch.setattr(aead, "decrypt_single", reject_vector_return_probe)
     # returns normally (no xfail) = PASS
     aead.run_gcm_decrypt_test(_rs(), "tc-inv", _vec_invalid_gcm())
+
+
+# --- CCM (base_runner_aead) -------------------------------------------------
+
+
+def _vec_invalid_ccm() -> dict[str, Any]:
+    """Minimal invalid CCM decrypt vector (test_passed=False, tag_len=16)."""
+    return {
+        "nonce": b"\x00" * 13,
+        "aad": None,
+        # 1-byte ciphertext + 16-byte tag = 17 bytes total
+        "ct": b"\x00" * 17,
+        "key": b"\x00" * 16,
+        "pt_expected": b"",
+        "test_passed": False,
+        "tag_len": 16,
+    }
+
+
+def test_ccm_invalid_reject_on_dead_mech_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AES-CCM invalid-tag reject on a NOT_OPERATIONAL mech -> vacuous xfail.
+
+    ``CKR_DEVICE_ERROR`` is in ``_CCM_DATA_REJECTS`` but NOT in ``_GCM_DATA_REJECTS``,
+    pinning the guard-set difference between the two sibling sites.
+    """
+
+    def refuse(*_a: Any, **_k: Any) -> bytes:
+        raise CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))
+
+    monkeypatch.setattr(aead, "_import_aes_key", lambda *a, **k: 7)
+    monkeypatch.setattr(aead, "destroy_quietly", lambda *a, **k: None)
+    monkeypatch.setattr(aead, "decrypt_single", refuse)
+    with pytest.raises(pytest.xfail.Exception, match="vacuous reject"):
+        aead.run_ccm_decrypt_test(_rs(), "tc-inv", _vec_invalid_ccm())
 
 
 # --- wrap (test_wrap) -------------------------------------------------------
@@ -118,6 +161,33 @@ def test_kw_invalid_reject_on_dead_mech_xfails(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(wrap, "decrypt_single", refuse)
     with pytest.raises(pytest.xfail.Exception, match="vacuous reject"):
         wrap.test_acvp_aes_kw_unwrap(_rs(), "tc-inv", _vec_invalid_kw())
+
+
+def _vec_invalid_kwp() -> dict[str, Any]:
+    """Minimal invalid KWP decrypt vector (test_passed=False)."""
+    return {
+        "key": b"\x00" * 16,
+        "ct": b"\x00" * 24,
+        "pt_expected": b"",
+        "test_passed": False,
+    }
+
+
+def test_kwp_invalid_reject_on_dead_mech_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AES-KWP invalid-ciphertext reject on a NOT_OPERATIONAL mech -> vacuous xfail.
+
+    Probes the ``AES_KEY_WRAP_KWP:decrypt`` probe key (``_wrap_operability``
+    dispatches on the mechanism name).
+    """
+
+    def refuse(*_a: Any, **_k: Any) -> bytes:
+        raise CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
+
+    monkeypatch.setattr(wrap, "_import_aes_key", lambda *a, **k: 7)
+    monkeypatch.setattr(wrap, "destroy_quietly", lambda *a, **k: None)
+    monkeypatch.setattr(wrap, "decrypt_single", refuse)
+    with pytest.raises(pytest.xfail.Exception, match="vacuous reject"):
+        wrap.test_acvp_aes_kwp_unwrap(_rs(), "tc-inv", _vec_invalid_kwp())
 
 
 # --- wycheproof CCM: INCONCLUSIVE must NOT xfail -----------------------------
@@ -158,3 +228,45 @@ def test_wycheproof_ccm_inconclusive_does_not_xfail(monkeypatch: pytest.MonkeyPa
     }
     # returns normally (no xfail) = legacy pass on INCONCLUSIVE
     wp.test_aes_ccm(_rs(), "tc-inv", vec_data)
+
+
+# --- wycheproof CCM: FIRING direction (NOT_OPERATIONAL must xfail) -----------
+
+
+def test_wycheproof_ccm_not_operational_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Invalid CCM vector + NOT_OPERATIONAL probe -> vacuous-reject xfail.
+
+    ``decrypt_single`` refuses everywhere (both the vector decrypt and the
+    canonical probe), so the probe verdict is NOT_OPERATIONAL.  Driving
+    ``test_aes_ccm`` with an invalid vector must fire the downgrade.
+    This test detects deleted wiring that the INCONCLUSIVE counterpart cannot
+    (an INCONCLUSIVE probe never fires the downgrade).
+    """
+    from pkcs11_check.testcases.wycheproof import test_wycheproof_aes as wp
+
+    def refuse_decrypt(*_a: Any, **_k: Any) -> bytes:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_ENCRYPTED_DATA_INVALID", int(CKR_ENCRYPTED_DATA_INVALID)
+        )
+
+    # Vector path key import succeeds; canonical probe key import also succeeds
+    # (both use _import_aes_key when patched here).  All decrypt_single calls
+    # raise -> probe verdict = NOT_OPERATIONAL -> downgrade fires.
+    monkeypatch.setattr(wp, "import_secret_key_negotiated", lambda *a, **k: 7)
+    monkeypatch.setattr(wp, "destroy_quietly", lambda *a, **k: None)
+    monkeypatch.setattr(wp, "decrypt_single", refuse_decrypt)
+    monkeypatch.setattr(aead, "_import_aes_key", lambda *a, **k: 7)
+    monkeypatch.setattr(aead, "decrypt_single", refuse_decrypt)
+    monkeypatch.setattr(aead, "destroy_quietly", lambda *a, **k: None)
+
+    vec_data = {
+        "key": "00" * 16,
+        "iv": "00" * 12,
+        "aad": "",
+        "msg": "",
+        "ct": "00" * 16,
+        "tag": "00" * 16,
+        "result": "invalid",
+    }
+    with pytest.raises(pytest.xfail.Exception, match="vacuous reject"):
+        wp.test_aes_ccm(_rs(), "tc-inv", vec_data)
