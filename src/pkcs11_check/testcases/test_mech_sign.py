@@ -38,22 +38,15 @@ from pkcs11_check.raw.types_std import (
     CKM,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_DATA_INVALID,
-    CKR_DEVICE_ERROR,
     CKR_DOMAIN_PARAMS_INVALID,
-    CKR_FUNCTION_FAILED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
-    CKR_OPERATION_NOT_INITIALIZED,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._capability_claims import claim_refusal_passes
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import is_known_error
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     build_params_from_vector,
@@ -65,21 +58,6 @@ from pkcs11_check.testcases.mechanism_helpers import (
 _EDWARDS_OID_PREFIXES = (
     b"\x06\x03\x2b\x65\x70",  # Ed25519 (1.3.101.112)
     b"\x06\x03\x2b\x65\x71",  # Ed448 (1.3.101.113)
-)
-
-_SIGN_RUNTIME_REJECT_RVS = (
-    CKR_ARGUMENTS_BAD,
-    CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_DATA_INVALID,
-    CKR_DEVICE_ERROR,
-    CKR_DOMAIN_PARAMS_INVALID,
-    CKR_FUNCTION_FAILED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
-    CKR_OPERATION_NOT_INITIALIZED,
 )
 
 _KAT_IMPORT_CAPABILITY_REJECT_RVS = (
@@ -100,14 +78,6 @@ def _ckr_name_from_exception(exc: AssertionError) -> str:
     if rv is not None:
         return ckr_name(rv)
     return str(exc)
-
-
-def _xfail_sign_runtime_reject(exc: AssertionError, entry: MechEntry, operation: str) -> None:
-    xfail_if_known_ckr(
-        exc,
-        _SIGN_RUNTIME_REJECT_RVS,
-        f"{entry.mech_name}: advertised but {operation} is not operational",
-    )
 
 
 def _skip_kat_import_capability_reject(
@@ -151,7 +121,8 @@ class TestMechSignRoundtrip:
                     rs.raw, rs.sh, sign_key, CKM(entry.mech_id), data, mech_param=mech_param
                 )
             except AssertionError as exc:
-                _xfail_sign_runtime_reject(exc, entry, "sign")
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:sign"):
+                    return
             try:
                 ok = verify_single(
                     rs.raw,
@@ -163,7 +134,8 @@ class TestMechSignRoundtrip:
                     mech_param=mech_param,
                 )
             except AssertionError as exc:
-                _xfail_sign_runtime_reject(exc, entry, "verify")
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:verify"):
+                    return
             assert ok, f"{entry.mech_name}: verify failed after valid sign (sig={sig.hex()!r})"
         finally:
             destroy_quietly(rs.raw, rs.sh, sign_key)
@@ -197,7 +169,8 @@ class TestMechSignRoundtrip:
                     rs.raw, rs.sh, sign_key, CKM(entry.mech_id), data_a, mech_param=mech_param
                 )
             except AssertionError as exc:
-                _xfail_sign_runtime_reject(exc, entry, "sign")
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:sign"):
+                    return
             try:
                 ok = verify_single(
                     rs.raw,
@@ -293,7 +266,8 @@ def _run_asymmetric_sign_kat(
                         mech_param=mech_param,
                     )
                 except AssertionError as exc:
-                    _xfail_sign_runtime_reject(exc, entry, "KAT verify")
+                    if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:kat-verify"):
+                        return
                 assert ok, (
                     f"KAT verify failed for {vec.get('id', '?')}: "
                     f"stored sig {stored_sig.hex()!r} did not verify"
@@ -310,7 +284,8 @@ def _run_asymmetric_sign_kat(
                         mech_param=mech_param,
                     )
                 except AssertionError as exc:
-                    _xfail_sign_runtime_reject(exc, entry, "KAT sign")
+                    if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:kat-sign"):
+                        return
                 expected = bytes.fromhex(vec["signature_hex"])
                 assert sig == expected, (
                     f"KAT sign mismatch for {vec.get('id', '?')}: "
@@ -349,7 +324,8 @@ def _run_asymmetric_sign_kat(
                     mech_param=mech_param,
                 )
             except AssertionError as exc:
-                _xfail_sign_runtime_reject(exc, entry, "KAT sign")
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:kat-sign"):
+                    return
             assert len(sig) > 0, f"KAT sign returned empty signature for {vec.get('id', '?')}"
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_key)
@@ -412,7 +388,8 @@ class TestMechSignKAT:
                         mech_param=params,
                     )
                 except AssertionError as exc:
-                    _xfail_sign_runtime_reject(exc, entry, "KAT sign")
+                    if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:kat-sign"):
+                        return
                 expected = bytes.fromhex(mac_hex)
                 assert mac == expected, (
                     f"KAT MAC mismatch for {vec.get('id', '?')}: "

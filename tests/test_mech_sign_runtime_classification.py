@@ -75,7 +75,7 @@ def test_roundtrip_sign_runtime_reject_is_xfail(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(mech_sign, "sign_single", _sign_reject)
     monkeypatch.setattr(mech_sign, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(pytest.xfail.Exception, match="advertised but sign is not operational"):
+    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
         mech_sign.TestMechSignRoundtrip().test_roundtrip(_session(), _aes_entry())
 
 
@@ -92,7 +92,7 @@ def test_roundtrip_verify_runtime_reject_is_xfail(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(mech_sign, "verify_single", _verify_reject)
     monkeypatch.setattr(mech_sign, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(pytest.xfail.Exception, match="advertised but verify is not operational"):
+    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
         mech_sign.TestMechSignRoundtrip().test_roundtrip(_session(), _aes_entry())
 
 
@@ -137,7 +137,7 @@ def test_kat_mac_runtime_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(mech_sign, "sign_single", _sign_reject)
     monkeypatch.setattr(mech_sign, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(pytest.xfail.Exception, match="advertised but KAT sign is not operational"):
+    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
         mech_sign.TestMechSignKAT().test_kat_vector(_session(), _aes_entry())
 
 
