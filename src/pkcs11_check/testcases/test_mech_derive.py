@@ -43,6 +43,7 @@ from pkcs11_check.raw.recipes import (
     pack_attrs,
     read_attributes,
 )
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CKA_CLASS,
@@ -314,7 +315,7 @@ def _gen_hkdf_base_key(rs: RawSession) -> int:
     mech = mech_simple(CKM_HKDF_KEY_GEN)
     handle = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
-    assert rv == CKR_OK, f"HKDF base key gen failed: {rv}"
+    expect_rv(rv, CKR_OK, context="HKDF base key gen")
     return handle.value
 
 
@@ -486,7 +487,7 @@ def _gen_des_base_key(rs: RawSession, des3: bool) -> int:
     mech = mech_simple(keygen_ckm)
     handle = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
-    assert rv == CKR_OK, f"DES{'3' if des3 else ''} base key gen failed: {rv}"
+    expect_rv(rv, CKR_OK, context=f"DES{'3' if des3 else ''} base key gen")
     return handle.value
 
 

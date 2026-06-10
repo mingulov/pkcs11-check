@@ -31,7 +31,7 @@ from pkcs11_check.raw.recipes import (
     gen_rsa_keypair,
     pack_attrs,
 )
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_EC_PARAMS,
@@ -993,5 +993,5 @@ def gen_generic_secret(
     mech = mech_simple(CKM_GENERIC_SECRET_KEY_GEN)
     handle = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
-    assert rv == CKR_OK, f"Generic secret key gen failed: {rv}"
+    expect_rv(rv, CKR_OK, context="Generic secret key gen")
     return handle.value

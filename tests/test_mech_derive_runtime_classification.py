@@ -11,6 +11,8 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKM_EXTRACT_KEY_FROM_KEY,
     CKM_HKDF_DERIVE,
+    CKM_XOR_BASE_AND_DATA,
+    CKR_MECHANISM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases import test_mech_derive
@@ -31,6 +33,23 @@ def _entry(mech_id: int, name: str) -> MechEntry:
 def _session() -> Any:
     return SimpleNamespace(
         raw=object(),
+        sh=1,
+        has_mechanism=lambda _name: True,
+    )
+
+
+def _session_with_keygen_reject(reject_rv: int) -> Any:
+    """Return a fake session whose C_GenerateKey always returns *reject_rv*.
+
+    Used to drive the base-keygen precondition through the real assert path
+    (C-level return, not a monkeypatched helper) and verify the claim-layer
+    classifies the refusal as "advertised but not operational".
+    """
+    raw = SimpleNamespace(
+        C_GenerateKey=lambda *_args, **_kwargs: reject_rv,
+    )
+    return SimpleNamespace(
+        raw=raw,
         sh=1,
         has_mechanism=lambda _name: True,
     )
@@ -81,3 +100,49 @@ def test_hkdf_base_keygen_non_ckr_assert_propagates(
             _entry(int(CKM_HKDF_DERIVE), "CKM_HKDF_DERIVE"),
         )
     assert not isinstance(ei.value, pytest.xfail.Exception)
+
+
+def test_hkdf_base_keygen_mech_invalid_is_xfail() -> None:
+    """R1 regression: HKDF base-keygen CKR_MECHANISM_INVALID -> xfail not-operational.
+
+    When CKM_HKDF_KEY_GEN returns CKR_MECHANISM_INVALID (NSS genuinely lacks it),
+    the assert in _gen_hkdf_base_key must raise CkrAssertionError (via expect_rv)
+    so the claim layer can classify it as not-operational and xfail.
+
+    RED before fix: plain assert -> bare AssertionError escapes claim layer -> hard FAIL.
+    GREEN after fix: expect_rv raises CkrAssertionError -> claim_refusal_passes -> xfail.
+
+    Hard-pin: an unexpected skip instead of xfail is a regression -> pytest.fail.
+    """
+    rs = _session_with_keygen_reject(int(CKR_MECHANISM_INVALID))
+    try:
+        with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
+            test_mech_derive.TestMechDerive().test_derive_produces_key(
+                rs,
+                _entry(int(CKM_HKDF_DERIVE), "CKM_HKDF_DERIVE"),
+            )
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"skipped instead of xfailing: {exc}")
+
+
+def test_xor_base_keygen_mech_invalid_is_xfail() -> None:
+    """R1 regression: XOR/generic-secret base-keygen CKR_MECHANISM_INVALID -> xfail.
+
+    When CKM_GENERIC_SECRET_KEY_GEN returns CKR_MECHANISM_INVALID (pkcs11-mock),
+    gen_generic_secret's assert must raise CkrAssertionError (via expect_rv)
+    so the claim layer classifies it as not-operational and xfails.
+
+    RED before fix: plain assert -> bare AssertionError escapes claim layer -> hard FAIL.
+    GREEN after fix: expect_rv raises CkrAssertionError -> claim_refusal_passes -> xfail.
+
+    Hard-pin: an unexpected skip instead of xfail is a regression -> pytest.fail.
+    """
+    rs = _session_with_keygen_reject(int(CKR_MECHANISM_INVALID))
+    try:
+        with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
+            test_mech_derive.TestMechDerive().test_derive_produces_key(
+                rs,
+                _entry(int(CKM_XOR_BASE_AND_DATA), "CKM_XOR_BASE_AND_DATA"),
+            )
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"skipped instead of xfailing: {exc}")
