@@ -71,7 +71,11 @@ class _FakeRs:
 def test_a1_skip_rsa_public_import_reject_xfails_on_ckr(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A1: CkrAssertionError from negotiated RSA import -> xfail, advertised but not operational."""
+    """A1: CkrAssertionError from negotiated RSA import -> xfail, advertised but not operational.
+
+    Hard-pin: an unexpected skip escaping instead of an xfail is caught and
+    converted to a hard fail so CI cannot silently swallow a regression.
+    """
     import pkcs11_check.testcases.acvp.test_acvp_rsa as mod
 
     monkeypatch.setattr(
@@ -80,8 +84,11 @@ def test_a1_skip_rsa_public_import_reject_xfails_on_ckr(
         lambda *_a, **_kw: (_ for _ in ()).throw(_ATTR_INVALID),
     )
 
-    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
-        mod._skip_rsa_public_import_reject(_ATTR_INVALID, mech_name="SHA256_RSA_PKCS")
+    try:
+        with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
+            mod._skip_rsa_public_import_reject(_ATTR_INVALID, mech_name="SHA256_RSA_PKCS")
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"skipped instead of xfailing: {exc}")
 
 
 def test_a1_skip_rsa_public_import_reject_propagates_non_ckr(
@@ -100,7 +107,11 @@ def test_a1_skip_rsa_public_import_reject_propagates_non_ckr(
 
 
 def test_a4_rsa_import_xfails_on_ckr(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A4: CkrAssertionError from negotiated RSA import -> xfail, not skip."""
+    """A4: CkrAssertionError from negotiated RSA import -> xfail, not skip.
+
+    Hard-pin: an unexpected skip escaping instead of an xfail is caught and
+    converted to a hard fail so CI cannot silently swallow a regression.
+    """
     import pkcs11_check.testcases.wycheproof.test_wycheproof as mod
 
     rs = _FakeRs(has=True)
@@ -126,8 +137,11 @@ def test_a4_rsa_import_xfails_on_ckr(monkeypatch: pytest.MonkeyPatch) -> None:
         },
     }
 
-    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
-        _call_test_rsa_sig_2048_sha256(mod, rs, vec)
+    try:
+        with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
+            _call_test_rsa_sig_2048_sha256(mod, rs, vec)
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"skipped instead of xfailing: {exc}")
 
 
 def test_a4_rsa_import_propagates_non_ckr(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -173,7 +187,11 @@ def _call_test_rsa_sig_2048_sha256(mod: object, rs: _FakeRs, vec: dict) -> None:
 def test_a6a_aes_kw_unwrap_key_import_xfails_on_ckr(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A6a: CkrAssertionError from negotiated AES unwrapping key import -> xfail."""
+    """A6a: CkrAssertionError from negotiated AES unwrapping key import -> xfail.
+
+    Hard-pin: an unexpected skip escaping instead of an xfail is caught and
+    converted to a hard fail so CI cannot silently swallow a regression.
+    """
     import pkcs11_check.testcases.wycheproof.test_wycheproof_aes as mod
 
     monkeypatch.setattr(
@@ -191,8 +209,11 @@ def test_a6a_aes_kw_unwrap_key_import_xfails_on_ckr(
         "result": "valid",
     }
 
-    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
-        mod.test_aes_key_wrap(rs, "tc1-valid", vec)  # type: ignore[attr-defined]
+    try:
+        with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
+            mod.test_aes_key_wrap(rs, "tc1-valid", vec)  # type: ignore[attr-defined]
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"skipped instead of xfailing: {exc}")
 
 
 def test_a6a_aes_kw_non_ckr_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -226,7 +247,11 @@ def test_a6a_aes_kw_non_ckr_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_a6b_aes_kwp_wrap_key_import_xfails_on_ckr(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A6b: CkrAssertionError from negotiated AES KWP wrapping key import -> xfail."""
+    """A6b: CkrAssertionError from negotiated AES KWP wrapping key import -> xfail.
+
+    Hard-pin: an unexpected skip escaping instead of an xfail is caught and
+    converted to a hard fail so CI cannot silently swallow a regression.
+    """
     import pkcs11_check.testcases.wycheproof.test_wycheproof_aes as mod
 
     monkeypatch.setattr(
@@ -244,8 +269,11 @@ def test_a6b_aes_kwp_wrap_key_import_xfails_on_ckr(
         "result": "valid",
     }
 
-    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
-        mod.test_aes_kwp(rs, "tc2-valid", vec)  # type: ignore[attr-defined]
+    try:
+        with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
+            mod.test_aes_kwp(rs, "tc2-valid", vec)  # type: ignore[attr-defined]
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"skipped instead of xfailing: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +284,11 @@ def test_a6b_aes_kwp_wrap_key_import_xfails_on_ckr(
 def test_a6c_aes_xts_key_import_xfails_on_ckr(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A6c: CkrAssertionError from negotiated AES-XTS key import -> xfail."""
+    """A6c: CkrAssertionError from negotiated AES-XTS key import -> xfail.
+
+    Hard-pin: an unexpected skip escaping instead of an xfail is caught and
+    converted to a hard fail so CI cannot silently swallow a regression.
+    """
     import pkcs11_check.testcases.wycheproof.test_wycheproof_aes as mod
 
     monkeypatch.setattr(
@@ -275,8 +307,11 @@ def test_a6c_aes_xts_key_import_xfails_on_ckr(
         "result": "valid",
     }
 
-    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
-        mod.test_aes_xts(rs, "tc3-valid", vec)  # type: ignore[attr-defined]
+    try:
+        with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
+            mod.test_aes_xts(rs, "tc3-valid", vec)  # type: ignore[attr-defined]
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"skipped instead of xfailing: {exc}")
 
 
 def test_a6c_aes_xts_invalid_vector_non_ckr_skips_not_xfails(

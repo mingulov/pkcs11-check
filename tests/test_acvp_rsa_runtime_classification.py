@@ -95,30 +95,56 @@ def test_acvp_rsa_pss_siggen_sign_runtime_reject_is_xfail(
         )
 
 
-def test_acvp_rsa_pkcs15_public_import_reject_is_setup_skip(
+def test_acvp_rsa_pkcs15_public_import_reject_is_not_operational_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Negotiation-exhausted RSA public key import on an advertised mechanism -> xfail.
+
+    The mechanism was already advertised (has_mechanism gate passed), so a
+    negotiation-exhausted import refusal is "advertised but not operational" per
+    the classification model.  The old contract (pytest.skip "RSA public key
+    import failed") was replaced by Batch 1; this test pins the new contract.
+
+    Hard-pin: an unexpected skip escaping instead of an xfail is caught and
+    converted to a hard fail so CI cannot silently swallow a regression.
+    """
     monkeypatch.setattr(test_acvp_rsa, "import_rsa_public_key_negotiated", _attribute_value_invalid)
 
-    with pytest.raises(pytest.skip.Exception, match="RSA public key import failed"):
-        test_acvp_rsa.TestRsaSigVer().test_rsa_pkcs15_verify(
-            _session(),
-            "SigVer-pkcs15-ver-SHA-1-tc181_0",
-            _pkcs15_vec(),
-        )
+    try:
+        with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
+            test_acvp_rsa.TestRsaSigVer().test_rsa_pkcs15_verify(
+                _session(),
+                "SigVer-pkcs15-ver-SHA-1-tc181_0",
+                _pkcs15_vec(),
+            )
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"skipped instead of xfailing: {exc}")
 
 
-def test_acvp_rsa_pss_public_import_reject_is_setup_skip(
+def test_acvp_rsa_pss_public_import_reject_is_not_operational_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Negotiation-exhausted RSA public key import on an advertised mechanism -> xfail.
+
+    Same contract as the PKCS#1.5 variant: the mechanism was already advertised,
+    so import refusal is "advertised but not operational", not a setup skip.
+    The old contract (pytest.skip "RSA public key import failed") was replaced
+    by Batch 1; this test pins the new contract.
+
+    Hard-pin: an unexpected skip escaping instead of an xfail is caught and
+    converted to a hard fail so CI cannot silently swallow a regression.
+    """
     monkeypatch.setattr(test_acvp_rsa, "import_rsa_public_key_negotiated", _attribute_value_invalid)
 
-    with pytest.raises(pytest.skip.Exception, match="RSA public key import failed"):
-        test_acvp_rsa.TestRsaSigVer().test_rsa_pss_verify(
-            _session(),
-            "SigVer-pss-ver-SHA-1-tc181_0",
-            _pss_vec(),
-        )
+    try:
+        with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
+            test_acvp_rsa.TestRsaSigVer().test_rsa_pss_verify(
+                _session(),
+                "SigVer-pss-ver-SHA-1-tc181_0",
+                _pss_vec(),
+            )
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"skipped instead of xfailing: {exc}")
 
 
 def test_acvp_rsa_verify_attribute_value_invalid_is_runtime_xfail(
