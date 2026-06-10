@@ -143,6 +143,8 @@ over-claim ×2 docs; opencryptoki verify-final). A parallel worker also landed
    confirmed genuine).
 7. **pkcs11-mock section in module-issues.md** (canned-CKA_VALUE Type-C; evidence above).
 8. **Mechanism-registry Phases B–D** (longer arc).
+9. **Catalog follow-up:** retain unknown-name manifest entries as `MechEntry(config=None)` so
+   the blind-spot check sees them (check `select_for_scenario` tolerance).
 
 ## DECISIONS NEEDED FROM DENIS (as of 2026-06-10)
 
