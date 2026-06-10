@@ -46,17 +46,37 @@ over-claim ×2 docs; opencryptoki verify-final). A parallel worker also landed
 ## How to restore the loop (run on Fable, not Opus)
 
 1. `claude --model claude-fable-5` (do not run `/fast`).
-2. Standing goal (paste, or `/goal …`):
+2. Standing goal (paste, or `/goal …`) — CURRENT version (2026-06-10, post-merge):
 
-   > fully analyze failures (both xfail/fail) in docker test_pool.py (and other runs) results.
-   > artifacts/ = fresh, artifacts2/ = backup baselines (docker target re-runs allowed). Analyze
-   > all issues in pkcs11-check test cases — misconfiguration, incorrect usage, harness bugs vs
-   > real provider findings. Document all findings, fix the real pkcs11-check issues, keep the
-   > suite general/provider-valid (no per-provider gating). Do not stop: when ready, code-review /
-   > gap-analyze from new angles and fix found issues — continue until quality improves.
+   > Improve pkcs11-check quality continuously on dev. Context: advertised-capability honesty
+   > package is merged (dev ec9db778+; spec: docs/superpowers/specs/2026-06-10-advertised-
+   > capability-honesty-design.md). A full pool run (docker/test_pool.py --all, 21 providers,
+   > run by Denis) writes fresh artifacts/<provider>-pooled/; artifacts2/ = READ-ONLY pre-fix
+   > baselines. Work queue, in order: (1) finish the plan
+   > docs/superpowers/plans/2026-06-10-advertised-capability-honesty.md — Task 10 quality
+   > review (commit 699cf42c, spec review done), Task 11 model-doc amendments (CLAUDE.md
+   > classification table + docs/classification-model-design.md must match shipped behavior),
+   > backfill Task 9's review pair (ec9db778); (2) when the pool completes, compare
+   > artifacts/<provider>-pooled vs artifacts2/ per provider — expected: tpm2 SigVer ~135 P→xf
+   > vacuous; bouncyhsm CCM thousands P→xf with the 1,691 genuine fails INTACT (fewer =
+   > downgrade leaked = STOP and investigate); kryoptic-fips test_mech_sign F→xf; wolfpkcs11
+   > CTS 2,079xf unchanged; controls softhsm2/kryoptic/opencryptoki ≈ byte-identical
+   > (probabilistic oracle tests excepted — verify before alarming). Document in docs/findings/
+   > (round counts >1000), update SESSION-RESTORE.md, triage UNEXPECTED shifts as harness bugs;
+   > (3) then the queue below: test_rsa_key_wrapping FIPS unwrap, import-skip→xfail audit
+   > (32 sites, negotiated-exhausted + advertised only), nss mldsa_verify 8F, opencryptoki
+   > AES-CBC-PKCS5 144F, pkcs11-mock canned-CKA_VALUE module-issues entry, mechanism-registry
+   > Phases B–D. Rules: provider-general only; never hide findings (fail vs xfail per the
+   > classification model); TDD meta-test per harness change; full CI gates before every
+   > commit; NEVER launch/kill docker while the pool runs, afterwards targeted docker/test.sh
+   > only; commit small coherent units to dev; subagent-driven implementation with two-stage
+   > review (sonnet/opus implement, fable review).
 
-3. Re-arm: `/loop 10m analyze issues by artifacts/ and artifacts2/ docker results, investigate,
-   if an issue is in pkcs11-check fix/improve, keep provider-general`
+3. Re-arm: `/loop 10m check Denis's pool run passively (pgrep -af test_pool.py; count
+   artifacts/<provider>-pooled of 21 — never launch/kill docker); work the standing goal queue
+   in order (plan task reviews + model-doc amendments → post-pool comparison vs artifacts2/ →
+   SESSION-RESTORE queue); provider-general, never hide findings, full CI gates before each
+   commit`
 
 ## Operating rules (proven)
 
