@@ -427,44 +427,9 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     # Build PSS params
     pss_param = mech_pss(mechanism, hash_mech=hash_mech, mgf=mgf, salt_len=s_len)
 
+    verified: bool | None = None
     try:
         verified = verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig, mech_param=pss_param)
-        if result == "invalid":
-            if verified:
-                # Discriminate the acceptance class with a reference auto-salt
-                # verification (pure public-key math): a GENUINE signature whose
-                # salt length merely differs from the declared sLen is only
-                # producible with the private key -- accepting it is salt-length
-                # policy leniency (the verifier recovers the salt, RFC 8017),
-                # an honest deviation, not a forgery. Anything else that
-                # verifies is a padding-check bypass and stays a hard fail.
-                if (
-                    _pss_valid_under_auto_salt(
-                        modulus, exponent, msg, sig, vec["_sha"], vec["_mgf_sha"]
-                    )
-                    is True
-                ):
-                    pytest.xfail(
-                        f"{vec_id}: accepted a genuine PSS signature whose salt length "
-                        f"differs from the declared sLen={s_len} -- salt-length policy "
-                        "not enforced (not forgeable without the private key)"
-                    )
-                pytest.fail(f"Invalid RSA-PSS sig {vec_id} accepted by module")
-            return
-        if result == "valid" and not verified:
-            combo = _pss_combo_operability(rs, mechanism, hash_mech, mgf, s_len)
-            if combo.status is Operability.NOT_OPERATIONAL:
-                pytest.xfail(
-                    f"Valid {vec_id} rejected; sign+verify roundtrip with the same "
-                    f"(mech, hash, mgf, sLen={s_len}) is not operational ({combo.detail}) "
-                    "-- advertised but not operational"
-                )
-            if combo.status is Operability.INCONCLUSIVE:
-                pytest.xfail(
-                    f"Valid {vec_id} rejected; PSS combo probe inconclusive ({combo.detail}) "
-                    "-- cannot distinguish deviation from module bug, recorded as xfail"
-                )
-            pytest.fail(f"Valid RSA-PSS sig {vec_id} rejected by module")
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_rsa_pss_runtime_reject(exc, vec_id)
@@ -480,5 +445,45 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, pub_key)
+
+    # --- outcome classification (probe calls must live here, outside the
+    # narrow try/except above, so plain AssertionErrors from the probe are
+    # never re-caught and misrouted through _xfail_if_rsa_pss_runtime_reject) ---
+    if result == "invalid":
+        if verified:
+            # Discriminate the acceptance class with a reference auto-salt
+            # verification (pure public-key math): a GENUINE signature whose
+            # salt length merely differs from the declared sLen is only
+            # producible with the private key -- accepting it is salt-length
+            # policy leniency (the verifier recovers the salt, RFC 8017),
+            # an honest deviation, not a forgery. Anything else that
+            # verifies is a padding-check bypass and stays a hard fail.
+            if (
+                _pss_valid_under_auto_salt(
+                    modulus, exponent, msg, sig, vec["_sha"], vec["_mgf_sha"]
+                )
+                is True
+            ):
+                pytest.xfail(
+                    f"{vec_id}: accepted a genuine PSS signature whose salt length "
+                    f"differs from the declared sLen={s_len} -- salt-length policy "
+                    "not enforced (not forgeable without the private key)"
+                )
+            pytest.fail(f"Invalid RSA-PSS sig {vec_id} accepted by module")
+        return
+    if result == "valid" and not verified:
+        combo = _pss_combo_operability(rs, mechanism, hash_mech, mgf, s_len)
+        if combo.status is Operability.NOT_OPERATIONAL:
+            pytest.xfail(
+                f"Valid {vec_id} rejected; sign+verify roundtrip with the same "
+                f"(mech, hash, mgf, sLen={s_len}) is not operational ({combo.detail}) "
+                "-- advertised but not operational"
+            )
+        if combo.status is Operability.INCONCLUSIVE:
+            pytest.xfail(
+                f"Valid {vec_id} rejected; PSS combo probe inconclusive ({combo.detail}) "
+                "-- cannot distinguish deviation from module bug, recorded as xfail"
+            )
+        pytest.fail(f"Valid RSA-PSS sig {vec_id} rejected by module")
 
     generate_random(rs.raw, rs.sh, 64)

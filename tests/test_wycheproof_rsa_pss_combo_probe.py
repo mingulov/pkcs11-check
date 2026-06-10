@@ -83,3 +83,57 @@ def test_rsa_pss_valid_rejected_fails_when_combo_operational(monkeypatch: Any) -
     }
     with pytest.raises(pytest.fail.Exception):
         twrp.test_rsa_pss(rs, "rsa_pss_2048_sha256_mgf1_32_params:tc1-valid", vec)
+
+
+def test_plain_assertion_from_probe_propagates_not_xfail(monkeypatch: Any) -> None:
+    """Fix 1 regression: plain AssertionError from the probe must propagate out
+    of the consumer test as AssertionError — never become an xfail, even when
+    the message contains a CKR name that the broad except/substring-match path
+    would otherwise misroute.
+
+    Root cause: if the probe call sits inside the ``try:`` whose ``except
+    AssertionError`` handler calls ``_xfail_if_rsa_pss_runtime_reject``, a
+    plain AssertionError from the probe goes through the substring-match
+    fallback in ``xfail_if_known_ckr``.  When the message happens to contain a
+    CKR name that is in ``_RSA_PSS_RUNTIME_REJECT_CKRS`` (e.g.
+    "CKR_FUNCTION_FAILED"), it is silently misattributed as an xfail (harness
+    bug hidden as "advertised but not operational").
+
+    The fix hoists the probe call OUT of the ``try:`` so the broad handler
+    never sees it.
+    """
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _n: True)
+    monkeypatch.setattr(twrp, "import_rsa_public_key_negotiated", lambda *_a, **_kw: 99)
+    # The wycheproof verify of the test vector -> False (triggers probe path).
+    monkeypatch.setattr(twrp, "verify_single", lambda *_a, **_kw: False)
+    # gen_rsa_keypair raises a plain AssertionError whose message contains a
+    # CKR name from _RSA_PSS_RUNTIME_REJECT_CKRS (simulates a harness assert
+    # that happens to mention a CKR constant in its message).  The substring-
+    # match fallback in xfail_if_known_ckr would fire on this, converting the
+    # harness bug into an xfail — the test pins that this must NOT happen.
+    monkeypatch.setattr(
+        twrp,
+        "gen_rsa_keypair",
+        lambda *_a, **_kw: (_ for _ in ()).throw(
+            AssertionError("harness internal: CKR_FUNCTION_FAILED not expected here")
+        ),
+    )
+    monkeypatch.setattr(twrp, "sign_single", lambda *_a, **_kw: b"sig")
+    monkeypatch.setattr(twrp, "destroy_quietly", lambda *_a, **_kw: None)
+    monkeypatch.setattr(twrp, "generate_random", lambda *_a, **_kw: b"\x00" * 64)
+
+    vec = {
+        "msg": "00",
+        "sig": "00",
+        "result": "valid",
+        "_mechanism": 0x0D,
+        "_hash_mech": 0x0220,
+        "_mgf": 1,
+        "_sLen": 20,
+        "_group": {"publicKey": {"modulus": "00" * 256, "publicExponent": "010001"}},
+    }
+    # Must propagate as plain AssertionError.  With the probe inside the try:,
+    # the "CKR_FUNCTION_FAILED" substring match fires and pytest.xfail() is
+    # raised instead — that is the bug this test pins against.
+    with pytest.raises(AssertionError, match="CKR_FUNCTION_FAILED not expected here"):
+        twrp.test_rsa_pss(rs, "rsa_pss_2048_sha1_mgf1_20_probe_bug:tc1-valid", vec)

@@ -95,3 +95,44 @@ def test_plain_assertion_error_propagates_uncached(monkeypatch: pytest.MonkeyPat
     from pkcs11_check.testcases._operability import _CACHE
 
     assert not any("RSA_PSS" in k for k in _CACHE)
+
+
+def test_different_salt_lengths_produce_distinct_cache_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fix 2: salt_len is part of the probe cache key; two calls with the same
+    (mech, hash, mgf) but different salt_len must each run the probe once and
+    produce independent cache entries.  A dropped ``:{salt_len}`` suffix would
+    collapse both calls onto the same key so the probe runs only once and the
+    second call returns the first result without re-probing (silent
+    cross-contamination of verdicts).
+    """
+    call_count = 0
+
+    def counting_keygen(*_a: Any, **_k: Any) -> tuple[int, int]:
+        nonlocal call_count
+        call_count += 1
+        return (7, 8)
+
+    _wire(monkeypatch, keygen=counting_keygen, verify=lambda *a, **k: True)
+
+    rs = _rs()
+    # First call: sLen=20
+    r1 = mod._pss_combo_operability(rs, 0x0D, 0x0220, 0x01, 20)
+    # Second call: same mech/hash/mgf, different sLen=32
+    r2 = mod._pss_combo_operability(rs, 0x0D, 0x0220, 0x01, 32)
+
+    # Both must be OPERATIONAL (two separate successful probes)
+    assert r1.status is Operability.OPERATIONAL
+    assert r2.status is Operability.OPERATIONAL
+    # The probe (keygen) must have run exactly twice — once per distinct salt
+    assert call_count == 2, (
+        f"expected 2 probe runs (one per salt_len), got {call_count}; "
+        "salt_len is likely missing from the cache key"
+    )
+
+    from pkcs11_check.testcases._operability import _CACHE
+
+    # Two distinct keys must be present
+    pss_keys = [k for k in _CACHE if "RSA_PSS" in k]
+    assert len(pss_keys) == 2, f"expected 2 cache entries, got: {pss_keys}"
