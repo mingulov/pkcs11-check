@@ -54,7 +54,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    classify_lifecycle_effect,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
@@ -436,9 +440,15 @@ class TestEcdhKeyAgreement:
             bob_point_attrs = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_EC_POINT])
             bob_ec_point = cast(bytes, bob_point_attrs.get(CKA_EC_POINT, b""))
 
-            # If we can't read the point, skip
-            if not bob_ec_point:
-                pytest.skip("Cannot extract public key point for ECDH")
+            # The module claimed EC keygen success (gen_ec_keypair asserts CKR_OK).
+            # CKA_EC_POINT is a mandatory, non-sensitive attribute on an EC public
+            # key, so an empty readback contradicts the claimed success (Type-C
+            # self-contradiction) -> fail, not skip.
+            classify_lifecycle_effect(
+                claimed_success=True,
+                effect_observed=not bob_ec_point,
+                label=f"Curve {curve} EC keygen claimed success but CKA_EC_POINT unreadable",
+            )
 
             # CKA_EC_POINT is DER-encoded; ECDH1_DERIVE requires raw point per OASIS spec.
             try:
