@@ -74,6 +74,14 @@ gated on provider identity**. No per-provider config, baselines, or allowlists.
   Type-A and self-contradiction (Type B/C/D) classes: those `fail`, they are not `xfail`ed.
 - Full model + A/B/C/D rules: [docs/classification-model-design.md](docs/classification-model-design.md).
 
+Two spec-grounded refinements (design: docs/superpowers/specs/2026-06-10-advertised-capability-honesty-design.md):
+- **Sanctioned policy refusal = pass:** in the `test_mech_*` claim layer, a clean refusal with
+  `CKR_OPERATION_NOT_VALIDATED` (PKCS#11 v3.2 validation-policy code) is conformant → **pass** +
+  `compliance.note`. Any other clean refusal of an advertised (mechanism, operation) stays xfail.
+- **Vacuous reject = xfail:** where a canonical operability probe says NOT_OPERATIONAL, a
+  negative-op "rejection" never evaluated the input → **xfail**, not pass (INCONCLUSIVE never
+  triggers this; WRONG_OUTPUT also leaves the pass untouched).
+
 ### Error handling — CRITICAL
 - **NEVER use a bare `except Exception: pass` or catch-all CKR check** — this hides real bugs. Every CKR check must list SPECIFIC acceptable return codes.
 - Use predefined CKR tuples for common patterns:

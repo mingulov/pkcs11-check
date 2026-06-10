@@ -31,7 +31,7 @@ def _notes_spy(
 
 
 def _make_unregistered_catalog(
-    mech_id: int = 0x00000107,
+    mech_id: int = 0x00001081,
     mech_name: str = "CKM_AES_ECB",
     *,
     flags: int | None = None,
@@ -72,9 +72,9 @@ def test_registered_entries_produce_no_notes(monkeypatch: pytest.MonkeyPatch) ->
     captured = _notes_spy(monkeypatch)
     catalog = MechanismCatalog(
         {
-            0x00001082: MechEntry(
-                mech_id=0x00001082,
-                mech_name="CKM_AES_CBC",
+            0x00001087: MechEntry(
+                mech_id=0x00001087,
+                mech_name="CKM_AES_GCM",
                 flags=int(CKF_DECRYPT),
                 min_key_size=16,
                 max_key_size=32,
@@ -90,16 +90,16 @@ def test_multiple_unregistered_produce_one_note_each(monkeypatch: pytest.MonkeyP
     captured = _notes_spy(monkeypatch)
     catalog = MechanismCatalog(
         {
-            0x00000107: MechEntry(
-                mech_id=0x00000107,
+            0x00001081: MechEntry(
+                mech_id=0x00001081,
                 mech_name="CKM_AES_ECB",
                 flags=int(CKF_SIGN),
                 min_key_size=0,
                 max_key_size=0,
                 config=None,
             ),
-            0x00001082: MechEntry(
-                mech_id=0x00001082,
+            0x00001087: MechEntry(
+                mech_id=0x00001087,
                 mech_name="CKM_AES_GCM",
                 flags=int(CKF_DECRYPT),
                 min_key_size=0,
@@ -120,10 +120,10 @@ def test_multiple_unregistered_produce_one_note_each(monkeypatch: pytest.MonkeyP
 def test_note_contains_hex_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """Note must include the mechanism's hex ID."""
     captured = _notes_spy(monkeypatch)
-    catalog = _make_unregistered_catalog(mech_id=0x00000107, mech_name="CKM_AES_ECB")
+    catalog = _make_unregistered_catalog(mech_id=0x00001081, mech_name="CKM_AES_ECB")
     cov._note_registry_blind_spots(catalog)
     descriptions = [d for d, _l, _t, _r in captured]
-    assert any("0x00000107" in d for d in descriptions)
+    assert any("0x00001081" in d for d in descriptions)
 
 
 def test_harness_blind_spot_not_module_deviation_text(monkeypatch: pytest.MonkeyPatch) -> None:

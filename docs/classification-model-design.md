@@ -259,3 +259,23 @@ reports from this session.
 - P1b roundtrip-inconsistency-as-self-contradiction (defer; start with base rule).
 - Whether `assert_ckr()`'s DEFAULT vs strict compat modes survive the 3-way change or are
   superseded by `classify_rejection` (decide in Phase 1).
+
+## Refinements: advertised-capability honesty (2026-06-10)
+
+Spec basis (OASIS PKCS#11 v3.2): `C_GetMechanismList` lists mechanisms "supported by a token";
+`CK_MECHANISM_INFO.flags` claims per-operation support ("True if the mechanism can be used with
+C_SignInit"); `CKR_OPERATION_NOT_VALIDATED` is the sanctioned validation-policy refusal.
+
+1. **Claim layer (test_mech_*):** the registry roundtrip is the canonical operation for the
+   advertised capability. Clean refusal with CKR_OPERATION_NOT_VALIDATED → pass + note
+   (conformant policy refusal — does not contradict the advertisement). Any other clean CKR →
+   xfail via the shared `not_operational_reason` wording (no CKR allowlist; positive-op row).
+   Wrong output / crash / non-CKR unchanged (fail / propagate).
+2. **Vacuous negative-op reject:** with a canonical probe verdict of NOT_OPERATIONAL, an
+   invalid-input "rejection" asserts nothing (the module refuses everything) → xfail
+   "vacuous reject", not pass. OPERATIONAL, INCONCLUSIVE, and WRONG_OUTPUT verdicts leave
+   the pass untouched: OPERATIONAL rejections are genuine passes; INCONCLUSIVE (staging
+   failure, no mechanism evidence) keeps legacy rules; WRONG_OUTPUT surfaces as a finding.
+
+Both refinements are provider-general: discrimination is by return code, probe effect, and
+CKO_VALIDATION capability only.
