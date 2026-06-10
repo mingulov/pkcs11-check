@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import NoReturn
+
 from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -48,6 +50,41 @@ NON_CLEAN_SIGNATURE_REJECT_RVS = (
     # evidence attributed to the leak, not a finding on the innocent vector.
     CKR_OPERATION_ACTIVE,
 )
+
+
+# An advertised mechanism whose positive (sign / sign-verify roundtrip)
+# operation cleanly refuses at runtime -- the mechanism is listed but is not
+# operational in this configuration (e.g. FIPS 140-3 deprecates SHA-1 for
+# signature generation, so kryoptic-FIPS advertises CKM_ECDSA_SHA1 yet returns
+# CKR_DEVICE_ERROR on the actual sign). A clean refusal produces no signature,
+# so per the classification model it is an "advertised but not operational"
+# deviation (xfail), never a crypto break. Wrong output (a produced signature
+# that does not verify) is caught by the runner's verify assertion, not here.
+SIGN_NOT_OPERATIONAL_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_ARGUMENTS_BAD,
+)
+
+
+def xfail_if_sign_not_operational(exc: AssertionError, label: str) -> NoReturn:
+    """Classify a clean runtime refusal of an ADVERTISED sign/roundtrip op.
+
+    xfails a known runtime-reject CK_RV as 'advertised but not operational';
+    re-raises anything else (including a non-CKR harness/ctypes error, which
+    must never be read as not-operational).
+    """
+    xfail_if_known_ckr(
+        exc,
+        SIGN_NOT_OPERATIONAL_RVS,
+        f"{label}: advertised mechanism not operational (sign refused at runtime)",
+    )
+    raise exc
 
 
 def signature_rejected_or_xfail(exc: AssertionError, label: str) -> bool:
