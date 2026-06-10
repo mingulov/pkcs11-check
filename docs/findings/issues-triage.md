@@ -606,18 +606,30 @@ Full `docker/test.sh softhsm2` on dev after merging the complete fix-pass:
   policy hardening checks (`test_parameter_validation` GCM weak-params 9, `test_acvp_eddsa` 4,
   `test_cve_regression`/`test_tookan` Tookan 2+1, `test_set_attribute` atomicity 1,
   `test_padding_oracle` 1, `test_mech_negative` 1, `test_ckr_wrong_key_type_hardening` 2).
+  **Update (2026-06-10):** the `test_ckr_wrong_key_type_hardening` 2 are now **xfailed**, not failed,
+  after the wrong-key-type continuation fix (lenient-init + safe-op-rejection → xfail; produced
+  output/crash → fail) — so the post-fix softhsm2 failed count is **66**, of which `test_mech_negative` 1
+  + the analogous `test_ckr_sign/verify::*InitErrors` are the first-line init-only strictness still
+  flagged for the same fail-vs-xfail decision (the continuation probe is now the authoritative verifier).
 
 Confirms the merged fix-pass is correct, complete for clear bugs, and regression-free; what remains
 on softhsm2 is precisely the documented policy/UB decisions awaiting the user.
 
 ## Post-merge regression gate #2 — wolfpkcs11 full suite on dev (2026-06-10)
 
-**3,067 (pool) → 400 failed** (87% reduction). Every fixed file is 0: `test_cts` 2,079→0,
-`test_wycheproof_rsa_oaep` 209→0, `test_wycheproof` 144→0, `test_wycheproof_rsa` 21→0,
-`test_wycheproof_aes`/`_ecdh`/`_rsa_decrypt` 0. Zero regressions (no fixed file fails). The 400
-remaining are GENUINE wolfpkcs11 findings + flagged UB: digest H7 malformed-CK_RV ~309, CCM
-tag-auth bypass + non-operability 45, output-buffer size-protocol violations 6 (wrong required
-count / OOB write / garbage length — characterized in module-issues.md), GCM 9, plus the flagged
-UB probes (`test_ffi_length_boundary` 21 + `test_secret_key_value_len` 8). Determination note: the
-buffer-guard failures were verified REAL (LEN values prove wrong-size-query / OOB / garbage),
-NOT the benign CKR_OK+0-overwrite deviation the C_Digest guard now xfails — so no harness change.
+Pool baseline 3,067. Cleared by the fix-pass: `test_cts` 2,079→0 (H2 operability → xfail),
+`test_wycheproof_rsa` 21→0, `test_wycheproof_aes`/`_ecdh`/`_rsa_decrypt` 0. Zero regressions (no
+fixed file fails). **CORRECTION (2026-06-10 re-verify):** two files this section previously listed
+as `→0` were NOT cleared — fresh targeted runs on dev show `test_wycheproof_rsa_oaep` **209 failed**
+(stable) / 210 (master) and `test_wycheproof.py::TestAESCBCPKCS5Wycheproof` **144 failed**. Both are
+genuine wolfpkcs11 deviations (OAEP empty-message ~125 + 3-prime RSA 54 + near-max ~15, operational
+combo → fail per H3 design; AES-CBC-PAD accepts non-PKCS#5 BadPadding, shared with opencryptoki —
+softhsm2/kryoptic reject). The H3 OAEP probe only clears *combo-dead* OAEP (opencryptoki's 26), never
+these. So the earlier `400 failed` total was understated by ~353 (it wrongly excluded OAEP+CBC-PAD);
+per project policy no precise total is re-asserted here. The genuine + flagged buckets that ARE
+correctly counted: digest H7 malformed-CK_RV ~309, CCM tag-auth bypass + non-operability 45,
+output-buffer size-protocol violations 6 (wrong required count / OOB write / garbage length —
+module-issues.md), GCM 9, flagged UB probes (`test_ffi_length_boundary` 21 + `test_secret_key_value_len`
+8), **plus OAEP 209 + AES-CBC-PAD 144 (above)**. Determination note: the buffer-guard failures were
+verified REAL (LEN values prove wrong-size-query / OOB / garbage), NOT the benign CKR_OK+0-overwrite
+deviation the C_Digest guard now xfails — so no harness change.
