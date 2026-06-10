@@ -21,10 +21,13 @@ from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_ENCRYPTED_DATA_INVALID,
     CKR_GENERAL_ERROR,
+    CKR_SIGNATURE_INVALID,
 )
 from pkcs11_check.testcases._operability import reset_operability_cache
+from pkcs11_check.testcases.acvp import test_acvp_rsa as rsa
 from pkcs11_check.testcases.acvp.aes import base_runner_aead as aead
 from pkcs11_check.testcases.acvp.aes import test_wrap as wrap
+from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa_pss as pss
 
 
 @pytest.fixture(autouse=True)
@@ -270,3 +273,220 @@ def test_wycheproof_ccm_not_operational_xfails(monkeypatch: pytest.MonkeyPatch) 
     }
     with pytest.raises(pytest.xfail.Exception, match="vacuous reject"):
         wp.test_aes_ccm(_rs(), "tc-inv", vec_data)
+
+
+# --- ACVP SigVer (test_acvp_rsa.test_rsa_pkcs15_verify) ---------------------
+#
+# An invalid SigVer vector "rejected" by a mechanism whose canonical SigVer
+# probe is NOT_OPERATIONAL never evaluated the signature -- the downgrade fires.
+# A probe that is INCONCLUSIVE (canonical public-key import refused, no
+# mechanism evidence) must leave the legacy pass untouched.  Both directions
+# drive the real ``test_rsa_pkcs15_verify`` method so deleting the wiring fails
+# the firing test.
+
+_SIGVER_VECTOR_SIG = b"\xaa" * 8  # the under-test vector signature (distinct)
+_SIGVER_CANON_SIG = b"\xbb" * 8  # the canonical probe vector signature
+
+
+def _invalid_sigver_vec() -> dict[str, Any]:
+    """A SigVer vector with expected_pass=False (the under-test invalid vector)."""
+    return {
+        "mech_name": "SHA1_RSA_PKCS",
+        "mech_int": 6,
+        "expected_pass": False,
+        "n": b"\x01" * 256,  # 256 bytes = 2048 bits
+        "e": b"\x01\x00\x01",
+        "message": b"m",
+        "signature": _SIGVER_VECTOR_SIG,
+    }
+
+
+def _canonical_sigver_pkcs15_ver() -> list[tuple[str, dict[str, Any]]]:
+    """A single canonical valid vector for the probe to find (2048-bit SHA-1)."""
+    return [
+        (
+            "canon",
+            {
+                "mech_name": "SHA1_RSA_PKCS",
+                "mech_int": 6,
+                "expected_pass": True,
+                "n": b"\x01" * 256,
+                "e": b"\x01\x00\x01",
+                "message": b"m",
+                "signature": _SIGVER_CANON_SIG,
+            },
+        )
+    ]
+
+
+def test_sigver_invalid_reject_on_dead_mech_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Invalid SigVer vector rejected + NOT_OPERATIONAL probe -> vacuous xfail.
+
+    The vector-under-test verify cleanly rejects (CKR_SIGNATURE_INVALID, so
+    ``signature_rejected_or_xfail`` returns False = ``verified``), and the
+    canonical probe verify ALSO refuses -> NOT_OPERATIONAL.  Mutation-resistant:
+    deleting the ``xfail_vacuous_reject`` call lets the function return = pass.
+    """
+
+    def verify_dispatch(
+        _raw: Any, _sh: int, _key: int, _mech: int, _msg: bytes, sig: bytes, **_kw: Any
+    ) -> bool:
+        if sig == _SIGVER_CANON_SIG:  # canonical probe verify -> NOT_OPERATIONAL
+            raise CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))
+        # under-test invalid vector -> clean signature reject
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SIGNATURE_INVALID", int(CKR_SIGNATURE_INVALID)
+        )
+
+    monkeypatch.setattr(rsa, "import_rsa_public_key_negotiated", lambda *a, **k: 7)
+    monkeypatch.setattr(rsa, "verify_single", verify_dispatch)
+    monkeypatch.setattr(rsa, "destroy_quietly", lambda *a, **k: None)
+    monkeypatch.setattr(rsa, "_PKCS15_VER", _canonical_sigver_pkcs15_ver())
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
+    with pytest.raises(pytest.xfail.Exception, match="vacuous reject"):
+        rsa.TestRsaSigVer().test_rsa_pkcs15_verify(rs, "tc-inv", _invalid_sigver_vec())
+
+
+def test_sigver_invalid_reject_on_inconclusive_probe_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invalid SigVer vector rejected + INCONCLUSIVE probe -> legacy pass (no xfail).
+
+    Probe staging (per the plan) = canonical public-key import refusal, so there
+    is no mechanism evidence; the downgrade must NOT fire.  The under-test vector
+    import succeeds (1st call) but the probe's canonical-vector import refuses
+    (2nd call) -> INCONCLUSIVE.  The vector reject returns normally.
+    """
+    import_calls = {"n": 0}
+
+    def import_dispatch(_rs: Any, *, n: bytes, e: bytes, attrs: Any) -> int:
+        import_calls["n"] += 1
+        if import_calls["n"] == 1:  # under-test vector import succeeds
+            return 7
+        # canonical probe import refuses -> staging failure -> INCONCLUSIVE
+        raise CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))
+
+    def verify_reject(
+        _raw: Any, _sh: int, _key: int, _mech: int, _msg: bytes, _sig: bytes, **_kw: Any
+    ) -> bool:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SIGNATURE_INVALID", int(CKR_SIGNATURE_INVALID)
+        )
+
+    monkeypatch.setattr(rsa, "import_rsa_public_key_negotiated", import_dispatch)
+    monkeypatch.setattr(rsa, "verify_single", verify_reject)
+    monkeypatch.setattr(rsa, "destroy_quietly", lambda *a, **k: None)
+    monkeypatch.setattr(rsa, "_PKCS15_VER", _canonical_sigver_pkcs15_ver())
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
+    # returns normally (no xfail) = legacy pass on INCONCLUSIVE
+    rsa.TestRsaSigVer().test_rsa_pkcs15_verify(rs, "tc-inv", _invalid_sigver_vec())
+
+
+# --- wycheproof RSA-PSS (test_wycheproof_rsa_pss.test_rsa_pss) ---------------
+#
+# An invalid PSS vector cleanly refused by a NOT_OPERATIONAL combo never
+# evaluated the signature -> vacuous xfail.  An INCONCLUSIVE combo (keypair
+# staging refused) keeps the legacy pass.  Staging = ``gen_rsa_keypair``
+# refusal in the probe.
+
+
+def _pss_vec_invalid() -> dict[str, Any]:
+    """A minimal wycheproof PSS test entry with result=invalid (SHA-1, 2048-bit)."""
+    from pkcs11_check.raw.types_std import CKG_MGF1_SHA1, CKM_SHA1_RSA_PKCS_PSS, CKM_SHA_1
+
+    n_hex = "01" * 256  # 2048-bit modulus
+    return {
+        "msg": "00",
+        "sig": "00" * 8,
+        "result": "invalid",
+        "_mechanism": CKM_SHA1_RSA_PKCS_PSS,
+        "_sLen": 20,
+        "_hash_mech": CKM_SHA_1,
+        "_mgf": CKG_MGF1_SHA1,
+        "_sha": "SHA-1",
+        "_mgf_sha": "SHA-1",
+        "_group": {"publicKey": {"modulus": n_hex, "publicExponent": "010001"}},
+    }
+
+
+def test_pss_invalid_reject_on_dead_combo_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Invalid PSS vector cleanly refused + NOT_OPERATIONAL combo -> vacuous xfail.
+
+    The vector verify refuses with CKR_SIGNATURE_INVALID (clean signature
+    reject; ``signature_rejected_or_xfail`` returns False), and the canonical
+    combo sign also refuses -> NOT_OPERATIONAL.  Mutation-resistant: deleting
+    the ``xfail_vacuous_reject`` lets the function ``return`` = pass.
+    """
+
+    def refuse_combo_sign(*_a: Any, **_k: Any) -> bytes:
+        raise CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))
+
+    def reject_vector_verify(*_a: Any, **_k: Any) -> bool:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SIGNATURE_INVALID", int(CKR_SIGNATURE_INVALID)
+        )
+
+    monkeypatch.setattr(pss, "import_rsa_public_key_negotiated", lambda *a, **k: 7)
+    monkeypatch.setattr(pss, "verify_single", reject_vector_verify)
+    monkeypatch.setattr(pss, "gen_rsa_keypair", lambda *a, **k: (7, 8))
+    monkeypatch.setattr(pss, "sign_single", refuse_combo_sign)
+    monkeypatch.setattr(pss, "destroy_quietly", lambda *a, **k: None)
+    monkeypatch.setattr(pss, "mech_pss", lambda *a, **k: object())
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
+    with pytest.raises(pytest.xfail.Exception, match="vacuous reject"):
+        pss.test_rsa_pss(rs, "tc-inv", _pss_vec_invalid())
+
+
+def test_pss_invalid_reject_on_inconclusive_combo_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invalid PSS vector cleanly refused + INCONCLUSIVE combo -> legacy pass.
+
+    The probe's RSA-2048 keypair generation refuses (staging), so there is no
+    PSS-combo evidence; the downgrade must NOT fire.  The vector reject returns
+    normally.
+    """
+
+    def refuse_keygen(*_a: Any, **_k: Any) -> tuple[int, int]:
+        raise CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))
+
+    def reject_vector_verify(*_a: Any, **_k: Any) -> bool:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SIGNATURE_INVALID", int(CKR_SIGNATURE_INVALID)
+        )
+
+    monkeypatch.setattr(pss, "import_rsa_public_key_negotiated", lambda *a, **k: 7)
+    monkeypatch.setattr(pss, "verify_single", reject_vector_verify)
+    monkeypatch.setattr(pss, "gen_rsa_keypair", refuse_keygen)
+    monkeypatch.setattr(pss, "destroy_quietly", lambda *a, **k: None)
+    monkeypatch.setattr(pss, "mech_pss", lambda *a, **k: object())
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
+    # returns normally (no xfail) = legacy pass on INCONCLUSIVE
+    pss.test_rsa_pss(rs, "tc-inv", _pss_vec_invalid())
+
+
+def test_pss_invalid_verify_false_on_dead_combo_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Invalid PSS vector returns verify-False + NOT_OPERATIONAL combo -> xfail.
+
+    Pins the SECOND PSS wiring site: the hoisted ``if result == 'invalid'``
+    classification block's terminal ``return`` (verify_single returns False
+    rather than raising).  The combo probe sign refuses -> NOT_OPERATIONAL ->
+    the downgrade fires.  Mutation-resistant for the hoisted-block site
+    independently of the except-handler site.
+    """
+
+    def refuse_combo_sign(*_a: Any, **_k: Any) -> bytes:
+        raise CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))
+
+    # verify_single returns False for the under-test vector (no raise) so the
+    # hoisted invalid block is reached; the combo probe also calls verify_single
+    # but only after sign_single, which refuses first.
+    monkeypatch.setattr(pss, "import_rsa_public_key_negotiated", lambda *a, **k: 7)
+    monkeypatch.setattr(pss, "verify_single", lambda *a, **k: False)
+    monkeypatch.setattr(pss, "gen_rsa_keypair", lambda *a, **k: (7, 8))
+    monkeypatch.setattr(pss, "sign_single", refuse_combo_sign)
+    monkeypatch.setattr(pss, "destroy_quietly", lambda *a, **k: None)
+    monkeypatch.setattr(pss, "mech_pss", lambda *a, **k: object())
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
+    with pytest.raises(pytest.xfail.Exception, match="vacuous reject"):
+        pss.test_rsa_pss(rs, "tc-inv", _pss_vec_invalid())

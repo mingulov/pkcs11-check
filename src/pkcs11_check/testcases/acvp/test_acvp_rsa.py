@@ -45,6 +45,7 @@ from pkcs11_check.testcases._operability import (
     Operability,
     OperabilityResult,
     probe_operability,
+    xfail_vacuous_reject,
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
@@ -311,6 +312,17 @@ class TestRsaSigVer:
 
             if not expected_pass and verified:
                 pytest.fail(f"{vec_id}: ACCEPTED INVALID signature - security concern")
+            if not expected_pass and not verified:
+                # The invalid vector was rejected -- a genuine pass ONLY if the
+                # mechanism actually verifies anything. tpm2 rejects all 27 valid
+                # SHA-1 SigVer vectors while "passing" 135 invalid ones: those
+                # rejections never evaluated the signature -> vacuous (xfail). The
+                # probe is INCONCLUSIVE-safe (canonical import refused never fires).
+                key_bits = len(vec["n"]) * 8
+                xfail_vacuous_reject(
+                    _pkcs15_sigver_operability(rs, mech_name, key_bits),
+                    label=f"{vec_id}: {mech_name} invalid-signature reject",
+                )
             if expected_pass and not verified:
                 key_bits = len(vec["n"]) * 8
                 result = _pkcs15_sigver_operability(rs, mech_name, key_bits)
