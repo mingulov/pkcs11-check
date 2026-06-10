@@ -10,12 +10,18 @@ same session; breaks any client that reuses a session for multiple verifies).
 | kryoptic v1.5.0 | 3.2 | wrong-**length** sig → `CKR_SIGNATURE_LEN_RANGE` | `C_SessionCancel` |
 | tpm2-pkcs11 | **2.40** | **empty** sig → `CKR_ARGUMENTS_BAD` (terminates fine on `CKR_SIGNATURE_INVALID`) | **only close+reopen** |
 | BouncyHSM | 3.2 | **empty** sig → `CKR_ARGUMENTS_BAD` (terminates fine on a wrong-length sig) | `C_SessionCancel` (v3.0) |
+| OpenCryptoki | 3.x | **empty** sig → `CKR_ARGUMENTS_BAD`, **multipart `C_VerifyFinal` only** (single-shot `C_Verify` terminates correctly) | `C_SessionCancel` |
 
-(Confirmed by running `test_operation_termination.py` across all 8 stable
-providers: kryoptic, tpm2-pkcs11, and BouncyHSM FAIL it; softhsm2, NSS, NSS-PQC,
-and OpenCryptoki PASS; pkcs11-mock skips. kryoptic is caught by the *too-short*
-variant; tpm2 and BouncyHSM only by the *empty* variant — which is why the test
-probes several malformations rather than one.)
+(Confirmed by running `test_operation_termination.py` across the stable providers:
+kryoptic, tpm2-pkcs11, BouncyHSM, and **OpenCryptoki** FAIL it; softhsm2, NSS, and
+NSS-PQC PASS; pkcs11-mock skips. kryoptic is caught by the *too-short* variant;
+tpm2, BouncyHSM, and OpenCryptoki only by the *empty* variant — which is why the
+test probes several malformations rather than one. **Re-verify 2026-06-10:**
+OpenCryptoki was previously listed as PASS — that held for the single-shot
+`C_Verify` test, but the multipart `C_VerifyFinal` probe
+(`test_c_verify_final_terminates_after_rejected_signature`) leaves the op active
+after an empty-sig `CKR_ARGUMENTS_BAD` (fresh: 1 failed / 25 passed), same class
+as tpm2/BouncyHSM.)
 
 Both leave the verify operation active after *some* rejection; they differ in
 *which* rejection and in what recovery is possible. tpm2-pkcs11 is the harder
