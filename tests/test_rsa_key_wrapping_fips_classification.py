@@ -20,7 +20,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from _pytest.outcomes import Failed, XFailed
+from _pytest.outcomes import XFailed
 
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKR_DEVICE_ERROR
@@ -156,7 +156,7 @@ def test_aes128_wrong_value_after_unwrap_hard_fails(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(rw, "wrap_key_recipe", lambda *_a, **_k: b"\x00" * 256)
     monkeypatch.setattr(rw, "unwrap_key_for_mechanism_roundtrip", lambda *_a, **_k: 99)
     monkeypatch.setattr(rw, "destroy_quietly", lambda *_a, **_k: None)
-    with pytest.raises((AssertionError, Failed)):
+    with pytest.raises(AssertionError):
         rw.TestRSAPKCSWrap().test_wrap_unwrap_aes128(_rs(), _p11_config())
 
 
@@ -171,7 +171,7 @@ def test_usability_wrong_plaintext_after_unwrap_hard_fails(
     monkeypatch.setattr(rw, "unwrap_key_for_mechanism_roundtrip", lambda *_a, **_k: 99)
     monkeypatch.setattr(rw, "decrypt_single", lambda *_a, **_k: b"WRONG-PLAINTEXT")
     monkeypatch.setattr(rw, "destroy_quietly", lambda *_a, **_k: None)
-    with pytest.raises((AssertionError, Failed)):
+    with pytest.raises(AssertionError):
         rw.TestWrappedKeyUsability().test_unwrapped_key_encrypts(_rs(), _p11_config())
 
 
