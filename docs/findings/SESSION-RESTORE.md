@@ -4,6 +4,29 @@ This file restores the goal + loop after a context clear / new session. History:
 `fix/triage-harness-improvements` is MERGED into `dev`; all work now lands on `dev` via small
 feature branches or direct doc commits. Auto-memory: `project_issue_triage_loop.md`.
 
+## CURRENT STATE — session-exit snapshot (2026-06-10)
+
+**Denis decisions (this session):**
+- **C1–C3 UB probes = KEEP** ("crashes are findings"). The flag is CLOSED; do not remove the
+  lying-buffer / NULL-deref probes. (Recorded in the CRASHES verdict block in issues-triage.md.)
+- **Hardening checks** (GCM weak-params, EdDSA keyver, SetAttribute atomicity, AES-CBC-PAD lax
+  padding, wrong-key-type init-only) = **no preference → leave AS-IS** (still `fail`, unchanged).
+
+**Shipped this session (all merged to `dev`):** wrong-key-type continuation→xfail; CI ruff-format
+gate; **FIPS "advertised-but-not-operational" class** — ECDSA-prehash SHA-1 + RSA encrypt/interop
+(new helper `_signature_policy.xfail_if_op_not_operational`); doc corrections (wolfpkcs11 OAEP/CBC-PAD
+over-claim ×2 docs; opencryptoki verify-final). A parallel worker also landed
+`advertised-not-operational-gap-analysis.md` + an ML-DSA ctx-skip fix.
+
+**Pending / pick up here:**
+1. **`test_rsa_key_wrapping` FIPS** (3F on kryoptic-fips) — failure is on the **unwrap**
+   (`unwrap_key_for_mechanism_roundtrip`, private-key C_UnwrapKey = key transport), NOT the public
+   wrap. Wrap the 3 unwrap call sites with `xfail_if_op_not_operational`; verify kryoptic-fips→0,
+   non-FIPS no-regression.
+2. **gap-analysis follow-ups** (`advertised-not-operational-gap-analysis.md`): vacuous negative-op
+   reject downgrade on NOT_OPERATIONAL mechanisms; registry-coverage meta-check.
+3. Hardening reclassification (open, no decision). main promotion (Denis only).
+
 ## How to restore the loop (run on Fable, not Opus)
 
 1. `claude --model claude-fable-5` (do not run `/fast`).

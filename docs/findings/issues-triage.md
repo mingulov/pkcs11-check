@@ -316,6 +316,11 @@ This is the same effect-over-return-code principle as the discrimination model
 
 ## 💥 CRASHES — **DETERMINED 2026-06-09 (code-read + fresh repro)**
 
+> **✅ DENIS DECISION (2026-06-10): KEEP the C1–C3 UB probes as-is — "crashes are findings."**
+> The lying-buffer / NULL-deref probes stay; their crashes are reported as module findings, not
+> removed/neutered. This closes the C1–C3 flag. (The analysis below stands as the rationale for why
+> they are *harness-provoked UB*, but the call is to retain them as robustness probes.)
+>
 > Precedent: [[project_threading_ub_finding]] — a "crash" the *harness* provokes by feeding
 > undefined-behavior input (e.g. declaring `ulDataLen = ULONG_MAX` while `pData` points at a small
 > buffer → the module reads out of bounds) is a **harness-bug**, not a module finding.
