@@ -19,7 +19,8 @@ Design: docs/superpowers/specs/2026-06-10-advertised-capability-honesty-design.m
 
 from __future__ import annotations
 
-from typing import Any
+import inspect
+from typing import Any, Literal
 
 import pytest
 
@@ -35,9 +36,9 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._operability import not_operational_reason
 
-# Cached once per process: whether the token exposes CKO_VALIDATION objects
-# (None = the token refused enumeration of that class).
-_VALIDATION_CACHE: dict[str, bool | None] = {}
+# Cached once per process: successful enumeration results keyed by "present".
+# CKR refusals are NOT cached (a later clean-session probe may succeed).
+_VALIDATION_CACHE: dict[str, str] = {}
 
 
 def reset_validation_object_cache() -> None:
@@ -45,17 +46,32 @@ def reset_validation_object_cache() -> None:
     _VALIDATION_CACHE.clear()
 
 
-def _validation_objects_present(rs: Any) -> bool | None:
-    if "present" not in _VALIDATION_CACHE:
-        try:
-            tmpl = template(attr_ulong(CKA_CLASS, CKO_VALIDATION))
-            _VALIDATION_CACHE["present"] = bool(find_objects(rs.raw, rs.sh, tmpl))
-        except AssertionError:
-            _VALIDATION_CACHE["present"] = None
-    return _VALIDATION_CACHE["present"]
+def _validation_objects_present(rs: Any) -> str:
+    """Return a presence description for CKO_VALIDATION objects.
+
+    Returns:
+        ``"True"``  -- at least one CKO_VALIDATION object was found.
+        ``"False"`` -- enumeration succeeded but returned no objects.
+        ``"unknown (CKR_*)"`` -- enumeration was refused with a CKR; NOT cached
+            so a later probe on a fresh session can succeed.
+
+    Non-CkrAssertionError exceptions (harness bugs) propagate unchanged.
+    """
+    if "present" in _VALIDATION_CACHE:
+        return _VALIDATION_CACHE["present"]
+    tmpl = template(attr_ulong(CKA_CLASS, CKO_VALIDATION))
+    try:
+        handles = find_objects(rs.raw, rs.sh, tmpl)
+    except CkrAssertionError as exc:
+        # Transient refusal -- do NOT cache so future clean-session probes work.
+        return f"unknown ({ckr_name(exc.rv)})"
+    # Successful enumeration: cache the outcome.
+    presence = "True" if handles else "False"
+    _VALIDATION_CACHE["present"] = presence
+    return presence
 
 
-def claim_refusal_passes(exc: AssertionError, rs: Any, *, probe_key: str) -> bool:
+def claim_refusal_passes(exc: AssertionError, rs: Any, *, probe_key: str) -> Literal[True]:
     """Classify a clean refusal of an advertised (mechanism, operation) roundtrip.
 
     Returns True for the spec-sanctioned validation-policy refusal
@@ -63,16 +79,20 @@ def claim_refusal_passes(exc: AssertionError, rs: Any, *, probe_key: str) -> boo
     (``return``) so it records as PASS; the compliance note carries the
     evidence. Otherwise xfails (any clean CKR) or re-raises (non-CKR).
     """
-    rv = getattr(exc, "rv", None)
-    if not isinstance(exc, CkrAssertionError) or rv is None:
+    if not isinstance(exc, CkrAssertionError):
         raise exc
-    if rv == int(CKR_OPERATION_NOT_VALIDATED):
-        present = _validation_objects_present(rs)
+    if exc.rv == int(CKR_OPERATION_NOT_VALIDATED):
+        # Capture the caller's qualname for correct note attribution.
+        frame = inspect.currentframe()
+        caller = frame.f_back if frame else None
+        caller_qualname = caller.f_code.co_qualname if caller else ""
+        presence = _validation_objects_present(rs)
         compliance.note(
             f"{probe_key}: refused via sanctioned CKR_OPERATION_NOT_VALIDATED "
-            f"(validation-policy refusal; CKO_VALIDATION objects present: {present})",
+            f"(validation-policy refusal; CKO_VALIDATION objects present: {presence})",
             ComplianceLevel.STANDARD,
             reference="PKCS#11 v3.2 CKR_OPERATION_NOT_VALIDATED / Sec. 4.15",
+            test_id=caller_qualname,
         )
         return True
-    pytest.xfail(not_operational_reason(probe_key, ckr_name(rv)))
+    pytest.xfail(not_operational_reason(probe_key, ckr_name(exc.rv)))
