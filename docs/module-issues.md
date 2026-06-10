@@ -1867,3 +1867,49 @@ so no precise total is asserted here.)
 - **Crashes (genuine, on normal input)**: `test_wycheproof_hkdf` SIGABRT after 10 valid vectors;
   `test_ckr_keygen` SIGSEGV. wolfpkcs11-master fixed most crashes (4 vs stable's 18) -- report
   against current master.
+
+---
+
+## pkcs11-mock v2.0.0 (Pkcs11Interop stub)
+
+**Library:** `libpkcs11-mock.so` (single-file C stub, <https://github.com/Pkcs11Interop/pkcs11-mock>)
+**Docker target:** `test-pkcs11-mock`
+**Interface:** v3.1 (stub; most operations return `CKR_FUNCTION_NOT_SUPPORTED`)
+
+pkcs11-mock is a minimal conformance-testing stub. It accepts any `C_CreateObject` call and
+returns `CKR_OK`, but it does not actually store the caller-supplied data — it serves back its
+own hardcoded canned values for every `C_GetAttributeValue` query.
+
+### Known bugs
+
+- **Canned `CKA_VALUE` on certificate objects (Type-C self-contradiction)**: `C_CreateObject`
+  for a `CKO_CERTIFICATE` object returns `CKR_OK` regardless of the supplied DER bytes, but a
+  subsequent `C_GetAttributeValue(CKA_VALUE)` returns the 12-byte string `"Hello world!"` instead
+  of the imported DER. The stored size never matches the sent size: the pool baseline shows all
+  175 `test_limbo_import.py` certificate-import tests fail with the message
+  `"CKA_VALUE mismatch (12B stored vs <N>B sent)"`, where `N` is the real DER length (hundreds of
+  bytes). This is a **Type-C lifecycle self-contradiction**: `C_CreateObject` claims success, but
+  the readback contradicts the stored value — the module did not honour what it said it had
+  stored. Classification: **correctly FAILs** — this is a genuine finding, not a harness bug.
+
+  **Source evidence:** the canned value is `PKCS11_MOCK_CK_OBJECT_CKA_VALUE "Hello world!"`
+  defined in the upstream `pkcs11-mock.h` header; the `C_GetAttributeValue` implementation in
+  `pkcs11-mock.c` returns it unconditionally for all non-certificate-type objects and falls through
+  to `mock_certificate` (a fixed DER blob, not the caller-supplied bytes) for certificate objects.
+  Neither path stores nor returns the caller-supplied `CKA_VALUE`.
+
+  **Count context:** the pool baseline recorded ~88 failures on an earlier run; the count grew to
+  ~175 after the portable-label fix allowed more `C_CreateObject` calls to succeed (previously
+  some imports were rejected before reaching the value-storage path). Both counts reflect the same
+  underlying canned-value behaviour — more successful imports expose more readback contradictions.
+
+  **Report upstream?** The behaviour is by design for a stub library: pkcs11-mock is intended as
+  a minimal no-op stub, not a compliant token. Worth noting upstream as documentation — a stub
+  that returns `CKR_FUNCTION_NOT_SUPPORTED` from `C_CreateObject` would be a cleaner contract
+  than a silent-discard that returns `CKR_OK` and then lies on readback. pkcs11-check correctly
+  surfaces the contradiction as a hard fail; callers testing against pkcs11-mock should not rely
+  on round-tripping certificate bytes through `CKA_VALUE`.
+
+  Detected by: `test_limbo_import.py::test_import_limbo_failure_cert_raw` (175 failures,
+  pool baseline `artifacts2/pkcs11-mock-pooled/report.jsonl`). Determination: 2026-06-10
+  triage session.
