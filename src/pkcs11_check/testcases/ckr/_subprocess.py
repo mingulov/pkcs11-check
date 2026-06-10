@@ -9,6 +9,14 @@ import pytest
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 
 _SETUP_XFAIL_PREFIX = "SETUP_XFAIL:"
+# A child probe that observed a genuine break (e.g. a wrong-key operation that
+# actually produced output) emits BREAK: and the parent hard-fails it.
+_BREAK_PREFIX = "BREAK:"
+# A child probe that observed a clean, safe deviation (e.g. a module lenient at
+# *Init but that still SAFELY refused at the terminal operation, leaving no
+# usable operation behind) emits DEVIATION_XFAIL: and the parent records it as
+# an xfail -- a noted deviation, not a hard failure.
+_DEVIATION_XFAIL_PREFIX = "DEVIATION_XFAIL:"
 
 _RV_TRACE_SETUP = """\
 import atexit as _p11check_atexit
@@ -153,6 +161,12 @@ def assert_ckr_subprocess_ok(
     for line in stdout.splitlines():
         if line.startswith(_SETUP_XFAIL_PREFIX):
             pytest.xfail(line.removeprefix(_SETUP_XFAIL_PREFIX).strip())
+    for line in stdout.splitlines():
+        if line.startswith(_BREAK_PREFIX):
+            pytest.fail(f"{context}: {line.removeprefix(_BREAK_PREFIX).strip()}")
+    for line in stdout.splitlines():
+        if line.startswith(_DEVIATION_XFAIL_PREFIX):
+            pytest.xfail(line.removeprefix(_DEVIATION_XFAIL_PREFIX).strip())
     if "OK" not in stdout:
         pytest.fail(
             f"{context}: child subprocess did not emit an OK marker; "
