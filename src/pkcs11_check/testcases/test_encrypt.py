@@ -34,6 +34,7 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS_OAEP,
     CKM_SHA_1,
 )
+from pkcs11_check.testcases._signature_policy import xfail_if_op_not_operational
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     require_operational_aes_keygen,
@@ -256,8 +257,14 @@ class TestRSAEncryption:
         )
         try:
             plaintext = b"RSA roundtrip test"
-            ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS, plaintext)
-            pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, ct)
+            try:
+                ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS, plaintext)
+                pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, ct)
+            except AssertionError as exc:
+                # FIPS restricts RSA PKCS#1 v1.5 key transport -> CKR_DEVICE_ERROR
+                # on the private-key decrypt: advertised but not operational, not
+                # a break.
+                xfail_if_op_not_operational(exc, "CKM_RSA_PKCS")
             assert pt == plaintext
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

@@ -52,15 +52,17 @@ NON_CLEAN_SIGNATURE_REJECT_RVS = (
 )
 
 
-# An advertised mechanism whose positive (sign / sign-verify roundtrip)
-# operation cleanly refuses at runtime -- the mechanism is listed but is not
-# operational in this configuration (e.g. FIPS 140-3 deprecates SHA-1 for
-# signature generation, so kryoptic-FIPS advertises CKM_ECDSA_SHA1 yet returns
-# CKR_DEVICE_ERROR on the actual sign). A clean refusal produces no signature,
-# so per the classification model it is an "advertised but not operational"
-# deviation (xfail), never a crypto break. Wrong output (a produced signature
-# that does not verify) is caught by the runner's verify assertion, not here.
-SIGN_NOT_OPERATIONAL_RVS = (
+# An advertised mechanism whose positive operation (sign / encrypt / wrap /
+# roundtrip) cleanly refuses at runtime -- the mechanism is listed but is not
+# operational in this configuration. FIPS 140-3 is the canonical case: it
+# deprecates SHA-1 for signature generation and restricts RSA PKCS#1 v1.5
+# encryption/key-transport, so kryoptic-FIPS advertises CKM_ECDSA_SHA1 /
+# CKM_RSA_PKCS yet returns CKR_DEVICE_ERROR on the actual op. A clean refusal
+# produces no output, so per the classification model it is an "advertised but
+# not operational" deviation (xfail), never a crypto break. Wrong output (e.g.
+# a produced signature/ciphertext that does not round-trip) is caught by the
+# runner's verify/decrypt assertion, not here.
+OP_NOT_OPERATIONAL_RVS = (
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
@@ -72,17 +74,17 @@ SIGN_NOT_OPERATIONAL_RVS = (
 )
 
 
-def xfail_if_sign_not_operational(exc: AssertionError, label: str) -> NoReturn:
-    """Classify a clean runtime refusal of an ADVERTISED sign/roundtrip op.
+def xfail_if_op_not_operational(exc: AssertionError, label: str) -> NoReturn:
+    """Classify a clean runtime refusal of an ADVERTISED positive op.
 
-    xfails a known runtime-reject CK_RV as 'advertised but not operational';
-    re-raises anything else (including a non-CKR harness/ctypes error, which
-    must never be read as not-operational).
+    For sign / encrypt / wrap roundtrips: xfails a known runtime-reject CK_RV as
+    'advertised but not operational'; re-raises anything else (including a
+    non-CKR harness/ctypes error, which must never be read as not-operational).
     """
     xfail_if_known_ckr(
         exc,
-        SIGN_NOT_OPERATIONAL_RVS,
-        f"{label}: advertised mechanism not operational (sign refused at runtime)",
+        OP_NOT_OPERATIONAL_RVS,
+        f"{label}: advertised mechanism not operational (refused at runtime)",
     )
     raise exc
 
