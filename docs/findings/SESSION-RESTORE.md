@@ -4,7 +4,23 @@ This file restores the goal + loop after a context clear / new session. History:
 `fix/triage-harness-improvements` is MERGED into `dev`; all work now lands on `dev` via small
 feature branches or direct doc commits. Auto-memory: `project_issue_triage_loop.md`.
 
-## CURRENT STATE — session-exit snapshot (2026-06-10)
+## CURRENT STATE — advertised-capability honesty MERGED (2026-06-10, later session)
+
+**Advertised-capability honesty package: plan Tasks 1–9 MERGED to dev (`ec9db778`).**
+Spec: `docs/superpowers/specs/2026-06-10-advertised-capability-honesty-design.md`; plan:
+`docs/superpowers/plans/2026-06-10-advertised-capability-honesty.md`. Shipped: claim-layer
+3-way mapping in all `test_mech_*` suites (OPERATION_NOT_VALIDATED → pass+note; per-suite CKR
+allowlists retired), `_capability_claims.py`, `not_operational_reason`/`xfail_vacuous_reject`
+helpers, three-state SigVer + PSS probes (staging → INCONCLUSIVE, never downgrades),
+vacuous-reject downgrade at 8 probe-gated sites (AEAD GCM/CCM, KW/KWP, wycheproof-CCM,
+SigVer, PSS ×2). Meta-suite 2060P/2s, gates green. Every task two-stage reviewed except
+Task 9 (gates+self-verified; review pair skipped on user redirect — loop may backfill).
+**REMAINING: plan Tasks 10–12** — registry coverage meta-check; CLAUDE.md +
+classification-model-design.md amendments (MUST land before release — model/behavior drift);
+docker fresh-verify (tpm2 acvp_rsa ~135 P→xf, bouncyhsm test_ccm 1,691 genuine F must remain,
+kryoptic-fips test_mech_sign, controls softhsm2/kryoptic/opencryptoki).
+
+## PREVIOUS STATE — session-exit snapshot (2026-06-10, earlier)
 
 **Denis decisions (this session):**
 - **C1–C3 UB probes = KEEP** ("crashes are findings"). The flag is CLOSED; do not remove the
