@@ -1,8 +1,41 @@
-# Session restore — triage/fix loop (updated 2026-06-10, on `dev`)
+# Session restore — triage/fix loop (updated 2026-06-11, on `dev`)
 
 This file restores the goal + loop after a context clear / new session. History: branch
 `fix/triage-harness-improvements` is MERGED into `dev`; all work now lands on `dev` via small
 feature branches or direct doc commits. Auto-memory: `project_issue_triage_loop.md`.
+
+## CURRENT STATE — POOL COMPLETE + VALIDATED, artifacts3 baseline created (2026-06-11)
+
+**The 21-provider full pool is COMPLETE and VALIDATED.** All `artifacts/<provider>-pooled/`
+have results; the post-pool procedure (Denis 2026-06-10) is DONE:
+- **Comparison FINAL:** `docs/findings/pool-2026-06-10-comparison.md` flipped PARTIAL→FINAL —
+  wolfpkcs11 ×2 amended (§4), validation verdict §6. New vs `artifacts2/` baselines.
+- **Verdict: VALIDATED.** Nothing broken. Every fail-count change is an intended fail→xfail/pass
+  shift (honesty package, vacuous-reject downgrade, ECDH-H9, capability-gating retirement), a
+  documented genuine module finding, new-test coverage, or documented probabilistic/scheduling
+  noise. **0 newly-failing nodeids** on the controls and both wolf variants. wolfpkcs11 CTS =
+  exactly 2,079 fail→xfail (both variants); OAEP 209/210F, AES-CBC-PKCS5 144F(stable), CCM/GCM,
+  access-levels SECURITY findings all present and pre-existing. Crash-file wobble = exit-time
+  teardown SIGSEGV that lands on whichever file the isolation scheduler finalizes (verdicts all
+  captured), not a new crash target.
+- **Known R1 does NOT block** (and is already fixed in code at `9b3e52f9`): the 7 false fails
+  (NSS HKDF + mock XOR base-keygen plain-assert escaping not-operational xfail) ARE in this pool
+  data (images predate the fix) — documented as known-fixed-after, surfaces in the next run.
+- **`artifacts3/` CREATED** = `cp -a artifacts artifacts3` (14G, 53 entries, verified match;
+  gitignored). **This is the VALIDATED BASELINE for pkcs11-proxy-ng tests.**
+- **Metrics refreshed:** `docs/docker-provider-results.md` Matrix Results table updated from this
+  validated pool (corepkcs11/-main now included as full rows).
+
+**STILL PENDING (next session / next pool):**
+- **Batch 3a review** — import-skip audit Batch 3a (RSA-family raw imports → negotiated;
+  exhaustion on advertised mechs skip→xfail; A9-RSA, A10–A12) shipped at `45441f10`, needs the
+  two-stage review backfill.
+- **Batch 3b / Batch 4** of the import-skip→xfail audit (remaining `pytest.skip("Cannot import …")`
+  sites; only negotiated-exhausted + advertised mechanisms qualify).
+- **Next-run verification items** (changes merged AFTER these pool images — look for them in the
+  next pool): **R1 fix** (`9b3e52f9` — expect the 7 false fails to return to xfail),
+  import-skip **Batches 1–2** + **D1–D3** reclassifications, **FIPS unwrap** fix
+  (`xfail_if_op_not_operational` in `test_rsa_key_wrapping`).
 
 ## CURRENT STATE — advertised-capability honesty MERGED (2026-06-10, later session)
 
