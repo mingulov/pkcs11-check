@@ -300,7 +300,7 @@ CKR_KEY_SIZE_RANGE, CKR_FUNCTION_FAILED)` → **xfail**; non-CKR `AssertionError
 
 **Precedent corroboration (not fresh-docker-dependent):** ML-DSA already xfails its whole
 import-reject bucket — `_MLDSA_PUBLIC/PRIVATE_IMPORT_REJECT_CKRS` in `test_wycheproof_mldsa.py`
-/ `_mldsa_sign.py`, and `test_wycheproof_mldsa_context.py:162` xfails **any**
+/ `test_wycheproof_mldsa_sign.py`, and `test_wycheproof_mldsa_context.py:162` xfails **any**
 `CkrAssertionError` import failure. `docs/module-issues.md:349` records the ML-KEM
 raw-private convention: a dk-only import rejected with `CKR_ATTRIBUTE_VALUE_INVALID` is a
 spec-permitted operational deviation → **xfail**, not failure. The SLH-DSA boundary now

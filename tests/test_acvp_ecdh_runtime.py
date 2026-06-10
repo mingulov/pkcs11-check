@@ -58,5 +58,12 @@ def test_empty_generated_ec_point_is_type_c_fail(monkeypatch: pytest.MonkeyPatch
     )
     monkeypatch.setattr(test_acvp_ecdh, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(pytest.fail.Exception, match="self-contradiction"):
-        test_acvp_ecdh.TestEcdhKeyAgreement().test_ecdh_key_agreement_basic(rs, "P-256")
+    # Outcome-class hard-pin (e0340c2d pattern): a regression back to skip (or a
+    # downgrade to xfail) must FAIL this meta-test, not silently change its outcome.
+    try:
+        with pytest.raises(pytest.fail.Exception, match="self-contradiction"):
+            test_acvp_ecdh.TestEcdhKeyAgreement().test_ecdh_key_agreement_basic(rs, "P-256")
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"skipped instead of Type-C failing: {exc}")
+    except pytest.xfail.Exception as exc:
+        pytest.fail(f"xfailed instead of Type-C failing: {exc}")
