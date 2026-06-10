@@ -1,8 +1,12 @@
-# Pool comparison — 2026-06-10 (PARTIAL: wolfpkcs11 ×2 pending)
+# Pool comparison — 2026-06-10/11 (FINAL: all 21 providers)
 
-**Status:** PARTIAL — 19/21 providers. `wolfpkcs11` and `wolfpkcs11-master` are still
-running their tail in the live pool and are **absent** from `artifacts/`; this doc will be
-completed once those two land.
+**Status:** FINAL — 21/21 providers. `wolfpkcs11` and `wolfpkcs11-master` landed in the pool
+tail and are amended below (§4). **Validation verdict: VALIDATED** (see §6) — no unexpected
+regression on any provider; every fail-count change is an intended fail→xfail/pass shift,
+documented genuine finding, new-test coverage, or documented probabilistic/scheduling noise.
+The one known harness regression (R1, 7 false fails) was found in the partial pass and is
+already fixed in code (`9b3e52f9`, NOT in these pool images — the 7 false fails ARE present
+in this data, documented as known-fixed-after); it does not block validation.
 
 - **New run:** `artifacts/<provider>-pooled/{results.json,report.jsonl}` (post-merge, fresh)
 - **Baseline:** `artifacts2/<provider>-pooled/results.json` (pre-fix OLD pool; pooled present
@@ -45,6 +49,8 @@ Counts: P=pass, F=fail, xf=xfail, skip=skip. Delta = new − base. `tot` delta i
 | softhsm2-generated-iv | 44797→44903 | 168→64 | 5021→5024 | 32481→32481 | +106 | −104 | +3 | 0 |
 | softhsm2-main | 46963→47064 | 169→63 | 4487→4488 | 31777→31786 | +101 | −106 | +1 | +9 |
 | tpm2 | 8323→18146 | 201→112 | 4412→4636 | 68778→58825 | +9823 | −89 | +224 | −9953 |
+| wolfpkcs11 | 38882→46524 | 3071→879 | 2962→5329 | 52669→44798 | +7642 | **−2192** | +2367 | −7871 |
+| wolfpkcs11-master | 41340→49028 | 2673→482 | 3127→5471 | 51450→43588 | +7688 | **−2191** | +2344 | −7862 |
 
 **Duplicate pairs** (identical config, near-identical results — analysed once):
 `corepkcs11`≈`corepkcs11-main`, `kryoptic`≈`kryoptic-main`,
@@ -55,7 +61,14 @@ exercise the touched suites.
 **Big movers are dominated by capability-gating retirement** (formerly-skipped
 wycheproof_ecdsa vectors now run): tpm2 +9999, kryoptic/-fips/-main +7202, opencryptoki
 +1149, corepkcs11 +8662 pass on that one file. corepkcs11's −22,614 F is its own story
-(see checklist item below).
+(see checklist item below). The two `wolfpkcs11` rows carry the largest **fail decreases**
+of the pool (−2,192 / −2,191) — driven by the CTS operability flip (2,079 fail→xfail each)
+plus ECDH-H9, CCM/GCM vacuous-reject, and digest/multipart honesty flips (see §4).
+
+**`tot`-delta caveat for the wolf rows:** the two `wolfpkcs11` baselines in `artifacts2` are
+from a *different* pool epoch than the in-pool 19, so their `tot` delta is **not** the
+uniform +5 (it is −56 stable / −21 master from collection/parametrization drift between
+epochs). The +5 new-test convention above applies only to the 19 same-epoch providers.
 
 ---
 
@@ -171,11 +184,67 @@ to xfail ("advertised ECDSA verify is not operational") + capability-gating skip
 
 ---
 
-## 4. Pending: wolfpkcs11 ×2
-`wolfpkcs11` and `wolfpkcs11-master` are not yet in `artifacts/` (live pool tail still
-running). When they land, append their summary rows + checklist deltas and flip this doc
-from PARTIAL to final. Of note from memory: wolfpkcs11 **stable** ships PQC=0 vs **master**
-PQC — expect different ML-DSA/ML-KEM coverage between the two.
+## 4. wolfpkcs11 ×2 — amended (landed in pool tail)
+
+Both variants land **VALIDATED**: **0 newly-failing nodeids** that existed in the baseline,
+on both stable and master. Every fail-count change is a **decrease** — the intended
+fail→xfail/pass shifts. Headline +7,642 P / −7,871 skip (stable) and +7,688 P / −7,862 skip
+(master) are capability-gating retirement (wycheproof_ecdsa) plus the CTS flip, identical in
+shape to the other providers.
+
+**Stable vs master coverage:** stable ships **PQC=0** — all **1,089** ML-DSA/ML-KEM tests
+`skip`; master ships PQC — **1,582 P / 182 xf / 27 F / 249 skip** on the same suites (the 27
+fails are genuine ML-DSA verify findings: `CKR_FUNCTION_FAILED` + valid-sig-rejected; the
+`mldsa_sign` fail 15→6 is the intended honesty fail→xfail flip on 9 of them). This is the
+documented stable/master PQC split, not a delta artifact.
+
+### Checklist (wolfpkcs11)
+
+1. **CTS operability flip — PASS (exact).** `acvp/aes/test_cts.py` fail **2,079 → 0**, xfail
+   **0 → 2,079** on **both** variants (H2 operability class: advertised AES-CTS not
+   operational → clean-error xfail). Verified by per-nodeid call-phase verdicts in
+   `report.jsonl`, exactly 2,079 each.
+2. **Documented genuine buckets remain — PASS.**
+   - `wycheproof_rsa_oaep.py`: **209 F stable / 210 F master** (stable bucket;
+     `CKR_ENCRYPTED_DATA_INVALID` on valid OAEP vectors). Matches expectation exactly.
+   - `wycheproof.py` AES-CBC-PKCS5 ("Invalid AES-CBC vector … decrypted successfully"):
+     **144 F on stable**; **master ships only 4** (master fixed most invalid-vector
+     acceptance) — a stable-vs-master module difference, both pre-existing (in baseline too).
+   - `test_hkdf` SIGABRT + `ckr_keygen` genuine crashes: present as crash-file units
+     (`wycheproof_hkdf.py` rc=11/6, `ckr_keygen.py` rc=11 on stable; `wycheproof_hkdf.py`
+     rc=11 on master) — same crash targets as baseline. Plus an in-test SIGABRT
+     (`malloc(): invalid` on `C_DeriveKey(HKDF_SHA256, CKA_VALUE_LEN=0x1fe0)` in
+     `test_secret_key_value_len.py`).
+   - `test_access_levels`: **stable 7 F / master 5 F** — genuine SECURITY findings
+     (CKA_TRUSTED escalation, public session creating CKA_PRIVATE objects, etc.). Present in
+     **baseline too** (0 newly-failing). The "segfault on stable / master-fixed" reading:
+     master fixed 2 of the access-control violations; neither variant crashes the file now
+     (unit `failed` rc=1, not `crashed`).
+3. **Honesty-package / vacuous shifts — PASS (analogous to other providers).**
+   `not-operational` honesty xfails present (194 stable / 206 master report records); the
+   vacuous-reject downgrades land as the CCM (fail 88→44, xfail +44), GCM (fail 23→8,
+   xfail +15), and CTS (+2,079 xfail) flips. ECDH-H9 fix: `wycheproof_ecdh.py` fail 8→0 on
+   both. Digest/multipart honesty: `test_mech_digest.py` fail→0 (xfail +18 stable / +9
+   master), `test_mech_multipart.py` fail 18→0 (xfail +18, stable).
+4. **No unexpected new failure class.** Only **one** file shows a fail **increase**:
+   stable `test_interface.py` **0 → 1** (`test_v30_encrypt_decrypt_aes` returns truncated
+   plaintext — `…test data 12` vs `…test data 123`, a Type-A correctness bug). This is a
+   **genuine wolfpkcs11 finding newly surfaced, not a regression**: in the baseline that file
+   was a *crashed* unit (rc=11) that died **before** the v3.0 crypto test ran, so the test
+   had no recorded verdict; this run the exit-time crash landed on a different file, the v3.0
+   test executed, and the pre-existing AES bug surfaced. master: **no** fail increase on any
+   file.
+
+### Crash-file wobble (informational — NOT a new crash target)
+Stable subprocess-isolation crashed-file set: base **6** {ckr_keygen, padding_oracle,
+dh_key_agreement, test_encrypt, **test_interface**, wycheproof_hkdf} → new **8** {same 5 +
+**test_key_flags, test_mech_encrypt, test_mech_multipart**, minus test_interface}. Inspection
+shows these are **exit-time SIGSEGVs**: every test inside each "crashed" unit produced a
+verdict in `report.jsonl` (e.g. test_key_flags 12P/2xf, test_mech_multipart 14P/34xf) — the
+segfault happens at process teardown (`C_Finalize`/unload) and lands on whichever file the
+isolation scheduler finalizes, so the file set wobbles run-to-run with the **same** underlying
+wolf exit-time bug. Master: single crash file both runs (`wycheproof_hkdf.py`, rc 6→11). This
+is the documented "within-unit crash wobble, not a new crash target" pattern (§2 item 7).
 
 ## 5. Changes NOT in these pool images (deferred to next run)
 The pool images were built **before** these merges, so their shifts are absent here and must
@@ -188,6 +257,25 @@ be looked for in the next pool:
 
 ---
 
+## 6. Validation verdict — **VALIDATED**
+
+**All 21 providers VALIDATED.** Nothing is BROKEN. Across every provider, each fail-count
+change is attributable to exactly one of: (i) an **intended** fail→xfail/pass shift from the
+merged changes (honesty package, vacuous-reject downgrade, ECDH-H9, capability-gating
+retirement); (ii) a **documented genuine module finding** (e.g. wolf OAEP/AES-CBC/CCM/
+access-levels, corepkcs11 EC-import); (iii) **new-test coverage** surfacing a pre-existing
+finding (the +5 new tests; the wolf-stable `test_interface` v3.0 AES bug unmasked by crash
+re-scheduling); or (iv) **documented probabilistic/scheduling noise** (oracle/overflow flips;
+exit-time crash-file wobble). **0 newly-failing nodeids** on the controls and on **both** wolf
+variants.
+
+**Known R1 does not block.** R1 (7 false fails: NSS HKDF + mock XOR base-keygen plain-assert
+escaping the not-operational xfail routing) was found in the partial pass and is **already
+fixed in code** at `9b3e52f9` — that fix is NOT in these pool images, so the 7 false fails ARE
+present in this data and are documented as known-fixed-after. It is a harness-side
+classification bug, not a module regression, and is out of scope for a "is the pool broken"
+verdict.
+
 ## Verdict roll-up
 | # | check | verdict |
 |---|---|---|
@@ -198,8 +286,11 @@ be looked for in the next pool:
 | 5 | pkcs11-mock 290F→288F | **PASS** (−2 net) |
 | 6 | OPERATION_NOT_VALIDATED sanctioned pass | **PASS** (negative result, 0) |
 | 7 | crash-count stability | **PASS** (identical crash-file set) |
+| 8 | wolfpkcs11 ×2 CTS 2,079 fail→xfail | **PASS** (exact, both) |
+| 9 | wolfpkcs11 ×2 genuine buckets (OAEP/AES-CBC/CCM/access/PQC) | **PASS** (counts match; 0 newly-failing) |
+| 10 | wolfpkcs11 ×2 no unexpected new fail class | **PASS** (only fail-increase = genuine unmasked AES bug, stable) |
 
-**One actionable regression: R1** (test_mech_derive base-key-gen plain-assert escapes the
-not-operational xfail routing → 7 hard fails; harness fix = attach `.rv` to the keygen
-preconditions). Everything else is intended shift, new-test coverage, or documented
-probabilistic noise.
+**Overall: VALIDATED.** One actionable harness regression remains for the *next* run — **R1**
+(test_mech_derive base-key-gen plain-assert escapes the not-operational xfail routing → 7
+hard fails; fixed in code at `9b3e52f9`). Everything else is intended shift, new-test
+coverage, genuine finding, or documented probabilistic/scheduling noise.
