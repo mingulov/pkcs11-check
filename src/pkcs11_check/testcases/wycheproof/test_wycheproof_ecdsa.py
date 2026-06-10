@@ -19,6 +19,7 @@ from pkcs11_check.raw.recipes import (
     generate_random,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKM_ECDSA,
@@ -39,6 +40,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import (
     ec_public_key_binding_defect,
@@ -367,10 +369,19 @@ def test_ecdsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
         )
     except AssertionError as exc:
         if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):
+            # Genuine capability absence: this specific curve is not supported
+            # (CKR_CURVE_NOT_SUPPORTED / CKR_DOMAIN_PARAMS_INVALID). Skip stays.
             _UNSUPPORTED_CURVES.add(curve)
             pytest.skip(f"Cannot import EC key for {curve}: {exc}")
-        if is_known_error(exc, _EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
-            pytest.skip(f"Cannot import EC key for {curve}: {exc}")
+        if isinstance(exc, CkrAssertionError) and is_known_error(
+            exc, _EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS
+        ):
+            # ECDSA is advertised (has_mechanism gate passed above) and the
+            # negotiated import is exhausted -> "advertised but not operational"
+            # -> xfail per the classification model (not skip).
+            # May include curve-capability rejects expressed as generic CKRs --
+            # recorded as xfail, not hidden.
+            pytest.xfail(not_operational_reason("ECDSA:key-import", f"{curve}: {ckr_name(exc.rv)}"))
         raise
 
     if curve not in _CURVE_BINDING_DEFECTS:

@@ -21,6 +21,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_VERIFY,
@@ -39,6 +40,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.acvp._duplicates import (
     mark_duplicate_pkcs11_inputs,
@@ -76,6 +78,22 @@ _EC_CAPABILITY_REJECT_RVS = (
     CKR_TEMPLATE_INCONSISTENT,
     CKR_CURVE_NOT_SUPPORTED,
     CKR_DOMAIN_PARAMS_INVALID,
+    CKR_KEY_SIZE_RANGE,
+)
+
+# Split of the merged _EC_CAPABILITY_REJECT_RVS for the public-key-import site
+# (import-skip audit A14): genuine capability absence (the curve is not supported)
+# stays a skip; the broad import-reject codes are "advertised but not operational"
+# on an advertised ECDSA SigVer path and become xfail.
+_EC_CURVE_ABSENT_RVS = (
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
+)
+_EC_PUBLIC_IMPORT_UNSUPPORTED_RVS = (
+    CKR_MECHANISM_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
     CKR_KEY_SIZE_RANGE,
 )
 
@@ -259,8 +277,23 @@ def test_acvp_ecdsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, 
                 attrs={CKA_VERIFY: True},
             )
         except AssertionError as exc:
-            if is_known_error(exc, _EC_CAPABILITY_REJECT_RVS):
+            if is_known_error(exc, _EC_CURVE_ABSENT_RVS):
+                # Genuine capability absence: this curve is not supported. Skip stays.
                 pytest.skip(f"Cannot import EC public key for {vec['curve']}: {exc}")
+            if isinstance(exc, CkrAssertionError) and is_known_error(
+                exc, _EC_PUBLIC_IMPORT_UNSUPPORTED_RVS
+            ):
+                # The ECDSA SigVer mechanism is advertised (has_mechanism gate passed
+                # above) and the import is exhausted -> "advertised but not operational"
+                # -> xfail per the classification model (not skip).
+                # May include curve-capability rejects expressed as generic CKRs --
+                # recorded as xfail, not hidden.
+                pytest.xfail(
+                    not_operational_reason(
+                        f"{mech_name}:key-import",
+                        f"{vec['curve']}: {ckr_name(exc.rv)}",
+                    )
+                )
             raise
         try:
             verified = verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["msg"], vec["sig"])

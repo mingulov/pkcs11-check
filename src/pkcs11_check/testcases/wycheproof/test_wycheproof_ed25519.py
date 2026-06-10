@@ -10,6 +10,7 @@ import pytest
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -26,6 +27,7 @@ from pkcs11_check.testcases._eddsa_public_key import (
     select_eddsa_public_key_encoding,
     verify_eddsa_signature_with_supported_params,
 )
+from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import is_known_error
 
@@ -51,6 +53,13 @@ _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_CKRS = (
     CKR_DEVICE_ERROR,
     CKR_KEY_SIZE_RANGE,
 )
+
+# Map Edwards curve OID bytes -> human label for the advertised-but-not-operational
+# xfail detail (so the shared encoding probe can name the curve it failed on).
+_OID_LABELS = {
+    bytes([0x06, 0x03, 0x2B, 0x65, 0x70]): "Ed25519",
+    bytes([0x06, 0x03, 0x2B, 0x65, 0x71]): "Ed448",
+}
 
 
 def _load_ed25519_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -101,10 +110,23 @@ def _select_eddsa_public_key_encoding_for_wycheproof(
         )
     except AssertionError as exc:
         if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):
+            # Genuine capability absence: this Edwards curve is not supported. Skip stays.
             _UNSUPPORTED_CURVE_OIDS.add(oid)
             pytest.skip(f"Cannot import EdDSA public key: {exc}")
-        if is_known_error(exc, _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
-            pytest.skip(f"Cannot import EdDSA public key: {exc}")
+        if isinstance(exc, CkrAssertionError) and is_known_error(
+            exc, _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_CKRS
+        ):
+            # EDDSA is advertised (has_mechanism gate passed in the caller) and the
+            # multi-encoding negotiated import is exhausted -> "advertised but not
+            # operational" -> xfail per the classification model (not skip).
+            # May include curve-capability rejects expressed as generic CKRs --
+            # recorded as xfail, not hidden.
+            pytest.xfail(
+                not_operational_reason(
+                    "EDDSA:key-import",
+                    f"{_OID_LABELS.get(oid, oid.hex())}: {ckr_name(exc.rv)}",
+                )
+            )
         signature_rejected_or_xfail(exc, "EdDSA public-key encoding probe")
 
 
@@ -151,10 +173,18 @@ def test_ed25519_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str,
         )
     except AssertionError as exc:
         if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):
+            # Genuine capability absence: Ed25519 not supported. Skip stays.
             _UNSUPPORTED_CURVE_OIDS.add(ed25519_oid)
             pytest.skip(f"Cannot import Ed25519 public key: {exc}")
-        if is_known_error(exc, _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
-            pytest.skip(f"Cannot import Ed25519 public key: {exc}")
+        if isinstance(exc, CkrAssertionError) and is_known_error(
+            exc, _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_CKRS
+        ):
+            # EDDSA is advertised (has_mechanism gate passed above) and the
+            # negotiated import is exhausted -> "advertised but not operational"
+            # -> xfail per the classification model (not skip).
+            # May include curve-capability rejects expressed as generic CKRs --
+            # recorded as xfail, not hidden.
+            pytest.xfail(not_operational_reason("EDDSA:key-import", f"Ed25519: {ckr_name(exc.rv)}"))
         raise
 
     try:
@@ -246,10 +276,18 @@ def test_ed448_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
         )
     except AssertionError as exc:
         if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):
+            # Genuine capability absence: Ed448 not supported. Skip stays.
             _UNSUPPORTED_CURVE_OIDS.add(ed448_oid)
             pytest.skip(f"Cannot import Ed448 public key: {exc}")
-        if is_known_error(exc, _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
-            pytest.skip(f"Cannot import Ed448 public key: {exc}")
+        if isinstance(exc, CkrAssertionError) and is_known_error(
+            exc, _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_CKRS
+        ):
+            # EDDSA is advertised (has_mechanism gate passed above) and the
+            # negotiated import is exhausted -> "advertised but not operational"
+            # -> xfail per the classification model (not skip).
+            # May include curve-capability rejects expressed as generic CKRs --
+            # recorded as xfail, not hidden.
+            pytest.xfail(not_operational_reason("EDDSA:key-import", f"Ed448: {ckr_name(exc.rv)}"))
         raise
 
     try:

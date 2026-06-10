@@ -25,6 +25,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_EC_PARAMS,
     CKA_SIGN,
@@ -48,6 +49,7 @@ from pkcs11_check.testcases._eddsa_public_key import (
     select_eddsa_public_key_encoding,
     verify_eddsa_signature_with_supported_params,
 )
+from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
     SIGNATURE_REJECT_RVS,
@@ -77,6 +79,21 @@ _CURVE_UNSUPPORTED_RVS = (
     CKR_TEMPLATE_INCONSISTENT,
     CKR_CURVE_NOT_SUPPORTED,
     CKR_DOMAIN_PARAMS_INVALID,
+    CKR_KEY_SIZE_RANGE,
+)
+
+# Split of the merged _CURVE_UNSUPPORTED_RVS for the public-key-import sites
+# (import-skip audit A8): genuine capability absence (the curve is not supported)
+# stays a skip; the broad import-reject codes are "advertised but not operational"
+# on an advertised EDDSA path and become xfail.
+_EDWARDS_CURVE_ABSENT_RVS = (
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
+)
+_EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_RVS = (
+    CKR_MECHANISM_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
     CKR_KEY_SIZE_RANGE,
 )
 
@@ -150,8 +167,23 @@ def _select_eddsa_public_key_encoding_for_vector(rs: Any, vec: dict[str, Any]) -
             signature=probe["sig"],
         )
     except AssertionError as exc:
-        if is_known_error(exc, _CURVE_UNSUPPORTED_RVS):
+        if is_known_error(exc, _EDWARDS_CURVE_ABSENT_RVS):
+            # Genuine capability absence: this Edwards curve is not supported. Skip stays.
             pytest.skip(f"Cannot import EdDSA public key for {vec['curve']}: {exc}")
+        if isinstance(exc, CkrAssertionError) and is_known_error(
+            exc, _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_RVS
+        ):
+            # EDDSA is advertised (has_mechanism gate passed in the caller) and the
+            # multi-encoding negotiated import is exhausted -> "advertised but not
+            # operational" -> xfail per the classification model (not skip).
+            # May include curve-capability rejects expressed as generic CKRs --
+            # recorded as xfail, not hidden.
+            pytest.xfail(
+                not_operational_reason(
+                    "EDDSA:key-import",
+                    f"{vec['curve']}: {ckr_name(exc.rv)}",
+                )
+            )
         _xfail_if_eddsa_runtime_reject(
             exc,
             f"{vec['curve']} EdDSA public-key encoding probe",
@@ -283,8 +315,23 @@ def test_acvp_eddsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, 
                 attrs={CKA_VERIFY: True},
             )
         except AssertionError as exc:
-            if is_known_error(exc, _CURVE_UNSUPPORTED_RVS):
+            if is_known_error(exc, _EDWARDS_CURVE_ABSENT_RVS):
+                # Genuine capability absence: this Edwards curve is not supported. Skip stays.
                 pytest.skip(f"Cannot import EdDSA public key for {vec['curve']}: {exc}")
+            if isinstance(exc, CkrAssertionError) and is_known_error(
+                exc, _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_RVS
+            ):
+                # EDDSA is advertised (has_mechanism gate passed above) and the
+                # negotiated import is exhausted -> "advertised but not operational"
+                # -> xfail per the classification model (not skip).
+                # May include curve-capability rejects expressed as generic CKRs --
+                # recorded as xfail, not hidden.
+                pytest.xfail(
+                    not_operational_reason(
+                        "EDDSA:key-import",
+                        f"{vec['curve']}: {ckr_name(exc.rv)}",
+                    )
+                )
             xfail_if_known_ckr(
                 exc,
                 _KEYVER_IMPORT_REJECT_RVS,
