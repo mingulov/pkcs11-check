@@ -23,13 +23,11 @@ from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_ec_private_key,
-    import_rsa_private_key,
-    import_rsa_public_key,
     import_secret_key,
     sign_single,
     verify_single,
 )
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_TOKEN,
@@ -45,8 +43,13 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._capability_claims import claim_refusal_passes
+from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import (
+    import_rsa_private_key_negotiated,
+    import_rsa_public_key_negotiated,
+    is_known_error,
+)
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     build_params_from_vector,
@@ -85,10 +88,45 @@ def _skip_kat_import_capability_reject(
     entry: MechEntry,
     object_label: str,
 ) -> None:
+    """Capability-skip path for EC KAT key import (Batch 3b residual).
+
+    The RSA call sites route through ``_xfail_rsa_kat_import_not_operational``
+    instead (import-skip audit A9 -- RSA legs, negotiated importers). The EC
+    private import keeps this skip path: there is no negotiated EC-private
+    importer (D2 determination, commit b56c3f8c) so the raw single-template
+    reject is converted in Batch 3b, not here.
+    """
     if is_known_error(exc, _KAT_IMPORT_CAPABILITY_REJECT_RVS):
         pytest.skip(
             f"{entry.mech_name}: cannot import {object_label} for KAT setup: "
             f"{_ckr_name_from_exception(exc)}"
+        )
+    raise exc
+
+
+def _xfail_rsa_kat_import_not_operational(
+    exc: AssertionError,
+    entry: MechEntry,
+    object_label: str,
+) -> None:
+    """Classify negotiated RSA KAT key-import rejects (import-skip audit A9 RSA).
+
+    The RSA key is imported through ``import_rsa_private_key_negotiated`` /
+    ``import_rsa_public_key_negotiated``; a clean broad import-failure CKR after
+    negotiation exhaustion on a sign mechanism the module ADVERTISES (the
+    ``mech_sign_entry`` registry parametrization is advertised-by-construction)
+    is advertised-but-not-operational -> xfail, never skip. This matches the
+    op-stage ``claim_refusal_passes`` routing so the setup/op asymmetry on the
+    RSA family is closed. Non-CKR AssertionErrors propagate (harness/coding bug).
+    """
+    if is_known_error(exc, _KAT_IMPORT_CAPABILITY_REJECT_RVS):
+        pytest.xfail(
+            not_operational_reason(
+                f"{entry.mech_name}:key-import",
+                f"{object_label}: {_ckr_name_from_exception(exc)}"
+                if isinstance(exc, CkrAssertionError)
+                else f"{object_label}: {exc}",
+            )
         )
     raise exc
 
@@ -228,9 +266,8 @@ def _run_asymmetric_sign_kat(
     if "n_hex" in vec:
         # RSA: import private key for signing
         try:
-            priv_key = import_rsa_private_key(
-                rs.raw,
-                rs.sh,
+            priv_key = import_rsa_private_key_negotiated(
+                rs,
                 n=bytes.fromhex(vec["n_hex"]),
                 e=bytes.fromhex(vec["e_hex"]),
                 d=bytes.fromhex(vec["d_hex"]),
@@ -242,19 +279,18 @@ def _run_asymmetric_sign_kat(
                 attrs={CKA_SIGN: True, CKA_TOKEN: False},
             )
         except AssertionError as exc:
-            _skip_kat_import_capability_reject(exc, entry, "RSA private key")
+            _xfail_rsa_kat_import_not_operational(exc, entry, "RSA private key")
         pub_key: int | None = None
         if verify_only:
             # Also import public key so we can verify with it
             try:
-                pub_key = import_rsa_public_key(
-                    rs.raw,
-                    rs.sh,
+                pub_key = import_rsa_public_key_negotiated(
+                    rs,
                     n=bytes.fromhex(vec["n_hex"]),
                     e=bytes.fromhex(vec["e_hex"]),
                 )
             except AssertionError as exc:
-                _skip_kat_import_capability_reject(exc, entry, "RSA public key")
+                _xfail_rsa_kat_import_not_operational(exc, entry, "RSA public key")
         try:
             if verify_only:
                 assert pub_key is not None

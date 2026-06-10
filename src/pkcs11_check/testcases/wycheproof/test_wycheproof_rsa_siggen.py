@@ -22,9 +22,9 @@ from cryptography.hazmat.primitives.serialization import load_der_private_key
 
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    import_rsa_private_key,
     sign_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKM_SHA1_RSA_PKCS,
@@ -45,7 +45,12 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases._operability import not_operational_reason
+from pkcs11_check.testcases.conftest import (
+    import_rsa_private_key_negotiated,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = pytest.mark.wycheproof
@@ -137,10 +142,26 @@ def _skip_or_xfail_rsa_private_import_reject(
     exc: AssertionError,
     key_size: int,
     sha: str,
+    mech_display: str,
 ) -> NoReturn:
-    """Classify RSA private-key import rejects before Wycheproof siggen."""
+    """Classify RSA private-key import rejects before Wycheproof siggen.
+
+    The key is imported through ``import_rsa_private_key_negotiated``; a clean
+    broad import-failure CKR after negotiation exhaustion on a mechanism the
+    module ADVERTISES (``has_mechanism`` gate passed upstream) is
+    advertised-but-not-operational -> xfail, never skip (import-skip audit A10,
+    docs/findings/import-skip-audit.md). The runtime-reject branch already
+    xfails; non-CKR AssertionErrors propagate as harness/coding-bug findings.
+    """
     if is_known_error(exc, _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
-        pytest.skip(f"Cannot import RSA private key ({key_size}-bit, {sha}): {exc}")
+        pytest.xfail(
+            not_operational_reason(
+                f"{mech_display}:key-import",
+                f"{key_size}-bit {sha}: {ckr_name(exc.rv)}"
+                if isinstance(exc, CkrAssertionError)
+                else f"{key_size}-bit {sha}: {exc}",
+            )
+        )
     xfail_if_known_ckr(
         exc,
         _RSA_PRIVATE_IMPORT_RUNTIME_REJECT_CKRS,
@@ -179,9 +200,8 @@ def test_rsa_pkcs1_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, A
     key_obj = None
     try:
         try:
-            key_obj = import_rsa_private_key(
-                rs.raw,
-                rs.sh,
+            key_obj = import_rsa_private_key_negotiated(
+                rs,
                 n=_i2b(pub_nums.n),
                 e=_i2b(pub_nums.e),
                 d=_i2b(nums.d),
@@ -193,7 +213,7 @@ def test_rsa_pkcs1_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, A
                 attrs={CKA_SIGN: True},
             )
         except AssertionError as e:
-            _skip_or_xfail_rsa_private_import_reject(e, key_size, sha)
+            _skip_or_xfail_rsa_private_import_reject(e, key_size, sha, mech_display)
 
         sig = sign_single(rs.raw, rs.sh, key_obj, mechanism, msg)
         assert sig == expected_sig, (

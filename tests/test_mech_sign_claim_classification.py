@@ -178,7 +178,7 @@ def test_run_asymmetric_sign_kat_sanctioned_refusal_real_path(
         lambda d, level, reference="", *, test_id="": notes.append(d),
     )
     monkeypatch.setattr(cc, "_validation_objects_present", lambda rs: "False")
-    monkeypatch.setattr(tms, "import_rsa_private_key", lambda *a, **k: 7)
+    monkeypatch.setattr(tms, "import_rsa_private_key_negotiated", lambda *a, **k: 7)
     monkeypatch.setattr(tms, "destroy_quietly", lambda *a, **k: None)
     # _run_asymmetric_sign_kat does a local import of build_params_from_vector,
     # so patch it on the source module.

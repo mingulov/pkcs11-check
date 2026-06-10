@@ -16,9 +16,8 @@ from pkcs11_check.raw.pack import mech_oaep
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
-    import_rsa_private_key,
 )
-from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKG_MGF1_SHA1,
@@ -50,9 +49,14 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._operability import (
     Operability,
     OperabilityResult,
+    not_operational_reason,
     probe_operability,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    import_rsa_private_key_negotiated,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 
 pytestmark = pytest.mark.wycheproof
@@ -319,10 +323,25 @@ def _skip_or_xfail_rsa_oaep_private_import_reject(
     exc: AssertionError,
     key_bits: int,
 ) -> NoReturn:
-    """Classify RSA private-key import rejects before Wycheproof OAEP decrypt."""
+    """Classify RSA private-key import rejects before Wycheproof OAEP decrypt.
+
+    The key is imported through ``import_rsa_private_key_negotiated``; a clean
+    broad import-failure CKR after negotiation exhaustion on RSA_PKCS_OAEP
+    (advertised -- ``has_mechanism`` gate passed upstream) is
+    advertised-but-not-operational -> xfail, never skip (import-skip audit A11,
+    docs/findings/import-skip-audit.md). The runtime-reject branch already
+    xfails; non-CKR AssertionErrors propagate as harness/coding-bug findings.
+    """
     if is_known_error(exc, _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
         _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
-        pytest.skip(f"Cannot import RSA {key_bits}-bit private key for OAEP: {exc}")
+        pytest.xfail(
+            not_operational_reason(
+                "RSA_PKCS_OAEP:key-import",
+                f"{key_bits}-bit private key: {ckr_name(exc.rv)}"
+                if isinstance(exc, CkrAssertionError)
+                else f"{key_bits}-bit private key: {exc}",
+            )
+        )
     xfail_if_known_ckr(
         exc,
         _RSA_OAEP_RUNTIME_REJECT_CKRS,
@@ -380,12 +399,18 @@ def test_rsa_oaep(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
     key_bits = len(modulus) * 8
 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
-        pytest.skip(f"RSA {key_bits}-bit keys not supported (cached)")
+        # Cached broad import-reject: same advertised-but-not-operational signal
+        # the first failure recorded (import-skip audit A11) -> xfail, not skip.
+        pytest.xfail(
+            not_operational_reason(
+                "RSA_PKCS_OAEP:key-import",
+                f"{key_bits}-bit private key import not operational (cached)",
+            )
+        )
 
     try:
-        priv_key = import_rsa_private_key(
-            rs.raw,
-            rs.sh,
+        priv_key = import_rsa_private_key_negotiated(
+            rs,
             n=modulus,
             e=pub_exponent,
             d=priv_exponent,

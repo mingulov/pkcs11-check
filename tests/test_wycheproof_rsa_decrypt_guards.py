@@ -107,7 +107,7 @@ def test_rsa_oaep_invalid_ciphertext_decrypt_success_is_reported(
             "Wycheproof RSA-OAEP vectors not available (run `pkcs11-check fetch-data wycheproof`)"
         )
     vec_id, vec = hit
-    monkeypatch.setattr(rsa_oaep, "import_rsa_private_key", _handle)
+    monkeypatch.setattr(rsa_oaep, "import_rsa_private_key_negotiated", _handle)
     monkeypatch.setattr(rsa_oaep, "decrypt_single", lambda *_a, **_k: b"\x00recovered")
     monkeypatch.setattr(rsa_oaep, "destroy_quietly", lambda *_a: None)
 
