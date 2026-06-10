@@ -36,7 +36,7 @@ def _digest_reject(*_args: Any, **_kwargs: Any) -> bytes:
 def test_mech_digest_empty_runtime_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(test_mech_digest, "digest_single", _digest_reject)
 
-    with pytest.raises(pytest.xfail.Exception, match="SHA224 advertised but digest"):
+    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
         test_mech_digest.TestMechDigest().test_known_empty(_session(), _digest_entry())
 
 
@@ -51,7 +51,7 @@ def test_mech_digest_kat_runtime_reject_is_xfail(monkeypatch: pytest.MonkeyPatch
         lambda _path: [{"input_hex": "00", "digest_hex": "00"}],
     )
 
-    with pytest.raises(pytest.xfail.Exception, match="SHA224 advertised but digest"):
+    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
         test_mech_digest.TestMechDigestKAT().test_kat_vector(
             _session(),
             _digest_entry(vector_file="dummy.json"),

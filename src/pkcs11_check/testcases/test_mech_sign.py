@@ -200,7 +200,7 @@ def _run_asymmetric_sign_kat(
     entry: MechEntry,
     config: object,
     vec: dict,  # type: ignore[type-arg]
-) -> None:
+) -> bool:
     """Import an asymmetric key from a KAT vector and sign/verify.
 
     RSA PKCS#1 v1.5 (verify_only=False): sign with private key, compare bytes.
@@ -208,6 +208,10 @@ def _run_asymmetric_sign_kat(
       imported public key (n, e available in vector).
     ECDSA (verify_only=True): sign with private key + round-trip verify with
       the fresh signature (public point not in vector, so stored sig is skipped).
+
+    Returns True when a sanctioned policy refusal (CKR_OPERATION_NOT_VALIDATED)
+    is seen so the calling loop can end the whole test immediately -- later
+    vectors would only duplicate the compliance note.
     """
     from pkcs11_check.testcases.mechanism_helpers import build_params_from_vector
 
@@ -216,7 +220,7 @@ def _run_asymmetric_sign_kat(
         pytest.skip(f"No param_recipe configured for {entry.mech_name}")
     mech_param = build_params_from_vector(entry.mech_id, param_recipe, vec)
     if mech_param == "SKIP":
-        return
+        return False
 
     input_data = bytes.fromhex(vec["input_hex"])
     verify_only: bool = bool(vec.get("verify_only", False))
@@ -267,7 +271,7 @@ def _run_asymmetric_sign_kat(
                     )
                 except AssertionError as exc:
                     if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:kat-verify"):
-                        return
+                        return True
                 assert ok, (
                     f"KAT verify failed for {vec.get('id', '?')}: "
                     f"stored sig {stored_sig.hex()!r} did not verify"
@@ -285,7 +289,7 @@ def _run_asymmetric_sign_kat(
                     )
                 except AssertionError as exc:
                     if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:kat-sign"):
-                        return
+                        return True
                 expected = bytes.fromhex(vec["signature_hex"])
                 assert sig == expected, (
                     f"KAT sign mismatch for {vec.get('id', '?')}: "
@@ -325,12 +329,13 @@ def _run_asymmetric_sign_kat(
                 )
             except AssertionError as exc:
                 if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:kat-sign"):
-                    return
+                    return True
             assert len(sig) > 0, f"KAT sign returned empty signature for {vec.get('id', '?')}"
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_key)
 
     # else: unrecognised asymmetric vector schema -- skip silently
+    return False
 
 
 class TestMechSignKAT:
@@ -357,7 +362,8 @@ class TestMechSignKAT:
                 continue
 
             if vec.get("key_type") == "asymmetric":
-                _run_asymmetric_sign_kat(rs, entry, config, vec)
+                if _run_asymmetric_sign_kat(rs, entry, config, vec):
+                    return
                 continue
 
             key_hex = vec.get("key_hex")

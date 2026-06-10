@@ -41,15 +41,8 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_224,
     CKM_SHA512_256,
     CKM_SHA_1,
-    CKR_ARGUMENTS_BAD,
-    CKR_DEVICE_ERROR,
-    CKR_FUNCTION_FAILED,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases._capability_claims import claim_refusal_passes
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_registry import MechConfig
 
@@ -93,27 +86,19 @@ _HASHLIB_BY_MECH: dict[int, str] = {
     int(CKM_SHA3_512): "sha3_512",
 }
 
-_DIGEST_RUNTIME_REJECT_RVS = (
-    CKR_ARGUMENTS_BAD,
-    CKR_DEVICE_ERROR,
-    CKR_FUNCTION_FAILED,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
-)
 
+def _digest_or_xfail(rs: RawSession, entry: MechEntry, data: bytes) -> bytes | None:
+    """Digest, or classify a clean refusal at the claim layer.
 
-def _digest_or_xfail(rs: RawSession, entry: MechEntry, data: bytes) -> bytes:
+    Returns None for the sanctioned validation-policy refusal -- callers must
+    end the test (PASS; the compliance note carries the evidence).
+    """
     try:
         return digest_single(rs.raw, rs.sh, CKM(entry.mech_id), data)
     except AssertionError as exc:
-        xfail_if_known_ckr(
-            exc,
-            _DIGEST_RUNTIME_REJECT_RVS,
-            f"{entry.mech_name} advertised but digest is not operational",
-        )
-    raise
+        if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:digest"):
+            return None
+        raise AssertionError("unreachable") from exc  # claim_refusal_passes xfails/raises
 
 
 def _check_not_xof(entry: MechEntry) -> None:
@@ -151,6 +136,8 @@ class TestMechDigest:
         _check_not_parameterised(entry, config)
 
         digest = _digest_or_xfail(rs, entry, b"")
+        if digest is None:
+            return
 
         hashlib_name = _HASHLIB_BY_MECH.get(entry.mech_id)
         if hashlib_name is not None:
@@ -179,6 +166,8 @@ class TestMechDigest:
 
         data = b"length check input data for pkcs11"
         digest = _digest_or_xfail(rs, entry, data)
+        if digest is None:
+            return
 
         expected_len = _KNOWN_OUTPUT_LENGTHS.get(entry.mech_id)
         if expected_len is not None:
@@ -204,7 +193,11 @@ class TestMechDigest:
 
         data = b"deterministic digest test input"
         d1 = _digest_or_xfail(rs, entry, data)
+        if d1 is None:
+            return
         d2 = _digest_or_xfail(rs, entry, data)
+        if d2 is None:
+            return
         assert d1 == d2, (
             f"{entry.mech_name}: two digests of same input differ: {d1.hex()!r} vs {d2.hex()!r}"
         )
@@ -236,6 +229,8 @@ class TestMechDigestKAT:
             if vec_mech and vec_mech != f"CKM_{entry.mech_name}" and vec_mech != entry.mech_name:
                 continue
             digest = _digest_or_xfail(rs, entry, bytes.fromhex(vec["input_hex"]))
+            if digest is None:
+                return
             expected = bytes.fromhex(vec["digest_hex"])
             assert digest == expected, (
                 f"KAT digest mismatch for {vec.get('id', '?')}: "

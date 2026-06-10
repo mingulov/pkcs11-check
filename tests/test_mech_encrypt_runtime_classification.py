@@ -69,7 +69,7 @@ def test_mechanism_kat_encrypt_general_error_is_xfail(
 
     with pytest.raises(
         pytest.xfail.Exception,
-        match="advertised but KAT encrypt is not operational",
+        match="advertised but not operational",
     ):
         mech_encrypt.TestMechEncryptKAT().test_kat_vector(rs, _entry())
 
@@ -135,7 +135,7 @@ def test_mechanism_roundtrip_key_type_inconsistent_is_xfail(
 
     with pytest.raises(
         pytest.xfail.Exception,
-        match="advertised but encrypt is not operational",
+        match="advertised but not operational",
     ):
         mech_encrypt.TestMechEncryptRoundtrip().test_roundtrip(rs, _entry())
 
@@ -160,6 +160,6 @@ def test_mechanism_roundtrip_argument_or_attribute_reject_is_xfail(
 
     with pytest.raises(
         pytest.xfail.Exception,
-        match="advertised but encrypt is not operational",
+        match="advertised but not operational",
     ):
         mech_encrypt.TestMechEncryptRoundtrip().test_roundtrip(rs, _entry())
