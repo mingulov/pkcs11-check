@@ -166,10 +166,19 @@ def test_gcm_decrypt_valid_tag_rejection_with_dead_mechanism_xfails(
         runner.run_gcm_decrypt_test(_AeadSession(), "tc-valid", vec)
 
 
-def test_gcm_decrypt_invalid_tag_rejection_still_passes(
+def test_gcm_decrypt_invalid_tag_rejection_on_dead_mech_xfails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Rejecting an INVALID-tag vector is the expected pass and must not probe."""
+    """Invalid-tag GCM rejection on a NOT_OPERATIONAL mechanism is a vacuous xfail.
+
+    When the canonical probe also refuses (the mechanism is dead), rejecting the
+    invalid-tag vector proves nothing — the module never evaluated the ciphertext.
+    The runner must downgrade to xfail("vacuous reject ...") rather than pass.
+
+    The complementary case — OPERATIONAL mechanism rejecting an invalid tag stays
+    a genuine pass — is covered by
+    ``tests/test_vacuous_reject_downgrade.py::test_gcm_invalid_reject_on_live_mech_passes``.
+    """
     from pkcs11_check.raw.types_std import CKR_ENCRYPTED_DATA_INVALID
 
     monkeypatch.setattr(runner, "import_secret_key", lambda *a, **k: 7)
@@ -180,6 +189,8 @@ def test_gcm_decrypt_invalid_tag_rejection_still_passes(
             "Unexpected CK_RV CKR_ENCRYPTED_DATA_INVALID", int(CKR_ENCRYPTED_DATA_INVALID)
         )
 
+    # Both the vector decrypt and the canonical probe hit the same stub
+    # -> NOT_OPERATIONAL -> vacuous reject.
     monkeypatch.setattr(runner, "decrypt_single", _decrypt)
 
     vec = {
@@ -192,5 +203,5 @@ def test_gcm_decrypt_invalid_tag_rejection_still_passes(
         "test_passed": False,
         "tag_len_bits": 128,
     }
-    # No exception: expected rejection of an invalid tag.
-    runner.run_gcm_decrypt_test(_AeadSession(), "tc-invalid", vec)
+    with pytest.raises(pytest.xfail.Exception, match="vacuous reject"):
+        runner.run_gcm_decrypt_test(_AeadSession(), "tc-invalid", vec)

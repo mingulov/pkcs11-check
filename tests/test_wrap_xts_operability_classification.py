@@ -88,14 +88,55 @@ def test_kw_unwrap_valid_reject_with_working_decrypt_is_finding(
         wrap.test_acvp_aes_kw_unwrap(_Session(), "tc1", vec)
 
 
-def test_kw_unwrap_invalid_reject_still_passes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Rejecting an invalid KW ciphertext stays the expected pass, no probe."""
+def test_kw_unwrap_invalid_reject_on_dead_mech_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Invalid KW ciphertext rejection on a NOT_OPERATIONAL mechanism is a vacuous xfail.
+
+    When the canonical probe also refuses (the mechanism is dead), the invalid-ciphertext
+    rejection proves nothing — the module rejected both without evaluating the input.
+    The runner must downgrade to xfail("vacuous reject ...").
+
+    The complementary case — OPERATIONAL mechanism rejecting an invalid KW ciphertext
+    stays a genuine pass — is covered by ``test_kw_unwrap_invalid_reject_on_live_mech_passes``
+    below.
+    """
     monkeypatch.setattr(wrap, "_import_aes_key", lambda *a, **k: 7)
     monkeypatch.setattr(wrap, "destroy_quietly", lambda *a, **k: None)
+    # Both the vector decrypt and the canonical probe hit _general_error
+    # -> NOT_OPERATIONAL -> vacuous reject.
     monkeypatch.setattr(wrap, "decrypt_single", _general_error)
 
     vec = {"key": bytes(16), "ct": bytes(24), "pt_expected": bytes(16), "test_passed": False}
-    wrap.test_acvp_aes_kw_unwrap(_Session(), "tc1", vec)  # no exception
+    with pytest.raises(pytest.xfail.Exception, match="vacuous reject"):
+        wrap.test_acvp_aes_kw_unwrap(_Session(), "tc1", vec)
+
+
+def test_kw_unwrap_invalid_reject_on_live_mech_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OPERATIONAL AES-KW mechanism rejecting an invalid ciphertext is a genuine pass.
+
+    When the canonical probe succeeds, the module demonstrably evaluates the input;
+    an invalid-ciphertext rejection is the correct outcome and must not be downgraded.
+    """
+    monkeypatch.setattr(wrap, "_import_aes_key", lambda *a, **k: 7)
+    monkeypatch.setattr(wrap, "destroy_quietly", lambda *a, **k: None)
+    canonical_ct = _canonical_kw_ct()
+    calls: dict[str, int] = {"n": 0}
+
+    def _decrypt_live(_raw: Any, _sh: int, _key: int, _mech: Any, ct: bytes, **_kw: Any) -> bytes:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # First call: vector under test — reject the invalid ciphertext.
+            raise CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
+        # Second call: canonical probe — succeed, proving OPERATIONAL.
+        if ct == canonical_ct:
+            return wrap.PROBE_KW_PT
+        raise CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
+
+    monkeypatch.setattr(wrap, "decrypt_single", _decrypt_live)
+    monkeypatch.setattr(wrap, "encrypt_single", lambda *a, **k: canonical_ct)
+
+    vec = {"key": bytes(16), "ct": bytes(24), "pt_expected": bytes(16), "test_passed": False}
+    # Returns normally (no xfail) = PASS: rejection by an operational mechanism is genuine.
+    wrap.test_acvp_aes_kw_unwrap(_Session(), "tc1", vec)
 
 
 def test_xts_encrypt_wholly_non_operational_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
