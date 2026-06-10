@@ -43,6 +43,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ACTION_PROHIBITED,
     CKR_KEY_NOT_WRAPPABLE,
 )
+from pkcs11_check.testcases._signature_policy import xfail_if_op_not_operational
 from pkcs11_check.testcases.conftest import (
     classify_policy_enforcement,
     gen_rsa_keypair_or_xfail,
@@ -107,21 +108,26 @@ class TestRSAPKCSWrap:
             assert wrapped != original_value
             assert len(wrapped) == 256  # 2048-bit RSA -> 256 bytes
 
-            unwrapped = unwrap_key_for_mechanism_roundtrip(
-                rs,
-                p11_config,
-                unwrapping_key=priv,
-                wrapped_key=wrapped,
-                mechanism=CKM_RSA_PKCS,
-                attrs={
-                    CKA_CLASS: CKO_SECRET_KEY,
-                    CKA_EXTRACTABLE: True,
-                    CKA_SENSITIVE: False,
-                    CKA_KEY_TYPE: CKK_AES,
-                    CKA_TOKEN: False,
-                },
-                purpose="RSA-PKCS AES-128 wrap/unwrap roundtrip",
-            )
+            try:
+                unwrapped = unwrap_key_for_mechanism_roundtrip(
+                    rs,
+                    p11_config,
+                    unwrapping_key=priv,
+                    wrapped_key=wrapped,
+                    mechanism=CKM_RSA_PKCS,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_EXTRACTABLE: True,
+                        CKA_SENSITIVE: False,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_TOKEN: False,
+                    },
+                    purpose="RSA-PKCS AES-128 wrap/unwrap roundtrip",
+                )
+            except AssertionError as exc:
+                # FIPS restricts RSA PKCS#1 v1.5 key transport -> CKR_DEVICE_ERROR on
+                # C_UnwrapKey: advertised but not operational, not a break.
+                xfail_if_op_not_operational(exc, "CKM_RSA_PKCS unwrap (key transport)")
             try:
                 unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
                 assert unwrapped_value == original_value
@@ -150,21 +156,26 @@ class TestRSAPKCSWrap:
                 aes_key,
                 CKM_RSA_PKCS,
             )
-            unwrapped = unwrap_key_for_mechanism_roundtrip(
-                rs,
-                p11_config,
-                unwrapping_key=priv,
-                wrapped_key=wrapped,
-                mechanism=CKM_RSA_PKCS,
-                attrs={
-                    CKA_CLASS: CKO_SECRET_KEY,
-                    CKA_EXTRACTABLE: True,
-                    CKA_SENSITIVE: False,
-                    CKA_KEY_TYPE: CKK_AES,
-                    CKA_TOKEN: False,
-                },
-                purpose="RSA-PKCS AES-256 wrap/unwrap roundtrip",
-            )
+            try:
+                unwrapped = unwrap_key_for_mechanism_roundtrip(
+                    rs,
+                    p11_config,
+                    unwrapping_key=priv,
+                    wrapped_key=wrapped,
+                    mechanism=CKM_RSA_PKCS,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_EXTRACTABLE: True,
+                        CKA_SENSITIVE: False,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_TOKEN: False,
+                    },
+                    purpose="RSA-PKCS AES-256 wrap/unwrap roundtrip",
+                )
+            except AssertionError as exc:
+                # FIPS restricts RSA PKCS#1 v1.5 key transport -> CKR_DEVICE_ERROR on
+                # C_UnwrapKey: advertised but not operational, not a break.
+                xfail_if_op_not_operational(exc, "CKM_RSA_PKCS unwrap (key transport)")
             try:
                 unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
                 assert unwrapped_value == original_value
@@ -297,23 +308,28 @@ class TestWrappedKeyUsability:
                 aes_key,
                 CKM_RSA_PKCS,
             )
-            unwrapped = unwrap_key_for_mechanism_roundtrip(
-                rs,
-                p11_config,
-                unwrapping_key=priv,
-                wrapped_key=wrapped,
-                mechanism=CKM_RSA_PKCS,
-                attrs={
-                    CKA_CLASS: CKO_SECRET_KEY,
-                    CKA_EXTRACTABLE: True,
-                    CKA_SENSITIVE: False,
-                    CKA_ENCRYPT: True,
-                    CKA_DECRYPT: True,
-                    CKA_KEY_TYPE: CKK_AES,
-                    CKA_TOKEN: False,
-                },
-                purpose="RSA-PKCS unwrapped-key usability roundtrip",
-            )
+            try:
+                unwrapped = unwrap_key_for_mechanism_roundtrip(
+                    rs,
+                    p11_config,
+                    unwrapping_key=priv,
+                    wrapped_key=wrapped,
+                    mechanism=CKM_RSA_PKCS,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_EXTRACTABLE: True,
+                        CKA_SENSITIVE: False,
+                        CKA_ENCRYPT: True,
+                        CKA_DECRYPT: True,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_TOKEN: False,
+                    },
+                    purpose="RSA-PKCS unwrapped-key usability roundtrip",
+                )
+            except AssertionError as exc:
+                # FIPS restricts RSA PKCS#1 v1.5 key transport -> CKR_DEVICE_ERROR on
+                # C_UnwrapKey: advertised but not operational, not a break.
+                xfail_if_op_not_operational(exc, "CKM_RSA_PKCS unwrap (key transport)")
             try:
                 pt = decrypt_single(rs.raw, rs.sh, unwrapped, CKM_AES_ECB, ct)
                 assert pt == plaintext
