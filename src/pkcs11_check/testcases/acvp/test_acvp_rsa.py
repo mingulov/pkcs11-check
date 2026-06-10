@@ -27,7 +27,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
-from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_VERIFY,
@@ -44,6 +44,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._operability import (
     Operability,
     OperabilityResult,
+    not_operational_reason,
     probe_operability,
     xfail_vacuous_reject,
 )
@@ -98,10 +99,23 @@ _RSA_SIGGEN_RUNTIME_REJECT_RVS = (
 )
 
 
-def _skip_rsa_public_import_reject(exc: AssertionError) -> None:
-    """Skip RSA SigVer vectors when the provider cannot import the public key."""
+def _skip_rsa_public_import_reject(exc: AssertionError, *, mech_name: str) -> None:
+    """Xfail RSA SigVer vectors when the negotiated public key import is refused.
+
+    The mechanism was already advertised (has_mechanism gate passed), so a
+    negotiation-exhausted import refusal is "advertised but not operational" ->
+    xfail per the classification model.  Non-CKR errors are harness bugs and
+    propagate.
+    """
+    if not isinstance(exc, CkrAssertionError):
+        raise exc
     if is_known_error(exc, _RSA_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
-        pytest.skip(f"RSA public key import failed: {exc}")
+        pytest.xfail(
+            not_operational_reason(
+                f"{mech_name}:key-import",
+                ckr_name(exc.rv),
+            )
+        )
     raise exc
 
 
@@ -302,7 +316,7 @@ class TestRsaSigVer:
                     rs, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
                 )
             except AssertionError as exc:
-                _skip_rsa_public_import_reject(exc)
+                _skip_rsa_public_import_reject(exc, mech_name=mech_name)
             try:
                 verified = verify_single(
                     rs.raw, rs.sh, pub_key, mech_int, vec["message"], vec["signature"]
@@ -364,7 +378,7 @@ class TestRsaSigVer:
                     rs, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
                 )
             except AssertionError as exc:
-                _skip_rsa_public_import_reject(exc)
+                _skip_rsa_public_import_reject(exc, mech_name=mech_name)
             mech_param = mech_pss(mech_int, hash_mech=hash_mech, mgf=mgf, salt_len=salt_len)
             try:
                 verified = verify_single(

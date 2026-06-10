@@ -18,6 +18,7 @@ from pkcs11_check.raw.recipes import (
     unwrap_key,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
@@ -58,7 +59,11 @@ from pkcs11_check.testcases._negotiation import (
     negotiate_request,
     value_len_variant_allowed,
 )
-from pkcs11_check.testcases._operability import classify_kat_clean_error, xfail_vacuous_reject
+from pkcs11_check.testcases._operability import (
+    classify_kat_clean_error,
+    not_operational_reason,
+    xfail_vacuous_reject,
+)
 from pkcs11_check.testcases.acvp.aes.base_runner_aead import _aead_operability as _ccm_operability
 from pkcs11_check.testcases.conftest import import_secret_key_negotiated, xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
@@ -241,8 +246,18 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
                 CKA_SENSITIVE: False,
             },
         )
-    except AssertionError:
-        pytest.skip("Cannot import AES unwrapping key")
+    except AssertionError as exc:
+        if not isinstance(exc, CkrAssertionError):
+            raise
+        # Mechanism was advertised (has_mechanism gate passed above); a
+        # negotiation-exhausted import refusal is "advertised but not
+        # operational" -> xfail per the classification model.
+        pytest.xfail(
+            not_operational_reason(
+                "AES_KEY_WRAP:key-import",
+                ckr_name(exc.rv),
+            )
+        )
 
     # Unwrap the supplied blob and verify the recovered key material
     unwrapped = None
@@ -332,8 +347,18 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
                 CKA_SENSITIVE: False,
             },
         )
-    except AssertionError:
-        pytest.skip("Cannot import AES wrapping key")
+    except AssertionError as exc:
+        if not isinstance(exc, CkrAssertionError):
+            raise
+        # Mechanism was advertised (has_mechanism gate passed above); a
+        # negotiation-exhausted import refusal is "advertised but not
+        # operational" -> xfail per the classification model.
+        pytest.xfail(
+            not_operational_reason(
+                "AES_KEY_WRAP_KWP:key-import",
+                ckr_name(exc.rv),
+            )
+        )
 
     # Wycheproof KWP vectors are RFC 5649 raw data vectors.  PKCS#11 exposes
     # that exact operation through CKM_AES_KEY_WRAP_KWP C_Encrypt.
@@ -564,10 +589,22 @@ def test_aes_xts(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
                 CKA_SENSITIVE: False,
             },
         )
-    except (AssertionError, AttributeError):
+    except (AssertionError, AttributeError) as exc:
         if result == "invalid":
+            # Invalid vector: import failure means the operation was never
+            # attempted -> vacuous (the invalid input was not evaluated).
             return
-        pytest.skip("Cannot import AES-XTS key")
+        if isinstance(exc, CkrAssertionError):
+            # Mechanism was advertised (has_mechanism gate passed above); a
+            # negotiation-exhausted import refusal is "advertised but not
+            # operational" -> xfail per the classification model.
+            pytest.xfail(
+                not_operational_reason(
+                    "AES_XTS:key-import",
+                    ckr_name(exc.rv),
+                )
+            )
+        raise
 
     ct = None
     try:

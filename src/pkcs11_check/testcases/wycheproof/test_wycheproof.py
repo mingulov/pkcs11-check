@@ -24,6 +24,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -55,6 +56,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import import_rsa_public_key_negotiated, xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: F401
@@ -578,8 +580,18 @@ class TestRSASigWycheproof:
                 e=exponent,
                 attrs={CKA_VERIFY: True},
             )
-        except AssertionError:
-            pytest.skip("Cannot import RSA public key on this module")
+        except AssertionError as exc:
+            if not isinstance(exc, CkrAssertionError):
+                raise
+            # Mechanism was advertised (has_mechanism gate passed above); a
+            # negotiation-exhausted import refusal is "advertised but not
+            # operational" -> xfail per the classification model.
+            pytest.xfail(
+                not_operational_reason(
+                    "SHA256_RSA_PKCS:key-import",
+                    ckr_name(exc.rv),
+                )
+            )
 
         try:
             verified = verify_single(rs.raw, rs.sh, pub_key, CKM_SHA256_RSA_PKCS, msg, sig)

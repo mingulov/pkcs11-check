@@ -22,7 +22,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
-from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_TOKEN,
@@ -70,6 +70,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._operability import (
     Operability,
     OperabilityResult,
+    not_operational_reason,
     probe_operability,
     xfail_vacuous_reject,
 )
@@ -409,7 +410,12 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     key_bits = len(modulus) * 8
 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
-        pytest.skip(f"RSA {key_bits}-bit keys not supported (cached)")
+        pytest.xfail(
+            not_operational_reason(
+                f"{name}:key-import",
+                f"RSA {key_bits}-bit key import refused (cached)",
+            )
+        )
 
     try:
         pub_key = import_rsa_public_key_negotiated(
@@ -419,11 +425,17 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
             attrs={CKA_VERIFY: True},
         )
     except AssertionError as exc:
-        exc_msg = str(exc)
+        if not isinstance(exc, CkrAssertionError):
+            raise
         # Only cache permanent key-size rejections, not transient errors.
         if is_known_error(exc, _RSA_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
             _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
-        pytest.skip(f"Cannot import RSA {key_bits}-bit public key: {exc_msg}")
+        pytest.xfail(
+            not_operational_reason(
+                f"{name}:key-import",
+                f"RSA {key_bits}-bit: {ckr_name(exc.rv)}",
+            )
+        )
 
     # Build PSS params
     pss_param = mech_pss(mechanism, hash_mech=hash_mech, mgf=mgf, salt_len=s_len)

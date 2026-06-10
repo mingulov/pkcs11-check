@@ -16,6 +16,7 @@ from pkcs11_check.raw.recipes import (
     generate_random,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKM_SHA3_224_RSA_PKCS,
@@ -31,6 +32,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import import_rsa_public_key_negotiated, is_known_error
 from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
@@ -209,7 +211,12 @@ def test_rsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, Any
     key_bits = len(modulus) * 8
 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
-        pytest.skip(f"RSA {key_bits}-bit keys not supported (cached)")
+        pytest.xfail(
+            not_operational_reason(
+                f"{mech_display}:key-import",
+                f"RSA {key_bits}-bit key import refused (cached)",
+            )
+        )
 
     try:
         pub_key = import_rsa_public_key_negotiated(
@@ -219,11 +226,17 @@ def test_rsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, Any
             attrs={CKA_VERIFY: True},
         )
     except AssertionError as exc:
-        exc_msg = str(exc)
+        if not isinstance(exc, CkrAssertionError):
+            raise
         # Only cache permanent key-size rejections, not transient errors.
         if is_known_error(exc, _RSA_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
             _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
-        pytest.skip(f"Cannot import RSA {key_bits}-bit public key: {exc_msg}")
+        pytest.xfail(
+            not_operational_reason(
+                f"{mech_display}:key-import",
+                f"RSA {key_bits}-bit: {ckr_name(exc.rv)}",
+            )
+        )
 
     try:
         verified = verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig)
