@@ -103,13 +103,13 @@ NIST P-curves (secp256r1/384r1/521r1) — which ECDSA advertisement implies — 
 | C9 | `wycheproof/test_wycheproof_dsa.py:200`, `:210` | `DSA sig cannot be represented as P1363` / `Incomplete DSA public key` | Vector shape / representation, not module refusal. |
 | C10 | `test_cctv_rfc6979.py` curve/`has_mechanism` setup skips | `ECDSA_SHA256 not supported …` | Mechanism not advertised — correct setup skip. |
 
-### Category D — UNCLEAR (needs evidence before deciding)
+### Category D — RESOLVED 2026-06-10 (determinations + implementations in §4a)
 
-| # | File:line | Skip message | What evidence decides it |
+| # | File:line | Determination | Action |
 |---|---|---|---|
-| D1 | `acvp/test_acvp_ecdh.py:441` | `Cannot extract public key point for ECDH` | Is this a module readback refusal (`CKR_*` on `C_GetAttributeValue` of `CKA_EC_POINT`) or a vector-shape gap? If the module *generated* the keypair (capability present) but cannot export the point, that is a self-contradiction (closer to Type C/fail) — needs the exact CKR. Currently raw `import_ec_public_key`-adjacent. Inspect whether it follows a successful `EC_KEY_PAIR_GEN`. |
-| D2 | `wycheproof/test_wycheproof_x25519.py:218/:222`, `test_wycheproof_ecdh.py:282/:286` (the **B4/B5** rows) | `Cannot import EC/Montgomery private key…` | Whether a module that advertises `ECDH1_DERIVE` (and X25519/X448 specifically) refuses the canonical private-key import for the **named curve it advertises** (→ A) vs an unsupported curve (→ C). Needs per-curve CKR breakdown like §3, plus a negotiated EC-private importer to exhaust shapes first. Listed as B above pending that evidence. |
-| D3 | `acvp/test_acvp_slhdsa.py` runtime branch overlap (`_PQC_IMPORT_RUNTIME_FAILURE_RVS` = `CKR_FUNCTION_FAILED`) | `SLH-DSA {label} import failed with non-specific CKR` (xfail) vs `Cannot import …` (skip) | The skip set `_PQC_IMPORT_UNSUPPORTED_RVS` may overlap genuine not-operational codes; confirm which CKRs PQC modules (nss-pqc) actually return so the A16 skip→xfail split lands on the right boundary. |
+| D1 | `acvp/test_acvp_ecdh.py:441` | **Type-C fail** — empty `CKA_EC_POINT` after claimed `EC_KEY_PAIR_GEN` success is a self-contradiction (never legitimately exercised in any artifacts2 baseline; latent finding-mask). | skip → `classify_lifecycle_effect` (fail). Commit `6857bebf`. |
+| D2 | `wycheproof/test_wycheproof_x25519.py` `test_xdh`, `test_wycheproof_ecdh.py` `test_ecdh` broad branches (the **B4/B5** rows) | **A-like xfail** (overturns the B-lean) — softhsm2/tpm2/wolfpkcs11/kryoptic operationally derive ECDH/XDH (hundreds–thousands of passes) yet refuse the canonical *valid*-vector private import with a broad CKR; the raw single-template import IS the spec path (no negotiated EC-private importer needed). Curve-unsupported branch stays C. | broad branch skip → `xfail(not_operational_reason(…))`. Commit `b56c3f8c`. |
+| D3 | `acvp/test_acvp_slhdsa.py` import helper | **xfail; boundary = mechanism advertisement** — no PQC genuine-absence import CKR analogue, so once `has_mechanism` passes any clean import reject is not-operational. Matches the ML-DSA precedent + the ML-KEM `docs/module-issues.md:349` convention. Clean — no fresh docker run needed. | unify `_PQC_IMPORT_NOT_OPERATIONAL_RVS`; `_skip_if_import_unsupported` → `_xfail_if_import_not_operational`. Commit `9a040f98`. |
 
 ---
 
@@ -223,6 +223,102 @@ pooled matrix and confirm the converted skips reappear as xfails (not as new fai
 
 ---
 
+## 4a. D determinations (2026-06-10 — evidence gathered, resolved)
+
+The three category-D items were deferred in §2 pending evidence. All three are now
+**determined** and **implemented** (TDD meta-test first, 0-xfail meta-suite gate green
+after each: `uv run pytest tests/` ⇒ 2111 passed / 2 skipped / **0 xfailed**; ruff +
+`mypy --strict` clean). Evidence is from the READ-ONLY `artifacts2/` pooled baselines
+(per-provider `report.jsonl`, `outcome`/`longrepr` scanned).
+
+### D1 — `acvp/test_acvp_ecdh.py:441` point-extract → **Type-C fail** (was skip)
+
+**Determination: latent Type-C self-contradiction, downgraded skip → fail.** By line 441
+the keypair was produced by `gen_ec_keypair` (CKM_EC_KEY_PAIR_GEN), which asserts
+`CKR_OK` internally — *success is claimed*. `CKA_EC_POINT` is a mandatory, non-sensitive
+attribute on an EC **public** key, so an empty readback after that claimed success is a
+self-contradiction (claimed success → effect not observable), exactly the Type-C class.
+
+**Evidence (artifacts2):** *no baseline ever hits the :441 skip.* Every real module that
+generates the keypair returns a readable point. Providers reaching `test_ecdh_key_agreement_basic`
+instead hit: corepkcs11 → `CKM_ECDH1_DERIVE not supported` skip (line 400, legit C);
+bouncyhsm → runtime-reject **xfail** at `conftest.py:423`; tpm2 → malformed-point **xfail**
+at `:447` (`decode_ec_point` ValueError); pkcs11-mock → canned-value guard skip. The :441
+branch is a defensive dead path that would *mask* the contradiction if it ever fired.
+
+**Action:** replaced `pytest.skip("Cannot extract public key point for ECDH")` with
+`classify_lifecycle_effect(claimed_success=True, effect_observed=not bob_ec_point, …)` →
+**fail** when the point is empty (readable-point happy path unchanged: the classifier
+returns when the effect is not observed). Commit `6857bebf`; meta-test
+`tests/test_acvp_ecdh_runtime.py::test_empty_generated_ec_point_is_type_c_fail`.
+
+### D2 — X25519/X448 + named-curve EC **private** import (B4/B5) → **A-like xfail** (was skip)
+
+**Determination: A-like (advertised-but-not-operational), overturning the audit's
+tentative B-lean.** Both sites already split the reject; only the **broad** branch flips,
+preserving the `_CURVE_UNSUPPORTED_CKRS` skip (C) and the `result=="invalid"` vacuous
+return.
+
+**Evidence (artifacts2) — the modules hitting the broad branch operationally derive ECDH,
+so the canonical private import of a *valid* vector is the only gap:**
+
+| provider | named-curve `test_ecdh` | Montgomery `test_xdh` | broad import skips (valid-vector / CKR) |
+|---|---|---|---|
+| softhsm2 | 6033 passed | 72 passed | Montgomery 518 valid (`CKR_ATTRIBUTE_VALUE_INVALID`) |
+| tpm2 | 652 passed | 72 passed | EC-priv 5406 valid + Montgomery 518 valid (`ATTR_VALUE_INVALID`) |
+| wolfpkcs11 | 2833 passed | 72 passed | EC-priv 3225 valid (`CKR_FUNCTION_FAILED`) + Montgomery 518 valid (`ATTR_VALUE_INVALID`) |
+| kryoptic | 2385 passed | (1077 passed) | EC-priv 3673 valid (`ATTR_VALUE_INVALID`) |
+| nss / opencryptoki | — | — | only `CKR_DOMAIN_PARAMS_INVALID` / `CKR_CURVE_NOT_SUPPORTED` → correctly stay **C** |
+
+The deciding test (§1) is satisfied: advertised gate passed (`has_mechanism("ECDH1_DERIVE")`),
+the imported private key is the *canonical* subject key (no negotiated EC-private importer
+exists — the raw `import_ec_private_key` single-template path IS the spec path here, so the
+broad reject is conclusive without negotiation wiring), and the broad CKR is not a
+genuine-absence code.
+
+**Action:** in `test_wycheproof_x25519.py::test_xdh` and `test_wycheproof_ecdh.py::test_ecdh`,
+the broad branch (gated on `isinstance(exc, CkrAssertionError)`) now
+`pytest.xfail(not_operational_reason("ECDH:Montgomery-private-import" / "ECDH:EC-private-import",
+ckr_name(exc.rv)))`. Commit `b56c3f8c`; meta-test `tests/test_import_skip_xfail_d2.py`
+(8 tests: broad→xfail, curve→skip, invalid→vacuous return, non-CKR→propagate, per site).
+
+### D3 — PQC (SLH-DSA / A16) import CKR boundary → **xfail; boundary = mechanism advertisement**
+
+**Determination: clean — implemented.** For PQC the genuine-absence signal **is** mechanism
+advertisement; there is **no curve-absence CKR analogue** (no `CKR_CURVE_NOT_SUPPORTED`
+equivalent for ML-DSA/SLH-DSA/ML-KEM object classes). So once `has_mechanism` passes (it
+gates every SLH-DSA import site), **any clean import reject is xfail** ("advertised but not
+operational"). The previous SLH-DSA helper's split — skip on `_PQC_IMPORT_UNSUPPORTED_RVS`
+but xfail only on `CKR_FUNCTION_FAILED` — was an incoherent asymmetry (both are the same
+not-operational signal).
+
+**Boundary tuple (the answer to D3):**
+`_PQC_IMPORT_NOT_OPERATIONAL_RVS = (CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID,
+CKR_ATTRIBUTE_VALUE_INVALID, CKR_ATTRIBUTE_READ_ONLY, CKR_TEMPLATE_INCONSISTENT,
+CKR_KEY_SIZE_RANGE, CKR_FUNCTION_FAILED)` → **xfail**; non-CKR `AssertionError` → propagate
+(harness/ctypes bug = fail); not-advertised → skip (above the import).
+
+**Precedent corroboration (not fresh-docker-dependent):** ML-DSA already xfails its whole
+import-reject bucket — `_MLDSA_PUBLIC/PRIVATE_IMPORT_REJECT_CKRS` in `test_wycheproof_mldsa.py`
+/ `_mldsa_sign.py`, and `test_wycheproof_mldsa_context.py:162` xfails **any**
+`CkrAssertionError` import failure. `docs/module-issues.md:349` records the ML-KEM
+raw-private convention: a dk-only import rejected with `CKR_ATTRIBUTE_VALUE_INVALID` is a
+spec-permitted operational deviation → **xfail**, not failure. The SLH-DSA boundary now
+matches that convention.
+
+**Evidence (artifacts2):** the SLH-DSA import-setup helper is *never reached today* —
+bouncyhsm & kryoptic advertise SLH-DSA and import successfully (their op-stage rejects
+already xfail at `conftest:423`); nss-pqc does not advertise `SLH_DSA` (skip fires above the
+import). So this is a latent finding-mask fixed proactively, consistent with the ML-DSA/ML-KEM
+precedent — **no fresh docker run needed** to make this determination.
+
+**Action:** merged the two sets into `_PQC_IMPORT_NOT_OPERATIONAL_RVS`; replaced
+`_skip_if_import_unsupported` with `_xfail_if_import_not_operational` (shared
+`not_operational_reason("SLH-DSA:import (…)", ckr_name)` wording). Commit `9a040f98`;
+meta-test additions in `tests/test_acvp_slhdsa_runtime_classification.py`.
+
+---
+
 ## 5. Summary
 
 - **Total in-scope import/decode skip sites examined:** 32 distinct sites (some helpers guard
@@ -232,7 +328,8 @@ pooled matrix and confirm the converted skips reappear as xfails (not as new fai
   splits keep their curve-unsupported sub-branch in C.
 - **Category B (legitimate, raw-import optional):** 5 (B1–B5; B4/B5 cross-listed as D2).
 - **Category C (legitimate, capability/test-data absent):** 10 (C1–C10).
-- **Category D (needs evidence):** 3 (D1–D3).
+- **Category D (RESOLVED 2026-06-10, see §4a):** 3 (D1 → Type-C **fail**; D2 → A-like **xfail**,
+  B4/B5 reclassified; D3 → **xfail**, boundary = mechanism advertisement). All implemented TDD.
 - **Cross-check confirms the leak is live:** tpm2 (~22k EC-curve skips, NIST P-curves in the broad
   branch = A), corePKCS11 (988 EC + 201 RSA = the documented precedent), kryoptic-fips (216 RSA
   SigVer) all skip imports while advertising the mechanism. The A-vs-C boundary is **per-CKR**
