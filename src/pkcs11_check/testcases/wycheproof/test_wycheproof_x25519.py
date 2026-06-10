@@ -20,6 +20,7 @@ from pkcs11_check.raw.recipes import (
     import_ec_private_key,
     read_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DERIVE,
@@ -48,6 +49,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 from pkcs11_check.testcases.wycheproof._key_decoders import (
     decode_xdh_private_bytes,
@@ -218,8 +220,18 @@ def test_xdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             pytest.skip(f"Cannot import Montgomery private key: {exc}")
         if result == "invalid" and is_known_error(exc, _MONTGOMERY_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
             return
-        if is_known_error(exc, _MONTGOMERY_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
-            pytest.skip(f"Cannot import Montgomery private key: {exc}")
+        if isinstance(exc, CkrAssertionError) and is_known_error(
+            exc, _MONTGOMERY_PRIVATE_IMPORT_UNSUPPORTED_CKRS
+        ):
+            # ECDH1_DERIVE is advertised (gate passed above) and providers that
+            # hit this branch (softhsm2/tpm2/wolfpkcs11/kryoptic per the D2
+            # cross-check) operationally derive XDH/ECDH -- the canonical
+            # private-key import of a VALID vector is the only gap. That is
+            # "advertised but not operational" -> xfail per the classification
+            # model, not skip. The CKR_CURVE_NOT_SUPPORTED/DOMAIN branch above
+            # keeps the genuine-absence skip; the result=="invalid" return above
+            # keeps the vacuous pass.
+            pytest.xfail(not_operational_reason("ECDH:Montgomery-private-import", ckr_name(exc.rv)))
         raise
 
     # Derive shared secret
