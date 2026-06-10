@@ -1815,9 +1815,16 @@ Minimal embedded implementation; storage-oriented object model. Root-caused 2026
 
 ## wolfpkcs11 (wolfSSL in-process C library)
 
-Fresh full run on dev 2026-06-10: **400 failed** (pool baseline 3,067; the fix-pass cleared
-test_cts 2,079, wycheproof_rsa_oaep 209, wycheproof 144, wycheproof_rsa 21 -> 0). Remaining are
-genuine wolfpkcs11 findings + flagged UB probes.
+Pool baseline 3,067. The fix-pass cleared `test_cts` 2,079 (H2 operability probe → xfail) and
+`wycheproof_rsa` 21 → 0. The remaining failures are **genuine wolfpkcs11 findings + flagged UB
+probes**. **Correction (2026-06-10 re-verify):** two files the prior summary listed as "cleared → 0"
+were NOT cleared — fresh targeted runs on dev still show `wycheproof_rsa_oaep` **209 failed** (stable)
+/ **210** (master) and `wycheproof.py::TestAESCBCPKCS5Wycheproof` **144 failed**. Both are genuine
+deviations (see below), not harness artifacts. The H3 combo probe only clears *combo-dead* OAEP
+(e.g. opencryptoki's 26 SHA-512/224 vectors → xfail); wolfpkcs11's combos are operational, so its
+valid-vector rejections are correctness findings (fail) by the deliberate H3 design. (The earlier
+`400 failed` total was thus understated; per project policy exact counts are tracked only at release,
+so no precise total is asserted here.)
 
 ### Known bugs
 - **Digest path leaks a raw wolfSSL error as the CK_RV (H7)**: `C_Digest`/`C_DigestFinal` for
@@ -1826,6 +1833,28 @@ genuine wolfpkcs11 findings + flagged UB probes.
   `test_acvp_sha3` ~81, `test_digest`/`test_mech_digest`/`test_mech_multipart`/`test_sha3` ~67
   (~309 total). Returning a non-`CKR_*` value violates the spec; the suite surfaces it as a clean
   (non-crash) return.
+- **RSA-OAEP decrypt rejects valid edge-case vectors despite an operational combo (209/210)**:
+  `test_wycheproof_rsa_oaep` — wolfpkcs11 decrypts typical OAEP messages correctly (the canonical
+  per-(sha,mgf) combo probe is OPERATIONAL) but returns `CKR_ENCRYPTED_DATA_INVALID` on valid
+  vectors at the input edges. Fresh 2026-06-10 cross-checked against the pool: **209 failed** (stable),
+  **210** (master). Breakdown (all clean rejects, no wrong output): **empty-message OAEP `msglen=0`
+  ~125** (softhsm2/kryoptic/opencryptoki all decrypt empty-message OAEP fine), **3-prime RSA keys 54**
+  (`rsa_three_primes_oaep_*`; softhsm2 66P, kryoptic/opencryptoki 110P each — so the harness's
+  multi-prime import is correct and this is wolfpkcs11-specific), **near-max message length ~15**,
+  scattered ~15. Classified `fail` (operational combo + rejected valid vector = correctness finding,
+  per the deliberate H3 design); the inconsistency (decrypts 16-byte but not 0-byte same-combo) is a
+  real wolfpkcs11 OAEP decoder edge-case bug, not an "advertised but not operational" deviation.
+- **AES-CBC-PAD accepts invalid PKCS#5 padding (144)**: `test_wycheproof.py::
+  TestAESCBCPKCS5Wycheproof` — also NOT cleared by the fix-pass (fresh 2026-06-10: **144 failed**).
+  The Wycheproof "invalid" vectors carry genuinely non-PKCS#5 padding (`BadPadding` ×141: zero-byte,
+  0xff, ISO/IEC 7816-4, ANSI X.923, ISO 10126, over-length; `NoPadding` ×3), which `CKM_AES_CBC_PAD`
+  should reject with `CKR_ENCRYPTED_DATA_INVALID`; wolfpkcs11 decrypts them (`CKR_OK`). **Shared with
+  opencryptoki** (both 72P/144F), whereas softhsm2 and kryoptic reject correctly (216P) and bouncyhsm
+  rejects all but 3 — so this is a real lax-padding-validation deviation, not a harness artifact.
+  ⚖️ **Flagged decision:** the test hard-`fail`s acceptance; per the classification model, accepting
+  an invalid negative-op input is `fail` only on a Type-A/self-contradiction (lax padding is neither a
+  crypto-correctness break nor a self-contradiction), so fail-vs-xfail here is a deliberate-strictness
+  call — recorded, not yet reclassified.
 - **AES-CCM decrypt accepts an invalid tag (tag-auth bypass, Type A)**: `test_ccm` -- "accepted
   invalid (CKR_OK) -- must reject" (same no-authentication class as bouncyhsm CCM). CCM is also
   partly non-operational (the H2 operability probe xfails those vectors); the ops that complete
