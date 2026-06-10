@@ -81,6 +81,9 @@ Two spec-grounded refinements (design: docs/superpowers/specs/2026-06-10-adverti
 - **Vacuous reject = xfail:** where a canonical operability probe says NOT_OPERATIONAL, a
   negative-op "rejection" never evaluated the input → **xfail**, not pass (INCONCLUSIVE never
   triggers this; WRONG_OUTPUT also leaves the pass untouched).
+- At claim-layer xfail sites the first refinement **supersedes** the "every CKR check must list
+  SPECIFIC acceptable return codes" rule below; that rule remains in force for negative-op
+  assertions.
 
 ### Error handling — CRITICAL
 - **NEVER use a bare `except Exception: pass` or catch-all CKR check** — this hides real bugs. Every CKR check must list SPECIFIC acceptable return codes.
