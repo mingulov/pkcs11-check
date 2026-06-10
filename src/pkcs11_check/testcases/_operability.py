@@ -91,6 +91,31 @@ def reset_operability_cache() -> None:
     _CACHE.clear()
 
 
+def not_operational_reason(probe_key: str, detail: str) -> str:
+    """Canonical advertised-but-not-operational wording, shared across suites.
+
+    One wording per (mechanism, operation) probe key lets report readers group
+    the claim-layer signal with its corroborating per-vector xfails.
+    """
+    return f"{probe_key}: advertised but not operational ({detail})"
+
+
+def xfail_vacuous_reject(result: OperabilityResult, *, label: str) -> None:
+    """Downgrade a negative-op "rejection" on a NOT_OPERATIONAL mechanism.
+
+    The module refuses everything, so the invalid input was never evaluated;
+    counting the rejection as pass asserts conformance that was never tested
+    (gap-analysis leak 1). Returns normally for every other verdict --
+    OPERATIONAL rejections are genuine passes and INCONCLUSIVE (staging
+    failure, no mechanism evidence) keeps legacy rules.
+    """
+    if result.status is Operability.NOT_OPERATIONAL:
+        pytest.xfail(
+            f"{label}: vacuous reject -- mechanism not operational "
+            f"({result.detail}); input never evaluated"
+        )
+
+
 def classify_kat_clean_error(
     exc: AssertionError,
     *,
@@ -108,7 +133,7 @@ def classify_kat_clean_error(
         # classified as "not operational".
         raise exc
     if result.status is Operability.NOT_OPERATIONAL:
-        pytest.xfail(f"{label}: advertised but not operational ({result.detail}); vector: {exc}")
+        pytest.xfail(f"{not_operational_reason(label, result.detail)}; vector: {exc}")
     if result.status is Operability.OPERATIONAL:
         # Classification model, positive-op row: a clean error is an honest
         # deviation (the module refused; it produced no wrong crypto) -> xfail,
