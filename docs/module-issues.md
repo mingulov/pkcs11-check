@@ -31,6 +31,21 @@ provider package versions where the finding was first recorded.
   `CKF_WRAP` and `CKF_UNWRAP` for `CKM_DES_CBC_PAD` and `CKM_DES3_CBC_PAD`, but `C_WrapKey`
   returns `CKR_MECHANISM_INVALID` even when called with matching DES-family wrapping keys and
   DES-family target keys. Detected by: `test_mech_wrap.py`.
+- **Lenient wrong-key-type at `C_SignInit`/`C_VerifyInit` (ECDSA + RSA key), but SAFE at the
+  operation**: `C_SignInit(CKM_ECDSA, RSA private key)` returns `CKR_OK` (PKCS#11 §5.2 prefers
+  `CKR_KEY_TYPE_INCONSISTENT` at init); the subsequent `C_Sign` then safely refuses with
+  `CKR_GENERAL_ERROR` (and `C_Verify` with `CKR_SIGNATURE_LEN_RANGE`) — **no signature is
+  produced and there is no crash**. SoftHSM2 is the only one of softhsm2/kryoptic/NSS/opencryptoki
+  that defers the key-type check this way (the others reject at init). Because the operation leaves
+  no usable result behind, this is a recorded **deviation (xfail)**, not a forgery: the
+  `test_ckr_wrong_key_type_hardening.py::TestWrongAsymmetricKeyTypeContinuation` continuation probe
+  classifies by *effect* — a produced signature (`BREAK`) would `fail`, a crash would `fail`, and a
+  safe late refusal `xfail`s. Note: the first-line init-only checks (`test_mech_negative.py::
+  TestWrongKeyType::test_ecdsa_with_rsa_key_rejected`, `test_ckr_sign.py::TestSignInitErrors`,
+  `test_ckr_verify.py::TestVerifyInitErrors`) still hard-`fail` SoftHSM2 here because they assert
+  rejection at the init stage without continuing to the operation — a stricter first-line check
+  whose fail-vs-xfail classification for lenient-but-safe init is a flagged decision (the
+  continuation probe is the authoritative safety verifier).
 - **HIGH — SIGSEGV on integer-overflow `template_count` (NEW 2026-04-29)**: Calling
   `C_CreateObject`, `C_GenerateKey`, or `C_GenerateKeyPair` with `ulCount` set to extreme
   values such as `0xffffffffffffffff` (UINT64_MAX), `0xaaaaaaaaaaaaaab`
