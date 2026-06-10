@@ -1,6 +1,7 @@
 # Advertised-capability honesty package — design
 
-Date: 2026-06-10. Status: approved by Denis (brainstorming session).
+Date: 2026-06-10. Status: approved by Denis (brainstorming session); revised after code
+review (claim-layer mechanism corrected, model-doc amendments and probe preconditions added).
 Supersedes the open question from `docs/findings/advertised-not-operational-gap-analysis.md`
 ("should advertised-but-not-operational be fail? a separate test? FIPS-only?").
 
@@ -22,59 +23,78 @@ PKCS#11 v3.2, local mirror):
   direction (safe, honest — e.g. FIPS *requires* refusing SHA-1 sign). Under the model's
   pivot ("right thing done imperfectly = xfail"), this is xfail. No security consequence
   (callers get a clean error and can fall back) → not a Type B/C/D self-contradiction.
+- **Why only `CKR_OPERATION_NOT_VALIDATED` earns pass+note, not `CKR_MECHANISM_INVALID`:**
+  an *advertised* mechanism refusing with "cannot be used in the selected token with the
+  selected function" contradicts the advertisement itself (self-inconsistent metadata
+  pair) — that stays xfail. A policy refusal does not contradict the advertisement: the
+  capability exists, policy forbids the operation, and v3.2 defines exactly this code for
+  exactly this case.
+- **Known conservatism:** the v3.2 text continues "Tokens may choose to return a more
+  specific error (like CKR_ATTRIBUTE_VALUE_INVALID or CKR_DATA_LEN_RANGE)" — so a policy
+  refusal via another code is also spec-blessed. We deliberately give pass+note only to
+  `CKR_OPERATION_NOT_VALIDATED`, because any other code is indistinguishable from
+  breakage without provider knowledge; those remain the recorded xfail.
 - The "separate test" is the existing `test_mech_*` registry layer; this package
   strengthens it rather than adding a parallel one (approach A, chosen over a dedicated
   `test_capability_claims.py` (B) and report-layer-only aggregation (C)).
 
 Denis decisions, 2026-06-10: severity = capability dishonesty → xfail;
-`CKR_OPERATION_NOT_VALIDATED` refusal in the claim test → pass + `compliance.note`;
-scope = full coherence package; KAT vectors stay **xfail** even under sanctioned refusal
-(the claim-layer test is the analytical verdict; per-vector xfails are corroborating
-evidence for later analysis, recorded not hidden).
+`CKR_OPERATION_NOT_VALIDATED` refusal in the claim test → pass + `compliance.note`
+(rv alone suffices — the note *records* whether the token exposes `CKO_VALIDATION`
+objects but does not require one; the stricter pass-only-with-declared-validation option
+was offered and not chosen); scope = full coherence package; KAT vectors stay **xfail**
+even under sanctioned refusal (the claim-layer test is the analytical verdict; per-vector
+xfails are corroborating evidence for later analysis, recorded not hidden).
 
 ## Components
 
-### 1. Probe result carries the refusal RV (`testcases/_operability.py`)
+### 1. Claim-layer 3-way mapping (`test_mech_*` registry suites)
 
-`OperabilityResult` gains `rv: int | None = None` — the canonical operation's refusal
-code when the verdict is `NOT_OPERATIONAL` (None otherwise / when not applicable). No new
-enum state; `classify_kat_clean_error` behavior is unchanged for KAT consumers
-(sanctioned-ness only matters at the claim layer). Probe sites populate `rv` from the
-canonical `CkrAssertionError`.
+The `test_mech_*` suites do not use `_operability.py` probes; their per-(mechanism,
+operation) **roundtrip is itself the canonical operation**, and the refusal code is
+already available as `exc.rv` on the `CkrAssertionError`. No new probe layer and no
+`OperabilityResult` change is needed. The suites classify the roundtrip outcome:
 
-KAT vectors on a sanctioned-refusing mechanism still xfail, with the sanctioned code
-named in the message.
-
-### 2. Claim-layer 3-way mapping (`test_mech_*` registry suites)
-
-The per-(mechanism, operation) registry tests classify the canonical probe verdict:
-
-| Canonical outcome | Verdict |
+| Roundtrip outcome | Verdict |
 |---|---|
-| OPERATIONAL (correct output) | pass |
-| clean refusal, `rv == CKR_OPERATION_NOT_VALIDATED` | **pass** + `compliance.note` ("validation-policy refusal via sanctioned code"; the note records whether the token exposes `CKO_VALIDATION` objects — capability-based enrichment, no provider identity) |
-| clean refusal, any other code | xfail with the shared not-operational reason (component 3) |
-| WRONG_OUTPUT / crash / non-CKR | fail / propagate |
+| OK + correct output | pass |
+| clean refusal, `exc.rv == CKR_OPERATION_NOT_VALIDATED` | **pass** + `compliance.note(level=STANDARD)` ("validation-policy refusal via sanctioned code"; the note records whether the token exposes `CKO_VALIDATION` objects — capability-based enrichment, no provider identity) |
+| clean refusal, any other code | xfail with the shared not-operational reason (component 2) |
+| OK + wrong output / crash / non-CKR | fail / propagate |
 
-Nothing weakens Type A–D; crashes and wrong output stay hard fails everywhere.
+**This retires the claim-layer per-CKR runtime-reject allowlists**
+(`_SIGN_RUNTIME_REJECT_RVS`, `_ENCRYPT_RUNTIME_REJECT_RVS`, …): today an unlisted clean
+code mid-roundtrip hard-fails; under the table it xfails. That is the model's positive-op
+row applied with the roundtrip as canonical evidence — the same "no CKR allowlist"
+rationale `_operability.py` already established — and at these sites it supersedes the
+CLAUDE.md "every CKR check must list SPECIFIC acceptable return codes" rule (which
+remains in force for negative-op assertions). Scope boundary: the table covers the
+canonical operation itself; **setup-stage** refusals (key generation/import for the
+roundtrip) keep their existing helpers and verdicts.
 
-### 3. Shared probe-key reason constant
+(Considered and deferred: routing the roundtrip outcome through `probe_operability` so
+the claim layer and KAT runners share one cache and probe keys. Not required for this
+package; revisit if cross-suite verdict reuse becomes useful.)
+
+### 2. Shared probe-key reason constant
 
 New helper `not_operational_reason(probe_key, detail)` in `_operability.py` producing the
-canonical wording (`"{probe_key}: advertised but not operational ({detail})"`). The ~18
-scattered "advertised but …" message sites that have a probe key route through it so
+canonical wording (`"{probe_key}: advertised but not operational ({detail})"`). The ~20
+probe-keyed "advertised but …" message sites route through it; `test_mech_*` derives the
+same probe-key format from (mechanism, operation) names without using the probe cache, so
 report readers can group the single per-(mech,op) claim signal with its corroborating
 per-vector xfails. Sites without a probe key (one-off helpers) keep their wording.
 
-### 4. Coverage meta-check (new test alongside `test_mech_probe.py`)
+### 3. Coverage meta-check (new test alongside `test_mech_probe.py`)
 
 Computes advertised (mechanism, operation) pairs from `C_GetMechanismList` ×
-`C_GetMechanismInfo` flags, diffs against the mechanism registry
-(`mechanism_helpers.py` / `mechanism_registry/`), and emits one `compliance.note` per
-advertised-but-unprobed pair. The test **passes** — a registry blind spot is a harness
-gap made visible, not a module deviation. Closes gap-analysis Q2 gap #1.
+`C_GetMechanismInfo` flags, diffs against the mechanism registry (via
+`MechanismCatalog.filter_unregistered`), and emits one `compliance.note` per
+advertised-but-unregistered pair. Registration is what's checked — scenario-level
+deselection does not count as a blind spot. The test **passes** — a registry blind spot
+is a harness gap made visible, not a module deviation. Closes gap-analysis Q2 gap #1.
 
-### 5. Vacuous-reject downgrade (Denis-endorsed; gap-analysis leak 1)
+### 4. Vacuous-reject downgrade (Denis-endorsed; gap-analysis leak 1)
 
 In the probe-wired runners — `base_runner_aead`, `acvp/aes/test_wrap`, `base_cts`,
 `test_xts`, `wycheproof_aes`, ACVP SigVer probe, PSS combo — when the canonical verdict
@@ -83,8 +103,25 @@ as `xfail` "vacuous reject — mechanism not operational, input never evaluated"
 `pass`. Operational mechanisms untouched (probe gates the downgrade); crashes still fail;
 `INCONCLUSIVE` keeps legacy rules.
 
+**Precondition:** `_pkcs15_sigver_operational` (acvp/test_acvp_rsa.py) and
+`_pss_combo_operational` (test_wycheproof_rsa_pss.py) currently return `bool`, collapsing
+canonical **staging** failure (key import/keygen refused) into "not operational". Before
+wiring the downgrade into them, upgrade both to three-state (NOT_OPERATIONAL /
+OPERATIONAL / INCONCLUSIVE, e.g. return `OperabilityResult`) so staging failures are
+INCONCLUSIVE and never trigger the vacuous downgrade.
+
 Expected honest count shift: tpm2 ~135 SHA-1 SigVer passes→xfail; bouncyhsm CCM thousands
 of invalid-vector passes→xfail.
+
+### 5. Classification-model doc amendments (same change, not after)
+
+Component 1 carves a pass out of the positive-op xfail cell (sanctioned policy refusal)
+and component 4 refines the negative-op pass cell (vacuous reject → xfail). Amend in the
+same merge so the ONE RULE stays consistent with shipped behavior:
+
+- CLAUDE.md classification table: footnote the two refinements.
+- `docs/classification-model-design.md`: add the sanctioned-refusal pass row and the
+  vacuous-reject rule with the spec citations above.
 
 ## Out of scope
 
@@ -97,11 +134,13 @@ of invalid-vector passes→xfail.
 
 TDD meta-tests first (RED before implementation), in `tests/`:
 
-1. Sanctioned-RV pass mapping: fake probe returning NOT_OPERATIONAL with
-   `rv=CKR_OPERATION_NOT_VALIDATED` vs `rv=CKR_DEVICE_ERROR` → pass+note vs xfail.
-2. `OperabilityResult.rv` population from the canonical CkrAssertionError.
+1. Claim-layer mapping: fake roundtrip refusals with `rv=CKR_OPERATION_NOT_VALIDATED` vs
+   `rv=CKR_DEVICE_ERROR` → pass+note vs xfail; allowlist retirement pinned (previously
+   unlisted clean code now xfails, wrong output still fails).
+2. Three-state upgrade of the SigVer/PSS probes: staging failure → INCONCLUSIVE (legacy
+   rules), canonical refusal → NOT_OPERATIONAL, canonical OK → OPERATIONAL.
 3. Vacuous-reject downgrade per wired runner (NOT_OPERATIONAL → negative reject xfails;
-   OPERATIONAL → negative reject still passes; crash still fails).
+   OPERATIONAL → negative reject still passes; crash still fails; INCONCLUSIVE → legacy).
 4. Coverage meta-check against a synthetic mechanism list / registry diff.
 5. Reason-constant linkage (claim-layer xfail and KAT xfail share the probe key).
 
