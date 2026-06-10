@@ -54,6 +54,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_reject
 from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
+from pkcs11_check.testcases._signature_policy import xfail_if_op_not_operational
 from pkcs11_check.testcases.conftest import extract_ec_point
 
 pytestmark = pytest.mark.interop
@@ -168,7 +169,12 @@ class TestRSAInterop:
         data = b"multi-hash interop test"
 
         try:
-            sig = sign_single(rs.raw, rs.sh, priv_h, hash_mech, data)
+            try:
+                sig = sign_single(rs.raw, rs.sh, priv_h, hash_mech, data)
+            except AssertionError as exc:
+                # FIPS deprecates SHA-1 for signature generation -> DEVICE_ERROR:
+                # advertised but not operational, not a break.
+                xfail_if_op_not_operational(exc, mech_names[int(hash_mech)])
 
             pub_crypto = read_rsa_public_key_or_xfail(rs, pub_h)
             pub_crypto.verify(sig, data, padding.PKCS1v15(), hash_class)
