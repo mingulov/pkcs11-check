@@ -39,6 +39,8 @@ def _session() -> Any:
 def test_extract_key_from_key_runtime_reject_is_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A clean CkrAssertionError derive reject -> claim-layer xfail (shared wording)."""
+
     def _derive_reject(*_args: Any, **_kwargs: Any) -> None:
         raise CkrAssertionError(
             "Unexpected CK_RV CKR_TEMPLATE_INCONSISTENT",
@@ -49,7 +51,7 @@ def test_extract_key_from_key_runtime_reject_is_xfail(
 
     with pytest.raises(
         pytest.xfail.Exception,
-        match="CKM_EXTRACT_KEY_FROM_KEY: advertised derive path is not operational",
+        match="advertised but not operational",
     ):
         test_mech_derive.TestMechDerive().test_derive_produces_key(
             _session(),
@@ -57,19 +59,25 @@ def test_extract_key_from_key_runtime_reject_is_xfail(
         )
 
 
-def test_hkdf_base_keygen_runtime_reject_is_xfail(
+def test_hkdf_base_keygen_non_ckr_assert_propagates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Allowlist retired: a plain (non-CkrAssertionError) keygen assert no longer
+    matches on message substring -- the claim layer re-raises it as a real failure.
+
+    Previously ``xfail_if_known_ckr`` substring-matched the CKR name in the
+    message and xfailed. The claim layer classifies only ``CkrAssertionError``,
+    so a plain assert (potential harness/contradiction signal) propagates.
+    """
+
     def _derive_reject(*_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("HKDF base key gen failed: CKR_MECHANISM_INVALID")
 
     monkeypatch.setattr(test_mech_derive, "_derive_hkdf", _derive_reject)
 
-    with pytest.raises(
-        pytest.xfail.Exception,
-        match="CKM_HKDF_DERIVE: advertised derive path is not operational",
-    ):
+    with pytest.raises(AssertionError, match="HKDF base key gen failed") as ei:
         test_mech_derive.TestMechDerive().test_derive_produces_key(
             _session(),
             _entry(int(CKM_HKDF_DERIVE), "CKM_HKDF_DERIVE"),
         )
+    assert not isinstance(ei.value, pytest.xfail.Exception)

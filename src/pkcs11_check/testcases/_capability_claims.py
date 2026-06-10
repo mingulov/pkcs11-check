@@ -46,6 +46,31 @@ def reset_validation_object_cache() -> None:
     _VALIDATION_CACHE.clear()
 
 
+def _enclosing_test_qualname() -> str:
+    """Walk the stack outward to the nearest enclosing ``test_*`` frame.
+
+    ``claim_refusal_passes`` is often called from inside a helper (e.g.
+    ``_digest_or_xfail``, ``_run_asymmetric_sign_kat``) rather than directly
+    from the test body. The compliance note must attribute to the test, not
+    the helper, so we skip our own frame and search outward for the first
+    frame whose function name starts with ``test_``. Falls back to the
+    immediate caller's qualname if none is found within a sane bound.
+    """
+    frame = inspect.currentframe()
+    # Skip this function's own frame; start at our caller (claim_refusal_passes).
+    caller = frame.f_back if frame else None
+    immediate = caller.f_back if caller else None
+    fallback = immediate.f_code.co_qualname if immediate else ""
+    cursor = immediate
+    for _ in range(10):
+        if cursor is None:
+            break
+        if cursor.f_code.co_name.startswith("test_"):
+            return cursor.f_code.co_qualname
+        cursor = cursor.f_back
+    return fallback
+
+
 def _validation_objects_present(rs: Any) -> str:
     """Return a presence description for CKO_VALIDATION objects.
 
@@ -82,10 +107,8 @@ def claim_refusal_passes(exc: AssertionError, rs: Any, *, probe_key: str) -> Lit
     if not isinstance(exc, CkrAssertionError):
         raise exc
     if exc.rv == int(CKR_OPERATION_NOT_VALIDATED):
-        # Capture the caller's qualname for correct note attribution.
-        frame = inspect.currentframe()
-        caller = frame.f_back if frame else None
-        caller_qualname = caller.f_code.co_qualname if caller else ""
+        # Attribute the note to the enclosing test, not an intermediate helper.
+        caller_qualname = _enclosing_test_qualname()
         presence = _validation_objects_present(rs)
         compliance.note(
             f"{probe_key}: refused via sanctioned CKR_OPERATION_NOT_VALIDATED "

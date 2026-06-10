@@ -79,6 +79,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._capability_claims import claim_refusal_passes
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_ec_keypair_or_xfail,
@@ -100,12 +101,6 @@ _HKDF_KEYGEN_REJECT_CKRS = (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
-)
-_RSA_OAEP_RUNTIME_REJECT_RVS: tuple[int, ...] = (
-    CKR_ARGUMENTS_BAD,
-    CKR_MECHANISM_PARAM_INVALID,
-    CKR_FUNCTION_FAILED,
-    CKR_FUNCTION_NOT_SUPPORTED,
 )
 
 
@@ -429,11 +424,8 @@ class TestRSAOAEPWrapLifecycle:
                     mech_param=oaep_param,
                 )
             except AssertionError as exc:
-                xfail_if_known_ckr(
-                    exc,
-                    _RSA_OAEP_RUNTIME_REJECT_RVS,
-                    "RSA-OAEP wrap advertised but not operational",
-                )
+                if claim_refusal_passes(exc, rs, probe_key="CKM_RSA_PKCS_OAEP:encrypt"):
+                    return
             assert len(wrapped) > 0
 
             destroy_quietly(rs.raw, rs.sh, target)
@@ -458,11 +450,8 @@ class TestRSAOAEPWrapLifecycle:
                     mech_param=oaep_param,
                 )
             except AssertionError as exc:
-                xfail_if_known_ckr(
-                    exc,
-                    _RSA_OAEP_RUNTIME_REJECT_RVS,
-                    "RSA-OAEP unwrap advertised but not operational",
-                )
+                if claim_refusal_passes(exc, rs, probe_key="CKM_RSA_PKCS_OAEP:encrypt"):
+                    return
             assert unwrapped_key != 0
 
             recovered = decrypt_single(rs.raw, rs.sh, unwrapped_key, CKM_AES_ECB, ciphertext)

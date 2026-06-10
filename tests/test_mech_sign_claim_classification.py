@@ -129,8 +129,8 @@ def test_kat_sanctioned_refusal_emits_exactly_one_note(
         {"key_type": "asymmetric", "n_hex": "cc" * 256, "input_hex": "dd" * 32},
     ]
 
-    monkeypatch.setattr(tms, "load_positive_vectors", lambda _f: two_vectors, raising=False)
-    # Patch the import of load_positive_vectors inside test_kat_vector
+    # test_kat_vector does a local `from ...mechanism_vectors import load_positive_vectors`,
+    # so the patch must land on the mechanism_vectors module, not on tms.
     import pkcs11_check.testcases.mechanism_vectors as mv
 
     monkeypatch.setattr(mv, "load_positive_vectors", lambda _f: two_vectors)
@@ -158,5 +158,56 @@ def test_kat_sanctioned_refusal_emits_exactly_one_note(
     # Only ONE call to _run_asymmetric_sign_kat (loop exited after first sanctioned refusal)
     assert call_count["n"] == 1, f"expected 1 call, got {call_count['n']}"
     # Exactly ONE note (no duplicate from second vector)
+    assert len(notes) == 1, f"expected exactly 1 note, got {len(notes)}: {notes}"
+    assert "CKR_OPERATION_NOT_VALIDATED" in notes[0]
+
+
+def test_run_asymmetric_sign_kat_sanctioned_refusal_real_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real _run_asymmetric_sign_kat path: a sanctioned sign refusal returns True + one note.
+
+    Drives the RSA deterministic (verify_only=False) branch: import the private
+    key, then sign_single refuses with CKR_OPERATION_NOT_VALIDATED. The function
+    must classify it via the claim layer (True) and emit exactly one note.
+    """
+    notes: list[str] = []
+    monkeypatch.setattr(
+        cc.compliance,
+        "note",
+        lambda d, level, reference="", *, test_id="": notes.append(d),
+    )
+    monkeypatch.setattr(cc, "_validation_objects_present", lambda rs: "False")
+    monkeypatch.setattr(tms, "import_rsa_private_key", lambda *a, **k: 7)
+    monkeypatch.setattr(tms, "destroy_quietly", lambda *a, **k: None)
+    # _run_asymmetric_sign_kat does a local import of build_params_from_vector,
+    # so patch it on the source module.
+    import pkcs11_check.testcases.mechanism_helpers as mh
+
+    monkeypatch.setattr(mh, "build_params_from_vector", lambda *a, **k: None)
+    monkeypatch.setattr(
+        tms,
+        "sign_single",
+        _raise(int(CKR_OPERATION_NOT_VALIDATED), "CKR_OPERATION_NOT_VALIDATED"),
+    )
+
+    # Minimal RSA vector with the hex fields _run_asymmetric_sign_kat reads
+    # (verify_only absent -> deterministic sign-and-compare branch).
+    vec = {
+        "n_hex": "aa" * 256,
+        "e_hex": "010001",
+        "d_hex": "bb" * 256,
+        "p_hex": "cc" * 128,
+        "q_hex": "dd" * 128,
+        "dmp1_hex": "ee" * 128,
+        "dmq1_hex": "ff" * 128,
+        "iqmp_hex": "11" * 128,
+        "input_hex": "22" * 32,
+        "signature_hex": "33" * 256,
+    }
+    entry = _kat_entry()
+    result = tms._run_asymmetric_sign_kat(_rs(), entry, entry.config, vec)
+
+    assert result is True
     assert len(notes) == 1, f"expected exactly 1 note, got {len(notes)}: {notes}"
     assert "CKR_OPERATION_NOT_VALIDATED" in notes[0]

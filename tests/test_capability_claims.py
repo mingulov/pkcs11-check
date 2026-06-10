@@ -69,6 +69,27 @@ def test_sanctioned_refusal_returns_true_and_notes(monkeypatch: pytest.MonkeyPat
     assert "claim_refusal_passes" not in test_id
 
 
+def test_note_attribution_walks_through_nested_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Called from inside a helper, the note attributes to the enclosing test_*."""
+    captured = _notes_spy(monkeypatch)
+    monkeypatch.setattr(cc, "_validation_objects_present", lambda rs: "True")
+    exc = CkrAssertionError(
+        "Unexpected CK_RV CKR_OPERATION_NOT_VALIDATED", int(CKR_OPERATION_NOT_VALIDATED)
+    )
+
+    def _inner_helper() -> bool:
+        # A non-test frame sitting between the test and claim_refusal_passes.
+        return cc.claim_refusal_passes(exc, _rs(), probe_key="CKM_ECDSA_SHA1:sign")
+
+    assert _inner_helper() is True
+    assert len(captured) == 1
+    _description, _level, test_id = captured[0]
+    assert "test_note_attribution_walks_through_nested_helper" in test_id
+    assert "_inner_helper" not in test_id
+
+
 def test_other_clean_ckr_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _notes_spy(monkeypatch)
     exc = CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))

@@ -31,21 +31,8 @@ from pkcs11_check.raw.recipes import (
     sign_multipart,
     verify_multipart,
 )
-from pkcs11_check.raw.types_std import (
-    CKM,
-    CKR_ARGUMENTS_BAD,
-    CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_DEVICE_ERROR,
-    CKR_ENCRYPTED_DATA_INVALID,
-    CKR_ENCRYPTED_DATA_LEN_RANGE,
-    CKR_FUNCTION_FAILED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
-    CKR_OPERATION_NOT_INITIALIZED,
-)
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.raw.types_std import CKM
+from pkcs11_check.testcases._capability_claims import claim_refusal_passes
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     generate_key_for_encrypt,
@@ -56,32 +43,6 @@ from pkcs11_check.testcases.mechanism_helpers import (
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.multipart]
-
-_MULTIPART_RUNTIME_REJECT_RVS = (
-    CKR_ARGUMENTS_BAD,
-    CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_DEVICE_ERROR,
-    CKR_ENCRYPTED_DATA_INVALID,
-    CKR_ENCRYPTED_DATA_LEN_RANGE,
-    CKR_FUNCTION_FAILED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
-    CKR_OPERATION_NOT_INITIALIZED,
-)
-
-
-def _xfail_multipart_runtime_reject(
-    exc: AssertionError,
-    entry: MechEntry,
-    operation: str,
-) -> None:
-    xfail_if_known_ckr(
-        exc,
-        _MULTIPART_RUNTIME_REJECT_RVS,
-        f"{entry.mech_name}: advertised but multipart {operation} is not operational",
-    )
 
 
 # AES-XTS key type (doesn't support multipart on most implementations)
@@ -130,7 +91,8 @@ class TestMultipartEncrypt:
                     rs.raw, rs.sh, enc_key, mech_id, plaintext, mech_param=mech_param
                 )
             except AssertionError as exc:
-                _xfail_multipart_runtime_reject(exc, entry, "single-part encrypt reference")
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:multipart-encrypt"):
+                    return
 
             if config.deterministic and mech_param is None:
                 # Multi-part must produce identical ciphertext
@@ -140,7 +102,10 @@ class TestMultipartEncrypt:
                         rs.raw, rs.sh, enc_key, mech_id, chunks, mech_param=mech_param
                     )
                 except AssertionError as exc:
-                    _xfail_multipart_runtime_reject(exc, entry, "encrypt")
+                    if claim_refusal_passes(
+                        exc, rs, probe_key=f"{entry.mech_name}:multipart-encrypt"
+                    ):
+                        return
                 assert ct_multi == ct_single, (
                     f"{entry.mech_name}: multipart ciphertext differs from single-part"
                 )
@@ -159,7 +124,10 @@ class TestMultipartEncrypt:
                         retry_on_buffer_too_small=config.auth_tag_included,
                     )
                 except AssertionError as exc:
-                    _xfail_multipart_runtime_reject(exc, entry, "single-part encrypt reference")
+                    if claim_refusal_passes(
+                        exc, rs, probe_key=f"{entry.mech_name}:multipart-encrypt"
+                    ):
+                        return
                 try:
                     pt = decrypt_multipart(
                         rs.raw,
@@ -173,7 +141,10 @@ class TestMultipartEncrypt:
                         mech_param=mech_param,
                     )
                 except AssertionError as exc:
-                    _xfail_multipart_runtime_reject(exc, entry, "decrypt")
+                    if claim_refusal_passes(
+                        exc, rs, probe_key=f"{entry.mech_name}:multipart-decrypt"
+                    ):
+                        return
                 assert pt == plaintext, (
                     f"{entry.mech_name}: multipart decrypt mismatch after encrypt"
                 )
@@ -215,7 +186,8 @@ class TestMultipartDigest:
         try:
             single = digest_single(rs.raw, rs.sh, mech_id, data)
         except AssertionError as exc:
-            _xfail_multipart_runtime_reject(exc, entry, "single-part digest reference")
+            if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:multipart-digest"):
+                return
         assert len(single) > 0
 
         # Multi-part (3 chunks)
@@ -224,7 +196,8 @@ class TestMultipartDigest:
         try:
             multi = digest_multipart(rs.raw, rs.sh, mech_id, chunks)
         except AssertionError as exc:
-            _xfail_multipart_runtime_reject(exc, entry, "digest")
+            if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:multipart-digest"):
+                return
 
         assert multi == single, (
             f"{entry.mech_name}: multipart digest {multi.hex()!r} != "
@@ -257,11 +230,13 @@ class TestMultipartDigest:
         try:
             single = digest_single(rs.raw, rs.sh, mech_id, data)
         except AssertionError as exc:
-            _xfail_multipart_runtime_reject(exc, entry, "single-part digest reference")
+            if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:multipart-digest"):
+                return
         try:
             multi = digest_multipart(rs.raw, rs.sh, mech_id, [data])
         except AssertionError as exc:
-            _xfail_multipart_runtime_reject(exc, entry, "digest")
+            if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:multipart-digest"):
+                return
 
         assert multi == single, f"{entry.mech_name}: 1-chunk multipart digest != single-part"
 
@@ -299,7 +274,8 @@ class TestMultipartSign:
                     rs.raw, rs.sh, sign_key, mech_id, chunks, mech_param=mech_param
                 )
             except AssertionError as exc:
-                _xfail_multipart_runtime_reject(exc, entry, "sign")
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:multipart-sign"):
+                    return
             try:
                 ok = verify_multipart(
                     rs.raw,
@@ -311,7 +287,8 @@ class TestMultipartSign:
                     mech_param=mech_param,
                 )
             except AssertionError as exc:
-                _xfail_multipart_runtime_reject(exc, entry, "verify")
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:multipart-verify"):
+                    return
             assert ok, f"{entry.mech_name}: multipart sign/verify failed (sig={sig.hex()!r})"
         finally:
             destroy_quietly(rs.raw, rs.sh, sign_key)

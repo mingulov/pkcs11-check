@@ -67,50 +67,13 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
-    CKR_ARGUMENTS_BAD,
-    CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_DEVICE_ERROR,
-    CKR_FUNCTION_FAILED,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_KEY_SIZE_RANGE,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
-    CKR_TEMPLATE_INCOMPLETE,
-    CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases._capability_claims import claim_refusal_passes
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import gen_generic_secret
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.derive]
-
-_DERIVE_RUNTIME_REJECT_RVS = (
-    CKR_ARGUMENTS_BAD,
-    CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_DEVICE_ERROR,
-    CKR_FUNCTION_FAILED,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_KEY_SIZE_RANGE,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
-    CKR_TEMPLATE_INCOMPLETE,
-    CKR_TEMPLATE_INCONSISTENT,
-)
-
-
-def _xfail_derive_runtime_reject(exc: AssertionError, entry: MechEntry) -> None:
-    xfail_if_known_ckr(
-        exc,
-        _DERIVE_RUNTIME_REJECT_RVS,
-        f"{entry.mech_name}: advertised derive path is not operational",
-    )
 
 
 # SHA key derivation mechanisms have no params and use a generic secret base key
@@ -799,4 +762,5 @@ class TestMechDerive:
                     "in this generic test"
                 )
         except AssertionError as exc:
-            _xfail_derive_runtime_reject(exc, entry)
+            if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:derive"):
+                return

@@ -74,6 +74,7 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPING_KEY_SIZE_RANGE,
     CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
 )
+from pkcs11_check.testcases._capability_claims import claim_refusal_passes
 from pkcs11_check.testcases.conftest import (
     unwrap_key_for_mechanism_roundtrip,
     xfail_if_known_ckr,
@@ -633,8 +634,8 @@ class TestMechWrapRoundtrip:
                     output_size_hint=_wrap_output_size_hint(entry),
                 )
             except AssertionError as exc:
-                _xfail_wrap_runtime_reject(exc, entry, "wrap")
-                raise
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:wrap"):
+                    return
             assert len(wrapped_blob) > 0, f"{entry.mech_name}: wrap produced empty blob"
 
             # Destroy the original target key -- unwrapped copy must still work
@@ -656,8 +657,8 @@ class TestMechWrapRoundtrip:
                     purpose=f"{entry.mech_name} wrap/unwrap roundtrip",
                 )
             except AssertionError as exc:
-                _xfail_wrap_runtime_reject(exc, entry, "unwrap")
-                raise
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:unwrap"):
+                    return
             assert unwrapped_key != 0, f"{entry.mech_name}: unwrap returned handle 0"
 
             # Decrypt with the unwrapped key -- must recover original plaintext

@@ -22,15 +22,9 @@ from pkcs11_check.raw.types_std import (
     CKA_VERIFY_RECOVER,
     CKM_RSA_X_509,
 )
-from pkcs11_check.testcases.conftest import CIPHER_OP_RUNTIME_REJECT_RVS, xfail_if_known_ckr
+from pkcs11_check.testcases._capability_claims import claim_refusal_passes
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.sign_recover]
-
-# Phase 5 P1b: produce-leg (sign-recover) reject set. A clean "advertised but
-# not operational" reject -> xfail; C_SignRecover genuinely absent -> skip
-# (NotImplementedError, handled separately). The dependent verify-recover leg
-# stays a hard failure (self-contradiction).
-_SIGN_RECOVER_REJECT_RVS = CIPHER_OP_RUNTIME_REJECT_RVS
 
 
 def _rsa_x509_keypair(rs: RawSession) -> tuple[int, int]:
@@ -73,10 +67,8 @@ class TestSignRecover:
             except NotImplementedError:
                 pytest.skip("C_SignRecover not supported by this module")
             except AssertionError as exc:
-                xfail_if_known_ckr(
-                    exc, _SIGN_RECOVER_REJECT_RVS, "CKM_RSA_X_509 sign-recover not operational"
-                )
-                raise
+                if claim_refusal_passes(exc, rs, probe_key="CKM_RSA_X_509:sign-recover"):
+                    return
             assert len(sig) == 256, f"Unexpected signature length: {len(sig)}"
 
             try:

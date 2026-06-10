@@ -2328,7 +2328,7 @@ def test_mech_wrap_runtime_reject_is_xfail(
 
     monkeypatch.setattr(test_mech_wrap, "wrap_key", _wrap_reject)
 
-    with pytest.raises(pytest.xfail.Exception, match="wrap rejected at runtime"):
+    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
         test_mech_wrap.TestMechWrapRoundtrip().test_wrap_unwrap_aes_key(
             rs, SimpleNamespace(module="/tmp/vendor-pkcs11.so"), entry
         )
