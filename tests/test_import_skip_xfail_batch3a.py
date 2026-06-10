@@ -359,3 +359,151 @@ def test_negotiation_genuinely_exhausts_before_xfail(monkeypatch: pytest.MonkeyP
     # Negotiation REALLY walked the storage variants (canonical + at least one
     # retry) before exhausting -- not a single-shot failure.
     assert len(calls) >= 2, f"expected >=2 storage-shape attempts, got {len(calls)}: {calls}"
+
+
+# ===========================================================================
+# F1 -- test_mech_sign.py symmetric-MAC KAT secret-key import (fix follow-ups)
+# ===========================================================================
+# The raw ``import_secret_key`` at the symmetric-MAC KAT site was never wrapped
+# in a negotiated importer + helper: a clean import-reject CKR propagated as a
+# hard FAIL instead of "advertised but not operational" xfail.
+# Fix: wire to ``import_secret_key_negotiated`` + route clean exhaustion to xfail
+# via ``_xfail_kat_import_not_operational`` (new generic helper, parallel to
+# ``_xfail_rsa_kat_import_not_operational``).  Probe key: ``{mech_name}:key-import``.
+
+
+def _kat_hmac_entry() -> MechEntry:
+    from pkcs11_check.raw.types_std import CKK_AES, CKM_AES_CMAC
+
+    return MechEntry(
+        mech_id=int(CKM_AES_CMAC),
+        mech_name="AES_CMAC",
+        flags=0,
+        min_key_size=0,
+        max_key_size=0,
+        config=MechConfig(
+            is_keypair=False,
+            key_type=int(CKK_AES),
+            keygen_recipe=KeygenRecipe("aes"),
+            param_recipe=ParamRecipe("none"),
+            vector_file="dummy.json",
+        ),
+    )
+
+
+def test_f1_secret_key_import_helper_xfails_on_broad_ckr() -> None:
+    """F1: _xfail_kat_import_not_operational xfails on a broad import-reject CKR.
+
+    Hard-pin: an unexpected skip escaping instead of an xfail is a regression.
+    """
+    from pkcs11_check.testcases import test_mech_sign as tms
+
+    try:
+        with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
+            tms._xfail_kat_import_not_operational(
+                _ATTR_INVALID, _kat_hmac_entry(), "AES secret key"
+            )
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"skipped instead of xfailing: {exc}")
+
+
+def test_f1_secret_key_import_helper_propagates_non_ckr() -> None:
+    """F1 negative pin: a non-CKR AssertionError must not be xfailed or skipped."""
+    from pkcs11_check.testcases import test_mech_sign as tms
+
+    with pytest.raises(AssertionError, match="KAT sign mismatch"):
+        tms._xfail_kat_import_not_operational(_NON_CKR, _kat_hmac_entry(), "AES secret key")
+
+
+def test_f1_kat_vector_site_xfails_on_broad_ckr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """F1: the test_kat_vector symmetric-MAC site xfails when import is rejected.
+
+    Drives the production class method (not just the helper) so the swap to
+    import_secret_key_negotiated + _xfail_kat_import_not_operational is exercised
+    end-to-end through test_kat_vector.
+
+    load_positive_vectors is imported locally inside the function, so we patch
+    it at the mechanism_vectors module level where the local import resolves.
+    """
+    from pkcs11_check.testcases import test_mech_sign as tms
+
+    monkeypatch.setattr(tms, "import_secret_key_negotiated", _raiser(_ATTR_INVALID))
+
+    entry = _kat_hmac_entry()
+    assert entry.config is not None
+    vec = {
+        "key_hex": "aa" * 16,
+        "mac_hex": "bb" * 16,
+        "input_hex": "cc" * 32,
+    }
+
+    # Patch load_positive_vectors at its definition site; the local import
+    # inside test_kat_vector picks it up from there.
+    monkeypatch.setattr(
+        "pkcs11_check.testcases.mechanism_vectors.load_positive_vectors",
+        lambda _f: [vec],
+    )
+
+    try:
+        with pytest.raises(pytest.xfail.Exception, match="AES_CMAC:key-import"):
+            tms.TestMechSignKAT().test_kat_vector(_session(), entry)
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"skipped instead of xfailing: {exc}")
+
+
+# ===========================================================================
+# F5 -- _run_asymmetric_sign_kat: priv_key destroyed before pub-import xfail
+# ===========================================================================
+# When verify_only=True and the public-key negotiated import raises with a broad
+# CKR, _xfail_rsa_kat_import_not_operational fires (raises pytest.xfail) BEFORE
+# the try/finally block that calls destroy_quietly on priv_key.  On storage-
+# oriented modules the leaked priv handle is a TOKEN object that persists across
+# the test file.  Fix: wrap the pub-key import in try/finally that destroys
+# priv_key regardless of whether the xfail fires.
+
+
+def test_f5_priv_key_destroyed_before_pub_import_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F5: destroy_quietly is called for priv_key before pub-import xfail raises.
+
+    Drives _run_asymmetric_sign_kat with verify_only=True.  Private import
+    succeeds (returns a fake handle).  Public import raises a broad CKR (triggers
+    xfail).  The test asserts destroy_quietly was called with the priv handle
+    BEFORE the XFailed propagates.
+    """
+    from pkcs11_check.testcases import test_mech_sign as tms
+
+    fake_priv = 0xDEAD
+
+    destroyed: list[int] = []
+
+    def _fake_destroy(_raw: Any, _sh: Any, handle: int) -> None:
+        destroyed.append(handle)
+
+    # Priv import succeeds, pub import refuses with a broad CKR.
+    monkeypatch.setattr(tms, "import_rsa_private_key_negotiated", lambda *_a, **_kw: fake_priv)
+    monkeypatch.setattr(tms, "import_rsa_public_key_negotiated", _raiser(_KEY_SIZE_RANGE))
+    monkeypatch.setattr(tms, "destroy_quietly", _fake_destroy)
+
+    vec = {
+        "n_hex": "aa" * 256,
+        "e_hex": "010001",
+        "d_hex": "bb" * 256,
+        "p_hex": "cc" * 128,
+        "q_hex": "dd" * 128,
+        "dmp1_hex": "ee" * 128,
+        "dmq1_hex": "ff" * 128,
+        "iqmp_hex": "11" * 128,
+        "input_hex": "22" * 32,
+        "signature_hex": "33" * 256,
+        "verify_only": True,
+    }
+    entry = _kat_rsa_entry()
+
+    with pytest.raises(pytest.xfail.Exception, match="SHA256_RSA_PKCS:key-import"):
+        tms._run_asymmetric_sign_kat(_session(), entry, entry.config, vec)
+
+    assert fake_priv in destroyed, (
+        f"priv handle {fake_priv:#x} was NOT destroyed before xfail; destroyed handles: {destroyed}"
+    )

@@ -133,7 +133,7 @@ def test_kat_mac_runtime_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) -> Non
         ],
     )
     monkeypatch.setattr(mech_sign, "build_params_from_vector", lambda *_args: None)
-    monkeypatch.setattr(mech_sign, "import_secret_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(mech_sign, "import_secret_key_negotiated", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(mech_sign, "sign_single", _sign_reject)
     monkeypatch.setattr(mech_sign, "destroy_quietly", lambda *_args: None)
 
