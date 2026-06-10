@@ -75,8 +75,9 @@ over-claim ×2 docs; opencryptoki verify-final). A parallel worker also landed
   softhsm2 control 854P/0F.
 - **ML-DSA sign (f08369da):** ctx vectors skip (never transmitted in this suite; covered by
   test_wycheproof_mldsa_context); malformed-key import+sign → xfail lenient (per a4ca5891
-  precedent); other accepted invalid stays fail. **DOCKER VERIFY PENDING: nss (expect mldsa_sign
-  14F→~0F) + softhsm2/kryoptic control — run FIRST next session.**
+  precedent); other accepted invalid stays fail. **VERIFIED 2026-06-10: nss mldsa_sign 14F→0F
+  (200P / 11xf / 9 skipped).** (Control runs on softhsm2/kryoptic optional — change is
+  vector-metadata-gated, no provider branch.)
 - **Gap analysis (9a288fac):** docs/findings/advertised-not-operational-gap-analysis.md — NOT
   FIPS-only (6 providers show the pattern); the "separate test" largely exists = test_mech_*
   registry suites (gaps: registry completeness, coverage meta-check); two leak classes violate
@@ -90,7 +91,7 @@ over-claim ×2 docs; opencryptoki verify-final). A parallel worker also landed
 
 ## Queue (next iterations)
 
-1. **Docker-verify f08369da** (nss mldsa_sign + softhsm2/kryoptic controls) — FIRST.
+1. ~~Docker-verify f08369da~~ DONE 2026-06-10: nss 14F→0F (200P/11xf/9s).
 2. **Vacuous-reject downgrade** (gap-analysis rec #1; direction endorsed by Denis 2026-06-10):
    where the canonical probe says NOT_OPERATIONAL, negative-op rejections pass→xfail "vacuous
    reject — input never evaluated". Scope: base_runner_aead, acvp/aes/test_wrap, base_cts,
