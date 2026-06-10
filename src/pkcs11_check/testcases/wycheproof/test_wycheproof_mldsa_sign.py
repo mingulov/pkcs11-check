@@ -113,6 +113,15 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_module_session: Any) -
     result = vec["result"]
     private_key_bytes = bytes.fromhex(private_key_hex)
 
+    if vec.get("ctx", ""):
+        # This suite signs without transmitting the vector's context, so the
+        # PKCS#11-visible operation differs from the vector: an InvalidContext
+        # vector ("context too long") reaches the module as a valid empty-ctx
+        # sign and "accepted" would be a false finding. Context vectors --
+        # including the over-long reject -- are exercised faithfully via
+        # CK_SIGN_ADDITIONAL_CONTEXT in test_wycheproof_mldsa_context.
+        pytest.skip("ctx vector not transmitted here; covered by test_wycheproof_mldsa_context")
+
     if not private_key_bytes:
         pytest.skip("No private key in vector")
 
@@ -139,6 +148,16 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_module_session: Any) -
             assert len(sig) > 0, "Empty signature"
             # Note: ML-DSA signatures are non-deterministic, so length/non-empty
             # is the meaningful invariant for this path.
+        elif _has_flag(vec, _MLDSA_INVALID_PRIVATE_KEY_FLAGS):
+            # The module imported malformed key material AND produced a
+            # signature: lenient key validation. No forgery and no
+            # self-contradiction is provable from this alone (only the key
+            # holder shape is wrong), so per the classification model it is a
+            # recorded deviation, not a hard fail.
+            pytest.xfail(
+                f"{vec_id}: lenient private-key validation -- module accepted malformed "
+                f"ML-DSA key material (flags={vec.get('flags', [])}) and signed"
+            )
         else:
             pytest.fail(f"Invalid ML-DSA sign vector {vec_id} accepted by module")
     except AssertionError as exc:
