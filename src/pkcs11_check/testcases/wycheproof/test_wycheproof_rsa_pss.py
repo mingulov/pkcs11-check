@@ -22,6 +22,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_TOKEN,
@@ -66,6 +67,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._operability import (
+    Operability,
+    OperabilityResult,
+    probe_operability,
+)
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import (
     import_rsa_public_key_negotiated,
@@ -105,80 +111,74 @@ _RSA_PSS_RUNTIME_REJECT_CKRS = (
     CKR_OPERATION_ACTIVE,
 )
 
-# Cache of (mech, hash_mech, mgf, salt_len) tuples we have already probed
-# for "advertised but not operational". True = a fresh-key sign+verify
-# roundtrip with these PSS params succeeded; False = the same provider
-# could not produce a verifying signature for itself with this combo, so
-# rejecting a known-valid Wycheproof sig with the same combo is the same
-# class of deviation (classification model: xfail, not fail).
-_PSS_COMBO_OPERATIONAL: dict[tuple[int, int, int, int], bool] = {}
-
 # Canned message for the operational probe -- arbitrary content.
 _PSS_PROBE_MESSAGE = b"pkcs11-check PSS combo operational probe"
 
 
-def _pss_combo_operational(
+def _pss_combo_operability(
     rs: Any, mechanism: int, hash_mech: int, mgf: int, salt_len: int
-) -> bool:
-    """Self-roundtrip probe: is this (mech, hash, mgf, salt_len) operational?
+) -> OperabilityResult:
+    """Self-roundtrip probe for a (mech, hash, mgf, sLen) PSS combo.
 
-    On the first call for a given combo, generates a fresh RSA-2048 keypair
-    and attempts a sign+verify roundtrip with the PSS params. Returns True
-    if verification succeeds, False on any rejection / verify-False / setup
-    failure. Result is cached per-combo for the rest of the run.
+    Keypair generation is staging (plain RSA keygen, no PSS involved) -- its
+    refusal is INCONCLUSIVE, not mechanism evidence (so the vacuous-reject
+    downgrade never fires without combo evidence). A canonical PSS sign/verify
+    refusal (CkrAssertionError) or verify-False IS combo evidence ->
+    NOT_OPERATIONAL; a verifying self-roundtrip -> OPERATIONAL. Cached per combo
+    via probe_operability.
 
-    The classification model uses this to distinguish:
-    - real provider bug (combo operational, but rejects a known-valid sig
-      from the test vector) -> hard ``fail``;
-    - advertised-but-not-operational combo (provider's own sig also fails
-      to verify with the same params) -> ``xfail``.
+    Module errors surface as CkrAssertionError (gen_rsa_keypair / sign_single /
+    verify_single all route through expect_rv); a plain AssertionError is a
+    harness bug and propagates uncached. ``mech_pss`` packing errors are
+    harness-side (ctypes) and likewise propagate.
     """
-    key = (mechanism, hash_mech, mgf, salt_len)
-    cached = _PSS_COMBO_OPERATIONAL.get(key)
-    if cached is not None:
-        return cached
-    operational = _probe_pss_combo(rs, mechanism, hash_mech, mgf, salt_len)
-    _PSS_COMBO_OPERATIONAL[key] = operational
-    return operational
 
+    def probe() -> OperabilityResult:
+        pub = priv = 0
+        try:
+            try:
+                pub, priv = gen_rsa_keypair(
+                    rs.raw,
+                    rs.sh,
+                    2048,
+                    private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+                    public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+                )
+            except CkrAssertionError as exc:
+                return OperabilityResult(
+                    Operability.INCONCLUSIVE, f"RSA-2048 keypair staging failed: {exc}"
+                )
+            pss_param = mech_pss(mechanism, hash_mech=hash_mech, mgf=mgf, salt_len=salt_len)
+            try:
+                sig = sign_single(
+                    rs.raw, rs.sh, priv, mechanism, _PSS_PROBE_MESSAGE, mech_param=pss_param
+                )
+            except CkrAssertionError as exc:
+                return OperabilityResult(
+                    Operability.NOT_OPERATIONAL, f"canonical PSS sign rejected: {exc}"
+                )
+            try:
+                ok = verify_single(
+                    rs.raw, rs.sh, pub, mechanism, _PSS_PROBE_MESSAGE, sig, mech_param=pss_param
+                )
+            except CkrAssertionError as exc:
+                return OperabilityResult(
+                    Operability.NOT_OPERATIONAL, f"canonical PSS verify rejected: {exc}"
+                )
+            if not ok:
+                return OperabilityResult(
+                    Operability.NOT_OPERATIONAL, "own PSS signature verifies False"
+                )
+            return OperabilityResult(Operability.OPERATIONAL, "self-roundtrip OK")
+        finally:
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+            if pub:
+                destroy_quietly(rs.raw, rs.sh, pub)
 
-def _probe_pss_combo(rs: Any, mechanism: int, hash_mech: int, mgf: int, salt_len: int) -> bool:
-    pub = priv = 0
-    try:
-        try:
-            pub, priv = gen_rsa_keypair(
-                rs.raw,
-                rs.sh,
-                2048,
-                private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
-                public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
-            )
-        except AssertionError:
-            return False
-        pss_param = mech_pss(mechanism, hash_mech=hash_mech, mgf=mgf, salt_len=salt_len)
-        try:
-            sig = sign_single(
-                rs.raw, rs.sh, priv, mechanism, _PSS_PROBE_MESSAGE, mech_param=pss_param
-            )
-        except AssertionError:
-            return False
-        try:
-            return verify_single(
-                rs.raw,
-                rs.sh,
-                pub,
-                mechanism,
-                _PSS_PROBE_MESSAGE,
-                sig,
-                mech_param=pss_param,
-            )
-        except AssertionError:
-            return False
-    finally:
-        if priv:
-            destroy_quietly(rs.raw, rs.sh, priv)
-        if pub:
-            destroy_quietly(rs.raw, rs.sh, pub)
+    return probe_operability(
+        f"RSA_PSS:{mechanism:#x}:{hash_mech:#x}:{mgf:#x}:{salt_len}:sign-verify", probe
+    )
 
 
 _RsaPssFingerprint = tuple[int, int, int, int, bytes, bytes, bytes, bytes]
@@ -452,11 +452,17 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
                 pytest.fail(f"Invalid RSA-PSS sig {vec_id} accepted by module")
             return
         if result == "valid" and not verified:
-            if not _pss_combo_operational(rs, mechanism, hash_mech, mgf, s_len):
+            combo = _pss_combo_operability(rs, mechanism, hash_mech, mgf, s_len)
+            if combo.status is Operability.NOT_OPERATIONAL:
                 pytest.xfail(
-                    f"Valid {vec_id} rejected; sign+verify roundtrip with "
-                    f"the same (mech, hash, mgf, sLen={s_len}) also fails "
+                    f"Valid {vec_id} rejected; sign+verify roundtrip with the same "
+                    f"(mech, hash, mgf, sLen={s_len}) is not operational ({combo.detail}) "
                     "-- advertised but not operational"
+                )
+            if combo.status is Operability.INCONCLUSIVE:
+                pytest.xfail(
+                    f"Valid {vec_id} rejected; PSS combo probe inconclusive ({combo.detail}) "
+                    "-- cannot distinguish deviation from module bug, recorded as xfail"
                 )
             pytest.fail(f"Valid RSA-PSS sig {vec_id} rejected by module")
     except AssertionError as exc:
