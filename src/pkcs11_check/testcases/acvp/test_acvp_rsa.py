@@ -381,6 +381,10 @@ class TestRsaSigVer:
                     pytest.xfail(
                         f"{mech_name} advertised but PSS params are not operational: {exc}"
                     )
+                # Known vacuous pass-through: invalid-PSS rejects are not probe-gated
+                # here (no in-scope PSS probe; the PKCS15 probe covers RSA but not PSS
+                # combos, and the PSS combo probe is private to the wycheproof module --
+                # cross-module import forbidden). See SESSION-RESTORE queue item.
                 verified = signature_rejected_or_xfail(exc, vec_id)
 
             if not expected_pass and verified:

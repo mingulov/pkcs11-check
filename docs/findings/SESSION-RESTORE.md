@@ -145,6 +145,10 @@ over-claim ×2 docs; opencryptoki verify-final). A parallel worker also landed
 8. **Mechanism-registry Phases B–D** (longer arc).
 9. **Catalog follow-up:** retain unknown-name manifest entries as `MechEntry(config=None)` so
    the blind-spot check sees them (check `select_for_scenario` tolerance).
+10. **acvp PSS three-state probe** (`_PSS_VER` canonical valid vectors exist) so
+    `test_rsa_pss_verify` invalid rejects get the vacuous gate (residual from ec9db778;
+    the PKCS15 probe does not cover PSS combos and the wycheproof PSS combo probe is
+    private — cross-module import forbidden).
 
 ## DECISIONS NEEDED FROM DENIS (as of 2026-06-10)
 

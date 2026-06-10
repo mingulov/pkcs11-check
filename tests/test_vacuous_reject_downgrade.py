@@ -201,6 +201,9 @@ def test_wycheproof_ccm_inconclusive_does_not_xfail(monkeypatch: pytest.MonkeyPa
 
     The canonical probe cannot import its key, so there is no mechanism
     evidence; the downgrade must not fire. The vector reject returns normally.
+    If the guard regressed (downgrade firing on INCONCLUSIVE), the resulting
+    XFailed propagates as this meta-test's own xfail outcome and CI stays green
+    without this hard-fail wrapper.
     """
     from pkcs11_check.testcases.wycheproof import test_wycheproof_aes as wp
 
@@ -229,8 +232,12 @@ def test_wycheproof_ccm_inconclusive_does_not_xfail(monkeypatch: pytest.MonkeyPa
         "tag": "00" * 16,
         "result": "invalid",
     }
-    # returns normally (no xfail) = legacy pass on INCONCLUSIVE
-    wp.test_aes_ccm(_rs(), "tc-inv", vec_data)
+    # Hard-fail on downgrade leak: if xfail_vacuous_reject fires on INCONCLUSIVE
+    # the XFailed exception would silently become this test's own xfail outcome.
+    try:
+        wp.test_aes_ccm(_rs(), "tc-inv", vec_data)
+    except pytest.xfail.Exception as exc:
+        pytest.fail(f"vacuous downgrade fired on INCONCLUSIVE probe: {exc}")
 
 
 # --- wycheproof CCM: FIRING direction (NOT_OPERATIONAL must xfail) -----------
@@ -356,6 +363,9 @@ def test_sigver_invalid_reject_on_inconclusive_probe_passes(
     is no mechanism evidence; the downgrade must NOT fire.  The under-test vector
     import succeeds (1st call) but the probe's canonical-vector import refuses
     (2nd call) -> INCONCLUSIVE.  The vector reject returns normally.
+    Hard-fail wrapper: if the guard regressed and xfail_vacuous_reject fired on
+    INCONCLUSIVE the resulting XFailed would silently become this meta-test's own
+    xfail outcome, keeping CI green while the regression went undetected.
     """
     import_calls = {"n": 0}
 
@@ -378,8 +388,11 @@ def test_sigver_invalid_reject_on_inconclusive_probe_passes(
     monkeypatch.setattr(rsa, "destroy_quietly", lambda *a, **k: None)
     monkeypatch.setattr(rsa, "_PKCS15_VER", _canonical_sigver_pkcs15_ver())
     rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
-    # returns normally (no xfail) = legacy pass on INCONCLUSIVE
-    rsa.TestRsaSigVer().test_rsa_pkcs15_verify(rs, "tc-inv", _invalid_sigver_vec())
+    # Hard-fail on downgrade leak so CI cannot silently swallow a regression.
+    try:
+        rsa.TestRsaSigVer().test_rsa_pkcs15_verify(rs, "tc-inv", _invalid_sigver_vec())
+    except pytest.xfail.Exception as exc:
+        pytest.fail(f"vacuous downgrade fired on INCONCLUSIVE probe: {exc}")
 
 
 # --- wycheproof RSA-PSS (test_wycheproof_rsa_pss.test_rsa_pss) ---------------
@@ -445,6 +458,9 @@ def test_pss_invalid_reject_on_inconclusive_combo_passes(
     The probe's RSA-2048 keypair generation refuses (staging), so there is no
     PSS-combo evidence; the downgrade must NOT fire.  The vector reject returns
     normally.
+    Hard-fail wrapper: if the guard regressed and xfail_vacuous_reject fired on
+    INCONCLUSIVE the resulting XFailed would silently become this meta-test's own
+    xfail outcome, keeping CI green while the regression went undetected.
     """
 
     def refuse_keygen(*_a: Any, **_k: Any) -> tuple[int, int]:
@@ -461,8 +477,11 @@ def test_pss_invalid_reject_on_inconclusive_combo_passes(
     monkeypatch.setattr(pss, "destroy_quietly", lambda *a, **k: None)
     monkeypatch.setattr(pss, "mech_pss", lambda *a, **k: object())
     rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
-    # returns normally (no xfail) = legacy pass on INCONCLUSIVE
-    pss.test_rsa_pss(rs, "tc-inv", _pss_vec_invalid())
+    # Hard-fail on downgrade leak so CI cannot silently swallow a regression.
+    try:
+        pss.test_rsa_pss(rs, "tc-inv", _pss_vec_invalid())
+    except pytest.xfail.Exception as exc:
+        pytest.fail(f"vacuous downgrade fired on INCONCLUSIVE probe: {exc}")
 
 
 def test_pss_invalid_verify_false_on_dead_combo_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -490,3 +509,62 @@ def test_pss_invalid_verify_false_on_dead_combo_xfails(monkeypatch: pytest.Monke
     rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
     with pytest.raises(pytest.xfail.Exception, match="vacuous reject"):
         pss.test_rsa_pss(rs, "tc-inv", _pss_vec_invalid())
+
+
+def _pss_vec_acceptable() -> dict[str, Any]:
+    """A minimal wycheproof PSS test entry with result=acceptable (SHA-1, 2048-bit).
+
+    "acceptable" vectors are technically valid signatures (the module should
+    not reject them) whose parameters are non-standard (e.g. sLen=0); a clean
+    exception-path rejection is a legitimate honest deviation, NOT a vacuous
+    reject that warrants xfailing.  The downgrade must only fire on result==invalid.
+    """
+    from pkcs11_check.raw.types_std import CKG_MGF1_SHA1, CKM_SHA1_RSA_PKCS_PSS, CKM_SHA_1
+
+    n_hex = "01" * 256  # 2048-bit modulus
+    return {
+        "msg": "00",
+        "sig": "00" * 8,
+        "result": "acceptable",
+        "_mechanism": CKM_SHA1_RSA_PKCS_PSS,
+        "_sLen": 0,
+        "_hash_mech": CKM_SHA_1,
+        "_mgf": CKG_MGF1_SHA1,
+        "_sha": "SHA-1",
+        "_mgf_sha": "SHA-1",
+        "_group": {"publicKey": {"modulus": n_hex, "publicExponent": "010001"}},
+    }
+
+
+def test_pss_acceptable_reject_on_dead_combo_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Acceptable PSS vector cleanly refused + NOT_OPERATIONAL combo -> legacy pass (no xfail).
+
+    RED test for Fix 3: the except-handler's xfail_vacuous_reject must only fire
+    when ``result == 'invalid'``.  An "acceptable" vector rejected during verify
+    (a legitimate honest deviation -- the module refused a technically-valid but
+    non-standard parameter set) must NOT be labelled "invalid-PSS reject"; it
+    should return normally from the except branch regardless of the combo probe
+    verdict.
+    """
+
+    def refuse_combo_sign(*_a: Any, **_k: Any) -> bytes:
+        raise CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))
+
+    def reject_vector_verify(*_a: Any, **_k: Any) -> bool:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SIGNATURE_INVALID", int(CKR_SIGNATURE_INVALID)
+        )
+
+    monkeypatch.setattr(pss, "import_rsa_public_key_negotiated", lambda *a, **k: 7)
+    monkeypatch.setattr(pss, "verify_single", reject_vector_verify)
+    monkeypatch.setattr(pss, "gen_rsa_keypair", lambda *a, **k: (7, 8))
+    monkeypatch.setattr(pss, "sign_single", refuse_combo_sign)
+    monkeypatch.setattr(pss, "destroy_quietly", lambda *a, **k: None)
+    monkeypatch.setattr(pss, "mech_pss", lambda *a, **k: object())
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
+    # Must return normally (no xfail) -- acceptable-vector rejection is a genuine
+    # honest deviation regardless of the combo probe verdict.
+    try:
+        pss.test_rsa_pss(rs, "tc-inv", _pss_vec_acceptable())
+    except pytest.xfail.Exception as exc:
+        pytest.fail(f"vacuous downgrade fired on acceptable-result vector: {exc}")

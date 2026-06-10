@@ -442,15 +442,19 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
                 f"Valid RSA-PSS sig {vec_id} rejected (sLen={s_len}, "
                 f"sha={sha}, mgf={mgf_sha}, flags=[{flags_str}]): {exc}"
             )
-        # result != "valid": a clean refusal of an INVALID vector. Returning
+        # result != "valid": a clean refusal of a non-valid vector. Returning
         # False = clean signature reject; on a NOT_OPERATIONAL combo that reject
-        # is vacuous (the signature was never evaluated) -> xfail. xfail/re-raise
-        # paths inside signature_rejected_or_xfail never reach the line below.
+        # is vacuous only for "invalid" vectors (the signature was never
+        # evaluated) -> xfail.  "acceptable" vectors cleanly refused are a
+        # legitimate honest deviation regardless of the combo probe verdict --
+        # xfail/re-raise paths inside signature_rejected_or_xfail never reach
+        # the downgrade line below.
         signature_rejected_or_xfail(exc, vec_id)
-        xfail_vacuous_reject(
-            _pss_combo_operability(rs, mechanism, hash_mech, mgf, s_len),
-            label=f"{vec_id}: invalid-PSS reject",
-        )
+        if result == "invalid":
+            xfail_vacuous_reject(
+                _pss_combo_operability(rs, mechanism, hash_mech, mgf, s_len),
+                label=f"{vec_id}: invalid-PSS reject",
+            )
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, pub_key)
