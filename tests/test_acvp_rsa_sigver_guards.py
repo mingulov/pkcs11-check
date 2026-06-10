@@ -15,7 +15,14 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases._operability import reset_operability_cache
 from pkcs11_check.testcases.acvp import test_acvp_rsa as acvp_rsa
+
+
+@pytest.fixture(autouse=True)
+def _fresh_cache() -> None:
+    reset_operability_cache()
+
 
 _NO_VECTORS = "ACVP vectors not available (run `pkcs11-check fetch-data acvp`)"
 
@@ -43,7 +50,6 @@ def _wire(monkeypatch: pytest.MonkeyPatch, verify_fn: Any) -> None:
     monkeypatch.setattr(acvp_rsa, "import_rsa_public_key_negotiated", lambda *_a, **_k: 1)
     monkeypatch.setattr(acvp_rsa, "verify_single", verify_fn)
     monkeypatch.setattr(acvp_rsa, "destroy_quietly", lambda *_a, **_k: None)
-    monkeypatch.setattr(acvp_rsa, "_PKCS15_SIGVER_OPERATIONAL", {})
 
 
 def test_valid_reject_with_nonoperational_class_xfails(
