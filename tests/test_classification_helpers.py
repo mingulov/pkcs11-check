@@ -296,7 +296,7 @@ def test_hmac_sign_or_xfail_xfails_on_known_op_reject(
         raise CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
 
     monkeypatch.setattr(raw_recipes, "sign_single", _raise)
-    rs = SimpleNamespace(raw=object(), sh=1)
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
 
     with pytest.raises(pytest.xfail.Exception, match="SHA256_HMAC advertised but sign"):
         hmac_sign_or_xfail(rs, 1, 0x251, b"data", label="SHA256_HMAC")
@@ -319,7 +319,7 @@ def test_hmac_sign_or_xfail_reraises_on_unknown_failure(
         )
 
     monkeypatch.setattr(raw_recipes, "sign_single", _raise)
-    rs = SimpleNamespace(raw=object(), sh=1)
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
 
     with pytest.raises(CkrAssertionError):
         hmac_sign_or_xfail(rs, 1, 0x251, b"data", label="SHA256_HMAC")
@@ -335,7 +335,7 @@ def test_hmac_sign_or_xfail_returns_mac_on_success(
     from pkcs11_check.testcases.conftest import hmac_sign_or_xfail
 
     monkeypatch.setattr(raw_recipes, "sign_single", lambda *_a, **_k: b"\xaa\xbb")
-    rs = SimpleNamespace(raw=object(), sh=1)
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
 
     assert hmac_sign_or_xfail(rs, 1, 0x251, b"data", label="SHA256_HMAC") == b"\xaa\xbb"
 

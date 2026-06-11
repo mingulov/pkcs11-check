@@ -201,14 +201,20 @@ def hmac_sign_or_xfail(
     *,
     label: str,
 ) -> bytes:
-    """C_Sign an HMAC, xfail-ing advertised-but-not-operational op rejects.
+    """C_Sign an HMAC, skipping when not advertised, xfail-ing op rejects.
+
+    label must be the mechanism name (e.g. "SHA256_HMAC") — it is used both
+    for the has_mechanism gate and for the xfail/skip messages.
 
     tpm2-pkcs11 advertises CKM_SHA*_HMAC yet C_Sign returns CKR_GENERAL_ERROR.
-    A produce (sign) leg returning a HMAC_OP_RUNTIME_REJECT_RVS code -> xfail;
-    any other failure (incl. a wrong-MAC comparison done by the caller) stays a
-    hard failure. Provider-general: a module whose HMAC works returns the MAC
-    and no provider identity is consulted.
+    * mechanism NOT advertised → pytest.skip (capability genuinely absent)
+    * advertised + HMAC_OP_RUNTIME_REJECT_RVS → xfail (advertised-but-not-operational)
+    * any other failure (incl. wrong-MAC comparison by the caller) → hard fail
+    Provider-general: no provider identity consulted.
     """
+    if not rs.has_mechanism(label):
+        pytest.skip(f"{label} not advertised")
+
     from pkcs11_check.raw.recipes import sign_single
 
     try:
