@@ -78,6 +78,19 @@ uv run pkcs11-check fetch-data wycheproof    # fetch individual source
 uv run pkcs11-check fetch-disabled           # fetch disabled-tests baseline
 ```
 
+## Artifact comparison
+
+```bash
+uv run pkcs11-check compare-coverage artifacts3/wolfpkcs11-pooled artifacts/wolfpkcs11-pooled --fail-on-loss
+uv run pkcs11-check compare-coverage old/coverage.json new/coverage.json --output json
+```
+
+`compare-coverage` compares provider-local mechanism coverage state buckets
+(`accepted`, `attempted`, `rejected_cleanly`, crash/timeout, and compatibility
+`invoked`) and exits 1 with `--fail-on-loss` if the candidate lost a baseline
+state. Use it before trusting a speed change that rearranges sharding, skips, or
+fast paths.
+
 ## Docker testing
 
 ```bash

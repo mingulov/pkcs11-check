@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from pkcs11_check.cli.compare_cmd import compare_coverage_command
 from pkcs11_check.cli.compliance_cmd import compliance_report_command
 from pkcs11_check.cli.crash_calls_cmd import crash_calls_command
 from pkcs11_check.cli.doctor_cmd import doctor_command
@@ -39,6 +40,7 @@ app.command("info")(info_command)
 app.command("list")(list_command)
 app.command("state")(state_command)
 app.command("compliance-report")(compliance_report_command)
+app.command("compare-coverage")(compare_coverage_command)
 app.command("fetch-data")(fetch_data_command)
 app.command("fetch-disabled")(fetch_disabled_command)
 app.command("shard-units")(shard_units_command)

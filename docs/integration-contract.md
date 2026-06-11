@@ -79,6 +79,12 @@ CK_RV traces ride in `user_properties` when `--rv-trace` is on.
 single-run artifacts (a split→merge round-trip is exact). See
 `docs/docker-artifacts.md`.
 
+### Coverage comparison
+`pkcs11-check compare-coverage BASELINE CANDIDATE` compares mechanism coverage
+state buckets from artifact directories or coverage/results JSON files. Add
+`--fail-on-loss` for CI-style gates that should exit 1 when the candidate loses
+a baseline state for the same provider.
+
 ## Reusable Python building blocks
 
 - **`pkcs11_check.raw`** — a pure-ctypes PKCS#11 binding (no C build) with

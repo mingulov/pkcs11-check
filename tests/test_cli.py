@@ -27,6 +27,56 @@ class TestVersionCommand:
         assert f"pkcs11-check {__version__}" in result.output
 
 
+class TestCompareCoverageCommand:
+    def test_compare_coverage_reports_loss_and_can_fail(self, tmp_path: Path) -> None:
+        baseline_dir = tmp_path / "baseline"
+        candidate_dir = tmp_path / "candidate"
+        baseline_dir.mkdir()
+        candidate_dir.mkdir()
+        (baseline_dir / "coverage.json").write_text(
+            json.dumps(
+                {
+                    "mechanism_coverage": {
+                        "accepted_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+                        "attempted_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+                    }
+                }
+            )
+            + "\n"
+        )
+        (candidate_dir / "coverage.json").write_text(
+            json.dumps(
+                {
+                    "mechanism_coverage": {
+                        "accepted_names": ["CKM_AES_CBC"],
+                        "attempted_names": ["CKM_AES_CBC"],
+                    }
+                }
+            )
+            + "\n"
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "compare-coverage",
+                str(baseline_dir),
+                str(candidate_dir),
+                "--output",
+                "json",
+                "--fail-on-loss",
+            ],
+        )
+
+        assert result.exit_code == 1
+        payload = json.loads(result.output)
+        assert payload["has_loss"] is True
+        assert payload["lost_by_state"] == {
+            "accepted": ["CKM_AES_GCM"],
+            "attempted": ["CKM_AES_GCM"],
+        }
+
+
 class TestTestCommand:
     def test_test_requires_module(self) -> None:
         result = runner.invoke(app, ["test"])

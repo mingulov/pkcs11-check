@@ -318,16 +318,18 @@ skipped-by-capability, crash, and timeout buckets, and `quality.json`
 mechanism findings surface those states instead of collapsing every mechanism
 into old invoked/not-invoked status. The pure
 `compare_mechanism_coverage_states()` helper can compare provider-local
-baseline/candidate coverage buckets and flag lost mechanisms by state; a future
-CLI/Docker integration can wire that into automatic speed-regression gates.
+baseline/candidate coverage buckets and flag lost mechanisms by state, and
+`pkcs11-check compare-coverage ... --fail-on-loss` exposes it as a CI-friendly
+gate. Docker pool automation can still wire it into speed-regression workflows
+later.
 
 ## Recommended Next Round
 
 The next implementation round should be harness-first, because it makes every
 later provider run more interpretable:
 
-1. Wire mechanism-state comparison into provider-local artifact comparison and
-   speed-regression gates.
+1. Wire `compare-coverage --fail-on-loss` into Docker pool speed-regression
+   workflows.
 2. Continue targeted provider-speed work once artifact semantics can prove
    coverage preservation.
 3. Continue legacy/deprecated mechanism coverage where reliable vectors and
