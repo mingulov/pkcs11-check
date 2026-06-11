@@ -61,7 +61,7 @@ def test_pool_dry_run_heavy_uses_optee_manual_target(
     assert test_pool.main() == 0
 
     out = capsys.readouterr().out
-    assert "optee-pkcs11: 1 batch(es), 1 files (full, partition ok)" in out
+    assert "optee-pkcs11: 1 batch(es), 1 files (full, synthetic-heavy, partition ok)" in out
     assert "optee-pkcs11:0  1 files" in out
     assert "optee-pkcs11-master" not in out
 
@@ -82,8 +82,11 @@ def test_pool_dry_run_all_heavy_includes_optee_release_and_master(
     assert test_pool.main() == 0
 
     out = capsys.readouterr().out
-    assert "optee-pkcs11: 1 batch(es), 1 files (full, partition ok)" in out
-    assert "optee-pkcs11-master: 1 batch(es), 1 files (full, partition ok)" in out
+    assert "optee-pkcs11: 1 batch(es), 1 files (full, synthetic-heavy, partition ok)" in out
+    assert (
+        "optee-pkcs11-master: 1 batch(es), 1 files (full, synthetic-heavy, partition ok)"
+        in out
+    )
 
 
 def test_pool_uses_fetched_user_data_cache_when_repo_data_is_empty(

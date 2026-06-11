@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from pkcs11_check.core.merge import merge_results_payloads, merge_shard_dirs
-from pkcs11_check.core.sharding import duration_by_unit_from_results, plan_shards
+from pkcs11_check.core.sharding import (
+    duration_by_unit_from_results,
+    estimate_shard_load,
+    plan_shards,
+)
 
 # --------------------------------------------------------------------------- #
 # Sharding
@@ -89,6 +93,34 @@ def test_plan_shards_heavy_disabled_when_none() -> None:
     shards = plan_shards([*heavy, "x.py"], 2, heavy_basenames=None)
     flat = sorted(u for s in shards for u in s)
     assert flat == sorted([*heavy, "x.py"])  # partition intact, no special handling
+
+
+def test_plan_shards_provider_specific_zero_duration_beats_synthetic_heavy() -> None:
+    # Provider-local results are authoritative for that provider: if opencryptoki
+    # skipped a synthetic-heavy ACVP file in 0s, do not rebalance it as if it
+    # were a bouncyhsm long pole.
+    heavy_zero = "src/pkcs11_check/testcases/acvp/aes/test_ccm.py"
+    slow = "src/pkcs11_check/testcases/test_slow.py"
+    light = "src/pkcs11_check/testcases/test_light.py"
+    durations = {heavy_zero: 0.0, slow: 10.0, light: 1.0}
+
+    shards = plan_shards([heavy_zero, slow, light], 2, duration_by_unit=durations)
+    heavy_shard = next(s for s in shards if heavy_zero in s)
+
+    assert light in heavy_shard
+    assert slow not in heavy_shard
+
+
+def test_estimate_shard_load_uses_provider_specific_zero_duration() -> None:
+    heavy_zero = "src/pkcs11_check/testcases/acvp/aes/test_ccm.py"
+    light = "src/pkcs11_check/testcases/test_light.py"
+
+    load = estimate_shard_load(
+        [heavy_zero, light],
+        duration_by_unit={heavy_zero: 0.0, light: 1.25},
+    )
+
+    assert load == 1.25
 
 
 def test_duration_by_unit_folds_per_test_nodeids(tmp_path: Path) -> None:

@@ -61,6 +61,43 @@ DEFAULT_HEAVY_BASENAMES: tuple[str, ...] = (
 _HEAVY_WEIGHT_SECONDS = 660.0
 
 
+def _fallback_duration(duration_by_unit: dict[str, float]) -> float:
+    known = [d for d in duration_by_unit.values() if d > 0]
+    return statistics.median(known) if known else 1.0
+
+
+def estimate_unit_weight(
+    unit: str,
+    *,
+    duration_by_unit: dict[str, float] | None = None,
+    heavy_basenames: tuple[str, ...] | None = DEFAULT_HEAVY_BASENAMES,
+) -> float:
+    """Return the balancing weight for one test-file unit."""
+    durations = duration_by_unit or {}
+    if unit in durations:
+        return max(durations[unit], 0.0)
+    if unit.rsplit("/", 1)[-1] in set(heavy_basenames or ()):
+        return _HEAVY_WEIGHT_SECONDS
+    return _fallback_duration(durations)
+
+
+def estimate_shard_load(
+    units: list[str],
+    *,
+    duration_by_unit: dict[str, float] | None = None,
+    heavy_basenames: tuple[str, ...] | None = DEFAULT_HEAVY_BASENAMES,
+) -> float:
+    """Estimate a shard's total load using the same weights as ``plan_shards``."""
+    return sum(
+        estimate_unit_weight(
+            unit,
+            duration_by_unit=duration_by_unit,
+            heavy_basenames=heavy_basenames,
+        )
+        for unit in units
+    )
+
+
 def plan_shards(
     units: list[str],
     num_shards: int,
@@ -81,24 +118,20 @@ def plan_shards(
     if num_shards == 1:
         return [list(units)]
 
-    durations = duration_by_unit or {}
-    known = [d for d in durations.values() if d > 0]
-    fallback = statistics.median(known) if known else 1.0
-    heavy = set(heavy_basenames or ())
-
-    def weight(unit: str) -> float:
-        measured = durations.get(unit, 0.0) or 0.0
-        if measured > 0:
-            return measured
-        if unit.rsplit("/", 1)[-1] in heavy:
-            return _HEAVY_WEIGHT_SECONDS
-        return fallback
+    weights = {
+        unit: estimate_unit_weight(
+            unit,
+            duration_by_unit=duration_by_unit,
+            heavy_basenames=heavy_basenames,
+        )
+        for unit in units
+    }
 
     shards: list[list[str]] = [[] for _ in range(num_shards)]
     loads = [0.0] * num_shards
     # Heaviest first; tie-break on name for determinism.
-    for unit in sorted(units, key=lambda u: (-weight(u), u)):
+    for unit in sorted(units, key=lambda u: (-weights[u], u)):
         target = min(range(num_shards), key=lambda i: (loads[i], i))
         shards[target].append(unit)
-        loads[target] += weight(unit)
+        loads[target] += weights[unit]
     return shards

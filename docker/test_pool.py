@@ -28,7 +28,11 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from pkcs11_check.core.merge import merge_shard_dirs
-from pkcs11_check.core.sharding import plan_shards
+from pkcs11_check.core.sharding import (
+    duration_by_unit_from_results,
+    estimate_shard_load,
+    plan_shards,
+)
 
 # Per-test CK_RV trace, on by default for pooled runs in COMPACT mode: every test
 # under N C_* calls is recorded in full; only the ~dozen MCT cases (one test =
@@ -49,7 +53,13 @@ CRASH_JOURNAL = os.environ.get("PKCS11_CHECK_CRASH_JOURNAL", "").strip().lower()
 )
 
 # Editable per-provider shard counts; providers not listed default to 1 (undivided).
-SHARD_MAP: dict[str, int] = {"bouncyhsm": 8, "opencryptoki": 3, "opencryptoki-master": 3}
+SHARD_MAP: dict[str, int] = {
+    "bouncyhsm": 16,
+    "opencryptoki": 3,
+    "opencryptoki-master": 3,
+    "wolfpkcs11": 8,
+    "wolfpkcs11-master": 8,
+}
 DEFAULT_PROVIDERS = [
     "softhsm2",
     "kryoptic",
@@ -96,6 +106,8 @@ ALL_PROVIDERS = DEFAULT_PROVIDERS + ADDITIONAL_PROVIDERS + VARIANT_PROVIDERS
 TESTCASES = "src/pkcs11_check/testcases"
 COMPOSE = ["docker", "compose", "-f", "docker/docker-compose.test.yml"]
 VECTOR_DATA_DIRS = ("wycheproof", "acvp", "cctv", "x509-limbo")
+DEFAULT_CONCURRENCY = 6
+WorkItem = tuple[str, int, list[str], float]
 
 # NSS exposes the digest / bulk-cipher / KDF mechanisms only on slot 0 (Internal
 # Cryptographic Services); the default slot-1 (cert/key DB) pass skips them. The
@@ -183,6 +195,20 @@ def compose_env(project_root: Path) -> dict[str, str]:
     env = os.environ.copy()
     env["PKCS11_CHECK_HOST_DATA_DIR"] = str(resolve_host_data_dir(project_root))
     return env
+
+
+def duration_oracle_for_provider(project_root: Path, provider: str) -> dict[str, float] | None:
+    """Return provider-local per-file durations from the previous pooled artifact."""
+    prior_results = project_root / "artifacts" / f"{provider}-pooled" / "results.json"
+    if not prior_results.exists():
+        return None
+    durations = duration_by_unit_from_results(prior_results)
+    return durations or None
+
+
+def sort_workitems(workitems: list[WorkItem]) -> list[WorkItem]:
+    """Order queued batches so the longest estimated work starts first."""
+    return sorted(workitems, key=lambda item: (-item[3], item[0], item[1]))
 
 
 def files_for_provider(provider: str, all_files: list[str], testcases: str) -> list[str]:
@@ -278,7 +304,11 @@ def clean_prior_shards(project_root: Path, providers: list[str]) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Global mixed pool across PKCS#11 providers.")
     ap.add_argument(
-        "-j", "--concurrency", type=int, default=3, help="max concurrent containers (K)"
+        "-j",
+        "--concurrency",
+        type=int,
+        default=DEFAULT_CONCURRENCY,
+        help="max concurrent containers (K)",
     )
     ap.add_argument("--no-build", action="store_true", help="skip rebuilding provider images")
     ap.add_argument(
@@ -351,11 +381,12 @@ def main() -> int:
                 print(f"  BUILD FAILED (see /tmp/pool-build-{p}.log)")
 
     # Shard each provider; verify per-provider partition (nothing forgotten); build work list.
-    workitems: list[tuple[str, int, list[str]]] = []
+    workitems: list[WorkItem] = []
     for p in providers:
         n = shard_map.get(p, 1)
         provider_files = files_for_provider(p, files, args.testcases)
-        batches = plan_shards(provider_files, n)  # count-balanced; pool absorbs imbalance
+        durations = duration_oracle_for_provider(project_root, p)
+        batches = plan_shards(provider_files, n, duration_by_unit=durations)
         batched = sum(len(b) for b in batches)
         if batched != len(provider_files):
             print(
@@ -364,17 +395,22 @@ def main() -> int:
             )
             return 1
         for i, batch in enumerate(batches):
-            workitems.append((p, i, batch))
+            load = estimate_shard_load(batch, duration_by_unit=durations)
+            workitems.append((p, i, batch, load))
         scope = "slot-0-unique" if len(provider_files) != len(files) else "full"
-        print(f"  {p}: {n} batch(es), {batched} files ({scope}, partition ok)")
+        balance = "duration-oracle" if durations else "synthetic-heavy"
+        print(
+            f"  {p}: {n} batch(es), {batched} files "
+            f"({scope}, {balance}, partition ok)"
+        )
 
-    # Heaviest-provider-first so the long poles start early (the pool consumes in order).
-    workitems.sort(key=lambda w: -shard_map.get(w[0], 1))
+    # Longest estimated batches first so the long poles start early.
+    workitems = sort_workitems(workitems)
 
     if args.dry_run:
         print(f"=== DRY RUN: {len(workitems)} items, K={args.concurrency} (launch nothing) ===")
-        for p, i, batch in workitems:
-            print(f"  {p}:{i}  {len(batch)} files")
+        for p, i, batch, load in workitems:
+            print(f"  {p}:{i}  {len(batch)} files  load~{load:.1f}s")
         return 0
 
     clean_prior_shards(project_root, providers)
@@ -382,7 +418,7 @@ def main() -> int:
     print(f"=== running {len(workitems)} items through {args.concurrency} workers (mixed) ===")
     start = time.time()
     with ThreadPoolExecutor(max_workers=args.concurrency) as ex:
-        results = list(ex.map(lambda w: run_item(*w, docker_env), workitems))
+        results = list(ex.map(lambda w: run_item(w[0], w[1], w[2], docker_env), workitems))
     wall = int(time.time() - start)
     nonzero = sum(1 for _, _, rc in results if rc not in (0, 1))  # 1 == failing tests (expected)
     if nonzero:
