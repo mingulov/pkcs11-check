@@ -426,6 +426,11 @@ Legacy/deprecated coverage addendum for the active goal:
   families as starting points; the coverage round should account for every
   uncovered legacy/deprecated registry entry that can be tested with
   provider-general semantics.
+- Started: `CKM_RC5_MAC_GENERAL` now has a KAT-backed expected-MAC vector using
+  the existing RFC 2040 RC5 block result as the one-block zero-IV CBC-MAC
+  output, plus vector-param replay for word size, rounds, and MAC length.
+  Fixed-length `CKM_RC5_MAC` still needs a clearer source for its mandated
+  truncation length before adding an expected-output KAT.
 
 Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks
 should follow once the harness can reuse provider-local history and prove

@@ -15,6 +15,7 @@ from pkcs11_check.raw.types_std import (
     CKM_RC4,
     CKM_RC5_CBC,
     CKM_RC5_ECB,
+    CKM_RC5_MAC_GENERAL,
     CKM_TWOFISH_CBC,
 )
 from pkcs11_check.testcases.mechanism_helpers import build_params_from_vector
@@ -104,6 +105,41 @@ def test_rc5_cbc_vector_params_replay_rounds_word_bits_and_iv() -> None:
     assert ctypes.string_at(params.params.pIv, params.params.ulIvLen) == bytes.fromhex(
         vec["params"]["iv_hex"]
     )
+
+
+def test_rc5_mac_general_mechanism_has_rfc2040_kat_vector() -> None:
+    config = MECHANISM_REGISTRY[int(CKM_RC5_MAC_GENERAL)]
+    assert config.vector_file == "rc5_mac_general.json"
+
+    vectors = load_positive_vectors("rc5_mac_general.json")
+    assert vectors, "rc5_mac_general.json must contain positive vectors"
+    for vec in vectors:
+        assert vec["type"] == "positive"
+        assert vec["mechanism_name"] == "CKM_RC5_MAC_GENERAL"
+        assert vec["key_hex"] == "0102030405060708"
+        assert vec["input_hex"] == "ffffffffffffffff"
+        assert vec["mac_hex"] == "e493f1c1bb4d6e8c"
+        assert vec["params"]["source"] == (
+            "RFC 2040 section 9.3; one-block CBC-MAC with zero IV equals RC5-ECB"
+        )
+        assert vec["params"]["word_bits"] == 32
+        assert vec["params"]["rounds"] == 12
+        assert vec["params"]["mac_len"] == 8
+
+
+def test_rc5_mac_general_vector_params_replay_length_rounds_and_word_bits() -> None:
+    config = MECHANISM_REGISTRY[int(CKM_RC5_MAC_GENERAL)]
+    vector = next(
+        vec
+        for vec in load_positive_vectors("rc5_mac_general.json")
+        if vec["mechanism_name"] == "CKM_RC5_MAC_GENERAL"
+    )
+
+    params = build_params_from_vector(int(CKM_RC5_MAC_GENERAL), config.param_recipe, vector)
+
+    assert params.params.ulWordsize == vector["params"]["word_bits"]
+    assert params.params.ulRounds == vector["params"]["rounds"]
+    assert params.params.ulMacLength == vector["params"]["mac_len"]
 
 
 def test_rc4_encrypt_mechanism_has_rfc6229_kat_vectors() -> None:

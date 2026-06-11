@@ -329,6 +329,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_rc5_mac_general,
         keygen_recipe=_sym,
         expected_flags=_SIG_VER,
+        vector_file="rc5_mac_general.json",
         notes="RC5-MAC-GENERAL: variable-length MAC, requires CK_RC5_MAC_GENERAL_PARAMS",
     )
 

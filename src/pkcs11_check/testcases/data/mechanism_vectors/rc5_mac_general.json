@@ -1,0 +1,24 @@
+{
+  "mechanism": "CKM_RC5_MAC_GENERAL",
+  "family": "rc5_mac_general",
+  "key_type": "CKK_RC5",
+  "source": "RFC 2040 section 9.3; one-block CBC-MAC with zero IV equals RC5-ECB",
+  "vectors": [
+    {
+      "id": "rc5_mac_general_r12_key64_full_block",
+      "type": "positive",
+      "mechanism_name": "CKM_RC5_MAC_GENERAL",
+      "key_type": "symmetric",
+      "key_bits": 64,
+      "key_hex": "0102030405060708",
+      "params": {
+        "source": "RFC 2040 section 9.3; one-block CBC-MAC with zero IV equals RC5-ECB",
+        "word_bits": 32,
+        "rounds": 12,
+        "mac_len": 8
+      },
+      "input_hex": "ffffffffffffffff",
+      "mac_hex": "e493f1c1bb4d6e8c"
+    }
+  ]
+}

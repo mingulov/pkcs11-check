@@ -880,6 +880,9 @@ def build_params_from_vector(mech_id: int, recipe: ParamRecipe, vec: dict[str, A
         ``"oaep"``   -- uses ``params["hash_mech_hex"]`` as CKM constant name.
         ``"rc2"``    -- uses ``params["effective_bits"]``.
         ``"rc2_cbc"`` -- uses ``effective_bits`` and ``iv_hex``.
+        ``"rc5"``    -- uses ``word_bits`` and ``rounds``.
+        ``"rc5_cbc"`` -- uses ``word_bits``, ``rounds``, and ``iv_hex``.
+        ``"rc5_mac_general"`` -- uses ``word_bits``, ``rounds``, and ``mac_len``.
 
     For all other styles the function delegates to ``build_test_params``.
 
@@ -992,6 +995,17 @@ def build_params_from_vector(mech_id: int, recipe: ParamRecipe, vec: dict[str, A
             word_bits=word_bits_rc5_cbc,
             rounds=rounds_rc5_cbc,
             iv=bytes.fromhex(iv_hex_rc5),
+        )
+
+    if style == "rc5_mac_general":
+        word_bits_rc5_mac_general: int = vp.get("word_bits", d.get("word_bits", 32))
+        rounds_rc5_mac_general: int = vp.get("rounds", d.get("rounds", 12))
+        mac_len_rc5_mac_general: int = vp.get("mac_len", d.get("mac_len", 8))
+        return mech_rc5_mac_general(
+            CKM(mech_id),
+            word_bits=word_bits_rc5_mac_general,
+            rounds=rounds_rc5_mac_general,
+            mac_len=mac_len_rc5_mac_general,
         )
 
     if style == "chacha20_poly1305":
