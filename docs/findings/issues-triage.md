@@ -638,3 +638,79 @@ module-issues.md), GCM 9, flagged UB probes (`test_ffi_length_boundary` 21 + `te
 8), **plus OAEP 209 + AES-CBC-PAD 144 (above)**. Determination note: the buffer-guard failures were
 verified REAL (LEN values prove wrong-size-query / OOB / garbage), NOT the benign CKR_OK+0-overwrite
 deviation the C_Digest guard now xfails — so no harness change.
+
+## Determination — nss `test_mldsa_verify` 8 F = GENUINE Type-A (over-long-encoding acceptance) (2026-06-11)
+
+**Verdict: GENUINE FINDING (Type-A crypto-correctness), not a harness bug. No code change.**
+Documented in [module-issues.md](../module-issues.md) under NSS.
+
+**Trigger.** SESSION-RESTORE queue flagged the nss "Invalid ML-DSA sig … accepted by module" 8 F
+as a *potential* forgery-acceptance Type-A. Determined, not assumed.
+
+**Source of the 8 F.** Fresh pool `artifacts/nss-pooled/report.jsonl` (base NSS variant, 2026-06-11).
+Note the pool split: the base `nss-pooled` module **advertises and operates** `CKM_ML_DSA`, so it
+RUNS `test_mldsa_verify` (607 passed / 8 failed / 15 skipped); `nss-pqc-pooled` reports
+`has_mechanism("ML_DSA") == False` and **collection-skips the whole file** (1 skip) — which is why
+the 8 F live only in `nss-pooled`, not in the "pqc" variant.
+
+**The 8 vectors (all `result: invalid`, wycheproof v1 schema → no "acceptable" three-state):**
+
+| File | tcId | flags | comment | over-long by |
+|---|---|---|---|---|
+| mldsa_44_verify | tc7 | IncorrectSignatureLength | long signature | sig 2421 vs 2420 |
+| mldsa_44_verify | tc65 | IncorrectPublicKeyLength | long public key | pk 1313 vs 1312 |
+| mldsa_44_verify | tc144 | IncorrectSignatureLength | sig + one trailing zero byte | sig 2421 vs 2420 |
+| mldsa_65_verify | tc7 | IncorrectSignatureLength | long signature | sig 3310 vs 3309 |
+| mldsa_65_verify | tc70 | IncorrectPublicKeyLength | long public key | pk 1953 vs 1952 |
+| mldsa_65_verify | tc157 | IncorrectSignatureLength | sig + one trailing zero byte | sig 3310 vs 3309 |
+| mldsa_87_verify | tc7 | IncorrectSignatureLength | long signature | sig 4628 vs 4627 |
+| mldsa_87_verify | tc170 | IncorrectSignatureLength | sig + one trailing zero byte | sig 4628 vs 4627 |
+
+Two sub-classes, **both genuine Type-A**:
+- **6× IncorrectSignatureLength** — signature is exactly +1 byte over the FIPS-204 fixed length.
+  NSS `C_Verify` returns `CKR_OK` (`verify_single` → `True`) on the over-long signature → test
+  fails at line 161 ("accepted by module").
+- **2× IncorrectPublicKeyLength** — the *public key* is +1 byte over the fixed length. NSS
+  **accepts the malformed key at import** (`import_pqc_public_key` does NOT raise; the
+  `_MLDSA_INVALID_PUBLIC_KEY_FLAGS` correctly-rejected path at lines 142-145 is never taken) **and
+  then verifies as valid**. Confirmed by traceback: the failure is at line 161, downstream of a
+  successful import.
+
+**Why Type-A, not harness / not "acceptable":**
+1. **FIPS-204 mandates fixed-length encoding.** Canonical sizes (computed from the same vector
+   files' `result:valid` rows; match FIPS-204 Table 2 exactly): pk = 1312/1952/2592, sig =
+   2420/3309/4627 for ML-DSA-44/65/87. ML-DSA.Verify (FIPS-204 Alg. 3) decodes the signature via
+   `sigDecode` / the key via `pkDecode`, which operate **only** on byte strings of the fixed length;
+   any other length is malformed and MUST be rejected. Accepting an over-long encoding and returning
+   "valid" is a **non-malleability break**: an attacker appends a trailing byte and the signature
+   still validates (signature/key malleability → forgeable variant of an existing signature).
+2. **Wycheproof semantics confirm "must reject".** Both flags carry `bugType: BASIC` (file `notes`),
+   not `LEGACY`/`KNOWN_BUG`; `result: invalid`. v1 schema is two-state (valid/invalid) — there is no
+   "acceptable" variant the test is mis-hard-failing.
+3. **Harness presents the input faithfully — no mis-encoding.** `test_wycheproof_mldsa.py`
+   `sig = bytes.fromhex(vec["sig"])` / `pk_bytes = bytes.fromhex(pk_hex)` are passed verbatim;
+   `verify_single` calls `C_Verify(..., sig_buf, len(signature))` with the full 2421/3310/4628 bytes.
+   No truncation, no re-encode. NSS itself returns `CKR_OK` → NSS is what accepts it.
+4. **NSS is otherwise correct.** Same module rejects **380/388** invalid vectors and accepts
+   **227/227** valid ones — only these 8 fixed-length-malformation cases slip through. So this is a
+   specific malformation-tolerance gap (NSS ignores trailing bytes past the fixed length), not a
+   blanket "verify always true" bug.
+
+**Baseline cross-check (regression vs pre-existing).** The **identical 8 vectors** fail in
+`artifacts2/nss-pooled`, `artifacts2/nss-shard-0`, `artifacts3/nss-pooled`, `artifacts3/nss-shard-0`
+and the fresh `artifacts/nss-pooled` — stable, deterministic, **pre-existing**. NOT introduced by
+this session's ML-DSA fixes (`f08369da` ctx-skip + malformed-key xfail): those reduced nss-pooled's
+total F from 234 (artifacts2) → 130 (fresh) by clearing OTHER files, and correctly left these 8
+standing (they are a real module behavior the fixes did not — and should not — mask).
+
+**Action.** Documented under NSS in module-issues.md (Type-A, vector ids + flags + the 380/8 split).
+**No harness change** — the test classifies correctly per the model (positive: n/a; negative:
+`CKR_OK` on a must-reject malformed input + crypto-correctness break = Type-A `fail`). Reportable
+upstream to NSS (softoken ML-DSA verify / pubkey import should enforce FIPS-204 fixed lengths).
+
+**Confidence: HIGH.** Evidence is direct (module returns `CKR_OK`; canonical sizes derived from the
+vectors themselves match FIPS-204; flags are `BASIC`/`invalid`; faithful harness path; reproduced
+identically across three independent pool snapshots; NSS otherwise rejects 380/388 invalids). The one
+residual not directly observed here is upstream root-cause line in NSS softoken (no NSS 3.120.1 source
+to hand; system NSS is 3.98 and does not advertise ML-DSA, so a local re-exec could not reproduce the
+exact build) — that is a *report-detail* gap, not a determination gap.

@@ -190,10 +190,33 @@ provider package versions where the finding was first recorded.
   but writes **0** bytes past the boundary — a benign return-code deviation (xfail), not an
   overflow; the probe now distinguishes the two via the guard-byte count.
 
+- **Type-A — ML-DSA verify accepts over-long (non-fixed-length) signatures and public keys**: NSS
+  softoken `C_Verify(CKM_ML_DSA, …)` returns `CKR_OK` on a signature that is **+1 byte longer** than
+  the FIPS-204 fixed length, and `C_CreateObject`/import **accepts a public key +1 byte over** the
+  fixed length and then verifies against it as valid. FIPS-204 (Alg. 3 ML-DSA.Verify via
+  `sigDecode`/`pkDecode`) operates only on byte strings of the fixed length — pk =
+  1312/1952/2592, sig = 2420/3309/4627 for ML-DSA-44/65/87 — so any other length is malformed and
+  MUST be rejected (`CKR_SIGNATURE_LEN_RANGE`/`CKR_SIGNATURE_INVALID`, or key-import rejection).
+  Accepting the over-long encoding is a **non-malleability break**: appending a trailing byte to a
+  valid signature still validates. 8/8 Wycheproof verify vectors flagged `IncorrectSignatureLength`
+  (6: `mldsa_{44,65,87}_verify` tc7 "long signature" + tc144/tc157/tc170 "one trailing zero byte")
+  and `IncorrectPublicKeyLength` (2: tc65/tc70 "long public key") — all `result: invalid`,
+  `bugType: BASIC` — are accepted. NSS is otherwise correct on this file: it rejects 380/388 invalid
+  vectors and accepts 227/227 valid ones, so this is a specific fixed-length-malformation gap (NSS
+  ignores trailing bytes past the spec length), not a blanket verify-always-true bug. Affects the
+  base `nss` variant (advertises + operates `CKM_ML_DSA`); the `nss-pqc` variant does not advertise
+  `CKM_ML_DSA` here and collection-skips the file. Stable and pre-existing (identical 8 across three
+  pool snapshots), independent of the ML-DSA ctx-skip/malformed-key fixes. Detected by:
+  `test_wycheproof_mldsa.py::test_mldsa_verify`. Classified Type-A per
+  [classification-model-design.md](classification-model-design.md) (negative op: `CKR_OK` on a
+  must-reject malformed input + crypto-correctness break → `fail`). Reportable upstream. Full
+  determination: [findings/issues-triage.md](findings/issues-triage.md) (2026-06-11 section).
+
 ### Failure breakdown (362 total)
 | Count | Area | Reason |
 |-------|------|--------|
 | 296 | DSA Wycheproof | Historical pkcs11-check loader issue, not an NSS finding. Follow-up found that DER DSA signatures were passed directly to `C_Verify` and then converted with the encoded length of `q`, including leading zero bytes. The loader now converts DER signatures to fixed-width PKCS#11/P1363 form; focused NSS validation passes this file. Full matrix counts still need rerun. |
+| 8 | ML-DSA verify (Type-A) | NSS accepts over-long (+1 byte) ML-DSA signatures and public keys as valid — FIPS-204 fixed-length violation (non-malleability break). See the Type-A entry above. |
 | ~16 | Session/access tests | NSS returns `CKR_USER_TYPE_INVALID` instead of `CKR_USER_ALREADY_LOGGED_IN` — PKCS#11 spec compliance deviation |
 | ~16 | KEM/PQC | ML-KEM not supported in NSS 3.120.1 (expected skips, showing as errors) |
 | ~2 | AES-XCBC-MAC | NSS returns CKR_KEY_TYPE_INCONSISTENT on verify despite CKA_VERIFY=True |
