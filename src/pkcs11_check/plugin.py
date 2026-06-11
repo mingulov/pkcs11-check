@@ -677,6 +677,36 @@ def _attach_rv_trace_to_report(item: pytest.Item, report: Any) -> None:
     _remember_rv_trace(item, report)
 
 
+def _append_missing_compliance_notes(
+    user_properties: list[tuple[str, Any]], notes: list[dict[str, str]]
+) -> None:
+    if not notes:
+        return
+    for index, (existing_name, existing_value) in enumerate(user_properties):
+        if existing_name != "pkcs11_compliance_notes":
+            continue
+        if isinstance(existing_value, list):
+            existing_value.extend(notes)
+        else:
+            user_properties[index] = ("pkcs11_compliance_notes", notes)
+        return
+    user_properties.append(("pkcs11_compliance_notes", notes))
+
+
+def _attach_compliance_notes_to_report(item: pytest.Item, report: Any) -> None:
+    """Attach compliance notes to call reports before report-log serializes them."""
+    if not _is_testcase_item(item) or getattr(report, "when", None) != "call":
+        return
+    user_properties = getattr(report, "user_properties", None)
+    if not isinstance(user_properties, list):
+        return
+
+    from pkcs11_check.compliance import get_notes, serialize_notes
+
+    notes = serialize_notes(get_notes(), nodeid=str(getattr(item, "nodeid", "")))
+    _append_missing_compliance_notes(user_properties, notes)
+
+
 def _convert_missing_function_to_skip(report: Any, call: pytest.CallInfo[Any]) -> None:
     """A PKCS#11 function absent from the module's function list is a capability
     gap, not a test error.
@@ -710,6 +740,7 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> 
     report = outcome.get_result()
     _convert_missing_function_to_skip(report, call)
     _attach_rv_trace_to_report(item, report)
+    _attach_compliance_notes_to_report(item, report)
 
 
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:

@@ -497,6 +497,11 @@ class TestTestCommand:
         )
         monkeypatch.setattr(
             test_cmd,
+            "collect_pytest_item_metadata",
+            lambda targets, pytest_args: [],  # type: ignore[arg-type]
+        )
+        monkeypatch.setattr(
+            test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
                 output_path.write_text("{}"),
@@ -531,6 +536,71 @@ class TestTestCommand:
         assert called["units"] == ["saved.py", "saved.py::test_case"]
         assert called["resume"] is True
         assert called["granularity"] == "mixed"
+
+    def test_test_auto_resume_rejects_unexpanded_subprocess_per_test_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("")
+        state_file = tmp_path / "state.json"
+        marked_file = tmp_path / "test_marked.py"
+        marked_file.write_text("def test_one():\n    assert True\n")
+
+        monkeypatch.setattr(
+            test_cmd,
+            "load_run_state",
+            lambda path: SimpleNamespace(units=[str(marked_file)]),  # type: ignore[arg-type]
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_item_metadata",
+            lambda targets, pytest_args: [  # type: ignore[arg-type]
+                CollectedPytestItem(
+                    nodeid=f"{marked_file}::test_one",
+                    file_path=str(marked_file),
+                    markers=["subprocess_per_test"],
+                )
+            ],
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: (
+                output_path.write_text("{}"),
+                CapabilityManifest(
+                    status="ok",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version="3.2",
+                    slot_index=slot,
+                    slot_count=1,
+                    mechanisms=[],
+                ),
+            )[1],
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_isolated_pytest_units",
+            lambda *_a, **_k: pytest.fail("stale unexpanded state must not run"),  # type: ignore[arg-type]
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "auto",
+                "--resume",
+                "--state-file",
+                str(state_file),
+                "--ignore-disabled-tests",
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "subprocess_per_test file was not expanded" in result.output
 
     @pytest.mark.parametrize(
         ("mode", "output_name", "expected_name"),

@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_EC_PARAMS,
@@ -788,9 +788,27 @@ def classify_negative_rv(
         pytest.fail(f"{label}: accepted invalid (CKR_OK) -- must reject")
     if rv in expected_rvs:
         return
-    pytest.xfail(
-        f"{label}: rejected with {ckr_name(rv)}, expected {[ckr_name(c) for c in expected_rvs]}"
-    )
+    _xfail_or_fail_unexpected_clean_rv(rv, expected_rvs, label=label)
+
+
+def _xfail_or_fail_unexpected_clean_rv(
+    rv: int,
+    expected_rvs: tuple[Any, ...] | set[Any] | frozenset[Any],
+    *,
+    label: str,
+) -> None:
+    expected_names = [ckr_name(c) for c in expected_rvs]
+    if is_vendor_defined_ckr(rv):
+        pytest.xfail(
+            f"{label}: rejected with vendor-defined CK_RV {ckr_name(rv)}, "
+            f"expected {expected_names}"
+        )
+    if not is_standard_ckr(rv):
+        pytest.fail(
+            f"{label}: rejected with undefined CK_RV {ckr_name(rv)}, "
+            f"expected {expected_names}"
+        )
+    pytest.xfail(f"{label}: rejected with {ckr_name(rv)}, expected {expected_names}")
 
 
 def reject_or_classify(
@@ -818,6 +836,9 @@ def reject_or_classify(
     if is_known_error(exc, expected_rvs):
         return
     rv = getattr(exc, "rv", None)
+    if isinstance(rv, int):
+        _xfail_or_fail_unexpected_clean_rv(rv, expected_rvs, label=label)
+        return
     name = ckr_name(rv) if rv is not None else str(exc)
     pytest.xfail(f"{label}: rejected with {name}, expected {[ckr_name(c) for c in expected_rvs]}")
 

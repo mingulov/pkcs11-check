@@ -40,6 +40,7 @@ from pkcs11_check.core.file_runner import (
     save_isolation_policy,
     save_run_state,
     units_remaining_for_resume,
+    validate_subprocess_per_test_expansion,
     write_isolated_json_report,
     write_report_jsonl,
 )
@@ -210,6 +211,21 @@ def test_discover_auto_isolation_units_expands_per_test_marked_files(
     )
 
     assert units == [f"{target}::test_one", f"{target}::test_two"]
+
+
+def test_validate_subprocess_per_test_expansion_rejects_file_unit(tmp_path: Path) -> None:
+    target = tmp_path / "test_marked.py"
+    target.write_text("def test_one():\n    assert True\n")
+    collected = [
+        CollectedPytestItem(
+            nodeid=f"{target}::test_one",
+            file_path=str(target),
+            markers=["subprocess_per_test"],
+        )
+    ]
+
+    with pytest.raises(ValueError, match="subprocess_per_test file was not expanded"):
+        validate_subprocess_per_test_expansion([str(target)], collected)
 
 
 def test_discover_auto_isolation_units_expands_policy_promoted_files(
@@ -2599,6 +2615,80 @@ def test_run_isolated_pytest_units_extracts_per_unit_details(
     assert report["units"][0]["counts"]["passed"] == 1
 
 
+def test_run_isolated_pytest_units_preserves_compliance_notes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen_cmds: list[list[str]] = []
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        seen_cmds.append(list(cmd))
+        for i, arg in enumerate(cmd):
+            if arg == "--report-log" and i + 1 < len(cmd):
+                jsonl_path = Path(cmd[i + 1])
+                jsonl_path.write_text(
+                    json.dumps(
+                        {
+                            "nodeid": "test_a.py::test_ok",
+                            "when": "call",
+                            "outcome": "passed",
+                            "duration": 0.1,
+                            "user_properties": [
+                                [
+                                    "pkcs11_compliance_notes",
+                                    [
+                                        {
+                                            "description": "validation policy accepted",
+                                            "level": "standard",
+                                            "reference": "PKCS#11 v3.2",
+                                            "test_id": "test_ok",
+                                            "nodeid": "test_a.py::test_ok",
+                                        }
+                                    ],
+                                ]
+                            ],
+                        }
+                    )
+                    + "\n"
+                )
+                break
+        return (0, "", "")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    report_path = tmp_path / "results.json"
+
+    exit_code = run_isolated_pytest_units(
+        ["test_a.py"],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    assert seen_cmds
+    report = json.loads(report_path.read_text())
+    assert report["units"][0]["compliance_notes"] == [
+        {
+            "description": "validation policy accepted",
+            "level": "standard",
+            "reference": "PKCS#11 v3.2",
+            "test_id": "test_ok",
+            "nodeid": "test_a.py::test_ok",
+        }
+    ]
+
+
 def test_run_isolated_pytest_units_does_not_retain_cached_report_records(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -4031,6 +4121,10 @@ def test_file_skip_counts_collected_tests_as_skipped(
     assert unit["file_skip"] is True
     assert unit["counts"]["skipped"] == 2
     assert unit["skip_reasons"] == {"AES_CCM not supported by module": 2}
+    quality = json.loads((tmp_path / "quality.json").read_text())
+    assert quality["file_skipped_units"] == [
+        {"target": str(test_file), "reason": "AES_CCM not supported by module"}
+    ]
 
 
 def test_nodeid_unit_with_missing_required_mechanism_is_skipped_before_pytest(

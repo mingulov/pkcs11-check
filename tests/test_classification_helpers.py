@@ -16,6 +16,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_OK,
     CKR_PIN_INCORRECT,
+    CKR_VENDOR_DEFINED,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CkrExpectation, assert_ckr
 from pkcs11_check.testcases.conftest import (
@@ -177,6 +178,20 @@ def test_rv_other_xfails() -> None:
         classify_negative_rv(CKR_FUNCTION_FAILED, (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
 
 
+def test_rv_unknown_non_vendor_value_fails() -> None:
+    with pytest.raises(Failed, match="undefined CK_RV"):
+        classify_negative_rv(0x7FFFFFFF, (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
+
+
+def test_rv_vendor_defined_value_xfails_distinctly() -> None:
+    with pytest.raises(pytest.xfail.Exception, match="vendor-defined CK_RV"):
+        classify_negative_rv(
+            int(CKR_VENDOR_DEFINED) + 1,
+            (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+            label="x",
+        )
+
+
 def test_exc_none_is_fail() -> None:
     with pytest.raises(Failed):
         reject_or_classify(None, (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
@@ -191,6 +206,20 @@ def test_exc_expected_passes() -> None:
 def test_exc_other_xfails() -> None:
     with pytest.raises(pytest.xfail.Exception):
         reject_or_classify(_exc(CKR_FUNCTION_FAILED), (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
+
+
+def test_exc_unknown_non_vendor_value_fails() -> None:
+    with pytest.raises(Failed, match="undefined CK_RV"):
+        reject_or_classify(_exc(0x7FFFFFFF), (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
+
+
+def test_exc_vendor_defined_value_xfails_distinctly() -> None:
+    with pytest.raises(pytest.xfail.Exception, match="vendor-defined CK_RV"):
+        reject_or_classify(
+            _exc(int(CKR_VENDOR_DEFINED) + 1),
+            (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+            label="x",
+        )
 
 
 # ---------------------------------------------------------------------------

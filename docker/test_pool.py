@@ -207,12 +207,26 @@ def compose_env(project_root: Path) -> dict[str, str]:
     return env
 
 
-def duration_oracle_for_provider(project_root: Path, provider: str) -> dict[str, float] | None:
+def resolve_duration_artifacts_root(project_root: Path, artifacts_root: Path | None) -> Path:
+    if artifacts_root is None:
+        return project_root / "artifacts"
+    if artifacts_root.is_absolute():
+        return artifacts_root
+    return project_root / artifacts_root
+
+
+def duration_oracle_for_provider(
+    project_root: Path, provider: str, *, artifacts_root: Path | None = None
+) -> dict[str, float] | None:
     """Return provider-local per-file durations from the previous pooled artifact."""
-    prior_results = project_root / "artifacts" / f"{provider}-pooled" / "results.json"
+    root = resolve_duration_artifacts_root(project_root, artifacts_root)
+    prior_results = root / f"{provider}-pooled" / "results.json"
     if not prior_results.exists():
         return None
-    durations = duration_by_unit_from_results(prior_results)
+    try:
+        durations = duration_by_unit_from_results(prior_results)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
     return durations or None
 
 
@@ -262,12 +276,19 @@ def format_elapsed(seconds: float) -> str:
     return f"{total // 60}m{total % 60:02d}s"
 
 
-def print_pool_event(message: str, output_lock: Any | None = None) -> None:
+def timestamped_message(message: str) -> str:
+    return f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}"
+
+
+def print_pool_event(
+    message: str, output_lock: Any | None = None, *, file: Any | None = None
+) -> None:
+    rendered = timestamped_message(message)
     if output_lock is None:
-        print(message, flush=True)
+        print(rendered, flush=True, file=file)
         return
     with output_lock:
-        print(message, flush=True)
+        print(rendered, flush=True, file=file)
 
 
 def run_item(
@@ -383,6 +404,15 @@ def main() -> int:
         action="store_true",
         help="plan + verify the partition and print the work list; launch nothing",
     )
+    ap.add_argument(
+        "--duration-artifacts-dir",
+        type=Path,
+        default=None,
+        help=(
+            "provider-local artifact root for duration planning "
+            "(reads <root>/<provider>-pooled/results.json)"
+        ),
+    )
     ap.add_argument("--testcases", default=TESTCASES)
     ap.add_argument(
         "providers", nargs="*", help="provider or provider:shards (default: stable set)"
@@ -408,40 +438,42 @@ def main() -> int:
     docker_env = compose_env(project_root)
     host_data_dir = Path(docker_env["PKCS11_CHECK_HOST_DATA_DIR"])
     if not has_vector_data(host_data_dir):
-        print(
+        print_pool_event(
             "WARNING: no test vector data found; full vector-backed collection may be incomplete. "
             "Run: uv run pkcs11-check fetch-data all",
             file=sys.stderr,
         )
     elif "PKCS11_CHECK_HOST_DATA_DIR" not in os.environ and host_data_dir != project_root / "data":
-        print(f"Using fetched test vector data: {host_data_dir}", file=sys.stderr)
+        print_pool_event(f"Using fetched test vector data: {host_data_dir}", file=sys.stderr)
 
     files = discover_files(args.testcases)
     if not files:
-        print(f"ERROR: no test_*.py under {args.testcases}", file=sys.stderr)
+        print_pool_event(f"ERROR: no test_*.py under {args.testcases}", file=sys.stderr)
         return 2
-    print(
+    print_pool_event(
         f"=== global mixed pool: {len(providers)} providers, K={args.concurrency}, "
         f"{len(files)} test files/provider ==="
     )
 
     if not args.no_build and not args.dry_run:
         for p in providers:
-            print(f"--- build test-{p} ---")
+            print_pool_event(f"--- build test-{p} ---")
             _, ok = build_image(p, docker_env)
             if not ok:
-                print(f"  BUILD FAILED (see /tmp/pool-build-{p}.log)")
+                print_pool_event(f"  BUILD FAILED (see /tmp/pool-build-{p}.log)")
 
     # Shard each provider; verify per-provider partition (nothing forgotten); build work list.
     workitems: list[WorkItem] = []
     for p in providers:
         n = shard_map.get(p, 1)
         provider_files = files_for_provider(p, files, args.testcases)
-        durations = duration_oracle_for_provider(project_root, p)
+        durations = duration_oracle_for_provider(
+            project_root, p, artifacts_root=args.duration_artifacts_dir
+        )
         batches = plan_shards(provider_files, n, duration_by_unit=durations)
         batched = sum(len(b) for b in batches)
         if batched != len(provider_files):
-            print(
+            print_pool_event(
                 f"ERROR: {p} partition {batched} != {len(provider_files)} — refusing to drop tests",
                 file=sys.stderr,
             )
@@ -451,7 +483,7 @@ def main() -> int:
             workitems.append((p, i, batch, load))
         scope = "slot-0-unique" if len(provider_files) != len(files) else "full"
         balance = "duration-oracle" if durations else "synthetic-heavy"
-        print(
+        print_pool_event(
             f"  {p}: {n} batch(es), {batched} files "
             f"({scope}, {balance}, partition ok)"
         )
@@ -460,14 +492,18 @@ def main() -> int:
     workitems = sort_workitems(workitems)
 
     if args.dry_run:
-        print(f"=== DRY RUN: {len(workitems)} items, K={args.concurrency} (launch nothing) ===")
+        print_pool_event(
+            f"=== DRY RUN: {len(workitems)} items, K={args.concurrency} (launch nothing) ==="
+        )
         for p, i, batch, load in workitems:
-            print(f"  {p}:{i}  {len(batch)} files  load~{load:.1f}s")
+            print_pool_event(f"  {p}:{i}  {len(batch)} files  load~{load:.1f}s")
         return 0
 
     clean_prior_shards(project_root, providers)
 
-    print(f"=== running {len(workitems)} items through {args.concurrency} workers (mixed) ===")
+    print_pool_event(
+        f"=== running {len(workitems)} items through {args.concurrency} workers (mixed) ==="
+    )
     start = time.time()
     output_lock = Lock()
     with ThreadPoolExecutor(max_workers=args.concurrency) as ex:
@@ -475,7 +511,9 @@ def main() -> int:
     wall = int(time.time() - start)
     nonzero = sum(1 for result in results if result.returncode not in (0, 1))
     if nonzero:
-        print(f"  note: {nonzero} item(s) exited with an unexpected code (see /tmp/pool-*.log)")
+        print_pool_event(
+            f"  note: {nonzero} item(s) exited with an unexpected code (see /tmp/pool-*.log)"
+        )
 
     # Merge per provider + comparison summary.
     print()
@@ -506,7 +544,7 @@ def main() -> int:
         if complete != n:
             incomplete_results = True
             salvageable = len(present) - complete
-            print(
+            print_pool_event(
                 f"  WARN: {p} produced {complete}/{n} complete shard results "
                 f"({salvageable} salvageable from report.jsonl) — incomplete!",
                 file=sys.stderr,
@@ -529,7 +567,7 @@ def main() -> int:
                 f"{'':>8} {'':>8} {'':>8} {shard_time:>10}"
             )
 
-    print(
+    print_pool_event(
         f"=== GLOBAL wall: {wall // 60}m{wall % 60}s for {len(providers)} providers / "
         f"{len(workitems)} items / K={args.concurrency} ==="
     )

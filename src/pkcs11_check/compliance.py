@@ -21,6 +21,7 @@ Usage in tests:
 from __future__ import annotations
 
 import enum
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 
@@ -94,6 +95,26 @@ def get_notes() -> list[ComplianceNote]:
 def clear_notes() -> None:
     """Clear collected notes (call between test runs)."""
     _notes.clear()
+
+
+def serialize_notes(
+    notes: Iterable[ComplianceNote],
+    *,
+    nodeid: str = "",
+) -> list[dict[str, str]]:
+    """Serialize compliance notes into JSON-safe artifact records."""
+    result: list[dict[str, str]] = []
+    for n in notes:
+        record = {
+            "description": n.description,
+            "level": n.level.value,
+            "reference": n.reference,
+            "test_id": n.test_id,
+        }
+        if nodeid:
+            record["nodeid"] = nodeid
+        result.append(record)
+    return result
 
 
 def summary() -> dict[str, list[ComplianceNote]]:

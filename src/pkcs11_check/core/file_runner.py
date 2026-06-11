@@ -253,6 +253,40 @@ def _markers_by_file(items: list[CollectedPytestItem]) -> dict[str, set[str]]:
     return markers_by_file
 
 
+def validate_subprocess_per_test_expansion(
+    units: Sequence[str],
+    collected_items: Sequence[CollectedPytestItem],
+) -> None:
+    """Refuse file-level units for files marked ``subprocess_per_test``."""
+    marked_files = {
+        normalize_policy_file_key(item.file_path)
+        for item in collected_items
+        if "subprocess_per_test" in item.markers
+    }
+    if not marked_files:
+        return
+
+    bare_file_units: set[str] = set()
+    nodeid_units: set[str] = set()
+    for unit in units:
+        file_part = unit.split("::", 1)[0]
+        file_key = normalize_policy_file_key(file_part)
+        if "::" in unit:
+            nodeid_units.add(file_key)
+        else:
+            bare_file_units.add(file_key)
+
+    bad_files = sorted(file_key for file_key in marked_files if file_key in bare_file_units)
+    missing_nodeids = sorted(file_key for file_key in marked_files if file_key not in nodeid_units)
+    if bad_files or missing_nodeids:
+        affected = sorted(set(bad_files) | set(missing_nodeids))
+        msg = (
+            "subprocess_per_test file was not expanded to per-test units: "
+            + ", ".join(affected)
+        )
+        raise ValueError(msg)
+
+
 def discover_auto_isolation_units(
     targets: list[str],
     default_root: Path,
@@ -327,6 +361,7 @@ def discover_auto_isolation_units(
             else:
                 units.append(file_unit)
 
+    validate_subprocess_per_test_expansion(units, collected_items)
     return units
 
 
@@ -414,6 +449,7 @@ def _group_results_by_file(
         file_results = groups[file_target]
         merged_counts: dict[str, int] = {key: 0 for key in _DETAIL_COUNT_KEYS}
         merged_tests: list[dict[str, Any]] = []
+        merged_compliance_notes: list[dict[str, Any]] = []
         merged_skip_reasons: dict[str, int] = {}
         file_skip = False
         for r in file_results:
@@ -421,11 +457,14 @@ def _group_results_by_file(
             for key in merged_counts:
                 merged_counts[key] += detail.get("counts", {}).get(key, 0)
             merged_tests.extend(detail.get("tests", []))
+            merged_compliance_notes.extend(detail.get("compliance_notes", []))
             for reason, count in detail.get("skip_reasons", {}).items():
                 merged_skip_reasons[reason] = merged_skip_reasons.get(reason, 0) + count
             if detail.get("file_skip"):
                 file_skip = True
         merged_detail: dict[str, Any] = {"counts": merged_counts, "tests": merged_tests}
+        if merged_compliance_notes:
+            merged_detail["compliance_notes"] = merged_compliance_notes
         if merged_skip_reasons:
             merged_detail["skip_reasons"] = merged_skip_reasons
         if file_skip:
@@ -437,6 +476,7 @@ def _group_results_by_file(
 def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
     counts = {key: 0 for key in _DETAIL_COUNT_KEYS}
     tests: list[dict[str, Any]] = []
+    compliance_notes: list[dict[str, Any]] = []
     skip_reasons: dict[str, int] = {}
 
     if isinstance(detail, Mapping):
@@ -449,6 +489,11 @@ def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
         raw_tests = detail.get("tests")
         if isinstance(raw_tests, list):
             tests = [dict(item) for item in raw_tests if isinstance(item, Mapping)]
+        raw_compliance_notes = detail.get("compliance_notes")
+        if isinstance(raw_compliance_notes, list):
+            compliance_notes = [
+                dict(item) for item in raw_compliance_notes if isinstance(item, Mapping)
+            ]
         raw_skip_reasons = detail.get("skip_reasons")
         if isinstance(raw_skip_reasons, Mapping):
             skip_reasons = {
@@ -458,6 +503,8 @@ def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
             }
 
     copied: dict[str, Any] = {"counts": counts, "tests": tests}
+    if compliance_notes:
+        copied["compliance_notes"] = compliance_notes
     if skip_reasons:
         copied["skip_reasons"] = skip_reasons
     if isinstance(detail, Mapping) and detail.get("file_skip"):
@@ -681,6 +728,9 @@ def _build_isolated_json_payload(
         tests = detail.get("tests")
         if tests:
             unit["tests"] = tests
+        compliance_notes = detail.get("compliance_notes")
+        if compliance_notes:
+            unit["compliance_notes"] = compliance_notes
         sr = detail.get("skip_reasons")
         if sr:
             unit["skip_reasons"] = sr
@@ -1096,6 +1146,39 @@ def _write_report_jsonl_from_record_map(
         tmp_path.unlink(missing_ok=True)
 
 
+_COMPLIANCE_NOTE_FIELDS = ("description", "level", "reference", "test_id", "nodeid")
+
+
+def _compliance_notes_from_user_properties(
+    user_properties: Any,
+    *,
+    nodeid: str,
+) -> list[dict[str, str]]:
+    if not isinstance(user_properties, list):
+        return []
+
+    notes: list[dict[str, str]] = []
+    for prop in user_properties:
+        if not isinstance(prop, (list, tuple)) or len(prop) != 2:
+            continue
+        name, value = prop
+        if name != "pkcs11_compliance_notes" or not isinstance(value, list):
+            continue
+        for raw_note in value:
+            if not isinstance(raw_note, Mapping):
+                continue
+            note = {
+                field: str(raw_note.get(field, ""))
+                for field in _COMPLIANCE_NOTE_FIELDS
+                if raw_note.get(field, "") not in (None, "")
+            }
+            if "nodeid" not in note and nodeid:
+                note["nodeid"] = nodeid
+            if note.get("description") and note.get("level"):
+                notes.append(note)
+    return notes
+
+
 def _build_detail_from_report_records(
     records: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any] | None:
@@ -1114,6 +1197,8 @@ def _build_detail_from_report_records(
         "timeout": 0,
     }
     non_passing: list[dict[str, Any]] = []
+    compliance_notes: list[dict[str, str]] = []
+    seen_compliance_notes: set[tuple[tuple[str, str], ...]] = set()
     skip_reasons: dict[str, int] = {}
     seen_call: set[str] = set()
     setup_events: list[Mapping[str, Any]] = []
@@ -1150,6 +1235,14 @@ def _build_detail_from_report_records(
         wasxfail = rec.get("wasxfail")
         mapped = _map_outcome(raw_outcome, wasxfail)
         counts[mapped] = counts.get(mapped, 0) + 1
+        for note in _compliance_notes_from_user_properties(
+            rec.get("user_properties"), nodeid=str(nodeid)
+        ):
+            key = tuple((field, note.get(field, "")) for field in _COMPLIANCE_NOTE_FIELDS)
+            if key in seen_compliance_notes:
+                continue
+            seen_compliance_notes.add(key)
+            compliance_notes.append(note)
 
         if mapped == "skipped":
             reason = _flatten_longrepr(rec.get("longrepr")) or "skipped"
@@ -1229,9 +1322,11 @@ def _build_detail_from_report_records(
             entry["longrepr"] = flat
         non_passing.append(entry)
 
-    if not any(counts.values()):
+    if not any(counts.values()) and not compliance_notes:
         return None
     result: dict[str, Any] = {"counts": counts, "tests": non_passing}
+    if compliance_notes:
+        result["compliance_notes"] = compliance_notes
     if skip_reasons:
         result["skip_reasons"] = skip_reasons
     return result
@@ -1348,6 +1443,15 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
         file_part = test.get("nodeid", "").split("::")[0]
         by_file.setdefault(file_part, []).append(test)
 
+    compliance_notes_by_file: dict[str, list[dict[str, Any]]] = {}
+    for note in detail.get("compliance_notes", []):
+        if not isinstance(note, Mapping):
+            continue
+        file_part = str(note.get("nodeid", "")).split("::")[0]
+        if not file_part:
+            continue
+        compliance_notes_by_file.setdefault(file_part, []).append(dict(note))
+
     file_counts: dict[str, dict[str, int]] = {}
     for rec in records:
         if rec.get("$report_type") != "TestReport" or rec.get("when") != "call":
@@ -1362,7 +1466,9 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
     summary: dict[str, int] = {key: 0 for key in _DETAIL_COUNT_KEYS}
     units: list[dict[str, Any]] = []
 
-    for target in sorted(set(list(by_file.keys()) + list(file_counts.keys()))):
+    for target in sorted(
+        set(list(by_file.keys()) + list(file_counts.keys()) + list(compliance_notes_by_file.keys()))
+    ):
         counts = file_counts.get(target, {key: 0 for key in _DETAIL_COUNT_KEYS})
         for key in summary:
             summary[key] += counts.get(key, 0)
@@ -1379,6 +1485,9 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
         tests = by_file.get(target, [])
         if tests:
             unit["tests"] = tests
+        compliance_notes = compliance_notes_by_file.get(target, [])
+        if compliance_notes:
+            unit["compliance_notes"] = compliance_notes
         units.append(unit)
 
     summary["total"] = sum(summary.values())

@@ -108,3 +108,47 @@ class TestComplianceNoteIsolation:
         pytest_runtest_teardown(fake_item, None)
         assert len(get_notes()) >= 1
         clear_notes()
+
+
+def test_compliance_notes_attach_to_testcase_call_reports() -> None:
+    from pkcs11_check.plugin import _attach_compliance_notes_to_report
+
+    clear_notes()
+    note(
+        "validation policy refused advertised encrypt",
+        ComplianceLevel.STANDARD,
+        reference="PKCS#11 v3.2 CKR_OPERATION_NOT_VALIDATED",
+        test_id="test_encrypt",
+    )
+    fake_item = type(
+        "FakeItem",
+        (),
+        {
+            "nodeid": "src/pkcs11_check/testcases/test_mech_encrypt.py::test_encrypt",
+            "path": Path("src/pkcs11_check/testcases/test_mech_encrypt.py"),
+            "fspath": Path("src/pkcs11_check/testcases/test_mech_encrypt.py"),
+        },
+    )()
+    fake_report = type(
+        "FakeReport",
+        (),
+        {"when": "call", "user_properties": []},
+    )()
+
+    _attach_compliance_notes_to_report(fake_item, fake_report)
+
+    assert fake_report.user_properties == [
+        (
+            "pkcs11_compliance_notes",
+            [
+                {
+                    "description": "validation policy refused advertised encrypt",
+                    "level": "standard",
+                    "reference": "PKCS#11 v3.2 CKR_OPERATION_NOT_VALIDATED",
+                    "test_id": "test_encrypt",
+                    "nodeid": "src/pkcs11_check/testcases/test_mech_encrypt.py::test_encrypt",
+                }
+            ],
+        )
+    ]
+    clear_notes()

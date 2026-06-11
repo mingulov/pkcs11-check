@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from . import metadata_std
 from .extensions import lookup_symbol_name
-from .types_std import CKR
+from .types_std import CKR, CKR_VENDOR_DEFINED
 
 _RV_NAMES = dict(metadata_std.RV_NAMES)
+_VENDOR_DEFINED_RV_START = int(CKR_VENDOR_DEFINED)
 
 
 class CkrAssertionError(AssertionError):
@@ -31,6 +32,16 @@ def ckr_name(rv: int) -> str:
     return lookup_symbol_name("rvs", rv) or _RV_NAMES.get(rv, f"0x{rv:08x}")
 
 
+def is_standard_ckr(rv: int) -> bool:
+    """Return True for CK_RV values defined by the base PKCS#11 standard."""
+    return int(rv) in _RV_NAMES
+
+
+def is_vendor_defined_ckr(rv: int) -> bool:
+    """Return True for CK_RV values in the vendor-defined range."""
+    return int(rv) >= _VENDOR_DEFINED_RV_START
+
+
 def expect_rv(rv: int, *allowed: CKR, context: str | None = None) -> int:
     """Return rv if allowed, otherwise raise ``CkrAssertionError`` (an AssertionError)."""
     if rv in allowed:
@@ -46,4 +57,6 @@ __all__ = [
     "CkrAssertionError",
     "ckr_name",
     "expect_rv",
+    "is_standard_ckr",
+    "is_vendor_defined_ckr",
 ]

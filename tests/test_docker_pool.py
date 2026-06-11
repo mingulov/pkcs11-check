@@ -89,6 +89,52 @@ def test_pool_dry_run_all_heavy_includes_optee_release_and_master(
     )
 
 
+def test_pool_dry_run_uses_explicit_duration_artifact_root_provider_locally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    testcases = tmp_path / "testcases"
+    testcases.mkdir()
+    (testcases / "test_fast.py").write_text("def test_fast():\n    pass\n")
+    (testcases / "test_slow.py").write_text("def test_slow():\n    pass\n")
+    history = tmp_path / "history"
+    results_path = history / "bouncyhsm-pooled" / "results.json"
+    results_path.parent.mkdir(parents=True)
+    results_path.write_text(
+        json.dumps(
+            {
+                "units": [
+                    {"target": str(testcases / "test_slow.py"), "duration_s": 12.0},
+                    {"target": str(testcases / "test_fast.py"), "duration_s": 2.0},
+                ]
+            }
+        )
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "test_pool.py",
+            "--dry-run",
+            "--duration-artifacts-dir",
+            str(history),
+            "--testcases",
+            str(testcases),
+            "bouncyhsm:2",
+            "opencryptoki:2",
+        ],
+    )
+
+    assert test_pool.main() == 0
+
+    out = capsys.readouterr().out
+    assert "bouncyhsm: 2 batch(es), 2 files (full, duration-oracle, partition ok)" in out
+    assert "opencryptoki: 2 batch(es), 2 files (full, synthetic-heavy, partition ok)" in out
+    assert "bouncyhsm:0  1 files  load~12.0s" in out
+    assert "opencryptoki:0  1 files  load~1.0s" in out
+
+
 def test_pool_uses_fetched_user_data_cache_when_repo_data_is_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -190,6 +236,10 @@ def test_pool_reports_shard_progress_and_provider_elapsed_time(
     def fake_monotonic() -> float:
         return next(clock)
 
+    def fake_strftime(format_string: str) -> str:
+        assert format_string == "%Y-%m-%d %H:%M:%S"
+        return "2026-06-11 12:34:56"
+
     def fake_run_item(
         provider: str, idx: int, files: list[str], env: dict[str, str]
     ) -> tuple[str, int, int]:
@@ -220,6 +270,7 @@ def test_pool_reports_shard_progress_and_provider_elapsed_time(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(test_pool.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(test_pool.time, "strftime", fake_strftime)
     monkeypatch.setattr(test_pool, "run_item", fake_run_item)
     monkeypatch.setattr(test_pool, "clean_prior_shards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(test_pool, "merge_shard_dirs", fake_merge_shard_dirs)
@@ -240,6 +291,14 @@ def test_pool_reports_shard_progress_and_provider_elapsed_time(
     assert test_pool.main() == 0
 
     out = capsys.readouterr().out
+    assert (
+        "[2026-06-11 12:34:56] "
+        "=== running 2 items through 1 workers (mixed) ==="
+    ) in out
+    assert (
+        "[2026-06-11 12:34:56] "
+        "--- START optee-pkcs11:0 files=1 load~1.0s log=/tmp/pool-optee-pkcs11-0.log ---"
+    ) in out
     assert "--- START optee-pkcs11:0 files=1 load~1.0s log=/tmp/pool-optee-pkcs11-0.log ---" in out
     assert "--- DONE optee-pkcs11:0 rc=0 took=2.5s ---" in out
     assert "--- DONE optee-pkcs11:1 rc=0 took=1.2s ---" in out

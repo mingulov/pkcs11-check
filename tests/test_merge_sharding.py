@@ -247,6 +247,88 @@ def test_merge_shard_dirs_unions_coverage_and_sums_results(tmp_path: Path) -> No
     assert cov["mechanism_coverage"]["not_invoked"] == 0
 
 
+def test_merge_shard_dirs_preserves_file_skip_quality_accounting(tmp_path: Path) -> None:
+    s0 = tmp_path / "shard0"
+    _write_shard(
+        s0,
+        units=[
+            {
+                "target": "test_cctv_ed25519.py",
+                "status": "passed",
+                "counts": {
+                    "passed": 0,
+                    "failed": 0,
+                    "skipped": 914,
+                    "xfailed": 0,
+                    "xpassed": 0,
+                    "error": 0,
+                    "crashed": 0,
+                    "timeout": 0,
+                },
+                "skip_reasons": {"EDDSA not supported by module": 914},
+                "file_skip": True,
+            }
+        ],
+        summary={"passed": 0, "failed": 0, "skipped": 914},
+        records=[],
+    )
+
+    out = tmp_path / "merged"
+    merge_shard_dirs([s0], out)
+
+    quality = json.loads((out / "quality.json").read_text())
+    assert quality["file_skipped_units"] == [
+        {"target": "test_cctv_ed25519.py", "reason": "EDDSA not supported by module"}
+    ]
+
+
+def test_merge_shard_dirs_salvages_compliance_notes_from_report_jsonl(
+    tmp_path: Path,
+) -> None:
+    s0 = tmp_path / "shard0"
+    s0.mkdir()
+    (s0 / "report.jsonl").write_text(
+        json.dumps(
+            {
+                "$report_type": "TestReport",
+                "nodeid": "test_mech_encrypt.py::test_encrypt_claim",
+                "when": "call",
+                "outcome": "passed",
+                "duration": 0.1,
+                "user_properties": [
+                    [
+                        "pkcs11_compliance_notes",
+                        [
+                            {
+                                "description": "validation policy accepted",
+                                "level": "standard",
+                                "reference": "PKCS#11 v3.2",
+                                "test_id": "test_encrypt_claim",
+                                "nodeid": "test_mech_encrypt.py::test_encrypt_claim",
+                            }
+                        ],
+                    ]
+                ],
+            }
+        )
+        + "\n"
+    )
+
+    out = tmp_path / "merged"
+    merge_shard_dirs([s0], out)
+
+    merged = json.loads((out / "results.json").read_text())
+    assert merged["units"][0]["compliance_notes"] == [
+        {
+            "description": "validation policy accepted",
+            "level": "standard",
+            "reference": "PKCS#11 v3.2",
+            "test_id": "test_encrypt_claim",
+            "nodeid": "test_mech_encrypt.py::test_encrypt_claim",
+        }
+    ]
+
+
 def test_merge_shard_dirs_promotes_teardown_trace_to_failed_call_report(tmp_path: Path) -> None:
     s0 = tmp_path / "shard0"
     trace = [
