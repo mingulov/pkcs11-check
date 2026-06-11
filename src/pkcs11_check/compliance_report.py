@@ -7,6 +7,7 @@ test coverage, CKR spec coverage, and compliance notes.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -68,6 +69,27 @@ def _add_outcome(counts: dict[str, int], outcome: str, amount: int = 1) -> None:
     clean_amount = max(amount, 0)
     counts[normalized] += clean_amount
     counts["tests"] += clean_amount
+
+
+def _status_from_counts(totals: Mapping[str, int]) -> str:
+    total_tests = sum(int(totals.get(key, 0)) for key in _OUTCOME_KEYS)
+    if total_tests == 0:
+        return "NOT_TESTED"
+    if totals.get("timeout", 0) > 0:
+        return "TIMEOUT"
+    if totals.get("crashed", 0) > 0:
+        return "CRASHED"
+    if totals.get("error", 0) > 0:
+        return "ERROR"
+    if totals.get("failed", 0) > 0:
+        return "FAIL"
+    if totals.get("xfailed", 0) > 0:
+        return "XFAIL"
+    if totals.get("xpassed", 0) > 0:
+        return "XPASS"
+    if totals.get("passed", 0) > 0:
+        return "PASS"
+    return "SKIP"
 
 
 # ---------------------------------------------------------------------------
@@ -532,6 +554,155 @@ def _parse_test_results(
     return counts
 
 
+def _json_mapping(path: Path) -> Mapping[str, Any] | None:
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    return data if isinstance(data, Mapping) else None
+
+
+def _coverage_mapping_from_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    embedded = payload.get("coverage")
+    if isinstance(embedded, Mapping) and isinstance(embedded.get("function_coverage"), Mapping):
+        return embedded
+    if isinstance(payload.get("function_coverage"), Mapping):
+        return payload
+    return None
+
+
+def _counts_from_coverage_payload(coverage: Mapping[str, Any]) -> dict[str, dict[str, int]] | None:
+    raw_fc = coverage.get("function_coverage")
+    if not isinstance(raw_fc, Mapping):
+        return None
+
+    raw_called_names = raw_fc.get("called_names")
+    if isinstance(raw_called_names, list):
+        called_names = {str(name) for name in raw_called_names if isinstance(name, str)}
+    else:
+        called_names = set()
+    raw_called_counts = raw_fc.get("called_counts")
+    called_counts = raw_called_counts if isinstance(raw_called_counts, Mapping) else {}
+    called_names.update(str(name) for name in called_counts if isinstance(name, str))
+    if not called_names:
+        return None
+
+    result: dict[str, dict[str, int]] = {}
+    for name in sorted(called_names):
+        count = _count_value(called_counts.get(name))
+        if count <= 0:
+            count = 1
+        result[name] = {"passed": count, "tests": count}
+    return result
+
+
+def _rv_trace_from_user_properties(user_properties: Any) -> list[Mapping[str, Any]]:
+    if not isinstance(user_properties, list):
+        return []
+    for prop in user_properties:
+        if not isinstance(prop, (list, tuple)) or len(prop) != 2:
+            continue
+        name, value = prop
+        if name not in {"pkcs11_rv_trace", "pkcs11_rv_trace_compact"}:
+            continue
+        if isinstance(value, list):
+            return [entry for entry in value if isinstance(entry, Mapping)]
+    return []
+
+
+def _counts_from_report_jsonl(jsonl_path: Path) -> dict[str, dict[str, int]] | None:
+    counts: dict[str, dict[str, int]] = {}
+    try:
+        fh = jsonl_path.open(encoding="utf-8")
+    except OSError:
+        return None
+    with fh:
+        for line in fh:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, Mapping):
+                continue
+            if record.get("$report_type", "TestReport") != "TestReport":
+                continue
+            trace = _rv_trace_from_user_properties(record.get("user_properties"))
+            if not trace:
+                continue
+            outcome = _outcome_from_pytest_report(
+                str(record.get("outcome", "")),
+                record.get("wasxfail"),
+            )
+            for entry in trace:
+                fn = entry.get("fn")
+                if not isinstance(fn, str) or not fn.startswith("C_"):
+                    continue
+                _add_outcome(_counts_for_base(counts, fn), outcome)
+    return counts or None
+
+
+def _load_observed_function_coverage(results_path: Path) -> dict[str, dict[str, int]] | None:
+    """Load observed C_* coverage from results/coverage/report-log artifacts."""
+    observed: dict[str, dict[str, int]] = {}
+
+    payload = _json_mapping(results_path)
+    if payload is not None:
+        coverage = _coverage_mapping_from_payload(payload)
+        if coverage is not None:
+            coverage_counts = _counts_from_coverage_payload(coverage)
+            if coverage_counts:
+                observed.update(coverage_counts)
+
+    sibling_coverage = _json_mapping(results_path.parent / "coverage.json")
+    if sibling_coverage is not None:
+        coverage = _coverage_mapping_from_payload(sibling_coverage)
+        if coverage is not None:
+            coverage_counts = _counts_from_coverage_payload(coverage)
+            if coverage_counts:
+                observed.update(coverage_counts)
+
+    report_counts = _counts_from_report_jsonl(results_path.parent / "report.jsonl")
+    if report_counts:
+        observed.update(report_counts)
+
+    return observed or None
+
+
+def _classify_functions_from_observed_coverage(
+    observed_function_counts: Mapping[str, Mapping[str, int]],
+) -> dict[str, dict[str, Any]]:
+    """Classify functions from observed C_* calls, not filename keywords."""
+    result: dict[str, dict[str, Any]] = {}
+
+    for func_name in STANDARD_FUNCTIONS:
+        raw_counts = observed_function_counts.get(func_name)
+        totals = _empty_test_counts()
+        if raw_counts is not None:
+            for key in _OUTCOME_KEYS:
+                totals[key] = _count_value(raw_counts.get(key))
+            explicit_tests = _count_value(raw_counts.get("tests"))
+            outcome_total = sum(totals[key] for key in _OUTCOME_KEYS)
+            if outcome_total == 0 and explicit_tests > 0:
+                totals["passed"] = explicit_tests
+                outcome_total = explicit_tests
+            totals["tests"] = max(explicit_tests, outcome_total)
+
+        result[func_name] = {
+            "status": _status_from_counts(totals),
+            "tests": totals["tests"],
+            "passed": totals["passed"],
+            "failed": totals["failed"],
+            "skipped": totals["skipped"],
+            "xfailed": totals["xfailed"],
+            "xpassed": totals["xpassed"],
+            "error": totals["error"],
+            "crashed": totals["crashed"],
+            "timeout": totals["timeout"],
+        }
+
+    return result
+
+
 def _classify_functions(
     test_counts: dict[str, dict[str, int]],
 ) -> dict[str, dict[str, Any]]:
@@ -549,24 +720,7 @@ def _classify_functions(
                         totals[key] += cnts.get(key, 0)
 
         total_tests = sum(totals[key] for key in _OUTCOME_KEYS)
-        if total_tests == 0:
-            status = "NOT_TESTED"
-        elif totals["timeout"] > 0:
-            status = "TIMEOUT"
-        elif totals["crashed"] > 0:
-            status = "CRASHED"
-        elif totals["error"] > 0:
-            status = "ERROR"
-        elif totals["failed"] > 0:
-            status = "FAIL"
-        elif totals["xfailed"] > 0:
-            status = "XFAIL"
-        elif totals["xpassed"] > 0:
-            status = "XPASS"
-        elif totals["passed"] > 0:
-            status = "PASS"
-        else:
-            status = "SKIP"
+        status = _status_from_counts(totals)
 
         result[func_name] = {
             "status": status,
@@ -677,8 +831,14 @@ def generate_report(
 
     # Function coverage from test results
     if test_results_path and test_results_path.exists():
-        test_counts = _parse_test_results(test_results_path)
-        functions = _classify_functions(test_counts)
+        observed_function_counts = _load_observed_function_coverage(test_results_path)
+        if observed_function_counts is not None:
+            functions = _classify_functions_from_observed_coverage(
+                observed_function_counts,
+            )
+        else:
+            test_counts = _parse_test_results(test_results_path)
+            functions = _classify_functions(test_counts)
     else:
         functions = {
             f: {

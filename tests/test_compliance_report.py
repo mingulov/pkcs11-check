@@ -6,7 +6,12 @@ import json
 from pathlib import Path
 
 from pkcs11_check.compliance import ComplianceLevel, clear_notes, get_notes, note
-from pkcs11_check.compliance_report import _classify_functions, _parse_test_results
+from pkcs11_check.compliance_report import (
+    _classify_functions,
+    _classify_functions_from_observed_coverage,
+    _load_observed_function_coverage,
+    _parse_test_results,
+)
 
 
 def test_parse_test_results_unified_format(tmp_path: Path) -> None:
@@ -153,6 +158,107 @@ def test_classify_functions_crash_and_timeout_precede_pass() -> None:
     assert functions["C_Encrypt"]["status"] == "TIMEOUT"
     assert functions["C_Encrypt"]["crashed"] == 1
     assert functions["C_Encrypt"]["timeout"] == 1
+
+
+def test_observed_coverage_prevents_filename_heuristic_overstatement(tmp_path: Path) -> None:
+    results_file = tmp_path / "results.json"
+    results_file.write_text(
+        json.dumps(
+            {
+                "tool": "pkcs11-check",
+                "kind": "test-run",
+                "summary": {"passed": 1, "total": 1},
+                "coverage": {
+                    "function_coverage": {
+                        "called_names": ["C_GetInfo"],
+                        "called_counts": {"C_GetInfo": 1},
+                        "uncalled_names": ["C_Encrypt"],
+                    }
+                },
+                "units": [
+                    {
+                        "target": "src/pkcs11_check/testcases/test_encrypt.py",
+                        "status": "passed",
+                        "counts": {"passed": 1},
+                    }
+                ],
+            }
+        )
+    )
+
+    observed = _load_observed_function_coverage(results_file)
+    assert observed is not None
+
+    functions = _classify_functions_from_observed_coverage(
+        observed,
+    )
+
+    assert functions["C_GetInfo"]["status"] == "PASS"
+    assert functions["C_GetInfo"]["tests"] == 1
+    assert functions["C_Encrypt"]["status"] == "NOT_TESTED"
+    assert functions["C_Encrypt"]["tests"] == 0
+
+
+def test_observed_coverage_can_come_from_sibling_coverage_json(tmp_path: Path) -> None:
+    results_file = tmp_path / "results.json"
+    results_file.write_text(
+        json.dumps(
+            {
+                "tool": "pkcs11-check",
+                "kind": "test-run",
+                "summary": {"passed": 1, "total": 1},
+                "units": [{"target": "test_unknown.py", "status": "passed"}],
+            }
+        )
+    )
+    (tmp_path / "coverage.json").write_text(
+        json.dumps(
+            {
+                "function_coverage": {
+                    "called_names": ["C_Encrypt"],
+                    "called_counts": {"C_Encrypt": 2},
+                    "uncalled_names": ["C_GetInfo"],
+                }
+            }
+        )
+    )
+
+    observed = _load_observed_function_coverage(results_file)
+
+    assert observed == {"C_Encrypt": {"passed": 2, "tests": 2}}
+
+
+def test_observed_coverage_can_come_from_sibling_report_jsonl_trace(tmp_path: Path) -> None:
+    results_file = tmp_path / "results.json"
+    results_file.write_text(
+        json.dumps(
+            {
+                "tool": "pkcs11-check",
+                "kind": "test-run",
+                "summary": {"xfailed": 1, "total": 1},
+                "units": [{"target": "test_custom.py", "status": "xfailed"}],
+            }
+        )
+    )
+    (tmp_path / "report.jsonl").write_text(
+        json.dumps(
+            {
+                "$report_type": "TestReport",
+                "nodeid": "src/pkcs11_check/testcases/test_custom.py::test_x",
+                "when": "call",
+                "outcome": "skipped",
+                "wasxfail": "provider clean rejection",
+                "user_properties": [["pkcs11_rv_trace", [{"fn": "C_Encrypt", "rv": 48}]]],
+            }
+        )
+        + "\n"
+    )
+
+    observed = _load_observed_function_coverage(results_file)
+
+    assert observed is not None
+    assert observed["C_Encrypt"]["xfailed"] == 1
+    assert observed["C_Encrypt"]["tests"] == 1
 
 
 class TestComplianceNoteIsolation:
