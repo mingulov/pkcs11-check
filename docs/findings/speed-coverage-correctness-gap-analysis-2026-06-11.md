@@ -369,7 +369,10 @@ later provider run more interpretable:
    `--duration-artifacts-dir` plus `--coverage-baseline-artifacts-dir` so speed
    changes prove coverage preservation.
 2. Continue legacy/deprecated mechanism coverage where reliable vectors and
-   PKCS#11 parameter mappings exist.
+   PKCS#11 parameter mappings exist. Treat this as a registry-to-test gap
+   sweep, not just another RC5/IDEA pass: RC5 and IDEA encrypt KATs are already
+   present, so their next useful work is CBC_PAD behavior and independent
+   MAC/MAC_GENERAL expected-output vectors.
 3. Continue broader semantic coverage expansion once artifact semantics can prove
    coverage preservation.
 
@@ -385,6 +388,20 @@ After that, do the first coverage expansion round:
    defensible domain-parameter/derive semantics, plus CDMF, CAST/CAST3,
    BATON/JUNIPER, GOST28147, CBC_PAD outputs, and
    RC2/RC5/CAST/IDEA MAC_GENERAL fixed-output vectors.
+
+Legacy/deprecated coverage addendum for the active goal:
+
+- Inventory every legacy/deprecated registry entry against product tests and
+  mechanism-vector files before adding the next family.
+- Add only provider-general tests: skip when a mechanism is genuinely absent,
+  xfail clean advertised-but-not-operational refusals, and fail wrong outputs,
+  self-contradictions, crashes, or hangs.
+- Prefer reliable, externally traceable vectors. RC5 and IDEA encrypt vectors
+  are already covered; continue with their CBC_PAD and MAC/MAC_GENERAL gaps.
+  SKIPJACK and KEA remain source-first candidates because their vector and
+  operation mappings are less straightforward. Also evaluate CDMF, CAST/CAST3,
+  BATON/JUNIPER, GOST28147, old PBE fixed-output cases, and other deprecated
+  mechanisms that a PKCS#11 provider might still advertise.
 
 Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks
 should follow once the harness can reuse provider-local history and prove
