@@ -29,6 +29,7 @@ x-common: &common
     - ../artifacts:/artifacts
     - ${PKCS11_CHECK_HOST_DATA_DIR:-../data}:/app/data:ro
     - ../data/disabled-tests.txt:/app/disabled-tests.txt:ro
+    - pkcs11-check-cache:/cache
 
 services:
 
@@ -336,3 +337,6 @@ services:
       dockerfile: docker/pkcs11-mock/Dockerfile
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/pkcs11-mock
+
+volumes:
+  pkcs11-check-cache:

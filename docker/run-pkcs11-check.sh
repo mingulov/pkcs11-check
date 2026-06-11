@@ -3,6 +3,7 @@ set -euo pipefail
 
 # Default data dir for Docker containers (host data/ mounted at /app/data)
 export PKCS11_CHECK_DATA_DIR="${PKCS11_CHECK_DATA_DIR:-/app/data}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/cache}"
 if [[ -f /app/disabled-tests.txt ]]; then
     export P11TEST_DISABLED_TESTS_FILE="${P11TEST_DISABLED_TESTS_FILE:-/app/disabled-tests.txt}"
 fi

@@ -201,6 +201,20 @@ Next task:
 - Mount or prewarm the cache for Docker runs where the cache key is based on
   file identity, mtime, size, and interpreter, never on provider outcomes.
 
+Current status:
+
+- Implemented: normal Docker provider containers now mount a shared named
+  `pkcs11-check-cache` volume at `/cache`, and `docker/run-pkcs11-check.sh`
+  defaults `XDG_CACHE_HOME=/cache`. This lets the content-addressed collection
+  metadata cache and vector marshal cache survive across pool shards without
+  using provider outcome data.
+- Verified by focused tests: Docker target guardrails assert the cache volume
+  and runner environment are wired. Existing vector-loader guardrails already
+  require product vector loaders to use `load_json_cached()` except subprocess
+  coverage helpers that read temporary coverage JSON rather than vector data.
+- Remaining work: continue reducing artifact/report processing paths that still
+  materialize full per-unit record lists before writing merged reports.
+
 ## Coverage Findings
 
 The registry is broad, but registry membership is not the same as semantic

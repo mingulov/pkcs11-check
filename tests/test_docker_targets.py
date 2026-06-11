@@ -96,6 +96,15 @@ def test_docker_test_uses_fetched_user_data_cache_when_repo_data_is_empty() -> N
     assert "Using fetched test vector data:" in script
 
 
+def test_docker_test_mounts_shared_private_cache_volume() -> None:
+    compose = (ROOT / "docker/docker-compose.test.yml").read_text()
+    runner = (ROOT / "docker/run-pkcs11-check.sh").read_text()
+
+    assert "- pkcs11-check-cache:/cache" in compose
+    assert "pkcs11-check-cache:" in compose
+    assert 'export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/cache}"' in runner
+
+
 def test_qryptotoken_is_not_an_active_docker_provider() -> None:
     script = (ROOT / "docker/test-all.sh").read_text()
     compose = (ROOT / "docker/docker-compose.test.yml").read_text()
