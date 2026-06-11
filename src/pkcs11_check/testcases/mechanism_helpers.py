@@ -29,6 +29,8 @@ from pkcs11_check.raw.pack_mechanisms import (
     mech_rc5,
     mech_rc5_cbc,
     mech_rc5_mac_general,
+    mech_salsa20,
+    mech_salsa20_poly1305,
 )
 from pkcs11_check.raw.recipes import (
     gen_keypair,
@@ -330,6 +332,13 @@ def build_test_params(mech_id: int, recipe: ParamRecipe) -> Any:
     elif style == "chacha20_poly1305":
         nonce = os.urandom(12)
         return mech_chacha20_poly1305(CKM(mech_id), nonce=nonce)
+    elif style == "salsa20":
+        nonce = os.urandom(d.get("nonce_len", 8))
+        return mech_salsa20(CKM(mech_id), nonce=nonce, counter=d.get("counter", 0))
+    elif style == "salsa20_poly1305":
+        nonce = os.urandom(d.get("nonce_len", 8))
+        aad = os.urandom(d.get("aad_len", 0)) if d.get("aad_len", 0) else None
+        return mech_salsa20_poly1305(CKM(mech_id), nonce=nonce, aad=aad)
     elif style == "rc2":
         effective_bits = d.get("effective_bits", 128)
         return mech_rc2(CKM(mech_id), effective_bits=effective_bits)

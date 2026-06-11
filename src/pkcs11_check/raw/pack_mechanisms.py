@@ -43,6 +43,7 @@ from .types_std import (
     CK_RSA_PKCS_OAEP_PARAMS,
     CK_RSA_PKCS_PSS_PARAMS,
     CK_SALSA20_CHACHA20_POLY1305_PARAMS,
+    CK_SALSA20_PARAMS,
     CK_SIGN_ADDITIONAL_CONTEXT,
     CK_SSL3_KEY_MAT_OUT,
     CK_SSL3_KEY_MAT_PARAMS,
@@ -644,6 +645,23 @@ def mech_chacha20(
     return _mech_struct(mechanism_type, params, "mech_chacha20", ka)
 
 
+def mech_salsa20(
+    mechanism_type: CKM | int,
+    nonce: bytes,
+    counter: int = 0,
+) -> PackedMechanism:
+    """Pack CK_SALSA20_PARAMS with a 64-bit counter and nonce."""
+    if counter < 0 or counter >= 2**64:
+        raise ValueError("counter must fit in 64 bits")
+    ka: list[Any] = []
+    params = CK_SALSA20_PARAMS()
+    counter_bytes = counter.to_bytes(8, "little")
+    params.pBlockCounter, _ = _pack_bytes(counter_bytes, ka)
+    params.pNonce, _ = _pack_bytes(nonce, ka)
+    params.ulNonceBits = len(nonce) * 8
+    return _mech_struct(mechanism_type, params, "mech_salsa20", ka)
+
+
 def mech_chacha20_poly1305(
     mechanism_type: CKM | int,
     nonce: bytes,
@@ -655,6 +673,19 @@ def mech_chacha20_poly1305(
     params.pNonce, params.ulNonceLen = _pack_bytes(nonce, ka)
     params.pAAD, params.ulAADLen = _pack_bytes(aad, ka)
     return _mech_struct(mechanism_type, params, "mech_chacha20_poly1305", ka)
+
+
+def mech_salsa20_poly1305(
+    mechanism_type: CKM | int,
+    nonce: bytes,
+    aad: bytes | None = None,
+) -> PackedMechanism:
+    """Pack CK_SALSA20_CHACHA20_POLY1305_PARAMS for Salsa20-Poly1305."""
+    ka: list[Any] = []
+    params = CK_SALSA20_CHACHA20_POLY1305_PARAMS()
+    params.pNonce, params.ulNonceLen = _pack_bytes(nonce, ka)
+    params.pAAD, params.ulAADLen = _pack_bytes(aad, ka)
+    return _mech_struct(mechanism_type, params, "mech_salsa20_poly1305", ka)
 
 
 def mech_rc2(
@@ -1340,6 +1371,8 @@ __all__ = [
     "mech_rc5",
     "mech_rc5_cbc",
     "mech_rc5_mac_general",
+    "mech_salsa20",
+    "mech_salsa20_poly1305",
     "mech_sign_context",
     "mech_ssl3_key_mat",
     "mech_ssl3_master_key_derive",

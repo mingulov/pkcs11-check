@@ -20,6 +20,8 @@ from pkcs11_check.raw.types_std import (
     CKM_RC5_MAC,
     CKM_RC5_MAC_GENERAL,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
+    CKM_SALSA20,
+    CKM_SALSA20_POLY1305,
     CKM_SHA256_KEY_GEN,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -345,6 +347,47 @@ def test_build_test_params_builds_rc5_params(
     ],
 )
 def test_rc5_registry_uses_buildable_parameter_recipes(
+    mech_id: int,
+    expected_style: str,
+) -> None:
+    config = MECHANISM_REGISTRY[int(mech_id)]
+
+    assert config.param_required is True
+    assert config.param_recipe.style == expected_style
+    assert helpers.build_test_params(int(mech_id), config.param_recipe) != "SKIP"
+
+
+@pytest.mark.parametrize(
+    ("mech_id", "recipe", "expected_params_type"),
+    [
+        (CKM_SALSA20, ParamRecipe("salsa20", {"nonce_len": 8}), "CK_SALSA20_PARAMS"),
+        (
+            CKM_SALSA20_POLY1305,
+            ParamRecipe("salsa20_poly1305", {"nonce_len": 8, "aad_len": 0}),
+            "CK_SALSA20_CHACHA20_POLY1305_PARAMS",
+        ),
+    ],
+)
+def test_build_test_params_builds_salsa_params(
+    mech_id: int,
+    recipe: ParamRecipe,
+    expected_params_type: str,
+) -> None:
+    params = helpers.build_test_params(int(mech_id), recipe)
+
+    assert params != "SKIP"
+    assert params.params is not None
+    assert type(params.params).__name__ == expected_params_type
+
+
+@pytest.mark.parametrize(
+    ("mech_id", "expected_style"),
+    [
+        (CKM_SALSA20, "salsa20"),
+        (CKM_SALSA20_POLY1305, "salsa20_poly1305"),
+    ],
+)
+def test_salsa_registry_uses_buildable_parameter_recipes(
     mech_id: int,
     expected_style: str,
 ) -> None:

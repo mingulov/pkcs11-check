@@ -599,6 +599,23 @@ def test_mech_chacha20_default_counter() -> None:
     assert m.params.pBlockCounter is not None
 
 
+def test_mech_salsa20_sets_64_bit_counter_and_nonce_bits() -> None:
+    from pkcs11_check.raw.pack import mech_salsa20
+    from pkcs11_check.raw.types_std import CK_SALSA20_PARAMS, CKM_SALSA20
+
+    nonce = b"\xab" * 8
+    mech = mech_salsa20(CKM_SALSA20, nonce, counter=1)
+
+    assert mech.ck.mechanism == CKM_SALSA20
+    params = mech.params
+    assert isinstance(params, CK_SALSA20_PARAMS)
+    assert params.ulNonceBits == 64
+    assert params.pNonce is not None
+    assert ctypes.string_at(params.pNonce, len(nonce)) == nonce
+    assert params.pBlockCounter is not None
+    assert ctypes.string_at(params.pBlockCounter, 8) == (1).to_bytes(8, "little")
+
+
 def test_mech_chacha20_poly1305_sets_nonce_and_no_aad() -> None:
     from pkcs11_check.raw.pack import mech_chacha20_poly1305
     from pkcs11_check.raw.types_std import (
@@ -626,6 +643,26 @@ def test_mech_chacha20_poly1305_with_aad() -> None:
     m = mech_chacha20_poly1305(CKM_CHACHA20_POLY1305, b"\x00" * 12, aad=aad)
     assert m.params.ulAADLen == 10
     assert m.params.pAAD is not None
+
+
+def test_mech_salsa20_poly1305_sets_nonce_and_aad() -> None:
+    from pkcs11_check.raw.pack import mech_salsa20_poly1305
+    from pkcs11_check.raw.types_std import (
+        CK_SALSA20_CHACHA20_POLY1305_PARAMS,
+        CKM_SALSA20_POLY1305,
+    )
+
+    nonce = b"\x22" * 8
+    aad = b"aad"
+    mech = mech_salsa20_poly1305(CKM_SALSA20_POLY1305, nonce, aad=aad)
+
+    assert mech.ck.mechanism == CKM_SALSA20_POLY1305
+    params = mech.params
+    assert isinstance(params, CK_SALSA20_CHACHA20_POLY1305_PARAMS)
+    assert params.ulNonceLen == len(nonce)
+    assert params.pNonce is not None
+    assert params.ulAADLen == len(aad)
+    assert params.pAAD is not None
 
 
 def test_mech_eddsa_no_context_data() -> None:

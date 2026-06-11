@@ -69,6 +69,8 @@ _fixed = KeygenRecipe("fixed_length")
 _iv16 = ParamRecipe("iv", {"iv_len": 16})
 _mac_general = ParamRecipe("mac_general", {"mac_len": 8})
 _string_data = ParamRecipe("string_data")
+_salsa20 = ParamRecipe("salsa20", {"nonce_len": 8, "counter": 0})
+_salsa20_poly1305 = ParamRecipe("salsa20_poly1305", {"nonce_len": 8, "aad_len": 0})
 
 
 def populate(registry: dict[int, MechConfig]) -> None:
@@ -134,7 +136,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_recipe=ParamRecipe("none"),
+        param_recipe=_salsa20,
         keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_ENC_DEC,
@@ -148,7 +150,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_recipe=ParamRecipe("none"),
+        param_recipe=_salsa20_poly1305,
         keygen_recipe=_sym,
         multi_part_supported=False,
         auth_tag_included=True,

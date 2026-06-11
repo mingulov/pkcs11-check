@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.pack import mech_chacha20, mech_simple
+from pkcs11_check.raw.pack import mech_chacha20, mech_salsa20, mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -133,11 +133,8 @@ class TestSalsa20:
             {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
-            from pkcs11_check.raw.pack import mech_bytes
-
             plaintext = b"Salsa20 test plaintext data!!!!!"
-            # Salsa20 params: 8-byte nonce via mech_bytes (module-specific)
-            param = mech_bytes(CKM_SALSA20, _SALSA20_NONCE)
+            param = mech_salsa20(CKM_SALSA20, _SALSA20_NONCE)
             ciphertext = _salsa20_encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
@@ -174,8 +171,6 @@ class TestSalsa20:
             {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
-            from pkcs11_check.raw.pack import mech_bytes
-
             plaintext = b"nonce differentiation test data!"
             nonce1 = b"\x00" * 8
             nonce2 = b"\x01" * 8
@@ -184,14 +179,14 @@ class TestSalsa20:
                 rs.sh,
                 key,
                 plaintext,
-                mech_param=mech_bytes(CKM_SALSA20, nonce1),
+                mech_param=mech_salsa20(CKM_SALSA20, nonce1),
             )
             ct2 = _salsa20_encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
                 plaintext,
-                mech_param=mech_bytes(CKM_SALSA20, nonce2),
+                mech_param=mech_salsa20(CKM_SALSA20, nonce2),
             )
             assert ct1 != ct2
         finally:
