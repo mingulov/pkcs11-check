@@ -1025,6 +1025,83 @@ def _load_cached_report_records_by_unit(
     return cached
 
 
+def _ordered_report_record_units(
+    units: Sequence[str],
+    inline_records_by_unit: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> Iterable[str]:
+    seen: set[str] = set()
+    for unit in units:
+        seen.add(unit)
+        yield unit
+    for unit in sorted(inline_records_by_unit):
+        if unit not in seen:
+            yield unit
+
+
+def _iter_unit_report_record_source(
+    state_file: Path,
+    unit: str,
+    inline_records_by_unit: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> Iterable[Mapping[str, Any]]:
+    """Yield one unit's report records from its cache shard or inline fallback."""
+    cache_path = _report_record_cache_path(state_file, unit)
+    yielded_cache_record = False
+    if cache_path.exists():
+        for record in _iter_report_log_records(cache_path):
+            yielded_cache_record = True
+            yield record
+        if yielded_cache_record:
+            return
+
+    for inline_record in inline_records_by_unit.get(unit, []):
+        if isinstance(inline_record, Mapping):
+            yield inline_record
+
+
+def _write_report_jsonl_from_record_sources(
+    state_file: Path,
+    *,
+    units: Sequence[str],
+    inline_records_by_unit: Mapping[str, Sequence[Mapping[str, Any]]],
+    output_path: Path,
+) -> bool:
+    """Write merged report.jsonl from per-unit cache shards without loading all records."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_path.with_suffix(".jsonl.tmp")
+    wrote = False
+    try:
+        with tmp_path.open("w", encoding="utf-8") as out_fh:
+            for unit in _ordered_report_record_units(units, inline_records_by_unit):
+                for record in _iter_unit_report_record_source(
+                    state_file, unit, inline_records_by_unit
+                ):
+                    out_fh.write(json.dumps(record) + "\n")
+                    wrote = True
+        if wrote:
+            tmp_path.replace(output_path)
+        else:
+            tmp_path.unlink(missing_ok=True)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+    return wrote
+
+
+def _build_per_unit_details_from_record_sources(
+    state_file: Path,
+    *,
+    units: Sequence[str],
+    inline_records_by_unit: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> dict[str, dict[str, Any]]:
+    details: dict[str, dict[str, Any]] = {}
+    for unit in _ordered_report_record_units(units, inline_records_by_unit):
+        detail = _build_detail_from_report_records(
+            _iter_unit_report_record_source(state_file, unit, inline_records_by_unit)
+        )
+        if detail is not None:
+            details[unit] = detail
+    return details
+
+
 # The only consumer of these records is build_quality_audit(); it reads just
 # these top-level fields. Projecting to them drops the heavy unused fields
 # (rv-trace user_properties, captured sections, keywords, location, timings) so
@@ -2502,11 +2579,9 @@ def run_isolated_pytest_units(
         if report_config is not None:
             coverage_data: dict[str, Any] | None = None
             quality_records: list[dict[str, Any]] = []
-            merged_report_records_by_unit = _load_cached_report_records_by_unit(
-                state_file, state.units
-            )
+            inline_report_records_by_unit: dict[str, Sequence[Mapping[str, Any]]] = {}
             for unit, records in state.report_records_by_unit.items():
-                merged_report_records_by_unit.setdefault(unit, records)
+                inline_report_records_by_unit.setdefault(unit, records)
             if (
                 resume
                 and report_config.jsonl_path is not None
@@ -2518,16 +2593,20 @@ def run_isolated_pytest_units(
                     candidate_targets=candidate_targets,
                 )
                 for unit, records in parsed_report_records.items():
-                    merged_report_records_by_unit.setdefault(unit, records)
-            merged_details = _build_per_unit_details_from_record_map(merged_report_records_by_unit)
+                    inline_report_records_by_unit.setdefault(unit, records)
+            merged_details = _build_per_unit_details_from_record_sources(
+                state_file,
+                units=state.units,
+                inline_records_by_unit=inline_report_records_by_unit,
+            )
             if report_config.jsonl_path is not None:
-                if merged_report_records_by_unit:
-                    _write_report_jsonl_from_record_map(
-                        merged_report_records_by_unit,
-                        units=state.units,
-                        output_path=report_config.jsonl_path,
-                    )
-                if report_config.jsonl_path.exists():
+                wrote_report_jsonl = _write_report_jsonl_from_record_sources(
+                    state_file,
+                    units=state.units,
+                    inline_records_by_unit=inline_report_records_by_unit,
+                    output_path=report_config.jsonl_path,
+                )
+                if wrote_report_jsonl or report_config.jsonl_path.exists():
                     coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
                     quality_records = extract_quality_report_records_from_jsonl(
                         report_config.jsonl_path
@@ -3406,12 +3485,9 @@ def run_isolated_pytest_units(
         merged_details = dict(per_unit_details)
         if report_config is not None:
             if report_config.jsonl_path is not None:
-                cached_report_records_by_unit = _load_cached_report_records_by_unit(
-                    state_file, state.units
-                )
-                merged_report_records_by_unit = dict(cached_report_records_by_unit)
+                inline_report_records_by_unit = {}
                 for unit, records in state.report_records_by_unit.items():
-                    merged_report_records_by_unit.setdefault(unit, records)
+                    inline_report_records_by_unit.setdefault(unit, records)
                 if resume and report_config.jsonl_path.exists():
                     candidate_targets = set(state.units) | {
                         result.target for result in state.results
@@ -3421,23 +3497,20 @@ def run_isolated_pytest_units(
                         candidate_targets=candidate_targets,
                     )
                     for unit, records in parsed_report_records.items():
-                        merged_report_records_by_unit.setdefault(unit, records)
+                        inline_report_records_by_unit.setdefault(unit, records)
                     for unit in executed_units:
-                        if unit in cached_report_records_by_unit:
-                            merged_report_records_by_unit[unit] = cached_report_records_by_unit[
-                                unit
-                            ]
-                        else:
-                            merged_report_records_by_unit.pop(unit, None)
-                if merged_report_records_by_unit:
-                    _write_report_jsonl_from_record_map(
-                        merged_report_records_by_unit,
+                        inline_report_records_by_unit.pop(unit, None)
+                wrote_report_jsonl = _write_report_jsonl_from_record_sources(
+                    state_file,
+                    units=state.units,
+                    inline_records_by_unit=inline_report_records_by_unit,
+                    output_path=report_config.jsonl_path,
+                )
+                if wrote_report_jsonl or report_config.jsonl_path.exists():
+                    merged_details = _build_per_unit_details_from_record_sources(
+                        state_file,
                         units=state.units,
-                        output_path=report_config.jsonl_path,
-                    )
-                if report_config.jsonl_path.exists():
-                    merged_details = _build_per_unit_details_from_record_map(
-                        merged_report_records_by_unit
+                        inline_records_by_unit=inline_report_records_by_unit,
                     )
                     merged_details = _merge_supplemental_special_details(
                         merged_details,

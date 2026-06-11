@@ -215,8 +215,11 @@ Current status:
 - Implemented: timeout/crash retry aggregation now streams source
   `report.jsonl` fragments directly into the per-unit report-record cache
   instead of building one parsed record list solely for cache output.
-- Remaining work: continue reducing artifact/report processing paths that still
-  materialize full per-unit record lists before writing merged reports.
+- Implemented: final isolated-run report generation now streams per-unit
+  report-record cache shards when rebuilding merged `report.jsonl` and per-unit
+  details, instead of loading the whole cached record map.
+- Remaining work: reduce the narrower resume fallback that splits an existing
+  merged `report.jsonl` back into per-unit chunks when no cache shard exists.
 
 ## Coverage Findings
 
@@ -418,7 +421,10 @@ Legacy/deprecated coverage addendum for the active goal:
   SKIPJACK and KEA remain source-first candidates because their vector and
   operation mappings are less straightforward. Also evaluate CDMF, CAST/CAST3,
   BATON/JUNIPER, GOST28147, old PBE fixed-output cases, and other deprecated
-  mechanisms that a PKCS#11 provider might still advertise.
+  mechanisms that a PKCS#11 provider might still advertise. Treat the named
+  families as starting points; the coverage round should account for every
+  uncovered legacy/deprecated registry entry that can be tested with
+  provider-general semantics.
 
 Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks
 should follow once the harness can reuse provider-local history and prove

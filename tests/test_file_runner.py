@@ -1075,6 +1075,115 @@ def test_run_isolated_pytest_units_resume_json_rebuilds_artifacts_when_complete(
     assert quality["selection_findings"][0]["scenario"] == "encrypt_roundtrip"
 
 
+def test_run_isolated_pytest_units_resume_json_streams_complete_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen_cmds: list[list[str]] = []
+    units = ["test_a.py"]
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    state_file = tmp_path / "state.json"
+    results_path = tmp_path / "results.json"
+    report_jsonl_path = tmp_path / "report.jsonl"
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        seen_cmds.append(list(cmd))
+        return (0, "", "")
+
+    def load_all_forbidden(
+        _state_file: Path, _units: list[str]
+    ) -> dict[str, list[dict[str, object]]]:
+        pytest.fail("complete resume finalization must stream cached report-record shards")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(
+        file_runner_mod,
+        "_load_cached_report_records_by_unit",
+        load_all_forbidden,
+    )
+    save_run_state(
+        state_file,
+        FileRunState(
+            units=units,
+            fingerprint=build_state_fingerprint(units, pytest_args),
+            results=[FileRunResult("test_a.py", "passed", 0, 0.1)],
+        ),
+    )
+    _write_unit_report_record_cache(
+        state_file,
+        "test_a.py",
+        [
+            {
+                "$report_type": "TestReport",
+                "nodeid": "test_a.py::test_case",
+                "when": "call",
+                "outcome": "passed",
+            },
+            {
+                "$report_type": "SelectionReport",
+                "selection_coverage": {
+                    "encrypt_roundtrip": {
+                        "selected_mechanisms": ["CKM_AES_CBC"],
+                        "rejected_mechanisms": [],
+                        "rejected_reason_counts": {},
+                    }
+                },
+            },
+            {
+                "$report_type": "CoverageReport",
+                "function_coverage": {
+                    "available": 1,
+                    "called_names": ["C_Encrypt"],
+                    "uncalled_names": [],
+                    "called_counts": {"C_Encrypt": 1},
+                    "bootstrap_counts": {},
+                },
+                "mechanism_coverage": {
+                    "available": 1,
+                    "available_names": ["CKM_AES_CBC"],
+                    "invoked": 1,
+                    "invoked_names": ["CKM_AES_CBC"],
+                    "invoked_counts": {"CKM_AES_CBC": 1},
+                    "not_invoked": 0,
+                    "not_invoked_names": [],
+                    "invoked_detail": ["encrypt_roundtrip"],
+                    "invoked_detail_counts": {"encrypt_roundtrip": 1},
+                },
+            },
+        ],
+    )
+
+    exit_code = run_isolated_pytest_units(
+        units,
+        pytest_args,
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=IsolatedReportConfig(
+            "json",
+            results_path,
+            jsonl_path=report_jsonl_path,
+        ),
+        resume=True,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    assert seen_cmds == []
+    assert "test_a.py::test_case" in report_jsonl_path.read_text()
+    report = json.loads(results_path.read_text())
+    assert report["units"][0]["counts"]["passed"] == 1
+    coverage = json.loads((tmp_path / "coverage.json").read_text())
+    assert coverage["mechanism_coverage"]["invoked_names"] == ["CKM_AES_CBC"]
+
+
 def test_run_isolated_pytest_units_resume_json_uses_state_records_without_coverage_report(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
