@@ -68,7 +68,7 @@ def test_generator_script_works_outside_repo_root(tmp_path: Path) -> None:
 def test_generated_standard_symbols_cover_representative_values() -> None:
     from pkcs11_check.raw import metadata_std, types_std
 
-    assert metadata_std.STANDARD_COUNTS["functions"] == 104
+    assert metadata_std.STANDARD_COUNTS["functions"] == 110
     assert metadata_std.STANDARD_COUNTS["attrs"] >= 160
     assert metadata_std.STANDARD_COUNTS["mechanisms"] >= 480
     assert hasattr(types_std, "CKA_CLASS")

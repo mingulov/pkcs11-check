@@ -113,6 +113,14 @@ _V32_FUNCTION_NAMES = tuple(
     for name, index in sorted(metadata_std.FUNCTION_INDICES.items(), key=lambda item: item[1])
     if index >= _V32_START
 )
+_OPTIONAL_EXPORTED_FUNCTION_NAMES = (
+    "C_DigestXofInit",
+    "C_DigestXof",
+    "C_DigestXofUpdate",
+    "C_DigestXofExtract",
+    "C_DigestXofFinal",
+    "C_DigestXofKeyValue",
+)
 
 
 _MECHANISM_ARG_FUNCS = frozenset(
@@ -162,6 +170,11 @@ _OUTPUT_LEN_FUNCS = frozenset(
         "C_GetOperationState",
     }
 )
+_OUTPUT_LEN_VALUE_ARG = {
+    "C_DigestXof": 4,
+    "C_DigestXofExtract": 2,
+    "C_DigestXofFinal": 2,
+}
 
 # Single-shot input-data functions: the input byte-length is a by-value CK_ULONG
 # at this positional index (ulDataLen).  Length only, never the bytes.
@@ -170,6 +183,8 @@ _INPUT_LEN_ARG = {
     "C_Decrypt": 2,
     "C_Sign": 2,
     "C_Digest": 2,
+    "C_DigestXof": 2,
+    "C_DigestXofUpdate": 2,
     "C_SignRecover": 2,
 }
 
@@ -189,7 +204,12 @@ def _coerce_len(value: Any) -> int | None:
 
 def _read_out_len(name: str, args: tuple[Any, ...], rv: int) -> int | None:
     """Output byte-length from the trailing byref(CK_ULONG), best-effort."""
-    if name not in _OUTPUT_LEN_FUNCS or rv not in _OUT_LEN_OK_RVS or not args:
+    if rv not in _OUT_LEN_OK_RVS or not args:
+        return None
+    value_idx = _OUTPUT_LEN_VALUE_ARG.get(name)
+    if value_idx is not None and value_idx < len(args):
+        return _coerce_len(args[value_idx])
+    if name not in _OUTPUT_LEN_FUNCS:
         return None
     try:
         return _coerce_len(args[-1]._obj)
@@ -350,6 +370,21 @@ class RawPKCS11:
             if addr:
                 self._funcs[name] = _FUNCTION_TYPES[name](addr)
 
+    def _load_optional_exported_functions(self) -> None:
+        """Load draft/extension C_* exports without changing function-list ABI."""
+        if self._lib is None:
+            return
+        for name in _OPTIONAL_EXPORTED_FUNCTION_NAMES:
+            if name in self._funcs:
+                continue
+            try:
+                func = getattr(self._lib, name)
+            except AttributeError:
+                continue
+            func.restype = CK_RV
+            func.argtypes = [_resolve_ctype(arg) for arg in metadata_std.FUNCTION_SIGNATURES[name]]
+            self._funcs[name] = func
+
     def _load_from_ptr(self, ptr: int) -> None:
         self._load_functions_from_ptr(ptr, _STANDARD_FUNCTION_NAMES)
 
@@ -406,11 +441,13 @@ class RawPKCS11:
             function_list_ptr = self._get_interface_function_list_ptr(get_interface, (3, 2))
             if function_list_ptr is not None:
                 self._load_versioned_function_list(function_list_ptr)
+                self._load_optional_exported_functions()
                 return
 
             function_list_ptr = self._get_interface_function_list_ptr(get_interface, None)
             if function_list_ptr is not None:
                 self._load_versioned_function_list(function_list_ptr)
+                self._load_optional_exported_functions()
                 return
         except (AttributeError, OSError):
             pass  # Module does not export C_GetInterface or library load failed
@@ -431,6 +468,7 @@ class RawPKCS11:
         if base_ptr is None:
             raise RuntimeError("C_GetFunctionList returned NULL pointer")
         self._load_from_ptr(base_ptr)
+        self._load_optional_exported_functions()
 
     @property
     def call_log(self) -> dict[str, int]:

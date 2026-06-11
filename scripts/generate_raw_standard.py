@@ -71,6 +71,17 @@ NAME_TABLES = {
     "RV_NAMES": "CKR_",
     "FLAG_NAMES": "CKF_",
 }
+OPTIONAL_EXPORTED_FUNCTIONS = [
+    ("C_DigestXofInit", ["CK_SESSION_HANDLE", "CK_MECHANISM_PTR"]),
+    (
+        "C_DigestXof",
+        ["CK_SESSION_HANDLE", "CK_BYTE_PTR", "CK_ULONG", "CK_BYTE_PTR", "CK_ULONG"],
+    ),
+    ("C_DigestXofUpdate", ["CK_SESSION_HANDLE", "CK_BYTE_PTR", "CK_ULONG"]),
+    ("C_DigestXofExtract", ["CK_SESSION_HANDLE", "CK_BYTE_PTR", "CK_ULONG"]),
+    ("C_DigestXofFinal", ["CK_SESSION_HANDLE", "CK_BYTE_PTR", "CK_ULONG"]),
+    ("C_DigestXofKeyValue", ["CK_SESSION_HANDLE", "CK_OBJECT_HANDLE"]),
+]
 
 
 def _resolve_constant_type(name: str) -> str:
@@ -558,6 +569,7 @@ def _render_types_module(
     opaque_structs: set[str],
     callbacks: dict[str, tuple[str, list[str]]],
     functions: list[tuple[str, list[str]]],
+    optional_functions: list[tuple[str, list[str]]],
 ) -> str:
     if not symbols and not structs and not callbacks:
         return (
@@ -582,7 +594,8 @@ def _render_types_module(
     lines.append("")
 
     struct_names = opaque_structs | set(structs)
-    function_pointer_names = {_function_pointer_name(name) for name, _ in functions}
+    all_functions = functions + optional_functions
+    function_pointer_names = {_function_pointer_name(name) for name, _ in all_functions}
     callable_names = set(callbacks) | function_pointer_names
     for name in sorted(struct_names):
         lines.append(f"class {name}(ctypes.Structure):")
@@ -616,12 +629,12 @@ def _render_types_module(
     if callbacks:
         lines.append("")
 
-    for name, arg_types in functions:
+    for name, arg_types in all_functions:
         lines.append(
             f"{_function_pointer_name(name)} = "
             f"{_render_callable_type('CK_RV', arg_types, aliases, struct_names, callable_names)}"
         )
-    if functions:
+    if all_functions:
         lines.append("")
 
     for name, fields in structs.items():
@@ -659,21 +672,23 @@ def _render_metadata_module(
     *,
     symbols: dict[str, int | str],
     functions: list[tuple[str, list[str]]],
+    optional_functions: list[tuple[str, list[str]]],
 ) -> str:
-    if not symbols and not functions:
+    if not symbols and not functions and not optional_functions:
         return (
             '"""Generated PKCS#11 standard metadata."""\n'
             "from __future__ import annotations\n\n"
             'STANDARD_COUNTS = {"functions": 0, "attrs": 0, "mechanisms": 0}\n'
         )
 
+    all_functions = functions + optional_functions
     lines = [
         '"""Generated PKCS#11 standard metadata."""',
         "from __future__ import annotations",
         "",
         "FUNCTION_SIGNATURES = {",
     ]
-    for name, args in functions:
+    for name, args in all_functions:
         lines.append(f"    {name!r}: {args!r},")
     lines.extend(
         [
@@ -689,7 +704,7 @@ def _render_metadata_module(
             "}",
             "",
             "STANDARD_COUNTS = {",
-            f'    "functions": {len(functions)},',
+            f'    "functions": {len(all_functions)},',
             f'    "attrs": {sum(1 for name in symbols if name.startswith("CKA_"))},',
             f'    "mechanisms": {sum(1 for name in symbols if name.startswith("CKM_"))},',
             "}",
@@ -740,6 +755,7 @@ def generate_raw_standard(*, header: Path, out_types: Path, out_metadata: Path) 
     structs = _parse_structs(types_text)
     _generate_struct_ptr_aliases(opaque_structs, structs, aliases)
     functions = _parse_functions(functions_text)
+    optional_functions = OPTIONAL_EXPORTED_FUNCTIONS if functions else []
 
     out_types.write_text(
         _render_types_module(
@@ -749,9 +765,16 @@ def generate_raw_standard(*, header: Path, out_types: Path, out_metadata: Path) 
             opaque_structs=opaque_structs,
             callbacks=callbacks,
             functions=functions,
+            optional_functions=optional_functions,
         )
     )
-    out_metadata.write_text(_render_metadata_module(symbols=symbols, functions=functions))
+    out_metadata.write_text(
+        _render_metadata_module(
+            symbols=symbols,
+            functions=functions,
+            optional_functions=optional_functions,
+        )
+    )
 
     # Format generated files with ruff if available
     import shutil

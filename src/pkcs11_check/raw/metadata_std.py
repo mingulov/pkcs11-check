@@ -358,6 +358,12 @@ FUNCTION_SIGNATURES = {
         "CK_ULONG",
         "CK_OBJECT_HANDLE_PTR",
     ],
+    "C_DigestXofInit": ["CK_SESSION_HANDLE", "CK_MECHANISM_PTR"],
+    "C_DigestXof": ["CK_SESSION_HANDLE", "CK_BYTE_PTR", "CK_ULONG", "CK_BYTE_PTR", "CK_ULONG"],
+    "C_DigestXofUpdate": ["CK_SESSION_HANDLE", "CK_BYTE_PTR", "CK_ULONG"],
+    "C_DigestXofExtract": ["CK_SESSION_HANDLE", "CK_BYTE_PTR", "CK_ULONG"],
+    "C_DigestXofFinal": ["CK_SESSION_HANDLE", "CK_BYTE_PTR", "CK_ULONG"],
+    "C_DigestXofKeyValue": ["CK_SESSION_HANDLE", "CK_OBJECT_HANDLE"],
 }
 
 FUNCTION_INDICES = {
@@ -468,7 +474,7 @@ FUNCTION_INDICES = {
 }
 
 STANDARD_COUNTS = {
-    "functions": 104,
+    "functions": 110,
     "attrs": 160,
     "mechanisms": 480,
 }
