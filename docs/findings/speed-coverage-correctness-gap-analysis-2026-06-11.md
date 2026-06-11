@@ -172,6 +172,21 @@ Acceptance checks:
 - A targeted wolfPKCS11 X.509/CCTV run shows lower setup time.
 - Tests prove a damaged reusable session still reopens before reuse.
 
+Current status:
+
+- Implemented: reusable module-session health checks are timed separately from
+  ordinary test-body C_* calls and exported under
+  `function_coverage.module_session_health`.
+- Implemented: high-count vector files that have independent per-item state use
+  `pytest.mark.module_session_fast`, which skips steady-state health checks but
+  still forces a health check after a failed fast-session call.
+- Verified by focused tests: fixture behavior, forced health checks after
+  failures, health-metric accumulation, JSONL aggregation, and fast-marker
+  metadata are covered.
+- Remaining evidence: run targeted wolfPKCS11 X.509/CCTV batches with
+  provider-local duration and coverage baselines before claiming a provider
+  wall-time reduction.
+
 ### 6. Continue artifact I/O and data-loader slimming
 
 The artifact directories are large, and pooled `report.jsonl` files can be
