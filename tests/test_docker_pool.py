@@ -502,6 +502,91 @@ def test_pool_reports_elapsed_time_when_provider_has_no_results(
     assert "4.0s" in out
 
 
+def test_pool_returns_nonzero_when_provider_coverage_state_regresses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    testcases = tmp_path / "testcases"
+    testcases.mkdir()
+    (testcases / "test_one.py").write_text("def test_one():\n    pass\n")
+
+    baseline_root = tmp_path / "baseline"
+    baseline_dir = baseline_root / "optee-pkcs11-pooled"
+    baseline_dir.mkdir(parents=True)
+    baseline_dir.joinpath("coverage.json").write_text(
+        json.dumps(
+            {
+                "mechanism_coverage": {
+                    "accepted_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+                    "attempted_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+                }
+            }
+        )
+        + "\n"
+    )
+
+    def fake_run_item(
+        provider: str, idx: int, files: list[str], env: dict[str, str]
+    ) -> tuple[str, int, int]:
+        shard_dir = Path("artifacts") / f"{provider}-shard-{idx}"
+        shard_dir.mkdir(parents=True)
+        shard_dir.joinpath("results.json").write_text(
+            json.dumps({"summary": {"passed": len(files)}, "units": []})
+        )
+        return provider, idx, 0
+
+    def fake_merge_shard_dirs(shard_dirs: list[Path], output_dir: Path) -> None:
+        assert len(shard_dirs) == 1
+        output_dir.mkdir(parents=True)
+        output_dir.joinpath("results.json").write_text(
+            json.dumps(
+                {
+                    "summary": {
+                        "total": 1,
+                        "passed": 1,
+                        "failed": 0,
+                        "crashed": 0,
+                        "timeout": 0,
+                    }
+                }
+            )
+        )
+        output_dir.joinpath("coverage.json").write_text(
+            json.dumps(
+                {
+                    "mechanism_coverage": {
+                        "accepted_names": ["CKM_AES_CBC"],
+                        "attempted_names": ["CKM_AES_CBC"],
+                    }
+                }
+            )
+        )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(test_pool, "build_image", lambda provider, env: (provider, True))
+    monkeypatch.setattr(test_pool, "run_item", fake_run_item)
+    monkeypatch.setattr(test_pool, "clean_prior_shards", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(test_pool, "merge_shard_dirs", fake_merge_shard_dirs)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "test_pool.py",
+            "--testcases",
+            str(testcases),
+            "--coverage-baseline-artifacts-dir",
+            str(baseline_root),
+            "optee-pkcs11:1",
+        ],
+    )
+
+    assert test_pool.main() == 1
+
+    out = capsys.readouterr().out
+    assert "COVERAGE LOSS optee-pkcs11" in out
+    assert "accepted: CKM_AES_GCM" in out
+    assert "attempted: CKM_AES_GCM" in out
+
+
 def test_pool_returns_nonzero_when_a_shard_produces_no_results(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

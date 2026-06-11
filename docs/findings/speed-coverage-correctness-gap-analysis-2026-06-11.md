@@ -320,20 +320,22 @@ into old invoked/not-invoked status. The pure
 `compare_mechanism_coverage_states()` helper can compare provider-local
 baseline/candidate coverage buckets and flag lost mechanisms by state, and
 `pkcs11-check compare-coverage ... --fail-on-loss` exposes it as a CI-friendly
-gate. Docker pool automation can still wire it into speed-regression workflows
-later.
+gate. Docker pool runs can now take `--coverage-baseline-artifacts-dir` to
+compare each just-merged `<provider>-pooled` artifact against the same
+provider's baseline and fail the pool on lost mechanism states.
 
 ## Recommended Next Round
 
 The next implementation round should be harness-first, because it makes every
 later provider run more interpretable:
 
-1. Wire `compare-coverage --fail-on-loss` into Docker pool speed-regression
-   workflows.
-2. Continue targeted provider-speed work once artifact semantics can prove
-   coverage preservation.
-3. Continue legacy/deprecated mechanism coverage where reliable vectors and
+1. Continue targeted provider-speed work using provider-local
+   `--duration-artifacts-dir` plus `--coverage-baseline-artifacts-dir` so speed
+   changes prove coverage preservation.
+2. Continue legacy/deprecated mechanism coverage where reliable vectors and
    PKCS#11 parameter mappings exist.
+3. Continue broader semantic coverage expansion once artifact semantics can prove
+   coverage preservation.
 
 After that, do the first coverage expansion round:
 

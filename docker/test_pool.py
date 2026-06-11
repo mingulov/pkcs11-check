@@ -25,6 +25,7 @@ import subprocess
 import sys
 import time
 from collections import defaultdict
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Lock
@@ -32,6 +33,7 @@ from typing import Any, NamedTuple
 
 from pkcs11_check.core.file_runner import collect_pytest_nodeids
 from pkcs11_check.core.merge import merge_shard_dirs
+from pkcs11_check.core.quality_audit import compare_mechanism_coverage_states
 from pkcs11_check.core.sharding import (
     duration_by_unit_from_results,
     estimate_shard_load,
@@ -236,6 +238,60 @@ def duration_oracle_for_provider(
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return None
     return durations or None
+
+
+def _read_json_mapping(path: Path) -> Mapping[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, Mapping) else None
+
+
+def provider_coverage_payload(
+    artifacts_root: Path,
+    provider: str,
+) -> tuple[Path, Mapping[str, Any]] | None:
+    """Load coverage for one provider from <root>/<provider>-pooled artifacts."""
+    provider_dir = artifacts_root / f"{provider}-pooled"
+    coverage_path = provider_dir / "coverage.json"
+    coverage_payload = _read_json_mapping(coverage_path)
+    if coverage_payload is not None and isinstance(
+        coverage_payload.get("mechanism_coverage"), Mapping
+    ):
+        return coverage_path, coverage_payload
+
+    results_path = provider_dir / "results.json"
+    results_payload = _read_json_mapping(results_path)
+    if results_payload is None:
+        return None
+    embedded_coverage = results_payload.get("coverage")
+    if isinstance(embedded_coverage, Mapping) and isinstance(
+        embedded_coverage.get("mechanism_coverage"), Mapping
+    ):
+        return results_path, embedded_coverage
+    return None
+
+
+def compare_provider_coverage(
+    project_root: Path,
+    provider: str,
+    *,
+    baseline_artifacts_root: Path,
+) -> tuple[str, dict[str, Any] | None]:
+    """Compare provider-local baseline coverage against the just-merged artifact."""
+    baseline = provider_coverage_payload(baseline_artifacts_root, provider)
+    if baseline is None:
+        return "missing-baseline", None
+
+    current_root = project_root / "artifacts"
+    candidate = provider_coverage_payload(current_root, provider)
+    if candidate is None:
+        return "missing-candidate", None
+
+    _baseline_path, baseline_payload = baseline
+    _candidate_path, candidate_payload = candidate
+    return "compared", compare_mechanism_coverage_states(baseline_payload, candidate_payload)
 
 
 def sort_workitems(workitems: list[WorkItem]) -> list[WorkItem]:
@@ -486,6 +542,15 @@ def main() -> int:
             "(reads <root>/<provider>-pooled/results.json)"
         ),
     )
+    ap.add_argument(
+        "--coverage-baseline-artifacts-dir",
+        type=Path,
+        default=None,
+        help=(
+            "provider-local artifact root for mechanism coverage regression gating "
+            "(compares <root>/<provider>-pooled to artifacts/<provider>-pooled)"
+        ),
+    )
     ap.add_argument("--testcases", default=TESTCASES)
     ap.add_argument(
         "providers", nargs="*", help="provider or provider:shards (default: stable set)"
@@ -508,6 +573,11 @@ def main() -> int:
             providers = list(ALL_PROVIDERS if args.all else DEFAULT_PROVIDERS)
 
     project_root = Path.cwd()
+    coverage_baseline_root = (
+        resolve_duration_artifacts_root(project_root, args.coverage_baseline_artifacts_dir)
+        if args.coverage_baseline_artifacts_dir is not None
+        else None
+    )
     docker_env = compose_env(project_root)
     host_data_dir = Path(docker_env["PKCS11_CHECK_HOST_DATA_DIR"])
     if not has_vector_data(host_data_dir):
@@ -617,6 +687,7 @@ def main() -> int:
     print(hdr)
     print("-" * len(hdr))
     incomplete_results = False
+    coverage_loss = False
     for p in providers:
         n = shard_map.get(p, 1)
         dirs = [Path(f"artifacts/{p}-shard-{i}") for i in range(n)]
@@ -655,12 +726,33 @@ def main() -> int:
                 f"{p:<20} {n:>6} {'NO-RESULTS':>8} {'':>8} {'':>8} "
                 f"{'':>8} {'':>8} {'':>8} {shard_time:>10}"
             )
+        if coverage_baseline_root is not None:
+            status, comparison = compare_provider_coverage(
+                project_root,
+                p,
+                baseline_artifacts_root=coverage_baseline_root,
+            )
+            if status == "missing-baseline":
+                print_pool_event(f"  coverage-baseline {p}: no provider-local baseline (skipped)")
+            elif status == "missing-candidate":
+                coverage_loss = True
+                print_pool_event(f"  COVERAGE LOSS {p}: candidate coverage missing")
+            elif comparison is not None and comparison.get("has_loss"):
+                coverage_loss = True
+                print_pool_event(f"  COVERAGE LOSS {p}:")
+                lost_by_state = comparison.get("lost_by_state", {})
+                if isinstance(lost_by_state, Mapping):
+                    for state, names in sorted(lost_by_state.items()):
+                        if isinstance(names, list) and names:
+                            print_pool_event(f"    {state}: {', '.join(str(n) for n in names)}")
+            else:
+                print_pool_event(f"  coverage-baseline {p}: ok")
 
     print_pool_event(
         f"=== GLOBAL wall: {wall // 60}m{wall % 60}s for {len(providers)} providers / "
         f"{len(workitems)} items / K={args.concurrency} ==="
     )
-    return 1 if nonzero or incomplete_results else 0
+    return 1 if nonzero or incomplete_results or coverage_loss else 0
 
 
 if __name__ == "__main__":

@@ -109,8 +109,14 @@ docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2-
 uv run python docker/test_pool.py --dry-run wolfpkcs11 wolfpkcs11-master corepkcs11 corepkcs11-main
 uv run python docker/test_pool.py --dry-run --heavy
 uv run python docker/test_pool.py --dry-run --all-heavy
+uv run python docker/test_pool.py --duration-artifacts-dir artifacts3 --coverage-baseline-artifacts-dir artifacts3 bouncyhsm:16
 uv run python docker/test_pool.py -j 3 optee-pkcs11:3
 ```
+
+For speed experiments, `--duration-artifacts-dir` is only provider-local
+scheduling history. Pair it with `--coverage-baseline-artifacts-dir` when the
+candidate pool run must fail if it loses mechanism coverage states relative to
+that same provider's baseline pooled artifact.
 
 `optee-pkcs11` is a heavy/manual Docker target. The OP-TEE `qemu_v8` tree is
 built into the Docker image once; runtime runs boot the prebuilt QEMU/kernel/rootfs
