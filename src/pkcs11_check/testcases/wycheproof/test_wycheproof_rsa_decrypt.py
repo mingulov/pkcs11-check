@@ -14,8 +14,8 @@ import pytest
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
-    import_rsa_private_key,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKM_RSA_PKCS,
@@ -32,7 +32,12 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases._operability import not_operational_reason
+from pkcs11_check.testcases.conftest import (
+    import_rsa_private_key_negotiated,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 
 pytestmark = pytest.mark.wycheproof
@@ -90,6 +95,37 @@ def _load_decrypt_vectors() -> list[tuple[str, dict[str, Any]]]:
 _ALL_DECRYPT_VECTORS = _load_decrypt_vectors()
 
 
+def _skip_or_xfail_rsa_pkcs1_private_import_reject(exc: AssertionError, key_bits: int) -> NoReturn:
+    """Classify RSA private-key import rejects before Wycheproof PKCS#1 decrypt.
+
+    The key is imported through ``import_rsa_private_key_negotiated``; a clean
+    broad import-failure CKR after negotiation exhaustion on RSA_PKCS
+    (advertised -- ``has_mechanism`` gate passed upstream) is
+    advertised-but-not-operational -> xfail, never skip (import-skip audit A12,
+    docs/findings/import-skip-audit.md). Non-CKR AssertionErrors propagate as
+    harness/coding-bug findings.
+
+    RSA has no curve-absence analogue (unlike EC); every clean import-reject CKR
+    after the mech gate is treated as "advertised but not operational".
+    """
+    if is_known_error(exc, _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
+        _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
+        pytest.xfail(
+            not_operational_reason(
+                "RSA_PKCS:key-import",
+                f"{key_bits}-bit private key: {ckr_name(exc.rv)}"
+                if isinstance(exc, CkrAssertionError)
+                else f"{key_bits}-bit private key: {exc}",
+            )
+        )
+    xfail_if_known_ckr(
+        exc,
+        _RSA_PKCS1_DECRYPT_RUNTIME_REJECT_CKRS,
+        f"RSA private-key import is not operational for PKCS#1 decrypt ({key_bits}-bit)",
+    )
+    raise exc
+
+
 def _xfail_if_rsa_pkcs1_decrypt_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
     """Classify advertised RSA PKCS#1 decrypt runtime rejects as findings."""
     xfail_if_known_ckr(
@@ -106,6 +142,9 @@ def _xfail_if_rsa_pkcs1_decrypt_runtime_reject(exc: AssertionError, label: str) 
 def test_rsa_pkcs1_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA PKCS#1 v1.5 decryption from Wycheproof vectors."""
     rs = p11_module_session
+    if not rs.has_mechanism("RSA_PKCS"):
+        pytest.skip("RSA_PKCS not supported")
+
     ct = bytes.fromhex(vec["ct"])
     msg_expected = bytes.fromhex(vec["msg"])
     result = vec["result"]
@@ -128,12 +167,18 @@ def test_rsa_pkcs1_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, 
     key_bits = len(modulus) * 8
 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
-        pytest.skip(f"RSA {key_bits}-bit keys not supported (cached)")
+        # Cached broad import-reject: same advertised-but-not-operational signal
+        # the first failure recorded (import-skip audit A12) -> xfail, not skip.
+        pytest.xfail(
+            not_operational_reason(
+                "RSA_PKCS:key-import",
+                f"{key_bits}-bit private key import not operational (cached)",
+            )
+        )
 
     try:
-        priv_key = import_rsa_private_key(
-            rs.raw,
-            rs.sh,
+        priv_key = import_rsa_private_key_negotiated(
+            rs,
             n=modulus,
             e=pub_exponent,
             d=priv_exponent,
@@ -145,11 +190,7 @@ def test_rsa_pkcs1_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, 
             attrs={CKA_DECRYPT: True},
         )
     except AssertionError as exc:
-        exc_msg = str(exc)
-        # Only cache permanent key-size rejections, not transient errors.
-        if is_known_error(exc, _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
-            _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
-        pytest.skip(f"Cannot import RSA {key_bits}-bit private key: {exc_msg}")
+        _skip_or_xfail_rsa_pkcs1_private_import_reject(exc, key_bits)
 
     plaintext = None
     try:
