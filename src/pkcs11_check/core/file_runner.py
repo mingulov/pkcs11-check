@@ -1242,12 +1242,9 @@ def _compliance_notes_from_user_properties(
 
 
 def _build_detail_from_report_records(
-    records: Sequence[Mapping[str, Any]],
+    records: Iterable[Mapping[str, Any]],
 ) -> dict[str, Any] | None:
     """Build per-unit detail payload from parsed report-log records."""
-    if not records:
-        return None
-
     counts: dict[str, int] = {
         "passed": 0,
         "failed": 0,
@@ -1976,7 +1973,7 @@ def _map_outcome(raw_outcome: str, wasxfail: str | None) -> str:
 
 
 def _identify_crash_culprit_from_records(
-    records: list[dict[str, Any]],
+    records: Iterable[Mapping[str, Any]],
 ) -> tuple[str | None, list[str]]:
     """Identify crash culprit and completed tests from already-loaded records.
 
@@ -2016,7 +2013,7 @@ def _identify_crash_culprit(jsonl_path: Path) -> tuple[str | None, list[str]]:
 
     Thin path wrapper over :func:`_identify_crash_culprit_from_records`.
     """
-    return _identify_crash_culprit_from_records(_load_report_log_records(jsonl_path))
+    return _identify_crash_culprit_from_records(_iter_report_log_records(jsonl_path))
 
 
 def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
@@ -2026,10 +2023,7 @@ def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
     only non-passing entries (failed, xfailed, xpassed, error).
     Returns ``None`` if the file is missing or empty.
     """
-    records = _load_report_log_records(jsonl_path)
-    if not records:
-        return None
-    return _build_detail_from_report_records(records)
+    return _build_detail_from_report_records(_iter_report_log_records(jsonl_path))
 
 
 def _unit_timeout_seconds(

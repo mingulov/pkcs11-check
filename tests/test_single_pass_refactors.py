@@ -10,10 +10,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from pkcs11_check.core import file_runner as file_runner_mod
 from pkcs11_check.core.file_runner import (
     _identify_crash_culprit,
     _identify_crash_culprit_from_records,
     _load_report_log_records,
+    _read_jsonl_results,
     postprocess_jsonl_to_unified,
 )
 
@@ -43,6 +47,56 @@ def test_culprit_records_core_matches_path_wrapper(tmp_path: Path) -> None:
 
     assert path_result == core_result
     assert path_result == ("f.py::test_b", ["f.py::test_a"])
+
+
+def test_culprit_path_wrapper_streams_without_load_all(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    jsonl = tmp_path / "report.jsonl"
+    _write(
+        jsonl,
+        [
+            _report("f.py::test_a", "setup"),
+            _report("f.py::test_a", "teardown"),
+            _report("f.py::test_b", "setup"),
+        ],
+    )
+
+    def _load_all_forbidden(_path: Path) -> list[dict[str, object]]:
+        pytest.fail("_identify_crash_culprit must stream records")
+
+    monkeypatch.setattr(file_runner_mod, "_load_report_log_records", _load_all_forbidden)
+
+    assert _identify_crash_culprit(jsonl) == ("f.py::test_b", ["f.py::test_a"])
+
+
+def test_read_jsonl_results_streams_without_load_all(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    jsonl = tmp_path / "report.jsonl"
+    _write(
+        jsonl,
+        [
+            _report("a.py::test_ok", "call", "passed"),
+            _report("a.py::test_bad", "call", "failed"),
+        ],
+    )
+
+    def _load_all_forbidden(_path: Path) -> list[dict[str, object]]:
+        pytest.fail("_read_jsonl_results must stream records")
+
+    monkeypatch.setattr(file_runner_mod, "_load_report_log_records", _load_all_forbidden)
+
+    detail = _read_jsonl_results(jsonl)
+
+    assert detail is not None
+    assert detail["counts"]["passed"] == 1
+    assert detail["counts"]["failed"] == 1
+    assert detail["tests"] == [
+        {"nodeid": "a.py::test_bad", "outcome": "failed", "duration": 0.0}
+    ]
 
 
 def test_postprocess_single_pass_per_file_counts(tmp_path: Path) -> None:
