@@ -117,6 +117,44 @@ _X25519_X448_FILES = [
 ]
 
 
+def _xdh_jwk_invalidity_not_representable(test: dict[str, Any], key_size: int) -> bool:
+    """Whether a JWK ``InvalidPublic`` vector's invalidity is invisible to PKCS#11.
+
+    Wycheproof's JWK ``InvalidPublic`` vectors carry the invalidity entirely in
+    the JWK wrapper -- a wrong ``crv``/``kty`` (e.g. a P-256 public key, or a
+    malformed/missing ``kty``) while the ``x`` member is a canonical-length
+    Montgomery coordinate.  ``decode_xdh_public_bytes`` extracts only that raw
+    ``x``; per RFC 7748 sec 5 every 32-byte (X25519) / 56-byte (X448) string is a
+    valid public key, so the module sees a fully valid raw point and deriving a
+    secret is correct -- there is no invalid-curve / invalid-point attack class
+    on Montgomery curves (RFC 7748 clamps the scalar; all inputs are valid
+    points).  This is the direct analog of the ECDH ``InvalidAsn``/``InvalidPem``
+    untestable-flag class: the invalidity is not representable once the wrapper
+    is stripped, so the vector must be dropped at load rather than hard-failed.
+
+    The wrong-length / missing-``x`` JWK invalid vectors are NOT swept: their
+    ``x`` decodes to a non-canonical length (or is absent), which a careful
+    module rejects at import, so they remain a genuine raw-point signal.
+    """
+    if test.get("_encoding") != "jwk" or test.get("result") != "invalid":
+        return False
+    if "InvalidPublic" not in test.get("flags", []):
+        return False
+    public = test.get("public")
+    if not isinstance(public, dict):
+        return False
+    x_field = public.get("x")
+    if not isinstance(x_field, str):
+        return False
+    try:
+        raw = decode_xdh_public_bytes(public, "jwk")
+    except _XDH_DECODE_ERRORS:
+        return False
+    # Only the canonical-length container-mismatch class is untestable; a
+    # wrong-length coordinate is a real import-validation signal and stays.
+    return len(raw) == key_size
+
+
 def _pkcs11_xdh_fingerprint(test: dict[str, Any]) -> tuple[bytes, bytes, bytes, bytes, str] | None:
     """Return the PKCS#11-visible XDH operation inputs for duplicate detection."""
     try:
@@ -148,6 +186,11 @@ def _load_xdh_vectors() -> list[tuple[str, dict[str, Any]]]:
                 test["_key_size"] = key_size
                 test["_encoding"] = encoding_name
                 test["_file"] = filename
+                if _xdh_jwk_invalidity_not_representable(test, key_size):
+                    # JWK wrapper-only invalidity (wrong crv/kty, canonical-length
+                    # x): not representable through the raw-point path -- drop it,
+                    # like the ECDH InvalidAsn/InvalidPem untestable class.
+                    continue
                 vec_id = f"{filename}:tc{test['tcId']}-{test['result']}"
                 fingerprint = _pkcs11_xdh_fingerprint(test)
                 if fingerprint is not None:

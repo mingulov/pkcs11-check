@@ -16,6 +16,7 @@ from pkcs11_check.raw.recipes import (
     import_pqc_private_key,
     sign_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKK_ML_DSA,
@@ -134,11 +135,18 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_module_session: Any) -
             parameter_set=vec["_parameter_set"],
             attrs={CKA_SIGN: True},
         )
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         exc_msg = str(exc)
+        # A vector whose invalidity IS the private key (out-of-range s1/s2,
+        # wrong length) is correctly rejected at import: rejecting malformed
+        # key material is the right direction, so ANY clean CKR reject -> pass,
+        # not only the 3 template codes.  kryoptic rejects these with
+        # CKR_DEVICE_ERROR (its crypto-layer decode failure code); softhsm2/
+        # nss/wolfpkcs11 instead accept the bytes and sign (lenient, handled
+        # in the sign branch).  Both are honest; neither is a fail.
+        if result == "invalid" and _has_flag(vec, _MLDSA_INVALID_PRIVATE_KEY_FLAGS):
+            return
         if is_known_error(exc, _MLDSA_PRIVATE_IMPORT_REJECT_CKRS):
-            if result == "invalid" and _has_flag(vec, _MLDSA_INVALID_PRIVATE_KEY_FLAGS):
-                return
             pytest.xfail(f"ML_DSA advertised but private-key import is not operational: {exc_msg}")
         raise
 

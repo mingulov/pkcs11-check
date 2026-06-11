@@ -129,12 +129,27 @@ def test_invalid_xdh_correct_length_success_is_reported(
 ) -> None:
     """An invalid vector that derives must fail even when the public key length is correct.
 
-    Phase-2 V1: the previous gate only fired when ``len(public_bytes) != key_size``,
-    so a low-order / invalid-but-correct-length point that derived a secret was
-    accepted silently. Any successful derive on an invalid vector must now fail.
+    The runtime fail-on-derive guard must still fire for a correct-length invalid
+    vector. The original exemplar (``x25519_jwk_test.json:tc519-invalid``,
+    ``crv: P-256``) was a JWK-wrapper-only invalidity that the decoder strips to a
+    valid raw X25519 point -- per RFC 7748 sec 5 there is no invalid-curve attack
+    on Montgomery curves, so that vector is now correctly dropped at load (the
+    2026-06-11 kryoptic triage). To keep exercising the runtime guard
+    provider-generally, drive it with a synthetic raw-encoding invalid vector
+    whose public key is the canonical 32-byte length: if a provider derives a
+    secret anyway, the test must still report ``invalid-point accepted``.
     """
-    vec_id = "x25519_jwk_test.json:tc519-invalid"
-    vec = next(vec for candidate_id, vec in xdh._ALL_XDH_VECTORS if candidate_id == vec_id)
+    vec = {
+        "_oid": xdh.X25519_OID,
+        "_key_size": 32,
+        "_encoding": "raw",
+        "_file": "synthetic",
+        "public": "00" * 32,
+        "private": "01" * 32,
+        "shared": "",
+        "result": "invalid",
+        "flags": ["SyntheticRuntimeGuard"],
+    }
 
     monkeypatch.setattr(xdh, "import_ec_private_key", _handle)
     monkeypatch.setattr(xdh, "derive_key", _handle)
@@ -142,7 +157,7 @@ def test_invalid_xdh_correct_length_success_is_reported(
     monkeypatch.setattr(xdh, "destroy_quietly", lambda *_args: None)
 
     with pytest.raises(pytest.fail.Exception, match="invalid-point accepted"):
-        xdh.test_xdh(_XdhSession(), vec_id, vec)
+        xdh.test_xdh(_XdhSession(), "synthetic:tc1-invalid", vec)
 
 
 def test_valid_xdh_derive_runtime_reject_is_xfail(
