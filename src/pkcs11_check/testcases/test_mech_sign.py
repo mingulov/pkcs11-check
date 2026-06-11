@@ -34,6 +34,7 @@ from pkcs11_check.raw.types_std import (
     CKM,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
     CKR_DOMAIN_PARAMS_INVALID,
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
@@ -62,10 +63,22 @@ _EDWARDS_OID_PREFIXES = (
     b"\x06\x03\x2b\x65\x71",  # Ed448 (1.3.101.113)
 )
 
+# KAT key-import reject classification (import-skip audit A9). The merged tuple is
+# SPLIT (Batch 3b) the way Batch 2 split the EC public-key tuples: a
+# genuine-capability-absence branch (the specific curve is not supported) stays a
+# skip; the broad import-failure codes are "advertised but not operational" ->
+# xfail (KEY_SIZE_RANGE and TEMPLATE_INCOMPLETE/INCONSISTENT count as broad per
+# the Batch 2 verdict). The generic xfail helper gates on the broad set; the EC
+# private site filters curve-absence to skip first (no negotiated EC-private
+# importer -- the raw single-template import IS the spec path; D2, b56c3f8c).
+_KAT_EC_CURVE_UNSUPPORTED_RVS = (
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
+)
+
 _KAT_IMPORT_CAPABILITY_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_DOMAIN_PARAMS_INVALID,
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_TEMPLATE_INCOMPLETE,
@@ -82,25 +95,34 @@ def _ckr_name_from_exception(exc: AssertionError) -> str:
     return str(exc)
 
 
-def _skip_kat_import_capability_reject(
+def _xfail_ec_kat_import_not_operational(
     exc: AssertionError,
     entry: MechEntry,
     object_label: str,
 ) -> None:
-    """Capability-skip path for EC KAT key import (Batch 3b residual).
+    """Classify a raw EC-private KAT key-import reject (import-skip audit A9 EC leg).
 
-    The RSA call sites route through ``_xfail_rsa_kat_import_not_operational``
-    instead (import-skip audit A9 -- RSA legs, negotiated importers). The EC
-    private import keeps this skip path: there is no negotiated EC-private
-    importer (D2 determination, commit b56c3f8c) so the raw single-template
-    reject is converted in Batch 3b, not here.
+    Curve-genuine-absence CKRs (CKR_CURVE_NOT_SUPPORTED / CKR_DOMAIN_PARAMS_INVALID)
+    keep the capability skip -- the specific curve is genuinely absent. A broad
+    import-failure CKR, on a sign mechanism the module ADVERTISES (the
+    ``mech_sign_entry`` registry parametrization is advertised-by-construction),
+    is "advertised but not operational" -> xfail. There is no negotiated
+    EC-private importer (D2, commit b56c3f8c): the raw single-template
+    ``import_ec_private_key`` IS the spec path, so the broad reject is conclusive
+    without negotiation wiring. Non-CKR AssertionErrors propagate (harness/coding
+    bug). This routes the EC leg to the same ``not_operational_reason`` wording as
+    the RSA/secret legs, closing the setup/op asymmetry on the EC family.
     """
-    if is_known_error(exc, _KAT_IMPORT_CAPABILITY_REJECT_RVS):
+    if is_known_error(exc, _KAT_EC_CURVE_UNSUPPORTED_RVS):
+        # Genuine capability absence: this specific curve is not supported
+        # (CKR_CURVE_NOT_SUPPORTED / CKR_DOMAIN_PARAMS_INVALID). Skip stays.
         pytest.skip(
             f"{entry.mech_name}: cannot import {object_label} for KAT setup: "
             f"{_ckr_name_from_exception(exc)}"
         )
-    raise exc
+    # Broad import-failure CKR -> xfail (may include curve-capability rejects
+    # expressed as generic CKRs -- recorded as xfail, not hidden).
+    _xfail_kat_import_not_operational(exc, entry, object_label)
 
 
 def _xfail_rsa_kat_import_not_operational(
@@ -369,7 +391,7 @@ def _run_asymmetric_sign_kat(
                 **({"key_type": ec_key_type} if ec_key_type is not None else {}),
             )
         except AssertionError as exc:
-            _skip_kat_import_capability_reject(exc, entry, "EC private key")
+            _xfail_ec_kat_import_not_operational(exc, entry, "EC private key")
         try:
             # Sign to confirm the key + mechanism work; we cannot verify the stored
             # sig because we have no public key object (scalar only in vector).

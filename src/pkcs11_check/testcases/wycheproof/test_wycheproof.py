@@ -19,7 +19,6 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     generate_random,
-    import_ec_public_key,
     import_secret_key,
     sign_single,
     verify_single,
@@ -42,8 +41,10 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
@@ -58,7 +59,12 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
-from pkcs11_check.testcases.conftest import import_rsa_public_key_negotiated, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    import_ec_public_key_negotiated,
+    import_rsa_public_key_negotiated,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: F401
 from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 from pkcs11_check.testcases.wycheproof.wycheproof_loader import load_vectors as load_wycheproof
@@ -82,6 +88,53 @@ _GENERIC_WYCHEPROOF_RUNTIME_REJECT_CKRS = (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+
+
+# EC public-key import reject classification (import-skip audit A13). The reject
+# is split: a genuine-capability-absence branch (the specific curve is not
+# supported) stays a skip; a broad import-failure branch on a module that
+# ADVERTISES ECDSA is "advertised but not operational" -> xfail. Mirrors the
+# Batch 2 split in test_wycheproof_ecdsa.py.
+_EC_CURVE_UNSUPPORTED_CKRS = (
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
+)
+
+_EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+
+def _classify_ec_public_import_reject(exc: AssertionError, curve: str) -> NoReturn:
+    """Classify an EC public-key import reject (import-skip audit A13).
+
+    Curve-genuine-absence CKRs (CKR_CURVE_NOT_SUPPORTED / CKR_DOMAIN_PARAMS_INVALID)
+    keep the capability skip. A broad import-failure CKR after the negotiated
+    importer has exhausted every storage shape, on a module that ADVERTISES ECDSA
+    (the ``_skip_unless_mechanism(rs, "ECDSA")`` gate passed upstream), is
+    "advertised but not operational" -> xfail per the classification model.
+    Non-CKR AssertionErrors propagate (harness/coding bug).
+    """
+    if is_known_error(exc, _EC_CURVE_UNSUPPORTED_CKRS):
+        # Genuine capability absence: this specific curve is not supported
+        # (CKR_CURVE_NOT_SUPPORTED / CKR_DOMAIN_PARAMS_INVALID). Skip stays.
+        pytest.skip(f"Cannot import EC public key on this module ({curve}): {exc}")
+    if isinstance(exc, CkrAssertionError) and is_known_error(
+        exc, _EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS
+    ):
+        # ECDSA is advertised (has_mechanism gate passed above) and the
+        # negotiated import is exhausted -> "advertised but not operational"
+        # -> xfail per the classification model (not skip).
+        # May include curve-capability rejects expressed as generic CKRs --
+        # recorded as xfail, not hidden.
+        pytest.xfail(not_operational_reason("ECDSA:key-import", f"{curve}: {ckr_name(exc.rv)}"))
+    raise exc
 
 
 def _vec_id(vec: dict[str, Any]) -> str:
@@ -355,16 +408,15 @@ class TestECDSAP256Wycheproof:
             ec_point_der = bytes([0x04, 0x81, len(uncompressed)]) + uncompressed
 
         try:
-            pub_key = import_ec_public_key(
-                rs.raw,
-                rs.sh,
+            pub_key = import_ec_public_key_negotiated(
+                rs,
                 ec_params=encode_named_curve_parameters("secp256r1"),
                 ec_point=ec_point_der,
                 attrs={CKA_VERIFY: True},
+                purpose="wycheproof ECDSA P-256 public key import",
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            pytest.skip(f"Cannot import EC public key on this module: {exc_msg}")
+            _classify_ec_public_import_reject(exc, "secp256r1")
 
         # Convert DER signature to raw r||s (32+32 bytes for P-256)
         try:
@@ -503,16 +555,15 @@ class TestECDSAP384Wycheproof:
             ec_point_der = bytes([0x04, 0x81, len(uncompressed)]) + uncompressed
 
         try:
-            pub_key = import_ec_public_key(
-                rs.raw,
-                rs.sh,
+            pub_key = import_ec_public_key_negotiated(
+                rs,
                 ec_params=encode_named_curve_parameters("secp384r1"),
                 ec_point=ec_point_der,
                 attrs={CKA_VERIFY: True},
+                purpose="wycheproof ECDSA P-384 public key import",
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            pytest.skip(f"Cannot import EC public key on this module: {exc_msg}")
+            _classify_ec_public_import_reject(exc, "secp384r1")
 
         # Convert DER sig to raw r||s (48+48 bytes for P-384)
         try:

@@ -15,6 +15,7 @@ from pkcs11_check.raw.types_std import (
     CKM_ECDSA_SHA224,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
@@ -141,15 +142,7 @@ def test_kat_mac_runtime_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) -> Non
         mech_sign.TestMechSignKAT().test_kat_vector(_session(), _aes_entry())
 
 
-def test_kat_ec_private_import_capability_reject_skips(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def _import_reject(*_args: Any, **_kwargs: Any) -> int:
-        raise CkrAssertionError(
-            "Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID",
-            int(CKR_ATTRIBUTE_VALUE_INVALID),
-        )
-
+def _patch_ec_kat_vector(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         mechanism_vectors,
         "load_positive_vectors",
@@ -163,6 +156,45 @@ def test_kat_ec_private_import_capability_reject_skips(
             }
         ],
     )
+
+
+def test_kat_ec_private_import_broad_reject_xfails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Batch 3b: a broad EC-private import CKR -> xfail (advertised but not operational).
+
+    Reconciles the prior ``..._capability_reject_skips`` pin: after the A9 EC-leg
+    split the broad import-failure CKR is no longer a capability skip.
+    """
+
+    def _import_reject(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID",
+            int(CKR_ATTRIBUTE_VALUE_INVALID),
+        )
+
+    _patch_ec_kat_vector(monkeypatch)
+    monkeypatch.setattr(mech_sign, "import_ec_private_key", _import_reject)
+    monkeypatch.setattr(
+        mech_sign.pytest, "skip", lambda message: pytest.fail(f"unexpected skip: {message}")
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="ECDSA_SHA224:key-import"):
+        mech_sign.TestMechSignKAT().test_kat_vector(_session(), _ec_entry())
+
+
+def test_kat_ec_private_import_curve_unsupported_skips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Batch 3b: a curve-absence EC-private import CKR keeps the genuine-absence skip."""
+
+    def _import_reject(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_DOMAIN_PARAMS_INVALID",
+            int(CKR_DOMAIN_PARAMS_INVALID),
+        )
+
+    _patch_ec_kat_vector(monkeypatch)
     monkeypatch.setattr(mech_sign, "import_ec_private_key", _import_reject)
 
     with pytest.raises(pytest.skip.Exception, match="cannot import EC private key"):

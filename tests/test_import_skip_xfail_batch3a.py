@@ -22,10 +22,12 @@ Plus an integration test where the negotiation is REAL: only the C-level
 ``negotiate_request`` genuinely walks and exhausts every variant -- proving the
 xfail means "negotiation exhausted", not "first attempt failed".
 
-A9 helper-split: ``_skip_kat_import_capability_reject`` (EC residual) keeps the
-skip; the RSA legs route through ``_xfail_rsa_kat_import_not_operational`` (xfail).
-The EC private import has no negotiated importer (D2, commit b56c3f8c) and stays
-on the skip path for Batch 3b -- pinned here so the split cannot silently regress.
+A9 helper-split: the RSA legs route through ``_xfail_rsa_kat_import_not_operational``
+(xfail).  Batch 3b then converted the EC private leg -- it has no negotiated
+importer (D2, commit b56c3f8c) so the raw single-template import IS the spec path;
+the broad reject now xfails via ``_xfail_ec_kat_import_not_operational`` while
+curve-absence keeps skip.  Reconciled here; the full EC split is pinned in
+tests/test_import_skip_xfail_batch3b.py.
 """
 
 from __future__ import annotations
@@ -149,17 +151,23 @@ def test_a9_rsa_private_import_site_xfails_real_function(monkeypatch: pytest.Mon
         pytest.fail(f"skipped instead of xfailing: {exc}")
 
 
-def test_a9_ec_private_import_keeps_skip_path() -> None:
-    """A9 residual pin: the EC private KAT import still SKIPS (Batch 3b).
+def test_a9_ec_private_import_broad_reject_xfails_after_batch3b() -> None:
+    """A9 EC leg (Batch 3b reconciliation): broad CKR -> xfail, not skip.
 
-    There is no negotiated EC-private importer (D2, b56c3f8c); the EC leg keeps
-    _skip_kat_import_capability_reject so the helper split cannot silently flip
-    the EC site to xfail before Batch 3b wires it.
+    Batch 3b removed ``_skip_kat_import_capability_reject`` and routed the EC
+    private KAT import through ``_xfail_ec_kat_import_not_operational``: a broad
+    import-failure CKR is now "advertised but not operational" -> xfail (there is
+    no negotiated EC-private importer; the raw single-template import IS the spec
+    path -- D2, b56c3f8c). The curve-absence -> skip split is pinned in
+    tests/test_import_skip_xfail_batch3b.py.
     """
     from pkcs11_check.testcases import test_mech_sign as tms
 
-    with pytest.raises(pytest.skip.Exception, match="cannot import EC private key"):
-        tms._skip_kat_import_capability_reject(_ATTR_INVALID, _ec_entry(), "EC private key")
+    try:
+        with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
+            tms._xfail_ec_kat_import_not_operational(_ATTR_INVALID, _ec_entry(), "EC private key")
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"skipped instead of xfailing: {exc}")
 
 
 def _ec_entry() -> MechEntry:
