@@ -1369,6 +1369,8 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     all_detail: set[str] = set()
     all_func_counts: Counter[str] = Counter()
     all_bootstrap_counts: Counter[str] = Counter()
+    all_module_session_health_checks = 0
+    all_module_session_health_duration_s = 0.0
     all_mech_counts: Counter[str] = Counter()
     all_detail_counts: Counter[str] = Counter()
     found = False
@@ -1397,6 +1399,14 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             all_uncalled.update(fc.get("uncalled_names", []))
             all_func_counts.update(fc.get("called_counts", {}))
             all_bootstrap_counts.update(fc.get("bootstrap_counts", {}))
+            module_session_health = fc.get("module_session_health", {})
+            if isinstance(module_session_health, dict):
+                all_module_session_health_checks += int(
+                    module_session_health.get("checks", 0) or 0
+                )
+                all_module_session_health_duration_s += float(
+                    module_session_health.get("duration_s", 0.0) or 0.0
+                )
             mc = rec.get("mechanism_coverage", {})
             all_available_mechs.update(mc.get("available_names", []))
             all_invoked.update(mc.get("invoked_names", []))
@@ -1428,6 +1438,10 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             "called_names": sorted(all_called),
             "called_counts": dict(all_func_counts),
             "bootstrap_counts": dict(all_bootstrap_counts),
+            "module_session_health": {
+                "checks": all_module_session_health_checks,
+                "duration_s": all_module_session_health_duration_s,
+            },
             "uncalled_names": merged_uncalled,
         },
         "mechanism_coverage": {

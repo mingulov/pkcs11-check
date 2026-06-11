@@ -49,10 +49,14 @@ class _HolderForModuleSession:
     def __init__(self) -> None:
         self.skip_health_args: list[bool] = []
         self.required_health_checks = 0
+        self.health_metrics = {"checks": 1, "duration_s": 0.25}
 
     def get_session(self, *, skip_health_check: bool = False) -> tuple[int, int, dict[str, int]]:
         self.skip_health_args.append(skip_health_check)
         return 7, 0, {}
+
+    def consume_health_metrics_delta(self) -> dict[str, float | int]:
+        return dict(self.health_metrics)
 
     def require_health_check(self) -> None:
         self.required_health_checks += 1
@@ -96,6 +100,19 @@ def test_p11_module_session_fast_marker_skips_health_check() -> None:
 def test_p11_module_session_without_fast_marker_keeps_health_check() -> None:
     holder = _run_wrapped_module_session(fast_marker=False)
     assert holder.skip_health_args == [False]
+
+
+def test_p11_module_session_exposes_health_metrics_on_raw_session() -> None:
+    holder = _HolderForModuleSession()
+    request = SimpleNamespace(node=_NodeForModuleSession(fast_marker=False))
+    config = SimpleNamespace(rv_trace=False, rv_trace_compact=None)
+    gen = p11_module_session.__wrapped__(holder, config, request)
+
+    session = next(gen)
+
+    assert session.module_session_health_metrics == {"checks": 1, "duration_s": 0.25}
+    with pytest.raises(StopIteration):
+        next(gen)
 
 
 def test_p11_module_session_fast_marker_checks_after_call_failure() -> None:

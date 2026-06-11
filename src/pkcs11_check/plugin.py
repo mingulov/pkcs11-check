@@ -69,6 +69,7 @@ _CUMULATIVE_MECHANISM_COUNTS: pytest.StashKey[Counter[int]] = pytest.StashKey()
 _CUMULATIVE_DETAIL_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
 _BOOTSTRAP_FUNCTION_COUNTS: pytest.StashKey[dict[str, int]] = pytest.StashKey()
 _BOOTSTRAP_COLLECTED: pytest.StashKey[bool] = pytest.StashKey()
+_MODULE_SESSION_HEALTH_METRICS: pytest.StashKey[dict[str, int | float]] = pytest.StashKey()
 _LAST_RV_TRACE: pytest.StashKey[list[dict[str, Any]]] = pytest.StashKey()
 
 _SCENARIO_BY_FIXTURE: dict[str, str] = {
@@ -187,6 +188,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.stash[_CUMULATIVE_DETAIL_COUNTS] = Counter()
     config.stash[_BOOTSTRAP_FUNCTION_COUNTS] = {}
     config.stash[_BOOTSTRAP_COLLECTED] = False
+    config.stash[_MODULE_SESSION_HEALTH_METRICS] = {"checks": 0, "duration_s": 0.0}
     config.stash[_LAST_RV_TRACE] = []
     config.stash[_SELECTION_TELEMETRY_KEY] = {}
     config.stash[_SELECTION_PARAM_CACHE_KEY] = {}
@@ -801,6 +803,18 @@ def _remember_module_session_call_outcome(item: pytest.Item, report: Any) -> Non
         setattr(item, MODULE_SESSION_CALL_FAILED_ATTR, True)
 
 
+def _accumulate_module_session_health_metrics(
+    total: dict[str, int | float],
+    delta: Any,
+) -> None:
+    if not isinstance(delta, dict):
+        return
+    total["checks"] = int(total.get("checks", 0)) + int(delta.get("checks", 0) or 0)
+    total["duration_s"] = float(total.get("duration_s", 0.0)) + float(
+        delta.get("duration_s", 0.0) or 0.0
+    )
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> Any:
     outcome = yield
@@ -858,6 +872,16 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
                         if bootstrap:
                             session.config.stash[_BOOTSTRAP_FUNCTION_COUNTS] = dict(bootstrap)
                             session.config.stash[_BOOTSTRAP_COLLECTED] = True
+                except KeyError:
+                    pass
+                # Track reusable-session health-check overhead separately from
+                # test-body C_* calls so setup-bound provider runs are measurable.
+                try:
+                    health_metrics = session.config.stash[_MODULE_SESSION_HEALTH_METRICS]
+                    _accumulate_module_session_health_metrics(
+                        health_metrics,
+                        getattr(rs, "module_session_health_metrics", {}),
+                    )
                 except KeyError:
                     pass
                 # Collect mechanism names used by this session
@@ -994,6 +1018,10 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     mech_counts_raw = config.stash.get(_CUMULATIVE_MECHANISM_COUNTS, Counter())
     detail_counts = config.stash.get(_CUMULATIVE_DETAIL_COUNTS, Counter())
     bootstrap = config.stash.get(_BOOTSTRAP_FUNCTION_COUNTS, {})
+    module_session_health = config.stash.get(
+        _MODULE_SESSION_HEALTH_METRICS,
+        {"checks": 0, "duration_s": 0.0},
+    )
 
     # Resolve mechanism int IDs to names for JSON output
     mech_counts_named: dict[str, int] = {}
@@ -1013,6 +1041,10 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             "called_names": called,
             "called_counts": dict(sorted(func_counts.items())),
             "bootstrap_counts": bootstrap,
+            "module_session_health": {
+                "checks": int(module_session_health.get("checks", 0)),
+                "duration_s": float(module_session_health.get("duration_s", 0.0)),
+            },
             "uncalled_names": uncalled,
         },
         "mechanism_coverage": {

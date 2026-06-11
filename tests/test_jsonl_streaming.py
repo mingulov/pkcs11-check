@@ -28,6 +28,7 @@ _FIXTURE_RECORDS: list[dict] = [
             "called_names": ["C_A", "C_B"],
             "called_counts": {"C_A": 2, "C_B": 3},
             "bootstrap_counts": {"C_Initialize": 1},
+            "module_session_health": {"checks": 1, "duration_s": 0.25},
             "uncalled_names": ["C_X", "C_Y"],
         },
         "mechanism_coverage": {
@@ -55,6 +56,7 @@ _FIXTURE_RECORDS: list[dict] = [
             "called_names": ["C_B", "C_Z"],
             "called_counts": {"C_B": 1, "C_Z": 4},
             "bootstrap_counts": {"C_GetSlotList": 2},
+            "module_session_health": {"checks": 2, "duration_s": 0.5},
             "uncalled_names": ["C_Y"],
         },
         "mechanism_coverage": {
@@ -149,6 +151,7 @@ def test_coverage_merges_two_reports_exactly(tmp_path: Path) -> None:
             "called_names": ["C_A", "C_B", "C_Z"],
             "called_counts": {"C_A": 2, "C_B": 4, "C_Z": 4},
             "bootstrap_counts": {"C_Initialize": 1, "C_GetSlotList": 2},
+            "module_session_health": {"checks": 3, "duration_s": 0.75},
             "uncalled_names": ["C_X", "C_Y"],
         },
         "mechanism_coverage": {

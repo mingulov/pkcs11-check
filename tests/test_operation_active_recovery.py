@@ -238,6 +238,33 @@ def test_holder_fast_handout_skips_steady_state_health_check(
     assert holder.reopen_count == 1
 
 
+def test_holder_records_health_check_metrics_for_normal_handout() -> None:
+    from pkcs11_check.fixtures import _ModuleSessionHolder
+
+    class _Raw:
+        call_log: dict[str, int] = {}
+
+        def __init__(self) -> None:
+            self.health_checks = 0
+
+        def C_GetSessionInfo(self, *_args: Any) -> int:  # noqa: N802
+            self.health_checks += 1
+            return CKR_OK
+
+    class _Mod:
+        raw = _Raw()
+
+    holder = _ModuleSessionHolder(_Mod(), object())  # type: ignore[arg-type]
+    holder._sh, holder._slot_id = 7, 0
+
+    holder.get_session()
+
+    metrics = holder.consume_health_metrics_delta()
+    assert metrics["checks"] == 1
+    assert metrics["duration_s"] >= 0.0
+    assert holder.consume_health_metrics_delta() == {"checks": 0, "duration_s": 0.0}
+
+
 def test_holder_fast_handout_checks_health_after_dirty_mark() -> None:
     from pkcs11_check.fixtures import _ModuleSessionHolder
     from pkcs11_check.raw.types_std import CKR_SESSION_HANDLE_INVALID

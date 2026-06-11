@@ -514,6 +514,71 @@ def test_sessionfinish_emits_mechanism_state_coverage() -> None:
     assert mechanism_coverage["timeout_names"] == []
 
 
+def test_teardown_accumulates_module_session_health_metrics() -> None:
+    raw = SimpleNamespace(call_log={}, used_mechanisms=set(), mechanism_counts={})
+    stash = {
+        plugin_mod._CUMULATIVE_FUNCTIONS: set(),
+        plugin_mod._CUMULATIVE_FUNCTION_COUNTS: Counter(),
+        plugin_mod._CUMULATIVE_USED_MECHANISMS: set(),
+        plugin_mod._CUMULATIVE_MECHANISM_COUNTS: Counter(),
+        plugin_mod._CUMULATIVE_MECHANISMS: set(),
+        plugin_mod._MODULE_SESSION_HEALTH_METRICS: {"checks": 0, "duration_s": 0.0},
+    }
+    item = _FakeItem(Path("/tmp/testcases/test_demo.py"), {})
+    item.session = SimpleNamespace(config=SimpleNamespace(stash=stash))
+    item.funcargs = {
+        "p11_module_session": SimpleNamespace(
+            raw=raw,
+            module_session_health_metrics={"checks": 2, "duration_s": 0.125},
+        )
+    }
+
+    plugin_mod.pytest_runtest_teardown(item, None)
+
+    assert stash[plugin_mod._MODULE_SESSION_HEALTH_METRICS] == {
+        "checks": 2,
+        "duration_s": 0.125,
+    }
+
+
+def test_sessionfinish_emits_module_session_health_coverage() -> None:
+    report_log = _FakeReportLogPlugin()
+    config = SimpleNamespace(
+        stash={
+            plugin_mod._CUMULATIVE_FUNCTIONS: set(),
+            plugin_mod._RAW_INSTANCE: SimpleNamespace(
+                available_function_names=lambda: set(),
+                call_log={},
+                used_mechanisms=set(),
+                mechanism_counts={},
+                mechanism_rv_counts={},
+            ),
+            plugin_mod._CUMULATIVE_MECHANISMS: set(),
+            plugin_mod._CUMULATIVE_USED_MECHANISMS: set(),
+            plugin_mod._CUMULATIVE_MECHANISM_DETAILS: set(),
+            plugin_mod._CUMULATIVE_FUNCTION_COUNTS: {},
+            plugin_mod._CUMULATIVE_MECHANISM_COUNTS: {},
+            plugin_mod._CUMULATIVE_DETAIL_COUNTS: {},
+            plugin_mod._BOOTSTRAP_FUNCTION_COUNTS: {},
+            plugin_mod._SELECTION_TELEMETRY_KEY: {},
+            plugin_mod._MODULE_SESSION_HEALTH_METRICS: {"checks": 3, "duration_s": 0.375},
+        },
+        getoption=lambda name, default=None: {"p11_module": "/tmp/module.so"}.get(name, default),
+        _report_log_plugin=report_log,
+    )
+    session = SimpleNamespace(config=config)
+
+    plugin_mod.pytest_sessionfinish(session, 0)
+
+    coverage_report = next(
+        record for record in report_log.records if record.get("$report_type") == "CoverageReport"
+    )
+    assert coverage_report["function_coverage"]["module_session_health"] == {
+        "checks": 3,
+        "duration_s": 0.375,
+    }
+
+
 def test_sessionfinish_mechanism_states_prefer_advertised_alias() -> None:
     report_log = _FakeReportLogPlugin()
     config = SimpleNamespace(

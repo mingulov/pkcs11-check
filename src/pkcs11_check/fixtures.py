@@ -20,6 +20,10 @@ _RV_TRACE_TRUTHY = frozenset({"1", "true", "yes", "on"})
 MODULE_SESSION_CALL_FAILED_ATTR = "_pkcs11_module_session_call_failed"
 
 
+def _empty_module_session_health_metrics() -> dict[str, int | float]:
+    return {"checks": 0, "duration_s": 0.0}
+
+
 def _resolve_rv_trace(
     *,
     opt_trace: bool,
@@ -338,6 +342,10 @@ class RawSession:
     slot_id: int
     _mechanisms: frozenset[str] | None = field(default=None, repr=False)
     bootstrap_call_counts: dict[str, int] = field(default_factory=dict, repr=False)
+    module_session_health_metrics: dict[str, int | float] = field(
+        default_factory=_empty_module_session_health_metrics,
+        repr=False,
+    )
 
     @property
     def mechanisms(self) -> frozenset[str]:
@@ -464,6 +472,8 @@ class _ModuleSessionHolder:
         self._bootstrap_log: dict[str, int] = {}
         self._reopen_count: int = 0
         self._health_check_required: bool = False
+        self._health_check_count: int = 0
+        self._health_check_duration_s: float = 0.0
 
     @property
     def raw(self) -> RawPKCS11:
@@ -477,6 +487,15 @@ class _ModuleSessionHolder:
     def require_health_check(self) -> None:
         """Force a health check before the next shared-session handout."""
         self._health_check_required = True
+
+    def consume_health_metrics_delta(self) -> dict[str, int | float]:
+        metrics = {
+            "checks": self._health_check_count,
+            "duration_s": self._health_check_duration_s,
+        }
+        self._health_check_count = 0
+        self._health_check_duration_s = 0.0
+        return metrics
 
     def get_session(self, *, skip_health_check: bool = False) -> tuple[int, int, dict[str, int]]:
         """Return (sh, slot_id, bootstrap_log); reopen if damaged or if a prior test
@@ -507,10 +526,13 @@ class _ModuleSessionHolder:
         from pkcs11_check.raw.types_std import CK_SESSION_INFO, CKR_OK
 
         info = CK_SESSION_INFO()
+        start = time.monotonic()
         try:
             rv = self.raw.C_GetSessionInfo(self._sh, ctypes.byref(info))
         except (AttributeError, OSError, ctypes.ArgumentError):
+            self._record_health_check(time.monotonic() - start)
             return False
+        self._record_health_check(time.monotonic() - start)
         if rv != CKR_OK:
             return False
         if self._logged_in:
@@ -518,6 +540,10 @@ class _ModuleSessionHolder:
             if int(info.state) in (0, 2):
                 return False
         return True
+
+    def _record_health_check(self, duration_s: float) -> None:
+        self._health_check_count += 1
+        self._health_check_duration_s += max(duration_s, 0.0)
 
     def _reopen(self) -> None:
         recover_general_error = self._sh is not None
@@ -593,12 +619,19 @@ def p11_module_session(
     holder = _p11_module_session_holder
     fast_reuse = request.node.get_closest_marker("module_session_fast") is not None
     sh, slot_id, bootstrap_log = holder.get_session(skip_health_check=fast_reuse)
+    health_metrics = holder.consume_health_metrics_delta()
     raw = holder.raw
     raw.reset_call_log()
     raw.reset_used_mechanisms()
     _apply_rv_trace(raw, p11_config)
     try:
-        yield RawSession(raw, sh, slot_id, bootstrap_call_counts=bootstrap_log)
+        yield RawSession(
+            raw,
+            sh,
+            slot_id,
+            bootstrap_call_counts=bootstrap_log,
+            module_session_health_metrics=health_metrics,
+        )
     finally:
         if fast_reuse and getattr(request.node, MODULE_SESSION_CALL_FAILED_ATTR, False):
             holder.require_health_check()
