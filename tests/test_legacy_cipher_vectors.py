@@ -21,6 +21,7 @@ from pkcs11_check.raw.types_std import (
     CKM_RC2_MAC_GENERAL,
     CKM_RC4,
     CKM_RC5_CBC,
+    CKM_RC5_CBC_PAD,
     CKM_RC5_ECB,
     CKM_RC5_MAC_GENERAL,
     CKM_TWOFISH_CBC,
@@ -105,6 +106,12 @@ def test_legacy_cbc_pad_mechanisms_have_kat_vectors() -> None:
             8,
             "64ed065757511fa7",
         ),
+        int(CKM_RC5_CBC_PAD): (
+            "rc5_cbc_pad.json",
+            "CKM_RC5_CBC_PAD",
+            8,
+            "7875dbf6738c64787cb3f1df34f948117fd1a023a5bba217",
+        ),
     }
 
     for mech_id, (vector_file, mechanism_name, block_size, expected_ciphertext) in expected.items():
@@ -125,6 +132,9 @@ def test_legacy_cbc_pad_mechanisms_have_kat_vectors() -> None:
             assert vec["ciphertext_hex"] == expected_ciphertext
             assert vec["params"]["iv_hex"]
             assert "PKCS#7" in vec["params"]["source"]
+            if mechanism_name == "CKM_RC5_CBC_PAD":
+                assert "RFC 2040 section 9.3" in vec["params"]["source"]
+                assert vec["params"]["source_url"] == "https://www.rfc-editor.org/rfc/rfc2040"
 
 
 def test_legacy_cbc_pad_vector_params_replay_iv_and_effective_bits() -> None:
@@ -133,6 +143,7 @@ def test_legacy_cbc_pad_vector_params_replay_iv_and_effective_bits() -> None:
         int(CKM_CAST128_CBC_PAD): "cast128_cbc_pad.json",
         int(CKM_IDEA_CBC_PAD): "idea_cbc_pad.json",
         int(CKM_BLOWFISH_CBC_PAD): "blowfish_cbc_pad.json",
+        int(CKM_RC5_CBC_PAD): "rc5_cbc_pad.json",
     }
 
     for mech_id, vector_file in expected.items():
@@ -143,6 +154,12 @@ def test_legacy_cbc_pad_vector_params_replay_iv_and_effective_bits() -> None:
         if mech_id == int(CKM_RC2_CBC_PAD):
             assert params.params.ulEffectiveBits == vector["params"]["effective_bits"]
             assert bytes(params.params.iv) == bytes.fromhex(vector["params"]["iv_hex"])
+        elif mech_id == int(CKM_RC5_CBC_PAD):
+            assert params.params.ulWordsize == vector["params"]["word_bits"]
+            assert params.params.ulRounds == vector["params"]["rounds"]
+            assert ctypes.string_at(params.params.pIv, params.params.ulIvLen) == bytes.fromhex(
+                vector["params"]["iv_hex"]
+            )
         else:
             assert ctypes.string_at(params.ck.pParameter, params.ck.ulParameterLen) == (
                 bytes.fromhex(vector["params"]["iv_hex"])

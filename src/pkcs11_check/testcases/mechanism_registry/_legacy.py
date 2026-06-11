@@ -309,6 +309,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="rc5_cbc_pad.json",
         notes="RC5-CBC with PKCS#7 padding: any-length plaintext, requires CK_RC5_CBC_PARAMS",
     )
 

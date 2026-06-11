@@ -2100,6 +2100,43 @@ def generate_idea_cbc_pad() -> dict:
     }
 
 
+def generate_rc5_cbc_pad() -> dict:
+    """RC5 CBC_PAD vector from RFC 2040 section 9.3."""
+    key = bytes.fromhex("0102030405")
+    iv = bytes.fromhex("0000000000000000")
+    plaintext = bytes.fromhex("ffffffffffffffff7875dbf6738c647811223344556677")
+    ciphertext = bytes.fromhex("7875dbf6738c64787cb3f1df34f948117fd1a023a5bba217")
+    source = "RFC 2040 section 9.3 RC5_CBC_Pad; PKCS#7-compatible padding"
+    source_url = "https://www.rfc-editor.org/rfc/rfc2040"
+    vectors = [
+        {
+            "id": "rc5_cbc_pad_r8_key40_rfc2040_23bytes",
+            "type": "positive",
+            "mechanism_name": "CKM_RC5_CBC_PAD",
+            "key_type": "symmetric",
+            "key_bits": 40,
+            "key_hex": key.hex(),
+            "params": {
+                "source": source,
+                "source_url": source_url,
+                "word_bits": 32,
+                "rounds": 8,
+                "iv_hex": iv.hex(),
+            },
+            "plaintext_hex": plaintext.hex(),
+            "ciphertext_hex": ciphertext.hex(),
+        }
+    ]
+    return {
+        "mechanism": "CKM_RC5_CBC_PAD",
+        "family": "rc5_cbc_pad",
+        "key_type": "CKK_RC5",
+        "source": source,
+        "source_url": source_url,
+        "vectors": vectors,
+    }
+
+
 def generate_blowfish_cbc_pad() -> dict:
     """Blowfish CBC_PAD vector via cryptography plus PKCS#7 padding."""
     from cryptography.hazmat.decrepit.ciphers import algorithms
@@ -2182,6 +2219,7 @@ GENERATORS = {
     "rc2_cbc": generate_rc2_cbc,
     "rc2_cbc_pad": generate_rc2_cbc_pad,
     "idea_cbc_pad": generate_idea_cbc_pad,
+    "rc5_cbc_pad": generate_rc5_cbc_pad,
     "blowfish_cbc_pad": generate_blowfish_cbc_pad,
     "des_ecb": generate_des_ecb,
     "des_cbc": generate_des_cbc,
