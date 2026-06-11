@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 from _pytest.outcomes import Failed
 
+from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_KEY_TYPE_INCONSISTENT,
@@ -27,7 +28,7 @@ def _session(sign_init_rv: int) -> SimpleNamespace:
 
 
 def _run(monkeypatch: pytest.MonkeyPatch, sign_init_rv: int) -> None:
-    monkeypatch.setattr(test_ckr_sign, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ckr_sign, "destroy_quietly", lambda *_a, **_k: None)
     test_ckr_sign.TestSignInitErrors().test_key_type_inconsistent(
         _session(sign_init_rv), ckr_strict=False

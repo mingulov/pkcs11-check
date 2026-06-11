@@ -20,10 +20,8 @@ from pkcs11_check.raw.pack import mech_ecdh, mech_hkdf
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
-    gen_ec_keypair,
     import_secret_key,
     read_attributes,
-    sign_single,
 )
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
@@ -58,7 +56,11 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    gen_ec_keypair_or_xfail,
+    hmac_sign_or_xfail,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -118,7 +120,7 @@ class TestKeyDeriveSoftware:
             },
         )
         try:
-            p11_mac = sign_single(rs.raw, rs.sh, p11_key, CKM_SHA256_HMAC, data)
+            p11_mac = hmac_sign_or_xfail(rs, p11_key, CKM_SHA256_HMAC, data, label="SHA256_HMAC")
             py_mac = hmac_mod.new(key_bytes, data, hashlib.sha256).digest()
             assert p11_mac == py_mac
         finally:
@@ -142,7 +144,7 @@ class TestKeyDeriveSoftware:
             },
         )
         try:
-            p11_mac = sign_single(rs.raw, rs.sh, p11_key, CKM_SHA512_HMAC, data)
+            p11_mac = hmac_sign_or_xfail(rs, p11_key, CKM_SHA512_HMAC, data, label="SHA512_HMAC")
             py_mac = hmac_mod.new(key_bytes, data, hashlib.sha512).digest()
             assert p11_mac == py_mac
         finally:
@@ -204,9 +206,8 @@ class TestECDHDerive:
 
     def _generate_ec_keypair(self, rs: Any) -> tuple[int, int]:
         curve_oid = encode_named_curve_parameters("secp256r1")
-        return gen_ec_keypair(
-            rs.raw,
-            rs.sh,
+        return gen_ec_keypair_or_xfail(
+            rs,
             curve_oid,
             private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
         )

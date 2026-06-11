@@ -32,7 +32,6 @@ from pkcs11_check.raw.bootstrap import (
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
-    gen_aes_key,
 )
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
@@ -54,6 +53,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._raw_subprocess import run_raw_script
 from pkcs11_check.testcases._subprocess_preamble import _P11CHECK_PIN_ENV
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail
 
 pytestmark = [pytest.mark.access]
 
@@ -473,7 +473,7 @@ class TestLoginLogoutCycle:
             assert rv in (CKR_OK, CKR_USER_ALREADY_LOGGED_IN), f"C_Login failed: {ckr_name(rv)}"
 
             # Verify the session is functional after login.
-            key = gen_aes_key(rs.raw, sh2, 128)
+            key = gen_aes_key_or_xfail(rs, 128, sh=sh2)
             assert key != 0, "generate_key returned 0 after login"
             destroy_quietly(rs.raw, sh2, key)
 

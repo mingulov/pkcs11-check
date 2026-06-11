@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.pack import mech_bytes
-from pkcs11_check.raw.recipes import decrypt_single, destroy_quietly, encrypt_single, gen_aes_key
+from pkcs11_check.raw.recipes import decrypt_single, destroy_quietly, encrypt_single
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -15,6 +15,7 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKM_AES_CBC_PAD,
 )
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail
 
 pytestmark = pytest.mark.smoke
 
@@ -82,9 +83,8 @@ class TestInterfaceV30:
         rs = p11_raw_session
         if not rs.has_mechanism("CKM_AES_CBC_PAD"):
             pytest.skip("CKM_AES_CBC_PAD not supported")
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={
                 CKA_ENCRYPT: True,

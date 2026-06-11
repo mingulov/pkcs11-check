@@ -15,17 +15,20 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKR_DEVICE_ERROR
 from pkcs11_check.testcases import test_encrypt as enc
 
 
 def _rs() -> SimpleNamespace:
-    return SimpleNamespace(raw=object(), sh=1)
+    return SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
 
 
 def _wire(monkeypatch: pytest.MonkeyPatch, *, encrypt: Any, decrypt: Any) -> None:
-    monkeypatch.setattr(enc, "gen_rsa_keypair", lambda *a, **k: (1, 2))
+    # The setup keypair routes through the canonical gen_rsa_keypair_or_xfail,
+    # which lazily imports gen_rsa_keypair from raw.recipes -- patch there.
+    monkeypatch.setattr(raw_recipes, "gen_rsa_keypair", lambda *a, **k: (1, 2))
     monkeypatch.setattr(enc, "destroy_quietly", lambda *a, **k: None)
     monkeypatch.setattr(enc, "encrypt_single", encrypt)
     monkeypatch.setattr(enc, "decrypt_single", decrypt)

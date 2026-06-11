@@ -21,7 +21,6 @@ from pkcs11_check.raw.pack import mech_simple, template_from_dict
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     find_objects,
-    gen_aes_key,
 )
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
@@ -41,7 +40,11 @@ from pkcs11_check.raw.types_std import (
     CKR_SESSION_HANDLE_INVALID,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import classify_negative_rv, get_pin_bytes
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    gen_aes_key_or_xfail,
+    get_pin_bytes,
+)
 
 pytestmark = pytest.mark.security
 
@@ -119,7 +122,7 @@ class TestCloseAllSessions:
             sessions.append(sh)
 
         # Generate a key in s1 (session object)
-        gen_aes_key(rs.raw, s1, 128)
+        gen_aes_key_or_xfail(rs, 128, sh=s1)
 
         # Close all sessions at once
         rv = rs.raw.C_CloseAllSessions(rs.slot_id)
@@ -146,9 +149,8 @@ class TestSoftHSM2IssueRegressions:
         """SoftHSM2 #608: C_WrapKey with unsupported mechanism must return
         CKR_MECHANISM_INVALID, not CKR_GENERAL_ERROR or crash."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={
                 CKA_WRAP: True,
@@ -156,9 +158,8 @@ class TestSoftHSM2IssueRegressions:
                 CKA_SENSITIVE: False,
             },
         )
-        target = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        target = gen_aes_key_or_xfail(
+            rs,
             128,
             attrs={CKA_EXTRACTABLE: True},
         )

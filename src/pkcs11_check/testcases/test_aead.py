@@ -116,6 +116,8 @@ class TestAESGCMCrossVerify:
     def test_gcm_256_encrypt_crossverify(self, p11_raw_session: Any) -> None:
         """AES-256-GCM: encrypt via PKCS#11, verify with cryptography."""
         rs = p11_raw_session
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("CKM_AES_GCM not supported")
         key_bytes = bytes(range(32))
         nonce = bytes(12)  # 96-bit recommended IV
         plaintext = b"GCM cross-verify test data!!"
@@ -145,6 +147,8 @@ class TestAESGCMCrossVerify:
     def test_gcm_128_encrypt_crossverify(self, p11_raw_session: Any) -> None:
         """AES-128-GCM cross-verify."""
         rs = p11_raw_session
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("CKM_AES_GCM not supported")
         key_bytes = bytes(16)
         nonce = bytes(range(12))
         plaintext = b"GCM-128 test!!"
@@ -171,6 +175,8 @@ class TestAESGCMCrossVerify:
     def test_gcm_decrypt_crossverify(self, p11_raw_session: Any) -> None:
         """Encrypt with cryptography, decrypt with PKCS#11."""
         rs = p11_raw_session
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("CKM_AES_GCM not supported")
         key_bytes = bytes(range(32))
         nonce = bytes(12)
         plaintext = b"decrypt cross-verify"

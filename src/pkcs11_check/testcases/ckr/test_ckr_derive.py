@@ -17,7 +17,7 @@ from pkcs11_check.raw.pack import (
     mech_simple,
     template,
 )
-from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key, gen_rsa_keypair
+from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CKA_CLASS,
@@ -33,6 +33,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_DERIVE, assert_ckr
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail
 
 pytestmark = pytest.mark.access
 
@@ -70,9 +71,8 @@ class TestDeriveKeyErrors:
     def test_mechanism_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Using hash mechanism for derive -> CKR_MECHANISM_INVALID."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_DERIVE: True},
         )

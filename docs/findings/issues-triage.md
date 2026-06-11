@@ -1213,8 +1213,13 @@ helpers already do in ~330 sites. Fixed for the focus-bucket files this pass.**
 - **Provider-general (the proof).** The wrapper only triggers on the specific keygen-reject CKRs;
   on every module whose AES keygen *works* (softhsm2/kryoptic/nss/opencryptoki/wolfpkcs11/bouncyhsm)
   the raw keygen succeeds and the test runs normally — confirmed by the cross-provider matrix
-  (**all 6 other providers PASS every one of these nodeids**; only tpm2 fails) and by the existing
-  `*_use_operational_aes128*` green meta-tests. No provider identity is consulted.
+  (the 6 other providers reach each migrated nodeid's post-keygen assertion instead of aborting at
+  setup) and by the existing `*_use_operational_aes128*` green meta-tests. No provider identity is
+  consulted. **Correction (earlier overstatement):** it is *not* true that all 6 other providers PASS
+  every one of these nodeids — 3 nodeid×provider pairs are genuine post-keygen findings that still
+  `fail` after migration (wolfpkcs11 `test_double_encrypt_init`, wolfpkcs11 + bouncyhsm
+  `test_encrypt_final_no_update`). The wrapper sits at the keygen call only; a real post-keygen
+  finding on any provider is unaffected and still hard-fails — which is exactly the desired behavior.
 - **Fix (this pass).** Migrated the **7 focus-bucket files** to a module-level `gen_aes_key` wrapper
   (raw imported as `_raw_gen_aes_key`; wrapper catches the setup `AssertionError` and calls
   `xfail_if_known_ckr(exc, AES_KEYGEN_RUNTIME_REJECT_RVS, …)`): `test_concurrent_sessions.py`,
@@ -1223,16 +1228,31 @@ helpers already do in ~330 sites. Fixed for the focus-bucket files this pass.**
   in `tests/test_setup_runtime_capability_guards.py` (the established guard suite; +7 tests, now 122
   passing) that monkeypatches `_raw_gen_aes_key` to raise `CKR_FUNCTION_NOT_SUPPORTED` and asserts
   the setup becomes an `xfail` with the file-specific message.
-- **Deferred (same class, same recipe, not done this pass to keep the commit bounded):** the
-  remaining 15 AES sites across `ckr/test_ckr_derive|priority|sign|verify`, `test_attribute_fuzz`,
+- **Deferred sites — NOW MIGRATED (follow-up pass).** The remaining setup-keygen laggards have been
+  migrated to the **canonical conftest helpers** (no per-file local wrapper — the review flagged the
+  7×-duplicated `_raw_gen_aes_key` wrapper; this pass uses `gen_aes_key_or_xfail` /
+  `gen_rsa_keypair_or_xfail` / `gen_ec_keypair_or_xfail` / new shared `hmac_sign_or_xfail` directly):
+  the remaining AES setup nodeids across `ckr/test_ckr_derive|priority|sign|verify`,
   `test_duplicate_labels`, `test_interface`, `test_large_objects`, `test_session_edge_cases`,
   `test_session_exhaustion`, `test_session_info`, `test_surface_audit`, `test_v30_session`,
-  `security/test_parameter_validation|tookan`; plus the 6 RSA + 3 EC + 2 HMAC setup sites
-  (`gen_rsa_keypair_or_xfail`/`gen_ec_keypair_or_xfail` recipe) and the 3 GCM-op gates. All are the
-  same mechanical migration; they remain `fail` until migrated (no finding is hidden).
-- **Confidence: HIGH.** Direct `CKR_FUNCTION_NOT_SUPPORTED`-at-setup traceback frames, the pool's own
-  xfail records for the migrated-sibling sites, a clean 6-provider PASS split, and 7 green
-  red→green regression tests.
+  `security/test_parameter_validation|tookan`; the 6 RSA setup sites (`test_encrypt` ×3,
+  `test_mech_sign_recover` ×2 via one helper, `security/test_crypto_weakness` ×1); the 3 EC sites
+  (`test_kdf::TestECDHDerive` via one helper); and the 2 HMAC sign-op sites
+  (`test_kdf::TestKeyDeriveSoftware` ×2, routed through the new shared `hmac_sign_or_xfail`, which
+  also replaced the duplicated local `_HMAC_RUNTIME_REJECT_RVS` block in `test_generic_secret`). The
+  3 GCM-op nodeids (`test_aead::TestAESGCMCrossVerify` ×3) got their distinct fix — a
+  `has_mechanism("AES_GCM")` skip-gate (these had no GCM capability gate while sibling GCM tests do).
+  `gen_aes_key_or_xfail` gained an optional `sh=` override for the few setup keys generated in a
+  freshly opened session. **Deliberately left `fail` (subject-keygen tests, not setup):**
+  `test_surface_audit::test_key_size_range_respected` and `test_generate_key_all_aes_sizes`,
+  `test_attribute_fuzz::test_create_key_normal` (baseline "keygen works" assertions whose subject IS
+  keygen), and `test_crypto_weakness::test_weak_rsa_key_generation` /
+  `test_attribute_fuzz::test_negative_key_length` (key-size probes that already tolerate the reject).
+- **Confidence: HIGH.** Direct `CKR_FUNCTION_NOT_SUPPORTED`/`CKR_ATTRIBUTE_VALUE_INVALID`/
+  `CKR_GENERAL_ERROR`-at-setup-or-op traceback frames (artifacts/tpm2-pooled), the pool's own xfail
+  records for the migrated-sibling sites, and red→green + mutation-checked regression tests in
+  `tests/test_setup_runtime_capability_guards.py` (+ direct helper unit tests in
+  `tests/test_classification_helpers.py`).
 
 ### Code + docs this triage
 

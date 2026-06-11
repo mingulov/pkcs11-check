@@ -104,6 +104,20 @@ CIPHER_OP_RUNTIME_REJECT_RVS = (
     CKR_MECHANISM_PARAM_INVALID,
 )
 
+# Clean codes a module may return at an HMAC *sign/verify* use site when the
+# HMAC mechanism is advertised but the operation is not operational (tpm2
+# advertises CKM_SHA*_HMAC but C_Sign returns CKR_GENERAL_ERROR). A produce
+# (sign) leg returning one of these -> xfail (advertised-but-not-operational);
+# the cross-verify comparison against a reference MAC stays a hard failure.
+# Mirrors the established local tuple in test_generic_secret.py (promoted here
+# so the sign-op guard is shared, not duplicated per file).
+HMAC_OP_RUNTIME_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+)
+
 
 def needs_mechanism(name: str) -> Callable[[Any], Any]:
     """Decorator that skips the test if the mechanism is not supported."""
@@ -153,21 +167,57 @@ def gen_aes_key_or_xfail(
     attrs: Mapping[Any, Any] | None = None,
     *,
     purpose: str = "setup",
+    sh: int | None = None,
 ) -> int:
-    """Generate an AES key, xfail-ing explicit setup rejection CKRs."""
+    """Generate an AES key, xfail-ing explicit setup rejection CKRs.
+
+    ``sh`` overrides the session the key is generated in (defaults to ``rs.sh``);
+    a few setup sites generate the key in a freshly opened session on the same
+    token, where the advertised-but-not-operational reject is identical.
+    """
     if not rs.has_mechanism("AES_KEY_GEN"):
         pytest.skip("AES_KEY_GEN not supported by module")
 
     from pkcs11_check.raw.recipes import gen_aes_key
 
+    session = rs.sh if sh is None else sh
     try:
-        return gen_aes_key(rs.raw, rs.sh, bits, attrs=attrs)
+        return gen_aes_key(rs.raw, session, bits, attrs=attrs)
     except AssertionError as exc:
         xfail_if_known_ckr(
             exc,
             AES_KEYGEN_RUNTIME_REJECT_RVS,
             f"AES_KEY_GEN advertised but AES-{bits} key generation for {purpose} "
             "is not operational",
+        )
+    raise
+
+
+def hmac_sign_or_xfail(
+    rs: Any,
+    key_handle: int,
+    mechanism: int,
+    data: bytes,
+    *,
+    label: str,
+) -> bytes:
+    """C_Sign an HMAC, xfail-ing advertised-but-not-operational op rejects.
+
+    tpm2-pkcs11 advertises CKM_SHA*_HMAC yet C_Sign returns CKR_GENERAL_ERROR.
+    A produce (sign) leg returning a HMAC_OP_RUNTIME_REJECT_RVS code -> xfail;
+    any other failure (incl. a wrong-MAC comparison done by the caller) stays a
+    hard failure. Provider-general: a module whose HMAC works returns the MAC
+    and no provider identity is consulted.
+    """
+    from pkcs11_check.raw.recipes import sign_single
+
+    try:
+        return sign_single(rs.raw, rs.sh, key_handle, mechanism, data)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            HMAC_OP_RUNTIME_REJECT_RVS,
+            f"{label} advertised but sign is not operational",
         )
     raise
 

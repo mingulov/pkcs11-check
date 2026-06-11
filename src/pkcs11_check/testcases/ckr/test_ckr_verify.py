@@ -13,7 +13,6 @@ import pytest
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    gen_aes_key,
     gen_rsa_keypair,
     sign_single,
 )
@@ -24,7 +23,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_VERIFY, assert_ckr
-from pkcs11_check.testcases.conftest import classify_lifecycle_effect
+from pkcs11_check.testcases.conftest import classify_lifecycle_effect, gen_aes_key_or_xfail
 
 pytestmark = pytest.mark.access
 
@@ -49,7 +48,7 @@ class TestVerifyInitErrors:
     def test_key_type_inconsistent(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """AES key with RSA verify mechanism -> CKR_KEY_TYPE_INCONSISTENT."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             exp = CKR_VERIFY["init_key_type_inconsistent"]
             mech = mech_simple(CKM_SHA256_RSA_PKCS)

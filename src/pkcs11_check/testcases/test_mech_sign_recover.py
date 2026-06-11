@@ -12,7 +12,6 @@ import pytest
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    gen_rsa_keypair,
     sign_recover_single,
     verify_recover_single,
 )
@@ -23,15 +22,15 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_X_509,
 )
 from pkcs11_check.testcases._capability_claims import claim_refusal_passes
+from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.sign_recover]
 
 
 def _rsa_x509_keypair(rs: RawSession) -> tuple[int, int]:
     """Generate a 2048-bit RSA keypair with sign-recover/verify-recover attributes."""
-    return gen_rsa_keypair(
-        rs.raw,
-        rs.sh,
+    return gen_rsa_keypair_or_xfail(
+        rs,
         2048,
         public_attrs={CKA_TOKEN: False, CKA_VERIFY_RECOVER: True},
         private_attrs={CKA_TOKEN: False, CKA_SIGN_RECOVER: True},

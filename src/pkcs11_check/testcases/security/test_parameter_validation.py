@@ -81,6 +81,7 @@ from pkcs11_check.testcases._subprocess_preamble import (
     subprocess_session_preamble,
 )
 from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
     is_known_error,
     reject_or_classify,
     xfail_if_known_ckr,
@@ -892,7 +893,7 @@ class TestCbcIvAllZeros:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CBC"):
             pytest.skip("AES_CBC not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             zero_iv = b"\x00" * 16  # 128-bit all-zero IV
             pt = b"D" * 16  # Single AES block
@@ -931,7 +932,7 @@ class TestEcbPatternLeakage:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("AES_ECB not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             # Two identical 16-byte blocks
             block = b"E" * 16

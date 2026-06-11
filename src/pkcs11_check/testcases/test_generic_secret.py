@@ -17,7 +17,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_aes_key,
     read_attributes,
-    sign_single,
 )
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
@@ -35,21 +34,10 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_HMAC,
     CKM_SHA512_HMAC,
     CKO_SECRET_KEY,
-    CKR_DEVICE_ERROR,
-    CKR_FUNCTION_FAILED,
-    CKR_GENERAL_ERROR,
-    CKR_MECHANISM_INVALID,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import hmac_sign_or_xfail
 
 pytestmark = pytest.mark.keymgmt
-
-_HMAC_RUNTIME_REJECT_RVS = (
-    CKR_DEVICE_ERROR,
-    CKR_FUNCTION_FAILED,
-    CKR_GENERAL_ERROR,
-    CKR_MECHANISM_INVALID,
-)
 
 
 class TestGenericSecretKeyGen:
@@ -143,14 +131,7 @@ class TestGenericSecretHMAC:
             },
         )
         try:
-            try:
-                p11_mac = sign_single(rs.raw, rs.sh, key_h, CKM_SHA256_HMAC, data)
-            except AssertionError as exc:
-                xfail_if_known_ckr(
-                    exc,
-                    _HMAC_RUNTIME_REJECT_RVS,
-                    "SHA256_HMAC advertised but sign is not operational",
-                )
+            p11_mac = hmac_sign_or_xfail(rs, key_h, CKM_SHA256_HMAC, data, label="SHA256_HMAC")
             expected = hmac_mod.new(key_bytes, data, hashlib.sha256).digest()
             assert p11_mac == expected
         finally:
@@ -178,14 +159,7 @@ class TestGenericSecretHMAC:
             },
         )
         try:
-            try:
-                p11_mac = sign_single(rs.raw, rs.sh, key_h, CKM_SHA512_HMAC, data)
-            except AssertionError as exc:
-                xfail_if_known_ckr(
-                    exc,
-                    _HMAC_RUNTIME_REJECT_RVS,
-                    "SHA512_HMAC advertised but sign is not operational",
-                )
+            p11_mac = hmac_sign_or_xfail(rs, key_h, CKM_SHA512_HMAC, data, label="SHA512_HMAC")
             expected = hmac_mod.new(key_bytes, data, hashlib.sha512).digest()
             assert p11_mac == expected
         finally:

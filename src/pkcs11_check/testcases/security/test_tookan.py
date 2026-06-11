@@ -55,6 +55,7 @@ from pkcs11_check.testcases._negotiation import TEMPLATE_SHAPE_REJECTS
 from pkcs11_check.testcases.conftest import (
     classify_discrimination,
     classify_policy_enforcement,
+    gen_aes_key_or_xfail,
     is_known_error,
     unwrap_key_for_mechanism_roundtrip,
     xfail_if_known_ckr,
@@ -171,7 +172,7 @@ class TestSensitivePreservation:
     def test_sensitive_preserved_on_copy(self, p11_raw_session: Any) -> None:
         """Copying a SENSITIVE key must keep SENSITIVE=True."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SENSITIVE: True})
+        key = gen_aes_key_or_xfail(rs, 256, attrs={CKA_SENSITIVE: True})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
             assert attrs[CKA_SENSITIVE] is True
@@ -206,9 +207,8 @@ class TestSensitivePreservation:
         This is a MUST NOT -- escalation is a security violation.
         """
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_EXTRACTABLE: False},
         )

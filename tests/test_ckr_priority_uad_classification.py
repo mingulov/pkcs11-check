@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 from _pytest.outcomes import Failed, XFailed
 
+from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_OBJECT_HANDLE_INVALID,
@@ -30,7 +31,7 @@ def _session(destroy_rv: int, init_rv: int) -> SimpleNamespace:
 
 
 def _run(monkeypatch: pytest.MonkeyPatch, *, destroy_rv: int, init_rv: int) -> None:
-    monkeypatch.setattr(test_ckr_priority, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ckr_priority, "destroy_quietly", lambda *_a, **_k: None)
     test_ckr_priority.TestErrorPriority().test_destroyed_handle_with_wrong_mechanism(
         _session(destroy_rv, init_rv)

@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
-from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key, gen_rsa_keypair
+from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKM_AES_ECB,
@@ -22,7 +22,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_SIGN, assert_ckr
-from pkcs11_check.testcases.conftest import classify_lifecycle_effect
+from pkcs11_check.testcases.conftest import classify_lifecycle_effect, gen_aes_key_or_xfail
 
 pytestmark = pytest.mark.access
 
@@ -47,7 +47,7 @@ class TestSignInitErrors:
     def test_key_type_inconsistent(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """AES key with RSA signing mechanism -> CKR_KEY_TYPE_INCONSISTENT."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), key)
