@@ -945,3 +945,202 @@ clean code.**
   reconciled `tests/test_wycheproof_xdh_guards.py`). Full gates green; meta-suite 0-fail/0-xfail.
 - module-issues.md §Kryoptic: NEW Type-A AES-KW empty-blob acceptance entry (genuine, stays `fail`).
 - No fix for the 27 AES-KW fails — keeping them failing is correct ("failures ARE findings").
+
+## nss long-tail triage 2026-06-11
+
+**Scope.** Full triage of **every** `outcome:failed` (`when:call`) record in the fresh VALIDATED
+pool `artifacts/nss-pooled/report.jsonl`. nss (Network Security Services softoken 3.120.1, v3.0)
+is a software-only PKCS#11 token, so the suite's hardware-token threat model flags many
+attribute-protection deviations that are upstream-known properties of the softoken design (the
+module-issues.md §NSS "Security Findings" preamble at line 408 records this). **Total: 130 failed
+call records, across 34 files** (matches the bucket counts in the triage brief).
+
+**Method.** Aggregated by `(file, normalized message)`; cross-checked **every** bucket against
+**all** `<provider>-pooled/report.jsonl` snapshots in the fresh pool (per-nodeid outcome decoded so
+the cross-provider split is on identical test ids), and against the §NSS / §NSS-PQC / §NSS-main
+sections of [module-issues.md](../module-issues.md). The ChaCha20-Poly1305 KAT vector was decoded
+and recomputed independently against the RFC 8439 / OpenSSL reference to decide vector-vs-module
+fault. No harness bug was proven on nss this pass — every failing test is sound and provider-general
+(the cross-provider splits are the proof), so this is a **documentation-only** triage.
+
+### Bucket table (file → count → determination)
+
+| Count | File | Class | Determination |
+|---|---|---|---|
+| 32 | `security/test_ffi_length_boundary.py` | 💥 | **KNOWN** — C-cluster harness-provoked UB (lying-buffer length / isize_max huge-len). Denis 2026-06-10: KEEP ("a segfault IS the finding"). Documented module-issues.md §NSS. |
+| 15 | `ckr/test_ckr_keygen.py` | 📋 ⚠️**NEW** | **GENUINE nss attribute-length-validation gap** — `C_GenerateKey`/`C_GenerateKeyPair` accept malformed-length scalar attributes (`CKA_TOKEN` BBOOL given 8 bytes; `CKA_VALUE_LEN`/`CKA_PARAMETER_SET` CK_ULONG given 1 or 9 bytes) and return `CKR_OK`. Same class as the softhsm2 `CKA_TOKEN` gap but **broader** (nss also misses `CKA_VALUE_LEN`/ML-DSA+ML-KEM `CKA_PARAMETER_SET`). kryoptic/opencryptoki/wolfpkcs11 **reject** all; softhsm2 rejects 2 of the 7 non-PQC. Stays `fail`. See determination below. |
+| 8 | `ckr/test_ckr_object.py` | 📋 ⚠️**NEW** | **GENUINE nss findings (same family).** 6 = the scalar-length gap on `C_CreateObject`/`C_CopyObject` (`CKA_TOKEN`/`CKA_CLASS`/`CKA_KEY_TYPE` malformed length) — here softhsm2 + wolfpkcs11 **both reject**, nss accepts → nss-specific. 1 = `CKA_ALLOWED_MECHANISMS` NULL-ptr-nonzero-length accepted (shared w/ kryoptic, documented). 1 = `test_allowed_mechanisms_empty_null_pointer_enforced` **Type-B**: nss accepts an empty allow-list, reads it back empty, then still encrypts (self-contradiction; shared w/ opencryptoki). See determination below. |
+| 8 | `wycheproof/test_wycheproof_mldsa.py` | 📋 | **KNOWN, ALREADY-ACCOUNTED** — the documented genuine nss ML-DSA verify Type-A finding (b251ad1b, module-issues.md §NSS): tc7/tc65/tc70/tc144/tc157/tc170 over-length signature + over-length public-key acceptance (FIPS-204 fixed-length / non-malleability break). Confirmed = that class. No action; stays `fail`. |
+| 7 | `security/test_ffi_null_pointer.py` | 💥 | **KNOWN** — C-cluster NULL-data/NULL-buffer SIGSEGV (`C_Sign`/`C_Verify`/`C_*Update`/`C_GenerateRandom`/`C_SeedRandom`/`C_SetOperationState` with NULL ptr + nonzero len). Denis-KEEP UB class. Recorded with the genuine NULL-deref crashes below (nss segfaults where careful modules return `CKR_ARGUMENTS_BAD`). |
+| 7 | `wycheproof/test_wycheproof_x25519.py` | 🔧 ⚠️**KNOWN→FIXED-AFTER** | **HARNESS over-strictness, FIXED this session (9908f272).** All 7 are x25519_jwk `InvalidPublic` tc519/522/524/525/526/527/529 — JWK-wrapper-only invalidity whose `x` decodes to canonical length (the kryoptic-triage NEW #2 determination). The provider-general load-time drop drops them next run; this pre-fix pool still shows 7F. Confirmed = that class. No further action. |
+| 6 | `ckr/test_ckr_raw_buffer.py` | 💥/📋 | **KNOWN** — output-buffer overrun: nss ignores the caller-declared `*pulCount`/`*pulBufLen` and writes the full result past the boundary (guard-byte probe). Documented module-issues.md §NSS ("Output-buffer overrun" 2026-06-09). Buffer-guard class shared w/ kryoptic. |
+| 6 | `security/test_parameter_validation.py` | 💥 + ⚖️ | **KNOWN, MIXED.** 1 = `TestGcmAadNullWithLength` GCM **NULL-AAD-pointer-with-nonzero-length SIGSEGV** = GENUINE nss crash (kryoptic/opencryptoki survive; only nss + softhsm2 crash). 5 = GCM weak-IV (1/4-byte) / weak-tag (32/64-bit) / IV-reuse stricter-than-spec hardening — ⚖️ flagged-for-decision (spec-legal weak params), same class flagged on softhsm2/kryoptic, left as-is. |
+| 4 | `security/test_api_boundary.py` | 💥 ⚠️**NEW(distinguishing)** | **GENUINE nss NULL-deref crash finding** (recorded; KEEP). `C_DigestInit(NULL mech)`, `C_CreateObject`/`C_FindObjectsInit`/`C_GenerateKey(template=NULL, count=5)` → **signal 11**. softhsm2/kryoptic/opencryptoki all **survive and return `CKR_ARGUMENTS_BAD`** on these exact calls → nss-specific NULL-deref, not generic harness UB. "A segfault IS the finding." See determination below. |
+| 3 | `test_access_levels.py` | 📋 | **KNOWN** — `CKA_TRUSTED` USER-grant, `CKA_WRAP_WITH_TRUSTED` downgrade + untrusted-wrap. Type-B attribute-non-enforcement of the softoken security-design family (module-issues.md §NSS Security Findings; `CKA_WRAP_WITH_TRUSTED not enforced` HIGH row + umbrella note). |
+| 3 | `test_kem.py` | 📋 ⚠️**NEW(partly)** | 2 = ML-KEM `CKA_ENCAPSULATE`/`CKA_DECAPSULATE=False` permission flag **not enforced** (Type-B): nss reads the flag back False then still encaps/decaps. **nss-only** (kryoptic/opencryptoki/bouncyhsm/wolfpkcs11 all enforce). Documented module-issues.md §NSS "ML-KEM permission flags not enforced" HIGH row. 1 = `CKA_VALUE` injected into the decaps template accepted (value-shape class, shared w/ kryoptic/bouncyhsm/wolfpkcs11). All stay `fail`. |
+| 2 | `acvp/test_acvp_eddsa.py` | ⚖️ | **KNOWN (flagged-for-decision)** — `TestEdDsaKeyVer` accepts invalid Ed25519 keys (tc1/tc4). Same ⚖️ Edwards-point analysis pending as on softhsm2/kryoptic; RFC 8032 does not require verifiers to reject non-canonical/small-order pubkeys. |
+| 2 | `ckr/test_ckr_null_params.py` | 💥 ⚠️**NEW(distinguishing)** | **GENUINE nss NULL-deref crash** — `C_GetInfo(NULL)`, `C_GetSlotList(pulCount=NULL)` → signal 11. softhsm2/kryoptic survive (return cleanly). Same nss-specific NULL-deref family as `test_api_boundary`. KEEP. |
+| 2 | `ckr/test_ckr_raw_args_bad.py` | 💥 ⚠️**NEW(distinguishing)** | **GENUINE nss NULL-deref crash** — `C_DigestInit(NULL mech)`, `C_GenerateKey(NULL mech)` → signal 11. softhsm2/kryoptic survive. Same family. KEEP. |
+| 2 | `ckr/test_ckr_wrap.py` | 📋 | **KNOWN** — `CKA_TOKEN` overlong-length on `C_UnwrapKey` (scalar-length family); `test_key_not_extractable` = `C_WrapKey` on `CKA_EXTRACTABLE=False` key (Type-B, softoken attribute-non-enforcement family, documented HIGH row). |
+| 2 | `security/test_api_security.py` | 📋 | **KNOWN** — `C_CopyObject` `CKA_EXTRACTABLE False→True` laundering + wrap-decrypt oracle key extraction. Type-B Tookan/laundering family, documented module-issues.md §NSS CRITICAL rows. |
+| 2 | `security/test_padding_oracle.py` | 📋 noise | **KNOWN** — probabilistic AES-CBC-PAD Vaudenay (`CKR_OK_DIFFERENT`=1) + RSA-OAEP Manger non-uniform error codes. Documented cross-run nondeterminism ([[reference_oracle_tests_probabilistic]]); verify-don't-alarm. |
+| 2 | `security/test_recover_length_boundary.py` | 💥/📋 | **KNOWN** — `C_SignRecover` isize_max+1 accepted + `C_VerifyRecover` one-byte-output guard subprocess fail. C-cluster value-shape / buffer-guard, KEEP. |
+| 2 | `test_remaining_gaps.py` | 📋 | **KNOWN** — `CKA_UNWRAP_TEMPLATE`/`CKA_WRAP_TEMPLATE` created-object/target-attribute enforcement (Type-B). softoken attribute-non-enforcement family (umbrella note). |
+| 1 | `test_mech_encrypt.py` | 📋 ⚠️**NEW** | **GENUINE nss ChaCha20-Poly1305 KAT mismatch (Type-A; param-layout root-cause DEFERRED to docker).** nss `C_Encrypt(CKM_CHACHA20_POLY1305)` accepts the standard `CK_SALSA20_CHACHA20_POLY1305_PARAMS` and returns ciphertext `257028bd…` ≠ the RFC-8439 reference (independently recomputed = the harness vector `b2af6bdc…`, verified correct). See determination below. |
+| 1 | `test_mech_wrap.py` | 📋 ⚠️**NEW** | **GENUINE nss `CKM_RSA_X_509` unwrap finding (Type-A roundtrip break).** nss derives the unwrapped AES key from the **leading** bytes of the raw RSA block; `CKM_RSA_X_509` right-justifies the key (trailing bytes). The harness `_raw_rsa_unwrap_hint` confirms `unwrapped == leading ≠ trailing`. wrap→unwrap on the same module recovers a different key. Stays `fail`. See determination below. |
+| 1 | `acvp/aes/test_cts_detect.py` | 📋 | **KNOWN** — nss advertises `CKM_AES_CTS` but errors on CTS encrypt probes (CTS non-functional). Advertised-but-not-operational; recorded module-issues.md §NSS (mechanism fuzz). |
+| 1 | `ckr/test_ckr_general.py` | 📋 ⚠️**NEW(minor)** | nss accepts `C_Finalize` after `C_Finalize` (`finalize_accepted`) where spec wants `CKR_CRYPTOKI_NOT_INITIALIZED`; softhsm2/kryoptic/opencryptoki reject. Lifecycle deviation (nss + wolfpkcs11). Stays `fail`; minor, recorded here. |
+| 1 | `security/test_arithmetic_overflow.py` | 💥 | **KNOWN** — `C_FindObjectsInit(template_count=ULONG_MAX)` SIGSEGV. C-cluster count-overflow (kryoptic also crashes). KEEP. |
+| 1 | `security/test_cve_regression.py` | 📋 | **KNOWN** — Tookan §3.3 unwrap-with-`CKA_SENSITIVE=False` produces a non-sensitive copy of a SENSITIVE=True key. softoken sensitive-boundary family. |
+| 1 | `security/test_tookan.py` | 📋 | **KNOWN** — `C_CopyObject` escalates `CKA_EXTRACTABLE False→True`. Type-B laundering family (documented CRITICAL row). |
+| 1 | `test_access_control.py` | 📋 | **KNOWN** — `CKA_COPYABLE=False` key copied. Documented module-issues.md §NSS ("CKA_COPYABLE not enforced"). |
+| 1 | `test_attribute_enforcement.py` | 📋 | **KNOWN** — `C_DestroyObject` on `CKA_DESTROYABLE=False`. Documented ("CKA_DESTROYABLE not enforced"). |
+| 1 | `test_buffers.py` | 📋 | **KNOWN** — `C_SignFinal` returns `pulSize=0` after `CKR_BUFFER_TOO_SMALL` (two-call-convention deviation; shared w/ kryoptic/opencryptoki/wolfpkcs11). Buffer-guard class. |
+| 1 | `test_mech_derive.py` | 📋 | **KNOWN** — HKDF base-key gen → `CKR_MECHANISM_INVALID`; nss HKDF non-operational. Documented module-issues.md §NSS (Group 2, HKDF limitation). |
+| 1 | `test_mech_message.py` | 📋 | **KNOWN** — `C_EncryptMessage` AES-GCM generated IV not written back to `pIv`. Same generated-IV message-API class as kryoptic/softhsm2-generated-iv. |
+| 1 | `test_operation_termination.py` | 📋 | **KNOWN** — `C_EncryptUpdate(NULL input)` returns `CKR_ARGUMENTS_BAD` but leaves the encrypt op active (next init → `CKR_OPERATION_ACTIVE`). Same operation-non-termination class as kryoptic ([[project_operation_active_cascade]]). |
+| 1 | `test_rsa_key_wrapping.py` | 📋 | **KNOWN** — `C_WrapKey` on `CKA_EXTRACTABLE=False` (Type-B, documented HIGH "Non-extractable key is wrappable"). |
+| 1 | `test_set_attribute.py` | ⚖️ | **KNOWN (flagged-for-decision)** — `TestSetAttributeAtomicity` partial `CKA_LABEL` apply before rejecting read-only `CKA_CLASS`. Stricter-than-spec atomicity hardening flagged ⚖️ on softhsm2/kryoptic; PKCS#11 §5.7 does not mandate atomicity. |
+
+**Known vs new roll-up.** Of 130: the great majority are **KNOWN** — documented genuine nss
+findings (Type-A ML-DSA over-length, output-buffer overrun, HKDF non-operational, generated-IV,
+operation-non-termination, the softoken attribute-non-enforcement security family) kept `fail`, the
+two ⚖️ flagged stricter-than-spec hardening items, C-cluster crashes (KEEP), the probabilistic-noise
+pair, and the two already-accounted buckets (ML-DSA 8 confirmed, X25519 7 known-fixed-after). The
+**NEW** material this pass, all GENUINE nss (no harness bug), stays `fail` and is added to
+module-issues.md §NSS: (1) the attribute-length-validation gap (keygen 15 + object 6 = scalar-length
+family), (2) the empty-`CKA_ALLOWED_MECHANISMS` Type-B + ML-KEM permission-flag Type-Bs (the latter
+already had a HIGH row — confirmed), (3) the **nss-specific NULL-deref crash family** (api_boundary 4
++ ckr_null_params 2 + ckr_raw_args_bad 2 + GCM-NULL-AAD 1 = 9 SIGSEGVs where every other careful
+module returns `CKR_ARGUMENTS_BAD`), (4) the ChaCha20-Poly1305 KAT mismatch (Type-A; param-layout
+root-cause deferred), (5) the `CKM_RSA_X_509` leading-vs-trailing unwrap break (Type-A), and (6) the
+minor `C_Finalize`-after-`C_Finalize` lifecycle acceptance.
+
+### NEW — attribute-length-validation gap (`test_ckr_keygen` 15 + `test_ckr_object` 6) = GENUINE nss finding
+
+**Verdict: GENUINE FINDING (input-validation gap). No code change — the test classifies correctly;
+documented module-issues.md §NSS.**
+
+- **What.** Probes inject a syntactically-valid template attribute with a **wrong declared
+  `ulValueLen`** (a valid non-NULL pointer — *not* a lying buffer): a `CKA_TOKEN` `CK_BBOOL` given
+  `sizeof(CK_ULONG)`=8 bytes (`make_bool_attr_overlong`), or a `CKA_VALUE_LEN` / `CKA_CLASS` /
+  `CKA_KEY_TYPE` / ML-DSA+ML-KEM `CKA_PARAMETER_SET` `CK_ULONG` given 1 byte (underlong) or 9 bytes
+  (overlong) (`make_ulong_attr_with_length`). On `C_GenerateKey`, `C_GenerateKeyPair`,
+  `C_CreateObject`, `C_CopyObject`, **nss returns `CKR_OK`** and creates the object (rv-trace /
+  message: "accepted invalid (CKR_OK) -- must reject").
+- **Why it's the wrong thing.** PKCS#11 fixes each attribute's value length by type
+  (`CK_BBOOL`=1 byte, `CK_ULONG`=`sizeof(CK_ULONG)`); a value whose length does not match is
+  malformed and must be rejected (`CKR_ATTRIBUTE_VALUE_INVALID` / `CKR_TEMPLATE_INCONSISTENT`). The
+  `classify_negative_rv(rv, TEMPLATE_ERRORS, …)` helper `fail`s **only on outright `CKR_OK`
+  acceptance** — any clean reject (spec code → pass, other clean code → xfail) is honest. nss accepts.
+- **Test is sound, not over-strict, not UB.** The pointer handed to nss is valid and points at real
+  storage; only the declared length is wrong (this is the documented value-shape probe, *not* the
+  C-cluster lying-buffer UB). The module reads a real buffer and simply fails to length-check it.
+- **Cross-provider (fresh pool, definitive):** on the 7 non-PQC scalar nodeids,
+  **kryoptic (×3) / opencryptoki (×2) / wolfpkcs11 (×2) PASS** (reject); softhsm2 rejects 2 of 7 (its
+  documented narrower `CKA_TOKEN` gap). On the 8 ML-DSA/ML-KEM `CKA_PARAMETER_SET` nodeids,
+  **kryoptic (×3) / opencryptoki (×2) PASS**. On the 6 object-creation nodeids,
+  **softhsm2 (×3) + wolfpkcs11 (×2) PASS** (so nss is uniquely permissive on `C_CreateObject`).
+  **nss (all advertised variants) accepts every one.** Clean split → nss-specific length-validation gap.
+- **Confidence: HIGH.** Direct `CKR_OK`-accept messages, well-formed value-shape probes, and a clean
+  cross-provider split (every other careful provider rejects at least the subset it advertises).
+
+### NEW — `test_ckr_object::test_allowed_mechanisms_empty_null_pointer_enforced` (1) + `test_kem` permission flags (2) = GENUINE nss Type-B
+
+**Verdict: GENUINE Type-B self-contradiction. No code change — `classify_policy_enforcement` only
+`fail`s when both claimed AND violated; documented module-issues.md §NSS.**
+
+- **What.** (a) nss accepts an **empty** `CKA_ALLOWED_MECHANISMS` array (NULL_PTR, len 0) at
+  `C_CreateObject`, reads it back as `[]` (`claimed=True`), then **still** `C_EncryptInit`/`C_Encrypt`
+  succeeds with `CKM_AES_ECB` (`violated=True`). (b) ML-KEM key created `CKA_ENCAPSULATE=False` /
+  `CKA_DECAPSULATE=False` reads the flag back False, then `C_EncapsulateKey`/`C_DecapsulateKey`
+  succeeds.
+- **Why it's the wrong thing (Type-B).** The module *claimed* a protection (the attribute it reports
+  back) then *violated* it (performed the operation the attribute forbids) — a self-contradiction
+  that `fail`s by the model, not a single honest deviation.
+- **Cross-provider.** The empty-allow-list one: nss + opencryptoki fail; softhsm2/kryoptic/wolfpkcs11
+  enforce (pass). The ML-KEM permission flags: **nss-only** — kryoptic/opencryptoki/bouncyhsm/
+  wolfpkcs11 all enforce (pass). The ML-KEM rows are already a documented HIGH §NSS finding (confirmed
+  here); the empty-allow-list one is added.
+- **Confidence: HIGH.** The `classify_policy_enforcement` claim/effect gate plus the cross-provider
+  enforcement split.
+
+### NEW — nss-specific NULL-pointer SIGSEGV family (`test_api_boundary` 4 + `test_ckr_null_params` 2 + `test_ckr_raw_args_bad` 2 + GCM-NULL-AAD 1 = 9) = GENUINE nss crash findings
+
+**Verdict: GENUINE crash findings ("a segfault IS the finding"). No code change — KEEP `fail`;
+documented module-issues.md §NSS.**
+
+- **What.** nss softoken **SIGSEGVs (signal 11)** on `C_GetInfo(NULL)`, `C_GetSlotList(pulCount=NULL)`,
+  `C_DigestInit`/`C_GenerateKey`/`C_CreateObject`/`C_FindObjectsInit` with a NULL `pMechanism` or NULL
+  `pTemplate` (nonzero `count`), and `C_EncryptInit(CKM_AES_GCM)` with a NULL `pAAD` + nonzero
+  `ulAADLen`. The subprocess runner records `returncode < 0` and the test correctly `fail`s.
+- **Why it's a finding, not generic harness UB.** Per spec these calls must return
+  `CKR_ARGUMENTS_BAD`, not dereference NULL. The cross-provider split is decisive:
+  **softhsm2 / kryoptic / opencryptoki all survive and return `CKR_ARGUMENTS_BAD`** on the exact same
+  NULL-mechanism / NULL-template calls; only nss crashes. (For the GCM NULL-AAD one, softhsm2 also
+  crashes — a separately documented softhsm2 finding — but kryoptic/opencryptoki survive, so nss
+  crashing is still a real finding.) Because careful modules handle these NULLs gracefully, the nss
+  crash is an nss NULL-deref bug, not a harness-provoked-UB exclusion.
+- **Relation to the C-cluster.** The brief framed `test_api_boundary`/`ffi_null_pointer` as
+  Denis-KEEP harness-provoked UB; that KEEP stance holds (don't suppress), but for **nss specifically**
+  these are *distinguishing* genuine NULL-deref crashes (other providers don't crash) and are recorded
+  as such. `ffi_null_pointer` (7, NULL *data*-with-nonzero-len) stays in the broad C-cluster KEEP set.
+- **Confidence: HIGH.** Direct `returncode<0` signal-11 records + a clean cross-provider survival split.
+
+### NEW — `test_mech_encrypt::test_kat_vector[CHACHA20_POLY1305]` (1) = GENUINE nss Type-A KAT mismatch (param-layout root-cause DEFERRED)
+
+**Verdict: GENUINE Type-A (positive op, `CKR_OK` + WRONG output). Stays `fail`. Root-cause
+(genuine crypto bug vs nss's documented non-standard AEAD param layout) DEFERRED to a focused docker
+run — recorded honestly, not reclassified.**
+
+- **What.** nss accepts the standard `CK_SALSA20_CHACHA20_POLY1305_PARAMS` (`pNonce`/`ulNonceLen`,
+  `pAAD`/`ulAADLen`; 12-byte nonce, 16-byte AAD, 256-bit key) at `C_Encrypt` and returns ciphertext
+  `257028bd…` (32 B) + tag `b0312a45…`, which does **not** equal the vector.
+- **The vector is correct (verified independently).** Recomputed the KAT with
+  `cryptography`/OpenSSL `ChaCha20Poly1305.encrypt(iv, pt, aad)` → ct `b2af6bdc…`, tag `fc9c3b3b…`,
+  **byte-identical to the stored vector**. So the harness KAT is RFC-8439-correct; nss's output is
+  wrong. Per the model a positive op returning `CKR_OK` with wrong output is Type-A → `fail` (correct).
+- **Not a shared harness param bug.** bouncyhsm also fails this vector but with a **different** wrong
+  ciphertext (`dca3f69b…`); a shared harness miscomputation would give identical wrong output on both.
+  The builder uses the spec-standard struct.
+- **Why root-cause is deferred (honest).** module-issues.md §NSS already documents that nss's
+  ChaCha20-Poly1305 uses a **non-standard parameter format** (historically `CK_NSS_AEAD_PARAMS` with an
+  extra `ulTagLen`), which is why the Wycheproof path *rejects* the standard struct at `C_EncryptInit`
+  and xfails. Here nss *accepts* and computes — so either (i) nss genuinely mis-encrypts, or (ii) nss
+  silently reads the standard struct under its non-standard layout and encrypts under a shifted
+  nonce/tag-len. Distinguishing (i) vs (ii) needs a focused docker run that re-encrypts under
+  `CK_NSS_AEAD_PARAMS` and compares; cannot be settled from static pool data. The verdict (`fail`) is
+  the same under the model either way (wrong output on a valid input); only the upstream-report wording
+  depends on it. **Deferred to docker; flagged, not reclassified.**
+- **Confidence: HIGH that it `fail`s correctly; MEDIUM on the precise root cause** (the param-layout
+  caveat is why root-cause is deferred).
+
+### NEW — `test_mech_wrap::test_wrap_unwrap_aes_key[RSA_X_509]` (1) = GENUINE nss Type-A unwrap break
+
+**Verdict: GENUINE Type-A (wrap→unwrap roundtrip recovers a different key). Stays `fail`. No code
+change.**
+
+- **What.** With `CKM_RSA_X_509` (raw RSA, no padding) the decrypted block is a full modulus-width
+  block with the 16-byte AES key **right-justified** (trailing bytes, zero-padded on the left). nss
+  derives the unwrapped key from the **leading** bytes instead; the harness `_raw_rsa_unwrap_hint`
+  confirms `unwrapped_value == leading and != trailing`. A wrap→unwrap on the same nss module recovers
+  a different AES key (`2643ad30…` vs the original `5aa55aa5…`).
+- **Why it's the wrong thing (Type-A).** `CKM_RSA_X_509` unwrap must take the key from the low-order
+  (trailing) bytes of the raw block; taking the leading bytes yields a wrong key — a self-inconsistent
+  roundtrip (a real application would get garbage key material). opencryptoki passes this exact id.
+- **Confidence: HIGH.** Direct decrypt-mismatch + the leading-vs-trailing diagnostic, and a passing
+  cross-provider comparator (opencryptoki).
+
+### Code + docs this triage
+
+- **No code change.** No harness bug was proven on nss — every failing test is sound and
+  provider-general (the cross-provider splits are the proof). The two harness over-strictness classes
+  that touch nss (X25519 jwk, ML-DSA-sign clean-reject) were already fixed in the kryoptic pass
+  (9908f272 / 439fc3a1) and drop next run.
+- module-issues.md §NSS: NEW entries — attribute-length-validation gap (keygen + object creation);
+  empty-`CKA_ALLOWED_MECHANISMS` Type-B; nss-specific NULL-pointer SIGSEGV family; ChaCha20-Poly1305
+  KAT mismatch (Type-A, param-layout root-cause deferred); `CKM_RSA_X_509` leading-vs-trailing unwrap
+  break (Type-A); minor `C_Finalize`-after-`C_Finalize` acceptance. All stay `fail`
+  ("failures ARE findings").
+- **Deferred (docker):** ChaCha20-Poly1305 KAT param-layout root-cause (genuine mis-encrypt vs
+  non-standard `CK_NSS_AEAD_PARAMS` re-read) — verdict unchanged, only upstream-report wording pends.
