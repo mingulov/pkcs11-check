@@ -9,6 +9,7 @@ from pkcs11_check.raw.types_std import (
     CKM_CAST128_ECB,
     CKM_RC2_CBC,
     CKM_RC2_ECB,
+    CKM_RC4,
     CKM_RC5_CBC,
     CKM_RC5_ECB,
 )
@@ -99,3 +100,18 @@ def test_rc5_cbc_vector_params_replay_rounds_word_bits_and_iv() -> None:
     assert ctypes.string_at(params.params.pIv, params.params.ulIvLen) == bytes.fromhex(
         vec["params"]["iv_hex"]
     )
+
+
+def test_rc4_encrypt_mechanism_has_rfc6229_kat_vectors() -> None:
+    config = MECHANISM_REGISTRY[int(CKM_RC4)]
+    assert config.vector_file == "rc4.json"
+
+    vectors = load_positive_vectors("rc4.json")
+    assert vectors, "rc4.json must contain positive vectors"
+    for vec in vectors:
+        assert vec["type"] == "positive"
+        assert vec["key_hex"]
+        assert vec["plaintext_hex"] == "00" * 32
+        assert vec["ciphertext_hex"]
+        assert vec["params"]["source"] == "RFC 6229 section 2"
+        assert vec["params"]["offset"] == 0

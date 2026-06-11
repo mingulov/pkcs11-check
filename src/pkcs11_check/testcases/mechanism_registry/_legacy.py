@@ -249,6 +249,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=True,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC,
+        vector_file="rc4.json",
         notes="RC4 stream cipher: no IV or params needed, stateful (never reuse key+nonce)",
     )
 
