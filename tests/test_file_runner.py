@@ -3239,6 +3239,62 @@ def test_write_isolated_json_report_preserves_crashed_test_unit(tmp_path: Path) 
     assert unit["tests"][0]["stderr"] == "segmentation fault"
 
 
+def test_write_isolated_json_report_crash_status_wins_over_failed_count(
+    tmp_path: Path,
+) -> None:
+    state = FileRunState(
+        units=["test_a.py::test_bad", "test_a.py::test_crash"],
+        fingerprint="abc123",
+        results=[
+            FileRunResult("test_a.py::test_bad", "failed", 1, 0.2),
+            FileRunResult(
+                "test_a.py::test_crash",
+                "crashed",
+                -11,
+                0.4,
+                stderr="segmentation fault",
+            ),
+        ],
+    )
+    per_unit_details = {
+        "test_a.py::test_bad": {
+            "counts": {
+                "passed": 0,
+                "failed": 1,
+                "skipped": 0,
+                "xfailed": 0,
+                "xpassed": 0,
+                "error": 0,
+            },
+            "tests": [
+                {
+                    "nodeid": "test_a.py::test_bad",
+                    "outcome": "failed",
+                    "duration": 0.2,
+                    "longrepr": "assert False",
+                }
+            ],
+        }
+    }
+    report_path = tmp_path / "results.json"
+
+    write_isolated_json_report(report_path, state, per_unit_details=per_unit_details)
+
+    report = json.loads(report_path.read_text())
+    assert report["summary"]["failed"] == 1
+    assert report["summary"]["crashed"] == 1
+    unit = report["units"][0]
+    assert unit["target"] == "test_a.py"
+    assert unit["status"] == "crashed"
+    assert unit["counts"]["failed"] == 1
+    assert unit["counts"]["crashed"] == 1
+    outcomes = {record["nodeid"]: record["outcome"] for record in unit["tests"]}
+    assert outcomes == {
+        "test_a.py::test_bad": "failed",
+        "test_a.py::test_crash": "crashed",
+    }
+
+
 # ---------------------------------------------------------------------------
 # _read_jsonl_results / _map_outcome / _flatten_longrepr
 # ---------------------------------------------------------------------------

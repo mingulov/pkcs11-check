@@ -617,7 +617,7 @@ def _merge_special_entries_into_detail(
 
 def _overall_unit_status(file_results: list[FileRunResult]) -> str:
     seen = {result.status for result in file_results}
-    for status in ("failed", "crashed", "timeout", "crash_limited", "passed", "empty", "escalated"):
+    for status in ("timeout", "crashed", "failed", "crash_limited", "passed", "empty", "escalated"):
         if status in seen:
             return status
     return file_results[0].status
