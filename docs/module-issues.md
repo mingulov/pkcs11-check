@@ -126,6 +126,23 @@ provider package versions where the finding was first recorded.
   self-contradiction: once operation init accepts the key, the provider has
   claimed the operation is valid. Detected by
   `test_ckr_wrong_key_type_hardening.py::TestWrongAsymmetricKeyTypeContinuation`.
+- **EC public-key import accepts an unknown curve OID (Type-A, NEW 2026-06-11)**:
+  `C_CreateObject` of a `CKO_PUBLIC_KEY` / `CKK_EC` with
+  `CKA_EC_PARAMS = 06 05 DE AD BE EF 00` (a syntactically-valid DER OBJECT
+  IDENTIFIER that resolves to **no known curve**) and a bogus uncompressed point
+  (`04 || 01×64`) returns **`CKR_OK`** instead of rejecting the unknown domain
+  parameters. rv-trace: `C_CreateObject → CKR_OK`, `C_DestroyObject → CKR_OK`. A
+  public key with no valid curve must be rejected with `CKR_CURVE_NOT_SUPPORTED`,
+  `CKR_DOMAIN_PARAMS_INVALID`, `CKR_ATTRIBUTE_VALUE_INVALID`, or
+  `CKR_TEMPLATE_INCONSISTENT`; accepting it admits an unverifiable/garbage key
+  object into the store (CVE-2021-3798 missing-EC-curve-validation pattern), a
+  crypto-correctness break. **softhsm2-specific:** in the fresh 2026-06-11 pool,
+  softhsm2 and softhsm2-main are the **only** modules that accept it — kryoptic
+  (all variants), NSS, opencryptoki, bouncyhsm, and tpm2 all reject (pass), and
+  wolfpkcs11 / corepkcs11 reject with a non-spec clean code (xfail). Affects
+  SoftHSM2 2.7.0 and main. Detected by:
+  `test_cve_regression.py::TestInvalidECCurve::test_import_ec_key_with_bad_oid`.
+  Reportable upstream.
 
 ### Known quirks
 - `C_GetObjectSize` returns `CK_UNAVAILABLE_INFORMATION` (not implemented)

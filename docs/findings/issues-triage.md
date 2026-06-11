@@ -714,3 +714,80 @@ identically across three independent pool snapshots; NSS otherwise rejects 380/3
 residual not directly observed here is upstream root-cause line in NSS softoken (no NSS 3.120.1 source
 to hand; system NSS is 3.98 and does not advertise ML-DSA, so a local re-exec could not reproduce the
 exact build) — that is a *report-detail* gap, not a determination gap.
+
+## softhsm2 long-tail triage 2026-06-11
+
+**Scope.** Full triage of **every** `outcome:failed` (`when:call`) record in the fresh VALIDATED
+pool `artifacts/softhsm2-pooled/report.jsonl`. softhsm2 is the suite's correctness baseline
+("must stay byte-identical"), so each hard fail is high-signal. **Total: 65 failed call records,
+across 11 files** (matches the post-merge regression gate above and the pool-comparison `171→65`).
+
+**Method.** Aggregated by `(file, normalized message)`; cross-checked each bucket against the
+softhsm2 section of [module-issues.md](../module-issues.md), the determinations above, and the
+[pool-2026-06-10-comparison.md](pool-2026-06-10-comparison.md) validation. Cross-provider outcome
+pulled from every `<provider>-pooled/report.jsonl` in the fresh pool for the one genuine new finding.
+
+### Bucket table (file → count → determination)
+
+| Count | File | Class | Determination |
+|---|---|---|---|
+| 22 | `security/test_ffi_length_boundary.py` | 💥→🔧 | **KNOWN** — C2/C-cluster harness-provoked UB (lying buffer length / isize_max + huge-len subprocess exits). Denis 2026-06-10: KEEP as-is ("a segfault IS the finding"). Documented module-issues.md §SoftHSM2. |
+| 18 | `security/test_arithmetic_overflow.py` | 💥→🔧 | **KNOWN** — C-cluster template/keypair/derive count-overflow SIGSEGV (`ulCount=ULONG_MAX`). HIGH module crash finding, documented module-issues.md §SoftHSM2 ("HIGH — SIGSEGV on integer-overflow template_count"); also the lying-buffer UB class flagged for decision. KEEP as-is. |
+| 9 | `security/test_parameter_validation.py` | ⚖️ + 💥 | **KNOWN, MIXED.** 8 = deliberate stricter-than-spec GCM hardening (0/8/32/64-bit tag, empty/1-/4-byte IV, IV-reuse) — ⚖️ flagged-for-Denis policy (spec-legal weak params), left as-is. 1 = `TestGcmAadNullWithLength` GCM **NULL-AAD-pointer-with-nonzero-length SIGSEGV** = GENUINE softhsm2 crash, documented module-issues.md §SoftHSM2. |
+| 5 | `ckr/test_ckr_keygen.py` | 🔧→📋 | **KNOWN** — `CKA_TOKEN` scalar-length validation gap (BBOOL given `sizeof(CK_ULONG)`) accepted on AES/RSA/EC keygen+keypair. Documented module-issues.md §SoftHSM2 ("CKA_TOKEN scalar-length validation missing"). The ULONG-overlong-length probes are the C-cluster value-shape class; documented module finding, not reclassified. |
+| 4 | `acvp/test_acvp_eddsa.py` | ⚖️ | **KNOWN (flagged-for-decision)** — `TestEdDsaKeyVer` invalid-EdDSA-key acceptance (ED-25519 tc1/tc4, ED-448 tc6/tc8). The triage above (§"two categories", EdDSA-keyver paragraph) flagged this ⚖️: RFC 8032 does NOT require a verifier to reject non-canonical/small-order pubkeys, so it leans over-strict but needs an Edwards-point (off-curve vs small-order) analysis before any reclassify. Stays `fail`, not blindly changed. NOT yet in module-issues.md §SoftHSM2 (sigver is; keyver is not) — **doc gap, recorded here.** |
+| 2 | `security/test_cve_regression.py` | 📋 + ⚠️**NEW** | **SPLIT.** `TestTookanUnwrapAttrs::test_unwrapped_key_cannot_unset_sensitive` = KNOWN Tookan §3.3 sensitive-key-boundary finding (documented module-issues.md §SoftHSM2 main). `TestInvalidECCurve::test_import_ec_key_with_bad_oid` = **GENUINE NEW softhsm2 Type-A finding** — see determination below. |
+| 1 | `security/test_tookan.py` | 📋 | **KNOWN** — `TestKeyTypeConfusionOnUnwrap::test_unwrap_aes_as_des3_rejected` (unwrap AES-KW blob as CKK_DES3). Documented module-issues.md §SoftHSM2 main. |
+| 1 | `ckr/test_ckr_sign.py` | ⚖️ | **KNOWN** — `TestSignInitErrors::test_key_type_inconsistent` (lenient `C_SignInit(CKM_ECDSA, RSA key)`). First-line init-only strictness, flagged-for-decision (continuation probe is authoritative; the op is safe). Documented module-issues.md §SoftHSM2 ("Lenient wrong-key-type at C_SignInit/C_VerifyInit … but SAFE at the operation"). |
+| 1 | `ckr/test_ckr_verify.py` | ⚖️ | **KNOWN** — `TestVerifyInitErrors::test_key_type_inconsistent`, same class as above. Documented. |
+| 1 | `test_mech_negative.py` | ⚖️ | **KNOWN** — `TestWrongKeyType::test_ecdsa_with_rsa_key_rejected`, same lenient-init first-line class. Documented. |
+| 1 | `test_set_attribute.py` | ⚖️ | **KNOWN** — `TestSetAttributeAtomicity` partial CKA_LABEL apply before rejecting read-only CKA_CLASS. Determined above (§"second cross-provider sweep") = deliberate stricter-than-spec atomicity hardening; PKCS#11 §5.7 does not mandate atomicity; flagged-for-decision, stays `fail`. |
+
+**Known vs new roll-up:** 64 of 65 are KNOWN — each is either (a) a documented genuine softhsm2
+crash/validation finding (kept failing per "a segfault IS the finding"), or (b) a ⚖️
+flagged-for-decision stricter-than-spec hardening / first-line-init policy item that Denis left
+as-is. **1 is NEW and un-triaged:** the bad-OID EC public-key import acceptance.
+
+### NEW — `TestInvalidECCurve::test_import_ec_key_with_bad_oid` = GENUINE softhsm2 Type-A finding
+
+**Verdict: GENUINE FINDING (Type-A crypto-correctness), not harness over-strictness. No code change —
+the test classifies correctly; documented in module-issues.md §SoftHSM2.**
+
+- **What.** `test_cve_regression.py::TestInvalidECCurve::test_import_ec_key_with_bad_oid`
+  (CVE-2021-3798 pattern) does `C_CreateObject` of a `CKO_PUBLIC_KEY`/`CKK_EC` with
+  `CKA_EC_PARAMS = 06 05 DE AD BE EF 00` (a syntactically-valid DER OID for a **nonexistent**
+  curve) and a bogus uncompressed point `04 || 01*64`. **softhsm2 returns `CKR_OK`** (rv-trace:
+  `C_CreateObject → CKR_OK`, `C_DestroyObject → CKR_OK`). Identical on `softhsm2` (2.7.0) and
+  `softhsm2-main`.
+- **Why it's the wrong thing (Type-A).** Importing an EC public key whose curve OID resolves to no
+  known curve must be rejected (`CKR_CURVE_NOT_SUPPORTED` / `CKR_DOMAIN_PARAMS_INVALID` /
+  `CKR_ATTRIBUTE_VALUE_INVALID` / `CKR_TEMPLATE_INCONSISTENT`). Accepting a public key with no valid
+  domain parameters is a crypto-correctness break (an unverifiable/garbage key object enters the
+  store as if usable). The classifier `reject_or_classify(None, …)` correctly `fail`s on acceptance.
+- **Test is sound, not over-strict.** `_INVALID_EC_CURVE_REJECT_RVS` is a 4-code reject set; ANY
+  clean reject → pass/xfail. Only outright acceptance fails. The harness presents the OID verbatim
+  (no mis-encoding). This is the same negative-op classification model used project-wide.
+- **Cross-provider check (fresh pool, definitive — this is softhsm2-specific):**
+  kryoptic / kryoptic-main / kryoptic-fips / nss / nss-main / opencryptoki / opencryptoki-master /
+  bouncyhsm / tpm2 all **PASS** (reject with an expected code). wolfpkcs11 / wolfpkcs11-master /
+  corepkcs11 **xfail** (reject with a non-spec clean code — `CKR_FUNCTION_FAILED` / `CKR_ARGUMENTS_BAD`).
+  **Only softhsm2 (both variants) ACCEPTS** → softhsm2-specific validation gap, high-confidence genuine.
+- **Action.** Documented under module-issues.md §SoftHSM2 (Type-A, EC domain-param validation gap).
+  No harness change — keeping it failing is correct ("failures ARE findings"). Reportable upstream
+  (SoftHSM2 should reject EC public-key import with an unknown `CKA_EC_PARAMS` OID).
+- **Confidence: HIGH.** Direct rv-trace evidence (CKR_OK accept), reproduced on both softhsm2
+  variants, and a clean cross-provider split (every other careful provider rejects). Not previously
+  in module-issues.md §SoftHSM2 (the section documents EdDSA EC_POINT and SigVer issues, not this
+  bad-OID import path) → genuinely new this triage.
+
+### Probabilistic-noise note (not in the softhsm2 fail set, recorded for completeness)
+
+`security/test_padding_oracle.py` and `security/test_arithmetic_overflow.py` randomized
+oracle/overflow flips that the pool-comparison R3 lists for *other* providers (and which the
+post-merge gate mentioned for softhsm2-generated-iv) are the documented cross-run nondeterminism
+([[reference_oracle_tests_probabilistic]]); in **this** fresh `softhsm2-pooled` snapshot they did
+not land in the fail set. Verify-don't-alarm; **no action.**
+
+**No code change this triage** — 64/65 were already documented/flagged; the 1 new is a genuine
+softhsm2 finding that stays `fail` and is added to module-issues.md (documentation only). No HARNESS
+bug was proven on softhsm2 in this pass.
