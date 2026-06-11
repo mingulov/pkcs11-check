@@ -25,10 +25,12 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_DSA_65,
     CKP_ML_DSA_87,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DATA_INVALID,
+    CKR_KEY_SIZE_RANGE,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import is_known_error, reject_or_classify
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc]
@@ -68,10 +70,18 @@ _MLDSA_SIGN_FILES = [
     ("mldsa_87_sign_noseed_test.json", CKP_ML_DSA_87),
 ]
 
+# Spec-correct CKRs for a malformed-key import rejection at C_CreateObject.
+# CKR_ATTRIBUTE_VALUE_INVALID: the key value attribute is invalid (spec §5.2).
+# CKR_TEMPLATE_INCOMPLETE / _INCONSISTENT: template shape errors (spec §11.7).
+# CKR_KEY_SIZE_RANGE: key material is the wrong size (covers IncorrectPrivateKeyLength).
+# CKR_DATA_INVALID: data is structurally invalid (some modules use this for decode failures).
+# Any OTHER clean code (e.g. kryoptic CKR_DEVICE_ERROR) is a recorded deviation (xfail).
 _MLDSA_PRIVATE_IMPORT_REJECT_CKRS = (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_DATA_INVALID,
 )
 
 _MLDSA_INVALID_PRIVATE_KEY_FLAGS = frozenset(
@@ -138,13 +148,19 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_module_session: Any) -
     except CkrAssertionError as exc:
         exc_msg = str(exc)
         # A vector whose invalidity IS the private key (out-of-range s1/s2,
-        # wrong length) is correctly rejected at import: rejecting malformed
-        # key material is the right direction, so ANY clean CKR reject -> pass,
-        # not only the 3 template codes.  kryoptic rejects these with
-        # CKR_DEVICE_ERROR (its crypto-layer decode failure code); softhsm2/
-        # nss/wolfpkcs11 instead accept the bytes and sign (lenient, handled
-        # in the sign branch).  Both are honest; neither is a fail.
+        # wrong length) is correctly rejected at import.  Per the classification
+        # model (CLAUDE.md table): rejection with the expected spec CKR = pass;
+        # rejection with SOME OTHER clean code = xfail (recorded deviation).
+        # kryoptic rejects these with CKR_DEVICE_ERROR (its crypto-layer decode
+        # failure code); softhsm2/nss/wolfpkcs11 instead accept the bytes and
+        # sign (lenient, handled in the sign branch).  Both are honest; neither
+        # is a fail.  reject_or_classify enforces the 3-way model here.
         if result == "invalid" and _has_flag(vec, _MLDSA_INVALID_PRIVATE_KEY_FLAGS):
+            reject_or_classify(
+                exc,
+                _MLDSA_PRIVATE_IMPORT_REJECT_CKRS,
+                label=f"{vec_id}: InvalidPrivateKey import reject",
+            )
             return
         if is_known_error(exc, _MLDSA_PRIVATE_IMPORT_REJECT_CKRS):
             pytest.xfail(f"ML_DSA advertised but private-key import is not operational: {exc_msg}")
