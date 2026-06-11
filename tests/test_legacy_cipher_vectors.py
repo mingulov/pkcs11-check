@@ -8,8 +8,10 @@ from pkcs11_check.raw.types_std import (
     CKM_BLOWFISH_CBC,
     CKM_CAST128_CBC,
     CKM_CAST128_ECB,
+    CKM_CAST128_MAC_GENERAL,
     CKM_IDEA_CBC,
     CKM_IDEA_ECB,
+    CKM_IDEA_MAC_GENERAL,
     CKM_RC2_CBC,
     CKM_RC2_ECB,
     CKM_RC4,
@@ -207,6 +209,43 @@ def test_idea_cbc_vector_params_replay_iv() -> None:
     assert ctypes.string_at(params.ck.pParameter, params.ck.ulParameterLen) == bytes.fromhex(
         vec["params"]["iv_hex"]
     )
+
+
+def test_idea_mac_general_mechanism_has_nessie_kat_vector() -> None:
+    config = MECHANISM_REGISTRY[int(CKM_IDEA_MAC_GENERAL)]
+    assert config.vector_file == "idea_mac_general.json"
+
+    vectors = load_positive_vectors("idea_mac_general.json")
+    assert vectors, "idea_mac_general.json must contain positive vectors"
+    for vec in vectors:
+        assert vec["type"] == "positive"
+        assert vec["mechanism_name"] == "CKM_IDEA_MAC_GENERAL"
+        assert vec["key_hex"] == "80000000000000000000000000000000"
+        assert vec["input_hex"] == "0000000000000000"
+        assert vec["mac_hex"] == "b1f5f7f87901370f"
+        assert vec["params"]["source"] == (
+            "NESSIE IDEA verified test vectors via pyca cryptography; "
+            "one-block CBC-MAC with zero IV equals IDEA-ECB"
+        )
+        assert vec["params"]["mac_len"] == 8
+
+
+def test_cast128_mac_general_mechanism_has_rfc2144_kat_vector() -> None:
+    config = MECHANISM_REGISTRY[int(CKM_CAST128_MAC_GENERAL)]
+    assert config.vector_file == "cast128_mac_general.json"
+
+    vectors = load_positive_vectors("cast128_mac_general.json")
+    assert vectors, "cast128_mac_general.json must contain positive vectors"
+    for vec in vectors:
+        assert vec["type"] == "positive"
+        assert vec["mechanism_name"] == "CKM_CAST128_MAC_GENERAL"
+        assert vec["key_hex"] == "0123456712345678234567893456789a"
+        assert vec["input_hex"] == "0123456789abcdef"
+        assert vec["mac_hex"] == "238b4fe5847e44b2"
+        assert vec["params"]["source"] == (
+            "RFC 2144 appendix B.1; one-block CBC-MAC with zero IV equals CAST-128 ECB"
+        )
+        assert vec["params"]["mac_len"] == 8
 
 
 def test_twofish_cbc_encrypt_mechanism_has_schneier_kat_vector() -> None:

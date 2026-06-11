@@ -405,6 +405,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_mac_general,
         keygen_recipe=_fixed,
         expected_flags=_SIG_VER,
+        vector_file="idea_mac_general.json",
         notes="IDEA-MAC-GENERAL: variable-length MAC (CK_MAC_GENERAL_PARAMS)",
     )
 
@@ -626,6 +627,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_mac_general,
         keygen_recipe=_sym,
         expected_flags=_SIG_VER,
+        vector_file="cast128_mac_general.json",
         notes="CAST128-MAC-GENERAL: variable-length MAC; CKM_CAST5_MAC_GENERAL is an alias",
     )
 

@@ -431,6 +431,11 @@ Legacy/deprecated coverage addendum for the active goal:
   output, plus vector-param replay for word size, rounds, and MAC length.
   Fixed-length `CKM_RC5_MAC` still needs a clearer source for its mandated
   truncation length before adding an expected-output KAT.
+- Added: `CKM_IDEA_MAC_GENERAL` and `CKM_CAST128_MAC_GENERAL` now have
+  full-block expected-MAC vectors derived from the existing IDEA NESSIE and
+  CAST-128 RFC 2144 one-block ECB KATs under the same zero-IV CBC-MAC
+  equivalence. Remaining MAC_GENERAL gaps should continue family by family
+  only where the block KAT source and PKCS#11 parameter mapping are clear.
 
 Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks
 should follow once the harness can reuse provider-local history and prove
