@@ -1,0 +1,48 @@
+"""Guardrails for registry-driven mechanism-negative coverage."""
+
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+MECH_NEGATIVE = REPO / "src" / "pkcs11_check" / "testcases" / "test_mech_negative.py"
+
+
+def _source() -> str:
+    return MECH_NEGATIVE.read_text()
+
+
+def _fixture_names() -> set[str]:
+    tree = ast.parse(_source())
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for arg in node.args.args:
+            names.add(arg.arg)
+    return names
+
+
+def test_negative_tests_use_registry_operation_fixtures() -> None:
+    """Negative coverage must scale beyond the fixed explicit examples."""
+    fixtures = _fixture_names()
+
+    for fixture in ("mech_encrypt_entry", "mech_sign_entry", "mech_wrap_entry"):
+        assert fixture in fixtures
+
+
+def test_permission_negatives_use_three_way_classification() -> None:
+    """Accepted forbidden ops fail; non-spec clean rejects xfail rather than disappearing."""
+    source = _source()
+
+    assert "classify_negative_rv(" in source
+    assert "classify_policy_enforcement(" in source
+
+
+def test_wrong_key_negatives_are_registry_driven() -> None:
+    """Wrong-key-type negatives should not be limited to named smoke examples."""
+    source = _source()
+
+    assert "test_registry_encrypt_wrong_key_type" in source
+    assert "test_registry_sign_wrong_key_type" in source
