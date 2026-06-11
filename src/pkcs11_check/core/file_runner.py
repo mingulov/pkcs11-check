@@ -943,11 +943,15 @@ def write_isolated_report(
 
 def _load_report_log_records(jsonl_path: Path) -> list[dict[str, Any]]:
     """Load parseable JSONL report-log records from disk (streamed line-by-line)."""
-    records: list[dict[str, Any]] = []
+    return list(_iter_report_log_records(jsonl_path))
+
+
+def _iter_report_log_records(jsonl_path: Path) -> Iterable[dict[str, Any]]:
+    """Yield parseable JSONL report-log records from disk line-by-line."""
     try:
         fh = jsonl_path.open(encoding="utf-8")
     except (FileNotFoundError, OSError):
-        return []
+        return
     with fh:
         for line in fh:
             line = line.strip()
@@ -958,8 +962,7 @@ def _load_report_log_records(jsonl_path: Path) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
             if isinstance(rec, dict):
-                records.append(rec)
-    return records
+                yield rec
 
 
 def _report_record_cache_dir(state_file: Path) -> Path:
@@ -1146,14 +1149,21 @@ def _extract_unit_report_records_from_jsonl(
     candidate_targets: set[str],
 ) -> dict[str, list[dict[str, Any]]]:
     """Split a merged report.jsonl back into per-unit record chunks."""
-    records = _load_report_log_records(jsonl_path)
-    if not records:
-        return {}
-
-    chunks: list[list[dict[str, Any]]] = []
+    records_by_unit: dict[str, list[dict[str, Any]]] = {}
     current_chunk: list[dict[str, Any]] = []
     current_target: str | None = None
-    for record in records:
+
+    def flush_current_chunk() -> None:
+        nonlocal current_chunk, current_target
+        if not current_chunk:
+            return
+        unit_target = _infer_unit_target_from_records(current_chunk, candidate_targets)
+        if unit_target is not None:
+            records_by_unit.setdefault(unit_target, []).extend(current_chunk)
+        current_chunk = []
+        current_target = None
+
+    for record in _iter_report_log_records(jsonl_path):
         record_target = _unit_candidate_from_record(record, candidate_targets)
         if (
             current_chunk
@@ -1161,25 +1171,14 @@ def _extract_unit_report_records_from_jsonl(
             and record_target is not None
             and record_target != current_target
         ):
-            chunks.append(current_chunk)
-            current_chunk = []
-            current_target = None
+            flush_current_chunk()
         current_chunk.append(record)
         if current_target is None and record_target is not None:
             current_target = record_target
         if record.get("$report_type") == "CoverageReport":
-            chunks.append(current_chunk)
-            current_chunk = []
-            current_target = None
-    if current_chunk:
-        chunks.append(current_chunk)
+            flush_current_chunk()
 
-    records_by_unit: dict[str, list[dict[str, Any]]] = {}
-    for chunk in chunks:
-        unit_target = _infer_unit_target_from_records(chunk, candidate_targets)
-        if unit_target is None:
-            continue
-        records_by_unit.setdefault(unit_target, []).extend(chunk)
+    flush_current_chunk()
     return records_by_unit
 
 

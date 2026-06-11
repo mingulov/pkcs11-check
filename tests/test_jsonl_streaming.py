@@ -11,7 +11,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from pkcs11_check.core import file_runner as file_runner_mod
 from pkcs11_check.core.file_runner import (
+    _extract_unit_report_records_from_jsonl,
     _load_report_log_records,
     extract_coverage_from_jsonl,
     extract_quality_report_records_from_jsonl,
@@ -110,6 +114,47 @@ def test_load_report_log_records_returns_all_dicts(tmp_path: Path) -> None:
 
 def test_load_report_log_records_missing_file_is_empty(tmp_path: Path) -> None:
     assert _load_report_log_records(tmp_path / "nope.jsonl") == []
+
+
+def test_extract_unit_report_records_streams_without_load_all(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    p = tmp_path / "report.jsonl"
+    records = [
+        {"$report_type": "SessionStart"},
+        {
+            "$report_type": "TestReport",
+            "nodeid": "a.py::test_one",
+            "when": "call",
+            "outcome": "passed",
+        },
+        {
+            "$report_type": "CoverageReport",
+            "function_coverage": {"called_names": ["C_Initialize"]},
+        },
+        {
+            "$report_type": "TestReport",
+            "nodeid": "b.py::test_two",
+            "when": "call",
+            "outcome": "failed",
+        },
+        {"$report_type": "SessionFinish"},
+    ]
+    p.write_text("".join(json.dumps(record) + "\n" for record in records))
+
+    def _load_all_forbidden(_path: Path) -> list[dict[str, object]]:
+        pytest.fail("_extract_unit_report_records_from_jsonl must stream records")
+
+    monkeypatch.setattr(file_runner_mod, "_load_report_log_records", _load_all_forbidden)
+
+    assert _extract_unit_report_records_from_jsonl(
+        p,
+        candidate_targets={"a.py", "b.py"},
+    ) == {
+        "a.py": records[:3],
+        "b.py": records[3:],
+    }
 
 
 def test_quality_records_keep_only_test_and_selection_reports(tmp_path: Path) -> None:
