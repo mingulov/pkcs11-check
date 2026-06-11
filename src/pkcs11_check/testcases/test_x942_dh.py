@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import byref
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -23,6 +23,7 @@ from pkcs11_check.raw.pack import (
     LengthArg,
     PackedMechanism,
     PointerArg,
+    attr_bool,
     attr_bytes,
     attr_ulong,
     mech_simple,
@@ -33,9 +34,10 @@ from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
     encrypt_single,
+    get_mechanism_info,
     read_attributes,
 )
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CK_MECHANISM,
     CK_OBJECT_HANDLE,
@@ -48,8 +50,10 @@ from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_PRIME,
+    CKA_PRIME_BITS,
     CKA_SENSITIVE,
     CKA_SUBPRIME,
+    CKA_SUBPRIME_BITS,
     CKA_TOKEN,
     CKA_VALUE,
     CKD_NULL,
@@ -58,9 +62,24 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_X9_42_DH_DERIVE,
     CKM_X9_42_DH_KEY_PAIR_GEN,
+    CKM_X9_42_DH_PARAMETER_GEN,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
 
@@ -100,6 +119,61 @@ X942_GEN = bytes.fromhex(
 
 X942_SUBPRIME = bytes.fromhex("8CF83642A709A097B447997640129DA299B1A47D1EB3750BA308B0FE64F5FBD3")
 
+_X942_PARAM_PRIME_BITS = 2048
+_X942_PARAM_SUBPRIME_BITS = 256
+_X942_PARAM_SIZE_CANDIDATES = (
+    (1024, 160),
+    (_X942_PARAM_PRIME_BITS, _X942_PARAM_SUBPRIME_BITS),
+)
+
+_X942_PARAMETER_SIZE_REJECT_RVS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+)
+
+_X942_PARAMETER_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+_X942_KEYPAIR_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+_X942_DERIVE_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -116,14 +190,20 @@ def _skip_no_x942_derive(rs: Any) -> None:
         pytest.skip("CKM_X9_42_DH_DERIVE not supported")
 
 
-def _generate_x942_keypair(rs: Any) -> tuple[int, int]:
+def _generate_x942_keypair(
+    rs: Any,
+    *,
+    prime: bytes = X942_PRIME_2048,
+    base: bytes = X942_GEN,
+    subprime: bytes = X942_SUBPRIME,
+) -> tuple[int, int]:
     """Generate an X9.42 DH keypair using RFC 5114 parameters via raw C_GenerateKeyPair."""
     pub_tmpl = template(
         attr_ulong(CKA_CLASS, 0x00000002),  # CKO_PUBLIC_KEY
         attr_ulong(CKA_KEY_TYPE, CKK_X9_42_DH),
-        attr_bytes(CKA_PRIME, X942_PRIME_2048),
-        attr_bytes(CKA_BASE, X942_GEN),
-        attr_bytes(CKA_SUBPRIME, X942_SUBPRIME),
+        attr_bytes(CKA_PRIME, prime),
+        attr_bytes(CKA_BASE, base),
+        attr_bytes(CKA_SUBPRIME, subprime),
     )
     priv_tmpl = template(
         attr_ulong(CKA_CLASS, 0x00000003),  # CKO_PRIVATE_KEY
@@ -142,8 +222,143 @@ def _generate_x942_keypair(rs: Any) -> tuple[int, int]:
         byref(pub_h),
         byref(priv_h),
     )
-    assert rv == CKR_OK, f"C_GenerateKeyPair failed: {ckr_name(rv)}"
+    expect_rv(rv, CKR_OK)
     return pub_h.value, priv_h.value
+
+
+def _generate_x942_params(
+    raw: Any,
+    sh: int,
+    *,
+    prime_bits: int = _X942_PARAM_PRIME_BITS,
+    subprime_bits: int = _X942_PARAM_SUBPRIME_BITS,
+) -> int:
+    """Generate an X9.42 DH domain-parameter object."""
+    tmpl = template(
+        attr_ulong(CKA_PRIME_BITS, prime_bits),
+        attr_ulong(CKA_SUBPRIME_BITS, subprime_bits),
+        attr_bool(CKA_TOKEN, False),
+    )
+    dp_handle = CK_OBJECT_HANDLE(0)
+    mech = mech_simple(CKM_X9_42_DH_PARAMETER_GEN)
+    rv = raw.C_GenerateKey(
+        sh,
+        mech.byref(),
+        tmpl.ptr,
+        tmpl.count,
+        byref(dp_handle),
+    )
+    expect_rv(rv, CKR_OK)
+    return dp_handle.value
+
+
+def _read_x942_params(
+    raw: Any,
+    sh: int,
+    dp_handle: int,
+    *,
+    expected_prime_bits: int = _X942_PARAM_PRIME_BITS,
+    expected_subprime_bits: int = _X942_PARAM_SUBPRIME_BITS,
+) -> tuple[bytes, bytes, bytes]:
+    attrs = read_attributes(
+        raw,
+        sh,
+        dp_handle,
+        [CKA_PRIME, CKA_BASE, CKA_SUBPRIME, CKA_PRIME_BITS, CKA_SUBPRIME_BITS],
+    )
+    prime = attrs[CKA_PRIME]
+    base = attrs[CKA_BASE]
+    subprime = attrs[CKA_SUBPRIME]
+    prime_bits = attrs[CKA_PRIME_BITS]
+    subprime_bits = attrs[CKA_SUBPRIME_BITS]
+
+    assert isinstance(prime, bytes)
+    assert isinstance(base, bytes)
+    assert isinstance(subprime, bytes)
+    assert prime_bits == expected_prime_bits
+    assert subprime_bits == expected_subprime_bits
+    assert len(prime) * 8 >= expected_prime_bits
+    assert len(base) > 0
+    assert len(subprime) * 8 >= expected_subprime_bits
+    return prime, base, subprime
+
+
+def _x942_param_size_candidates(rs: Any) -> tuple[tuple[int, int], ...]:
+    slot_id = getattr(rs, "slot_id", None)
+    if slot_id is None:
+        return ((_X942_PARAM_PRIME_BITS, _X942_PARAM_SUBPRIME_BITS),)
+
+    info = get_mechanism_info(rs.raw, slot_id, CKM_X9_42_DH_PARAMETER_GEN)
+    min_key_size = int(info["min_key_size"])
+    max_key_size = int(info["max_key_size"])
+    candidates = tuple(
+        (prime_bits, subprime_bits)
+        for prime_bits, subprime_bits in _X942_PARAM_SIZE_CANDIDATES
+        if (min_key_size == 0 or prime_bits >= min_key_size)
+        and (max_key_size == 0 or prime_bits <= max_key_size)
+    )
+    if candidates:
+        return candidates
+
+    pytest.skip(
+        "CKM_X9_42_DH_PARAMETER_GEN advertised, but mechanism info has no "
+        "1024/160 or 2048/256 testable prime-size candidate"
+    )
+
+
+def _generate_x942_params_for_session(rs: Any) -> tuple[int, int, int]:
+    last_size_reject: AssertionError | None = None
+    for prime_bits, subprime_bits in _x942_param_size_candidates(rs):
+        try:
+            dp = _generate_x942_params(
+                rs.raw,
+                rs.sh,
+                prime_bits=prime_bits,
+                subprime_bits=subprime_bits,
+            )
+        except AssertionError as e:
+            if is_known_error(e, _X942_PARAMETER_SIZE_REJECT_RVS):
+                last_size_reject = e
+                continue
+            _skip_or_xfail_x942_param_gen_reject(e)
+        return dp, prime_bits, subprime_bits
+
+    if last_size_reject is not None:
+        _skip_or_xfail_x942_param_gen_reject(last_size_reject)
+    pytest.skip("No X9.42 DH parameter-generation size candidate available")
+
+
+def _skip_or_xfail_x942_param_gen_reject(exc: AssertionError) -> NoReturn:
+    if is_known_error(exc, _X942_PARAMETER_SIZE_REJECT_RVS):
+        pytest.skip(
+            "X9.42 DH 2048/256 parameter generation not supported by this module: "
+            f"{exc}"
+        )
+    xfail_if_known_ckr(
+        exc,
+        _X942_PARAMETER_RUNTIME_REJECT_RVS,
+        "X9_42_DH_PARAMETER_GEN advertised but parameter generation is not operational",
+    )
+    raise
+
+
+def _xfail_if_x942_keypair_reject(exc: AssertionError) -> NoReturn:
+    xfail_if_known_ckr(
+        exc,
+        _X942_KEYPAIR_RUNTIME_REJECT_RVS,
+        "X9_42_DH_KEY_PAIR_GEN advertised but keypair generation from generated "
+        "params is not operational",
+    )
+    raise
+
+
+def _xfail_if_x942_derive_reject(exc: AssertionError) -> NoReturn:
+    xfail_if_known_ckr(
+        exc,
+        _X942_DERIVE_RUNTIME_REJECT_RVS,
+        "X9_42_DH_DERIVE advertised but derive from generated params is not operational",
+    )
+    raise
 
 
 def _build_x942_derive_mech(
@@ -370,6 +585,7 @@ class TestX942DHDerive:
                 destroy_quietly(rs.raw, rs.sh, key2)
 
 
+@pytest.mark.slow
 class TestX942DHParameterGen:
     """Test CKM_X9_42_DH_PARAMETER_GEN - on-token X9.42 DH parameter generation."""
 
@@ -378,8 +594,79 @@ class TestX942DHParameterGen:
         if not rs.has_mechanism("X9_42_DH_PARAMETER_GEN"):
             pytest.skip("CKM_X9_42_DH_PARAMETER_GEN not supported")
 
-        # This mechanism is very rarely supported - just probe availability
-        pytest.skip("CKM_X9_42_DH_PARAMETER_GEN generation is extremely slow; skipping")
+        dp, prime_bits, subprime_bits = _generate_x942_params_for_session(rs)
+        try:
+            assert dp != 0
+            _read_x942_params(
+                rs.raw,
+                rs.sh,
+                dp,
+                expected_prime_bits=prime_bits,
+                expected_subprime_bits=subprime_bits,
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, dp)
+
+    def test_generated_params_produce_valid_derive(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("X9_42_DH_PARAMETER_GEN"):
+            pytest.skip("CKM_X9_42_DH_PARAMETER_GEN not supported")
+        if not rs.has_mechanism("X9_42_DH_KEY_PAIR_GEN"):
+            pytest.skip("CKM_X9_42_DH_KEY_PAIR_GEN not supported")
+        if not rs.has_mechanism("X9_42_DH_DERIVE"):
+            pytest.skip("CKM_X9_42_DH_DERIVE not supported")
+
+        dp, prime_bits, subprime_bits = _generate_x942_params_for_session(rs)
+
+        alice_pub = 0
+        alice_priv = 0
+        bob_pub = 0
+        bob_priv = 0
+        alice_shared = 0
+        bob_shared = 0
+        try:
+            prime, base, subprime = _read_x942_params(
+                rs.raw,
+                rs.sh,
+                dp,
+                expected_prime_bits=prime_bits,
+                expected_subprime_bits=subprime_bits,
+            )
+            try:
+                alice_pub, alice_priv = _generate_x942_keypair(
+                    rs,
+                    prime=prime,
+                    base=base,
+                    subprime=subprime,
+                )
+                bob_pub, bob_priv = _generate_x942_keypair(
+                    rs,
+                    prime=prime,
+                    base=base,
+                    subprime=subprime,
+                )
+            except AssertionError as e:
+                _xfail_if_x942_keypair_reject(e)
+
+            alice_value = read_attributes(rs.raw, rs.sh, alice_pub, [CKA_VALUE])[CKA_VALUE]
+            bob_value = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])[CKA_VALUE]
+            assert alice_value != bob_value
+            assert isinstance(alice_value, bytes)
+            assert isinstance(bob_value, bytes)
+
+            try:
+                alice_shared = _x942_derive_aes(rs, alice_priv, bob_value)
+                bob_shared = _x942_derive_aes(rs, bob_priv, alice_value)
+            except AssertionError as e:
+                _xfail_if_x942_derive_reject(e)
+
+            va = read_attributes(rs.raw, rs.sh, alice_shared, [CKA_VALUE])[CKA_VALUE]
+            vb = read_attributes(rs.raw, rs.sh, bob_shared, [CKA_VALUE])[CKA_VALUE]
+            assert va == vb
+        finally:
+            for h in (alice_pub, alice_priv, bob_pub, bob_priv, alice_shared, bob_shared, dp):
+                if h:
+                    destroy_quietly(rs.raw, rs.sh, h)
 
 
 class TestX942DHHybridDerive:
