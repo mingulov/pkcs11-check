@@ -213,11 +213,13 @@ smoke behavior, or covered only by one narrow variation.
    RC5, CAST128/CAST5, IDEA, Blowfish, and Twofish have KAT-backed encrypt
    coverage where the PKCS#11 mechanism shape is reliable. Remaining shallow
    areas are SKIPJACK, CDMF, CAST/CAST3 variants, BATON/JUNIPER, GOST28147,
-   older PBE variants, CBC_PAD outputs, and RC2/RC5/CAST/IDEA MAC_GENERAL
-   parameter structures. Continue this sweep, but gate each new legacy vector
-   on a reliable source and an unambiguous PKCS#11 parameter mapping; SKIPJACK
-   and KEA are lower confidence until a defensible vector/operation source is
-   identified.
+   CBC_PAD outputs, and RC2/RC5/CAST/IDEA MAC_GENERAL parameter structures.
+   Older PBE variants now have semantic `C_GenerateKey` coverage for key type
+   and IV writeback where `CK_PBE_PARAMS` applies, but not independent
+   fixed-output KAT vectors. Continue this sweep, but gate each new legacy
+   vector on a reliable source and an unambiguous PKCS#11 parameter mapping;
+   SKIPJACK and KEA are lower confidence until a defensible vector/operation
+   source is identified.
 9. CMS and CT-KIP are shallow: current tests mostly check mechanism info or
    clean rejection rather than valid parameterized operations.
 10. Generic negative coverage is narrow relative to 467 registry mechanisms.
@@ -364,7 +366,7 @@ After that, do the first coverage expansion round:
 6. Legacy/deprecated mechanisms not yet covered by reliable KATs or semantic
    probes: SKIPJACK only if a trustworthy vector source is found, KEA only with
    defensible domain-parameter/derive semantics, plus CDMF, CAST/CAST3,
-   BATON/JUNIPER, GOST28147, old PBE variants, CBC_PAD outputs, and
+   BATON/JUNIPER, GOST28147, CBC_PAD outputs, and
    RC2/RC5/CAST/IDEA MAC_GENERAL parameter structures.
 
 Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks

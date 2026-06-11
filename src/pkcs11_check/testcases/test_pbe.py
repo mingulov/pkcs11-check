@@ -9,6 +9,7 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 from __future__ import annotations
 
 from ctypes import byref
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -30,13 +31,22 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKA_VERIFY,
     CKK_AES,
+    CKK_DES,
     CKK_DES2,
     CKK_DES3,
     CKK_GENERIC_SECRET,
+    CKK_RC2,
+    CKK_RC4,
     CKK_SHA_1_HMAC,
     CKM_PBA_SHA1_WITH_SHA1_HMAC,
+    CKM_PBE_MD2_DES_CBC,
+    CKM_PBE_MD5_DES_CBC,
     CKM_PBE_SHA1_DES2_EDE_CBC,
     CKM_PBE_SHA1_DES3_EDE_CBC,
+    CKM_PBE_SHA1_RC2_40_CBC,
+    CKM_PBE_SHA1_RC2_128_CBC,
+    CKM_PBE_SHA1_RC4_40,
+    CKM_PBE_SHA1_RC4_128,
     CKM_PKCS5_PBKD2,
     CKO_SECRET_KEY,
     CKP_PKCS5_PBKD2_HMAC_SHA1,
@@ -80,8 +90,14 @@ _PBE_ERROR_RVS = {
 }
 
 _PBE_MECH_NAMES: dict[int, str] = {
+    int(CKM_PBE_MD2_DES_CBC): "CKM_PBE_MD2_DES_CBC",
+    int(CKM_PBE_MD5_DES_CBC): "CKM_PBE_MD5_DES_CBC",
+    int(CKM_PBE_SHA1_RC4_128): "CKM_PBE_SHA1_RC4_128",
+    int(CKM_PBE_SHA1_RC4_40): "CKM_PBE_SHA1_RC4_40",
     int(CKM_PBE_SHA1_DES3_EDE_CBC): "CKM_PBE_SHA1_DES3_EDE_CBC",
     int(CKM_PBE_SHA1_DES2_EDE_CBC): "CKM_PBE_SHA1_DES2_EDE_CBC",
+    int(CKM_PBE_SHA1_RC2_128_CBC): "CKM_PBE_SHA1_RC2_128_CBC",
+    int(CKM_PBE_SHA1_RC2_40_CBC): "CKM_PBE_SHA1_RC2_40_CBC",
     int(CKM_PBA_SHA1_WITH_SHA1_HMAC): "CKM_PBA_SHA1_WITH_SHA1_HMAC",
     int(CKM_PKCS5_PBKD2): "CKM_PKCS5_PBKD2",
 }
@@ -100,6 +116,29 @@ _SALT = b"\xde\xad\xbe\xef\xca\xfe\xba\xbe"
 _ITERATIONS = 1024
 
 
+@dataclass(frozen=True)
+class _LegacyPBECase:
+    mechanism: int
+    mechanism_name: str
+    key_type: int
+    key_bits: int
+    iv_len: int | None
+
+    @property
+    def mechanism_short_name(self) -> str:
+        return self.mechanism_name.removeprefix("CKM_")
+
+
+_LEGACY_PBE_CASES = (
+    _LegacyPBECase(CKM_PBE_MD2_DES_CBC, "CKM_PBE_MD2_DES_CBC", CKK_DES, 64, 8),
+    _LegacyPBECase(CKM_PBE_MD5_DES_CBC, "CKM_PBE_MD5_DES_CBC", CKK_DES, 64, 8),
+    _LegacyPBECase(CKM_PBE_SHA1_RC4_128, "CKM_PBE_SHA1_RC4_128", CKK_RC4, 128, None),
+    _LegacyPBECase(CKM_PBE_SHA1_RC4_40, "CKM_PBE_SHA1_RC4_40", CKK_RC4, 40, None),
+    _LegacyPBECase(CKM_PBE_SHA1_RC2_128_CBC, "CKM_PBE_SHA1_RC2_128_CBC", CKK_RC2, 128, 8),
+    _LegacyPBECase(CKM_PBE_SHA1_RC2_40_CBC, "CKM_PBE_SHA1_RC2_40_CBC", CKK_RC2, 40, 8),
+)
+
+
 # ---------------------------------------------------------------------------
 # CK_PBE_PARAMS builder
 # ---------------------------------------------------------------------------
@@ -110,7 +149,7 @@ def _build_pbe_mech(
     password: bytes,
     salt: bytes,
     iterations: int,
-    iv_len: int = 8,
+    iv_len: int | None = 8,
 ) -> PackedMechanism:
     """Build CK_PBE_PARAMS using the public raw packer."""
     return mech_pbe(
@@ -130,7 +169,7 @@ def _pbe_gen_key(
     password: bytes,
     salt: bytes,
     iterations: int,
-    iv_len: int = 8,
+    iv_len: int | None = 8,
     extra_attrs: dict[int, Any] | None = None,
 ) -> tuple[int, PackedMechanism]:
     """Generate a PBE key.
@@ -207,6 +246,44 @@ def _pbkdf2_gen_key(
     rv = rs.raw.C_GenerateKey(rs.sh, mp.byref(), tmpl.ptr, tmpl.count, byref(key_h))
     _expect_pbe_gen_key_rv(rv, CKM_PKCS5_PBKD2)
     return key_h.value
+
+
+class TestLegacyPBEVariants:
+    """Obsolete PKCS#5/PKCS#12 PBE mechanisms still get semantic coverage."""
+
+    @pytest.mark.parametrize("case", _LEGACY_PBE_CASES, ids=lambda case: case.mechanism_name)
+    def test_generate_key(self, p11_raw_session: Any, case: _LegacyPBECase) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism(case.mechanism_short_name):
+            pytest.skip(f"{case.mechanism_name} not supported")
+
+        extra_attrs: dict[int, Any] = {}
+        if case.key_type in {CKK_RC2, CKK_RC4}:
+            extra_attrs[CKA_VALUE_LEN] = case.key_bits // 8
+
+        handle, mech = _pbe_gen_key(
+            rs,
+            case.mechanism,
+            case.key_type,
+            case.key_bits,
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
+            iv_len=case.iv_len,
+            extra_attrs=extra_attrs,
+        )
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
+            assert attrs[CKA_KEY_TYPE] == case.key_type
+            if case.iv_len is not None:
+                iv = mech.buffer_bytes("init_vector")
+                assert len(iv) == case.iv_len
+                assert iv != b"\x00" * case.iv_len, (
+                    f"{case.mechanism_name} accepted CK_PBE_PARAMS but did not write "
+                    "pInitVector"
+                )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, handle)
 
 
 class TestPBESHA1DES3:
