@@ -476,7 +476,7 @@ FUNCTION_INDICES = {
 STANDARD_COUNTS = {
     "functions": 110,
     "attrs": 160,
-    "mechanisms": 480,
+    "mechanisms": 482,
 }
 
 ATTR_NAMES = {
@@ -673,9 +673,11 @@ MECHANISM_NAMES = {
     0x1B: "CKM_DSA_SHA3_512",
     0x1C: "CKM_ML_DSA_KEY_PAIR_GEN",
     0x1D: "CKM_ML_DSA",
+    0x1E: "CKM_ML_DSA_EXTERNAL_MU_GEN",
     0x1F: "CKM_HASH_ML_DSA",
     0x20: "CKM_DH_PKCS_KEY_PAIR_GEN",
     0x21: "CKM_DH_PKCS_DERIVE",
+    0x22: "CKM_ML_DSA_EXTERNAL_MU",
     0x23: "CKM_HASH_ML_DSA_SHA224",
     0x24: "CKM_HASH_ML_DSA_SHA256",
     0x25: "CKM_HASH_ML_DSA_SHA384",

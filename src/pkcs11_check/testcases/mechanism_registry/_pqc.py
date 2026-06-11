@@ -44,6 +44,8 @@ from pkcs11_check.raw.types_std import (
     CKM_HSS,
     CKM_HSS_KEY_PAIR_GEN,
     CKM_ML_DSA,
+    CKM_ML_DSA_EXTERNAL_MU,
+    CKM_ML_DSA_EXTERNAL_MU_GEN,
     CKM_ML_DSA_KEY_PAIR_GEN,
     CKM_ML_KEM,
     CKM_ML_KEM_KEY_PAIR_GEN,
@@ -120,8 +122,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         notes="ML-DSA sign/verify (FIPS 204): pure ML-DSA, context optional",
     )
 
-    # CKM_ML_DSA_EXTERNAL_MU_GEN = 0x0000001e (gaps in types_std.py around ML_DSA=0x1d)
-    registry[0x0000001E] = MechConfig(
+    registry[CKM_ML_DSA_EXTERNAL_MU_GEN] = MechConfig(
         key_type=CKK_ML_DSA,
         keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
         key_sizes=_ML_DSA_SIZES,
@@ -132,8 +133,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         notes="ML-DSA ExternalMu generation (FIPS 204): digest op producing mu for EXTERNAL_MU",
     )
 
-    # CKM_ML_DSA_EXTERNAL_MU = 0x00000022 (between DH_PKCS_DERIVE=0x21 and HASH_ML_DSA_SHA224=0x23)
-    registry[0x00000022] = MechConfig(
+    registry[CKM_ML_DSA_EXTERNAL_MU] = MechConfig(
         key_type=CKK_ML_DSA,
         keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
         key_sizes=_ML_DSA_SIZES,

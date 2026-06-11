@@ -17,12 +17,15 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.pack import mech_simple
+from pkcs11_check.raw.pack import attr_ulong, mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     gen_aes_key,
+    gen_keypair,
+    sign_single,
     to_ubyte_buf,
+    verify_single,
     wrap_key,
 )
 from pkcs11_check.raw.rv import CkrAssertionError, expect_rv
@@ -33,16 +36,22 @@ from pkcs11_check.raw.types_std import (
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
+    CKA_PARAMETER_SET,
     CKA_SENSITIVE,
+    CKA_SIGN,
     CKA_TOKEN,
     CKA_UNWRAP,
+    CKA_VERIFY,
     CKA_WRAP,
     CKK_AES,
     CKM,
     CKM_AES_KEY_WRAP_KWP,
+    CKM_ML_DSA_EXTERNAL_MU,
+    CKM_ML_DSA_KEY_PAIR_GEN,
     CKM_SHA512_224,
     CKM_SHA512_256,
     CKO_SECRET_KEY,
+    CKP_ML_DSA_65,
     CKR_ARGUMENTS_BAD,
     CKR_DEVICE_ERROR,
     CKR_DEVICE_MEMORY,
@@ -63,6 +72,8 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_NOT_LOGGED_IN,
 )
 from pkcs11_check.testcases.conftest import (
+    CIPHER_OP_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
     unwrap_key_for_mechanism_roundtrip,
     xfail_if_known_ckr,
 )
@@ -476,17 +487,98 @@ class TestKMAC:
         )
 
 
+_EXTERNAL_MU_SAMPLE = bytes(range(64))
+
+
+def _generate_external_mu_mldsa_keypair(rs: Any) -> tuple[int, int]:
+    return gen_keypair(
+        rs.raw,
+        rs.sh,
+        mechanism=int(CKM_ML_DSA_KEY_PAIR_GEN),
+        pub_base=[attr_ulong(CKA_PARAMETER_SET, CKP_ML_DSA_65)],
+        priv_base=[],
+        public_attrs={
+            CKA_VERIFY: True,
+            CKA_TOKEN: False,
+        },
+        private_attrs={
+            CKA_SIGN: True,
+            CKA_TOKEN: False,
+        },
+        pub_skip={CKA_PARAMETER_SET},
+    )
+
+
+def _external_mu_sign_verify_roundtrip(rs: Any) -> None:
+    pub_key = 0
+    priv_key = 0
+    try:
+        try:
+            pub_key, priv_key = _generate_external_mu_mldsa_keypair(rs)
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                KEYPAIR_RUNTIME_REJECT_RVS,
+                "CKM_ML_DSA_KEY_PAIR_GEN for ExternalMu not operational",
+            )
+
+        try:
+            signature = sign_single(
+                rs.raw,
+                rs.sh,
+                priv_key,
+                int(CKM_ML_DSA_EXTERNAL_MU),
+                _EXTERNAL_MU_SAMPLE,
+            )
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                CIPHER_OP_RUNTIME_REJECT_RVS,
+                "CKM_ML_DSA_EXTERNAL_MU sign not operational",
+            )
+
+        assert len(signature) > 0, "CKM_ML_DSA_EXTERNAL_MU returned an empty signature"
+        verified = verify_single(
+            rs.raw,
+            rs.sh,
+            pub_key,
+            int(CKM_ML_DSA_EXTERNAL_MU),
+            _EXTERNAL_MU_SAMPLE,
+            signature,
+        )
+        assert verified is True, "CKM_ML_DSA_EXTERNAL_MU verify rejected a fresh signature"
+
+        tampered_mu = _EXTERNAL_MU_SAMPLE[:-1] + bytes([_EXTERNAL_MU_SAMPLE[-1] ^ 0x01])
+        try:
+            tampered_verified = verify_single(
+                rs.raw,
+                rs.sh,
+                pub_key,
+                int(CKM_ML_DSA_EXTERNAL_MU),
+                tampered_mu,
+                signature,
+            )
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                CIPHER_OP_RUNTIME_REJECT_RVS,
+                "tampered CKM_ML_DSA_EXTERNAL_MU rejected with non-spec CKR",
+            )
+        else:
+            assert not tampered_verified, "CKM_ML_DSA_EXTERNAL_MU verified a tampered mu"
+    finally:
+        if pub_key:
+            destroy_quietly(rs.raw, rs.sh, pub_key)
+        if priv_key:
+            destroy_quietly(rs.raw, rs.sh, priv_key)
+
+
 class TestMLDSAExternalMU:
-    """CKM_ML_DSA_EXTERNAL_MU -- External message update PQC sign (v3.2).
+    """CKM_ML_DSA_EXTERNAL_MU -- ExternalMu PQC sign/verify (v3.2 draft).
 
     ExternalMu-ML-DSA accepts a precomputed 64-byte message representative mu
     instead of hashing the message on-token. The mu value is normally computed
-    by step 6 of algorithm 7 in FIPS-204.
-
-    Since CKM_ML_DSA_EXTERNAL_MU and its constant are not yet in the stable
-    published PKCS#11 headers (only in working draft), and no CKM constant
-    exists in pkcs11_check.raw.types_std, we test mechanism availability and
-    document the limitation.
+    by FIPS 204 algorithms 7/8 and supplied directly to single-part sign/verify.
     """
 
     def test_external_mu_availability(self, p11_raw_session: Any) -> None:
@@ -498,9 +590,7 @@ class TestMLDSAExternalMU:
         rs = p11_raw_session
         if not rs.has_mechanism("ML_DSA_EXTERNAL_MU"):
             pytest.skip("CKM_ML_DSA_EXTERNAL_MU not supported")
-        if not rs.has_mechanism("ML_DSA"):
-            pytest.skip("CKM_ML_DSA keygen not supported for EXTERNAL_MU test")
-        pytest.skip(
-            "CKM_ML_DSA_EXTERNAL_MU constant (0x00000020) not yet in "
-            "pkcs11_check.raw.types_std -- awaiting published PKCS#11 header"
-        )
+        if not rs.has_mechanism("ML_DSA_KEY_PAIR_GEN"):
+            pytest.skip("CKM_ML_DSA_KEY_PAIR_GEN not supported for EXTERNAL_MU test")
+
+        _external_mu_sign_verify_roundtrip(rs)
