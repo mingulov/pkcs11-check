@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from ctypes import byref
-from typing import Any, NoReturn
+from ctypes import byref, sizeof, string_at
+from typing import Any, NamedTuple, NoReturn
 
 import pytest
 
@@ -28,6 +28,7 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
+    CK_ULONG,
     CKA_DERIVE,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -37,16 +38,31 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKA_VERIFY,
+    CKK_BLAKE2B_160_HMAC,
     CKK_BLAKE2B_256_HMAC,
+    CKK_BLAKE2B_384_HMAC,
+    CKK_BLAKE2B_512_HMAC,
     CKK_GENERIC_SECRET,
     CKM_BLAKE2B_160,
+    CKM_BLAKE2B_160_HMAC,
+    CKM_BLAKE2B_160_HMAC_GENERAL,
+    CKM_BLAKE2B_160_KEY_DERIVE,
+    CKM_BLAKE2B_160_KEY_GEN,
     CKM_BLAKE2B_256,
     CKM_BLAKE2B_256_HMAC,
     CKM_BLAKE2B_256_HMAC_GENERAL,
     CKM_BLAKE2B_256_KEY_DERIVE,
     CKM_BLAKE2B_256_KEY_GEN,
     CKM_BLAKE2B_384,
+    CKM_BLAKE2B_384_HMAC,
+    CKM_BLAKE2B_384_HMAC_GENERAL,
+    CKM_BLAKE2B_384_KEY_DERIVE,
+    CKM_BLAKE2B_384_KEY_GEN,
     CKM_BLAKE2B_512,
+    CKM_BLAKE2B_512_HMAC,
+    CKM_BLAKE2B_512_HMAC_GENERAL,
+    CKM_BLAKE2B_512_KEY_DERIVE,
+    CKM_BLAKE2B_512_KEY_GEN,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
@@ -75,7 +91,6 @@ _BLAKE2_MECHS = {
 
 _EMPTY_DIGEST_REJECT_RVS = (CKR_ARGUMENTS_BAD,)
 
-_BLAKE2B_256_LEN = 32
 _BLAKE2B_TEST_KEY = b"pkcs11-check blake2b hmac key"
 _BLAKE2B_TEST_DATA = b"pkcs11-check blake2b keyed data"
 
@@ -96,6 +111,83 @@ _BLAKE2B_RUNTIME_REJECT_RVS = (
 )
 
 
+class _Blake2bKeyedCase(NamedTuple):
+    bits: int
+    digest_len: int
+    hmac_name: str
+    hmac_mech: Any
+    hmac_general_name: str
+    hmac_general_mech: Any
+    key_gen_name: str
+    key_gen_mech: Any
+    key_derive_name: str
+    key_derive_mech: Any
+    key_type: Any
+    id: str
+
+
+_BLAKE2B_KEYED_CASES: tuple[_Blake2bKeyedCase, ...] = (
+    _Blake2bKeyedCase(
+        bits=160,
+        digest_len=20,
+        hmac_name="BLAKE2B_160_HMAC",
+        hmac_mech=CKM_BLAKE2B_160_HMAC,
+        hmac_general_name="BLAKE2B_160_HMAC_GENERAL",
+        hmac_general_mech=CKM_BLAKE2B_160_HMAC_GENERAL,
+        key_gen_name="BLAKE2B_160_KEY_GEN",
+        key_gen_mech=CKM_BLAKE2B_160_KEY_GEN,
+        key_derive_name="BLAKE2B_160_KEY_DERIVE",
+        key_derive_mech=CKM_BLAKE2B_160_KEY_DERIVE,
+        key_type=CKK_BLAKE2B_160_HMAC,
+        id="BLAKE2B-160",
+    ),
+    _Blake2bKeyedCase(
+        bits=256,
+        digest_len=32,
+        hmac_name="BLAKE2B_256_HMAC",
+        hmac_mech=CKM_BLAKE2B_256_HMAC,
+        hmac_general_name="BLAKE2B_256_HMAC_GENERAL",
+        hmac_general_mech=CKM_BLAKE2B_256_HMAC_GENERAL,
+        key_gen_name="BLAKE2B_256_KEY_GEN",
+        key_gen_mech=CKM_BLAKE2B_256_KEY_GEN,
+        key_derive_name="BLAKE2B_256_KEY_DERIVE",
+        key_derive_mech=CKM_BLAKE2B_256_KEY_DERIVE,
+        key_type=CKK_BLAKE2B_256_HMAC,
+        id="BLAKE2B-256",
+    ),
+    _Blake2bKeyedCase(
+        bits=384,
+        digest_len=48,
+        hmac_name="BLAKE2B_384_HMAC",
+        hmac_mech=CKM_BLAKE2B_384_HMAC,
+        hmac_general_name="BLAKE2B_384_HMAC_GENERAL",
+        hmac_general_mech=CKM_BLAKE2B_384_HMAC_GENERAL,
+        key_gen_name="BLAKE2B_384_KEY_GEN",
+        key_gen_mech=CKM_BLAKE2B_384_KEY_GEN,
+        key_derive_name="BLAKE2B_384_KEY_DERIVE",
+        key_derive_mech=CKM_BLAKE2B_384_KEY_DERIVE,
+        key_type=CKK_BLAKE2B_384_HMAC,
+        id="BLAKE2B-384",
+    ),
+    _Blake2bKeyedCase(
+        bits=512,
+        digest_len=64,
+        hmac_name="BLAKE2B_512_HMAC",
+        hmac_mech=CKM_BLAKE2B_512_HMAC,
+        hmac_general_name="BLAKE2B_512_HMAC_GENERAL",
+        hmac_general_mech=CKM_BLAKE2B_512_HMAC_GENERAL,
+        key_gen_name="BLAKE2B_512_KEY_GEN",
+        key_gen_mech=CKM_BLAKE2B_512_KEY_GEN,
+        key_derive_name="BLAKE2B_512_KEY_DERIVE",
+        key_derive_mech=CKM_BLAKE2B_512_KEY_DERIVE,
+        key_type=CKK_BLAKE2B_512_HMAC,
+        id="BLAKE2B-512",
+    ),
+)
+
+_BLAKE2B_KEYED_CASE_BY_BITS = {case.bits: case for case in _BLAKE2B_KEYED_CASES}
+
+
 def _digest_empty_or_xfail(raw: Any, sh: int, mechanism: Any, mech_name: str) -> bytes:
     try:
         return digest_single(raw, sh, mechanism, b"")
@@ -114,6 +206,11 @@ def _blake2b_hmac_reference(key: bytes, data: bytes, digest_size: int) -> bytes:
 def _xfail_blake2b_reject(exc: AssertionError, label: str) -> NoReturn:
     xfail_if_known_ckr(exc, _BLAKE2B_RUNTIME_REJECT_RVS, label)
     raise
+
+
+def _ck_ulong_param(value: int) -> bytes:
+    storage = CK_ULONG(value)
+    return string_at(byref(storage), sizeof(storage))
 
 
 def _import_blake2b_setup_key(
@@ -138,9 +235,9 @@ def _import_blake2b_setup_key(
         _xfail_blake2b_reject(e, "BLAKE2B setup generic-secret import rejected")
 
 
-def _generate_blake2b_256_hmac_key(rs: Any) -> int:
+def _generate_blake2b_hmac_key(rs: Any, case: _Blake2bKeyedCase) -> int:
     tmpl = template(
-        attr_ulong(CKA_VALUE_LEN, _BLAKE2B_256_LEN),
+        attr_ulong(CKA_VALUE_LEN, case.digest_len),
         attr_bool(CKA_TOKEN, False),
         attr_bool(CKA_SENSITIVE, False),
         attr_bool(CKA_EXTRACTABLE, True),
@@ -148,12 +245,12 @@ def _generate_blake2b_256_hmac_key(rs: Any) -> int:
         attr_bool(CKA_VERIFY, True),
     )
     handle = CK_OBJECT_HANDLE(0)
-    mech = mech_simple(CKM_BLAKE2B_256_KEY_GEN)
+    mech = mech_simple(case.key_gen_mech)
     rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
     try:
         expect_rv(rv, CKR_OK)
     except AssertionError as e:
-        _xfail_blake2b_reject(e, "BLAKE2B_256_KEY_GEN advertised but keygen failed")
+        _xfail_blake2b_reject(e, f"{case.key_gen_name} advertised but keygen failed")
     return handle.value
 
 
@@ -295,12 +392,12 @@ class TestBlake2bProperties:
 
 
 class TestBlake2bKeyed:
-    """Representative keyed BLAKE2b HMAC, key generation, and key derivation tests."""
+    """Keyed BLAKE2b HMAC, key generation, and key derivation tests."""
 
-    def test_blake2b_256_hmac_matches_reference(self, p11_raw_session: Any) -> None:
+    def _hmac_matches_reference(self, p11_raw_session: Any, case: _Blake2bKeyedCase) -> None:
         rs = p11_raw_session
-        if not rs.has_mechanism("BLAKE2B_256_HMAC"):
-            pytest.skip("CKM_BLAKE2B_256_HMAC not supported")
+        if not rs.has_mechanism(case.hmac_name):
+            pytest.skip(f"CKM_{case.hmac_name} not supported")
 
         key = _import_blake2b_setup_key(rs, sign=True, verify=True)
         try:
@@ -309,19 +406,19 @@ class TestBlake2bKeyed:
                     rs.raw,
                     rs.sh,
                     key,
-                    CKM_BLAKE2B_256_HMAC,
+                    case.hmac_mech,
                     _BLAKE2B_TEST_DATA,
                 )
             except AssertionError as e:
                 _xfail_blake2b_reject(
                     e,
-                    "BLAKE2B_256_HMAC advertised but sign failed",
+                    f"{case.hmac_name} advertised but sign failed",
                 )
 
             expected = _blake2b_hmac_reference(
                 _BLAKE2B_TEST_KEY,
                 _BLAKE2B_TEST_DATA,
-                _BLAKE2B_256_LEN,
+                case.digest_len,
             )
             assert mac == expected
 
@@ -330,14 +427,14 @@ class TestBlake2bKeyed:
                     rs.raw,
                     rs.sh,
                     key,
-                    CKM_BLAKE2B_256_HMAC,
+                    case.hmac_mech,
                     _BLAKE2B_TEST_DATA,
                     mac,
                 )
             except AssertionError as e:
                 _xfail_blake2b_reject(
                     e,
-                    "BLAKE2B_256_HMAC advertised but verify failed",
+                    f"{case.hmac_name} advertised but verify failed",
                 )
 
             tampered = bytes([mac[0] ^ 0x01]) + mac[1:]
@@ -346,28 +443,40 @@ class TestBlake2bKeyed:
                     rs.raw,
                     rs.sh,
                     key,
-                    CKM_BLAKE2B_256_HMAC,
+                    case.hmac_mech,
                     _BLAKE2B_TEST_DATA,
                     tampered,
                 )
             except AssertionError as e:
                 _xfail_blake2b_reject(
                     e,
-                    "BLAKE2B_256_HMAC tampered verify rejected with unexpected CKR",
+                    f"{case.hmac_name} tampered verify rejected with unexpected CKR",
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_blake2b_256_hmac_general_truncates(self, p11_raw_session: Any) -> None:
+    @pytest.mark.parametrize(
+        "case",
+        _BLAKE2B_KEYED_CASES,
+        ids=[case.id for case in _BLAKE2B_KEYED_CASES],
+    )
+    def test_blake2b_hmac_matches_reference(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        self._hmac_matches_reference(p11_raw_session, case)
+
+    def _hmac_general_truncates(self, p11_raw_session: Any, case: _Blake2bKeyedCase) -> None:
         rs = p11_raw_session
-        if not rs.has_mechanism("BLAKE2B_256_HMAC_GENERAL"):
-            pytest.skip("CKM_BLAKE2B_256_HMAC_GENERAL not supported")
+        if not rs.has_mechanism(case.hmac_general_name):
+            pytest.skip(f"CKM_{case.hmac_general_name} not supported")
 
         key = _import_blake2b_setup_key(rs, sign=True, verify=True)
         mac_len = 12
         mech_param = mech_bytes(
-            CKM_BLAKE2B_256_HMAC_GENERAL,
-            mac_len.to_bytes(8, "little"),
+            case.hmac_general_mech,
+            _ck_ulong_param(mac_len),
         )
         try:
             try:
@@ -375,20 +484,20 @@ class TestBlake2bKeyed:
                     rs.raw,
                     rs.sh,
                     key,
-                    CKM_BLAKE2B_256_HMAC_GENERAL,
+                    case.hmac_general_mech,
                     _BLAKE2B_TEST_DATA,
                     mech_param=mech_param,
                 )
             except AssertionError as e:
                 _xfail_blake2b_reject(
                     e,
-                    "BLAKE2B_256_HMAC_GENERAL advertised but sign failed",
+                    f"{case.hmac_general_name} advertised but sign failed",
                 )
 
             expected_full = _blake2b_hmac_reference(
                 _BLAKE2B_TEST_KEY,
                 _BLAKE2B_TEST_DATA,
-                _BLAKE2B_256_LEN,
+                case.digest_len,
             )
             assert mac == expected_full[:mac_len]
 
@@ -397,7 +506,7 @@ class TestBlake2bKeyed:
                     rs.raw,
                     rs.sh,
                     key,
-                    CKM_BLAKE2B_256_HMAC_GENERAL,
+                    case.hmac_general_mech,
                     _BLAKE2B_TEST_DATA,
                     mac,
                     mech_param=mech_param,
@@ -405,53 +514,77 @@ class TestBlake2bKeyed:
             except AssertionError as e:
                 _xfail_blake2b_reject(
                     e,
-                    "BLAKE2B_256_HMAC_GENERAL advertised but verify failed",
+                    f"{case.hmac_general_name} advertised but verify failed",
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_blake2b_256_key_gen_signs_reference(self, p11_raw_session: Any) -> None:
-        rs = p11_raw_session
-        if not rs.has_mechanism("BLAKE2B_256_KEY_GEN"):
-            pytest.skip("CKM_BLAKE2B_256_KEY_GEN not supported")
-        if not rs.has_mechanism("BLAKE2B_256_HMAC"):
-            pytest.skip("CKM_BLAKE2B_256_HMAC not supported")
+    @pytest.mark.parametrize(
+        "case",
+        _BLAKE2B_KEYED_CASES,
+        ids=[case.id for case in _BLAKE2B_KEYED_CASES],
+    )
+    def test_blake2b_hmac_general_truncates(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        self._hmac_general_truncates(p11_raw_session, case)
 
-        key = _generate_blake2b_256_hmac_key(rs)
+    def _key_gen_signs_reference(self, p11_raw_session: Any, case: _Blake2bKeyedCase) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism(case.key_gen_name):
+            pytest.skip(f"CKM_{case.key_gen_name} not supported")
+        if not rs.has_mechanism(case.hmac_name):
+            pytest.skip(f"CKM_{case.hmac_name} not supported")
+
+        key = _generate_blake2b_hmac_key(rs, case)
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_TYPE, CKA_VALUE])
-            assert attrs[CKA_KEY_TYPE] == CKK_BLAKE2B_256_HMAC
+            assert attrs[CKA_KEY_TYPE] == case.key_type
             key_value = attrs[CKA_VALUE]
             assert isinstance(key_value, bytes)
-            assert len(key_value) == _BLAKE2B_256_LEN
+            assert len(key_value) == case.digest_len
 
             try:
                 mac = sign_single(
                     rs.raw,
                     rs.sh,
                     key,
-                    CKM_BLAKE2B_256_HMAC,
+                    case.hmac_mech,
                     _BLAKE2B_TEST_DATA,
                 )
             except AssertionError as e:
                 _xfail_blake2b_reject(
                     e,
-                    "BLAKE2B_256_KEY_GEN produced key but HMAC sign failed",
+                    f"{case.key_gen_name} produced key but {case.hmac_name} sign failed",
                 )
 
             expected = _blake2b_hmac_reference(
                 key_value,
                 _BLAKE2B_TEST_DATA,
-                _BLAKE2B_256_LEN,
+                case.digest_len,
             )
             assert mac == expected
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_blake2b_256_key_derive_value(self, p11_raw_session: Any) -> None:
+    @pytest.mark.parametrize(
+        "case",
+        _BLAKE2B_KEYED_CASES,
+        ids=[case.id for case in _BLAKE2B_KEYED_CASES],
+    )
+    def test_blake2b_key_gen_signs_reference(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        self._key_gen_signs_reference(p11_raw_session, case)
+
+    def _key_derive_value(self, p11_raw_session: Any, case: _Blake2bKeyedCase) -> None:
         rs = p11_raw_session
-        if not rs.has_mechanism("BLAKE2B_256_KEY_DERIVE"):
-            pytest.skip("CKM_BLAKE2B_256_KEY_DERIVE not supported")
+        if not rs.has_mechanism(case.key_derive_name):
+            pytest.skip(f"CKM_{case.key_derive_name} not supported")
 
         base = _import_blake2b_setup_key(rs, derive=True)
         derived = 0
@@ -461,10 +594,10 @@ class TestBlake2bKeyed:
                     rs.raw,
                     rs.sh,
                     base,
-                    CKM_BLAKE2B_256_KEY_DERIVE,
+                    case.key_derive_mech,
                     attrs={
                         CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-                        CKA_VALUE_LEN: _BLAKE2B_256_LEN,
+                        CKA_VALUE_LEN: case.digest_len,
                         CKA_TOKEN: False,
                         CKA_SENSITIVE: False,
                         CKA_EXTRACTABLE: True,
@@ -473,13 +606,25 @@ class TestBlake2bKeyed:
             except AssertionError as e:
                 _xfail_blake2b_reject(
                     e,
-                    "BLAKE2B_256_KEY_DERIVE advertised but derive failed",
+                    f"{case.key_derive_name} advertised but derive failed",
                 )
 
             value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            expected = hashlib.blake2b(_BLAKE2B_TEST_KEY, digest_size=_BLAKE2B_256_LEN).digest()
+            expected = hashlib.blake2b(_BLAKE2B_TEST_KEY, digest_size=case.digest_len).digest()
             assert value == expected
         finally:
             destroy_quietly(rs.raw, rs.sh, base)
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
+
+    @pytest.mark.parametrize(
+        "case",
+        _BLAKE2B_KEYED_CASES,
+        ids=[case.id for case in _BLAKE2B_KEYED_CASES],
+    )
+    def test_blake2b_key_derive_value(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        self._key_derive_value(p11_raw_session, case)

@@ -14,6 +14,10 @@ from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR
 from pkcs11_check.testcases import test_blake2
 
 
+def test_blake2b_keyed_cases_cover_all_output_sizes() -> None:
+    assert {case.bits for case in test_blake2._BLAKE2B_KEYED_CASES} == {160, 256, 384, 512}
+
+
 def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
     names = set(mechanisms)
     return SimpleNamespace(
@@ -47,7 +51,10 @@ def test_blake2b_hmac_general_runtime_reject_is_xfail(
     monkeypatch.setattr(test_blake2, "sign_single", _sign_reject)
 
     with pytest.raises(pytest.xfail.Exception, match="BLAKE2B_256_HMAC_GENERAL advertised"):
-        test_blake2.TestBlake2bKeyed().test_blake2b_256_hmac_general_truncates(rs)
+        test_blake2.TestBlake2bKeyed()._hmac_general_truncates(
+            rs,
+            test_blake2._BLAKE2B_KEYED_CASE_BY_BITS[256],
+        )
 
 
 def test_blake2b_key_derive_runtime_reject_is_xfail(
@@ -61,4 +68,7 @@ def test_blake2b_key_derive_runtime_reject_is_xfail(
     monkeypatch.setattr(test_blake2, "derive_key", _derive_reject)
 
     with pytest.raises(pytest.xfail.Exception, match="BLAKE2B_256_KEY_DERIVE advertised"):
-        test_blake2.TestBlake2bKeyed().test_blake2b_256_key_derive_value(rs)
+        test_blake2.TestBlake2bKeyed()._key_derive_value(
+            rs,
+            test_blake2._BLAKE2B_KEYED_CASE_BY_BITS[256],
+        )
