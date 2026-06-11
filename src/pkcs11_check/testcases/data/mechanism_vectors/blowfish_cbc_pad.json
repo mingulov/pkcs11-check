@@ -1,0 +1,22 @@
+{
+  "mechanism": "CKM_BLOWFISH_CBC_PAD",
+  "family": "blowfish_cbc_pad",
+  "key_type": "CKK_BLOWFISH",
+  "source": "Bruce Schneier Blowfish keying plus cryptography Blowfish CBC and PKCS#7 padding",
+  "vectors": [
+    {
+      "id": "blowfish_cbc_pad_zero_iv_key64_7bytes",
+      "type": "positive",
+      "mechanism_name": "CKM_BLOWFISH_CBC_PAD",
+      "key_type": "symmetric",
+      "key_bits": 64,
+      "key_hex": "0000000000000000",
+      "params": {
+        "source": "Bruce Schneier Blowfish keying plus cryptography Blowfish CBC and PKCS#7 padding",
+        "iv_hex": "0000000000000000"
+      },
+      "plaintext_hex": "00000000000000",
+      "ciphertext_hex": "64ed065757511fa7"
+    }
+  ]
+}

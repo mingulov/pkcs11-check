@@ -6,13 +6,17 @@ import ctypes
 
 from pkcs11_check.raw.types_std import (
     CKM_BLOWFISH_CBC,
+    CKM_BLOWFISH_CBC_PAD,
     CKM_CAST128_CBC,
+    CKM_CAST128_CBC_PAD,
     CKM_CAST128_ECB,
     CKM_CAST128_MAC_GENERAL,
     CKM_IDEA_CBC,
+    CKM_IDEA_CBC_PAD,
     CKM_IDEA_ECB,
     CKM_IDEA_MAC_GENERAL,
     CKM_RC2_CBC,
+    CKM_RC2_CBC_PAD,
     CKM_RC2_ECB,
     CKM_RC2_MAC_GENERAL,
     CKM_RC4,
@@ -73,6 +77,76 @@ def test_rc2_cbc_vector_params_replay_effective_bits_and_iv() -> None:
 
     assert params.params.ulEffectiveBits == vec["params"]["effective_bits"]
     assert bytes(params.params.iv) == bytes.fromhex(vec["params"]["iv_hex"])
+
+
+def test_legacy_cbc_pad_mechanisms_have_kat_vectors() -> None:
+    expected = {
+        int(CKM_RC2_CBC_PAD): (
+            "rc2_cbc_pad.json",
+            "CKM_RC2_CBC_PAD",
+            8,
+            "5dc06db7afa1896ad38fbfa9fe215ab3",
+        ),
+        int(CKM_CAST128_CBC_PAD): (
+            "cast128_cbc_pad.json",
+            "CKM_CAST128_CBC_PAD",
+            8,
+            "c5aa82a2a6c97d5ce48c18e4fbda3d5d",
+        ),
+        int(CKM_IDEA_CBC_PAD): (
+            "idea_cbc_pad.json",
+            "CKM_IDEA_CBC_PAD",
+            8,
+            "2cb10d22ac22a37555032f85bc5d3806",
+        ),
+        int(CKM_BLOWFISH_CBC_PAD): (
+            "blowfish_cbc_pad.json",
+            "CKM_BLOWFISH_CBC_PAD",
+            8,
+            "64ed065757511fa7",
+        ),
+    }
+
+    for mech_id, (vector_file, mechanism_name, block_size, expected_ciphertext) in expected.items():
+        config = MECHANISM_REGISTRY[mech_id]
+        assert config.vector_file == vector_file
+
+        vectors = load_positive_vectors(vector_file)
+        assert vectors, f"{vector_file} must contain positive vectors"
+        for vec in vectors:
+            plaintext = bytes.fromhex(vec["plaintext_hex"])
+            ciphertext = bytes.fromhex(vec["ciphertext_hex"])
+            assert vec["type"] == "positive"
+            assert vec["mechanism_name"] == mechanism_name
+            assert vec["key_hex"]
+            assert len(plaintext) % block_size != 0
+            assert len(ciphertext) % block_size == 0
+            assert len(ciphertext) > len(plaintext)
+            assert vec["ciphertext_hex"] == expected_ciphertext
+            assert vec["params"]["iv_hex"]
+            assert "PKCS#7" in vec["params"]["source"]
+
+
+def test_legacy_cbc_pad_vector_params_replay_iv_and_effective_bits() -> None:
+    expected = {
+        int(CKM_RC2_CBC_PAD): "rc2_cbc_pad.json",
+        int(CKM_CAST128_CBC_PAD): "cast128_cbc_pad.json",
+        int(CKM_IDEA_CBC_PAD): "idea_cbc_pad.json",
+        int(CKM_BLOWFISH_CBC_PAD): "blowfish_cbc_pad.json",
+    }
+
+    for mech_id, vector_file in expected.items():
+        config = MECHANISM_REGISTRY[mech_id]
+        vector = load_positive_vectors(vector_file)[0]
+        params = build_params_from_vector(mech_id, config.param_recipe, vector)
+
+        if mech_id == int(CKM_RC2_CBC_PAD):
+            assert params.params.ulEffectiveBits == vector["params"]["effective_bits"]
+            assert bytes(params.params.iv) == bytes.fromhex(vector["params"]["iv_hex"])
+        else:
+            assert ctypes.string_at(params.ck.pParameter, params.ck.ulParameterLen) == (
+                bytes.fromhex(vector["params"]["iv_hex"])
+            )
 
 
 def test_rc2_mac_general_mechanism_has_openssl_legacy_kat_vector() -> None:

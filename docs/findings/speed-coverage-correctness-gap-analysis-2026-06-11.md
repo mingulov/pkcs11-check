@@ -247,9 +247,12 @@ smoke behavior, or covered only by one narrow variation.
    function signatures and KAT-backed tests exist.
 8. Legacy cipher coverage is now mixed rather than mostly generic: RC2, RC4,
    RC5, CAST128/CAST5, IDEA, Blowfish, and Twofish have KAT-backed encrypt
-   coverage where the PKCS#11 mechanism shape is reliable. Remaining shallow
-   areas are SKIPJACK, CDMF, CAST/CAST3 variants, BATON/JUNIPER, GOST28147,
-   CBC_PAD outputs, and RC2/RC5/CAST/IDEA MAC_GENERAL fixed-output KATs.
+   coverage where the PKCS#11 mechanism shape is reliable. RC2, CAST128/CAST5,
+   IDEA, and Blowfish also have CBC_PAD exact-output vectors for non-block-
+   aligned plaintext. Remaining shallow areas are SKIPJACK, CDMF, CAST/CAST3
+   variants, BATON/JUNIPER, GOST28147, RC5/Twofish CBC_PAD outputs, and
+   fixed-output MAC/MAC_GENERAL KATs where a block-vector source and output
+   length mapping are still missing.
    Older PBE variants now have semantic `C_GenerateKey` coverage for key type
    and IV writeback where `CK_PBE_PARAMS` applies, but not independent
    fixed-output KAT vectors. MAC_GENERAL mechanisms now assert the returned MAC
@@ -393,7 +396,10 @@ later provider run more interpretable:
    PKCS#11 parameter mappings exist. Treat this as a registry-to-test gap
    sweep, not just another RC5/IDEA pass: RC5 and IDEA encrypt KATs are already
    present, so their next useful work is CBC_PAD behavior and independent
-   MAC/MAC_GENERAL expected-output vectors.
+   MAC/MAC_GENERAL expected-output vectors. RC5 CBC_PAD remains source-first
+   until there is a checked RC5 implementation or external padded vector;
+   SKIPJACK and KEA remain lower-priority because their vector and operation
+   mappings are less straightforward.
 3. Continue broader semantic coverage expansion once artifact semantics can prove
    coverage preservation.
 
@@ -407,7 +413,7 @@ After that, do the first coverage expansion round:
 6. Legacy/deprecated mechanisms not yet covered by reliable KATs or semantic
    probes: SKIPJACK only if a trustworthy vector source is found, KEA only with
    defensible domain-parameter/derive semantics, plus CDMF, CAST/CAST3,
-   BATON/JUNIPER, GOST28147, CBC_PAD outputs, and
+   BATON/JUNIPER, GOST28147, remaining CBC_PAD outputs, and
    RC2/RC5/CAST/IDEA MAC_GENERAL fixed-output vectors.
 
 Legacy/deprecated coverage addendum for the active goal:
@@ -439,6 +445,12 @@ Legacy/deprecated coverage addendum for the active goal:
 - Added: `CKM_RC2_MAC_GENERAL` now has a full-block expected-MAC vector derived
   from the existing OpenSSL legacy RC2 one-block ECB vector, plus vector-param
   replay for effective key bits and requested MAC length.
+- Added: `CKM_RC2_CBC_PAD`, `CKM_CAST128_CBC_PAD`, `CKM_IDEA_CBC_PAD`, and
+  `CKM_BLOWFISH_CBC_PAD` now have non-block-aligned exact-output KAT vectors
+  and registry `vector_file` links, so providers that advertise those historical
+  mechanisms are tested for PKCS#7 padding behavior rather than only CBC
+  roundtrip behavior. `CKM_RC5_CBC_PAD` and `CKM_TWOFISH_CBC_PAD` remain pending
+  until a reliable padded-vector generator/source is available.
 
 Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks
 should follow once the harness can reuse provider-local history and prove

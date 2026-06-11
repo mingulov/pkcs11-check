@@ -1,0 +1,24 @@
+{
+  "mechanism": "CKM_IDEA_CBC_PAD",
+  "family": "idea_cbc_pad",
+  "key_type": "CKK_IDEA",
+  "source": "pyca cryptography IDEA CBC vector parameters plus cryptography IDEA CBC and PKCS#7 padding",
+  "source_url": "https://raw.githubusercontent.com/pyca/cryptography/main/vectors/cryptography_vectors/ciphers/IDEA/idea-cbc.txt",
+  "vectors": [
+    {
+      "id": "idea_cbc_pad_pyca_count_0_15bytes",
+      "type": "positive",
+      "mechanism_name": "CKM_IDEA_CBC_PAD",
+      "key_type": "symmetric",
+      "key_bits": 128,
+      "key_hex": "1f8e4973953f3fb0bd6b16662e9a3c17",
+      "params": {
+        "source": "pyca cryptography IDEA CBC vector parameters plus cryptography IDEA CBC and PKCS#7 padding",
+        "source_url": "https://raw.githubusercontent.com/pyca/cryptography/main/vectors/cryptography_vectors/ciphers/IDEA/idea-cbc.txt",
+        "iv_hex": "2fe2b333ceda8f98"
+      },
+      "plaintext_hex": "45cf12964fc824ab76616ae2f4bf08",
+      "ciphertext_hex": "2cb10d22ac22a37555032f85bc5d3806"
+    }
+  ]
+}

@@ -242,6 +242,23 @@ def generate_aes_cbc_pad() -> dict:
     }
 
 
+def _pkcs7_pad(data: bytes, block_bits: int) -> bytes:
+    from cryptography.hazmat.primitives import padding
+
+    padder = padding.PKCS7(block_bits).padder()
+    return padder.update(data) + padder.finalize()
+
+
+def _cryptography_cbc_pkcs7_ciphertext(algorithm: object, iv: bytes, plaintext: bytes) -> bytes:
+    from cryptography.hazmat.primitives.ciphers import Cipher, modes
+
+    block_bits = len(iv) * 8
+    padded = _pkcs7_pad(plaintext, block_bits)
+    cipher = Cipher(algorithm, modes.CBC(iv))
+    enc = cipher.encryptor()
+    return enc.update(padded) + enc.finalize()
+
+
 def generate_aes_ctr() -> dict:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
@@ -1979,6 +1996,141 @@ def generate_rc2_cbc() -> dict:
     }
 
 
+def generate_rc2_cbc_pad() -> dict:
+    """RC2 CBC_PAD vector via OpenSSL legacy provider plus explicit PKCS#7 padding."""
+    key = bytes.fromhex("000102030405060708090a0b0c0d0e0f")
+    iv = bytes.fromhex("0102030405060708")
+    plaintext = bytes.fromhex("0123456789abcdef00")
+    source = "OpenSSL legacy RC2 CBC plus PKCS#7 padding"
+    ciphertext = _openssl_enc("RC2-CBC", key, _pkcs7_pad(plaintext, 64), iv=iv)
+    vectors = [
+        {
+            "id": "rc2_cbc_pad_128_9bytes",
+            "type": "positive",
+            "mechanism_name": "CKM_RC2_CBC_PAD",
+            "key_type": "symmetric",
+            "key_bits": 128,
+            "key_hex": key.hex(),
+            "params": {"source": source, "effective_bits": 128, "iv_hex": iv.hex()},
+            "plaintext_hex": plaintext.hex(),
+            "ciphertext_hex": ciphertext.hex(),
+        }
+    ]
+    return {
+        "mechanism": "CKM_RC2_CBC_PAD",
+        "family": "rc2_cbc_pad",
+        "key_type": "CKK_RC2",
+        "source": source,
+        "vectors": vectors,
+    }
+
+
+def generate_cast128_cbc_pad() -> dict:
+    """CAST128/CAST5 CBC_PAD vector via cryptography plus PKCS#7 padding."""
+    from cryptography.hazmat.decrepit.ciphers import algorithms
+
+    key = bytes.fromhex("0123456712345678234567893456789a")
+    iv = bytes.fromhex("0102030405060708")
+    plaintext = bytes.fromhex("0123456789abcdef00")
+    source = "RFC 2144 CAST-128 keying plus cryptography CAST5 CBC and PKCS#7 padding"
+    ciphertext = _cryptography_cbc_pkcs7_ciphertext(algorithms.CAST5(key), iv, plaintext)
+    vectors = [
+        {
+            "id": "cast128_cbc_pad_128_9bytes",
+            "type": "positive",
+            "mechanism_name": "CKM_CAST128_CBC_PAD",
+            "key_type": "symmetric",
+            "key_bits": 128,
+            "key_hex": key.hex(),
+            "params": {"source": source, "iv_hex": iv.hex()},
+            "plaintext_hex": plaintext.hex(),
+            "ciphertext_hex": ciphertext.hex(),
+        }
+    ]
+    return {
+        "mechanism": "CKM_CAST128_CBC_PAD",
+        "family": "cast128_cbc_pad",
+        "key_type": "CKK_CAST128",
+        "source": source,
+        "vectors": vectors,
+    }
+
+
+def generate_idea_cbc_pad() -> dict:
+    """IDEA CBC_PAD vector via cryptography plus PKCS#7 padding."""
+    from cryptography.hazmat.decrepit.ciphers import algorithms
+
+    key = bytes.fromhex("1f8e4973953f3fb0bd6b16662e9a3c17")
+    iv = bytes.fromhex("2fe2b333ceda8f98")
+    plaintext = bytes.fromhex("45cf12964fc824ab76616ae2f4bf08")
+    source = (
+        "pyca cryptography IDEA CBC vector parameters plus cryptography IDEA CBC and PKCS#7 padding"
+    )
+    ciphertext = _cryptography_cbc_pkcs7_ciphertext(algorithms.IDEA(key), iv, plaintext)
+    vectors = [
+        {
+            "id": "idea_cbc_pad_pyca_count_0_15bytes",
+            "type": "positive",
+            "mechanism_name": "CKM_IDEA_CBC_PAD",
+            "key_type": "symmetric",
+            "key_bits": 128,
+            "key_hex": key.hex(),
+            "params": {
+                "source": source,
+                "source_url": (
+                    "https://raw.githubusercontent.com/pyca/cryptography/main/"
+                    "vectors/cryptography_vectors/ciphers/IDEA/idea-cbc.txt"
+                ),
+                "iv_hex": iv.hex(),
+            },
+            "plaintext_hex": plaintext.hex(),
+            "ciphertext_hex": ciphertext.hex(),
+        }
+    ]
+    return {
+        "mechanism": "CKM_IDEA_CBC_PAD",
+        "family": "idea_cbc_pad",
+        "key_type": "CKK_IDEA",
+        "source": source,
+        "source_url": (
+            "https://raw.githubusercontent.com/pyca/cryptography/main/"
+            "vectors/cryptography_vectors/ciphers/IDEA/idea-cbc.txt"
+        ),
+        "vectors": vectors,
+    }
+
+
+def generate_blowfish_cbc_pad() -> dict:
+    """Blowfish CBC_PAD vector via cryptography plus PKCS#7 padding."""
+    from cryptography.hazmat.decrepit.ciphers import algorithms
+
+    key = bytes.fromhex("0000000000000000")
+    iv = bytes.fromhex("0000000000000000")
+    plaintext = bytes.fromhex("00000000000000")
+    source = "Bruce Schneier Blowfish keying plus cryptography Blowfish CBC and PKCS#7 padding"
+    ciphertext = _cryptography_cbc_pkcs7_ciphertext(algorithms.Blowfish(key), iv, plaintext)
+    vectors = [
+        {
+            "id": "blowfish_cbc_pad_zero_iv_key64_7bytes",
+            "type": "positive",
+            "mechanism_name": "CKM_BLOWFISH_CBC_PAD",
+            "key_type": "symmetric",
+            "key_bits": 64,
+            "key_hex": key.hex(),
+            "params": {"source": source, "iv_hex": iv.hex()},
+            "plaintext_hex": plaintext.hex(),
+            "ciphertext_hex": ciphertext.hex(),
+        }
+    ]
+    return {
+        "mechanism": "CKM_BLOWFISH_CBC_PAD",
+        "family": "blowfish_cbc_pad",
+        "key_type": "CKK_BLOWFISH",
+        "source": source,
+        "vectors": vectors,
+    }
+
+
 GENERATORS = {
     "aes_ecb": generate_aes_ecb,
     "aes_cbc": generate_aes_cbc,
@@ -2025,8 +2177,12 @@ GENERATORS = {
     "aria_cbc": generate_aria_cbc,
     "cast128_ecb": generate_cast128_ecb,
     "cast128_cbc": generate_cast128_cbc,
+    "cast128_cbc_pad": generate_cast128_cbc_pad,
     "rc2_ecb": generate_rc2_ecb,
     "rc2_cbc": generate_rc2_cbc,
+    "rc2_cbc_pad": generate_rc2_cbc_pad,
+    "idea_cbc_pad": generate_idea_cbc_pad,
+    "blowfish_cbc_pad": generate_blowfish_cbc_pad,
     "des_ecb": generate_des_ecb,
     "des_cbc": generate_des_cbc,
     "aes_ccm": generate_aes_ccm,
