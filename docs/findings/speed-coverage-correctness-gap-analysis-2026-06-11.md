@@ -312,6 +312,14 @@ Next task:
 - Use this to detect shallow registry-only coverage and speed-induced coverage
   loss.
 
+Status: improved in the current branch. Coverage reports and JSONL merge now
+preserve advertised, selected, attempted, accepted, rejected-cleanly,
+skipped-by-capability, crash, and timeout buckets, and `quality.json`
+mechanism findings surface those states instead of collapsing every mechanism
+into old invoked/not-invoked status. A future provider-run comparison gate is
+still needed to flag speed-induced coverage loss automatically across artifact
+sets.
+
 ## Recommended Next Round
 
 The next implementation round should be harness-first, because it makes every

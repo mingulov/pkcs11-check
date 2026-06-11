@@ -53,10 +53,20 @@ Merged function- and mechanism-coverage:
 "available_names", "invoked", "invoked_names", "invoked_counts", "not_invoked",
 "not_invoked_names", "invoked_detail", "invoked_detail_counts"}}`.
 
+Mechanism coverage may also include additive state buckets:
+`advertised_names`, `selected_names`, `selection_rejected_names`,
+`attempted_names`, `accepted_names`, `rejected_cleanly_names`,
+`skipped_by_capability_names`, `crashed_names`, and `timeout_names`. These are
+the preferred fields for distinguishing registry-only visibility, selected but
+unreached mechanisms, clean operational refusals, capability skips, and
+crash/timeout outcomes; older `invoked*` fields remain for compatibility.
+
 ### `quality.json`
 A conservative quality audit (summary counts, per-finding details, warnings)
 derived purely from `results.json` + `coverage.json` + the report log. Treat its
 top-level `summary` and `findings` as stable; nested detail may grow.
+Mechanism findings include a primary `status` plus additive
+`telemetry_states`/boolean fields when the richer mechanism buckets are present.
 
 ### `report.jsonl`
 The raw pytest-reportlog stream (one JSON record per line: TestReport,
