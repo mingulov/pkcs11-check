@@ -29,8 +29,10 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
     find_objects,
-    gen_aes_key,
     read_attributes,
+)
+from pkcs11_check.raw.recipes import (
+    gen_aes_key as _raw_gen_aes_key,
 )
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
@@ -44,9 +46,36 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKO_DATA,
 )
-from pkcs11_check.testcases.conftest import skip_if_token_write_protected
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    skip_if_token_write_protected,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.security
+
+
+def gen_aes_key(
+    raw: Any,
+    sh: int,
+    bits: int = 256,
+    attrs: Any | None = None,
+) -> int:
+    """Generate a concurrent-session setup AES key.
+
+    tpm2-pkcs11 advertises CKM_AES_KEY_GEN but C_GenerateKey is not
+    operational; route the advertised-but-not-operational reject to xfail
+    (provider-general — a module whose keygen works is unaffected).
+    """
+    try:
+        return _raw_gen_aes_key(raw, sh, bits, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            "AES_KEY_GEN advertised but concurrent-session setup key generation is not operational",
+        )
+        raise
 
 
 def _unique_label(prefix: str = "conc") -> bytes:

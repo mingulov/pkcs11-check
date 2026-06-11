@@ -25,8 +25,10 @@ from pkcs11_check.raw.recipes import (
     create_object,
     destroy_quietly,
     find_objects,
-    gen_aes_key,
     read_attributes,
+)
+from pkcs11_check.raw.recipes import (
+    gen_aes_key as _raw_gen_aes_key,
 )
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
@@ -56,12 +58,37 @@ from pkcs11_check.testcases.ckr._malformed_attrs import (
     make_ulong_attr_with_length,
 )
 from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
     classify_lifecycle_effect,
     classify_negative_rv,
     classify_policy_enforcement,
+    xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.access
+
+
+def gen_aes_key(
+    raw: Any,
+    sh: int,
+    bits: int = 256,
+    attrs: Any | None = None,
+) -> int:
+    """Generate a ckr-object setup AES key, routing advertised-but-not-operational
+    AES_KEY_GEN rejects to xfail (provider-general).
+
+    tpm2-pkcs11 advertises CKM_AES_KEY_GEN but C_GenerateKey is not operational;
+    a module whose keygen works is unaffected.
+    """
+    try:
+        return _raw_gen_aes_key(raw, sh, bits, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            "AES_KEY_GEN advertised but ckr-object setup key generation is not operational",
+        )
+        raise
 
 
 class TestCreateObjectErrors:

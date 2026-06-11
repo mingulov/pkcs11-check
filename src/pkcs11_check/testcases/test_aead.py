@@ -16,9 +16,11 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
-    gen_aes_key,
     generate_random,
     import_secret_key,
+)
+from pkcs11_check.raw.recipes import (
+    gen_aes_key as _raw_gen_aes_key,
 )
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
@@ -27,9 +29,37 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKM_AES_GCM,
 )
-from pkcs11_check.testcases.conftest import skip_if_mech_param_unsupported
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    skip_if_mech_param_unsupported,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.crossverify
+
+
+def gen_aes_key(
+    raw: Any,
+    sh: int,
+    bits: int = 256,
+    attrs: Any | None = None,
+) -> int:
+    """Generate an AEAD-property setup AES key, routing
+    advertised-but-not-operational AES_KEY_GEN rejects to xfail
+    (provider-general).
+
+    tpm2-pkcs11 advertises CKM_AES_KEY_GEN but C_GenerateKey is not operational;
+    a module whose keygen works is unaffected.
+    """
+    try:
+        return _raw_gen_aes_key(raw, sh, bits, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            "AES_KEY_GEN advertised but AEAD-property setup key generation is not operational",
+        )
+        raise
 
 
 def _import_aes(rs: Any, key_bytes: bytes) -> int:

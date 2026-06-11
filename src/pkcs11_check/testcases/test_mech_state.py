@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import byref
+from typing import Any
 
 import pytest
 
@@ -25,9 +26,11 @@ from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    gen_aes_key,
     import_secret_key,
     to_ubyte_buf,
+)
+from pkcs11_check.raw.recipes import (
+    gen_aes_key as _raw_gen_aes_key,
 )
 from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
@@ -55,9 +58,38 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import classify_negative_rv, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    classify_negative_rv,
+    xfail_if_known_ckr,
+)
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.state_machine]
+
+
+def gen_aes_key(
+    raw: Any,
+    sh: int,
+    bits: int = 256,
+    attrs: Any | None = None,
+) -> int:
+    """Generate a mechanism-state setup AES key, routing
+    advertised-but-not-operational AES_KEY_GEN rejects to xfail
+    (provider-general).
+
+    tpm2-pkcs11 advertises CKM_AES_KEY_GEN but C_GenerateKey is not operational;
+    a module whose keygen works is unaffected.
+    """
+    try:
+        return _raw_gen_aes_key(raw, sh, bits, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            "AES_KEY_GEN advertised but mechanism-state setup key generation is not operational",
+        )
+        raise
+
 
 # Single-session operation-state guards (op-without-init, double-init) are
 # classified 3-way via classify_negative_rv: CKR_OK -> fail, the spec-preferred

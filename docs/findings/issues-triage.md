@@ -1147,3 +1147,105 @@ change.**
   `CKM_RSA_X_509` leading-vs-trailing unwrap break (Type-A); minor `C_Finalize`-after-`C_Finalize`
   acceptance. All stay `fail` ("failures ARE findings"). ChaCha20-Poly1305 entry RETRACTED (harness
   bug, not NSS bug).
+
+## tpm2 long-tail triage 2026-06-11
+
+**Scope.** Full triage of **every** `outcome:failed` (`when:call`) record in the fresh VALIDATED
+pool `artifacts/tpm2-pooled/report.jsonl`. tpm2 (tpm2-pkcs11 1.10.0, swtpm-backed daemon) is a
+hardware/daemon-backed provider with a deliberately **narrow** surface — 26 mechanisms, and notably
+**no operational key/object *creation* surface** for the suite's setup recipes. **Total: 112 failed
+call records, across 44 files** (matches the bucket counts in the triage brief; very diffuse).
+
+**Method.** Decoded the structured `longrepr.reprcrash` + first traceback frame of all 112 records
+and bucketed by **root cause site** (which setup recipe / op raised), not just by file. Cross-checked
+the focus buckets against **all** `<provider>-pooled/report.jsonl` snapshots (per-nodeid outcome
+decoded), and against the §tpm2-pkcs11 1.10.0 section of [module-issues.md](../module-issues.md) +
+[provider-tpm2.md](provider-tpm2.md). The dominant story was confirmed by the pool's own
+**xfail** records: tpm2 already produces 147+88+75+… `XFailed: AES_KEY_GEN advertised but key
+generation is not operational` (and the RSA/EC equivalents) — i.e. the provider **advertises**
+`CKM_AES_KEY_GEN`/`CKM_RSA_PKCS_KEY_PAIR_GEN`/`CKM_EC_KEY_PAIR_GEN` but `C_GenerateKey*` rejects at
+runtime. The 112 hard fails are the **laggard setup sites** that still call the *raw* recipe instead
+of the established `_or_xfail` wrapper, plus a tail of genuine findings and the Denis-KEEP C-cluster.
+
+### Root-cause classification (all 112)
+
+| Count | Root cause | Class | Determination |
+|---|---|---|---|
+| 51 | `gen_aes_key()` setup → `CKR_FUNCTION_NOT_SUPPORTED` | 🔧 **NEW→FIXED** | **HARNESS over-strictness, FIXED (provider-general).** tpm2 advertises `CKM_AES_KEY_GEN` but `C_GenerateKey` is non-operational — the documented PC-6 advertised-but-not-operational condition, **already routed to xfail in ~330 sites** via `gen_aes_key_or_xfail`/`require_operational_aes_keygen`. These 51 call the raw `gen_aes_key()` in setup and so hard-fail. **Cross-provider: every other provider PASSES these nodeids** (softhsm2/kryoptic/nss/opencryptoki/wolfpkcs11/bouncyhsm) — only tpm2 fails, exactly the non-operational-keygen signature. Fixed this pass for the 7 focus-bucket files (see below); rest is the same class. |
+| 6 | `gen_rsa_keypair()` setup → `CKR_ATTRIBUTE_VALUE_INVALID` | 🔧/📋 **NEW** | **Same advertised-but-not-operational class (RSA).** tpm2 advertises `CKM_RSA_PKCS_KEY_PAIR_GEN`; the pool already xfails 45+ such sites (`RSA_PKCS_KEY_PAIR_GEN advertised but keypair generation is not operational`). The 6 raw `gen_rsa_keypair()` setup sites (`test_encrypt`, `test_mech_sign_recover`, `test_crypto_weakness`) hard-fail. NOTE the surface is *template-conditional*: some templates succeed (e.g. `test_ckr_sign::test_mechanism_invalid` reaches its assertion), so the right wrapper is `gen_rsa_keypair_or_xfail` per-site, not a blanket skip. Documented; same fix recipe as AES, deferred (not in the 7 focus files). |
+| 3 | `gen_ec_keypair()` setup → `CKR_ATTRIBUTE_VALUE_INVALID` | 🔧/📋 **NEW** | **Same class (EC).** `test_kdf::TestECDHDerive` ×3 abort at EC keypair setup; pool already xfails 8+ `EC_KEY_PAIR_GEN advertised but keypair generation is not operational`. Same `gen_ec_keypair_or_xfail` recipe; deferred. |
+| 2 | HMAC-as-KDF op → `CKR_GENERAL_ERROR` | 📋 **NEW** | `test_kdf::TestKeyDeriveSoftware` ×2: HMAC sign returns `CKR_GENERAL_ERROR` (advertised-but-not-operational HMAC). Same `SHA256_HMAC advertised but … not operational` xfail class already used by `test_generic_secret`. Deferred. |
+| 11 | C-cluster SIGSEGV (`ffi_length_boundary`, `arithmetic_overflow`, `api_boundary`, `ckr_raw_args_bad` NULL-mech) | 💥 | **KNOWN** — harness-provoked UB (isize_max huge-len digest/update/random, `template_count=ULONG_MAX`, NULL `pMechanism`). Denis-KEEP ("a segfault IS the finding"). Documented module-issues.md §tpm2 (Raw CKR NULL-mechanism findings). |
+| 5 | `test_secret_key_value_len.py` oversized `CKA_VALUE_LEN` | 💥 | **KNOWN, excluded** — the ulong/scalar `CKA_VALUE_LEN=0xffff…` value-shape class (`C_CreateObject`/`C_SetAttributeValue`/`C_DigestKey` store the toxic length). Shared, documented C-cluster value-shape. KEEP. |
+| 3 | `test_operation_termination.py` C_Verify/VerifyFinal non-termination | 📋 | **KNOWN, excluded** — documented tpm2 `C_Verify`/`C_VerifyFinal` non-termination after rejected signature (next `C_VerifyInit` → `CKR_OPERATION_ACTIVE`). provider-verify-operation-not-terminated.md / [[project_operation_active_cascade]]. Stays `fail`. |
+| 1 | `test_subprocess_safety.py::test_fork_after_initialize` timeout | 📋 | **KNOWN, excluded** — documented tpm2 fork/daemon re-init timeout (module-issues.md §tpm2 "Remaining-gap and subprocess-safety"). Environmental daemon behavior; KEEP. |
+| 2 | `ckr_raw_args_bad` `C_GenerateKey/C_WrapKey(NULL mech)` → `CKR_FUNCTION_NOT_SUPPORTED` | 📋 | **KNOWN** — documented module-issues.md §tpm2 ("`C_GenerateKey(NULL)`/`C_WrapKey(NULL)` returns `0x54` not `CKR_ARGUMENTS_BAD`"). Stays `fail`. |
+| ~13 | genuine semantic findings (session/object/login/attribute) | 📋 | **KNOWN (documented)** — `test_open_session_is_public` / `test_access::public_session_no_private_keys` / `test_session_state_machine` (private keys visible pre-login); `test_object_visibility` ×2 (session objects survive owning-session close); `test_ro_session::test_verify_in_ro_session`; `test_sensitivity` Type-B; `test_set_attribute::test_cannot_change_modulus` + `test_ckr_object::test_set_readonly_class` (read-only `CKA_MODULUS`/`CKA_CLASS` mutated); `x509/test_lifecycle::test_cert_modifiability`; `ckr_sign`/`ckr_verify::test_mechanism_invalid` (AES_ECB accepted as sign/verify mech); `test_data_objects`/`test_access_control` data-object create rejected. The lifecycle/visibility set is documented module-issues.md §tpm2 "Session and object lifecycle findings". All stay `fail`. |
+| 3 | AES-GCM crossverify op → `CKR_GENERAL_ERROR` | 📋 **NEW(minor)** | `test_aead::TestAESGCMCrossVerify` ×3: tpm2 does **not** advertise AES-GCM (the suite already `Skipped: AES_GCM not supported` for the ACVP-GCM path), but these 3 crossverify tests `_import_aes` then GCM-encrypt without a GCM capability gate, so they hard-fail at the op with `CKR_GENERAL_ERROR`. Advertised-vs-operational mismatch on the *op* side; same advertised-but-not-operational family. Deferred (left `fail`; a `skip_unless_mechanism(rs, "AES_GCM")` gate would convert to skip — minor, not in focus fix). |
+
+**Known vs new roll-up.** Of 112: the great majority are the **single dominant class** — the
+tpm2 *no-operational-key/object-creation-surface* setup aborts (51 AES + 6 RSA + 3 EC + 2 HMAC = 62)
+that the harness should route to xfail (provider-general; it already does for ~330+ sibling sites).
+The rest is the Denis-KEEP C-cluster (11 SIGSEGV + 5 value-shape + 2 NULL-mech = 18), the documented
+non-termination/fork environmental pair (4), and ~13 genuine documented semantic findings (kept
+`fail`) plus 3 GCM-op advertised/operational-mismatch (minor). **No genuine Type-A crypto break was
+found** — and, per the nss-ChaCha lesson, I specifically checked the AES "wrong output" candidates:
+there are none; every AES bucket is a *setup keygen reject*, not a wrong-ciphertext. The wrong-output
+risk simply does not arise here because tpm2 cannot create the setup keys to reach a crypto op.
+
+### NEW — the `gen_aes_key()` setup-abort class (51) = HARNESS over-strictness — FIXED (7 focus files)
+
+**Verdict: HARNESS over-strictness. tpm2 advertises `CKM_AES_KEY_GEN` but `C_GenerateKey` is
+non-operational; a *setup* keygen abort for a non-operational advertised mechanism must be `xfail`
+(not `fail`), exactly as the established `gen_aes_key_or_xfail`/`require_operational_aes_keygen`
+helpers already do in ~330 sites. Fixed for the focus-bucket files this pass.**
+
+- **What.** 51 tests across 22 files call the *raw* `gen_aes_key(rs.raw, rs.sh, …)` in their setup
+  (the first line of the test body). On tpm2, `C_GenerateKey(CKM_AES_KEY_GEN)` returns
+  `CKR_FUNCTION_NOT_SUPPORTED`, so `gen_aes_key`'s internal `expect_rv(rv, CKR_OK)` raises and the
+  whole test hard-fails *before reaching its actual negative-op/contract assertion*.
+- **Why it's harness over-strictness, not a tpm2 finding.** The pool **already records** tpm2 as
+  `XFailed: AES_KEY_GEN advertised but key generation is not operational` for the ~330 sites that
+  route setup through `gen_aes_key_or_xfail`/`require_operational_aes_keygen`. The model's "capability
+  genuinely absent / advertised-but-not-operational" rule makes this an `xfail`, not a `fail`. The
+  51 laggard sites are simply unmigrated. `CKR_FUNCTION_NOT_SUPPORTED` is already in
+  `AES_KEYGEN_RUNTIME_REJECT_RVS`.
+- **Provider-general (the proof).** The wrapper only triggers on the specific keygen-reject CKRs;
+  on every module whose AES keygen *works* (softhsm2/kryoptic/nss/opencryptoki/wolfpkcs11/bouncyhsm)
+  the raw keygen succeeds and the test runs normally — confirmed by the cross-provider matrix
+  (**all 6 other providers PASS every one of these nodeids**; only tpm2 fails) and by the existing
+  `*_use_operational_aes128*` green meta-tests. No provider identity is consulted.
+- **Fix (this pass).** Migrated the **7 focus-bucket files** to a module-level `gen_aes_key` wrapper
+  (raw imported as `_raw_gen_aes_key`; wrapper catches the setup `AssertionError` and calls
+  `xfail_if_known_ckr(exc, AES_KEYGEN_RUNTIME_REJECT_RVS, …)`): `test_concurrent_sessions.py`,
+  `ckr/test_ckr_codes.py`, `ckr/test_ckr_object.py`, `ckr/test_ckr_spec_compliance.py`,
+  `test_mech_state.py`, `test_ro_session.py`, `test_aead.py`. Each gets a dedicated regression test
+  in `tests/test_setup_runtime_capability_guards.py` (the established guard suite; +7 tests, now 122
+  passing) that monkeypatches `_raw_gen_aes_key` to raise `CKR_FUNCTION_NOT_SUPPORTED` and asserts
+  the setup becomes an `xfail` with the file-specific message.
+- **Deferred (same class, same recipe, not done this pass to keep the commit bounded):** the
+  remaining 15 AES sites across `ckr/test_ckr_derive|priority|sign|verify`, `test_attribute_fuzz`,
+  `test_duplicate_labels`, `test_interface`, `test_large_objects`, `test_session_edge_cases`,
+  `test_session_exhaustion`, `test_session_info`, `test_surface_audit`, `test_v30_session`,
+  `security/test_parameter_validation|tookan`; plus the 6 RSA + 3 EC + 2 HMAC setup sites
+  (`gen_rsa_keypair_or_xfail`/`gen_ec_keypair_or_xfail` recipe) and the 3 GCM-op gates. All are the
+  same mechanical migration; they remain `fail` until migrated (no finding is hidden).
+- **Confidence: HIGH.** Direct `CKR_FUNCTION_NOT_SUPPORTED`-at-setup traceback frames, the pool's own
+  xfail records for the migrated-sibling sites, a clean 6-provider PASS split, and 7 green
+  red→green regression tests.
+
+### Code + docs this triage
+
+- **Harness fix (commit pending).** 7 focus-bucket files migrated to the advertised-but-not-
+  operational AES-keygen xfail wrapper; +7 regression tests in
+  `tests/test_setup_runtime_capability_guards.py`. Full gates green: `ruff check`/`ruff format
+  --check` clean on all changed files, `mypy --strict` clean (package scope), `tests/` meta-suite
+  **2183 passed, 2 skipped, 0 failed, 0 xfailed**.
+- **No false Type-A.** Per the nss-ChaCha lesson, every AES "wrong output" candidate was checked and
+  is a *setup keygen reject*, not a wrong-ciphertext — there is no genuine tpm2 crypto break in this
+  pool. The genuine findings are all already-documented session/object/login/attribute semantics +
+  the Denis-KEEP C-cluster, kept `fail`.
+- **No doc churn for stats** (per project policy). module-issues.md §tpm2 already documents the
+  advertised-but-not-operational keygen (PC-6), the lifecycle/visibility findings, the NULL-mech
+  rejects, and the fork timeout; this triage adds no new finding rows (the 62 setup aborts are a
+  harness classification bug, not module bugs).

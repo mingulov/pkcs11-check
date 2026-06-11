@@ -34,11 +34,13 @@ from pkcs11_check.testcases import (
     _rsa_export,
     test_access,
     test_access_levels,
+    test_aead,
     test_aes_modes,
     test_attribute_defaults,
     test_attribute_enforcement,
     test_authenticated_wrap,
     test_buffers,
+    test_concurrent_sessions,
     test_crossverify,
     test_crossverify_extended,
     test_data_objects,
@@ -50,6 +52,7 @@ from pkcs11_check.testcases import (
     test_mech_flags,
     test_mech_keygen,
     test_mech_lifecycle,
+    test_mech_state,
     test_mech_wrap,
     test_mechanism_fuzz,
     test_object_search_patterns,
@@ -68,10 +71,13 @@ from pkcs11_check.testcases import (
     test_stateful,
 )
 from pkcs11_check.testcases.ckr import (
+    test_ckr_codes,
     test_ckr_decrypt,
     test_ckr_encrypt,
+    test_ckr_object,
     test_ckr_raw_state,
     test_ckr_session,
+    test_ckr_spec_compliance,
     test_ckr_wrap,
 )
 from pkcs11_check.testcases.mechanism_registry import ParamRecipe
@@ -2332,6 +2338,91 @@ def test_mech_wrap_runtime_reject_is_xfail(
         test_mech_wrap.TestMechWrapRoundtrip().test_wrap_unwrap_aes_key(
             rs, SimpleNamespace(module="/tmp/vendor-pkcs11.so"), entry
         )
+
+
+def test_concurrent_sessions_xfail_when_advertised_aes_keygen_rejects_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_concurrent_sessions, "_raw_gen_aes_key", _raise_function_not_supported)
+    monkeypatch.setattr(
+        test_concurrent_sessions, "skip_if_token_write_protected", lambda *_args: None
+    )
+    rs = SimpleNamespace(
+        raw=object(),
+        sh=1,
+        slot_id=1,
+        has_mechanism=lambda name: name in {"AES_KEY_GEN", "AES_ECB"},
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="concurrent-session setup key generation"):
+        test_concurrent_sessions.TestConcurrentObjectCreation().test_rapid_create_destroy_cycle(
+            rs, SimpleNamespace()
+        )
+
+
+def test_ckr_codes_xfail_when_advertised_aes_keygen_rejects_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_ckr_codes, "_raw_gen_aes_key", _raise_function_not_supported)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="ckr-code setup key generation"):
+        test_ckr_codes.TestCKRMechanismErrors().test_ckr_mechanism_invalid(rs)
+
+
+def test_ckr_object_xfail_when_advertised_aes_keygen_rejects_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_ckr_object, "_raw_gen_aes_key", _raise_function_not_supported)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="ckr-object setup key generation"):
+        test_ckr_object.TestGetAttributeErrors().test_destroyed_handle(rs)
+
+
+def test_ckr_spec_compliance_xfail_when_advertised_aes_keygen_rejects_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_ckr_spec_compliance, "_raw_gen_aes_key", _raise_function_not_supported)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="spec-compliance setup key generation"):
+        test_ckr_spec_compliance.TestCKRMechanismCompliance().test_sha256_as_encrypt_returns_mechanism_invalid(
+            rs
+        )
+
+
+def test_mech_state_xfail_when_advertised_aes_keygen_rejects_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_mech_state, "_raw_gen_aes_key", _raise_function_not_supported)
+    rs = _session_with_mechanisms("AES_KEY_GEN", "AES_ECB")
+
+    with pytest.raises(pytest.xfail.Exception, match="mechanism-state setup key generation"):
+        test_mech_state.TestEncryptState().test_double_encrypt_init(rs)
+
+
+def test_ro_session_xfail_when_advertised_aes_keygen_rejects_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_ro_session, "_raw_gen_aes_key", _raise_function_not_supported)
+    monkeypatch.setattr(test_ro_session, "skip_if_token_write_protected", lambda *_args: None)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="RO-session setup key generation"):
+        test_ro_session.TestROSessionOperations().test_find_objects_in_ro_session(
+            rs, SimpleNamespace()
+        )
+
+
+def test_aead_xfail_when_advertised_aes_keygen_rejects_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_aead, "_raw_gen_aes_key", _raise_function_not_supported)
+    rs = _session_with_mechanisms("AES_KEY_GEN", "AES_GCM")
+
+    with pytest.raises(pytest.xfail.Exception, match="AEAD-property setup key generation"):
+        test_aead.TestAESGCMProperties().test_gcm_roundtrip(rs)
 
 
 def test_mech_flags_missing_expected_flags_are_xfail() -> None:
