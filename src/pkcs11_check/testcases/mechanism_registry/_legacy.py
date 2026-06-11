@@ -568,6 +568,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=True,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="cast128_ecb.json",
         notes="CAST128-ECB: 8-byte block, no padding; CKM_CAST5_ECB is an alias",
     )
 
@@ -582,6 +583,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="cast128_cbc.json",
         notes="CAST128-CBC: 8-byte block, requires 8-byte IV; CKM_CAST5_CBC is an alias",
     )
 
