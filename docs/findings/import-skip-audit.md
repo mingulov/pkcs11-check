@@ -68,7 +68,7 @@ setup skips are excluded as out of scope (they are correct by construction).
 | A14 | `acvp/test_acvp_ecdsa.py:263` | `Cannot import EC public key for {curve}: …` | raw `import_ec_public_key` | `has_mechanism(mech_name)` :249 | **needs wiring** (split: curve-unsupported branch stays C) |
 | A15 | `test_cctv_rfc6979.py:104` (`_skip_or_xfail_cctv_ec_import_reject`, broad branch) | `Cannot import {label}: …` | raw `import_ec_public_key` (pub) + `import_ec_private_key` (priv) | `has_mechanism("ECDSA_SHA256")` :121/:165 | **DONE (Batch 3b)** → public site → `import_ec_public_key_negotiated`; tuple split into `_CCTV_EC_CURVE_UNSUPPORTED_CKRS` (skip) + broad (xfail); private site keeps raw `import_ec_private_key` but broad → xfail (D2 spec-path) |
 | A16 | `acvp/test_acvp_slhdsa.py` import helper | `Cannot import SLH-DSA {label}: …` | raw `import_pqc_*` | `has_mechanism` (SLH-DSA mech) | **DONE (D3, commit 9a040f98)** → `_skip_if_import_unsupported` removed; replaced by `_xfail_if_import_not_operational` (unified `_PQC_IMPORT_NOT_OPERATIONAL_RVS`; boundary = mechanism advertisement, see §4a D3) |
-| A17 | `wycheproof/test_wycheproof_dsa.py:228` | `Cannot import DSA public key` | raw `import_dsa_public_key` | `has_mechanism(name)` :188 | **DEFERRED (Batch 4)** — decision + per-provider evidence recorded in the A17 deferral commit. |
+| A17 | `wycheproof/test_wycheproof_dsa.py:228` | `Cannot import DSA public key` | raw `import_dsa_public_key` | `has_mechanism(name)` :188 | **DEFERRED (Batch 4)** — no negotiated DSA importer exists and wiring one is non-trivial (DSA needs its own p/q/g/y template + storage-shape variants, no shared negotiator covers it). **The leak is theoretical:** scanning all `artifacts*/` pooled baselines, the `Cannot import DSA public key` skip is **never hit by any provider**. The only providers that advertise `DSA_SHA*` (nss, softhsm2) import the public key successfully (≈4.4k–4.5k `test_dsa` passes each, 0 import-skips); every `test_dsa` skip is mechanism-not-advertised (`DSA_SHA* not supported`, 792), vector-duplicate (7,956) or P1363-representation (16,218) — none is an `import_dsa_public_key` refusal. No provider both advertises DSA and refuses the canonical public import, so deferral is clearly correct. **To resolve later:** add `import_dsa_public_key_negotiated` (CKK_DSA, p/q/g/y template) to `conftest.py`, wire the site + skip→xfail (`DSA_SHA256:key-import`) per the A18/A19 pattern. |
 | A18 | `wycheproof/test_wycheproof_hkdf.py:119` | `Cannot import IKM key for HKDF` | raw `create_object` (generic secret) | `has_mechanism("HKDF_DERIVE")` :86 | **DONE (Batch 4)** → `import_secret_key_negotiated` (CKK_GENERIC_SECRET); broad CKR after negotiation exhaustion → xfail `HKDF_DERIVE:key-import`; `result=="invalid"` keeps vacuous return; non-CKR propagates |
 | A19 | `wycheproof/test_wycheproof_chacha.py:97` | `Cannot import ChaCha20 key` | raw `create_object` | `has_mechanism("CHACHA20_POLY1305")` :71 | **DONE (Batch 4)** → `import_secret_key_negotiated` (CKK_CHACHA20); broad CKR after negotiation exhaustion → xfail `CHACHA20_POLY1305:key-import`; non-CKR propagates |
 
@@ -331,6 +331,12 @@ meta-test additions in `tests/test_acvp_slhdsa_runtime_classification.py`.
 - **Category A (xfail-qualifying):** 19 sites — **5 mechanical** (A1–A4, A6 + the broad branch of
   A5/A7/A8 are mechanical too), **the rest need negotiation wiring** (A9–A19). The A5/A7/A8/A14
   splits keep their curve-unsupported sub-branch in C.
+- **Category A status — ALL RESOLVED (2026-06-11):** A1–A16, A18, A19 are **implemented**
+  (skip→xfail across Batches 1–4: `45441f10`, `72b9b7d8`, Batch 3b, D3 `9a040f98`, Batch 4). **A17
+  (DSA) is the sole DEFERRED item** — needs a new negotiated DSA importer, and the leak is
+  theoretical (no provider advertises DSA and refuses the canonical public import in any baseline).
+  The **import-skip audit is COMPLETE**: every live leak is converted; the one deferral is
+  evidence-backed and carries its resolution recipe (A17 row).
 - **Category B (legitimate, raw-import optional):** 5 (B1–B5; B4/B5 cross-listed as D2).
 - **Category C (legitimate, capability/test-data absent):** 10 (C1–C10).
 - **Category D (RESOLVED 2026-06-10, see §4a):** 3 (D1 → Type-C **fail**; D2 → A-like **xfail**,
