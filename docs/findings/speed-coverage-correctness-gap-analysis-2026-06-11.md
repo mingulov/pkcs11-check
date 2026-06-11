@@ -478,6 +478,12 @@ Legacy/deprecated coverage addendum for the active goal:
   `RC5_CBC_Pad` vector, including non-block-aligned plaintext and vector-param
   replay for word size, rounds, and IV. `CKM_TWOFISH_CBC_PAD` remains pending
   until a reliable padded-vector generator/source is available.
+- Added: DES, 3DES, Camellia, ARIA, and SEED CBC_PAD now have
+  non-block-aligned exact-output KAT vectors plus registry `vector_file` links.
+  These cover the block-cipher padding families where existing CBC vector
+  generation already had a reliable local cipher implementation. Twofish
+  CBC_PAD remains pending because the current local OpenSSL/cryptography setup
+  does not expose Twofish, so a stronger source or generator is still needed.
 
 Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks
 should follow once the harness can reuse provider-local history and prove

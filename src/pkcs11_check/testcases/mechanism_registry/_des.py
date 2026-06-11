@@ -107,6 +107,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_DES_ENC,
+        vector_file="des_cbc_pad.json",
         notes="DES-CBC with PKCS#7 padding: any-length plaintext, requires 8-byte IV",
     )
 
@@ -270,6 +271,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_DES_ENC,
+        vector_file="des3_cbc_pad.json",
         notes="3DES-CBC with PKCS#7 padding: any-length plaintext, requires 8-byte IV",
     )
 

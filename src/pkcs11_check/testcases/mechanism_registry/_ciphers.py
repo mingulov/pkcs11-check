@@ -231,6 +231,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_CAMELLIA_ENC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="camellia_cbc_pad.json",
         notes="Camellia-CBC with PKCS#7 padding: any-length plaintext, requires 16-byte IV",
     )
 
@@ -342,6 +343,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_ARIA_ENC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="aria_cbc_pad.json",
         notes="ARIA-CBC with PKCS#7 padding: any-length plaintext, requires 16-byte IV",
     )
 
@@ -440,6 +442,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_SEED_ENC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="seed_cbc_pad.json",
         notes="SEED-CBC with PKCS#7 padding: any-length plaintext, requires 16-byte IV",
     )
 

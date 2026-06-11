@@ -77,3 +77,20 @@ def test_gap_analysis_marks_dsa_dh_domain_parameter_coverage_as_dedicated() -> N
 
     assert "DSA/DH/X9.42 domain parameter paths are mostly absent" not in doc
     assert "Dedicated DSA/DH/X9.42 domain-parameter coverage exists" in doc
+
+
+def test_gap_analysis_marks_block_cbc_pad_vectors_as_added() -> None:
+    """DES-family, Camellia, ARIA, and SEED CBC_PAD now have KAT vector links."""
+    des_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_des.py")
+    cipher_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_ciphers.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    for vector_file in ("des_cbc_pad.json", "des3_cbc_pad.json"):
+        assert vector_file in des_registry
+        assert _read(f"src/pkcs11_check/testcases/data/mechanism_vectors/{vector_file}")
+
+    for vector_file in ("camellia_cbc_pad.json", "aria_cbc_pad.json", "seed_cbc_pad.json"):
+        assert vector_file in cipher_registry
+        assert _read(f"src/pkcs11_check/testcases/data/mechanism_vectors/{vector_file}")
+
+    assert "DES, 3DES, Camellia, ARIA, and SEED CBC_PAD" in doc

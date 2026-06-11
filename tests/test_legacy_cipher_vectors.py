@@ -5,12 +5,16 @@ from __future__ import annotations
 import ctypes
 
 from pkcs11_check.raw.types_std import (
+    CKM_ARIA_CBC_PAD,
     CKM_BLOWFISH_CBC,
     CKM_BLOWFISH_CBC_PAD,
+    CKM_CAMELLIA_CBC_PAD,
     CKM_CAST128_CBC,
     CKM_CAST128_CBC_PAD,
     CKM_CAST128_ECB,
     CKM_CAST128_MAC_GENERAL,
+    CKM_DES3_CBC_PAD,
+    CKM_DES_CBC_PAD,
     CKM_IDEA_CBC,
     CKM_IDEA_CBC_PAD,
     CKM_IDEA_ECB,
@@ -24,6 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKM_RC5_CBC_PAD,
     CKM_RC5_ECB,
     CKM_RC5_MAC_GENERAL,
+    CKM_SEED_CBC_PAD,
     CKM_TWOFISH_CBC,
 )
 from pkcs11_check.testcases.mechanism_helpers import build_params_from_vector
@@ -135,6 +140,71 @@ def test_legacy_cbc_pad_mechanisms_have_kat_vectors() -> None:
             if mechanism_name == "CKM_RC5_CBC_PAD":
                 assert "RFC 2040 section 9.3" in vec["params"]["source"]
                 assert vec["params"]["source_url"] == "https://www.rfc-editor.org/rfc/rfc2040"
+
+
+def test_block_cipher_cbc_pad_mechanisms_have_kat_vectors() -> None:
+    expected = {
+        int(CKM_DES_CBC_PAD): (
+            "des_cbc_pad.json",
+            "CKM_DES_CBC_PAD",
+            8,
+            1,
+            "ccfec8fe28d5828e52340c1aa445fc61",
+        ),
+        int(CKM_DES3_CBC_PAD): (
+            "des3_cbc_pad.json",
+            "CKM_DES3_CBC_PAD",
+            8,
+            1,
+            "cc980b0548d718e43f2ff326e3d40ae7",
+        ),
+        int(CKM_CAMELLIA_CBC_PAD): (
+            "camellia_cbc_pad.json",
+            "CKM_CAMELLIA_CBC_PAD",
+            16,
+            3,
+            "ae50cb70c6d2d1cf3290031f682a3f9768cf559ddd170006ed70a040b0aea425",
+        ),
+        int(CKM_ARIA_CBC_PAD): (
+            "aria_cbc_pad.json",
+            "CKM_ARIA_CBC_PAD",
+            16,
+            3,
+            "798ad766758dd2b0249dbddae0055eb7e30b5138c669e1c158594a92ec01bb99",
+        ),
+        int(CKM_SEED_CBC_PAD): (
+            "seed_cbc_pad.json",
+            "CKM_SEED_CBC_PAD",
+            16,
+            1,
+            "199ca42dab518bf9f9605f892c3d567a",
+        ),
+    }
+
+    for mech_id, (
+        vector_file,
+        mechanism_name,
+        block_size,
+        expected_count,
+        first_ciphertext,
+    ) in expected.items():
+        config = MECHANISM_REGISTRY[mech_id]
+        assert config.vector_file == vector_file
+
+        vectors = load_positive_vectors(vector_file)
+        assert len(vectors) == expected_count
+        assert vectors[0]["ciphertext_hex"] == first_ciphertext
+        for vec in vectors:
+            plaintext = bytes.fromhex(vec["plaintext_hex"])
+            ciphertext = bytes.fromhex(vec["ciphertext_hex"])
+            assert vec["type"] == "positive"
+            assert vec["mechanism_name"] == mechanism_name
+            assert vec["key_hex"]
+            assert len(plaintext) % block_size != 0
+            assert len(ciphertext) % block_size == 0
+            assert len(ciphertext) > len(plaintext)
+            assert vec["params"]["iv_hex"]
+            assert "PKCS#7" in vec["params"]["source"]
 
 
 def test_legacy_cbc_pad_vector_params_replay_iv_and_effective_bits() -> None:
