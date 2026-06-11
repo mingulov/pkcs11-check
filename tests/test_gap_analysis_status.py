@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GAP_DOC = ROOT / "docs/findings/speed-coverage-correctness-gap-analysis-2026-06-11.md"
+COVERAGE_GAPS_PLAN = ROOT / "docs/coverage-gaps-plan.md"
 
 
 def _read(relative: str) -> str:
@@ -44,3 +45,17 @@ def test_gap_analysis_marks_blake2b_keyed_semantics_as_covered() -> None:
 
     assert "BLAKE2B coverage stops at unkeyed digest" not in doc
     assert "BLAKE2B keyed coverage exists" in doc
+
+
+def test_coverage_plan_does_not_count_ecmqv_as_kea_coverage() -> None:
+    """ECMQV and KEA are different mechanisms; ECMQV tests do not cover KEA."""
+    ecdh_extended = _read("src/pkcs11_check/testcases/test_ecdh_extended.py")
+    misc_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_misc.py")
+    plan = COVERAGE_GAPS_PLAN.read_text(encoding="utf-8")
+
+    assert "TestECMQVDerive" in ecdh_extended
+    assert "CKM_KEA_KEY_PAIR_GEN" in misc_registry
+    assert "CKM_KEA_DERIVE" in misc_registry
+
+    assert "ECMQV / KEA" not in plan
+    assert "KEA remains source-first" in plan

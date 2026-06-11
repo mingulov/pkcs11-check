@@ -182,8 +182,13 @@ Verification surprises:
 - **T3.1 IKE** — test_ike.py covers all 4 variants (CKM_IKE_PRF_DERIVE,
   CKM_IKE1_PRF_DERIVE, CKM_IKE1_EXTENDED_DERIVE, CKM_IKE2_PRF_PLUS_DERIVE).
   **Sufficient.**
-- **T3.2 ECMQV / KEA** — test_ecdh_extended.py has `TestECMQVDerive`.
-  **Sufficient.**
+- **T3.2 ECMQV** — test_ecdh_extended.py has `TestECMQVDerive`.
+  **Sufficient for ECMQV.**
+- **T3.2b KEA** — KEA has raw constants and mechanism-registry entries, but
+  current product tests do not provide KEA domain-parameter/key-derive semantics.
+  **Not sufficient yet.** KEA remains source-first until a defensible public
+  vector, domain-parameter shape, and `CK_KEA_DERIVE_PARAMS` mapping are
+  identified.
 - **T3.3 GOST** — `CKM_GOST` = 3 hits. Test files thin. Real opportunity if
   GOST coverage is needed, but most users don't run GOST modules — defer.
 - **T3.4 BLAKE2 custom output lengths** — test_blake2.py covers the
