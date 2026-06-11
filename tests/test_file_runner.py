@@ -4183,6 +4183,47 @@ def test_file_skip_counts_collected_tests_as_skipped(
     ]
 
 
+def test_mechanism_coverage_buckets_required_mechanisms_for_unit_outcomes(
+    tmp_path: Path,
+) -> None:
+    skipped_file = tmp_path / "test_skip.py"
+    skipped_file.write_text('REQUIRED_MECHANISMS = ["AES_CCM"]\ndef test_x(): pass\n')
+    crashed_file = tmp_path / "test_crash.py"
+    crashed_file.write_text('REQUIRED_MECHANISMS = ["HKDF_DERIVE"]\ndef test_x(): pass\n')
+    timeout_file = tmp_path / "test_timeout.py"
+    timeout_file.write_text('REQUIRED_MECHANISMS = ["CKM_ML_DSA"]\ndef test_x(): pass\n')
+    coverage = {
+        "mechanism_coverage": {
+            "available_names": ["CKM_AES_CCM", "CKM_HKDF_DERIVE", "CKM_ML_DSA"],
+            "invoked_names": [],
+            "not_invoked_names": ["CKM_AES_CCM", "CKM_HKDF_DERIVE", "CKM_ML_DSA"],
+            "skipped_by_capability_names": [],
+            "crashed_names": [],
+            "timeout_names": [],
+        }
+    }
+    state = FileRunState(
+        units=[str(skipped_file), str(crashed_file), str(timeout_file)],
+        fingerprint="fp",
+        results=[
+            FileRunResult(str(skipped_file), "passed", 0, 0.0),
+            FileRunResult(str(crashed_file), "crashed", -11, 1.0),
+            FileRunResult(str(timeout_file), "timeout", file_runner_mod._TIMEOUT_RETURN_CODE, 1.0),
+        ],
+    )
+
+    augmented = file_runner_mod._augment_mechanism_coverage_from_unit_outcomes(
+        coverage,
+        state,
+        per_unit_details={str(skipped_file): {"file_skip": True}},
+    )
+
+    mechanism_coverage = augmented["mechanism_coverage"]
+    assert mechanism_coverage["skipped_by_capability_names"] == ["CKM_AES_CCM"]
+    assert mechanism_coverage["crashed_names"] == ["CKM_HKDF_DERIVE"]
+    assert mechanism_coverage["timeout_names"] == ["CKM_ML_DSA"]
+
+
 def test_nodeid_unit_with_missing_required_mechanism_is_skipped_before_pytest(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -651,6 +651,69 @@ def _merge_supplemental_special_details(
     return merged
 
 
+def _required_ckm_names_for_unit(unit: str) -> list[str]:
+    required = extract_required_mechanisms(unit.split("::", 1)[0])
+    if not required:
+        return []
+    return sorted(
+        name if name.startswith("CKM_") else f"CKM_{name}"
+        for name in required
+        if isinstance(name, str) and name
+    )
+
+
+def _mechanism_name_set(value: Any) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    return {str(name) for name in value if name is not None}
+
+
+def _augment_mechanism_coverage_from_unit_outcomes(
+    coverage: dict[str, Any] | None,
+    state: FileRunState,
+    *,
+    per_unit_details: Mapping[str, dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """Annotate coverage states for explicit per-file mechanism outcomes."""
+    if coverage is None:
+        return None
+    raw_mechanism_coverage = coverage.get("mechanism_coverage")
+    if not isinstance(raw_mechanism_coverage, Mapping):
+        return coverage
+
+    augmented = dict(coverage)
+    mechanism_coverage = dict(raw_mechanism_coverage)
+    augmented["mechanism_coverage"] = mechanism_coverage
+
+    bucket_names = {
+        "skipped_by_capability_names": _mechanism_name_set(
+            mechanism_coverage.get("skipped_by_capability_names")
+        ),
+        "crashed_names": _mechanism_name_set(mechanism_coverage.get("crashed_names")),
+        "timeout_names": _mechanism_name_set(mechanism_coverage.get("timeout_names")),
+    }
+
+    for unit, file_results, merged_detail in _group_results_by_file(
+        state.results,
+        dict(per_unit_details or {}),
+    ):
+        required_names = _required_ckm_names_for_unit(unit)
+        if not required_names:
+            continue
+        if merged_detail.get("file_skip") is True:
+            bucket_names["skipped_by_capability_names"].update(required_names)
+        status = _overall_unit_status(file_results)
+        if status == "crashed":
+            bucket_names["crashed_names"].update(required_names)
+        elif status == "timeout":
+            bucket_names["timeout_names"].update(required_names)
+
+    for key, names in bucket_names.items():
+        mechanism_coverage[key] = sorted(names)
+
+    return augmented
+
+
 def write_isolated_json_report(
     path: Path,
     state: FileRunState,
@@ -2444,6 +2507,11 @@ def run_isolated_pytest_units(
                     quality_records = extract_quality_report_records_from_jsonl(
                         report_config.jsonl_path
                     )
+                    coverage_data = _augment_mechanism_coverage_from_unit_outcomes(
+                        coverage_data,
+                        state,
+                        per_unit_details=merged_details,
+                    )
                     if coverage_data:
                         coverage_path = report_config.jsonl_path.parent / "coverage.json"
                         coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
@@ -3353,6 +3421,11 @@ def run_isolated_pytest_units(
                     coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
                     quality_records = extract_quality_report_records_from_jsonl(
                         report_config.jsonl_path
+                    )
+                    coverage_data = _augment_mechanism_coverage_from_unit_outcomes(
+                        coverage_data,
+                        state,
+                        per_unit_details=merged_details,
                     )
                 if coverage_data:
                     coverage_path = report_config.jsonl_path.parent / "coverage.json"
