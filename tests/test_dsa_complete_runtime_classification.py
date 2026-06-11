@@ -21,6 +21,13 @@ def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
     )
 
 
+def test_dsa_complete_module_preserves_sign_and_slow_marks() -> None:
+    mark = test_dsa_complete.pytestmark
+    marks = mark if isinstance(mark, list) else [mark]
+
+    assert {item.mark.name for item in marks} == {"sign", "slow"}
+
+
 def test_dsa_parameter_gen_runtime_reject_is_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

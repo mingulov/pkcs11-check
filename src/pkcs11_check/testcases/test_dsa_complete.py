@@ -70,8 +70,6 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
-pytestmark = pytest.mark.sign
-
 # Verification failure return values
 _VERIFY_FAIL_RVS = {
     CKR_SIGNATURE_INVALID,
@@ -99,7 +97,7 @@ _DSA_PARAMETER_RUNTIME_REJECT_RVS = (
 # DSA parameter/key generation is heavy on several providers (10-32s per case
 # on NSS); the whole file is keygen-bound. Marked slow so a basic run can skip
 # it with -m "not slow"; it still runs in the full profile.
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.sign, pytest.mark.slow]
 
 _DSA_KEYPAIR_RUNTIME_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
