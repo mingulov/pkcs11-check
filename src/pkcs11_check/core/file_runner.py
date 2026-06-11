@@ -984,6 +984,31 @@ def _write_unit_report_record_cache(
     cache_path.write_text("".join(json.dumps(record) + "\n" for record in records))
 
 
+def _write_unit_report_record_cache_from_jsonl_paths(
+    state_file: Path,
+    unit: str,
+    jsonl_paths: Sequence[Path],
+) -> None:
+    """Persist one unit's report-record cache by streaming source JSONL files."""
+    cache_path = _report_record_cache_path(state_file, unit)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = cache_path.with_suffix(".jsonl.tmp")
+    wrote = False
+    try:
+        with tmp_path.open("w", encoding="utf-8") as out_fh:
+            for jsonl_path in jsonl_paths:
+                for record in _iter_report_log_records(jsonl_path):
+                    out_fh.write(json.dumps(record) + "\n")
+                    wrote = True
+        if wrote:
+            tmp_path.replace(cache_path)
+        else:
+            tmp_path.unlink(missing_ok=True)
+            cache_path.unlink(missing_ok=True)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 def _delete_unit_report_record_cache(state_file: Path, unit: str) -> None:
     _report_record_cache_path(state_file, unit).unlink(missing_ok=True)
 
@@ -2624,10 +2649,12 @@ def run_isolated_pytest_units(
                 except subprocess.TimeoutExpired:
                     duration_s = time.monotonic() - start
                     if unit_jsonl_path is not None:
-                        unit_records = _load_report_log_records(unit_jsonl_path)
-                        if unit_records:
-                            if report_config is not None and report_config.jsonl_path is not None:
-                                _write_unit_report_record_cache(state_file, unit, unit_records)
+                        if report_config is not None and report_config.jsonl_path is not None:
+                            _write_unit_report_record_cache_from_jsonl_paths(
+                                state_file,
+                                unit,
+                                [unit_jsonl_path],
+                            )
                     result = FileRunResult(
                         target=unit,
                         status="timeout",
@@ -2876,12 +2903,11 @@ def run_isolated_pytest_units(
                                 [unit_jsonl_path] if unit_jsonl_path else []
                             ) + to_retry_temps
                             if report_config is not None and report_config.jsonl_path is not None:
-                                to_aggr_records: list[dict[str, Any]] = []
-                                for tmp in all_iter_jsonls:
-                                    if not tmp.exists():
-                                        continue
-                                    to_aggr_records.extend(_load_report_log_records(tmp))
-                                _write_unit_report_record_cache(state_file, unit, to_aggr_records)
+                                _write_unit_report_record_cache_from_jsonl_paths(
+                                    state_file,
+                                    unit,
+                                    all_iter_jsonls,
+                                )
                                 save_run_state(state_file, state)
                             for tmp in all_iter_jsonls:
                                 tmp.unlink(missing_ok=True)
@@ -3295,12 +3321,11 @@ def run_isolated_pytest_units(
                                 [crash_jsonl_path] if crash_jsonl_path else []
                             ) + retry_temp_files
                             if report_config is not None and report_config.jsonl_path is not None:
-                                unit_records = []
-                                for tmp in all_iter_jsonls:
-                                    if not tmp.exists():
-                                        continue
-                                    unit_records.extend(_load_report_log_records(tmp))
-                                _write_unit_report_record_cache(state_file, unit, unit_records)
+                                _write_unit_report_record_cache_from_jsonl_paths(
+                                    state_file,
+                                    unit,
+                                    all_iter_jsonls,
+                                )
                                 save_run_state(state_file, state)
                             for tmp in all_iter_jsonls:
                                 tmp.unlink(missing_ok=True)

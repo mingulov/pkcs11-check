@@ -212,6 +212,9 @@ Current status:
   and runner environment are wired. Existing vector-loader guardrails already
   require product vector loaders to use `load_json_cached()` except subprocess
   coverage helpers that read temporary coverage JSON rather than vector data.
+- Implemented: timeout/crash retry aggregation now streams source
+  `report.jsonl` fragments directly into the per-unit report-record cache
+  instead of building one parsed record list solely for cache output.
 - Remaining work: continue reducing artifact/report processing paths that still
   materialize full per-unit record lists before writing merged reports.
 

@@ -1213,6 +1213,77 @@ def test_run_isolated_pytest_units_resume_json_uses_state_records_without_covera
     assert "test_b.py::test_case" in merged_jsonl
 
 
+def test_write_unit_report_record_cache_from_jsonl_paths_streams_sources(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state_file = tmp_path / "state.json"
+    first = tmp_path / "first.jsonl"
+    second = tmp_path / "second.jsonl"
+    first.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "test_a.py::test_one",
+                        "when": "call",
+                        "outcome": "passed",
+                    }
+                ),
+                "not json",
+            ]
+        )
+        + "\n"
+    )
+    second.write_text(
+        json.dumps(
+            {
+                "$report_type": "SelectionReport",
+                "selection_coverage": {
+                    "encrypt_roundtrip": {
+                        "selected_mechanisms": ["CKM_AES_CBC"],
+                        "rejected_mechanisms": [],
+                        "rejected_reason_counts": {},
+                    }
+                },
+            }
+        )
+        + "\n"
+    )
+
+    def load_all_forbidden(_path: Path) -> list[dict[str, object]]:
+        pytest.fail("cache writes from JSONL paths must stream records")
+
+    monkeypatch.setattr(file_runner_mod, "_load_report_log_records", load_all_forbidden)
+
+    file_runner_mod._write_unit_report_record_cache_from_jsonl_paths(
+        state_file,
+        "test_a.py",
+        [first, tmp_path / "missing.jsonl", second],
+    )
+
+    cache_text = file_runner_mod._report_record_cache_path(state_file, "test_a.py").read_text()
+    assert [json.loads(line) for line in cache_text.splitlines()] == [
+        {
+            "$report_type": "TestReport",
+            "nodeid": "test_a.py::test_one",
+            "when": "call",
+            "outcome": "passed",
+        },
+        {
+            "$report_type": "SelectionReport",
+            "selection_coverage": {
+                "encrypt_roundtrip": {
+                    "selected_mechanisms": ["CKM_AES_CBC"],
+                    "rejected_mechanisms": [],
+                    "rejected_reason_counts": {},
+                }
+            },
+        },
+    ]
+
+
 def test_run_isolated_pytest_units_resume_json_rebuilds_multi_unit_log_without_coverage(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
