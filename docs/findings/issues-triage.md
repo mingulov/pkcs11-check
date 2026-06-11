@@ -791,3 +791,157 @@ not land in the fail set. Verify-don't-alarm; **no action.**
 **No code change this triage** — 64/65 were already documented/flagged; the 1 new is a genuine
 softhsm2 finding that stays `fail` and is added to module-issues.md (documentation only). No HARNESS
 bug was proven on softhsm2 in this pass.
+
+## kryoptic long-tail triage 2026-06-11
+
+**Scope.** Full triage of **every** `outcome:failed` (`when:call`) record in the fresh VALIDATED
+pool `artifacts/kryoptic-pooled/report.jsonl`. kryoptic (v1.5.0) is the suite's **other** mature
+CONTROL module alongside softhsm2 ("must stay byte-identical"), so each hard fail is high-signal.
+**Total: 137 failed call records, across 24 files** (matches the bucket counts in the triage brief).
+
+**Method.** Aggregated by `(file, normalized message)`; cross-checked each bucket against the
+kryoptic section of [module-issues.md](../module-issues.md), the determinations above, and the
+pool-comparison validation. For the three un-triaged NEW buckets every failing vector was decoded
+from the Wycheproof JSON and cross-checked across **all** `<provider>-pooled/report.jsonl` snapshots
+(rv-trace inspected for the actual `CK_RV` on the call that determined the verdict).
+
+### Bucket table (file → count → determination)
+
+| Count | File | Class | Determination |
+|---|---|---|---|
+| 30 | `security/test_ffi_length_boundary.py` | 💥 | **KNOWN** — C-cluster harness-provoked UB (lying-buffer / isize_max SIGSEGV/SIGABRT). Denis 2026-06-10: KEEP ("a segfault IS the finding"). Documented module-issues.md §Kryoptic FFI/arithmetic findings. |
+| 27 | `wycheproof/test_wycheproof_aes.py` | 📋 ⚠️**NEW** | **GENUINE kryoptic Type-A finding** — `C_UnwrapKey(CKM_AES_KEY_WRAP)` accepts an **empty / non-multiple-of-8 wrapped blob** (`ct_len=0`) and returns `CKR_OK`, creating a key. RFC 3394 requires ≥2 semiblocks; an empty blob is malformed. **kryoptic-only** (all 3 variants); softhsm2/nss/opencryptoki/wolfpkcs11 all reject (pass). Stays `fail`. See determination below. |
+| 12 | `security/test_arithmetic_overflow.py` | 💥 | **KNOWN** — C-cluster `ulCount=ULONG_MAX` template/find-objects count-overflow SIGABRT (`thread panicked`, `memory allocation of 274 GiB`). KEEP. Documented module-issues.md §Kryoptic. |
+| 12 | `wycheproof/test_wycheproof_x25519.py` | 🔧 ⚠️**NEW→FIXED** | **HARNESS over-strictness, FIXED (effect-gated, provider-general).** All 12 are JWK `InvalidPublic` vectors (wrong `crv`/`kty`) whose `x` decodes to canonical length; per RFC 7748 §5 every such raw point is valid. Resolves the flagged SESSION-RESTORE decision. See determination below. |
+| 11 | `test_operation_termination.py` | 📋 | **KNOWN** — `C_Verify`/`C_VerifyFinal` non-termination after a rejected short signature (next `C_VerifyInit` → `CKR_OPERATION_ACTIVE`). Documented root cause ([[project_operation_active_cascade]], provider-verify-operation-not-terminated.md). |
+| 6 | `test_parameter_validation.py` | ⚖️ | **KNOWN (flagged-for-decision)** — `TestGcmTagSize` accepts 8/32/64-bit GCM tags (below NIST 96-bit minimum). Same stricter-than-spec GCM hardening class flagged ⚖️ on softhsm2; spec-legal weak params, left as-is. |
+| 6 | `wycheproof/test_wycheproof_mldsa_sign.py` | 🔧 ⚠️**NEW→FIXED** | **HARNESS over-strictness, FIXED.** kryoptic correctly **rejects** the `InvalidPrivateKey` (out-of-range s1/s2) vectors at `C_CreateObject` — right direction — but with `CKR_DEVICE_ERROR`, a clean code outside the narrow 3-code import-reject set. Per the model that is pass/xfail, not fail. Different class from the nss ML-DSA finding (that was over-length *acceptance*). See determination below. |
+| 4 | `acvp/test_acvp_eddsa.py` | ⚖️ | **KNOWN (flagged-for-decision)** — `TestEdDsaKeyVer` accepts invalid Ed25519/Ed448 keys (tc1/tc4/tc6/tc8). Same ⚖️ Edwards-point analysis pending as on softhsm2; RFC 8032 does not require verifiers to reject non-canonical/small-order pubkeys. Documented module-issues.md §Kryoptic (EdDSA SigVer is; keyver class flagged here, consistent with the softhsm2 doc-gap note). |
+| 4 | `test_ckr_raw_buffer.py` | 💥/📋 | **KNOWN** — undersized output-buffer guard subprocess failures (`C_GetMechanismList`/`C_GetInterfaceList`/`C_Decrypt` AES-CBC-PAD). Same two-call-convention probe class documented for nss (module-issues.md §NSS); applies to kryoptic too. |
+| 3 | `security/test_ffi_null_pointer.py` | 💥 | **KNOWN** — NULL-pointer SIGSEGV (`C_GenerateRandom`/`C_SetOperationState`/`C_SignInit` NULL param). C-cluster, KEEP. The `C_SetPIN` NULL-new-PIN PIN-corruption is separately documented (module-issues.md §Kryoptic, `@destructive`). |
+| 3 | `test_secret_key_value_len.py` | 💥 | **KNOWN** — `CKA_VALUE_LEN=0xffff…` overflow on `C_GenerateKey`/`C_CopyObject`/`C_SetAttributeValue` SIGABRT. C-cluster value-shape, KEEP. |
+| 3 | `test_set_attribute.py` | ⚖️ | **KNOWN (flagged-for-decision)** — `TestSetAttributeAtomicity`/`TestSetAttributeNegative` read-back after partial write of read-only `CKA_CLASS`/`CKA_KEY_TYPE`. Same stricter-than-spec atomicity hardening flagged ⚖️ on softhsm2; PKCS#11 §5.7 does not mandate atomicity. |
+| 2 | `test_ckr_object.py` | 📋 | **KNOWN** — `CKA_ALLOWED_MECHANISMS` NULL-pointer-nonzero-length accepted (documented module-issues.md §Kryoptic NEW 2026-06-08); `TestSetAttributeErrors` `CKR_GENERAL_ERROR` on read-only class set (same hardening class). |
+| 2 | `test_access_levels.py` | 📋 | **KNOWN** — USER-session `CKA_TRUSTED=True` grant + public-session `CKA_PRIVATE=True` create. Same security-boundary class documented for kryoptic (module-issues.md §Kryoptic 1595+ CKA_TRUSTED finding). |
+| 2 | `test_mech_message.py` | 📋 | **KNOWN** — `C_EncryptMessage` AES-GCM/CCM generated-IV not written back to `pIv`/nonce. Same generated-IV message-API class as softhsm2-generated-iv. |
+| 2 | `test_misc_kdf.py` / `test_aes_kdf.py` | 📋 | **KNOWN** — `TestExtractKeyFromKey` / `CKM_AES_CBC_ENCRYPT_DATA` derived-bytes mismatch (kryoptic KDF byte-ordering / extract-from-key offset quirk). Module-specific derive output; recorded. |
+| 1 each | `test_ckr_decrypt`, `test_ckr_wrap`, `test_api_boundary`, `test_cve_regression`, `test_kem`, `test_buffers` | 📋/💥 | **KNOWN** — RSA wrong-length ciphertext accepted; generic-secret accepted for AES wrap (documented module-issues.md §Kryoptic 1645+); `CKA_VALUE_LEN=0xffff…` AES keygen SIGABRT (C-cluster); Tookan §3.3 sensitive-unwrap boundary; ML-KEM `CKA_VALUE` injection accepted; `C_SignFinal` buffer-too-small `pulSize` deviation. Each is a documented kryoptic finding or C-cluster crash. |
+| 1 | `security/test_padding_oracle.py` | 📋 noise | **KNOWN** — probabilistic AES-CBC-PAD Vaudenay oracle (1/320 `CKR_OK_DIFFERENT` this snapshot). Documented cross-run nondeterminism ([[reference_oracle_tests_probabilistic]]); verify-don't-alarm. |
+
+**Known vs new roll-up:** 135 of 137 are KNOWN — documented kryoptic crash/validation findings (kept
+failing) or ⚖️ flagged stricter-than-spec hardening Denis left as-is. **3 buckets were un-triaged
+NEW; 2 are HARNESS over-strictness now FIXED, 1 is a genuine kryoptic Type-A finding kept `fail`.**
+
+### NEW #1 — `test_wycheproof_aes::test_aes_key_wrap` (27F) = GENUINE kryoptic Type-A finding
+
+**Verdict: GENUINE FINDING (Type-A crypto-correctness). No code change — the test classifies
+correctly; documented in module-issues.md §Kryoptic.**
+
+- **What.** All 27 are AES-KW **unwrap** of `WrongDataSize` / `InvalidWrappingSize` vectors
+  (tc14–22, 56–64, 111–119 across AES-128/192/256). Wycheproof gives a plaintext `msg` whose length
+  is **not a multiple of 8** (1–20 bytes) and therefore an **empty `ct`** (no valid wrapped blob can
+  exist). The test calls `C_UnwrapKey(CKM_AES_KEY_WRAP, wrapped=b"")`. rv-trace:
+  `C_CreateObject→CKR_OK`, **`C_UnwrapKey→CKR_OK`**, `C_DestroyObject→CKR_OK` — kryoptic accepts the
+  empty blob and creates a key object.
+- **Why it's the wrong thing (Type-A).** RFC 3394 AES-KW requires the wrapped data to be a multiple
+  of 64 bits with a minimum of two 64-bit semiblocks (16 bytes). An empty (and any
+  non-multiple-of-8) ciphertext is malformed and MUST be rejected
+  (`CKR_WRAPPED_KEY_LEN_RANGE`/`CKR_DATA_LEN_RANGE`). Unwrapping it into a key is a
+  crypto-correctness break (a garbage/zero key object enters the store as if it were a recovered
+  key). The negative-op classifier `fail`s on this acceptance — correct.
+- **Test is sound.** The adaptive unwrap passes `value_len=None` for invalid vectors precisely so a
+  forged/malformed blob is never coerced through a restated length; the module's own
+  rejection is what's checked, and kryoptic doesn't reject.
+- **Cross-provider (fresh pool, definitive — kryoptic-specific):** on these exact 27 vector ids,
+  **kryoptic / kryoptic-main / kryoptic-fips all return `CKR_OK` (fail)**; softhsm2 (both),
+  nss (all 3), opencryptoki (both), wolfpkcs11 (both) all **reject (pass)**; bouncyhsm/tpm2/corepkcs11
+  do not advertise `AES_KEY_WRAP` (skip). Clean split → kryoptic-specific input-validation gap.
+- **Confidence: HIGH.** Direct rv-trace `CKR_OK` on an empty blob, reproduced on all three kryoptic
+  variants, every other careful provider rejects. Reportable upstream.
+
+### NEW #2 — `test_wycheproof_x25519::test_xdh` (12F) = HARNESS over-strictness — FIXED (resolves the X25519 flag)
+
+**Verdict: HARNESS over-strictness. FIXED effect-gated + provider-general. The flagged
+SESSION-RESTORE "X25519 invalid-vector over-strictness" decision is RESOLVED = resolved-harness-fix.**
+
+- **What the 12 vectors assert.** x25519_jwk tc519/522/524/525/526/527/529 + x448_jwk
+  tc516/517/518/519/521, all `result:invalid`, flag **`InvalidPublic`** ("private and public key do
+  not use the same underlying group"). Their invalidity is purely in the **JWK wrapper**: a wrong
+  `crv` (`P-256`, `secp256k1`) with both x AND y, or a malformed/missing `kty`. The harness decoder
+  `decode_xdh_public_bytes(..., "jwk")` extracts **only the raw `x` field** and discards
+  `kty`/`crv`/`y`, so the module receives a **canonical-length raw coordinate** (32/56 B).
+- **Why deriving is correct (RFC 7748 §5).** On Montgomery curves every 32-byte (X25519) / 56-byte
+  (X448) string is a valid public key — the X25519/X448 functions clamp the scalar and are defined
+  for **all** inputs (and for twist points, §5/§7: implementations are recommended to accept
+  non-canonical keys). There is **no invalid-curve / invalid-point attack class** to detect once the
+  JWK wrapper is stripped. So the module deriving a secret is the right thing; the test failing it is
+  the harness treating a JWK-encoding-layer property as a crypto invalidity.
+- **The discriminator (why only these 12).** The passing/skipped JWK-invalid vectors are exactly the
+  ones whose `x` decodes to a **wrong length** (P-384→48 B, P-521→66 B) or is **missing** — those a
+  careful module rejects at import (pass) and remain testable. Only the **canonical-length**
+  container-mismatch subset is untestable.
+- **Direct analog already in the suite.** ECDH (`test_wycheproof_ecdh`) drops `InvalidAsn`/`InvalidPem`
+  at load (`_UNTESTABLE_FLAGS`) for the same reason — PKCS#11 takes pre-extracted points, not
+  containers — and reduces parameter-level WrongCurve vectors via `ecdh_cofactor1_shared_x`. The
+  asn/pem XDH `InvalidPublic` vectors already self-correct (cryptography's `.public_bytes(Raw)` or the
+  SPKI fallback yields a wrong-length/full point → import-reject → pass), so **only the jwk path**
+  needed the fix.
+- **Cross-provider (provider-general, no kryoptic identity).** Every provider that advertises XDH
+  fails a subset of exactly these 12 with **no extras**: kryoptic/opencryptoki/bouncyhsm = all 12,
+  nss = the 7 X25519 (nss doesn't advertise X448). softhsm2/tpm2/wolfpkcs11 skip XDH entirely. No
+  provider had a real invalid-point break here.
+- **Fix.** `test_wycheproof_x25519._xdh_jwk_invalidity_not_representable` + a load-time drop: a jwk
+  `InvalidPublic` vector whose decoded `x` is the canonical curve length is excluded from
+  parametrization (like `InvalidAsn`/`InvalidPem`). **Effect-gated:** wrong-length / missing-`x`
+  invalid vectors stay testable, and a *raw/asn/pem* vector whose canonical-length point a provider
+  derives from is untouched — a genuine raw-point break still fails. TDD:
+  `tests/test_wycheproof_kryoptic_classification.py` (drop + retain + valid-unaffected) and the
+  reconciled `tests/test_wycheproof_xdh_guards.py::test_invalid_xdh_correct_length_success_is_reported`
+  (its prior exemplar tc519 was a misdiagnosed "low-order point"; rewritten to a synthetic
+  raw-encoding invalid vector so the runtime fail-on-derive guard still fires).
+- **Confidence: HIGH.** Decoded every failing vector's JWK `x`/`crv`/`kty`, confirmed the
+  canonical-length / wrong-length split exactly predicts fail vs pass, RFC 7748 §5 is dispositive,
+  and the fix is the established ECDH untestable-flag pattern.
+
+### NEW #3 — `test_wycheproof_mldsa_sign::test_mldsa_sign` (6F) = HARNESS over-strictness — FIXED
+
+**Verdict: HARNESS over-strictness. FIXED provider-general. Different class from the nss ML-DSA
+finding (b251ad1b) — that was over-length *acceptance* (Type-A); this is *rejection* with a non-spec
+clean code.**
+
+- **What.** mldsa_44 tc52/53, mldsa_65 tc56/57, mldsa_87 tc47/48 — all `result:invalid`, flag
+  **`InvalidPrivateKey`** ("private key with s1/s2 vector out of range"). rv-trace:
+  **`C_CreateObject→CKR_DEVICE_ERROR`** — kryoptic **rejects** the malformed private key at import
+  (the right direction for a negative vector), but with `CKR_DEVICE_ERROR` (its crypto-layer
+  decode-failure fallback, [[reference_kryoptic_default_ckrv]]), which is outside the test's narrow
+  3-code reject set `{TEMPLATE_INCOMPLETE, TEMPLATE_INCONSISTENT, ATTRIBUTE_VALUE_INVALID}` → the old
+  code `raise`d → fail.
+- **Why it's over-strict.** Per the classification model, a negative op rejected with **some other
+  clean code** is `pass`/`xfail`, never `fail`. A `CkrAssertionError` always carries a clean module
+  `CK_RV` (a crash surfaces as `returncode<0` at the runner, not here), so the import-reject of an
+  `InvalidPrivateKey`-flagged vector is honest behavior regardless of which clean code is used.
+- **Not the nss class.** nss b251ad1b *accepts* over-length ML-DSA signatures/keys (Type-A, wrong
+  thing → fail, kept). Here kryoptic *rejects* malformed key material → correct direction. Opposite
+  sign.
+- **Cross-provider.** softhsm2-main/opencryptoki **pass**; bouncyhsm/nss/wolfpkcs11 *accept* the
+  malformed key at import then reach the sign branch (which xfails them as lenient key validation —
+  the existing `_MLDSA_INVALID_PRIVATE_KEY_FLAGS` path). kryoptic is the only one rejecting at import,
+  and it does so cleanly. Both directions are honest; the harness was failing only the clean-reject
+  direction.
+- **Fix.** `test_wycheproof_mldsa_sign` now treats a clean `CkrAssertionError` import-reject of an
+  `InvalidPrivateKey`/`IncorrectPrivateKeyLength` invalid vector as a pass (rejecting malformed key
+  material is the correct outcome), narrowing the `except` to `CkrAssertionError` so non-CKR Python
+  bugs still propagate. TDD: `tests/test_wycheproof_kryoptic_classification.py` (clean import-reject
+  for `DEVICE_ERROR`/`FUNCTION_FAILED`/`GENERAL_ERROR` is not-fail; a valid-vector import reject still
+  propagates as a real signal).
+- **Confidence: HIGH.** rv-trace pinpoints `C_CreateObject→CKR_DEVICE_ERROR`, the model is explicit
+  that a clean non-spec reject of a negative vector is not a fail, and the fix preserves the lenient
+  *acceptance* path (still xfailed) and valid-vector signal.
+
+### Code + docs this triage
+
+- `fix(tests)` x25519 jwk `InvalidPublic` canonical-length drop + mldsa_sign clean import-reject —
+  provider-general, effect-gated, with TDD (`tests/test_wycheproof_kryoptic_classification.py`,
+  reconciled `tests/test_wycheproof_xdh_guards.py`). Full gates green; meta-suite 0-fail/0-xfail.
+- module-issues.md §Kryoptic: NEW Type-A AES-KW empty-blob acceptance entry (genuine, stays `fail`).
+- No fix for the 27 AES-KW fails — keeping them failing is correct ("failures ARE findings").

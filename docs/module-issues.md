@@ -181,6 +181,21 @@ provider package versions where the finding was first recorded.
   `C_GetAttributeValue` size queries; a NULL value pointer with a nonzero
   length must be rejected cleanly. Detected by
   `test_ckr_object.py::TestCreateObjectErrors::test_allowed_mechanisms_null_pointer_nonzero_length`.
+- **Type-A — C_UnwrapKey(CKM_AES_KEY_WRAP) accepts an empty / non-multiple-of-8 wrapped blob (NEW
+  2026-06-11)**: `C_UnwrapKey` with `CKM_AES_KEY_WRAP` and a **zero-length** (`b""`) wrapped blob
+  returns `CKR_OK` and creates a key object (rv-trace: `C_CreateObject→CKR_OK`,
+  `C_UnwrapKey→CKR_OK`). RFC 3394 AES-KW requires the wrapped data to be a multiple of 64 bits with a
+  minimum of two semiblocks (16 bytes); an empty (and any non-multiple-of-8) ciphertext is malformed
+  and MUST be rejected (`CKR_WRAPPED_KEY_LEN_RANGE` / `CKR_DATA_LEN_RANGE`). Accepting it unwraps a
+  garbage/zero key into the store as if recovered — a crypto-correctness break (Type-A). 27 Wycheproof
+  `aes_wrap_test.json` `WrongDataSize`/`InvalidWrappingSize` vectors (tc14–22, 56–64, 111–119 across
+  AES-128/192/256, each with empty `ct`) are accepted. **kryoptic-specific**: all three variants
+  (v1.5.0 / kryoptic-main / kryoptic-fips) return `CKR_OK`; softhsm2 (both), nss (all), opencryptoki
+  (both), wolfpkcs11 (both) all reject (bouncyhsm/tpm2/corepkcs11 don't advertise the mechanism).
+  Detected by: `test_wycheproof_aes.py::test_aes_key_wrap`. Classified Type-A per
+  [classification-model-design.md](classification-model-design.md) (negative op: `CKR_OK` on a
+  must-reject malformed input + crypto-correctness break → `fail`). Reportable upstream. Full
+  determination: [findings/issues-triage.md](findings/issues-triage.md) (kryoptic 2026-06-11 section).
 
 ### Known quirks
 - v3.2 interface — supports `C_GetInterface`, PQC mechanisms
