@@ -1443,7 +1443,10 @@ classifies it.
   not a harness artifact.
 
 **Severity:** MEDIUM (conformance — `CKM_AES_CBC_PAD` does not validate PKCS#5 padding on
-decrypt; a padding-oracle-style channel and acceptance of malformed ciphertext).
+decrypt: malformed ciphertext is accepted and a stripped plaintext returned, a
+crypto-correctness break with unvalidated-malleability / interop consequences. Note this
+module accepts *all* invalid-padding vectors, so on its own it exposes no distinguishable
+padding oracle — the harm is malformed-ciphertext acceptance, not an oracle channel.).
 **Action:** documentation only; the test classification is already correct. Report upstream
 against OpenCryptoki SW token.
 
