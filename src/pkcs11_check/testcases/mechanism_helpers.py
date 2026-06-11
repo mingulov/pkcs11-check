@@ -878,6 +878,8 @@ def build_params_from_vector(mech_id: int, recipe: ParamRecipe, vec: dict[str, A
         ``"ccm"``    -- uses ``iv_hex`` (nonce), ``aad_hex``, ``tag_bits``, ``data_len``.
         ``"pss"``    -- uses ``params["hash_mech_hex"]`` as CKM constant name.
         ``"oaep"``   -- uses ``params["hash_mech_hex"]`` as CKM constant name.
+        ``"rc2"``    -- uses ``params["effective_bits"]``.
+        ``"rc2_cbc"`` -- uses ``effective_bits`` and ``iv_hex``.
 
     For all other styles the function delegates to ``build_test_params``.
 
@@ -957,6 +959,21 @@ def build_params_from_vector(mech_id: int, recipe: ParamRecipe, vec: dict[str, A
             CKM(mech_id),
             hash_mech=_resolve_const(hash_mech_name_oaep),
             mgf=_resolve_const(d.get("mgf", "CKG_MGF1_SHA256")),
+        )
+
+    if style == "rc2":
+        effective_bits_rc2: int = vp.get("effective_bits", d.get("effective_bits", 128))
+        return mech_rc2(CKM(mech_id), effective_bits=effective_bits_rc2)
+
+    if style == "rc2_cbc":
+        iv_hex_rc2: str | None = vp.get("iv_hex")
+        if iv_hex_rc2 is None:
+            return build_test_params(mech_id, recipe)
+        effective_bits_rc2_cbc: int = vp.get("effective_bits", d.get("effective_bits", 128))
+        return mech_rc2_cbc(
+            CKM(mech_id),
+            effective_bits=effective_bits_rc2_cbc,
+            iv=bytes.fromhex(iv_hex_rc2),
         )
 
     if style == "chacha20_poly1305":

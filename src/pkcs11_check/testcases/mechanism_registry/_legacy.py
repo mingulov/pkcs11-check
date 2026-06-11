@@ -172,6 +172,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=True,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="rc2_ecb.json",
         notes="RC2-ECB: 8-byte block, no padding, requires CK_RC2_PARAMS (effective key bits)",
     )
 
@@ -186,6 +187,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="rc2_cbc.json",
         notes="RC2-CBC: 8-byte block, requires CK_RC2_CBC_PARAMS (effective bits + 8-byte IV)",
     )
 
