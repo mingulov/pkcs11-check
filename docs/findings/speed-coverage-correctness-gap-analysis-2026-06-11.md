@@ -174,8 +174,12 @@ smoke behavior, or covered only by one narrow variation.
    KEY_DERIVE variants need keyed reference tests and handle/value checks.
 7. SHAKE/XOF and ML-DSA ExternalMu are registry/smoke only until raw XOF
    function signatures and KAT-backed tests exist.
-8. Legacy cipher families are mostly generic: SKIPJACK, RC5, CAST, IDEA, KEA,
-   older PBE variants, and RC2/RC5 MAC_GENERAL parameter structures.
+8. Legacy cipher coverage is now mixed rather than mostly generic: RC2, RC4,
+   RC5, CAST128/CAST5, IDEA, Blowfish, and Twofish have KAT-backed encrypt
+   coverage where the PKCS#11 mechanism shape is reliable. Remaining shallow
+   areas are SKIPJACK, CDMF, CAST/CAST3 variants, BATON/JUNIPER, GOST28147,
+   older PBE variants, CBC_PAD outputs, and RC2/RC5/CAST/IDEA MAC_GENERAL
+   parameter structures.
 9. CMS and CT-KIP are shallow: current tests mostly check mechanism info or
    clean rejection rather than valid parameterized operations.
 10. Generic negative coverage is narrow relative to 467 registry mechanisms.
@@ -285,4 +289,3 @@ After that, do the first coverage expansion round:
 Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks
 should follow once the harness can reuse provider-local history and prove
 coverage did not silently drop.
-
