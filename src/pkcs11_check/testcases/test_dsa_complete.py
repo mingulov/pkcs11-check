@@ -243,9 +243,9 @@ def _generate_dsa_keypair(
 class TestDSARaw:
     """Tests for raw CKM_DSA with pre-hashed data."""
 
-    def test_raw_dsa_sign_verify(self, p11_raw_session: Any) -> None:
+    def test_raw_dsa_sign_verify(self, p11_module_session: Any) -> None:
         """Raw DSA sign/verify with a SHA-1-sized digest (20 bytes)."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DSA"):
             pytest.skip("CKM_DSA not supported")
 
@@ -264,9 +264,9 @@ class TestDSARaw:
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, dp)
 
-    def test_raw_dsa_wrong_digest_fails(self, p11_raw_session: Any) -> None:
+    def test_raw_dsa_wrong_digest_fails(self, p11_module_session: Any) -> None:
         """Raw DSA verification with wrong digest must fail."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DSA"):
             pytest.skip("CKM_DSA not supported")
 
@@ -283,9 +283,9 @@ class TestDSARaw:
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, dp)
 
-    def test_raw_dsa_nondeterministic(self, p11_raw_session: Any) -> None:
+    def test_raw_dsa_nondeterministic(self, p11_module_session: Any) -> None:
         """Raw DSA signatures for the same digest should differ (random k)."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DSA"):
             pytest.skip("CKM_DSA not supported")
 
@@ -301,9 +301,9 @@ class TestDSARaw:
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, dp)
 
-    def test_raw_dsa_wrong_length_digest(self, p11_raw_session: Any) -> None:
+    def test_raw_dsa_wrong_length_digest(self, p11_module_session: Any) -> None:
         """Raw DSA with wrong-length digest should fail per spec."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DSA"):
             pytest.skip("CKM_DSA not supported")
 
@@ -359,12 +359,12 @@ class TestDSAPrehash:
     @pytest.mark.parametrize(("mech_name_str", "mechanism"), _DSA_HASH_MECHS)
     def test_sign_verify_roundtrip(
         self,
-        p11_raw_session: Any,
+        p11_module_session: Any,
         mech_name_str: str,
         mechanism: int,
     ) -> None:
         """Sign and verify with a prehash DSA mechanism."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism(mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
@@ -384,12 +384,12 @@ class TestDSAPrehash:
     @pytest.mark.parametrize(("mech_name_str", "mechanism"), _DSA_HASH_MECHS)
     def test_tampered_data_fails(
         self,
-        p11_raw_session: Any,
+        p11_module_session: Any,
         mech_name_str: str,
         mechanism: int,
     ) -> None:
         """Prehash DSA verification with tampered data must fail."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism(mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
@@ -409,12 +409,12 @@ class TestDSAPrehash:
     @pytest.mark.parametrize(("mech_name_str", "mechanism"), _DSA_HASH_MECHS)
     def test_tampered_signature_fails(
         self,
-        p11_raw_session: Any,
+        p11_module_session: Any,
         mech_name_str: str,
         mechanism: int,
     ) -> None:
         """Prehash DSA verification with tampered signature must fail."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism(mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
@@ -438,12 +438,12 @@ class TestDSAPrehash:
     @pytest.mark.parametrize(("mech_name_str", "mechanism"), _DSA_HASH_MECHS)
     def test_empty_data(
         self,
-        p11_raw_session: Any,
+        p11_module_session: Any,
         mech_name_str: str,
         mechanism: int,
     ) -> None:
         """Prehash DSA sign/verify with empty data should work (hash of empty)."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism(mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
@@ -463,12 +463,12 @@ class TestDSAPrehash:
     @pytest.mark.parametrize(("mech_name_str", "mechanism"), _DSA_HASH_MECHS)
     def test_large_data(
         self,
-        p11_raw_session: Any,
+        p11_module_session: Any,
         mech_name_str: str,
         mechanism: int,
     ) -> None:
         """Prehash DSA sign/verify with large data (10 KiB)."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism(mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
@@ -489,9 +489,9 @@ class TestDSAPrehash:
 class TestDSAParameterGen:
     """Tests for CKM_DSA_PARAMETER_GEN."""
 
-    def test_parameter_gen(self, p11_raw_session: Any) -> None:
+    def test_parameter_gen(self, p11_module_session: Any) -> None:
         """Generate DSA domain parameters using CKM_DSA_PARAMETER_GEN."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DSA_PARAMETER_GEN"):
             pytest.skip("CKM_DSA_PARAMETER_GEN not supported")
 
@@ -505,9 +505,9 @@ class TestDSAParameterGen:
         finally:
             destroy_quietly(rs.raw, rs.sh, dp)
 
-    def test_parameter_gen_and_keypair(self, p11_raw_session: Any) -> None:
+    def test_parameter_gen_and_keypair(self, p11_module_session: Any) -> None:
         """Generate DSA parameters, then use them for keypair generation."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DSA_PARAMETER_GEN"):
             pytest.skip("CKM_DSA_PARAMETER_GEN not supported")
 
@@ -533,9 +533,9 @@ class TestDSAParameterGen:
         finally:
             destroy_quietly(rs.raw, rs.sh, dp)
 
-    def test_parameter_gen_sign_verify(self, p11_raw_session: Any) -> None:
+    def test_parameter_gen_sign_verify(self, p11_module_session: Any) -> None:
         """Generate DSA params, keypair, then sign and verify."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DSA_PARAMETER_GEN"):
             pytest.skip("CKM_DSA_PARAMETER_GEN not supported")
 

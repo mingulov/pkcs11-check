@@ -50,6 +50,8 @@ from pkcs11_check.testcases.data import CCTV_DIR
 
 pytestmark = [pytest.mark.pqc, pytest.mark.kat, pytest.mark.cctv]
 
+REQUIRED_MECHANISMS = ["ML_DSA", "ML_DSA_KEY_PAIR_GEN"]
+
 _BENCHMARK_DIR = CCTV_DIR / "ML-DSA" / "benchmark"
 
 # ML-DSA parameter set name -> (CKP parameter set int, benchmark file)
@@ -135,7 +137,7 @@ def _gen_mldsa_keypair(rs: Any, param_set: int) -> tuple[int, int]:
     _ALL_VECTORS,
     ids=[v[0] for v in _ALL_VECTORS],
 )
-def test_cctv_mldsa_sign_verify(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_cctv_mldsa_sign_verify(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """ML-DSA sign + verify round-trip using CCTV benchmark messages.
 
     Generates a fresh ML-DSA key pair, signs the message, then verifies the
@@ -145,7 +147,7 @@ def test_cctv_mldsa_sign_verify(p11_raw_session: Any, vec_id: str, vec: dict[str
     Security property: if sign succeeds and verify rejects the fresh
     signature, the module has a sign/verify inconsistency (test failure).
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not _BENCHMARK_DIR.exists():
         pytest.skip("CCTV ML-DSA benchmark data not found")
 

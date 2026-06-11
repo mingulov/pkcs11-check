@@ -4033,6 +4033,130 @@ def test_file_skip_counts_collected_tests_as_skipped(
     assert unit["skip_reasons"] == {"AES_CCM not supported by module": 2}
 
 
+def test_file_skip_for_any_missing_required_mechanism_counts_collected_tests(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    test_file = tmp_path / "test_example.py"
+    test_file.write_text(
+        'REQUIRED_MECHANISMS = ["ML_DSA", "ML_DSA_KEY_PAIR_GEN"]\n'
+        "def test_a(): pass\n"
+        "def test_b(): pass\n"
+    )
+    report_path = tmp_path / "results.json"
+    calls: list[list[str]] = []
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        calls.append(cmd)
+        return (0, "", "")
+
+    monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"ML_DSA"})
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(
+        file_runner_mod,
+        "collect_pytest_nodeids",
+        lambda targets, pytest_args, *, env=None: [
+            f"{test_file}::test_a",
+            f"{test_file}::test_b",
+        ],
+    )
+
+    exit_code = run_isolated_pytest_units(
+        [str(test_file)],
+        ["--p11-module", "/tmp/module.so", "--p11-manifest", str(tmp_path / "manifest.json")],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    assert calls == []
+    report = json.loads(report_path.read_text())
+    unit = report["units"][0]
+    assert unit["file_skip"] is True
+    assert unit["counts"]["skipped"] == 2
+    assert unit["skip_reasons"] == {"ML_DSA_KEY_PAIR_GEN not supported by module": 2}
+
+
+def test_file_skip_counts_survive_report_jsonl_merge(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    skipped_file = tmp_path / "test_skipped.py"
+    skipped_file.write_text(
+        'REQUIRED_MECHANISMS = ["EDDSA"]\n'
+        "def test_a(): pass\n"
+        "def test_b(): pass\n"
+    )
+    passed_file = tmp_path / "test_passed.py"
+    passed_file.write_text("def test_ok(): pass\n")
+    report_path = tmp_path / "results.json"
+    report_jsonl_path = tmp_path / "report.jsonl"
+
+    monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"AES_CBC"})
+    monkeypatch.setattr(
+        file_runner_mod,
+        "collect_pytest_nodeids",
+        lambda targets, pytest_args, *, env=None: [
+            f"{skipped_file}::test_a",
+            f"{skipped_file}::test_b",
+        ],
+    )
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        assert str(passed_file) in cmd
+        report_log_idx = cmd.index("--report-log")
+        unit_jsonl_path = Path(cmd[report_log_idx + 1])
+        unit_jsonl_path.write_text(
+            _jsonl_line(nodeid=f"{passed_file}::test_ok", outcome="passed") + "\n"
+        )
+        return (0, "", "")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+
+    exit_code = run_isolated_pytest_units(
+        [str(skipped_file), str(passed_file)],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path, jsonl_path=report_jsonl_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    report = json.loads(report_path.read_text())
+    assert report["summary"]["passed"] == 1
+    assert report["summary"]["skipped"] == 2
+    assert report["summary"]["total"] == 3
+    units = {unit["target"]: unit for unit in report["units"]}
+    skipped_unit = units[str(skipped_file)]
+    assert skipped_unit["file_skip"] is True
+    assert skipped_unit["counts"]["skipped"] == 2
+    assert skipped_unit["skip_reasons"] == {"EDDSA not supported by module": 2}
+    assert units[str(passed_file)]["counts"]["passed"] == 1
+
+
 def test_file_not_skipped_when_mechanism_present(tmp_path: Path) -> None:
     """File with REQUIRED_MECHANISMS present in manifest is NOT skipped."""
     from pkcs11_check.core.test_selection import extract_required_mechanisms

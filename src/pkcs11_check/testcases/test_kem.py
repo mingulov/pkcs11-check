@@ -216,13 +216,13 @@ def _decapsulate_ml_kem_or_xfail(
 class TestMLKEMKeyGeneration:
     """ML-KEM key pair generation tests."""
 
-    def test_ml_kem_available(self, p11_raw_session: Any) -> None:
+    def test_ml_kem_available(self, p11_module_session: Any) -> None:
         """Check that ML_KEM mechanism is available."""
-        _skip_if_no_ml_kem(p11_raw_session)
+        _skip_if_no_ml_kem(p11_module_session)
 
-    def test_ml_kem_keypair_gen(self, p11_raw_session: Any) -> None:
+    def test_ml_kem_keypair_gen(self, p11_module_session: Any) -> None:
         """Generate an ML-KEM key pair."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         try:
@@ -232,9 +232,9 @@ class TestMLKEMKeyGeneration:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_ml_kem_keypair_classes(self, p11_raw_session: Any) -> None:
+    def test_ml_kem_keypair_classes(self, p11_module_session: Any) -> None:
         """ML-KEM public key is PublicKey, private is PrivateKey."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         try:
@@ -246,9 +246,9 @@ class TestMLKEMKeyGeneration:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_ml_kem_keypair_key_type(self, p11_raw_session: Any) -> None:
+    def test_ml_kem_keypair_key_type(self, p11_module_session: Any) -> None:
         """ML-KEM keys report correct key type."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         try:
@@ -260,9 +260,9 @@ class TestMLKEMKeyGeneration:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_ml_kem_private_key_derive_false(self, p11_raw_session: Any) -> None:
+    def test_ml_kem_private_key_derive_false(self, p11_module_session: Any) -> None:
         """Generated ML-KEM private keys must not claim CKA_DERIVE=True."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         try:
@@ -277,9 +277,9 @@ class TestMLKEMKeyGeneration:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_ml_kem_two_keypairs_distinct(self, p11_raw_session: Any) -> None:
+    def test_ml_kem_two_keypairs_distinct(self, p11_module_session: Any) -> None:
         """Two ML-KEM key pair generations produce distinct keys."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub_a, priv_a = _generate_ml_kem_keypair(rs)
         pub_b, priv_b = _generate_ml_kem_keypair(rs)
@@ -303,9 +303,9 @@ class TestMLKEMKeyGeneration:
 class TestMLKEMEncapsulateDecapsulate:
     """ML-KEM encapsulate/decapsulate round-trip tests."""
 
-    def test_encapsulate_returns_ciphertext_and_key(self, p11_raw_session: Any) -> None:
+    def test_encapsulate_returns_ciphertext_and_key(self, p11_module_session: Any) -> None:
         """C_EncapsulateKey returns a ciphertext and a secret key."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         shared = 0
@@ -325,9 +325,9 @@ class TestMLKEMEncapsulateDecapsulate:
             if shared:
                 destroy_quietly(rs.raw, rs.sh, shared)
 
-    def test_encapsulate_ciphertext_nonzero(self, p11_raw_session: Any) -> None:
+    def test_encapsulate_ciphertext_nonzero(self, p11_module_session: Any) -> None:
         """Ciphertext from encapsulate_key is non-trivially non-zero."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         shared = 0
@@ -345,9 +345,9 @@ class TestMLKEMEncapsulateDecapsulate:
             if shared:
                 destroy_quietly(rs.raw, rs.sh, shared)
 
-    def test_encapsulate_decapsulate_shared_secret_matches(self, p11_raw_session: Any) -> None:
+    def test_encapsulate_decapsulate_shared_secret_matches(self, p11_module_session: Any) -> None:
         """Encapsulated and decapsulated shared secrets match."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         encap_handle = 0
@@ -378,9 +378,11 @@ class TestMLKEMEncapsulateDecapsulate:
             if decap_handle:
                 destroy_quietly(rs.raw, rs.sh, decap_handle)
 
-    def test_two_encapsulations_produce_different_ciphertexts(self, p11_raw_session: Any) -> None:
+    def test_two_encapsulations_produce_different_ciphertexts(
+        self, p11_module_session: Any
+    ) -> None:
         """Separate encapsulation calls produce different ciphertexts (fresh randomness)."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         s1 = s2 = 0
@@ -406,9 +408,9 @@ class TestMLKEMEncapsulateDecapsulate:
             if s2:
                 destroy_quietly(rs.raw, rs.sh, s2)
 
-    def test_decapsulate_with_wrong_key_fails_or_differs(self, p11_raw_session: Any) -> None:
+    def test_decapsulate_with_wrong_key_fails_or_differs(self, p11_module_session: Any) -> None:
         """Decapsulating with a different private key produces a different (or no) secret."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub_a, priv_a = _generate_ml_kem_keypair(rs)
         pub_b, priv_b = _generate_ml_kem_keypair(rs)
@@ -473,12 +475,12 @@ class TestMLKEMCiphertextSize:
     )
     def test_ciphertext_size(
         self,
-        p11_raw_session: Any,
+        p11_module_session: Any,
         param_set: str,
         expected_ct_len: int,
     ) -> None:
         """Ciphertext size matches FIPS 203 for this ML-KEM parameter set."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         shared = 0
@@ -510,9 +512,9 @@ class TestMLKEMCiphertextSize:
 class TestMLKEMKeyDerivation:
     """ML-KEM encapsulation producing specific key types (AES-128, AES-256)."""
 
-    def test_encapsulate_produces_aes128_key(self, p11_raw_session: Any) -> None:
+    def test_encapsulate_produces_aes128_key(self, p11_module_session: Any) -> None:
         """encapsulate_key with key_type=AES and VALUE_LEN=16 produces AES-128."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         aes_handle = 0
@@ -558,9 +560,9 @@ class TestMLKEMKeyDerivation:
             if aes_handle:
                 destroy_quietly(rs.raw, rs.sh, aes_handle)
 
-    def test_encapsulate_produces_aes256_key(self, p11_raw_session: Any) -> None:
+    def test_encapsulate_produces_aes256_key(self, p11_module_session: Any) -> None:
         """encapsulate_key with key_type=AES and VALUE_LEN=32 produces AES-256."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         aes_handle = 0
@@ -600,12 +602,12 @@ class TestMLKEMKeyDerivation:
     )
     def test_parameter_set_produces_correct_ciphertext_size(
         self,
-        p11_raw_session: Any,
+        p11_module_session: Any,
         param_set_name: str,
         expected_ct_len: int,
     ) -> None:
         """Requesting a specific ML-KEM parameter set produces the expected ciphertext size."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         param_set = _PARAM_MAP[param_set_name]
         try:
@@ -640,9 +642,9 @@ class TestMLKEMDecapsulation:
     """ML-KEM decapsulation tests with various target templates."""
 
     @pytest.mark.parametrize("aes_len", [16, 24, 32])
-    def test_decapsulate_aes_key_sizes(self, p11_raw_session: Any, aes_len: int) -> None:
+    def test_decapsulate_aes_key_sizes(self, p11_module_session: Any, aes_len: int) -> None:
         """Decapsulate to AES keys of different sizes (128, 192, 256 bits)."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         encap_handle = 0
@@ -680,9 +682,9 @@ class TestMLKEMDecapsulation:
             if decap_handle:
                 destroy_quietly(rs.raw, rs.sh, decap_handle)
 
-    def test_decapsulate_generic_secret(self, p11_raw_session: Any) -> None:
+    def test_decapsulate_generic_secret(self, p11_module_session: Any) -> None:
         """Decapsulate to CKK_GENERIC_SECRET (default 32 bytes for ML-KEM)."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         encap_handle = 0
@@ -712,9 +714,9 @@ class TestMLKEMDecapsulation:
             if decap_handle:
                 destroy_quietly(rs.raw, rs.sh, decap_handle)
 
-    def test_decapsulate_extractability_flags(self, p11_raw_session: Any) -> None:
+    def test_decapsulate_extractability_flags(self, p11_module_session: Any) -> None:
         """Decapsulate with specific security flags (if supported by provider)."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         encap_handle = 0
@@ -755,9 +757,9 @@ class TestMLKEMDecapsulation:
 class TestMLKEMNegative:
     """Negative tests for ML-KEM KEM operations."""
 
-    def test_decapsulate_with_invalid_attributes_in_template(self, p11_raw_session: Any) -> None:
+    def test_decapsulate_with_invalid_attributes_in_template(self, p11_module_session: Any) -> None:
         """Injecting prohibited attributes (like CKA_VALUE) should fail."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         encap_handle, ct = _encapsulate_ml_kem_or_xfail(
@@ -803,9 +805,9 @@ class TestMLKEMNegative:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_decapsulate_invalid_ciphertext_length(self, p11_raw_session: Any) -> None:
+    def test_decapsulate_invalid_ciphertext_length(self, p11_module_session: Any) -> None:
         """Off-by-one ciphertext length should fail."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         encap_handle, ct = _encapsulate_ml_kem_or_xfail(
@@ -840,14 +842,14 @@ class TestMLKEMNegative:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_decapsulate_missing_permission_flag(self, p11_raw_session: Any) -> None:
+    def test_decapsulate_missing_permission_flag(self, p11_module_session: Any) -> None:
         """Decapsulate fails if CKA_DECAPSULATE is False on private key.
 
         Spec (PKCS#11 v3.2 Sec.5.14.8): CKR_KEY_FUNCTION_NOT_PERMITTED when
         CKA_DECAPSULATE is False.  Some modules return CKR_BUFFER_TOO_SMALL if
         they validate output buffer availability before checking key permissions.
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs, CKA_DECAPSULATE_OVERRIDE=False)
         try:
@@ -903,7 +905,7 @@ class TestMLKEMNegative:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_encapsulate_missing_permission_flag(self, p11_raw_session: Any) -> None:
+    def test_encapsulate_missing_permission_flag(self, p11_module_session: Any) -> None:
         """Encapsulate fails if CKA_ENCAPSULATE is False on public key.
 
         Spec (PKCS#11 v3.2 Sec.5.14.7): CKR_KEY_FUNCTION_NOT_PERMITTED when
@@ -916,7 +918,7 @@ class TestMLKEMNegative:
         that reads back CKA_ENCAPSULATE=False is a Type-B self-contradiction and
         must fail (not silently pass on CKR_OK).
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs, CKA_ENCAPSULATE_OVERRIDE=False)
         handle = CK_OBJECT_HANDLE(0)
@@ -994,9 +996,9 @@ class TestMLKEMNegative:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_kem_mechanisms_with_wrong_key_type(self, p11_raw_session: Any) -> None:
+    def test_kem_mechanisms_with_wrong_key_type(self, p11_module_session: Any) -> None:
         """ML-KEM mechanisms should reject RSA/other keys."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         from pkcs11_check.raw.recipes import gen_aes_key
 

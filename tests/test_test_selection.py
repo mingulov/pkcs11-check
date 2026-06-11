@@ -480,3 +480,16 @@ def test_extract_required_mechanisms_empty_list(tmp_path: Path) -> None:
     f = tmp_path / "test_example.py"
     f.write_text("REQUIRED_MECHANISMS = []\n")
     assert extract_required_mechanisms(str(f)) is None
+
+
+def test_cctv_ed25519_declares_required_mechanism() -> None:
+    assert extract_required_mechanisms("src/pkcs11_check/testcases/test_cctv_ed25519.py") == [
+        "EDDSA"
+    ]
+
+
+def test_cctv_mldsa_declares_required_mechanisms() -> None:
+    assert extract_required_mechanisms("src/pkcs11_check/testcases/test_cctv_mldsa.py") == [
+        "ML_DSA",
+        "ML_DSA_KEY_PAIR_GEN",
+    ]

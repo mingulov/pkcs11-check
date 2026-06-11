@@ -574,6 +574,9 @@ def _merge_supplemental_special_details(
     for unit, detail in supplemental_details.items():
         if not isinstance(detail, Mapping):
             continue
+        if detail.get("file_skip") is True:
+            merged[unit] = _copy_detail(detail)
+            continue
         raw_tests = detail.get("tests")
         if not isinstance(raw_tests, list):
             continue

@@ -119,11 +119,11 @@ class TestLimboCertImport:
     def test_import_peer_cert(
         self,
         tc: dict[str, Any],
-        p11_raw_session: Any,
+        p11_module_session: Any,
         limbo_available: Any,
     ) -> None:
         """Import peer certificate using raw CKA_VALUE."""
-        rs = p11_raw_session
+        rs = p11_module_session
         der = pem_to_der(tc["peer_certificate"])
         if not der:
             pytest.skip("Failed to decode peer certificate PEM")
@@ -188,11 +188,11 @@ class TestLimboCertImport:
     def test_import_trusted_certs(
         self,
         tc: dict[str, Any],
-        p11_raw_session: Any,
+        p11_module_session: Any,
         limbo_available: Any,
     ) -> None:
         """Import trusted CA certificates from a limbo testcase."""
-        rs = p11_raw_session
+        rs = p11_module_session
         for i, pem in enumerate(tc["trusted_certs"]):
             der = pem_to_der(pem)
             if not der:
@@ -256,11 +256,11 @@ class TestLimboCertImport:
 @pytest.mark.parametrize("tc", _failure_sample, ids=lambda tc: tc["id"])
 def test_import_limbo_failure_cert_raw(
     tc: dict[str, Any],
-    p11_raw_session: Any,
+    p11_module_session: Any,
     limbo_available: Any,
 ) -> None:
     """Raw import of x509-limbo FAILURE certs."""
-    rs = p11_raw_session
+    rs = p11_module_session
     der = pem_to_der(tc["peer_certificate"])
     if not der:
         pytest.skip("Failed to decode PEM")

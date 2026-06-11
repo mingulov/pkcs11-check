@@ -53,7 +53,7 @@ _all_crls = get_unique_limbo_crls(_all_cases)
 def test_exhaustive_cert_import_no_crash(
     tc_id: str,
     der_bytes: bytes,
-    p11_raw_session: Any,
+    p11_module_session: Any,
     limbo_available: Any,
 ) -> None:
     """Import every unique cert from Limbo - must not crash module.
@@ -62,7 +62,7 @@ def test_exhaustive_cert_import_no_crash(
     back computed attributes (SUBJECT, ISSUER, SERIAL_NUMBER) and querying
     object size.  This catches ASN.1 parser crashes that a bare import misses.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     try:
         h = create_object(
             rs.raw,
@@ -114,7 +114,7 @@ def test_exhaustive_cert_import_no_crash(
 def test_exhaustive_crl_import_no_crash(
     tc_id: str,
     der_bytes: bytes,
-    p11_raw_session: Any,
+    p11_module_session: Any,
     limbo_available: Any,
 ) -> None:
     """Import every unique CRL from Limbo - must not crash module.
@@ -123,7 +123,7 @@ def test_exhaustive_crl_import_no_crash(
     to force any lazy parsing.  CRLs may not have SUBJECT/ISSUER attributes,
     so we read CKA_VALUE (round-trip) and CKA_CLASS.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     try:
         # Use a generic class value for CRL
         crl_class = 0x00000004

@@ -49,6 +49,8 @@ from pkcs11_check.testcases.data import CCTV_DIR
 
 pytestmark = [pytest.mark.interop, pytest.mark.security, pytest.mark.cctv]
 
+REQUIRED_MECHANISMS = ["EDDSA"]
+
 _VECTORS_FILE = CCTV_DIR / "ed25519" / "ed25519vectors.json"
 
 
@@ -110,9 +112,9 @@ def _invalid_public_key_rejected_cleanly(exc: AssertionError, flags: list[str]) 
 
 
 @pytest.mark.parametrize("vec", _vectors, ids=_vec_id)
-def test_ed25519_cctv(vec: dict[str, Any], p11_raw_session: Any) -> None:
+def test_ed25519_cctv(vec: dict[str, Any], p11_module_session: Any) -> None:
     """Ed25519 verification with CCTV edge-case vector."""
-    rs = p11_raw_session
+    rs = p11_module_session
     if not rs.has_mechanism("EDDSA"):
         pytest.skip("EdDSA not supported")
 
