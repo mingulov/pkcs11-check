@@ -276,6 +276,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=True,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="rc5_ecb.json",
         notes="RC5-ECB: variable block size, requires CK_RC5_PARAMS (wordsize, rounds)",
     )
 
@@ -290,6 +291,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="rc5_cbc.json",
         notes="RC5-CBC: requires CK_RC5_CBC_PARAMS (wordsize, rounds, IV)",
     )
 

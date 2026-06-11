@@ -1,0 +1,23 @@
+{
+  "mechanism": "CKM_RC5_ECB",
+  "family": "rc5_ecb",
+  "key_type": "CKK_RC5",
+  "source": "RFC 2040 section 9.3; single-block RC5-CBC with zero IV is equivalent to RC5-ECB",
+  "vectors": [
+    {
+      "id": "rc5_ecb_r12_key64_zero_iv_equivalent",
+      "type": "positive",
+      "mechanism_name": "CKM_RC5_ECB",
+      "key_type": "symmetric",
+      "key_bits": 64,
+      "key_hex": "0102030405060708",
+      "params": {
+        "source": "RFC 2040 section 9.3",
+        "word_bits": 32,
+        "rounds": 12
+      },
+      "plaintext_hex": "ffffffffffffffff",
+      "ciphertext_hex": "e493f1c1bb4d6e8c"
+    }
+  ]
+}

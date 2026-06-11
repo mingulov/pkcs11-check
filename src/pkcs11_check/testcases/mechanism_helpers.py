@@ -976,6 +976,24 @@ def build_params_from_vector(mech_id: int, recipe: ParamRecipe, vec: dict[str, A
             iv=bytes.fromhex(iv_hex_rc2),
         )
 
+    if style == "rc5":
+        word_bits_rc5: int = vp.get("word_bits", d.get("word_bits", 32))
+        rounds_rc5: int = vp.get("rounds", d.get("rounds", 12))
+        return mech_rc5(CKM(mech_id), word_bits=word_bits_rc5, rounds=rounds_rc5)
+
+    if style == "rc5_cbc":
+        iv_hex_rc5: str | None = vp.get("iv_hex")
+        if iv_hex_rc5 is None:
+            return build_test_params(mech_id, recipe)
+        word_bits_rc5_cbc: int = vp.get("word_bits", d.get("word_bits", 32))
+        rounds_rc5_cbc: int = vp.get("rounds", d.get("rounds", 12))
+        return mech_rc5_cbc(
+            CKM(mech_id),
+            word_bits=word_bits_rc5_cbc,
+            rounds=rounds_rc5_cbc,
+            iv=bytes.fromhex(iv_hex_rc5),
+        )
+
     if style == "chacha20_poly1305":
         iv_hex_cp: str | None = vp.get("iv_hex")
         if iv_hex_cp is None:
