@@ -6,7 +6,6 @@ Requires PKCS#11 v3.2 with ML-DSA support.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -40,7 +39,7 @@ from pkcs11_check.testcases.conftest import is_known_error
 pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc]
 REQUIRED_MECHANISMS = ["ML_DSA"]
 
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
 
 _MLDSA_FILES = [
     ("mldsa_44_verify_test.json", 44),
@@ -79,8 +78,7 @@ def _load_mldsa_vectors() -> list[tuple[str, dict[str, Any]]]:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         for group in data["testGroups"]:
             for test in group["tests"]:
                 test["_group"] = {k: v for k, v in group.items() if k != "tests"}

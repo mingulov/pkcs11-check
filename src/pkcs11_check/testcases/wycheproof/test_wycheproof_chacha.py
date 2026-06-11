@@ -8,7 +8,6 @@ Uses raw ctypes mechanism params via mech_chacha20_poly1305.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -33,7 +32,7 @@ from pkcs11_check.testcases.conftest import import_secret_key_negotiated
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["CHACHA20_POLY1305"]
 
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
 
 
 def _load_chacha_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -41,8 +40,7 @@ def _load_chacha_vectors() -> list[tuple[str, dict[str, Any]]]:
     path = WYCHEPROOF_DIR / "chacha20_poly1305_test.json"
     if not path.exists():
         return []
-    with open(path) as f:
-        data = json.load(f)
+    data = load_json_cached(path)
     vectors = []
     for group in data["testGroups"]:
         for test in group["tests"]:

@@ -31,7 +31,6 @@ hidden failure.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -57,7 +56,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
 )
 from pkcs11_check.testcases.conftest import reject_or_classify
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
 pytestmark = [
     pytest.mark.wycheproof,
@@ -90,8 +89,7 @@ def _load_modulus_overflow_vectors() -> tuple[list[tuple[str, dict[str, Any]]], 
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         for group in data.get("testGroups", []):
             for test in group.get("tests", []):
                 ek = test.get("ek")

@@ -7,7 +7,6 @@ Skips on modules without HKDF support (e.g., SoftHSM2).
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -40,7 +39,7 @@ from pkcs11_check.testcases.conftest import import_secret_key_negotiated
 pytestmark = [pytest.mark.wycheproof, pytest.mark.subprocess_per_test]
 REQUIRED_MECHANISMS = ["HKDF_DERIVE"]
 
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
 
 _HKDF_FILES = [
     ("hkdf_sha1_test.json", "SHA-1"),
@@ -64,8 +63,7 @@ def _load_hkdf_vectors() -> list[tuple[str, dict[str, Any]]]:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         for group in data["testGroups"]:
             for test in group["tests"]:
                 test["_group"] = {k: v for k, v in group.items() if k != "tests"}

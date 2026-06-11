@@ -6,7 +6,6 @@ with EC_MONTGOMERY key type across raw, ASN.1, PEM, and JWK encodings.
 
 from __future__ import annotations
 
-import json
 from binascii import Error as BinasciiError
 from typing import Any, NoReturn
 
@@ -59,7 +58,7 @@ from pkcs11_check.testcases.wycheproof._key_decoders import (
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["ECDH1_DERIVE"]
 
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
 
 # Module-level cache of curve OIDs that failed C_CreateObject with a domain/curve error.
 # Keyed by OID bytes; avoids redundant probe calls for unsupported Montgomery curves.
@@ -177,8 +176,7 @@ def _load_xdh_vectors() -> list[tuple[str, dict[str, Any]]]:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         for group in data["testGroups"]:
             for test in group["tests"]:
                 test["_group"] = {k: v for k, v in group.items() if k != "tests"}

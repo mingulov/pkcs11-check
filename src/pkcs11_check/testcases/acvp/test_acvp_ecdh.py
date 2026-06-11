@@ -9,7 +9,6 @@ Skips gracefully if test vectors not available or mechanism unavailable.
 
 from __future__ import annotations
 
-import json
 from typing import Any, cast
 
 import pytest
@@ -59,7 +58,7 @@ from pkcs11_check.testcases.conftest import (
     is_known_error,
     xfail_if_known_ckr,
 )
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -185,8 +184,7 @@ def _load_wycheproof_ecdh_vectors(
     if not filepath.exists():
         return []
 
-    with open(filepath) as f:
-        data = json.load(f)
+    data = load_json_cached(filepath)
 
     results: list[tuple[str, dict[str, Any]]] = []
 

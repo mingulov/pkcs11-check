@@ -14,7 +14,6 @@ Source: https://github.com/C2SP/CCTV/tree/main/ed25519
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -45,7 +44,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
-from pkcs11_check.testcases.data import CCTV_DIR
+from pkcs11_check.testcases.data import CCTV_DIR, load_json_cached
 
 pytestmark = [
     pytest.mark.interop,
@@ -63,9 +62,8 @@ def _load_cctv_ed25519() -> list[dict[str, Any]]:
     """Load CCTV Ed25519 vectors."""
     if not _VECTORS_FILE.exists():
         return []
-    with open(_VECTORS_FILE) as f:
-        result: list[dict[str, Any]] = json.load(f)
-        return result
+    result: list[dict[str, Any]] = load_json_cached(_VECTORS_FILE)
+    return result
 
 
 def _vec_id(v: dict[str, Any]) -> str:

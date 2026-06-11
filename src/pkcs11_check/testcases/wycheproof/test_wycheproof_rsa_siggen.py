@@ -13,7 +13,6 @@ because many modules reject those key sizes.
 
 from __future__ import annotations
 
-import json
 from typing import Any, NoReturn
 
 import pytest
@@ -51,7 +50,7 @@ from pkcs11_check.testcases.conftest import (
     is_known_error,
     xfail_if_known_ckr,
 )
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
 pytestmark = pytest.mark.wycheproof
 
@@ -111,8 +110,7 @@ def _load_siggen_vectors() -> list[tuple[str, dict[str, Any]]]:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         for group in data["testGroups"]:
             sha = group.get("sha", "")
             mechanism = _SHA_TO_MECH.get(sha)

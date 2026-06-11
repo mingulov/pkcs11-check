@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, NoReturn
 
 import pytest
@@ -94,7 +93,7 @@ _MECH_NAMES: dict[int, str] = {
     CKM_SHA3_512_HMAC: "SHA3_512_HMAC",
 }
 
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
 
 _HMAC_FILES: dict[str, tuple[int | None, int | None, int | None]] = {
     "hmac_sha1_test.json": (CKK_SHA_1_HMAC, CKM_SHA_1_HMAC, CKK_GENERIC_SECRET),
@@ -157,8 +156,7 @@ def _load_hmac_vectors() -> list[tuple[str, dict[str, Any]]]:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         for group in data["testGroups"]:
             tag_size = group.get("tagSize", 256) // 8
             for test in group["tests"]:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -40,6 +39,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.data import KAT_DIR as VECTORS_DIR
+from pkcs11_check.testcases.data import load_json_cached
 
 pytestmark = pytest.mark.kat
 
@@ -85,8 +85,7 @@ _AES_KAT_RUNTIME_REJECT_RVS = (
 
 def load_vectors(filename: str) -> list[dict[str, str]]:
     """Load test vectors from JSON file."""
-    with open(VECTORS_DIR / filename) as f:
-        data = json.load(f)
+    data = load_json_cached(VECTORS_DIR / filename)
     return data["vectors"]  # type: ignore[no-any-return]
 
 

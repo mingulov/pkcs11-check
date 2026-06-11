@@ -13,7 +13,6 @@ SoftHSM2 (v2.40) skips all tests - it has no ML-DSA support.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +45,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import xfail_if_known_ckr
-from pkcs11_check.testcases.data import CCTV_DIR
+from pkcs11_check.testcases.data import CCTV_DIR, load_json_cached
 
 pytestmark = [
     pytest.mark.pqc,
@@ -84,8 +83,7 @@ def _load_messages(path: Path) -> list[bytes]:
     """Load benchmark message strings, encoded to UTF-8 bytes."""
     if not path.exists():
         return []
-    with open(path) as f:
-        data: list[str] = json.load(f)
+    data: list[str] = load_json_cached(path)
     return [msg.encode("utf-8") for msg in data]
 
 

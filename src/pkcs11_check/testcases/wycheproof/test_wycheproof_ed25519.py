@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -34,7 +33,7 @@ from pkcs11_check.testcases.conftest import is_known_error
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["EDDSA"]
 
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
 
 # Module-level cache of Edwards curve OIDs that failed C_CreateObject with a domain/curve error.
 # Keyed by OID bytes; avoids redundant probe calls for unsupported Edwards curves.
@@ -66,8 +65,7 @@ def _load_ed25519_vectors() -> list[tuple[str, dict[str, Any]]]:
     path = WYCHEPROOF_DIR / "ed25519_test.json"
     if not path.exists():
         return []
-    with open(path) as f:
-        data = json.load(f)
+    data = load_json_cached(path)
     vectors = []
     for group in data["testGroups"]:
         pk_info = group.get("publicKey", group.get("key", {}))
@@ -218,8 +216,7 @@ def _load_ed448_vectors() -> list[tuple[str, dict[str, Any]]]:
     path = WYCHEPROOF_DIR / "ed448_test.json"
     if not path.exists():
         return []
-    with open(path) as f:
-        data = json.load(f)
+    data = load_json_cached(path)
     vectors = []
     for group in data["testGroups"]:
         pk_info = group.get("publicKey", group.get("key", {}))

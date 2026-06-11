@@ -6,7 +6,6 @@ Supports both ASN.1 DER and IEEE P1363 signature encodings.
 
 from __future__ import annotations
 
-import json
 from typing import Any, NoReturn
 
 import pytest
@@ -42,7 +41,7 @@ from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_h
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["DSA_SHA256"]
 
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
 
 _SHA_MECHANISMS: dict[str, int] = {
     "SHA-224": CKM_DSA_SHA224,
@@ -136,8 +135,7 @@ def _load_dsa_vectors() -> list[tuple[str, dict[str, Any]]]:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         for group in data["testGroups"]:
             sha = group.get("sha", "")
             mechanism = _SHA_MECHANISMS.get(sha)

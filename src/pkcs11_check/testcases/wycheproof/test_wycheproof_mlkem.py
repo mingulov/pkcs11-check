@@ -5,7 +5,6 @@ Adds decapsulation-style coverage for the available ML-KEM vector families.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -42,7 +41,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import xfail_if_known_ckr
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
 pytestmark = [
     pytest.mark.wycheproof,
@@ -105,8 +104,7 @@ def _load_mlkem_vectors(filename: str) -> list[dict[str, Any]]:
     path = WYCHEPROOF_DIR / filename
     if not path.exists():
         return []
-    with open(path) as f:
-        data = json.load(f)
+    data = load_json_cached(path)
     vectors = []
     for group in data.get("testGroups", []):
         group_meta = {k: v for k, v in group.items() if k != "tests"}

@@ -6,7 +6,6 @@ SHA-1/SHA-224/SHA-256/SHA-384/SHA-512 and varying salt lengths.
 
 from __future__ import annotations
 
-import json
 from typing import Any, NoReturn
 
 import pytest
@@ -84,7 +83,7 @@ from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_h
 
 pytestmark = pytest.mark.wycheproof
 
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
 
 # Cache of RSA key sizes (in bits) that the module rejected on import.
 # Populated on first failure; subsequent tests with the same key size skip
@@ -294,8 +293,7 @@ def _load_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         for group in data["testGroups"]:
             sha = group.get("sha", "")
             mgf_sha = group.get("mgfSha", sha)

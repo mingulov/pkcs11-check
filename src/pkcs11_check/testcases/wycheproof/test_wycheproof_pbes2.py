@@ -7,7 +7,6 @@ exercises the derived-key handoff into an actual decrypt operation.
 
 from __future__ import annotations
 
-import json
 from ctypes import byref
 from typing import Any, NoReturn
 
@@ -60,7 +59,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import xfail_if_known_ckr
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["PKCS5_PBKD2"]
@@ -116,8 +115,7 @@ def _load_pbes2_vectors() -> list[tuple[str, dict[str, Any]]]:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         prf = _PRF_MAP[prf_name]
         for group in data["testGroups"]:
             for test in group["tests"]:

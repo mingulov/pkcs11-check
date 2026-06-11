@@ -7,7 +7,6 @@ Skips on modules without PBKDF2 support (e.g., SoftHSM2).
 
 from __future__ import annotations
 
-import json
 from ctypes import byref
 from typing import Any, NoReturn
 
@@ -59,7 +58,7 @@ from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["PKCS5_PBKD2"]
 
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
 
 _PBKDF2_RUNTIME_REJECT_CKRS = (
     CKR_ARGUMENTS_BAD,
@@ -104,8 +103,7 @@ def _load_pbkdf2_vectors() -> list[tuple[str, dict[str, Any]]]:
         prf = _PRF_MAP.get(prf_name)
         if prf is None:
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         for group in data["testGroups"]:
             for test in group["tests"]:
                 test["_group"] = {k: v for k, v in group.items() if k != "tests"}

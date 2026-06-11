@@ -6,7 +6,6 @@ Wycheproof vectors. Complements test_wycheproof_mldsa.py (verify-only).
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -31,7 +30,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import is_known_error, reject_or_classify
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
 pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc]
 REQUIRED_MECHANISMS = ["ML_DSA"]
@@ -41,8 +40,7 @@ def _load(filename: str) -> list[dict[str, Any]]:
     path = WYCHEPROOF_DIR / filename
     if not path.exists():
         return []
-    with open(path) as f:
-        data = json.load(f)
+    data = load_json_cached(path)
     vectors = []
     for group in data.get("testGroups", []):
         meta = {k: v for k, v in group.items() if k != "tests"}

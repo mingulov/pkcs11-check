@@ -8,6 +8,7 @@ transparently fall back to the JSON source on any cache miss/staleness/corruptio
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import time
@@ -15,6 +16,13 @@ from pathlib import Path
 
 from pkcs11_check.testcases import data as data_mod
 from pkcs11_check.testcases.data import load_json_cached
+
+_TESTCASE_ROOT = Path(__file__).resolve().parents[1] / "src" / "pkcs11_check" / "testcases"
+_DIRECT_JSON_LOAD_EXCEPTIONS = {
+    "data/__init__.py",
+    "_raw_subprocess.py",
+    "_subprocess_preamble.py",
+}
 
 
 def _write(tmp_path: Path, obj: object) -> Path:
@@ -67,3 +75,23 @@ def test_missing_source_raises_like_json_load(tmp_path: Path) -> None:
     except FileNotFoundError:
         return
     raise AssertionError("expected FileNotFoundError for a missing source file")
+
+
+def test_vector_loaders_use_cached_json_loader() -> None:
+    offenders: list[str] = []
+    for path in sorted(_TESTCASE_ROOT.rglob("*.py")):
+        rel = path.relative_to(_TESTCASE_ROOT).as_posix()
+        if rel in _DIRECT_JSON_LOAD_EXCEPTIONS:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "json"
+                and node.func.attr == "load"
+            ):
+                offenders.append(f"{rel}:{node.lineno}")
+
+    assert offenders == []

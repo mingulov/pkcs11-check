@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import datetime
-import json
 from typing import Any
 
 import pytest
@@ -34,7 +33,7 @@ from pkcs11_check.raw.types_std import (
     CKC_X_509,
     CKO_CERTIFICATE,
 )
-from pkcs11_check.testcases.data import X509_LIMBO_DIR
+from pkcs11_check.testcases.data import X509_LIMBO_DIR, load_json_cached
 
 _LIMBO_FILE = X509_LIMBO_DIR / "limbo.json"
 
@@ -324,8 +323,7 @@ def load_limbo_testcases() -> list[dict[str, Any]]:
     if not _LIMBO_FILE.exists():
         return []
 
-    with open(_LIMBO_FILE) as f:
-        data = json.load(f)
+    data = load_json_cached(_LIMBO_FILE)
 
     cases: list[dict[str, Any]] = data.get("testcases", [])
     return cases
