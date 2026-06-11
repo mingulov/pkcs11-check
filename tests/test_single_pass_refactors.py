@@ -99,7 +99,10 @@ def test_read_jsonl_results_streams_without_load_all(
     ]
 
 
-def test_postprocess_single_pass_per_file_counts(tmp_path: Path) -> None:
+def test_postprocess_single_pass_per_file_counts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     jsonl = tmp_path / "report.jsonl"
     _write(
         jsonl,
@@ -109,6 +112,11 @@ def test_postprocess_single_pass_per_file_counts(tmp_path: Path) -> None:
             _report("b.py::t1", "call", "passed"),
         ],
     )
+
+    def _load_all_forbidden(_path: Path) -> list[dict[str, object]]:
+        pytest.fail("postprocess_jsonl_to_unified must stream records")
+
+    monkeypatch.setattr(file_runner_mod, "_load_report_log_records", _load_all_forbidden)
 
     payload = postprocess_jsonl_to_unified(jsonl, tmp_path / "results.json")
 

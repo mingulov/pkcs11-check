@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from functools import cache
 from pathlib import Path
@@ -1243,6 +1243,8 @@ def _compliance_notes_from_user_properties(
 
 def _build_detail_from_report_records(
     records: Iterable[Mapping[str, Any]],
+    *,
+    call_record_hook: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> dict[str, Any] | None:
     """Build per-unit detail payload from parsed report-log records."""
     counts: dict[str, int] = {
@@ -1285,6 +1287,8 @@ def _build_detail_from_report_records(
         if when == "call":
             seen_call.add(str(nodeid))
             call_events.append(rec)
+            if call_record_hook is not None:
+                call_record_hook(rec)
         elif when == "setup" and outcome in ("skipped", "failed", "error"):
             setup_events.append(rec)
 
@@ -1532,10 +1536,24 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
     Groups tests by file and writes the unified JSON report.
     Used for ``--isolation none`` to produce consistent output.
     """
+    file_counts: dict[str, dict[str, int]] = {}
+
+    def _accumulate_file_count(rec: Mapping[str, Any]) -> None:
+        nodeid = str(rec.get("nodeid", ""))
+        file_part = nodeid.split("::")[0]
+        if not file_part:
+            return
+        if file_part not in file_counts:
+            file_counts[file_part] = {key: 0 for key in _DETAIL_COUNT_KEYS}
+        outcome = _map_outcome(rec.get("outcome", "passed"), rec.get("wasxfail"))
+        file_counts[file_part][outcome] = file_counts[file_part].get(outcome, 0) + 1
+
     # Parse the JSONL once: build the aggregate detail and the per-file counts
-    # from the same record set (records are already filtered to dicts).
-    records = _load_report_log_records(jsonl_path)
-    detail = _build_detail_from_report_records(records) if records else None
+    # from the same streaming record pass.
+    detail = _build_detail_from_report_records(
+        _iter_report_log_records(jsonl_path),
+        call_record_hook=_accumulate_file_count,
+    )
     if detail is None:
         return None
 
@@ -1553,17 +1571,6 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
         if not file_part:
             continue
         compliance_notes_by_file.setdefault(file_part, []).append(dict(note))
-
-    file_counts: dict[str, dict[str, int]] = {}
-    for rec in records:
-        if rec.get("$report_type") != "TestReport" or rec.get("when") != "call":
-            continue
-        nodeid = rec.get("nodeid", "")
-        file_part = nodeid.split("::")[0]
-        if file_part not in file_counts:
-            file_counts[file_part] = {key: 0 for key in _DETAIL_COUNT_KEYS}
-        outcome = _map_outcome(rec.get("outcome", "passed"), rec.get("wasxfail"))
-        file_counts[file_part][outcome] = file_counts[file_part].get(outcome, 0) + 1
 
     summary: dict[str, int] = {key: 0 for key in _DETAIL_COUNT_KEYS}
     units: list[dict[str, Any]] = []
