@@ -230,19 +230,30 @@ smoke behavior, or covered only by one narrow variation.
 
 ### Highest-value missing or shallow coverage
 
-1. Protocol KDFs are intentionally skipped in `test_mech_derive.py`: SP800-108,
-   TLS, SSL3, WTLS, IKE, PBKDF2, X3DH, and X2RATCHET paths need runtime
-   parameters and semantic assertions.
+1. Dedicated protocol KDF semantic coverage exists outside the generic
+   `test_mech_derive.py` dispatch path. The generic parametrized derive test
+   still skips protocol KDFs because their parameter structures are
+   mechanism-specific, but SP800-108 counter KDF has exact HMAC-SHA256 output
+   checks, TLS 1.2 KDF has exact PRF output checks, and PBKDF2 has Wycheproof
+   exact-output coverage. SSL3, WTLS, IKE, X3DH, and X2RATCHET also have
+   dedicated operational probes. Remaining shallow protocol-KDF work is
+   exact-vector expansion and richer negative/tamper coverage for those
+   dedicated files, not basic runtime dispatch for the already-covered priority
+   mechanisms.
 2. Many derive mechanisms still lack runtime dispatch: Camellia/ARIA/SEED
-   encrypt-data, BLAKE2B key-derive variants, and several protocol KDFs.
+   encrypt-data and any remaining protocol KDF variants not covered by
+   dedicated files.
 3. DSA/DH/X9.42 domain parameter paths are mostly absent because key generation
    skips `dsa` and `dh` styles that need external domain parameters.
 4. Message API coverage is representative, not registry-driven. Scenario
    selection does not yet cover `CKF_MESSAGE_*` flags generically.
 5. Hybrid and AEAD wrap coverage has explicit holes: RSA-AES key wrap,
    ECDH-AES key wrap, AEAD wrap styles, and AES-CTR wrap params.
-6. BLAKE2B coverage stops at unkeyed digest. HMAC, HMAC_GENERAL, KEY_GEN, and
-   KEY_DERIVE variants need keyed reference tests and handle/value checks.
+6. BLAKE2B keyed coverage exists for HMAC, HMAC_GENERAL truncation, KEY_GEN,
+   and KEY_DERIVE across 160/256/384/512-bit variants, with Python reference
+   checks plus key-type and extracted-value assertions. Remaining BLAKE2B work
+   is negative parameter/regression expansion and provider-artifact evidence,
+   not basic keyed semantic coverage.
 7. SHAKE/XOF and ML-DSA ExternalMu are registry/smoke only until raw XOF
    function signatures and KAT-backed tests exist.
 8. Legacy cipher coverage is now mixed rather than mostly generic: RC2, RC4,
@@ -270,11 +281,14 @@ smoke behavior, or covered only by one narrow variation.
 
 ### Recommended coverage order
 
-1. Protocol KDF semantics: start with `CKM_SP800_108_COUNTER_KDF`,
-   `CKM_TLS12_KDF`, and `CKM_PKCS5_PBKD2`.
-2. DSA/DH domain parameter generation, then DSA sign/verify and DH/X9.42
+1. DSA/DH domain parameter generation, then DSA sign/verify and DH/X9.42
    derive tests using generated parameters.
-3. BLAKE2B keyed HMAC/HMAC_GENERAL and key-derive coverage.
+2. Protocol KDF expansion beyond the already-covered priority set
+   (`CKM_SP800_108_COUNTER_KDF`, `CKM_TLS12_KDF`, and `CKM_PKCS5_PBKD2`):
+   add exact external vectors and tamper/negative checks for SSL3, WTLS, IKE,
+   X3DH, and X2RATCHET where the mechanism semantics allow it.
+3. BLAKE2B keyed negative/parameter edge cases, now that HMAC, HMAC_GENERAL,
+   KEY_GEN, and KEY_DERIVE positive semantics are covered.
 4. Hybrid wrap params: `CK_RSA_AES_KEY_WRAP_PARAMS` and
    `CK_ECDH_AES_KEY_WRAP_PARAMS`, with positive and tamper tests.
 5. Registry-driven negative tests for wrong key type and missing operation
@@ -406,9 +420,10 @@ later provider run more interpretable:
 
 After that, do the first coverage expansion round:
 
-1. SP800-108 counter KDF, TLS 1.2 KDF, and PBKDF2 semantic tests.
-2. DSA/DH parameter generation and DH/X9.42 derive.
-3. BLAKE2B keyed HMAC/HMAC_GENERAL and key-derive.
+1. DSA/DH parameter generation and DH/X9.42 derive.
+2. Protocol KDF exact-vector expansion beyond already-covered SP800-108
+   counter KDF, TLS 1.2 KDF, and PBKDF2.
+3. BLAKE2B keyed negative/parameter edge cases.
 4. RSA-AES and ECDH-AES wrap params.
 5. Registry-driven wrong-key/permission negatives.
 6. Legacy/deprecated mechanisms not yet covered by reliable KATs or semantic
