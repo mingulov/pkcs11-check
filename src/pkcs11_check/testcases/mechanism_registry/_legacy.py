@@ -354,6 +354,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=True,
         keygen_recipe=_fixed,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="idea_ecb.json",
         notes="IDEA-ECB: 8-byte block, no padding, deterministic",
     )
 
@@ -368,6 +369,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="idea_cbc.json",
         notes="IDEA-CBC: 8-byte block, requires 8-byte IV param",
     )
 
