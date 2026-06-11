@@ -114,6 +114,9 @@ class TestExample:
             destroy_quietly(rs.raw, rs.sh, key)
 ```
 
+> When the AES key is a **fixture** (not the test's subject), prefer
+> `gen_aes_key_or_xfail(rs, 256)` over the raw recipe — see "Classification & setup helpers" below.
+
 ### Key fixtures
 
 - `p11_raw_session` — function-scoped: fresh C_OpenSession + C_Login per test. Fields: `rs.raw`, `rs.sh`, `rs.slot_id`, `rs.has_mechanism(name)`, `rs.mechanisms`. Use for tests that test session lifecycle, login/logout/PIN behavior, or otherwise need a fresh session per invocation.
@@ -147,6 +150,40 @@ Compliance notes for above-spec behavior:
 from pkcs11_check.compliance import ComplianceLevel, note
 note("Module does X above spec Y", ComplianceLevel.VENDOR)
 ```
+
+### Classification & advertised-but-not-operational helpers
+
+The classification model (CLAUDE.md "Test-outcome classification model"; full rules in
+[classification-model-design.md](classification-model-design.md)) is enforced through shared
+helpers — **use these instead of hand-rolling per-CKR allowlists or bare `pytest.skip`/`xfail`**:
+
+- **Setup keys via the `_or_xfail` helpers, not the raw recipes** (`testcases/conftest.py`):
+  `gen_aes_key_or_xfail(rs, bits, *, attrs=None, sh=None)`,
+  `gen_rsa_keypair_or_xfail`, `gen_ec_keypair_or_xfail`, `hmac_sign_or_xfail`. Each prechecks
+  `has_mechanism` (→ `skip` when the mechanism is genuinely absent) and, when the mechanism is
+  advertised but `C_GenerateKey`/the op cleanly refuses, `xfail`s "advertised but not operational"
+  instead of hard-failing. Raw `gen_aes_key`/`gen_rsa_keypair` (from `raw.recipes`) are only for
+  sites whose subject *is* keygen (e.g. `test_mech_keygen`, key-size-range tests).
+- **Claim layer for `test_mech_*` op refusals:** `claim_refusal_passes(exc, rs, *, probe_key)`
+  (`testcases/_capability_claims.py`) — a clean op refusal classifies as pass+note for the
+  spec-sanctioned `CKR_OPERATION_NOT_VALIDATED`, else `xfail` via `not_operational_reason`; non-CKR
+  propagates. No per-CKR allowlists.
+- **Operability probes** (`testcases/_operability.py`): `probe_operability(key, fn)` caches a
+  canonical KAT verdict per (mechanism, direction) — `OPERATIONAL` / `NOT_OPERATIONAL` /
+  `INCONCLUSIVE` (staging failed) / `WRONG_OUTPUT`. `classify_kat_clean_error(...)` and
+  `xfail_vacuous_reject(result, *, label)` (a negative-vector "rejection" on a NOT_OPERATIONAL
+  mechanism never evaluated its input → xfail, not pass) consume it. `not_operational_reason`
+  gives the shared wording so KAT-vector xfails group with the per-(mech,op) claim signal.
+- **Negative-op classification** (`testcases/conftest.py` / `ckr/_ckr_spec.py`):
+  `reject_or_classify(exc, expected_rvs, *, label)` / `classify_negative_rv(...)` (rejection with
+  the expected spec CKR = pass, some other clean code = xfail, accepted-invalid = fail);
+  `assert_ckr()` (3-way) for table-driven sites; `classify_policy_enforcement` (Type B) /
+  `classify_lifecycle_effect` (Type C) for self-contradiction checks.
+
+**Import-skip rule:** a *negotiated* import that fails for all storage shapes on a module that
+*advertises* the mechanism is "advertised but not operational" → `xfail`, never `skip`. Use the
+`import_*_negotiated` helpers (`testcases/conftest.py`); skip is only for genuinely-absent
+capability. See [findings/import-skip-audit.md](findings/import-skip-audit.md).
 
 ## PKCS#11 Specification
 
