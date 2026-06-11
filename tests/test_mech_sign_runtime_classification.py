@@ -60,7 +60,7 @@ def _ec_entry() -> MechEntry:
     )
 
 
-def _session() -> SimpleNamespace:
+def _session() -> Any:
     return SimpleNamespace(raw=object(), sh=1)
 
 
@@ -89,11 +89,24 @@ def test_roundtrip_verify_runtime_reject_is_xfail(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(mech_sign, "generate_key_for_sign", lambda *_args: (1, None))
     monkeypatch.setattr(mech_sign, "make_mech_param_or_skip", lambda _entry: None)
-    monkeypatch.setattr(mech_sign, "sign_single", lambda *_args, **_kwargs: b"sig")
+    monkeypatch.setattr(mech_sign, "sign_single", lambda *_args, **_kwargs: b"sigbytes")
     monkeypatch.setattr(mech_sign, "verify_single", _verify_reject)
     monkeypatch.setattr(mech_sign, "destroy_quietly", lambda *_args: None)
 
     with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
+        mech_sign.TestMechSignRoundtrip().test_roundtrip(_session(), _aes_entry())
+
+
+def test_mac_general_roundtrip_rejects_wrong_output_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mech_sign, "generate_key_for_sign", lambda *_args: (1, None))
+    monkeypatch.setattr(mech_sign, "make_mech_param_or_skip", lambda _entry: None)
+    monkeypatch.setattr(mech_sign, "sign_single", lambda *_args, **_kwargs: b"short")
+    monkeypatch.setattr(mech_sign, "verify_single", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(mech_sign, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(AssertionError, match="MAC length mismatch"):
         mech_sign.TestMechSignRoundtrip().test_roundtrip(_session(), _aes_entry())
 
 
@@ -103,7 +116,7 @@ def test_tampered_verify_non_clean_reject_is_xfail(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(mech_sign, "generate_key_for_sign", lambda *_args: (1, None))
     monkeypatch.setattr(mech_sign, "make_mech_param_or_skip", lambda _entry: None)
-    monkeypatch.setattr(mech_sign, "sign_single", lambda *_args, **_kwargs: b"sig")
+    monkeypatch.setattr(mech_sign, "sign_single", lambda *_args, **_kwargs: b"sigbytes")
     monkeypatch.setattr(mech_sign, "verify_single", _verify_reject)
     monkeypatch.setattr(mech_sign, "destroy_quietly", lambda *_args: None)
 
@@ -175,9 +188,7 @@ def test_kat_ec_private_import_broad_reject_xfails(
 
     _patch_ec_kat_vector(monkeypatch)
     monkeypatch.setattr(mech_sign, "import_ec_private_key", _import_reject)
-    monkeypatch.setattr(
-        mech_sign.pytest, "skip", lambda message: pytest.fail(f"unexpected skip: {message}")
-    )
+    monkeypatch.setattr(pytest, "skip", lambda message: pytest.fail(f"unexpected skip: {message}"))
 
     with pytest.raises(pytest.xfail.Exception, match="ECDSA_SHA224:key-import"):
         mech_sign.TestMechSignKAT().test_kat_vector(_session(), _ec_entry())

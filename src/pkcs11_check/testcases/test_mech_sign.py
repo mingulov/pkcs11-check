@@ -87,6 +87,18 @@ _KAT_IMPORT_CAPABILITY_REJECT_RVS = (
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.sign]
 
+_MAC_GENERAL_STYLES = frozenset({"mac_general", "rc2_mac_general", "rc5_mac_general"})
+
+
+def _expected_mac_general_len(config: object) -> int | None:
+    param_recipe = getattr(config, "param_recipe", None)
+    if param_recipe is None or param_recipe.style not in _MAC_GENERAL_STYLES:
+        return None
+    mac_len = param_recipe.defaults.get("mac_len")
+    if mac_len is None:
+        return None
+    return int(mac_len)
+
 
 def _ckr_name_from_exception(exc: AssertionError) -> str:
     rv = getattr(exc, "rv", None)
@@ -199,6 +211,12 @@ class TestMechSignRoundtrip:
             except AssertionError as exc:
                 if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:sign"):
                     return
+            expected_mac_len = _expected_mac_general_len(config)
+            if expected_mac_len is not None:
+                assert len(sig) == expected_mac_len, (
+                    f"{entry.mech_name}: MAC length mismatch: "
+                    f"got {len(sig)}, expected {expected_mac_len}"
+                )
             try:
                 ok = verify_single(
                     rs.raw,
@@ -247,6 +265,12 @@ class TestMechSignRoundtrip:
             except AssertionError as exc:
                 if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:sign"):
                     return
+            expected_mac_len = _expected_mac_general_len(config)
+            if expected_mac_len is not None:
+                assert len(sig) == expected_mac_len, (
+                    f"{entry.mech_name}: MAC length mismatch: "
+                    f"got {len(sig)}, expected {expected_mac_len}"
+                )
             try:
                 ok = verify_single(
                     rs.raw,
