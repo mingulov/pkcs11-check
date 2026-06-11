@@ -30,6 +30,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, NamedTuple
 
+from pkcs11_check.core.file_runner import collect_pytest_nodeids
 from pkcs11_check.core.merge import merge_shard_dirs
 from pkcs11_check.core.sharding import (
     duration_by_unit_from_results,
@@ -111,6 +112,13 @@ COMPOSE = ["docker", "compose", "-f", "docker/docker-compose.test.yml"]
 VECTOR_DATA_DIRS = ("wycheproof", "acvp", "cctv", "x509-limbo")
 DEFAULT_CONCURRENCY = 6
 WorkItem = tuple[str, int, list[str], float]
+NODE_SPLIT_MIN_DURATION_S = 300.0
+NODE_SPLIT_BASENAMES: tuple[str, ...] = (
+    "test_cfb8.py",
+    "test_cfb128.py",
+    "test_ofb.py",
+)
+NODE_SPLIT_SLOW_NAME_PARTS: tuple[str, ...] = ("multiblock",)
 
 
 class RunResult(NamedTuple):
@@ -251,6 +259,71 @@ def files_for_provider(provider: str, all_files: list[str], testcases: str) -> l
         )
         return all_files
     return sorted(f for f in all_files if f in wanted)
+
+
+def _is_duration_hot_node_split_candidate(unit: str, duration_by_unit: dict[str, float]) -> bool:
+    if unit.rsplit("/", 1)[-1] not in NODE_SPLIT_BASENAMES:
+        return False
+    return duration_by_unit.get(unit, 0.0) >= NODE_SPLIT_MIN_DURATION_S
+
+
+def _is_slow_nodeid(nodeid: str) -> bool:
+    lowered = nodeid.lower()
+    return any(part in lowered for part in NODE_SPLIT_SLOW_NAME_PARTS)
+
+
+def expand_duration_hot_node_units(
+    units: list[str],
+    duration_by_unit: dict[str, float] | None,
+    *,
+    collection_env: dict[str, str] | None = None,
+) -> tuple[list[str], dict[str, float] | None, dict[str, int]]:
+    """Expand prior-slow MCT files into pytest nodeids for finer pool sharding.
+
+    Expansion is provider-local because it is driven only by that provider's
+    prior ``results.json`` durations. A provider that skipped the same file in
+    0s, or has no history, keeps the file-level unit.
+    """
+    if not duration_by_unit:
+        return list(units), duration_by_unit, {}
+
+    expanded_units: list[str] = []
+    expanded_durations = dict(duration_by_unit)
+    expanded_files: dict[str, int] = {}
+
+    for unit in units:
+        if not _is_duration_hot_node_split_candidate(unit, duration_by_unit):
+            expanded_units.append(unit)
+            continue
+
+        try:
+            nodeids = collect_pytest_nodeids([unit], [], env=collection_env)
+        except ValueError:
+            expanded_units.append(unit)
+            continue
+        if len(nodeids) <= 1:
+            expanded_units.append(unit)
+            continue
+
+        expanded_files[unit] = len(nodeids)
+        total_duration = max(duration_by_unit.get(unit, 0.0), 0.0)
+        slow_nodeids = [nodeid for nodeid in nodeids if _is_slow_nodeid(nodeid)]
+        slow_nodeid_set = set(slow_nodeids)
+        fast_nodeids = [nodeid for nodeid in nodeids if nodeid not in slow_nodeid_set]
+        if slow_nodeids:
+            slow_budget = total_duration * 0.95
+            fast_budget = total_duration - slow_budget
+            slow_weight = slow_budget / len(slow_nodeids)
+            fast_weight = fast_budget / max(len(fast_nodeids), 1)
+        else:
+            slow_weight = total_duration / len(nodeids)
+            fast_weight = slow_weight
+
+        for nodeid in nodeids:
+            expanded_units.append(nodeid)
+            expanded_durations[nodeid] = slow_weight if nodeid in slow_nodeid_set else fast_weight
+
+    return expanded_units, expanded_durations, expanded_files
 
 
 def build_image(provider: str, env: dict[str, str]) -> tuple[str, bool]:
@@ -470,22 +543,37 @@ def main() -> int:
         durations = duration_oracle_for_provider(
             project_root, p, artifacts_root=args.duration_artifacts_dir
         )
-        batches = plan_shards(provider_files, n, duration_by_unit=durations)
+        collection_env = os.environ.copy()
+        collection_env["PKCS11_CHECK_DATA_DIR"] = str(host_data_dir)
+        provider_units, planning_durations, expanded_files = expand_duration_hot_node_units(
+            provider_files,
+            durations,
+            collection_env=collection_env,
+        )
+        batches = plan_shards(provider_units, n, duration_by_unit=planning_durations)
         batched = sum(len(b) for b in batches)
-        if batched != len(provider_files):
+        if batched != len(provider_units):
             print_pool_event(
-                f"ERROR: {p} partition {batched} != {len(provider_files)} — refusing to drop tests",
+                f"ERROR: {p} partition {batched} != {len(provider_units)} — refusing to drop tests",
                 file=sys.stderr,
             )
             return 1
         for i, batch in enumerate(batches):
-            load = estimate_shard_load(batch, duration_by_unit=durations)
+            load = estimate_shard_load(batch, duration_by_unit=planning_durations)
             workitems.append((p, i, batch, load))
         scope = "slot-0-unique" if len(provider_files) != len(files) else "full"
         balance = "duration-oracle" if durations else "synthetic-heavy"
+        unit_count = (
+            f"{len(provider_files)} files -> {batched} targets"
+            if expanded_files
+            else f"{batched} files"
+        )
+        node_split = (
+            f", node-split {len(expanded_files)} file(s)" if expanded_files else ""
+        )
         print_pool_event(
-            f"  {p}: {n} batch(es), {batched} files "
-            f"({scope}, {balance}, partition ok)"
+            f"  {p}: {n} batch(es), {unit_count} "
+            f"({scope}, {balance}{node_split}, partition ok)"
         )
 
     # Longest estimated batches first so the long poles start early.
@@ -496,7 +584,8 @@ def main() -> int:
             f"=== DRY RUN: {len(workitems)} items, K={args.concurrency} (launch nothing) ==="
         )
         for p, i, batch, load in workitems:
-            print_pool_event(f"  {p}:{i}  {len(batch)} files  load~{load:.1f}s")
+            unit_label = "targets" if any("::" in unit for unit in batch) else "files"
+            print_pool_event(f"  {p}:{i}  {len(batch)} {unit_label}  load~{load:.1f}s")
         return 0
 
     clean_prior_shards(project_root, providers)

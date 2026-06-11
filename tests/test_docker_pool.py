@@ -135,6 +135,157 @@ def test_pool_dry_run_uses_explicit_duration_artifact_root_provider_locally(
     assert "opencryptoki:0  1 files  load~1.0s" in out
 
 
+def test_pool_dry_run_reports_duration_hot_node_split(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    testcases = tmp_path / "src/pkcs11_check/testcases"
+    mct_file = testcases / "acvp/aes/test_cfb128.py"
+    light_file = testcases / "test_light.py"
+    mct_file.parent.mkdir(parents=True)
+    light_file.parent.mkdir(parents=True, exist_ok=True)
+    mct_file.write_text("def test_placeholder():\n    pass\n")
+    light_file.write_text("def test_light():\n    pass\n")
+    history = tmp_path / "history"
+    results_path = history / "bouncyhsm-pooled" / "results.json"
+    results_path.parent.mkdir(parents=True)
+    results_path.write_text(
+        json.dumps(
+            {
+                "units": [
+                    {"target": str(mct_file), "duration_s": 900.0},
+                    {"target": str(light_file), "duration_s": 2.0},
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr(
+        test_pool,
+        "collect_pytest_nodeids",
+        lambda targets, pytest_args, env=None: [
+            f"{mct_file}::test_acvp_aes_cfb128_encrypt[AES-enc-tc1]",
+            f"{mct_file}::test_acvp_aes_cfb128_multiblock_encrypt[AES-enc-tc2]",
+            f"{mct_file}::test_acvp_aes_cfb128_multiblock_decrypt[AES-dec-tc3]",
+        ]
+        if targets == [str(mct_file)]
+        else [],
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "test_pool.py",
+            "--dry-run",
+            "--duration-artifacts-dir",
+            str(history),
+            "--testcases",
+            str(testcases),
+            "bouncyhsm:2",
+        ],
+    )
+
+    assert test_pool.main() == 0
+
+    out = capsys.readouterr().out
+    assert (
+        "bouncyhsm: 2 batch(es), 2 files -> 4 targets "
+        "(full, duration-oracle, node-split 1 file(s), partition ok)"
+    ) in out
+    assert "bouncyhsm:0  2 targets" in out
+    assert "bouncyhsm:1  2 targets" in out
+
+
+def test_pool_expands_duration_hot_mct_files_to_node_targets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mct_file = tmp_path / "src/pkcs11_check/testcases/acvp/aes/test_cfb128.py"
+    light_file = tmp_path / "src/pkcs11_check/testcases/test_light.py"
+    mct_file.parent.mkdir(parents=True)
+    light_file.parent.mkdir(parents=True, exist_ok=True)
+    mct_file.write_text("def test_placeholder():\n    pass\n")
+    light_file.write_text("def test_light():\n    pass\n")
+    nodeids = [
+        f"{mct_file}::test_acvp_aes_cfb128_encrypt[AES-enc-tc1]",
+        f"{mct_file}::test_acvp_aes_cfb128_multiblock_encrypt[AES-enc-tc2]",
+        f"{mct_file}::test_acvp_aes_cfb128_multiblock_decrypt[AES-dec-tc3]",
+    ]
+
+    monkeypatch.setattr(
+        test_pool,
+        "collect_pytest_nodeids",
+        lambda targets, pytest_args, env=None: nodeids if targets == [str(mct_file)] else [],
+    )
+
+    units, durations, expanded = test_pool.expand_duration_hot_node_units(
+        [str(mct_file), str(light_file)],
+        {str(mct_file): 900.0, str(light_file): 2.0},
+    )
+
+    assert str(mct_file) not in units
+    assert str(light_file) in units
+    assert all(nodeid in units for nodeid in nodeids)
+    assert expanded == {str(mct_file): len(nodeids)}
+    assert durations[nodeids[1]] == durations[nodeids[2]]
+    assert durations[nodeids[1]] > durations[nodeids[0]]
+
+
+def test_pool_keeps_provider_local_fast_or_skipped_mct_files_at_file_level(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mct_file = tmp_path / "src/pkcs11_check/testcases/acvp/aes/test_cfb128.py"
+    mct_file.parent.mkdir(parents=True)
+    mct_file.write_text("def test_placeholder():\n    pass\n")
+    collect_calls: list[list[str]] = []
+
+    def fake_collect(
+        targets: list[str], pytest_args: list[str], env: dict[str, str] | None = None
+    ) -> list[str]:
+        collect_calls.append(targets)
+        return [f"{mct_file}::test_acvp_aes_cfb128_multiblock_encrypt[AES-enc-tc2]"]
+
+    monkeypatch.setattr(test_pool, "collect_pytest_nodeids", fake_collect)
+
+    units, durations, expanded = test_pool.expand_duration_hot_node_units(
+        [str(mct_file)],
+        {str(mct_file): 0.0},
+    )
+
+    assert units == [str(mct_file)]
+    assert durations == {str(mct_file): 0.0}
+    assert expanded == {}
+    assert collect_calls == []
+
+
+def test_pool_node_split_collection_uses_caller_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mct_file = tmp_path / "src/pkcs11_check/testcases/acvp/aes/test_ofb.py"
+    mct_file.parent.mkdir(parents=True)
+    mct_file.write_text("def test_placeholder():\n    pass\n")
+    seen_env: list[dict[str, str] | None] = []
+
+    def fake_collect(
+        targets: list[str], pytest_args: list[str], env: dict[str, str] | None = None
+    ) -> list[str]:
+        seen_env.append(env)
+        return [
+            f"{mct_file}::test_acvp_aes_ofb_multiblock_encrypt[AES-enc-tc2]",
+            f"{mct_file}::test_acvp_aes_ofb_multiblock_decrypt[AES-dec-tc3]",
+        ]
+
+    monkeypatch.setattr(test_pool, "collect_pytest_nodeids", fake_collect)
+    collection_env = {"PKCS11_CHECK_DATA_DIR": "/custom/data"}
+
+    units, _durations, _expanded = test_pool.expand_duration_hot_node_units(
+        [str(mct_file)],
+        {str(mct_file): 600.0},
+        collection_env=collection_env,
+    )
+
+    assert len(units) == 2
+    assert seen_env == [collection_env]
+
+
 def test_pool_uses_fetched_user_data_cache_when_repo_data_is_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
