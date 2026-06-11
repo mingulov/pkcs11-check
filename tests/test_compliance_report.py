@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from pkcs11_check.compliance import ComplianceLevel, clear_notes, get_notes, note
-from pkcs11_check.compliance_report import _parse_test_results
+from pkcs11_check.compliance_report import _classify_functions, _parse_test_results
 
 
 def test_parse_test_results_unified_format(tmp_path: Path) -> None:
@@ -28,6 +28,11 @@ def test_parse_test_results_unified_format(tmp_path: Path) -> None:
                         "status": "failed",
                         "counts": {"passed": 1, "failed": 1, "skipped": 0, "xfailed": 0},
                     },
+                    {
+                        "target": "src/pkcs11_check/testcases/test_crash.py",
+                        "status": "crashed",
+                        "counts": {"failed": 1},
+                    },
                 ],
             }
         )
@@ -39,13 +44,17 @@ def test_parse_test_results_unified_format(tmp_path: Path) -> None:
     assert counts["test_sign"]["passed"] == 2
     assert counts["test_sign"]["failed"] == 0
     assert counts["test_sign"]["skipped"] == 1
+    assert counts["test_sign"]["xfailed"] == 1
     assert "test_encrypt" in counts
     assert counts["test_encrypt"]["passed"] == 1
     assert counts["test_encrypt"]["failed"] == 1
+    assert counts["test_crash"]["failed"] == 1
+    assert counts["test_crash"]["crashed"] == 1
+    assert counts["test_crash"]["tests"] == 2
 
 
 def test_parse_test_results_unified_format_without_counts(tmp_path: Path) -> None:
-    """Units without counts (e.g., crashed) should be handled gracefully."""
+    """Status-only units still carry crash/timeout evidence."""
     results_file = tmp_path / "results.json"
     results_file.write_text(
         json.dumps(
@@ -61,8 +70,89 @@ def test_parse_test_results_unified_format_without_counts(tmp_path: Path) -> Non
     )
 
     counts = _parse_test_results(results_file)
-    # Crashed unit has no counts -> not included
-    assert counts == {}
+    assert counts["test_crash"]["crashed"] == 1
+    assert counts["test_crash"]["tests"] == 1
+
+
+def test_parse_test_results_preserves_non_pass_fail_outcomes(tmp_path: Path) -> None:
+    results_file = tmp_path / "results.json"
+    results_file.write_text(
+        json.dumps(
+            {
+                "tests": [
+                    {
+                        "nodeid": "src/pkcs11_check/testcases/test_encrypt.py::test_clean_xfail",
+                        "outcome": "skipped",
+                        "wasxfail": "clean provider rejection",
+                    },
+                    {
+                        "nodeid": "src/pkcs11_check/testcases/test_encrypt.py::test_setup_error",
+                        "outcome": "error",
+                    },
+                    {
+                        "nodeid": (
+                            "src/pkcs11_check/testcases/test_encrypt.py::test_unexpected_pass"
+                        ),
+                        "outcome": "passed",
+                        "wasxfail": "known bug",
+                    },
+                ],
+            }
+        )
+    )
+
+    counts = _parse_test_results(results_file)
+
+    assert counts["test_encrypt"]["xfailed"] == 1
+    assert counts["test_encrypt"]["error"] == 1
+    assert counts["test_encrypt"]["xpassed"] == 1
+    assert counts["test_encrypt"]["skipped"] == 0
+    assert counts["test_encrypt"]["tests"] == 3
+
+
+def test_classify_functions_does_not_report_xfail_as_pass() -> None:
+    functions = _classify_functions(
+        {
+            "test_encrypt": {
+                "passed": 1,
+                "failed": 0,
+                "skipped": 0,
+                "xfailed": 2,
+                "xpassed": 0,
+                "error": 0,
+                "crashed": 0,
+                "timeout": 0,
+                "tests": 3,
+            }
+        }
+    )
+
+    assert functions["C_Encrypt"]["status"] == "XFAIL"
+    assert functions["C_Encrypt"]["tests"] == 3
+    assert functions["C_Encrypt"]["passed"] == 1
+    assert functions["C_Encrypt"]["xfailed"] == 2
+
+
+def test_classify_functions_crash_and_timeout_precede_pass() -> None:
+    functions = _classify_functions(
+        {
+            "test_encrypt": {
+                "passed": 10,
+                "failed": 0,
+                "skipped": 0,
+                "xfailed": 0,
+                "xpassed": 0,
+                "error": 0,
+                "crashed": 1,
+                "timeout": 1,
+                "tests": 12,
+            }
+        }
+    )
+
+    assert functions["C_Encrypt"]["status"] == "TIMEOUT"
+    assert functions["C_Encrypt"]["crashed"] == 1
+    assert functions["C_Encrypt"]["timeout"] == 1
 
 
 class TestComplianceNoteIsolation:

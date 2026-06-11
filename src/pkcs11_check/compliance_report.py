@@ -13,6 +13,63 @@ from typing import Any
 
 from pkcs11_check.compliance import ComplianceNote, get_notes
 
+_OUTCOME_KEYS: tuple[str, ...] = (
+    "passed",
+    "failed",
+    "skipped",
+    "xfailed",
+    "xpassed",
+    "error",
+    "crashed",
+    "timeout",
+)
+
+
+def _empty_test_counts() -> dict[str, int]:
+    counts = {key: 0 for key in _OUTCOME_KEYS}
+    counts["tests"] = 0
+    return counts
+
+
+def _count_value(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return max(value, 0)
+    return 0
+
+
+def _counts_for_base(counts: dict[str, dict[str, int]], base: str) -> dict[str, int]:
+    if base not in counts:
+        counts[base] = _empty_test_counts()
+    return counts[base]
+
+
+def _outcome_from_status(status: str) -> str:
+    if status in _OUTCOME_KEYS:
+        return status
+    if status == "crash":
+        return "crashed"
+    if status in {"errored", "error"}:
+        return "error"
+    return "error"
+
+
+def _outcome_from_pytest_report(outcome: str, wasxfail: Any) -> str:
+    if outcome == "passed" and wasxfail is not None:
+        return "xpassed"
+    if outcome == "skipped" and wasxfail is not None:
+        return "xfailed"
+    return _outcome_from_status(outcome)
+
+
+def _add_outcome(counts: dict[str, int], outcome: str, amount: int = 1) -> None:
+    normalized = _outcome_from_status(outcome)
+    clean_amount = max(amount, 0)
+    counts[normalized] += clean_amount
+    counts["tests"] += clean_amount
+
+
 # ---------------------------------------------------------------------------
 # Standard PKCS#11 mechanism names (representative subset)
 # ---------------------------------------------------------------------------
@@ -408,7 +465,7 @@ def _parse_test_results(
 ) -> dict[str, dict[str, int]]:
     """Parse a pytest-json-report, pkcs11-check isolated, or unified results JSON.
 
-    Returns a mapping of test file base name -> {passed, failed, skipped}.
+    Returns a mapping of test file base name to outcome counts.
     """
     data = json.loads(results_path.read_text())
 
@@ -421,14 +478,29 @@ def _parse_test_results(
             base = target.split("::")[0].split("/")[-1].replace(".py", "")
             if not base:
                 continue
+            base_counts = _counts_for_base(counts, base)
             unit_counts = unit.get("counts")
-            if unit_counts is None:
-                continue
-            if base not in counts:
-                counts[base] = {"passed": 0, "failed": 0, "skipped": 0}
-            counts[base]["passed"] += unit_counts.get("passed", 0)
-            counts[base]["failed"] += unit_counts.get("failed", 0)
-            counts[base]["skipped"] += unit_counts.get("skipped", 0)
+            if isinstance(unit_counts, dict):
+                outcome_total = 0
+                for key in _OUTCOME_KEYS:
+                    value = _count_value(unit_counts.get(key))
+                    base_counts[key] += value
+                    outcome_total += value
+                explicit_total = max(
+                    _count_value(unit_counts.get("tests")),
+                    _count_value(unit_counts.get("total")),
+                )
+                status_outcome = _outcome_from_status(str(unit.get("status", "")))
+                if status_outcome in {"crashed", "timeout", "error"} and _count_value(
+                    unit_counts.get(status_outcome)
+                ) == 0:
+                    base_counts[status_outcome] += 1
+                    outcome_total += 1
+                base_counts["tests"] += max(outcome_total, explicit_total)
+            else:
+                status = str(unit.get("status", ""))
+                if status:
+                    _add_outcome(base_counts, _outcome_from_status(status))
         return counts
 
     # pytest-json-report format: {"tests": [{"nodeid": "...", "outcome": "..."}]}
@@ -440,14 +512,11 @@ def _parse_test_results(
             status = r.get("status", "")
             # Extract base filename
             base = target.split("::")[0].split("/")[-1].replace(".py", "")
-            if base not in counts:
-                counts[base] = {"passed": 0, "failed": 0, "skipped": 0}
-            if status == "passed":
-                counts[base]["passed"] += 1
-            elif status == "failed":
-                counts[base]["failed"] += 1
-            else:
-                counts[base]["skipped"] += 1
+            if not base:
+                continue
+            status_text = str(status)
+            if status_text:
+                _add_outcome(_counts_for_base(counts, base), status_text)
         return counts
 
     for test in tests:
@@ -455,14 +524,10 @@ def _parse_test_results(
         outcome = test.get("outcome", "")
         # Extract base filename
         base = nodeid.split("::")[0].split("/")[-1].replace(".py", "")
-        if base not in counts:
-            counts[base] = {"passed": 0, "failed": 0, "skipped": 0}
-        if outcome == "passed":
-            counts[base]["passed"] += 1
-        elif outcome == "failed":
-            counts[base]["failed"] += 1
-        else:
-            counts[base]["skipped"] += 1
+        if not base:
+            continue
+        report_outcome = _outcome_from_pytest_report(str(outcome), test.get("wasxfail"))
+        _add_outcome(_counts_for_base(counts, base), report_outcome)
 
     return counts
 
@@ -475,23 +540,30 @@ def _classify_functions(
 
     for func_name in STANDARD_FUNCTIONS:
         keywords = _FUNCTION_KEYWORDS.get(func_name, [])
-        total_passed = 0
-        total_failed = 0
-        total_skipped = 0
+        totals = _empty_test_counts()
 
         for keyword in keywords:
             for file_base, cnts in test_counts.items():
                 if keyword in file_base:
-                    total_passed += cnts["passed"]
-                    total_failed += cnts["failed"]
-                    total_skipped += cnts["skipped"]
+                    for key in _OUTCOME_KEYS:
+                        totals[key] += cnts.get(key, 0)
 
-        total_tests = total_passed + total_failed + total_skipped
+        total_tests = sum(totals[key] for key in _OUTCOME_KEYS)
         if total_tests == 0:
             status = "NOT_TESTED"
-        elif total_failed > 0:
+        elif totals["timeout"] > 0:
+            status = "TIMEOUT"
+        elif totals["crashed"] > 0:
+            status = "CRASHED"
+        elif totals["error"] > 0:
+            status = "ERROR"
+        elif totals["failed"] > 0:
             status = "FAIL"
-        elif total_passed > 0:
+        elif totals["xfailed"] > 0:
+            status = "XFAIL"
+        elif totals["xpassed"] > 0:
+            status = "XPASS"
+        elif totals["passed"] > 0:
             status = "PASS"
         else:
             status = "SKIP"
@@ -499,9 +571,14 @@ def _classify_functions(
         result[func_name] = {
             "status": status,
             "tests": total_tests,
-            "passed": total_passed,
-            "failed": total_failed,
-            "skipped": total_skipped,
+            "passed": totals["passed"],
+            "failed": totals["failed"],
+            "skipped": totals["skipped"],
+            "xfailed": totals["xfailed"],
+            "xpassed": totals["xpassed"],
+            "error": totals["error"],
+            "crashed": totals["crashed"],
+            "timeout": totals["timeout"],
         }
 
     return result
@@ -610,6 +687,11 @@ def generate_report(
                 "passed": 0,
                 "failed": 0,
                 "skipped": 0,
+                "xfailed": 0,
+                "xpassed": 0,
+                "error": 0,
+                "crashed": 0,
+                "timeout": 0,
             }
             for f in STANDARD_FUNCTIONS
         }
@@ -622,7 +704,7 @@ def generate_report(
 
     # Aggregate scores
     mechs_supported = sum(1 for v in mechanisms.values() if v == "SUPPORTED")
-    funcs_tested = sum(1 for v in functions.values() if v["status"] in {"PASS", "FAIL"})
+    funcs_tested = sum(1 for v in functions.values() if v["status"] not in {"NOT_TESTED", "SKIP"})
     ckr_total = ckr_coverage["total_specs"]
     ckr_tested = ckr_coverage["tested"]
     ckr_pct = round(ckr_tested / ckr_total * 100, 1) if ckr_total > 0 else 0.0
