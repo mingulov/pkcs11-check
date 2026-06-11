@@ -13,11 +13,20 @@ from __future__ import annotations
 import ctypes
 import os
 from ctypes import byref
+from typing import Any
 
 import pytest
 
 from pkcs11_check.fixtures import RawSession
-from pkcs11_check.raw.recipes import to_ubyte_buf
+from pkcs11_check.raw.pack import mech_simple
+from pkcs11_check.raw.recipes import destroy_quietly, to_ubyte_buf
+from pkcs11_check.raw.types_std import CKM, CKR_OK
+from pkcs11_check.testcases.mechanism_catalog import MechEntry
+from pkcs11_check.testcases.mechanism_helpers import (
+    generate_key_for_encrypt,
+    generate_key_for_sign,
+    make_mech_param_or_skip,
+)
 
 pytestmark = [
     pytest.mark.mechanism_coverage,
@@ -61,6 +70,170 @@ def _xfail_if_message_init_rejected(rv: int, *, label: str) -> None:
     )
     if rv in reject:
         pytest.xfail(f"{label}: advertised message op rejected with {ckr_name(rv)}")
+
+
+def _require_message_functions(rs: RawSession, *function_names: str) -> None:
+    for function_name in function_names:
+        if not hasattr(rs.raw, function_name):
+            pytest.skip(f"{function_name} not available on this module")
+
+
+def _message_init_mech_or_skip(entry: MechEntry) -> Any:
+    config = entry.config
+    if config is None:
+        pytest.skip(f"{entry.mech_name}: no registry config")
+
+    if config.param_required and config.param_recipe.style == "gcm":
+        from pkcs11_check.raw.pack_mechanisms import mech_gcm_message
+
+        defaults = config.param_recipe.defaults
+        return mech_gcm_message(
+            CKM(entry.mech_id),
+            os.urandom(int(defaults.get("iv_len", 12))),
+            tag_bits=int(defaults.get("tag_bits", 128)),
+        )
+
+    if config.param_required and config.param_recipe.style == "ccm":
+        from pkcs11_check.raw.pack_mechanisms import mech_ccm
+
+        defaults = config.param_recipe.defaults
+        return mech_ccm(
+            CKM(entry.mech_id),
+            os.urandom(int(defaults.get("nonce_len", 12))),
+            data_len=int(defaults.get("data_len", 32)),
+            mac_len=int(defaults.get("mac_len", 16)),
+        )
+
+    mech_param = make_mech_param_or_skip(entry)
+    return mech_param if mech_param is not None else mech_simple(CKM(entry.mech_id))
+
+
+def _message_init_or_xfail(
+    rs: RawSession,
+    entry: MechEntry,
+    *,
+    key: int,
+    init_name: str,
+) -> None:
+    init = getattr(rs.raw, init_name)
+    mech = _message_init_mech_or_skip(entry)
+    rv = init(rs.sh, mech.byref(), key)
+    _xfail_if_message_init_rejected(rv, label=f"{init_name} (CKM_{entry.mech_name})")
+    assert rv == CKR_OK, f"{init_name}(CKM_{entry.mech_name}) failed: 0x{rv:08x}"
+
+
+def _message_final_or_fail(rs: RawSession, entry: MechEntry, *, final_name: str) -> None:
+    final = getattr(rs.raw, final_name)
+    rv = final(rs.sh)
+    assert rv == CKR_OK, f"{final_name}(CKM_{entry.mech_name}) failed: 0x{rv:08x}"
+
+
+class TestRegistryMessageInit:
+    """Registry-driven message-init smoke coverage for advertised CKF_MESSAGE_* flags."""
+
+    @pytest.mark.needs_function("C_MessageEncryptInit")
+    def test_registry_message_encrypt_init(
+        self,
+        p11_module_session: RawSession,
+        mech_message_encrypt_entry: MechEntry,
+    ) -> None:
+        rs = p11_module_session
+        entry = mech_message_encrypt_entry
+        config = entry.config
+        assert config is not None
+        _require_message_functions(rs, "C_MessageEncryptInit", "C_MessageEncryptFinal")
+
+        encrypt_key, decrypt_key = generate_key_for_encrypt(rs, entry, config)
+        try:
+            _message_init_or_xfail(
+                rs,
+                entry,
+                key=encrypt_key,
+                init_name="C_MessageEncryptInit",
+            )
+            _message_final_or_fail(rs, entry, final_name="C_MessageEncryptFinal")
+        finally:
+            destroy_quietly(rs.raw, rs.sh, encrypt_key)
+            if decrypt_key is not None:
+                destroy_quietly(rs.raw, rs.sh, decrypt_key)
+
+    @pytest.mark.needs_function("C_MessageDecryptInit")
+    def test_registry_message_decrypt_init(
+        self,
+        p11_module_session: RawSession,
+        mech_message_decrypt_entry: MechEntry,
+    ) -> None:
+        rs = p11_module_session
+        entry = mech_message_decrypt_entry
+        config = entry.config
+        assert config is not None
+        _require_message_functions(rs, "C_MessageDecryptInit", "C_MessageDecryptFinal")
+
+        encrypt_key, decrypt_key = generate_key_for_encrypt(rs, entry, config)
+        try:
+            _message_init_or_xfail(
+                rs,
+                entry,
+                key=decrypt_key if decrypt_key is not None else encrypt_key,
+                init_name="C_MessageDecryptInit",
+            )
+            _message_final_or_fail(rs, entry, final_name="C_MessageDecryptFinal")
+        finally:
+            destroy_quietly(rs.raw, rs.sh, encrypt_key)
+            if decrypt_key is not None:
+                destroy_quietly(rs.raw, rs.sh, decrypt_key)
+
+    @pytest.mark.needs_function("C_MessageSignInit")
+    def test_registry_message_sign_init(
+        self,
+        p11_module_session: RawSession,
+        mech_message_sign_entry: MechEntry,
+    ) -> None:
+        rs = p11_module_session
+        entry = mech_message_sign_entry
+        config = entry.config
+        assert config is not None
+        _require_message_functions(rs, "C_MessageSignInit", "C_MessageSignFinal")
+
+        sign_key, verify_key = generate_key_for_sign(rs, entry, config)
+        try:
+            _message_init_or_xfail(
+                rs,
+                entry,
+                key=sign_key,
+                init_name="C_MessageSignInit",
+            )
+            _message_final_or_fail(rs, entry, final_name="C_MessageSignFinal")
+        finally:
+            destroy_quietly(rs.raw, rs.sh, sign_key)
+            if verify_key is not None:
+                destroy_quietly(rs.raw, rs.sh, verify_key)
+
+    @pytest.mark.needs_function("C_MessageVerifyInit")
+    def test_registry_message_verify_init(
+        self,
+        p11_module_session: RawSession,
+        mech_message_verify_entry: MechEntry,
+    ) -> None:
+        rs = p11_module_session
+        entry = mech_message_verify_entry
+        config = entry.config
+        assert config is not None
+        _require_message_functions(rs, "C_MessageVerifyInit", "C_MessageVerifyFinal")
+
+        sign_key, verify_key = generate_key_for_sign(rs, entry, config)
+        try:
+            _message_init_or_xfail(
+                rs,
+                entry,
+                key=verify_key if verify_key is not None else sign_key,
+                init_name="C_MessageVerifyInit",
+            )
+            _message_final_or_fail(rs, entry, final_name="C_MessageVerifyFinal")
+        finally:
+            destroy_quietly(rs.raw, rs.sh, sign_key)
+            if verify_key is not None:
+                destroy_quietly(rs.raw, rs.sh, verify_key)
 
 
 class TestMessageEncrypt:

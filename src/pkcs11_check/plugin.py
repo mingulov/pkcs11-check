@@ -36,6 +36,10 @@ from pkcs11_check.raw.types_std import (
     CKF_DIGEST,
     CKF_GENERATE,
     CKF_GENERATE_KEY_PAIR,
+    CKF_MESSAGE_DECRYPT,
+    CKF_MESSAGE_ENCRYPT,
+    CKF_MESSAGE_SIGN,
+    CKF_MESSAGE_VERIFY,
     CKR_OK,
 )
 from pkcs11_check.testcases._mock_gating import is_pkcs11_mock_target, should_skip_on_mock
@@ -84,6 +88,10 @@ _LEGACY_FLAG_BY_FIXTURE: dict[str, int] = {
     "mech_digest_entry": int(CKF_DIGEST),
     "mech_keygen_entry": int(CKF_GENERATE) | int(CKF_GENERATE_KEY_PAIR),
     "mech_derive_entry": int(CKF_DERIVE),
+    "mech_message_encrypt_entry": int(CKF_MESSAGE_ENCRYPT),
+    "mech_message_decrypt_entry": int(CKF_MESSAGE_DECRYPT),
+    "mech_message_sign_entry": int(CKF_MESSAGE_SIGN),
+    "mech_message_verify_entry": int(CKF_MESSAGE_VERIFY),
     "mech_any_entry": 0,
 }
 
