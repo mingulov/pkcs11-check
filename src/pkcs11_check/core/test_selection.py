@@ -168,23 +168,26 @@ def build_disabled_selection_plan(
 
 
 def _load_report_log_records(path: Path) -> list[dict[str, object]]:
-    try:
-        text = path.read_text()
-    except (FileNotFoundError, OSError):
-        return []
+    return list(_iter_report_log_records(path))
 
-    records: list[dict[str, object]] = []
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            records.append(payload)
-    return records
+
+def _iter_report_log_records(path: Path) -> Iterable[dict[str, object]]:
+    try:
+        fh = path.open(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return
+
+    with fh:
+        for raw_line in fh:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                yield payload
 
 
 def _map_report_outcome(raw_outcome: str, wasxfail: object) -> str:
@@ -195,10 +198,13 @@ def _map_report_outcome(raw_outcome: str, wasxfail: object) -> str:
     return raw_outcome
 
 
-def _collect_report_nodeids(records: list[dict[str, object]]) -> dict[str, str]:
+def _collect_report_evidence(
+    records: Iterable[dict[str, object]],
+) -> tuple[dict[str, str], dict[str, dict[str, set[str]]]]:
     outcomes: dict[str, str] = {}
     seen_call: set[str] = set()
     setup_only: list[dict[str, object]] = []
+    phases_by_file: dict[str, dict[str, set[str]]] = {}
 
     for record in records:
         report_type = str(record.get("$report_type", "TestReport"))
@@ -214,6 +220,9 @@ def _collect_report_nodeids(records: list[dict[str, object]]) -> dict[str, str]:
         nodeid = str(record.get("nodeid", "")).strip()
         if not nodeid:
             continue
+        if when:
+            file_target = nodeid.split("::", 1)[0]
+            phases_by_file.setdefault(file_target, {}).setdefault(nodeid, set()).add(when)
 
         if when == "call":
             seen_call.add(nodeid)
@@ -231,22 +240,14 @@ def _collect_report_nodeids(records: list[dict[str, object]]) -> dict[str, str]:
         raw_outcome = str(record.get("outcome", ""))
         outcomes[nodeid] = "skipped" if raw_outcome == "skipped" else "error"
 
-    return outcomes
+    return outcomes, phases_by_file
 
 
-def _identify_culprit_for_file(records: list[dict[str, object]], file_target: str) -> str | None:
-    phases: dict[str, set[str]] = {}
-    for record in records:
-        if str(record.get("$report_type", "TestReport")) != "TestReport":
-            continue
-        nodeid = str(record.get("nodeid", "")).strip()
-        when = str(record.get("when", "")).strip()
-        if not nodeid or not when:
-            continue
-        if nodeid.split("::", 1)[0] != file_target:
-            continue
-        phases.setdefault(nodeid, set()).add(when)
-
+def _identify_culprit_for_file(
+    phases_by_file: dict[str, dict[str, set[str]]],
+    file_target: str,
+) -> str | None:
+    phases = phases_by_file.get(file_target, {})
     for nodeid, node_phases in phases.items():
         if "teardown" not in node_phases and "setup" in node_phases:
             return nodeid
@@ -344,8 +345,9 @@ def collect_disabled_candidate_review_records(
     manual_review: set[str] = set()
 
     for artifact_dir in artifact_dirs:
-        records = _load_report_log_records(artifact_dir / "report.jsonl")
-        report_nodeids = _collect_report_nodeids(records)
+        report_nodeids, report_phases = _collect_report_evidence(
+            _iter_report_log_records(artifact_dir / "report.jsonl")
+        )
         results_units = _load_results_units(artifact_dir / "results.json")
         _, explicit_special_units = _collect_results_test_nodeids(
             results_units,
@@ -401,7 +403,7 @@ def collect_disabled_candidate_review_records(
                     continue
                 if (target, status) in explicit_special_units:
                     continue
-                culprit = _identify_culprit_for_file(records, target)
+                culprit = _identify_culprit_for_file(report_phases, target)
                 if culprit is not None:
                     _add_review_record(
                         review_map,
