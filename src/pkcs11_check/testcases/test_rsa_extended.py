@@ -69,6 +69,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    classify_discrimination,
     unwrap_key_for_mechanism_roundtrip,
     xfail_if_known_ckr,
 )
@@ -596,6 +597,95 @@ class TestRSAAESKeyWrap:
 
             # The wrapped blob should not contain the raw key bytes
             assert original_value not in wrapped
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, aes_key)
+
+    def test_tampered_blob_rejected(self, p11_raw_session: Any, p11_config: Any) -> None:
+        """Bit-flipped RSA-AES hybrid wrapped blobs must not unwrap successfully."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_AES_KEY_WRAP"):
+            pytest.skip("CKM_RSA_AES_KEY_WRAP not supported")
+
+        pub, priv = _rsa_keypair(rs, wrap=True)
+        aes_key = _make_extractable_aes(rs, 128)
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])
+            original_value = attrs[CKA_VALUE]
+            assert isinstance(original_value, bytes)
+
+            try:
+                wrapped = wrap_key(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    aes_key,
+                    CKM_RSA_AES_KEY_WRAP,
+                    mech_param=_mech_rsa_aes_key_wrap(256),
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc, _RSA_OP_REJECT_RVS, "CKM_RSA_AES_KEY_WRAP wrap not operational"
+                )
+                raise
+
+            assert len(wrapped) > 2, "CKM_RSA_AES_KEY_WRAP output unexpectedly short"
+
+            unwrap_attrs = {
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
+                CKA_TOKEN: False,
+            }
+
+            try:
+                good = unwrap_key_for_mechanism_roundtrip(
+                    rs,
+                    p11_config,
+                    unwrapping_key=priv,
+                    wrapped_key=wrapped,
+                    mechanism=CKM_RSA_AES_KEY_WRAP,
+                    attrs=unwrap_attrs,
+                    mech_param=_mech_rsa_aes_key_wrap(256),
+                    purpose="RSA-AES-KEY-WRAP unwrap (valid leg)",
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _RSA_OP_REJECT_RVS,
+                    "CKM_RSA_AES_KEY_WRAP unwrap (valid leg) not operational",
+                )
+                raise
+            good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
+            destroy_quietly(rs.raw, rs.sh, good)
+            valid_accepted = good_value is not None and good_value == original_value
+
+            tampered = bytearray(wrapped)
+            tampered[-2] ^= 0xFF
+            invalid_outcome: Any
+            try:
+                h = unwrap_key_for_mechanism_roundtrip(
+                    rs,
+                    p11_config,
+                    unwrapping_key=priv,
+                    wrapped_key=bytes(tampered),
+                    mechanism=CKM_RSA_AES_KEY_WRAP,
+                    attrs=unwrap_attrs,
+                    mech_param=_mech_rsa_aes_key_wrap(256),
+                    purpose="RSA-AES-KEY-WRAP unwrap of bit-flipped ciphertext",
+                )
+                invalid_outcome = h
+                destroy_quietly(rs.raw, rs.sh, h)
+            except AssertionError as exc:
+                invalid_outcome = exc
+
+            classify_discrimination(
+                valid_accepted=valid_accepted,
+                invalid_outcome=invalid_outcome,
+                label="RSA-AES-KEY-WRAP unwrap of bit-flipped ciphertext",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

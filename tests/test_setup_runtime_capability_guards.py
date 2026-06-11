@@ -530,7 +530,11 @@ def test_authenticated_wrap_ecdh_roundtrip_ec_keygen_reject_is_xfail(
     )
 
     with pytest.raises(pytest.xfail.Exception, match="EC_KEY_PAIR_GEN advertised"):
-        test_authenticated_wrap.TestEcdhAesKeyWrap().test_ecdh_aes_kw_roundtrip(rs, p11_config)
+        test_authenticated_wrap.TestEcdhAesKeyWrap().test_ecdh_aes_kw_roundtrip(
+            rs,
+            p11_config,
+            test_authenticated_wrap._ECDH_AES_KW_CASES[0],
+        )
 
 
 def test_authenticated_wrap_ecdh_integrity_ec_keygen_reject_is_xfail(
@@ -547,7 +551,9 @@ def test_authenticated_wrap_ecdh_integrity_ec_keygen_reject_is_xfail(
 
     with pytest.raises(pytest.xfail.Exception, match="EC_KEY_PAIR_GEN advertised"):
         test_authenticated_wrap.TestEcdhAesKeyWrap().test_ecdh_aes_kw_bit_flip_integrity(
-            rs, p11_config
+            rs,
+            p11_config,
+            test_authenticated_wrap._ECDH_AES_KW_CASES[0],
         )
 
 

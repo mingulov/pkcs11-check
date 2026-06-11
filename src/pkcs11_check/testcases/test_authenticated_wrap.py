@@ -6,14 +6,21 @@ AES-GCM AEAD. Requires PKCS#11 v3.2 interface (C_WrapKeyAuthenticated).
 
 from __future__ import annotations
 
-from typing import Any, NoReturn
+from typing import Any, NamedTuple, NoReturn
 
 import pytest
 
-from pkcs11_check.raw.pack import mech_gcm_message, mech_gcm_message_inherit_tag
+from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.pack import (
+    attr_bytes,
+    mech_ecdh_aes_kw,
+    mech_gcm_message,
+    mech_gcm_message_inherit_tag,
+)
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_aes_key,
+    gen_keypair,
     generate_random,
     read_attributes,
     unwrap_key_authenticated,
@@ -23,16 +30,24 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
+    CKA_DERIVE,
+    CKA_EC_PARAMS,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_SENSITIVE,
+    CKA_TOKEN,
     CKA_UNWRAP,
     CKA_VALUE,
     CKA_WRAP,
+    CKD_SHA256_KDF,
     CKK_AES,
     CKM_AES_GCM,
     CKM_AES_KEY_WRAP,
+    CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
+    CKM_ECDH_AES_KEY_WRAP,
+    CKM_ECDH_COF_AES_KEY_WRAP,
+    CKM_ECDH_X_AES_KEY_WRAP,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
     CKR_DEVICE_ERROR,
@@ -46,6 +61,8 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._negotiation import TEMPLATE_SHAPE_REJECTS
 from pkcs11_check.testcases.conftest import (
+    EC_CURVE_UNSUPPORTED_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
     classify_discrimination,
     gen_ec_keypair_or_xfail,
     is_known_error,
@@ -78,6 +95,104 @@ _WRAP_RUNTIME_REJECT_RVS = (
 def _xfail_if_wrap_runtime_reject(exc: AssertionError, msg: str) -> NoReturn:
     xfail_if_known_ckr(exc, _WRAP_RUNTIME_REJECT_RVS, msg)
     raise
+
+
+class _EcdhAesKwCase(NamedTuple):
+    short_name: str
+    mechanism: Any
+    keygen_kind: str
+
+
+_ECDH_AES_KW_CASES: tuple[_EcdhAesKwCase, ...] = (
+    _EcdhAesKwCase("ECDH_AES_KEY_WRAP", CKM_ECDH_AES_KEY_WRAP, "weierstrass"),
+    _EcdhAesKwCase("ECDH_COF_AES_KEY_WRAP", CKM_ECDH_COF_AES_KEY_WRAP, "weierstrass"),
+    _EcdhAesKwCase("ECDH_X_AES_KEY_WRAP", CKM_ECDH_X_AES_KEY_WRAP, "montgomery"),
+)
+
+_MONTGOMERY_WRAP_CURVES: tuple[tuple[str, bytes], ...] = (
+    ("X25519", encode_named_curve_parameters("x25519")),
+    ("X448", encode_named_curve_parameters("x448")),
+)
+
+
+def _gen_montgomery_wrap_keypair_or_xfail(rs: Any) -> tuple[int, int]:
+    """Generate a Montgomery recipient keypair for CKM_ECDH_X_AES_KEY_WRAP."""
+    if not rs.has_mechanism("EC_MONTGOMERY_KEY_PAIR_GEN"):
+        pytest.skip("CKM_EC_MONTGOMERY_KEY_PAIR_GEN not supported for ECDH-X-AES-KW setup")
+
+    curve_rejects: list[BaseException] = []
+    for curve_name, curve_oid in _MONTGOMERY_WRAP_CURVES:
+        try:
+            return gen_keypair(
+                rs.raw,
+                rs.sh,
+                int(CKM_EC_MONTGOMERY_KEY_PAIR_GEN),
+                pub_base=[attr_bytes(CKA_EC_PARAMS, curve_oid)],
+                priv_base=[],
+                public_attrs={CKA_TOKEN: False, CKA_DERIVE: True, CKA_WRAP: True},
+                private_attrs={CKA_TOKEN: False, CKA_DERIVE: True, CKA_UNWRAP: True},
+                pub_skip={CKA_EC_PARAMS},
+            )
+        except AssertionError as exc:
+            if is_known_error(exc, EC_CURVE_UNSUPPORTED_RVS):
+                curve_rejects.append(exc)
+                continue
+            xfail_if_known_ckr(
+                exc,
+                KEYPAIR_RUNTIME_REJECT_RVS,
+                f"CKM_EC_MONTGOMERY_KEY_PAIR_GEN advertised but {curve_name} "
+                "keypair generation for ECDH-X-AES-KW setup is not operational",
+            )
+            raise
+
+    detail = "; ".join(str(exc) for exc in curve_rejects)
+    pytest.xfail(
+        "CKM_EC_MONTGOMERY_KEY_PAIR_GEN advertised but neither X25519 nor X448 "
+        f"keypair generation is available for ECDH-X-AES-KW setup: {detail}"
+    )
+
+
+def _ecdh_aes_kw_recipient_keypair(rs: Any, case: _EcdhAesKwCase) -> tuple[int, int]:
+    if case.keygen_kind == "montgomery":
+        return _gen_montgomery_wrap_keypair_or_xfail(rs)
+    if case.keygen_kind != "weierstrass":
+        raise AssertionError(f"unknown ECDH-AES-KW keygen kind: {case.keygen_kind}")
+
+    curve_oid = encode_named_curve_parameters("secp256r1")
+    return gen_ec_keypair_or_xfail(
+        rs,
+        curve_oid,
+        public_attrs={CKA_DERIVE: True, CKA_WRAP: True},
+        private_attrs={CKA_DERIVE: True, CKA_UNWRAP: True},
+    )
+
+
+def _ecdh_aes_kw_mech(case: _EcdhAesKwCase) -> Any:
+    return mech_ecdh_aes_kw(
+        case.mechanism,
+        aes_key_bits=256,
+        kdf=CKD_SHA256_KDF,
+    )
+
+
+def _wrap_ecdh_aes_kw_or_xfail(
+    rs: Any,
+    *,
+    recipient_public: int,
+    target: int,
+    case: _EcdhAesKwCase,
+) -> bytes:
+    try:
+        return wrap_key(
+            rs.raw,
+            rs.sh,
+            recipient_public,
+            target,
+            case.mechanism,
+            mech_param=_ecdh_aes_kw_mech(case),
+        )
+    except AssertionError as exc:
+        _xfail_if_wrap_runtime_reject(exc, f"CKM_{case.short_name} wrap not operational")
 
 
 class TestAuthenticatedWrap:
@@ -742,7 +857,7 @@ class TestWrapIntegrity:
 
 
 class TestEcdhAesKeyWrap:
-    """GAP-W3: CKM_ECDH_AES_KEY_WRAP hybrid wrap roundtrip + integrity.
+    """GAP-W3: ECDH-AES hybrid wrap roundtrip + integrity.
 
     The hybrid mechanism derives an AES key via ECDH (using the
     recipient's public key + an internally-generated ephemeral key
@@ -754,39 +869,30 @@ class TestEcdhAesKeyWrap:
     Closes Phase 4.5 GAP-W3 (MED).
     """
 
-    def test_ecdh_aes_kw_roundtrip(self, p11_raw_session: Any, p11_config: Any) -> None:
-        """Wrap an AES key with CKM_ECDH_AES_KEY_WRAP, unwrap, verify
+    @pytest.mark.parametrize(
+        "case",
+        _ECDH_AES_KW_CASES,
+        ids=[c.short_name for c in _ECDH_AES_KW_CASES],
+    )
+    def test_ecdh_aes_kw_roundtrip(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        case: _EcdhAesKwCase,
+    ) -> None:
+        """Wrap an AES key with the ECDH-AES-KW family, unwrap, verify
         roundtrip recovers the original key. The unwrap template is
-        negotiated (canonical CKA_CLASS+CKA_KEY_TYPE first; on a shape
-        reject, retry dropping only CKA_CLASS) so a module that rejects
-        CKA_CLASS in unwrap templates still completes the roundtrip
+        negotiated (canonical CKA_CLASS+CKA_KEY_TYPE plus policy attrs first;
+        on a shape reject, retry dropping only policy attrs) so a module that
+        rejects policy attrs in unwrap templates still completes the roundtrip
         instead of being silently skipped. The bit-flip integrity
         assertion is in a separate test
         (`test_ecdh_aes_kw_bit_flip_integrity`)."""
-        from pkcs11_check.raw.ec import encode_named_curve_parameters
-        from pkcs11_check.raw.pack import mech_ecdh_aes_kw
-        from pkcs11_check.raw.recipes import wrap_key
-        from pkcs11_check.raw.types_std import (
-            CKA_DERIVE,
-            CKA_KEY_TYPE,
-            CKD_SHA256_KDF,
-            CKK_AES,
-            CKM_ECDH_AES_KEY_WRAP,
-            CKO_SECRET_KEY,
-        )
-
         rs = p11_raw_session
-        if not rs.has_mechanism("ECDH_AES_KEY_WRAP"):
-            pytest.skip("CKM_ECDH_AES_KEY_WRAP not supported")
+        if not rs.has_mechanism(case.short_name):
+            pytest.skip(f"CKM_{case.short_name} not supported")
 
-        # Recipient EC P-256 keypair: pub used for wrap, priv for unwrap.
-        curve_oid = encode_named_curve_parameters("secp256r1")
-        pub, priv = gen_ec_keypair_or_xfail(
-            rs,
-            curve_oid,
-            public_attrs={CKA_DERIVE: True, CKA_WRAP: True},
-            private_attrs={CKA_DERIVE: True, CKA_UNWRAP: True},
-        )
+        pub, priv = _ecdh_aes_kw_recipient_keypair(rs, case)
 
         target = gen_aes_key(
             rs.raw,
@@ -796,76 +902,60 @@ class TestEcdhAesKeyWrap:
         )
         try:
             original = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
-            mech = mech_ecdh_aes_kw(
-                CKM_ECDH_AES_KEY_WRAP,
-                aes_key_bits=256,
-                kdf=CKD_SHA256_KDF,
-            )
 
             # --- Roundtrip ---
-            try:
-                wrapped = wrap_key(
-                    rs.raw,
-                    rs.sh,
-                    pub,
-                    target,
-                    CKM_ECDH_AES_KEY_WRAP,
-                    mech_param=mech,
-                )
-            except AssertionError as exc:
-                # has_mechanism("ECDH_AES_KEY_WRAP") was checked at the
-                # top, so the only legitimate "skip" reason here is a
-                # vendor-specific disagreement about the parameter
-                # combination (e.g. only certain aes_key_bits / kdf
-                # combos accepted). CKR_FUNCTION_NOT_SUPPORTED and
-                # CKR_KEY_FUNCTION_NOT_PERMITTED would mean the module
-                # advertised the mechanism but doesn't actually
-                # implement it / accept CKA_WRAP=True on EC pub keys —
-                # that IS the advertise-but-don't-implement bug class
-                # this test should surface, not skip.
-                if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
-                    pytest.skip(f"Module rejected ECDH-AES-KW params: {exc}")
-                    return
-                raise
-
-            assert len(wrapped) > 16, "ECDH-AES-KW output unexpectedly short"
-
-            mech2 = mech_ecdh_aes_kw(
-                CKM_ECDH_AES_KEY_WRAP,
-                aes_key_bits=256,
-                kdf=CKD_SHA256_KDF,
+            wrapped = _wrap_ecdh_aes_kw_or_xfail(
+                rs,
+                recipient_public=pub,
+                target=target,
+                case=case,
             )
+
+            assert len(wrapped) > 16, f"CKM_{case.short_name} output unexpectedly short"
+
             try:
                 unwrapped = unwrap_key_for_mechanism_roundtrip(
                     rs,
                     p11_config,
                     unwrapping_key=priv,
                     wrapped_key=wrapped,
-                    mechanism=CKM_ECDH_AES_KEY_WRAP,
+                    mechanism=case.mechanism,
                     attrs={
                         CKA_CLASS: CKO_SECRET_KEY,
                         CKA_KEY_TYPE: CKK_AES,
                         CKA_EXTRACTABLE: True,
                         CKA_SENSITIVE: False,
                     },
-                    mech_param=mech2,
-                    purpose="ECDH-AES-KW unwrap roundtrip",
+                    mech_param=_ecdh_aes_kw_mech(case),
+                    purpose=f"CKM_{case.short_name} unwrap roundtrip",
                 )
             except AssertionError as exc:
-                _xfail_if_wrap_runtime_reject(exc, "ECDH-AES-KW unwrap (roundtrip) not operational")
+                _xfail_if_wrap_runtime_reject(
+                    exc, f"CKM_{case.short_name} unwrap (roundtrip) not operational"
+                )
             # Round-trip succeeded — verify it recovered the original key.
             unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE]).get(CKA_VALUE)
             destroy_quietly(rs.raw, rs.sh, unwrapped)
             assert unwrapped_value == original, (
-                "ECDH-AES-KW roundtrip recovered a different key than was wrapped"
+                f"CKM_{case.short_name} roundtrip recovered a different key than was wrapped"
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, target)
 
-    def test_ecdh_aes_kw_bit_flip_integrity(self, p11_raw_session: Any, p11_config: Any) -> None:
-        """Bit-flip integrity check for CKM_ECDH_AES_KEY_WRAP.
+    @pytest.mark.parametrize(
+        "case",
+        _ECDH_AES_KW_CASES,
+        ids=[c.short_name for c in _ECDH_AES_KW_CASES],
+    )
+    def test_ecdh_aes_kw_bit_flip_integrity(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        case: _EcdhAesKwCase,
+    ) -> None:
+        """Bit-flip integrity check for the ECDH-AES-KW family.
 
         Wrap a target key, flip a byte in the AES-KW ciphertext region of
         the hybrid blob, attempt unwrap. The AES-KW RFC 3394 magic-field
@@ -875,29 +965,11 @@ class TestEcdhAesKeyWrap:
         path (e.g. an unwrap-template quirk) doesn't silently hide the
         integrity coverage from pytest output.
         """
-        from pkcs11_check.raw.ec import encode_named_curve_parameters
-        from pkcs11_check.raw.pack import mech_ecdh_aes_kw
-        from pkcs11_check.raw.recipes import wrap_key
-        from pkcs11_check.raw.types_std import (
-            CKA_DERIVE,
-            CKA_KEY_TYPE,
-            CKD_SHA256_KDF,
-            CKK_AES,
-            CKM_ECDH_AES_KEY_WRAP,
-            CKO_SECRET_KEY,
-        )
-
         rs = p11_raw_session
-        if not rs.has_mechanism("ECDH_AES_KEY_WRAP"):
-            pytest.skip("CKM_ECDH_AES_KEY_WRAP not supported")
+        if not rs.has_mechanism(case.short_name):
+            pytest.skip(f"CKM_{case.short_name} not supported")
 
-        curve_oid = encode_named_curve_parameters("secp256r1")
-        pub, priv = gen_ec_keypair_or_xfail(
-            rs,
-            curve_oid,
-            public_attrs={CKA_DERIVE: True, CKA_WRAP: True},
-            private_attrs={CKA_DERIVE: True, CKA_UNWRAP: True},
-        )
+        pub, priv = _ecdh_aes_kw_recipient_keypair(rs, case)
 
         target = gen_aes_key(
             rs.raw,
@@ -907,25 +979,12 @@ class TestEcdhAesKeyWrap:
         )
         try:
             original = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
-            mech = mech_ecdh_aes_kw(
-                CKM_ECDH_AES_KEY_WRAP,
-                aes_key_bits=256,
-                kdf=CKD_SHA256_KDF,
+            wrapped = _wrap_ecdh_aes_kw_or_xfail(
+                rs,
+                recipient_public=pub,
+                target=target,
+                case=case,
             )
-            try:
-                wrapped = wrap_key(
-                    rs.raw,
-                    rs.sh,
-                    pub,
-                    target,
-                    CKM_ECDH_AES_KEY_WRAP,
-                    mech_param=mech,
-                )
-            except AssertionError as exc:
-                if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
-                    pytest.skip(f"Module rejected ECDH-AES-KW params: {exc}")
-                    return
-                raise
 
             unwrap_attrs = {
                 CKA_CLASS: CKO_SECRET_KEY,
@@ -936,24 +995,21 @@ class TestEcdhAesKeyWrap:
 
             # Valid leg (D4/D5): unwrap the UN-tampered blob (negotiating the
             # accepted template) and recover the original key.
-            mech_good = mech_ecdh_aes_kw(
-                CKM_ECDH_AES_KEY_WRAP,
-                aes_key_bits=256,
-                kdf=CKD_SHA256_KDF,
-            )
             try:
                 good = unwrap_key_for_mechanism_roundtrip(
                     rs,
                     p11_config,
                     unwrapping_key=priv,
                     wrapped_key=wrapped,
-                    mechanism=CKM_ECDH_AES_KEY_WRAP,
+                    mechanism=case.mechanism,
                     attrs=unwrap_attrs,
-                    mech_param=mech_good,
-                    purpose="ECDH-AES-KW unwrap (valid leg)",
+                    mech_param=_ecdh_aes_kw_mech(case),
+                    purpose=f"CKM_{case.short_name} unwrap (valid leg)",
                 )
             except AssertionError as exc:
-                _xfail_if_wrap_runtime_reject(exc, "ECDH-AES-KW unwrap (valid leg) not operational")
+                _xfail_if_wrap_runtime_reject(
+                    exc, f"CKM_{case.short_name} unwrap (valid leg) not operational"
+                )
             good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
             destroy_quietly(rs.raw, rs.sh, good)
             valid_accepted = good_value is not None and good_value == original
@@ -961,11 +1017,6 @@ class TestEcdhAesKeyWrap:
             # Invalid leg (D3): flip a byte in the AES-KW ciphertext region.
             tampered = bytearray(wrapped)
             tampered[-2] ^= 0xFF
-            mech_t = mech_ecdh_aes_kw(
-                CKM_ECDH_AES_KEY_WRAP,
-                aes_key_bits=256,
-                kdf=CKD_SHA256_KDF,
-            )
             invalid_outcome: Any
             try:
                 h = unwrap_key_for_mechanism_roundtrip(
@@ -973,10 +1024,10 @@ class TestEcdhAesKeyWrap:
                     p11_config,
                     unwrapping_key=priv,
                     wrapped_key=bytes(tampered),
-                    mechanism=CKM_ECDH_AES_KEY_WRAP,
+                    mechanism=case.mechanism,
                     attrs=unwrap_attrs,
-                    mech_param=mech_t,
-                    purpose="ECDH-AES-KW unwrap of bit-flipped ciphertext",
+                    mech_param=_ecdh_aes_kw_mech(case),
+                    purpose=f"CKM_{case.short_name} unwrap of bit-flipped ciphertext",
                 )
                 invalid_outcome = h
                 destroy_quietly(rs.raw, rs.sh, h)
@@ -985,7 +1036,7 @@ class TestEcdhAesKeyWrap:
             classify_discrimination(
                 valid_accepted=valid_accepted,
                 invalid_outcome=invalid_outcome,
-                label="ECDH-AES-KW unwrap of bit-flipped ciphertext (RFC 3394 ICV)",
+                label=f"CKM_{case.short_name} unwrap of bit-flipped ciphertext (RFC 3394 ICV)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
