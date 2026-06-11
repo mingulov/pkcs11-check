@@ -37,6 +37,13 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKR_ATTRIBUTE_VALUE_INVALID, CKR_TEMPLATE_INCONSISTENT
 from pkcs11_check.testcases import conftest as tc
 
+# Pre-import at collection time so _ALL_HKDF_VECTORS / _CHACHA_VECTORS are
+# cached under a clean environment.  This mirrors the chacha-guards pattern
+# (tests/test_wycheproof_chacha_guards.py:16) and makes the tests robust
+# against any future ordering-induced WYCHEPROOF_DIR pollution.
+from pkcs11_check.testcases.wycheproof import test_wycheproof_chacha as _chacha_mod  # noqa: F401
+from pkcs11_check.testcases.wycheproof import test_wycheproof_hkdf as _hkdf_mod  # noqa: F401
+
 _ATTR_INVALID = CkrAssertionError(
     "Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID", int(CKR_ATTRIBUTE_VALUE_INVALID)
 )

@@ -19,11 +19,16 @@ from pkcs11_check.cli.fetch_cmd import (
 
 class TestResolveDataDir:
     def test_env_var_overrides(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        monkeypatch.setenv("PKCS11_CHECK_DATA_DIR", str(tmp_path / "custom"))
-        # Force re-import to pick up the env var
-        importlib.reload(data_mod)
+        # Use monkeypatch.context() so the env var is *already restored* before
+        # the finally-reload runs.  The old pattern (setenv outside + finally
+        # reload) left the bogus var visible during the restoring reload, which
+        # permanently poisoned WYCHEPROOF_DIR for the rest of the process and
+        # silently skipped the A18 HKDF meta-tests (finding-hiding bug).
         try:
-            assert data_mod.resolve_data_dir() == tmp_path / "custom"
+            with monkeypatch.context() as m:
+                m.setenv("PKCS11_CHECK_DATA_DIR", str(tmp_path / "custom"))
+                importlib.reload(data_mod)
+                assert data_mod.resolve_data_dir() == tmp_path / "custom"
         finally:
             importlib.reload(data_mod)
 
