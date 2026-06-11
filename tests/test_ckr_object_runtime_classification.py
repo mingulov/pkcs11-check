@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 from _pytest.outcomes import Failed, XFailed
 
+from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_SENSITIVE,
@@ -38,7 +39,7 @@ def _assert_real_fail(excinfo: pytest.ExceptionInfo[Failed]) -> None:
 
 
 def _run_sensitive(monkeypatch: pytest.MonkeyPatch, *, claimed: bool, readable: bool) -> None:
-    monkeypatch.setattr(test_ckr_object, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ckr_object, "destroy_quietly", lambda *_a, **_k: None)
 
     def _read(_raw: object, _sh: object, _h: object, attrs: list[int]) -> dict:
@@ -73,7 +74,7 @@ def test_sensitive_protected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _run_destroyed_handle(monkeypatch: pytest.MonkeyPatch, *, getattr_rv: int) -> None:
-    monkeypatch.setattr(test_ckr_object, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
     raw = SimpleNamespace(
         C_DestroyObject=lambda *_a, **_k: int(CKR_OK),
         C_GetAttributeValue=lambda *_a, **_k: int(getattr_rv),
@@ -110,7 +111,7 @@ def test_destroyed_handle_other_reject_xfails(monkeypatch: pytest.MonkeyPatch) -
 
 
 def _run_copy_destroyed(monkeypatch: pytest.MonkeyPatch, *, destroy_rv: int, copy_rv: int) -> None:
-    monkeypatch.setattr(test_ckr_object, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ckr_object, "destroy_quietly", lambda *_a, **_k: None)
 
     def _copy(_sh: object, _src: object, _ptr: object, _cnt: object, out_ref: object) -> int:
@@ -146,7 +147,7 @@ def test_copy_destroyed_destroy_declined_xfails(monkeypatch: pytest.MonkeyPatch)
 
 
 def _run_double_destroy(monkeypatch: pytest.MonkeyPatch, *, first_rv: int, survives: bool) -> None:
-    monkeypatch.setattr(test_ckr_object, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ckr_object, "destroy_quietly", lambda *_a, **_k: None)
     monkeypatch.setattr(
         test_ckr_object,

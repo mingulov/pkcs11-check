@@ -31,9 +31,6 @@ from pkcs11_check.raw.recipes import (
     find_objects,
     read_attributes,
 )
-from pkcs11_check.raw.recipes import (
-    gen_aes_key as _raw_gen_aes_key,
-)
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
@@ -47,35 +44,11 @@ from pkcs11_check.raw.types_std import (
     CKO_DATA,
 )
 from pkcs11_check.testcases.conftest import (
-    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    gen_aes_key_or_xfail,
     skip_if_token_write_protected,
-    xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.security
-
-
-def gen_aes_key(
-    raw: Any,
-    sh: int,
-    bits: int = 256,
-    attrs: Any | None = None,
-) -> int:
-    """Generate a concurrent-session setup AES key.
-
-    tpm2-pkcs11 advertises CKM_AES_KEY_GEN but C_GenerateKey is not
-    operational; route the advertised-but-not-operational reject to xfail
-    (provider-general — a module whose keygen works is unaffected).
-    """
-    try:
-        return _raw_gen_aes_key(raw, sh, bits, attrs=attrs)
-    except AssertionError as exc:
-        xfail_if_known_ckr(
-            exc,
-            AES_KEYGEN_RUNTIME_REJECT_RVS,
-            "AES_KEY_GEN advertised but concurrent-session setup key generation is not operational",
-        )
-        raise
 
 
 def _unique_label(prefix: str = "conc") -> bytes:
@@ -101,9 +74,8 @@ class TestConcurrentSessions:
         skip_if_token_write_protected(rs.raw, rs.slot_id)
         label = _unique_label("vis")
 
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_TOKEN: True, CKA_LABEL: label},
         )
@@ -130,9 +102,8 @@ class TestConcurrentSessions:
         skip_if_token_write_protected(rs.raw, rs.slot_id)
         label = _unique_label("destr")
 
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_TOKEN: True, CKA_LABEL: label},
         )
@@ -170,9 +141,8 @@ class TestConcurrentSessions:
         label = _unique_label("use")
         plaintext = b"concurrent-test!" * 2  # 32 bytes
 
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={
                 CKA_TOKEN: True,
@@ -214,9 +184,8 @@ class TestConcurrentObjectCreation:
         for i in range(20):
             label = _unique_label(f"rapid-{i}")
             labels.append(label)
-            key = gen_aes_key(
-                rs.raw,
-                rs.sh,
+            key = gen_aes_key_or_xfail(
+                rs,
                 128,
                 attrs={CKA_TOKEN: True, CKA_LABEL: label},
             )
@@ -240,20 +209,19 @@ class TestConcurrentObjectCreation:
         label_a = _unique_label("sA")
         label_b = _unique_label("sB")
 
-        key_a = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key_a = gen_aes_key_or_xfail(
+            rs,
             128,
             attrs={CKA_TOKEN: True, CKA_LABEL: label_a},
         )
 
         sh2 = _open_second_session(rs)
         try:
-            key_b = gen_aes_key(
-                rs.raw,
-                sh2,
+            key_b = gen_aes_key_or_xfail(
+                rs,
                 128,
                 attrs={CKA_TOKEN: True, CKA_LABEL: label_b},
+                sh=sh2,
             )
 
             # Both should be visible in both sessions

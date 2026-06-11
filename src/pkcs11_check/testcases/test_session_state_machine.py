@@ -34,9 +34,6 @@ from pkcs11_check.raw.recipes import (
     generate_random,
     get_session_info,
 )
-from pkcs11_check.raw.recipes import (
-    gen_aes_key as _raw_gen_aes_key,
-)
 from pkcs11_check.raw.rv import ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
     CK_UTF8CHAR,
@@ -71,9 +68,9 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     classify_negative_rv,
+    gen_aes_key_or_xfail,
     get_pin_bytes,
     is_known_error,
-    require_operational_aes_keygen,
     xfail_if_known_ckr,
 )
 
@@ -103,28 +100,6 @@ def raw_open_session(raw: Any, slot_id: int, flags: int) -> int:
                 f"{ckr_name(int(CKR_SESSION_COUNT))}"
             )
         raise
-
-
-def _gen_state_aes_key(
-    rs: Any,
-    sh: int,
-    bits: int = 128,
-    *,
-    attrs: dict[Any, Any] | None = None,
-) -> int:
-    """Generate a setup AES key for session-state tests."""
-    if not rs.has_mechanism("AES_KEY_GEN"):
-        pytest.skip("AES_KEY_GEN not supported by module")
-    require_operational_aes_keygen(rs)
-    try:
-        return _raw_gen_aes_key(rs.raw, sh, bits, attrs=attrs)
-    except AssertionError as exc:
-        xfail_if_known_ckr(
-            exc,
-            AES_KEYGEN_RUNTIME_REJECT_RVS,
-            "AES_KEY_GEN advertised but session-state setup key generation is not operational",
-        )
-    raise
 
 
 def _create_state_data_object(rs: Any, sh: int, attrs: dict[Any, Any]) -> int:
@@ -203,11 +178,10 @@ class TestLoginStateTransitions:
         try:
             _login_user_raw(rs.raw, test_sh, pin_bytes)
             # Generate a private-key object to confirm access
-            key_h = _gen_state_aes_key(
+            key_h = gen_aes_key_or_xfail(
                 rs,
-                test_sh,
-                128,
                 attrs={CKA_TOKEN: False, CKA_PRIVATE: True},
+                sh=test_sh,
             )
             assert key_h != 0
             destroy_quietly(rs.raw, test_sh, key_h)
@@ -228,15 +202,14 @@ class TestLoginStateTransitions:
 
             # Create a private token object while logged in
             label = "state-machine-logout-test"
-            key_h = _gen_state_aes_key(
+            key_h = gen_aes_key_or_xfail(
                 rs,
-                test_sh,
-                128,
                 attrs={
                     CKA_TOKEN: True,
                     CKA_PRIVATE: True,
                     CKA_LABEL: label,
                 },
+                sh=test_sh,
             )
             assert key_h != 0
 
@@ -282,11 +255,10 @@ class TestLoginStateTransitions:
             _login_user_raw(rs.raw, test_sh, pin_bytes)
 
             # Verify we are logged in by creating a private object
-            key_h = _gen_state_aes_key(
+            key_h = gen_aes_key_or_xfail(
                 rs,
-                test_sh,
-                128,
                 attrs={CKA_TOKEN: False, CKA_PRIVATE: True},
+                sh=test_sh,
             )
             assert key_h != 0
             destroy_quietly(rs.raw, test_sh, key_h)
@@ -478,15 +450,14 @@ class TestConcurrentSessionLogin:
 
             # Create a private session object in s1
             label = "shared-login-test"
-            key_h = _gen_state_aes_key(
+            key_h = gen_aes_key_or_xfail(
                 rs,
-                s1,
-                128,
                 attrs={
                     CKA_TOKEN: False,
                     CKA_PRIVATE: True,
                     CKA_LABEL: label,
                 },
+                sh=s1,
             )
 
             # Open second session - should inherit login state
@@ -516,15 +487,14 @@ class TestConcurrentSessionLogin:
 
             # Create private token object
             label = "logout-shared-test"
-            _gen_state_aes_key(
+            gen_aes_key_or_xfail(
                 rs,
-                s1,
-                128,
                 attrs={
                     CKA_TOKEN: True,
                     CKA_PRIVATE: True,
                     CKA_LABEL: label,
                 },
+                sh=s1,
             )
 
             # Logout via s1
@@ -628,15 +598,14 @@ class TestLogoutEffects:
         try:
             _login_user_raw(rs.raw, test_sh, pin_bytes)
             label = "priv-logout-session"
-            _gen_state_aes_key(
+            gen_aes_key_or_xfail(
                 rs,
-                test_sh,
-                128,
                 attrs={
                     CKA_TOKEN: False,
                     CKA_PRIVATE: True,
                     CKA_LABEL: label,
                 },
+                sh=test_sh,
             )
             # Confirm visible while logged in
             tmpl = template_from_dict({CKA_LABEL: label})
@@ -770,11 +739,10 @@ class TestSessionCloseEffects:
         try:
             _login_user_raw(rs.raw, s1, pin_bytes)
             label = "close-destroys-test"
-            _gen_state_aes_key(
+            gen_aes_key_or_xfail(
                 rs,
-                s1,
-                128,
                 attrs={CKA_TOKEN: False, CKA_LABEL: label},
+                sh=s1,
             )
             close_session_quietly(rs.raw, s1)
 
@@ -805,11 +773,10 @@ class TestSessionCloseEffects:
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             _login_user_raw(rs.raw, s1, pin_bytes)
-            key_h = _gen_state_aes_key(
+            key_h = gen_aes_key_or_xfail(
                 rs,
-                s1,
-                128,
                 attrs={CKA_TOKEN: True, CKA_LABEL: label},
+                sh=s1,
             )
             assert key_h != 0
         finally:
@@ -909,7 +876,7 @@ class TestROvsRWSessionState:
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             _login_user_raw(rs.raw, test_sh, pin_bytes)
-            key_h = _gen_state_aes_key(rs, test_sh, 128)
+            key_h = gen_aes_key_or_xfail(rs, sh=test_sh)
             assert key_h != 0
             destroy_quietly(rs.raw, test_sh, key_h)
         finally:
@@ -1044,11 +1011,10 @@ class TestSessionContextManager:
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             _login_user_raw(rs.raw, test_sh, pin_bytes)
-            key_h = _gen_state_aes_key(
+            key_h = gen_aes_key_or_xfail(
                 rs,
-                test_sh,
-                128,
                 attrs={CKA_TOKEN: False, CKA_PRIVATE: True},
+                sh=test_sh,
             )
             assert key_h != 0
             destroy_quietly(rs.raw, test_sh, key_h)
@@ -1077,11 +1043,10 @@ class TestLoginTypeSpecificity:
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             _login_user_raw(rs.raw, test_sh, pin_bytes)
-            key_h = _gen_state_aes_key(
+            key_h = gen_aes_key_or_xfail(
                 rs,
-                test_sh,
-                128,
                 attrs={CKA_TOKEN: False, CKA_PRIVATE: True},
+                sh=test_sh,
             )
             assert key_h != 0
             destroy_quietly(rs.raw, test_sh, key_h)

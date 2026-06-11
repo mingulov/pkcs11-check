@@ -15,9 +15,6 @@ import pytest
 
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
-from pkcs11_check.raw.recipes import (
-    gen_aes_key as _raw_gen_aes_key,
-)
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
@@ -38,36 +35,12 @@ from pkcs11_check.raw.types_std import (
     CKU_USER,
 )
 from pkcs11_check.testcases.conftest import (
-    AES_KEYGEN_RUNTIME_REJECT_RVS,
     classify_negative_rv,
     classify_policy_enforcement,
-    xfail_if_known_ckr,
+    gen_aes_key_or_xfail,
 )
 
 pytestmark = pytest.mark.security
-
-
-def gen_aes_key(
-    raw: Any,
-    sh: int,
-    bits: int = 256,
-    attrs: Any | None = None,
-) -> int:
-    """Generate a ckr-code setup AES key, routing advertised-but-not-operational
-    AES_KEY_GEN rejects to xfail (provider-general).
-
-    tpm2-pkcs11 advertises CKM_AES_KEY_GEN but C_GenerateKey is not operational;
-    a module whose keygen works is unaffected.
-    """
-    try:
-        return _raw_gen_aes_key(raw, sh, bits, attrs=attrs)
-    except AssertionError as exc:
-        xfail_if_known_ckr(
-            exc,
-            AES_KEYGEN_RUNTIME_REJECT_RVS,
-            "AES_KEY_GEN advertised but ckr-code setup key generation is not operational",
-        )
-        raise
 
 
 class TestCKRPinErrors:
@@ -98,7 +71,7 @@ class TestCKRMechanismErrors:
     def test_ckr_mechanism_invalid(self, p11_raw_session: Any) -> None:
         """Using a non-existent mechanism triggers CKR_MECHANISM_INVALID."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             # Use SHA256 (digest mech) for encrypt - should fail
             mech = mech_simple(CKM_SHA256)
@@ -114,7 +87,7 @@ class TestCKRDataErrors:
     def test_ckr_data_len_range_ecb(self, p11_raw_session: Any) -> None:
         """Non-block-aligned data in AES-ECB triggers CKR_DATA_LEN_RANGE."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
@@ -139,7 +112,7 @@ class TestCKRAttributeErrors:
         CKR_ATTRIBUTE_SENSITIVE.
         """
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SENSITIVE: True})
+        key = gen_aes_key_or_xfail(rs, 256, attrs={CKA_SENSITIVE: True})
         try:
             # Type-B claim/effect-check: claimed = the key reports
             # CKA_SENSITIVE=True back; violated = the protected CKA_VALUE is
@@ -160,7 +133,7 @@ class TestCKRAttributeErrors:
     def test_ckr_attribute_type_invalid(self, p11_raw_session: Any) -> None:
         """Reading a nonsense attribute ID triggers CKR_ATTRIBUTE_TYPE_INVALID or similar."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             tmpl = (CK_ATTRIBUTE * 1)()
             tmpl[0].type = 0xFFFFFFFF
@@ -205,7 +178,7 @@ class TestCKRObjectErrors:
     ) -> None:
         """Using a destroyed object's handle -> CKR_OBJECT_HANDLE_INVALID."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         rs.raw.C_DestroyObject(rs.sh, key)
         # Negative op on a destroyed handle. Issue C_GetAttributeValue *directly*
         # (not via read_attributes, which would re-raise the correct

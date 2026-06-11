@@ -18,6 +18,7 @@ from types import SimpleNamespace
 import pytest
 from _pytest.outcomes import Failed, XFailed
 
+from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.types_std import (
     CKA_SENSITIVE,
     CKA_VALUE,
@@ -37,7 +38,7 @@ def _real_fail(ei: pytest.ExceptionInfo[Failed]) -> None:
 
 
 def _run_sensitive(monkeypatch: pytest.MonkeyPatch, *, claimed: bool, readable: bool) -> None:
-    monkeypatch.setattr(test_ckr_codes, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ckr_codes, "destroy_quietly", lambda *_a, **_k: None)
 
     def _read(_raw: object, _sh: object, _h: object, attrs: list[int]) -> dict:
@@ -72,7 +73,7 @@ def test_sensitive_protected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _run_uad(monkeypatch: pytest.MonkeyPatch, *, getattr_rv: int) -> None:
-    monkeypatch.setattr(test_ckr_codes, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
     raw = SimpleNamespace(
         C_DestroyObject=lambda *_a, **_k: int(CKR_OK),
         C_GetAttributeValue=lambda *_a, **_k: int(getattr_rv),

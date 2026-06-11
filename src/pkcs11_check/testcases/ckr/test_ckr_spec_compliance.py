@@ -31,9 +31,6 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
     sign_single,
 )
-from pkcs11_check.raw.recipes import (
-    gen_aes_key as _raw_gen_aes_key,
-)
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
@@ -59,37 +56,12 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
 )
 from pkcs11_check.testcases.conftest import (
-    AES_KEYGEN_RUNTIME_REJECT_RVS,
     classify_negative_rv,
     classify_policy_enforcement,
-    xfail_if_known_ckr,
+    gen_aes_key_or_xfail,
 )
 
 pytestmark = pytest.mark.access
-
-
-def gen_aes_key(
-    raw: Any,
-    sh: int,
-    bits: int = 256,
-    attrs: Any | None = None,
-) -> int:
-    """Generate a spec-compliance setup AES key, routing
-    advertised-but-not-operational AES_KEY_GEN rejects to xfail
-    (provider-general).
-
-    tpm2-pkcs11 advertises CKM_AES_KEY_GEN but C_GenerateKey is not operational;
-    a module whose keygen works is unaffected.
-    """
-    try:
-        return _raw_gen_aes_key(raw, sh, bits, attrs=attrs)
-    except AssertionError as exc:
-        xfail_if_known_ckr(
-            exc,
-            AES_KEYGEN_RUNTIME_REJECT_RVS,
-            "AES_KEY_GEN advertised but spec-compliance setup key generation is not operational",
-        )
-        raise
 
 
 def _check_ckr(operation: str, expected: int, actual: int) -> None:
@@ -166,7 +138,7 @@ class TestCKRMechanismCompliance:
     def test_sha256_as_encrypt_returns_mechanism_invalid(self, p11_raw_session: Any) -> None:
         """SHA-256 for encrypt -> CKR_MECHANISM_INVALID (spec)."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             mech = mech_simple(CKM_SHA256)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
@@ -179,7 +151,7 @@ class TestCKRMechanismCompliance:
     def test_non_aligned_ecb_returns_data_len_range(self, p11_raw_session: Any) -> None:
         """AES-ECB with 15 bytes -> CKR_DATA_LEN_RANGE (spec)."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
@@ -206,7 +178,7 @@ class TestCKRAttributeCompliance:
         key MUST return CKR_ATTRIBUTE_SENSITIVE.
         """
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SENSITIVE: True})
+        key = gen_aes_key_or_xfail(rs, 256, attrs={CKA_SENSITIVE: True})
         try:
             # Type-B claim/effect-check: claimed = the key reports
             # CKA_SENSITIVE=True back; violated = the protected CKA_VALUE is
@@ -231,7 +203,7 @@ class TestCKRObjectCompliance:
     def test_destroyed_handle_returns_object_handle_invalid(self, p11_raw_session: Any) -> None:
         """Using destroyed handle -> CKR_OBJECT_HANDLE_INVALID (spec)."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         rs.raw.C_DestroyObject(rs.sh, key)
         tmpl = (CK_ATTRIBUTE * 1)()
         tmpl[0].type = CKA_LABEL
@@ -295,7 +267,7 @@ class TestCKRMultipartCompliance:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CBC"):
             pytest.skip("AES_CBC not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             mech = mech_bytes(CKM_AES_CBC, b"\x00" * 16)
             data = b"\x42" * 64  # 4 blocks

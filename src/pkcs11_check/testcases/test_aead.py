@@ -19,9 +19,6 @@ from pkcs11_check.raw.recipes import (
     generate_random,
     import_secret_key,
 )
-from pkcs11_check.raw.recipes import (
-    gen_aes_key as _raw_gen_aes_key,
-)
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -30,36 +27,11 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_GCM,
 )
 from pkcs11_check.testcases.conftest import (
-    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    gen_aes_key_or_xfail,
     skip_if_mech_param_unsupported,
-    xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.crossverify
-
-
-def gen_aes_key(
-    raw: Any,
-    sh: int,
-    bits: int = 256,
-    attrs: Any | None = None,
-) -> int:
-    """Generate an AEAD-property setup AES key, routing
-    advertised-but-not-operational AES_KEY_GEN rejects to xfail
-    (provider-general).
-
-    tpm2-pkcs11 advertises CKM_AES_KEY_GEN but C_GenerateKey is not operational;
-    a module whose keygen works is unaffected.
-    """
-    try:
-        return _raw_gen_aes_key(raw, sh, bits, attrs=attrs)
-    except AssertionError as exc:
-        xfail_if_known_ckr(
-            exc,
-            AES_KEYGEN_RUNTIME_REJECT_RVS,
-            "AES_KEY_GEN advertised but AEAD-property setup key generation is not operational",
-        )
-        raise
 
 
 def _import_aes(rs: Any, key_bytes: bytes) -> int:
@@ -260,7 +232,7 @@ class TestAESGCMProperties:
     def test_gcm_different_nonces_different_ct(self, p11_raw_session: Any) -> None:
         """Same key+plaintext with different nonces must produce different ciphertext."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         plaintext = b"nonce uniqueness"
 
         nonce1 = generate_random(rs.raw, rs.sh, 12)
@@ -293,7 +265,7 @@ class TestAESGCMProperties:
     def test_gcm_roundtrip(self, p11_raw_session: Any) -> None:
         """GCM encrypt then decrypt must return original plaintext."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         nonce = generate_random(rs.raw, rs.sh, 12)
         plaintext = b"GCM roundtrip test data"
         aad = b"authenticated but not encrypted"

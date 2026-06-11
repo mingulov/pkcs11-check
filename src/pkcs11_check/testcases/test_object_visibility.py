@@ -23,9 +23,6 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
     set_attributes,
 )
-from pkcs11_check.raw.recipes import (
-    gen_aes_key as _raw_gen_aes_key,
-)
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
@@ -49,10 +46,9 @@ from pkcs11_check.raw.types_std import (
     CKU_USER,
 )
 from pkcs11_check.testcases.conftest import (
-    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    gen_aes_key_or_xfail,
     get_pin_bytes,
     is_known_error,
-    require_operational_aes_keygen,
     skip_if_token_write_protected,
     xfail_if_known_ckr,
 )
@@ -98,27 +94,6 @@ def _open_ro_session(raw: Any, slot_id: int) -> int:
     """Open a read-only session without login."""
     flags = CKF_SERIAL_SESSION
     return raw_open_session(raw, slot_id, flags)
-
-
-def _gen_visibility_aes_key(
-    rs: Any,
-    sh: int,
-    *,
-    attrs: dict[Any, Any] | None = None,
-) -> int:
-    """Generate an AES setup key for object-visibility tests."""
-    if not rs.has_mechanism("AES_KEY_GEN"):
-        pytest.skip("AES_KEY_GEN not supported by module")
-    require_operational_aes_keygen(rs)
-    try:
-        return _raw_gen_aes_key(rs.raw, sh, 128, attrs=attrs)
-    except AssertionError as exc:
-        xfail_if_known_ckr(
-            exc,
-            AES_KEYGEN_RUNTIME_REJECT_RVS,
-            "AES_KEY_GEN advertised but object-visibility setup key generation is not operational",
-        )
-    raise
 
 
 def _find_data_by_label(raw: Any, sh: int, label: str) -> list[int]:
@@ -180,7 +155,7 @@ class TestSessionObjectLifecycle:
         # Create session object in session 1, then close it
         sh1 = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
         try:
-            _gen_visibility_aes_key(rs, sh1, attrs={CKA_TOKEN: False, CKA_LABEL: label})
+            gen_aes_key_or_xfail(rs, attrs={CKA_TOKEN: False, CKA_LABEL: label}, sh=sh1)
         finally:
             close_session_quietly(rs.raw, sh1)
 
@@ -217,7 +192,7 @@ class TestSessionObjectLifecycle:
         """Session object is findable within the same session."""
         rs = p11_raw_session
         label = _ulabel("sess-alive")
-        key = _gen_visibility_aes_key(rs, rs.sh, attrs={CKA_TOKEN: False, CKA_LABEL: label})
+        key = gen_aes_key_or_xfail(rs, attrs={CKA_TOKEN: False, CKA_LABEL: label})
         try:
             found = _find_by_label(rs.raw, rs.sh, label)
             assert len(found) >= 1
@@ -240,7 +215,7 @@ class TestTokenObjectPersistence:
         # Session 1: create token object
         sh1 = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
         try:
-            _gen_visibility_aes_key(rs, sh1, attrs={CKA_TOKEN: True, CKA_LABEL: label})
+            gen_aes_key_or_xfail(rs, attrs={CKA_TOKEN: True, CKA_LABEL: label}, sh=sh1)
         finally:
             close_session_quietly(rs.raw, sh1)
 
@@ -774,15 +749,15 @@ class TestTokenObjectImmediateVisibility:
 
         sh_a = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
         try:
-            key = _gen_visibility_aes_key(
+            key = gen_aes_key_or_xfail(
                 rs,
-                sh_a,
                 attrs={
                     CKA_TOKEN: True,
                     CKA_LABEL: label,
                     CKA_ENCRYPT: True,
                     CKA_DECRYPT: True,
                 },
+                sh=sh_a,
             )
             try:
                 sh_b = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)

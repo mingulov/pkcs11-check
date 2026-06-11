@@ -27,9 +27,6 @@ from pkcs11_check.raw.recipes import (
     find_objects,
     read_attributes,
 )
-from pkcs11_check.raw.recipes import (
-    gen_aes_key as _raw_gen_aes_key,
-)
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
@@ -58,37 +55,13 @@ from pkcs11_check.testcases.ckr._malformed_attrs import (
     make_ulong_attr_with_length,
 )
 from pkcs11_check.testcases.conftest import (
-    AES_KEYGEN_RUNTIME_REJECT_RVS,
     classify_lifecycle_effect,
     classify_negative_rv,
     classify_policy_enforcement,
-    xfail_if_known_ckr,
+    gen_aes_key_or_xfail,
 )
 
 pytestmark = pytest.mark.access
-
-
-def gen_aes_key(
-    raw: Any,
-    sh: int,
-    bits: int = 256,
-    attrs: Any | None = None,
-) -> int:
-    """Generate a ckr-object setup AES key, routing advertised-but-not-operational
-    AES_KEY_GEN rejects to xfail (provider-general).
-
-    tpm2-pkcs11 advertises CKM_AES_KEY_GEN but C_GenerateKey is not operational;
-    a module whose keygen works is unaffected.
-    """
-    try:
-        return _raw_gen_aes_key(raw, sh, bits, attrs=attrs)
-    except AssertionError as exc:
-        xfail_if_known_ckr(
-            exc,
-            AES_KEYGEN_RUNTIME_REJECT_RVS,
-            "AES_KEY_GEN advertised but ckr-object setup key generation is not operational",
-        )
-        raise
 
 
 class TestCreateObjectErrors:
@@ -313,7 +286,7 @@ class TestGetAttributeErrors:
     def test_sensitive_value(self, p11_raw_session: Any) -> None:
         """Reading VALUE on SENSITIVE key -> CKR_ATTRIBUTE_SENSITIVE."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SENSITIVE: True})
+        key = gen_aes_key_or_xfail(rs, 256, attrs={CKA_SENSITIVE: True})
         try:
             # Type-B claim/effect-check: claimed = the key reports
             # CKA_SENSITIVE=True back; violated = the protected CKA_VALUE is
@@ -334,7 +307,7 @@ class TestGetAttributeErrors:
     def test_destroyed_handle(self, p11_raw_session: Any) -> None:
         """Using a destroyed object's handle -> CKR_OBJECT_HANDLE_INVALID."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 128)
+        key = gen_aes_key_or_xfail(rs, 128)
         rs.raw.C_DestroyObject(rs.sh, key)
         # Negative op on a destroyed handle. Issue C_GetAttributeValue *directly*
         # (not via read_attributes, which would re-raise the correct
@@ -401,7 +374,7 @@ class TestCopyObjectErrors:
     def test_copy_destroyed_handle(self, p11_raw_session: Any) -> None:
         """Copy destroyed object -> CKR_OBJECT_HANDLE_INVALID."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 128)
+        key = gen_aes_key_or_xfail(rs, 128)
         destroy_rv = rs.raw.C_DestroyObject(rs.sh, key)
         tmpl = template(attr_bytes(CKA_LABEL, b"ckr-copy-result"))
         new_handle = CK_OBJECT_HANDLE(0)
@@ -577,7 +550,7 @@ class TestDestroyObjectErrors:
         # afterwards (the destroy was claimed but did not take effect). The
         # second-destroy return code alone is not the effect.
         tag = b"ckr-double-destroy"
-        key = gen_aes_key(rs.raw, rs.sh, 128)
+        key = gen_aes_key_or_xfail(rs, 128)
         tag_tmpl = template(attr_bytes(CKA_LABEL, tag))
         rs.raw.C_SetAttributeValue(rs.sh, key, tag_tmpl.ptr, tag_tmpl.count)
         first_rv = rs.raw.C_DestroyObject(rs.sh, key)

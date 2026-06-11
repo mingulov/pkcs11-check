@@ -26,9 +26,6 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
-from pkcs11_check.raw.recipes import (
-    gen_aes_key as _raw_gen_aes_key,
-)
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
@@ -45,38 +42,13 @@ from pkcs11_check.raw.types_std import (
     CKU_USER,
 )
 from pkcs11_check.testcases.conftest import (
-    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    gen_aes_key_or_xfail,
     get_pin_bytes,
     is_known_error,
     skip_if_token_write_protected,
-    xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.access
-
-
-def gen_aes_key(
-    raw: Any,
-    sh: int,
-    bits: int = 256,
-    attrs: Any | None = None,
-) -> int:
-    """Generate an RO-session setup AES key, routing
-    advertised-but-not-operational AES_KEY_GEN rejects to xfail
-    (provider-general).
-
-    tpm2-pkcs11 advertises CKM_AES_KEY_GEN but C_GenerateKey is not operational;
-    a module whose keygen works is unaffected.
-    """
-    try:
-        return _raw_gen_aes_key(raw, sh, bits, attrs=attrs)
-    except AssertionError as exc:
-        xfail_if_known_ckr(
-            exc,
-            AES_KEYGEN_RUNTIME_REJECT_RVS,
-            "AES_KEY_GEN advertised but RO-session setup key generation is not operational",
-        )
-        raise
 
 
 def raw_open_session(raw: Any, slot_id: int, flags: int) -> int:
@@ -112,7 +84,7 @@ class TestROSessionOperations:
         """Finding objects works in R/O session."""
         rs = p11_raw_session
         # Create a key in R/W session first
-        key_h = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: "ro-find-test"})
+        key_h = gen_aes_key_or_xfail(rs, 128, attrs={CKA_LABEL: "ro-find-test"})
 
         try:
             ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
@@ -170,7 +142,7 @@ class TestSessionObjectLifecycle:
         if pin_bytes is not None:
             login_user(rs.raw, s1, CKU_USER, pin_bytes)
         label = "session-lifecycle-test"
-        gen_aes_key(rs.raw, s1, 128, attrs={CKA_LABEL: label})
+        gen_aes_key_or_xfail(rs, 128, attrs={CKA_LABEL: label}, sh=s1)
         # Verify it exists in this session
         tmpl = template_from_dict({CKA_LABEL: label})
         found = find_objects(rs.raw, s1, tmpl)
@@ -199,7 +171,7 @@ class TestSessionObjectLifecycle:
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
             login_user(rs.raw, s1, CKU_USER, pin_bytes)
-        gen_aes_key(rs.raw, s1, 128, attrs={CKA_LABEL: label, CKA_TOKEN: True})
+        gen_aes_key_or_xfail(rs, 128, attrs={CKA_LABEL: label, CKA_TOKEN: True}, sh=s1)
         close_session_quietly(rs.raw, s1)
 
         # Session 2: token object should still exist

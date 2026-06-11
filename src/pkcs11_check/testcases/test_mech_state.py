@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import byref
-from typing import Any
 
 import pytest
 
@@ -28,9 +27,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_secret_key,
     to_ubyte_buf,
-)
-from pkcs11_check.raw.recipes import (
-    gen_aes_key as _raw_gen_aes_key,
 )
 from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
@@ -59,36 +55,12 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
-    AES_KEYGEN_RUNTIME_REJECT_RVS,
     classify_negative_rv,
+    gen_aes_key_or_xfail,
     xfail_if_known_ckr,
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.state_machine]
-
-
-def gen_aes_key(
-    raw: Any,
-    sh: int,
-    bits: int = 256,
-    attrs: Any | None = None,
-) -> int:
-    """Generate a mechanism-state setup AES key, routing
-    advertised-but-not-operational AES_KEY_GEN rejects to xfail
-    (provider-general).
-
-    tpm2-pkcs11 advertises CKM_AES_KEY_GEN but C_GenerateKey is not operational;
-    a module whose keygen works is unaffected.
-    """
-    try:
-        return _raw_gen_aes_key(raw, sh, bits, attrs=attrs)
-    except AssertionError as exc:
-        xfail_if_known_ckr(
-            exc,
-            AES_KEYGEN_RUNTIME_REJECT_RVS,
-            "AES_KEY_GEN advertised but mechanism-state setup key generation is not operational",
-        )
-        raise
 
 
 # Single-session operation-state guards (op-without-init, double-init) are
@@ -169,7 +141,7 @@ class TestEncryptState:
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES keygen not supported")
 
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv1 = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
@@ -515,7 +487,7 @@ class TestMultiPartCrossSession:
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
 
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         sh_b = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
 
         try:
@@ -596,7 +568,7 @@ class TestZeroDataFinal:
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
 
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv1 = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
