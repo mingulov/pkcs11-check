@@ -738,53 +738,60 @@ def _classify_functions(
     return result
 
 
-def _ckr_coverage_summary() -> dict[str, int]:
+def _ckr_test_base_for_spec(attr_name: str) -> str:
+    return f"test_{attr_name.lower()}"
+
+
+def _ckr_file_has_executed_tests(counts: Mapping[str, int]) -> bool:
+    return any(
+        _count_value(counts.get(key)) > 0
+        for key in ("passed", "failed", "xfailed", "xpassed", "error", "crashed", "timeout")
+    )
+
+
+def _ckr_coverage_summary(
+    test_counts: Mapping[str, Mapping[str, int]] | None = None,
+) -> dict[str, int]:
     """Count CKR spec expectations and tested coverage."""
     try:
         from pkcs11_check.testcases.ckr import _ckr_spec
     except ImportError:
         return {"total_specs": 0, "tested": 0, "untestable": 0, "untested": 0}
 
-    # Collect all CKR spec dicts
     total = 0
-    spec_dicts: list[dict[str, Any]] = []
-    for attr_name in dir(_ckr_spec):
-        attr = getattr(_ckr_spec, attr_name)
-        if isinstance(attr, dict) and attr_name.startswith("CKR_"):
-            spec_dicts.append(attr)
-            total += len(attr)
-
-    # Check which have corresponding test files
-    ckr_test_dir = Path(__file__).parent / "testcases" / "ckr"
-    test_files = set()
-    if ckr_test_dir.is_dir():
-        for p in ckr_test_dir.iterdir():
-            if p.name.startswith("test_") and p.suffix == ".py":
-                test_files.add(p.stem)
-
-    # Count tested expectations: those whose spec dict name maps to a test file
     tested = 0
     untestable = 0
     for attr_name in dir(_ckr_spec):
         attr = getattr(_ckr_spec, attr_name)
-        if not isinstance(attr, dict) or not attr_name.startswith("CKR_"):
-            continue
-        # Check each expectation
-        for _key, expectation in attr.items():
-            untestable_flag = getattr(expectation, "untestable", False)
-            if untestable_flag:
-                untestable += 1
-            else:
-                tested += 1
+        if isinstance(attr, dict) and attr_name.startswith("CKR_"):
+            total += len(attr)
+            testable_entries = 0
+            for _key, expectation in attr.items():
+                if getattr(expectation, "untestable", False):
+                    untestable += 1
+                    continue
+                testable_entries += 1
+            if test_counts is None:
+                continue
+            file_counts = test_counts.get(_ckr_test_base_for_spec(attr_name))
+            if file_counts is not None and _ckr_file_has_executed_tests(file_counts):
+                tested += testable_entries
+    if test_counts is None:
+        for attr_name in dir(_ckr_spec):
+            attr = getattr(_ckr_spec, attr_name)
+            if not isinstance(attr, dict) or not attr_name.startswith("CKR_"):
+                continue
+            for _key, expectation in attr.items():
+                if not getattr(expectation, "untestable", False):
+                    tested += 1
+    else:
+        tested = min(tested, max(total - untestable, 0))
 
-    # All specs are either tested or untestable for the purpose of this count
-    # The "tested" count here means "has a spec entry" - actual test execution
-    # is tracked via test results
     return {
         "total_specs": total,
         "tested": tested,
         "untestable": untestable,
-        "untested": 0,
+        "untested": max(total - untestable - tested, 0),
     }
 
 
@@ -830,14 +837,15 @@ def generate_report(
     mechanisms = _collect_mechanisms(module, slot_index=slot_index)
 
     # Function coverage from test results
+    test_counts: dict[str, dict[str, int]] | None = None
     if test_results_path and test_results_path.exists():
+        test_counts = _parse_test_results(test_results_path)
         observed_function_counts = _load_observed_function_coverage(test_results_path)
         if observed_function_counts is not None:
             functions = _classify_functions_from_observed_coverage(
                 observed_function_counts,
             )
         else:
-            test_counts = _parse_test_results(test_results_path)
             functions = _classify_functions(test_counts)
     else:
         functions = {
@@ -857,7 +865,7 @@ def generate_report(
         }
 
     # CKR coverage
-    ckr_coverage = _ckr_coverage_summary()
+    ckr_coverage = _ckr_coverage_summary(test_counts)
 
     # Compliance notes
     compliance_notes = _compliance_notes_list()

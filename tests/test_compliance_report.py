@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pkcs11_check.compliance import ComplianceLevel, clear_notes, get_notes, note
 from pkcs11_check.compliance_report import (
+    _ckr_coverage_summary,
     _classify_functions,
     _classify_functions_from_observed_coverage,
     _load_observed_function_coverage,
@@ -259,6 +260,70 @@ def test_observed_coverage_can_come_from_sibling_report_jsonl_trace(tmp_path: Pa
     assert observed is not None
     assert observed["C_Encrypt"]["xfailed"] == 1
     assert observed["C_Encrypt"]["tests"] == 1
+
+
+def test_ckr_coverage_does_not_count_unrelated_results_as_tested() -> None:
+    summary = _ckr_coverage_summary(
+        {
+            "test_encrypt": {
+                "passed": 10,
+                "failed": 0,
+                "skipped": 0,
+                "xfailed": 0,
+                "xpassed": 0,
+                "error": 0,
+                "crashed": 0,
+                "timeout": 0,
+                "tests": 10,
+            }
+        }
+    )
+
+    assert summary["total_specs"] > 0
+    assert summary["tested"] == 0
+    assert summary["untested"] == summary["total_specs"] - summary["untestable"]
+
+
+def test_ckr_coverage_does_not_count_all_skipped_ckr_file_as_tested() -> None:
+    summary = _ckr_coverage_summary(
+        {
+            "test_ckr_encrypt": {
+                "passed": 0,
+                "failed": 0,
+                "skipped": 40,
+                "xfailed": 0,
+                "xpassed": 0,
+                "error": 0,
+                "crashed": 0,
+                "timeout": 0,
+                "tests": 40,
+            }
+        }
+    )
+
+    assert summary["tested"] == 0
+    assert summary["untested"] == summary["total_specs"] - summary["untestable"]
+
+
+def test_ckr_coverage_counts_executed_ckr_file_spec_group_only() -> None:
+    summary = _ckr_coverage_summary(
+        {
+            "test_ckr_encrypt": {
+                "passed": 1,
+                "failed": 0,
+                "skipped": 39,
+                "xfailed": 0,
+                "xpassed": 0,
+                "error": 0,
+                "crashed": 0,
+                "timeout": 0,
+                "tests": 40,
+            }
+        }
+    )
+
+    assert summary["tested"] == 40
+    assert summary["untested"] == summary["total_specs"] - summary["untestable"] - 40
 
 
 class TestComplianceNoteIsolation:
