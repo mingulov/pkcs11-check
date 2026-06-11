@@ -62,6 +62,12 @@ Acceptance checks:
 - No provider ever borrows another provider's durations.
 - Tests cover a missing-provider fallback and a malformed/empty results file.
 
+Status: fixed in the current branch. `docker/test_pool.py` now accepts
+`--duration-artifacts-dir`, resolves it relative to the project root when
+needed, and reads only `<root>/<provider>-pooled/results.json` for the same
+provider. Focused tests cover provider-local dry-run planning, missing-provider
+fallback, and empty/malformed history.
+
 ### 2. Verify static file-skip actually triggers in pooled runs
 
 The runner has static skip logic through `extract_required_mechanisms`, but
@@ -77,6 +83,13 @@ Next task:
 - Add a test that a missing required mechanism produces a file-skip record
   before pytest collection/execution of that file.
 
+Status: fixed in the current branch. High-count vector files now declare
+`REQUIRED_MECHANISMS`; isolated execution short-circuits files before pytest
+collection when required mechanisms are absent; `results.json`,
+`quality.json`, `report.jsonl`, and shard merge preserve `file_skip`
+accounting. Focused tests cover missing required mechanisms,
+any-missing-required-mechanism behavior, and merged accounting.
+
 ### 3. Guard subprocess-per-test expansion for crash-prone files
 
 `artifacts3` still has `wycheproof/test_wycheproof_hkdf.py` at about 5,403s on
@@ -90,6 +103,11 @@ Next task:
   expands to node-level units.
 - Bound file-level timeout damage when collection metadata is available.
 - Re-run at least wolfPKCS11 HKDF to prove the old 90-minute file unit is gone.
+
+Status: fixed in the current branch, except the provider-local wolfPKCS11
+remeasurement remains a fresh-run follow-up. Auto-isolation expands
+`subprocess_per_test` files to node-level units, resume rejects unexpanded
+subprocess-per-test state, and focused tests cover the guard.
 
 ### 4. Split or optimize bouncyhsm MCT long poles carefully
 
@@ -179,7 +197,10 @@ smoke behavior, or covered only by one narrow variation.
    coverage where the PKCS#11 mechanism shape is reliable. Remaining shallow
    areas are SKIPJACK, CDMF, CAST/CAST3 variants, BATON/JUNIPER, GOST28147,
    older PBE variants, CBC_PAD outputs, and RC2/RC5/CAST/IDEA MAC_GENERAL
-   parameter structures.
+   parameter structures. Continue this sweep, but gate each new legacy vector
+   on a reliable source and an unambiguous PKCS#11 parameter mapping; SKIPJACK
+   and KEA are lower confidence until a defensible vector/operation source is
+   identified.
 9. CMS and CT-KIP are shallow: current tests mostly check mechanism info or
    clean rejection rather than valid parameterized operations.
 10. Generic negative coverage is narrow relative to 467 registry mechanisms.
@@ -213,6 +234,11 @@ Next task:
 - Decide and test vendor-defined CKR handling explicitly, likely as a distinct
   vendor-defined xfail/note rather than the same bucket as official CKRs.
 
+Status: fixed in the current branch. The shared raw-RV helpers distinguish
+standard CKRs, undefined non-vendor values, and vendor-defined values.
+Undefined non-vendor values fail; vendor-defined values xfail with a distinct
+message. Focused tests cover both raw-rv and exception-shaped classifiers.
+
 ### 2. Compliance notes are process-local and may vanish from artifacts
 
 `compliance.note()` appends to a process-global list. The plugin clears notes
@@ -226,6 +252,12 @@ Next task:
 - Carry notes through `report.jsonl`, `results.json`, and pooled merge.
 - Add an end-to-end isolated-run test proving a note emitted in a testcase
   appears in final artifacts.
+
+Status: fixed in the current branch. The pytest plugin attaches serialized
+notes to call-phase report `user_properties` before teardown clears the
+process-local collector. The isolated runner promotes those notes into
+`results.json`; compliance report generation reloads notes from both
+`results.json` and `report.jsonl`; shard merge preserves them.
 
 ### 3. Compliance report coverage can overstate execution
 
@@ -241,6 +273,14 @@ Next task:
 - Add regression tests where skipped/crashed/xfail tests cannot produce a
   misleading full-coverage PASS.
 
+Status: fixed in the current branch. Compliance report outcome classification
+now carries xfail, xpass, error, crash, and timeout buckets with timeout/crash
+precedence over ordinary failures; observed `coverage.json` or sibling
+`report.jsonl` traces prevent filename heuristics from manufacturing function
+coverage; CKR coverage counts only executed CKR spec files, not unrelated or
+all-skipped files. Focused tests cover xfail, crash, timeout, observed
+coverage, and skipped-only CKR cases.
+
 ### 4. Mixed fail+crash units can be summarized as failed
 
 `_overall_unit_status()` currently gives `failed` precedence over `crashed`.
@@ -252,6 +292,11 @@ Next task:
 - Either give crash/timeout precedence, or add explicit `has_crash` and
   `has_timeout` fields.
 - Add a unit test for mixed failed plus crashed file results.
+
+Status: fixed in the current branch. `_overall_unit_status()` gives timeout
+and crash precedence over ordinary failure while preserving failed counts in the
+unit details. A regression test covers a file with one failed test and one
+crashed test: the unit status remains `crashed`, and both counters survive.
 
 ### 5. Mechanism coverage telemetry needs more states
 
@@ -272,11 +317,11 @@ Next task:
 The next implementation round should be harness-first, because it makes every
 later provider run more interpretable:
 
-1. Add provider-local `--duration-artifacts-dir` support to `docker/test_pool.py`.
-2. Add a subprocess-per-test expansion guard for crash-prone files.
-3. Repair/static-test file-skip accounting and high-count `REQUIRED_MECHANISMS`.
-4. Fix unknown CKR classification for undefined non-vendor values.
-5. Persist compliance notes through isolated artifacts.
+1. Expand mechanism coverage telemetry states.
+2. Continue targeted provider-speed work once artifact semantics can prove
+   coverage preservation.
+3. Continue legacy/deprecated mechanism coverage where reliable vectors and
+   PKCS#11 parameter mappings exist.
 
 After that, do the first coverage expansion round:
 
@@ -285,6 +330,11 @@ After that, do the first coverage expansion round:
 3. BLAKE2B keyed HMAC/HMAC_GENERAL and key-derive.
 4. RSA-AES and ECDH-AES wrap params.
 5. Registry-driven wrong-key/permission negatives.
+6. Legacy/deprecated mechanisms not yet covered by reliable KATs or semantic
+   probes: SKIPJACK only if a trustworthy vector source is found, KEA only with
+   defensible domain-parameter/derive semantics, plus CDMF, CAST/CAST3,
+   BATON/JUNIPER, GOST28147, old PBE variants, CBC_PAD outputs, and
+   RC2/RC5/CAST/IDEA MAC_GENERAL parameter structures.
 
 Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks
 should follow once the harness can reuse provider-local history and prove
