@@ -243,8 +243,13 @@ smoke behavior, or covered only by one narrow variation.
 2. Many derive mechanisms still lack runtime dispatch: Camellia/ARIA/SEED
    encrypt-data and any remaining protocol KDF variants not covered by
    dedicated files.
-3. DSA/DH/X9.42 domain parameter paths are mostly absent because key generation
-   skips `dsa` and `dh` styles that need external domain parameters.
+3. Dedicated DSA/DH/X9.42 domain-parameter coverage exists in
+   `test_dsa_complete.py`, `test_dh_key_agreement.py`, and `test_x942_dh.py`.
+   The generic registry-driven keygen path still skips `dsa` and `dh` recipe
+   styles because their parameter objects are mechanism-specific, but this is
+   not the same as missing product coverage. Remaining work is broader
+   exact-vector, negative, and provider-artifact evidence, plus any untested DSA
+   parameter-generation variants.
 4. Message API coverage is representative, not registry-driven. Scenario
    selection does not yet cover `CKF_MESSAGE_*` flags generically.
 5. Hybrid and AEAD wrap coverage has explicit holes: RSA-AES key wrap,
@@ -281,8 +286,9 @@ smoke behavior, or covered only by one narrow variation.
 
 ### Recommended coverage order
 
-1. DSA/DH domain parameter generation, then DSA sign/verify and DH/X9.42
-   derive tests using generated parameters.
+1. Expand DSA/DH/X9.42 coverage beyond the existing dedicated generated-parameter
+   tests: exact-vector checks where practical, richer negative cases, and DSA
+   parameter-generation variants not covered by `test_dsa_complete.py`.
 2. Protocol KDF expansion beyond the already-covered priority set
    (`CKM_SP800_108_COUNTER_KDF`, `CKM_TLS12_KDF`, and `CKM_PKCS5_PBKD2`):
    add exact external vectors and tamper/negative checks for SSL3, WTLS, IKE,
@@ -420,7 +426,8 @@ later provider run more interpretable:
 
 After that, do the first coverage expansion round:
 
-1. DSA/DH parameter generation and DH/X9.42 derive.
+1. DSA/DH/X9.42 exact-vector, negative, and parameter-variant expansion beyond
+   the existing dedicated generated-parameter coverage.
 2. Protocol KDF exact-vector expansion beyond already-covered SP800-108
    counter KDF, TLS 1.2 KDF, and PBKDF2.
 3. BLAKE2B keyed negative/parameter edge cases.

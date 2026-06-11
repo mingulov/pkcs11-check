@@ -59,3 +59,21 @@ def test_coverage_plan_does_not_count_ecmqv_as_kea_coverage() -> None:
 
     assert "ECMQV / KEA" not in plan
     assert "KEA remains source-first" in plan
+
+
+def test_gap_analysis_marks_dsa_dh_domain_parameter_coverage_as_dedicated() -> None:
+    """DSA, DH, and X9.42 have dedicated domain-parameter/product tests."""
+    dsa = _read("src/pkcs11_check/testcases/test_dsa_complete.py")
+    dh = _read("src/pkcs11_check/testcases/test_dh_key_agreement.py")
+    x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "CKM_DSA_PARAMETER_GEN" in dsa
+    assert "test_parameter_gen_sign_verify" in dsa
+    assert "CKM_DH_PKCS_PARAMETER_GEN" in dh
+    assert "test_generated_params_produce_valid_keypair" in dh
+    assert "CKM_X9_42_DH_PARAMETER_GEN" in x942
+    assert "test_generated_params_produce_valid_derive" in x942
+
+    assert "DSA/DH/X9.42 domain parameter paths are mostly absent" not in doc
+    assert "Dedicated DSA/DH/X9.42 domain-parameter coverage exists" in doc
