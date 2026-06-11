@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 
 from pkcs11_check.raw.types_std import (
+    CKM_BLOWFISH_CBC,
     CKM_CAST128_CBC,
     CKM_CAST128_ECB,
     CKM_RC2_CBC,
@@ -115,3 +116,20 @@ def test_rc4_encrypt_mechanism_has_rfc6229_kat_vectors() -> None:
         assert vec["ciphertext_hex"]
         assert vec["params"]["source"] == "RFC 6229 section 2"
         assert vec["params"]["offset"] == 0
+
+
+def test_blowfish_cbc_encrypt_mechanism_has_schneier_kat_vector() -> None:
+    config = MECHANISM_REGISTRY[int(CKM_BLOWFISH_CBC)]
+    assert config.vector_file == "blowfish_cbc.json"
+
+    vectors = load_positive_vectors("blowfish_cbc.json")
+    assert vectors, "blowfish_cbc.json must contain positive vectors"
+    for vec in vectors:
+        assert vec["type"] == "positive"
+        assert vec["key_hex"] == "0000000000000000"
+        assert vec["plaintext_hex"] == "0000000000000000"
+        assert vec["ciphertext_hex"] == "4ef997456198dd78"
+        assert vec["params"]["iv_hex"] == "0000000000000000"
+        assert vec["params"]["source"] == (
+            "Bruce Schneier Blowfish ECB test data, replayed as single-block CBC with zero IV"
+        )

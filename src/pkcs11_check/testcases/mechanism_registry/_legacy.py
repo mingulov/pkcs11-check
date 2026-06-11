@@ -1011,6 +1011,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="blowfish_cbc.json",
         notes="Blowfish-CBC: 8-byte block, requires 8-byte IV param",
     )
 
