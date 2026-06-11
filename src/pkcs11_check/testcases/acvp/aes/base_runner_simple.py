@@ -2,34 +2,46 @@
 
 from __future__ import annotations
 
+import ctypes
 from collections.abc import Callable
+from ctypes import byref
 from typing import Any
 
 import pytest
 
 from pkcs11_check.raw.pack import mech_bytes
 from pkcs11_check.raw.recipes import (
+    _cancel_operation,
     decrypt_single,
     destroy_quietly,
     encrypt_single,
     import_secret_key,
+    to_ubyte_buf,
 )
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
+    CK_ULONG,
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKA_UNWRAP,
     CKA_WRAP,
+    CKF_DECRYPT,
+    CKF_ENCRYPT,
     CKK_AES,
     CKM,
     CKM_AES_CFB8,
     CKM_AES_OFB,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OK,
+    CKR_OPERATION_ACTIVE,
+    CKR_OPERATION_NOT_INITIALIZED,
 )
 from pkcs11_check.testcases.conftest import is_known_error
 
@@ -39,6 +51,13 @@ _AES_RUNTIME_REJECT_RVS = (
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+)
+
+_MCT_MULTIPART_FALLBACK_RVS = (
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_OPERATION_NOT_INITIALIZED,
+    CKR_OPERATION_ACTIVE,
+    *_AES_RUNTIME_REJECT_RVS,
 )
 
 
@@ -273,6 +292,89 @@ def _mct_dec_next_input(
     return output_history[j - 2]
 
 
+def _mct_update_part(
+    rs: Any,
+    update_fn: str,
+    chunk: bytes,
+) -> bytes | None:
+    """Run one multipart Update chunk, returning None for clean fallback CKRs."""
+    try:
+        fn = getattr(rs.raw, update_fn)
+    except AttributeError:
+        return None
+    in_buf = to_ubyte_buf(chunk)
+    max_out = len(chunk) + 256
+    out_buf = (ctypes.c_ubyte * max_out)()
+    out_len = CK_ULONG(max_out)
+    rv = fn(rs.sh, in_buf, len(chunk), out_buf, byref(out_len))
+    if rv in _MCT_MULTIPART_FALLBACK_RVS:
+        return None
+    expect_rv(rv, CKR_OK)
+    if out_len.value != len(chunk):
+        return None
+    return bytes(out_buf[: out_len.value])
+
+
+def _mct_finish(
+    rs: Any,
+    final_fn: str,
+) -> bool:
+    """Finish a multipart stream. True means no tail output and no fallback needed."""
+    try:
+        fn = getattr(rs.raw, final_fn)
+    except AttributeError:
+        return False
+    out_buf = (ctypes.c_ubyte * 256)()
+    out_len = CK_ULONG(256)
+    rv = fn(rs.sh, out_buf, byref(out_len))
+    if rv in _MCT_MULTIPART_FALLBACK_RVS:
+        return False
+    expect_rv(rv, CKR_OK)
+    return out_len.value == 0
+
+
+def _run_mct_multipart_stream(
+    rs: Any,
+    key_handle: int,
+    mech_constant: CKM,
+    initial_iv: bytes,
+    first_input: bytes,
+    *,
+    init_fn: str,
+    update_fn: str,
+    final_fn: str,
+    cancel_flag: int,
+    next_input_func: Callable[[CKM, int, bytes, list[bytes]], bytes],
+) -> bytes | None:
+    """Run one CFB/OFB MCT block as a single multipart stream when supported."""
+    mech = mech_bytes(mech_constant, initial_iv)
+    try:
+        init = getattr(rs.raw, init_fn)
+    except AttributeError:
+        return None
+
+    rv = init(rs.sh, mech.byref(), key_handle)
+    expect_rv(rv, CKR_OK)
+    try:
+        chunk = first_input
+        output_history: list[bytes] = []
+        for j in range(_MCT_ITERATIONS):
+            out = _mct_update_part(rs, update_fn, chunk)
+            if out is None:
+                _cancel_operation(rs.raw, rs.sh, cancel_flag)
+                return None
+            output_history.append(out)
+            if j + 1 < _MCT_ITERATIONS:
+                chunk = next_input_func(mech_constant, j + 1, initial_iv, output_history)
+        if not _mct_finish(rs, final_fn):
+            _cancel_operation(rs.raw, rs.sh, cancel_flag)
+            return None
+        return output_history[-1]
+    except BaseException:
+        _cancel_operation(rs.raw, rs.sh, cancel_flag)
+        raise
+
+
 def run_multiblock_encrypt_test(
     p11_module_session: Any,
     vec_id: str,
@@ -308,25 +410,21 @@ def run_multiblock_encrypt_test(
             iv = initial_iv
             pt = block["pt"]
             ct_history: list[bytes] = []
+            ct: bytes | None = None
 
-            for j in range(_MCT_ITERATIONS):
-                if mech_param_func:
-                    mech = mech_param_func()
-                else:
-                    mech = mech_bytes(mech_constant, iv)
+            if mech_param_func is None:
                 try:
-                    ct = encrypt_single(
-                        rs.raw,
-                        rs.sh,
+                    ct = _run_mct_multipart_stream(
+                        rs,
                         key_handle,
                         mech_constant,
+                        initial_iv,
                         pt,
-                        mech_param=mech,
-                        # MCT inner loop is the hot path: ~100k chained ops, each
-                        # a fresh init+encrypt. CFB/OFB ct len == pt len, so skip
-                        # the size-query round-trip; retry recovers a bad guess.
-                        output_size_hint=len(pt),
-                        retry_on_buffer_too_small=True,
+                        init_fn="C_EncryptInit",
+                        update_fn="C_EncryptUpdate",
+                        final_fn="C_EncryptFinal",
+                        cancel_flag=int(CKF_ENCRYPT),
+                        next_input_func=_mct_enc_next_input,
                     )
                 except AssertionError as exc:
                     if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
@@ -334,16 +432,44 @@ def run_multiblock_encrypt_test(
                             f"{mech_name} advertised but MCT encrypt is not operational: {exc}"
                         )
                     raise
-                ct_history.append(ct)
-                iv = _mct_next_iv(mech_constant, iv, ct, pt)
-                if j + 1 < _MCT_ITERATIONS:
-                    pt = _mct_enc_next_input(
-                        mech_constant,
-                        j + 1,
-                        initial_iv,
-                        ct_history,
-                    )
 
+            if ct is None:
+                for j in range(_MCT_ITERATIONS):
+                    if mech_param_func:
+                        mech = mech_param_func()
+                    else:
+                        mech = mech_bytes(mech_constant, iv)
+                    try:
+                        ct = encrypt_single(
+                            rs.raw,
+                            rs.sh,
+                            key_handle,
+                            mech_constant,
+                            pt,
+                            mech_param=mech,
+                            # MCT inner loop is the hot path: ~100k chained ops, each
+                            # a fresh init+encrypt. CFB/OFB ct len == pt len, so skip
+                            # the size-query round-trip; retry recovers a bad guess.
+                            output_size_hint=len(pt),
+                            retry_on_buffer_too_small=True,
+                        )
+                    except AssertionError as exc:
+                        if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
+                            pytest.xfail(
+                                f"{mech_name} advertised but MCT encrypt is not operational: {exc}"
+                            )
+                        raise
+                    ct_history.append(ct)
+                    iv = _mct_next_iv(mech_constant, iv, ct, pt)
+                    if j + 1 < _MCT_ITERATIONS:
+                        pt = _mct_enc_next_input(
+                            mech_constant,
+                            j + 1,
+                            initial_iv,
+                            ct_history,
+                        )
+
+            assert ct is not None
             assert ct == block["ct_expected"], (
                 f"{vec_id}: block {block['block_index']} ciphertext mismatch "
                 f"after {_MCT_ITERATIONS} MCT iterations: "
@@ -389,23 +515,21 @@ def run_multiblock_decrypt_test(
             iv = initial_iv
             ct = block["ct"]
             pt_history: list[bytes] = []
+            pt: bytes | None = None
 
-            for j in range(_MCT_ITERATIONS):
-                if mech_param_func:
-                    mech = mech_param_func()
-                else:
-                    mech = mech_bytes(mech_constant, iv)
+            if mech_param_func is None:
                 try:
-                    pt = decrypt_single(
-                        rs.raw,
-                        rs.sh,
+                    pt = _run_mct_multipart_stream(
+                        rs,
                         key_handle,
                         mech_constant,
+                        initial_iv,
                         ct,
-                        mech_param=mech,
-                        # MCT inner loop (see encrypt): CFB/OFB pt len == ct len.
-                        output_size_hint=len(ct),
-                        retry_on_buffer_too_small=True,
+                        init_fn="C_DecryptInit",
+                        update_fn="C_DecryptUpdate",
+                        final_fn="C_DecryptFinal",
+                        cancel_flag=int(CKF_DECRYPT),
+                        next_input_func=_mct_dec_next_input,
                     )
                 except AssertionError as exc:
                     if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
@@ -413,17 +537,43 @@ def run_multiblock_decrypt_test(
                             f"{mech_name} advertised but MCT decrypt is not operational: {exc}"
                         )
                     raise
-                pt_history.append(pt)
-                # CFB: shift register tracks ct INPUT (not pt output)
-                iv = _mct_next_iv(mech_constant, iv, ct, pt)
-                if j + 1 < _MCT_ITERATIONS:
-                    ct = _mct_dec_next_input(
-                        mech_constant,
-                        j + 1,
-                        initial_iv,
-                        pt_history,
-                    )
 
+            if pt is None:
+                for j in range(_MCT_ITERATIONS):
+                    if mech_param_func:
+                        mech = mech_param_func()
+                    else:
+                        mech = mech_bytes(mech_constant, iv)
+                    try:
+                        pt = decrypt_single(
+                            rs.raw,
+                            rs.sh,
+                            key_handle,
+                            mech_constant,
+                            ct,
+                            mech_param=mech,
+                            # MCT inner loop (see encrypt): CFB/OFB pt len == ct len.
+                            output_size_hint=len(ct),
+                            retry_on_buffer_too_small=True,
+                        )
+                    except AssertionError as exc:
+                        if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
+                            pytest.xfail(
+                                f"{mech_name} advertised but MCT decrypt is not operational: {exc}"
+                            )
+                        raise
+                    pt_history.append(pt)
+                    # CFB: shift register tracks ct INPUT (not pt output)
+                    iv = _mct_next_iv(mech_constant, iv, ct, pt)
+                    if j + 1 < _MCT_ITERATIONS:
+                        ct = _mct_dec_next_input(
+                            mech_constant,
+                            j + 1,
+                            initial_iv,
+                            pt_history,
+                        )
+
+            assert pt is not None
             assert pt == block["pt_expected"], (
                 f"{vec_id}: block {block['block_index']} plaintext mismatch "
                 f"after {_MCT_ITERATIONS} MCT iterations: "
