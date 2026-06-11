@@ -24,8 +24,11 @@ import os
 import subprocess
 import sys
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Lock
+from typing import Any, NamedTuple
 
 from pkcs11_check.core.merge import merge_shard_dirs
 from pkcs11_check.core.sharding import (
@@ -108,6 +111,13 @@ COMPOSE = ["docker", "compose", "-f", "docker/docker-compose.test.yml"]
 VECTOR_DATA_DIRS = ("wycheproof", "acvp", "cctv", "x509-limbo")
 DEFAULT_CONCURRENCY = 6
 WorkItem = tuple[str, int, list[str], float]
+
+
+class RunResult(NamedTuple):
+    provider: str
+    idx: int
+    returncode: int
+    elapsed_s: float
 
 # NSS exposes the digest / bulk-cipher / KDF mechanisms only on slot 0 (Internal
 # Cryptographic Services); the default slot-1 (cert/key DB) pass skips them. The
@@ -241,11 +251,30 @@ def build_image(provider: str, env: dict[str, str]) -> tuple[str, bool]:
     return provider, rc == 0
 
 
+def pool_log_path(provider: str, idx: int) -> Path:
+    return Path(f"/tmp/pool-{provider}-{idx}.log")
+
+
+def format_elapsed(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    total = int(round(seconds))
+    return f"{total // 60}m{total % 60:02d}s"
+
+
+def print_pool_event(message: str, output_lock: Any | None = None) -> None:
+    if output_lock is None:
+        print(message, flush=True)
+        return
+    with output_lock:
+        print(message, flush=True)
+
+
 def run_item(
     provider: str, idx: int, files: list[str], env: dict[str, str]
 ) -> tuple[str, int, int]:
     """Run one (provider, batch) container. Returns (provider, idx, returncode)."""
-    log = Path(f"/tmp/pool-{provider}-{idx}.log")
+    log = pool_log_path(provider, idx)
     rv_trace_env = (
         ["-e", f"PKCS11_CHECK_RV_TRACE_COMPACT={RV_TRACE_COMPACT_N}"] if RV_TRACE_COMPACT_N else []
     )
@@ -274,6 +303,29 @@ def run_item(
             env=env,
         ).returncode
     return provider, idx, rc
+
+
+def run_workitem(
+    workitem: WorkItem, env: dict[str, str], output_lock: Any | None = None
+) -> RunResult:
+    provider, idx, files, load = workitem
+    log = pool_log_path(provider, idx)
+    print_pool_event(
+        f"--- START {provider}:{idx} files={len(files)} load~{load:.1f}s log={log} ---",
+        output_lock,
+    )
+    started = time.monotonic()
+    rc: int | None = None
+    try:
+        provider_out, idx_out, rc = run_item(provider, idx, files, env)
+    finally:
+        elapsed = time.monotonic() - started
+        rc_text = "error" if rc is None else str(rc)
+        print_pool_event(
+            f"--- DONE {provider}:{idx} rc={rc_text} took={format_elapsed(elapsed)} ---",
+            output_lock,
+        )
+    return RunResult(provider_out, idx_out, rc, elapsed)
 
 
 def clean_prior_shards(project_root: Path, providers: list[str]) -> None:
@@ -417,18 +469,23 @@ def main() -> int:
 
     print(f"=== running {len(workitems)} items through {args.concurrency} workers (mixed) ===")
     start = time.time()
+    output_lock = Lock()
     with ThreadPoolExecutor(max_workers=args.concurrency) as ex:
-        results = list(ex.map(lambda w: run_item(w[0], w[1], w[2], docker_env), workitems))
+        results = list(ex.map(lambda w: run_workitem(w, docker_env, output_lock), workitems))
     wall = int(time.time() - start)
-    nonzero = sum(1 for _, _, rc in results if rc not in (0, 1))  # 1 == failing tests (expected)
+    nonzero = sum(1 for result in results if result.returncode not in (0, 1))
     if nonzero:
         print(f"  note: {nonzero} item(s) exited with an unexpected code (see /tmp/pool-*.log)")
 
     # Merge per provider + comparison summary.
     print()
+    shard_time_by_provider: defaultdict[str, float] = defaultdict(float)
+    for result in results:
+        shard_time_by_provider[result.provider] += result.elapsed_s
     hdr = (
         f"{'provider':<20} {'shards':>6} {'total':>8} {'passed':>8} "
-        f"{'failed':>8} {'crashed':>8} {'timeout':>8}"
+        f"{'failed':>8} {'xfailed':>8} {'crashed':>8} {'timeout':>8} "
+        f"{'shard_time':>10}"
     )
     print(hdr)
     print("-" * len(hdr))
@@ -457,15 +514,20 @@ def main() -> int:
         if present:
             merge_shard_dirs(present, Path(f"artifacts/{p}-pooled"))
         res = Path(f"artifacts/{p}-pooled/results.json")
+        shard_time = format_elapsed(shard_time_by_provider[p])
         if res.exists():
             s = json.loads(res.read_text())["summary"]
             print(
                 f"{p:<20} {n:>6} {s.get('total', 0):>8} {s.get('passed', 0):>8} "
-                f"{s.get('failed', 0):>8} {s.get('crashed', 0):>8} {s.get('timeout', 0):>8}"
+                f"{s.get('failed', 0):>8} {s.get('xfailed', 0):>8} "
+                f"{s.get('crashed', 0):>8} {s.get('timeout', 0):>8} {shard_time:>10}"
             )
         else:
             incomplete_results = True
-            print(f"{p:<20} {n:>6} {'NO-RESULTS':>8}")
+            print(
+                f"{p:<20} {n:>6} {'NO-RESULTS':>8} {'':>8} {'':>8} "
+                f"{'':>8} {'':>8} {'':>8} {shard_time:>10}"
+            )
 
     print(
         f"=== GLOBAL wall: {wall // 60}m{wall % 60}s for {len(providers)} providers / "

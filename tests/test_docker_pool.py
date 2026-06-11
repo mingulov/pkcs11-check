@@ -177,6 +177,121 @@ def test_pool_builds_provider_image_once_regardless_of_shard_count(
     ]
 
 
+def test_pool_reports_shard_progress_and_provider_elapsed_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    testcases = tmp_path / "testcases"
+    testcases.mkdir()
+    for index in range(2):
+        (testcases / f"test_{index}.py").write_text("def test_one():\n    pass\n")
+
+    clock = iter([10.0, 12.5, 20.0, 21.25])
+
+    def fake_monotonic() -> float:
+        return next(clock)
+
+    def fake_run_item(
+        provider: str, idx: int, files: list[str], env: dict[str, str]
+    ) -> tuple[str, int, int]:
+        shard_dir = Path("artifacts") / f"{provider}-shard-{idx}"
+        shard_dir.mkdir(parents=True)
+        shard_dir.joinpath("results.json").write_text(
+            json.dumps({"summary": {"passed": len(files)}, "units": []})
+        )
+        return provider, idx, 0
+
+    def fake_merge_shard_dirs(shard_dirs: list[Path], output_dir: Path) -> None:
+        assert len(shard_dirs) == 2
+        output_dir.mkdir(parents=True)
+        output_dir.joinpath("results.json").write_text(
+            json.dumps(
+                {
+                    "summary": {
+                        "total": 11,
+                        "passed": 7,
+                        "failed": 1,
+                        "xfailed": 3,
+                        "crashed": 0,
+                        "timeout": 0,
+                    }
+                }
+            )
+        )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(test_pool.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(test_pool, "run_item", fake_run_item)
+    monkeypatch.setattr(test_pool, "clean_prior_shards", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(test_pool, "merge_shard_dirs", fake_merge_shard_dirs)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "test_pool.py",
+            "--no-build",
+            "-j",
+            "1",
+            "--testcases",
+            str(testcases),
+            "optee-pkcs11:2",
+        ],
+    )
+
+    assert test_pool.main() == 0
+
+    out = capsys.readouterr().out
+    assert "--- START optee-pkcs11:0 files=1 load~1.0s log=/tmp/pool-optee-pkcs11-0.log ---" in out
+    assert "--- DONE optee-pkcs11:0 rc=0 took=2.5s ---" in out
+    assert "--- DONE optee-pkcs11:1 rc=0 took=1.2s ---" in out
+    assert "xfailed" in out
+    assert "shard_time" in out
+    assert "optee-pkcs11" in out
+    assert "3.8s" in out
+
+
+def test_pool_reports_elapsed_time_when_provider_has_no_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    testcases = tmp_path / "testcases"
+    testcases.mkdir()
+    (testcases / "test_one.py").write_text("def test_one():\n    pass\n")
+
+    clock = iter([30.0, 34.0])
+
+    def fake_monotonic() -> float:
+        return next(clock)
+
+    def fake_run_item(
+        provider: str, idx: int, files: list[str], env: dict[str, str]
+    ) -> tuple[str, int, int]:
+        return provider, idx, 2
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(test_pool.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(test_pool, "run_item", fake_run_item)
+    monkeypatch.setattr(test_pool, "clean_prior_shards", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "test_pool.py",
+            "--no-build",
+            "-j",
+            "1",
+            "--testcases",
+            str(testcases),
+            "optee-pkcs11:1",
+        ],
+    )
+
+    assert test_pool.main() == 1
+
+    out = capsys.readouterr().out
+    assert "--- DONE optee-pkcs11:0 rc=2 took=4.0s ---" in out
+    assert "NO-RESULTS" in out
+    assert "4.0s" in out
+
+
 def test_pool_returns_nonzero_when_a_shard_produces_no_results(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
