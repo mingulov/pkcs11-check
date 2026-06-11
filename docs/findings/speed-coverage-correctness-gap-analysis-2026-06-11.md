@@ -136,6 +136,23 @@ Acceptance checks:
 - bouncyhsm runtime is remeasured provider-locally; the result is not applied
   to other providers.
 
+Current status:
+
+- Implemented: provider-local duration-oracle data can split only duration-hot
+  MCT files (`test_ofb.py`, `test_cfb8.py`, `test_cfb128.py`) into collected
+  pytest node ids, so non-MCT files stay at file-shard granularity.
+- Implemented: CFB/OFB MCT runners try one `C_EncryptInit`/`C_DecryptInit`
+  plus repeated `C_EncryptUpdate`/`C_DecryptUpdate` calls, then fall back to the
+  canonical per-iteration single-part path if multipart update/final is missing,
+  operation-state-invalid, or cleanly rejected by the provider.
+- Verified by focused tests: multipart fast path, fallback path, and official
+  vector equivalence are covered in `tests/test_acvp_aes_runtime_classification.py`;
+  duration-hot node expansion and caller environment propagation are covered in
+  `tests/test_docker_pool.py`.
+- Remaining evidence: run a fresh bouncyhsm pool using provider-local
+  `--duration-artifacts-dir` and `--coverage-baseline-artifacts-dir` before
+  claiming a bouncyhsm wall-time improvement.
+
 ### 5. Reduce remaining setup cost for module-session vector files
 
 wolfPKCS11 remains setup-bound in `artifacts3`. The worst setup-heavy files are
