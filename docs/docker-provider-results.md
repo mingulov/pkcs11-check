@@ -8,6 +8,15 @@ For the size of the test suite itself, see [test-universe.md](test-universe.md).
 For focused crash, timeout, and broad failure classification, see
 [provider-crash-failure-findings.md](provider-crash-failure-findings.md).
 
+> **Current status (2026-06-11): latest full Docker pool in `artifacts/` is complete and in good shape.**
+> All 21 pooled Docker targets have `results.json`, `quality.json`, and `report.jsonl`; all
+> latest target timeout counts are zero. The statistics below are generated from the latest
+> full `docker/test_pool.py --all` artifact set. The validation pass compared this pool with
+> the older local artifact snapshots before backup rotation; `artifacts2/` now mirrors the
+> current `artifacts/` backup and is not an independent comparison baseline. Known provider
+> findings remain visible as failures/crashes; they are not filtered from the headline matrix.
+> Current baseline artifact: `docs/matrix/baseline-2026-06-11.json`.
+
 > **Status (2026-05-30): refreshed to the 2026-05-30 POST-FIX full sweep.** This is the
 > first full matrix run with the `CKR_OPERATION_ACTIVE` recovery in place across **all**
 > providers — the prior 2026-05-27/05-29 snapshots had cascade-inflated failures (matrix
@@ -40,14 +49,14 @@ For focused crash, timeout, and broad failure classification, see
 
 | Field | Value |
 | --- | --- |
-| Report generated | 2026-06-10/11 (Matrix Results refreshed from the validated full pool; metadata/source rows below remain the 2026-06-04/06 pin set) |
+| Report generated | 2026-06-11 (Matrix Results refreshed from the latest full pool in `artifacts/`) |
 | Source manifest | `docker/provider-sources.toml` |
 | Source manifest observed at | `2026-06-06T07:33:21Z` |
-| Current release pin refresh | 2026-06-06: Kryoptic `v1.5.1` and BouncyHSM `v2.1.1` pins updated; wolfPKCS11 `v2.0.0-stable` / `master` Docker targets added with wolfSSL `v5.9.1-stable` / `master`; corePKCS11 `v3.6.4` Docker target added with focused build/run smoke only; wolfPKCS11 rows are 2026-06-06 single-target full validations, while the rest of the matrix rows remain the 2026-06-04 artifact set |
-| Provider summary artifact | `docs/matrix/baseline-2026-06-04.json` (supersedes `baseline-2026-05-30.json`) |
-| Provider summary generated at | `2026-06-04` (combined from per-provider `artifacts/<target>-pooled/results.json`) |
+| Current release pin refresh | 2026-06-06: Kryoptic `v1.5.1` and BouncyHSM `v2.1.1` pins updated; wolfPKCS11 `v2.0.0-stable` / `master` Docker targets added with wolfSSL `v5.9.1-stable` / `master`; corePKCS11 `v3.6.4` Docker target added. The latest `artifacts/` pool now contains full pooled results for all 21 Docker targets. |
+| Provider summary artifact | `docs/matrix/baseline-2026-06-11.json` (supersedes `baseline-2026-06-04.json`) |
+| Provider summary generated at | `2026-06-11` (combined from per-provider `artifacts/<target>-pooled/results.json` and `quality.json`) |
 | Cascade-fix status | POST-fix — `CKR_OPERATION_ACTIVE` recovery active for all providers |
-| Artifact source | per-provider `artifacts/<target>-pooled/results.json` summaries (pooled/sharded run) |
+| Artifact source | latest full `docker/test_pool.py --all` output in `artifacts/<target>-pooled/`; validated against older local snapshots before backup rotation |
 | Matrix command family | `docker/test_pool.py` full pooled sweep |
 | Runner mode | pooled Docker target runs with per-file/mixed subprocess isolation |
 
@@ -71,18 +80,18 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 | wolfSSL | `master` | `8fca95ce651d6e370d91f5598786de4bc66aa2c2` | 2026-06-05T21:27:00Z | wolfPKCS11 master support |
 | SoftHSM2 | `2.7.0` | `13e6e86b83748fef74046dbf0c91f664b7acc1c3` | 2026-01-20T06:25:10Z | release |
 | SoftHSM2 | `main` | `679f33d1b325cca8f5eb1a8febcc7630654a34de` | 2026-05-23T10:20:01Z | branch tip |
-| Kryoptic | `v1.5.1` | `b0d6ee212495244b25d5ac196c6204d22153a31c` | 2026-06-04T18:04:30Z | release pin updated; full Docker result refresh pending |
-| Kryoptic | `main` | `b59babefe229bddeb3a14f8c0d13031bb5060a5f` | 2026-06-04T18:14:15Z | branch tip refreshed; full Docker result refresh pending |
-| wolfPKCS11 | `v2.0.0-stable` | `6b76537e4cc5bea0358b7059fda26d1872584be4` | 2025-08-26T17:00:48Z | release target; 2026-06-06 full Docker result in `artifacts/wolfpkcs11/results.json` |
-| wolfPKCS11 | `master` | `3be61e1d9a6487460dfff5df82d0301e2be2fa30` | 2026-05-20T21:50:11Z | master target with PKCS#11 v3.2 ML-DSA/ML-KEM enabled; 2026-06-06 full Docker result in `artifacts/wolfpkcs11-master/results.json` |
-| corePKCS11 | `v3.6.4` | `ccc78afee1716436cca832dd3d9388ead2ba05b0` | 2026-02-24T05:23:57Z | target added; focused Docker build/run smoke passed, full result refresh pending |
+| Kryoptic | `v1.5.1` | `b0d6ee212495244b25d5ac196c6204d22153a31c` | 2026-06-04T18:04:30Z | release pin updated; full pooled result included in the 2026-06-11 matrix |
+| Kryoptic | `main` | `b59babefe229bddeb3a14f8c0d13031bb5060a5f` | 2026-06-04T18:14:15Z | branch tip refreshed; full pooled result included in the 2026-06-11 matrix |
+| wolfPKCS11 | `v2.0.0-stable` | `6b76537e4cc5bea0358b7059fda26d1872584be4` | 2025-08-26T17:00:48Z | release target; 2026-06-11 full pooled result in `artifacts/wolfpkcs11-pooled/results.json` |
+| wolfPKCS11 | `master` | `3be61e1d9a6487460dfff5df82d0301e2be2fa30` | 2026-05-20T21:50:11Z | master target with PKCS#11 v3.2 ML-DSA/ML-KEM enabled; 2026-06-11 full pooled result in `artifacts/wolfpkcs11-master-pooled/results.json` |
+| corePKCS11 | `v3.6.4` | `ccc78afee1716436cca832dd3d9388ead2ba05b0` | 2026-02-24T05:23:57Z | target added; full pooled result included in the 2026-06-11 matrix |
 | OpenCryptoki | `v3.27.0` | `583d0128bb5ebfac263496bc8fe32d4aef440178` | 2026-05-13T11:19:05Z | release |
 | OpenCryptoki | `master` | `583d0128bb5ebfac263496bc8fe32d4aef440178` | 2026-05-13T11:19:05Z | same as release |
 | NSS | `NSS_3_124_RTM` | `089afe88dd219cf4b1516fd04f3b1c1fda3b7b61` | 2026-05-15T14:57:13Z | official RTM tag |
 | NSPR | `NSPR_4_39_RTM` | `54e7c1b0803d151e142e30dc0d05f12e1ec67a13` | 2026-05-05T12:48:55Z | official RTM tag |
 | NSS | `tip` | `1a02ab2a26b719d5a2ba23aed6e7b06b5d3e9370` | 2026-05-19T16:33:46Z | Mercurial tip for `nss-main` comparison |
 | NSPR | `tip` | `764a204fce9a069633c2eb75890f8194f0c54853` | 2026-05-05T12:49:29Z | Mercurial tip for `nss-main` comparison |
-| BouncyHSM | `v2.1.1` | `3bfd53943fdc298bee8cd04ba6ac1a8663e8cc0c` | 2026-06-03T16:39:08Z | release pin updated; full Docker result refresh pending |
+| BouncyHSM | `v2.1.1` | `3bfd53943fdc298bee8cd04ba6ac1a8663e8cc0c` | 2026-06-03T16:39:08Z | release pin updated; full pooled result included in the 2026-06-11 matrix |
 | BouncyHSM | `main` | `331308f0b210ef331e4c5499c393271e0f76e68c` | 2026-06-06T06:47:25Z | branch tip refreshed; no separate Docker target |
 | tpm2-pkcs11 | `1.10.0` | `a95465ce672c5fda92a2d34bc5cbeda4b0511c80` | 2026-05-19T20:44:58Z | release and master |
 | libtpms | `v0.10.2` | `03ff2481e133540be3b3ffe3daa1483d2a73d967` | 2026-01-02T15:56:41Z | TPM support |
@@ -113,106 +122,109 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 
 ## Matrix Results
 
-> **Refreshed 2026-06-10/11 from the validated full pooled sweep** (`artifacts/<target>-pooled/`,
-> backed up to `artifacts3/`). This is the post-merge run carrying the advertised-capability
-> honesty package, vacuous-reject downgrade, ECDH-H9, and capability-gating retirement; it is
-> **VALIDATED** against the prior pool (`artifacts2/`) — see
-> [findings/pool-2026-06-10-comparison.md](findings/pool-2026-06-10-comparison.md). The dominant
-> shifts are the intended fail→xfail/pass reclassifications (notably the wolfPKCS11 CTS
-> operability flip and the wycheproof_ecdsa capability-gating retirement that converts large
-> skip blocks into pass). `corepkcs11`/`corepkcs11-main` now have full pooled results and are
-> included. NSS `*-slot0` crash counts reflect the per-pool exit-time scheduling (a known wolf
-> /NSS teardown pattern), not new crash targets.
+> **Refreshed 2026-06-11 from the latest full pooled sweep** (`artifacts/<target>-pooled/`).
+> The result was checked against the previous local full-pool snapshots before backup rotation.
+> Those comparison roots had the same 21 provider targets; the latest `artifacts/` has
+> `results.json`, `quality.json`, and `report.jsonl` for every pooled target. The current pool
+> has **zero timeouts**. Failure counts mostly hold or decrease versus the previous good pool;
+> the material exception is `corepkcs11`/`corepkcs11-main`, where the test universe grew by
+> ~48k outcomes and exposed additional provider findings. `softhsm2` is +1 failed, while
+> `bouncyhsm` and release `wolfpkcs11` record a small crash-count increase but no timeout.
 
-| Docker target | Source | Status | Total | Passed | Failed | Skipped | Xfailed | Errors | Crashed | Timeout |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `softhsm2` | SoftHSM2 2.7.0, OpenSSL 3.6.2 | full | 82,472 | 44,900 | 65 | 32,483 | 5,024 | 0 | 0 | 0 |
-| `softhsm2-generated-iv` | SoftHSM2 2.7.0 + generated-IV patch, OpenSSL 3.6.2 | full | 82,472 | 44,903 | 64 | 32,481 | 5,024 | 0 | 0 | 0 |
-| `softhsm2-main` | SoftHSM2 main, OpenSSL 4.0.0 | full | 83,401 | 47,064 | 63 | 31,786 | 4,488 | 0 | 0 | 0 |
-| `kryoptic` | Kryoptic v1.5.1, OpenSSL 4.0.0 | full | 109,127 | 58,614 | 137 | 37,762 | 12,614 | 0 | 0 | 0 |
-| `kryoptic-main` | Kryoptic main, OpenSSL 4.0.0 | full | 109,127 | 58,613 | 138 | 37,762 | 12,614 | 0 | 0 | 0 |
-| `kryoptic-fips` | Kryoptic FIPS/PQC + custom OpenSSL branch | full diagnostic | 93,046 | 43,939 | 176 | 37,565 | 11,354 | 0 | 12 | 0 |
-| `nss` | Fedora NSS softoken package (slot 1) | full | 93,498 | 38,220 | 130 | 53,323 | 1,819 | 0 | 6 | 0 |
-| `nss-pqc` | NSS/NSPR RTM tags (slot 1; near-identical to `nss-main`, differs only by a flaky overflow-crash case) | full | 92,655 | 36,750 | 119 | 54,052 | 1,727 | 0 | 7 | 0 |
-| `nss-main` | NSS/NSPR source tips (slot 1) | full | 92,655 | 36,752 | 117 | 54,052 | 1,727 | 0 | 7 | 0 |
-| `nss-slot0` | Fedora NSS softoken, slot 0 (Internal Crypto Services); scoped to the slot-0-unique files (coverage-neutral, see note) | slot-0-scoped | 2,391 | 1,440 | 61 | 693 | 191 | 0 | 6 | 0 |
-| `nss-pqc-slot0` | NSS/NSPR RTM tags, slot 0; scoped | slot-0-scoped | 2,442 | 1,470 | 61 | 710 | 194 | 0 | 7 | 0 |
-| `nss-main-slot0` | NSS/NSPR source tips, slot 0; scoped | slot-0-scoped | 2,442 | 1,470 | 61 | 710 | 194 | 0 | 7 | 0 |
-| `opencryptoki` | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 97,880 | 64,438 | 212 | 31,982 | 1,248 | 0 | 0 | 0 |
-| `opencryptoki-master` | OpenCryptoki master, OpenSSL 4.0.0 | full | 97,880 | 64,439 | 211 | 31,982 | 1,248 | 0 | 0 | 0 |
-| `wolfpkcs11` | wolfPKCS11 v2.0.0-stable, wolfSSL v5.9.1-stable | full | 97,546 | 46,524 | 879 | 44,798 | 5,329 | 0 | 15 | 1 |
-| `wolfpkcs11-master` | wolfPKCS11 master, wolfSSL master, PKCS#11 v3.2/PQC enabled | full | 98,573 | 49,028 | 482 | 43,588 | 5,471 | 0 | 4 | 0 |
-| `corepkcs11` | corePKCS11 v3.6.4 MbedTLS software mock | full | 61,833 | 10,950 | 142 | 49,679 | 1,059 | 3 | 0 | 0 |
-| `corepkcs11-main` | corePKCS11 main MbedTLS software mock | full | 61,833 | 10,950 | 142 | 49,679 | 1,059 | 3 | 0 | 0 |
-| `tpm2` | source-built tpm2-pkcs11 1.10.0 | full | 81,719 | 18,146 | 112 | 58,825 | 4,636 | 0 | 0 | 0 |
-| `pkcs11-mock` | pkcs11-mock v2.0.0 | full mock baseline | 32,945 | 737 | 288 | 31,850 | 70 | 0 | 0 | 0 |
-| `bouncyhsm` | BouncyHSM v2.1.1 | full (monolithic) | 108,640 | 54,196 | 2,132 | 36,448 | 15,858 | 0 | 6 | 0 |
+| Docker target | Source | Status | Shards | Files | Total | Passed | Failed | Skipped | Xfailed | Errors | Crashed | Timeout | File-skipped units |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `softhsm2` | SoftHSM2 2.7.0, OpenSSL 3.6.2 | full | 1 | 254 | 111,284 | 44,887 | 66 | 60,290 | 6,041 | 0 | 0 | 0 | 17 |
+| `softhsm2-generated-iv` | SoftHSM2 2.7.0 + generated-IV patch, OpenSSL 3.6.2 | full | 1 | 254 | 111,284 | 44,892 | 63 | 60,288 | 6,041 | 0 | 0 | 0 | 17 |
+| `softhsm2-main` | SoftHSM2 main, OpenSSL 4.0.0 | full | 1 | 254 | 111,319 | 47,052 | 63 | 58,699 | 5,505 | 0 | 0 | 0 | 13 |
+| `kryoptic` | Kryoptic v1.5.1, OpenSSL 4.0.0 | full | 1 | 254 | 112,594 | 58,613 | 119 | 29,615 | 24,247 | 0 | 0 | 0 | 3 |
+| `kryoptic-main` | Kryoptic main, OpenSSL 4.0.0 | full | 1 | 254 | 112,594 | 58,614 | 119 | 29,615 | 24,246 | 0 | 0 | 0 | 3 |
+| `kryoptic-fips` | Kryoptic FIPS/PQC + custom OpenSSL branch | full diagnostic | 1 | 254 | 105,125 | 43,939 | 155 | 37,637 | 23,382 | 0 | 12 | 0 | 8 |
+| `nss` | Fedora NSS softoken package (slot 1) | full | 1 | 254 | 111,694 | 38,221 | 121 | 71,257 | 2,089 | 0 | 6 | 0 | 7 |
+| `nss-pqc` | NSS/NSPR RTM tags (slot 1) | full | 1 | 254 | 111,745 | 36,752 | 109 | 72,880 | 1,997 | 0 | 7 | 0 | 11 |
+| `nss-main` | NSS/NSPR source tips (slot 1) | full | 1 | 254 | 111,745 | 36,750 | 110 | 72,880 | 1,998 | 0 | 7 | 0 | 11 |
+| `nss-slot0` | Fedora NSS softoken, slot 0 (Internal Crypto Services); scoped to slot-0-unique files | slot-0-scoped | 1 | 39 | 2,391 | 1,441 | 59 | 693 | 192 | 0 | 6 | 0 | 0 |
+| `nss-pqc-slot0` | NSS/NSPR RTM tags, slot 0; scoped | slot-0-scoped | 1 | 39 | 2,442 | 1,471 | 59 | 710 | 195 | 0 | 7 | 0 | 0 |
+| `nss-main-slot0` | NSS/NSPR source tips, slot 0; scoped | slot-0-scoped | 1 | 39 | 2,442 | 1,471 | 59 | 710 | 195 | 0 | 7 | 0 | 0 |
+| `opencryptoki` | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 3 | 254 | 112,622 | 64,438 | 199 | 45,611 | 2,374 | 0 | 0 | 0 | 8 |
+| `opencryptoki-master` | OpenCryptoki master, OpenSSL 4.0.0 | full | 3 | 254 | 112,622 | 64,437 | 199 | 45,611 | 2,375 | 0 | 0 | 0 | 8 |
+| `wolfpkcs11` | wolfPKCS11 v2.0.0-stable, wolfSSL v5.9.1-stable | full | 8 | 254 | 110,792 | 46,544 | 876 | 47,438 | 15,916 | 0 | 18 | 0 | 15 |
+| `wolfpkcs11-master` | wolfPKCS11 master, wolfSSL master, PKCS#11 v3.2/PQC enabled | full | 8 | 254 | 110,889 | 48,627 | 464 | 47,812 | 13,982 | 0 | 4 | 0 | 11 |
+| `corepkcs11` | corePKCS11 v3.6.4 MbedTLS software mock | full | 1 | 254 | 110,142 | 11,088 | 680 | 88,553 | 9,818 | 3 | 0 | 0 | 23 |
+| `corepkcs11-main` | corePKCS11 main MbedTLS software mock | full | 1 | 254 | 110,142 | 11,088 | 680 | 88,553 | 9,818 | 3 | 0 | 0 | 23 |
+| `tpm2` | source-built tpm2-pkcs11 1.10.0 | full | 1 | 254 | 110,580 | 18,134 | 49 | 66,905 | 25,492 | 0 | 0 | 0 | 20 |
+| `pkcs11-mock` | pkcs11-mock v2.0.0 | full mock baseline | 1 | 254 | 110,173 | 737 | 267 | 109,098 | 71 | 0 | 0 | 0 | 25 |
+| `bouncyhsm` | BouncyHSM v2.1.1 | full | 16 | 254 | 113,340 | 54,186 | 2,129 | 41,160 | 15,858 | 0 | 7 | 0 | 4 |
 
-**NSS `*-slot0` scoping (v0.1.3):** NSS exposes the digest / bulk-cipher / KDF
+**NSS `*-slot0` scoping (v0.1.3 and later):** NSS exposes the digest / bulk-cipher / KDF
 mechanisms only on slot 0 (Internal Cryptographic Services); the default slot-1
-(cert/key DB) pass skips them. The `*-slot0` targets used to re-run the **whole**
-suite on slot 0 — byte-identical re-runs of the slot-1 pass for every file with
-no slot-0-unique node. They are now scoped to just the files that have a test
-node which runs on slot 0 but skips on slot 1 (`docker/test_pool.py`
-`SLOT0_UNIQUE_FILES`, guarded by `tests/test_slot0_scope.py`), so their totals
-drop from ~90k to ~2.3k. This is **coverage-neutral** — every slot-0-unique
-finding is retained; the dropped files are already covered identically by the
-slot-1 pass. A missing slot-0-unique file falls back to the full suite rather
-than silently dropping coverage.
+(cert/key DB) pass skips them. The `*-slot0` targets are scoped to just the files that have
+a test node which runs on slot 0 but skips on slot 1 (`docker/test_pool.py`
+`SLOT0_UNIQUE_FILES`, guarded by `tests/test_slot0_scope.py`). This is **coverage-neutral**:
+every slot-0-unique finding is retained; the dropped files are already covered identically by
+the slot-1 pass. A missing slot-0-unique file falls back to the full suite rather than
+silently dropping coverage.
 
-Skip composition (why skipped counts are large): a large share of skips are
-not-applicable rather than untested. Per provider, roughly **~18k skips are
-duplicate upstream vectors** — Wycheproof ECDH and NIST ACVP key-generation
-inputs whose provider-visible parameters are already covered by another vector
-(`Duplicate PKCS#11 ECDH operation input; covered by ecdh_*.json:tcNNN`,
-`Duplicate ACVP RSA/ML-KEM/ML-DSA KeyGen input`). Further skips come from
-non-selected AES-CTS CS1/CS2/CS3 variants (~7k) and unsupported
-mechanisms/curves (KWP, AES_KEY_WRAP, CCM, GMAC, secp224r1, secp256k1).
+File-skipped unit counts come from each target's `quality.json`. They are nonzero in the latest
+pool for applicable providers because static file-skip accounting is now preserved in the
+pooled artifact, whereas the previous good comparison pool recorded zero file-skipped units.
+These are capability/selection skips, not missing artifact files.
+
+Skip composition (why skipped counts are large): a large share of skips are not-applicable
+rather than untested. Per provider, many skips are duplicate upstream vectors — Wycheproof
+ECDH and NIST ACVP key-generation inputs whose provider-visible parameters are already covered
+by another vector. Further skips come from non-selected AES-CTS CS1/CS2/CS3 variants and
+unsupported mechanisms/curves (KWP, AES_KEY_WRAP, CCM, GMAC, secp224r1, secp256k1).
 
 Archived comparison row, not the current TPM2 headline result:
 
 | Docker target | Source | Status | Total | Passed | Failed | Skipped | Xfailed | Errors | Crashed | Timeout |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `tpm2-fedora-package-20260525` | Fedora tpm2-pkcs11 1.9.1 package | archived full | 64,084 | 8,433 | 5,067 | 49,727 | 6 | 851 | 0 | 0 |
-
 ## Run Time
 
-Per-target test execution time, summed from each unit's `duration_s` in
-`results.json` (per-file subprocess isolation). These exclude Docker image build
-and token setup.
+Per-target test execution time, summed from each unit's `duration_s` in `results.json`
+(per-file subprocess isolation). These exclude Docker image build and token setup. The pooled
+runner executes targets and shards in parallel, so summed unit time is not wall-clock time.
 
-| Target | Test execution (summed unit time) |
-| --- | ---: |
-| `pkcs11-mock` | ~3 min |
-| `nss-main`, `nss-main-slot0` | ~7-8 min |
-| `softhsm2`/`-main`/`-generated-iv`, `nss-pqc`/`-slot0`, `nss-slot0` | ~8-10 min |
-| `nss`, `tpm2` | ~10 min |
-| `opencryptoki`, `opencryptoki-master` | ~13 min |
-| `kryoptic-main`, `kryoptic-fips`, `kryoptic` | ~14-16 min |
-| `wolfpkcs11` | ~85 min |
-| `wolfpkcs11-master` | ~90 min |
-| `bouncyhsm` | ~98 min |
-| **2026-05-30 baseline targets only (summed)** | **~4.4 hours** |
-| **wolfPKCS11 2026-06-06 single-target additions (summed)** | **~2.9 hours** |
+| Target | Shards | Files | Summed unit time | Longest unit | Longest status |
+| --- | ---: | ---: | ---: | --- | --- |
+| `softhsm2` | 1 | 254 | 13m 3s | `test_wrap.py` (2m 33s) | passed |
+| `softhsm2-generated-iv` | 1 | 254 | 13m 16s | `test_wrap.py` (2m 20s) | passed |
+| `softhsm2-main` | 1 | 254 | 13m 36s | `test_wrap.py` (2m 22s) | passed |
+| `kryoptic` | 1 | 254 | 39m 12s | `test_wycheproof_ecdsa.py` (9m 19s) | passed |
+| `kryoptic-main` | 1 | 254 | 39m 13s | `test_wycheproof_ecdsa.py` (9m 17s) | passed |
+| `kryoptic-fips` | 1 | 254 | 40m 21s | `test_wycheproof_ecdsa.py` (8m 14s) | passed |
+| `nss` | 1 | 254 | 19m 50s | `test_wycheproof_hkdf.py` (5m 16s) | passed |
+| `nss-pqc` | 1 | 254 | 19m 3s | `test_wycheproof_hkdf.py` (5m 25s) | passed |
+| `nss-main` | 1 | 254 | 19m 17s | `test_wycheproof_hkdf.py` (5m 33s) | passed |
+| `nss-slot0` | 1 | 39 | 2m 7s | `test_ffi_length_boundary.py` (1m 2s) | failed |
+| `nss-pqc-slot0` | 1 | 39 | 2m 1s | `test_ffi_length_boundary.py` (58s) | failed |
+| `nss-main-slot0` | 1 | 39 | 2m 7s | `test_ffi_length_boundary.py` (1m 12s) | failed |
+| `opencryptoki` | 3 | 254 | 15m 37s | `test_wycheproof_ecdsa.py` (2m 11s) | passed |
+| `opencryptoki-master` | 3 | 254 | 15m 26s | `test_wycheproof_ecdsa.py` (2m 16s) | passed |
+| `wolfpkcs11` | 8 | 254 | 1h 26m 37s | `test_wycheproof_ecdsa.py` (8m 19s) | passed |
+| `wolfpkcs11-master` | 8 | 254 | 1h 25m 52s | `test_wycheproof_ecdsa.py` (7m 51s) | failed |
+| `corepkcs11` | 1 | 254 | 16m 28s | `test_wycheproof_ecdsa.py` (9m 56s) | passed |
+| `corepkcs11-main` | 1 | 254 | 16m 32s | `test_wycheproof_ecdsa.py` (10m 4s) | passed |
+| `tpm2` | 1 | 254 | 37m 8s | `test_wycheproof_ecdsa.py` (12m 19s) | passed |
+| `pkcs11-mock` | 1 | 254 | 4m 7s | `test_parameter_validation.py` (19s) | passed |
+| `bouncyhsm` | 16 | 254 | 2h 3m 3s | `test_cfb128.py` (18m 28s) | failed |
 
-These are the sum of per-unit `duration_s` (per-file subprocess isolation), **not**
-wall-clock — the pooled runner (`docker/test_pool.py`) executes targets in parallel,
-so the real sweep wall-clock is far shorter. The large drop vs the 2026-05-27 snapshot
-(opencryptoki ~89-128 → ~13 min, bouncyhsm ~237 → ~98 min, tpm2 ~25 → ~10 min) is the
-module-scoped `p11_module_session` fixture. BouncyHSM remains the slow outlier (AES
-vector tail).
+The current long poles are provider-specific findings rather than pool failures: BouncyHSM
+still spends about 18 minutes each in AES CFB/OFB vector files, and wolfPKCS11 HKDF now
+records a roughly 4-minute crash unit instead of a timeout-length long pole.
 
 ## BouncyHSM Segmented Evidence
 
-> Superseded: the matrix row above is the 2026-05-30 monolithic BouncyHSM full run
-> (`artifacts/bouncyhsm-pooled/`, total 104,980, 8,142 failed). The segmented
-> breakdown below is retained as **2026-05-27 diagnostic detail** for the per-group
-> failure attribution (Wycheproof ECDH, AES-CCM), not as the current headline statistic.
+> Archived: the matrix row above is now the 2026-06-11 16-shard BouncyHSM full pool
+> (`artifacts/bouncyhsm-pooled/`, total 113,340, 2,129 failed, 7 crashed, 0 timeouts).
+> The segmented breakdown below is retained as **2026-05-27 diagnostic detail** for
+> per-group failure attribution (Wycheproof ECDH, AES-CCM), not as the current headline
+> statistic.
 
-BouncyHSM is reachable and configured, but one monolithic full-suite run was
-not used as the headline statistic because AES vector execution entered a
-pathological timeout tail. The current evidence is the sum of completed bounded
-segments:
+BouncyHSM is reachable and configured. Earlier segmented evidence is preserved here
+only to show where the old per-group findings came from; the current headline evidence
+is the latest full pooled/sharded run above:
 
 | Segment | Total | Passed | Failed | Skipped | Xfailed | Crashed | Timeout |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |

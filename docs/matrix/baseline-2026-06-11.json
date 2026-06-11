@@ -1,0 +1,568 @@
+{
+  "generated_at": "2026-06-11",
+  "description": "Combined provider baseline: 2026-06-11 full Docker pool from artifacts/. All 21 pooled Docker targets have results.json, quality.json, and report.jsonl. No target has timeouts. The validation pass compared this pool with older local full-pool snapshots before backup rotation; the latest run is complete and in good shape. Current differences are explained by expanded coverage, file-skip accounting, and known provider findings rather than a broken pool.",
+  "provenance": {
+    "sweep": "artifacts/*-pooled, 2026-06-11 full docker/test_pool.py --all output",
+    "prior_baseline": "docs/matrix/baseline-2026-06-04.json",
+    "comparison_roots_used_before_backup_rotation": [
+      "artifacts3",
+      "artifacts2"
+    ],
+    "current_backup_root": "artifacts2 now mirrors current artifacts/; artifacts3 was removed after validation",
+    "validation": "same 21 provider targets were present across artifacts/ and the older comparison snapshots; latest artifacts/ has complete results.json, quality.json, and report.jsonl for every pooled target; timeout count is zero for every target",
+    "notes": [
+      "BouncyHSM is now represented by a 16-shard full pooled result; AES CFB/OFB remain the slow tail and one additional crash is recorded versus the previous good pool.",
+      "wolfPKCS11 and wolfPKCS11 master are now 8-shard pooled targets; the previous wolfPKCS11 timeout is gone and HKDF is no longer a 90-minute long pole, but release wolfPKCS11 records three more crashes versus the previous good pool.",
+      "corePKCS11 and corePKCS11 main record more failures than the previous good pool because the test universe grew substantially; these are retained as provider findings.",
+      "File-skipped unit counts are now recorded from quality.json and are nonzero for applicable targets."
+    ]
+  },
+  "records": [
+    {
+      "target": "softhsm2",
+      "artifact": "artifacts/softhsm2-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 44887,
+        "failed": 66,
+        "skipped": 60290,
+        "xfailed": 6041,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 111284
+      },
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 17,
+      "summed_duration_s": 783.392,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/acvp/aes/test_wrap.py",
+        "status": "passed",
+        "duration_s": 152.889
+      }
+    },
+    {
+      "target": "softhsm2-generated-iv",
+      "artifact": "artifacts/softhsm2-generated-iv-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 44892,
+        "failed": 63,
+        "skipped": 60288,
+        "xfailed": 6041,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 111284
+      },
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 17,
+      "summed_duration_s": 796.42,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/acvp/aes/test_wrap.py",
+        "status": "passed",
+        "duration_s": 140.379
+      }
+    },
+    {
+      "target": "softhsm2-main",
+      "artifact": "artifacts/softhsm2-main-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 47052,
+        "failed": 63,
+        "skipped": 58699,
+        "xfailed": 5505,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 111319
+      },
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 13,
+      "summed_duration_s": 816.321,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/acvp/aes/test_wrap.py",
+        "status": "passed",
+        "duration_s": 141.568
+      }
+    },
+    {
+      "target": "kryoptic",
+      "artifact": "artifacts/kryoptic-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 58613,
+        "failed": 119,
+        "skipped": 29615,
+        "xfailed": 24247,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 112594
+      },
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 3,
+      "summed_duration_s": 2352.261,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdsa.py",
+        "status": "passed",
+        "duration_s": 559.288
+      }
+    },
+    {
+      "target": "kryoptic-main",
+      "artifact": "artifacts/kryoptic-main-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 58614,
+        "failed": 119,
+        "skipped": 29615,
+        "xfailed": 24246,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 112594
+      },
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 3,
+      "summed_duration_s": 2353.002,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdsa.py",
+        "status": "passed",
+        "duration_s": 556.631
+      }
+    },
+    {
+      "target": "kryoptic-fips",
+      "artifact": "artifacts/kryoptic-fips-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 43939,
+        "failed": 155,
+        "skipped": 37637,
+        "xfailed": 23382,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 12,
+        "timeout": 0,
+        "total": 105125
+      },
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 8,
+      "summed_duration_s": 2420.831,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdsa.py",
+        "status": "passed",
+        "duration_s": 493.811
+      }
+    },
+    {
+      "target": "nss",
+      "artifact": "artifacts/nss-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 38221,
+        "failed": 121,
+        "skipped": 71257,
+        "xfailed": 2089,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 6,
+        "timeout": 0,
+        "total": 111694
+      },
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 7,
+      "summed_duration_s": 1189.752,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_hkdf.py",
+        "status": "passed",
+        "duration_s": 316.058
+      }
+    },
+    {
+      "target": "nss-pqc",
+      "artifact": "artifacts/nss-pqc-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 36752,
+        "failed": 109,
+        "skipped": 72880,
+        "xfailed": 1997,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 7,
+        "timeout": 0,
+        "total": 111745
+      },
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 11,
+      "summed_duration_s": 1143.221,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_hkdf.py",
+        "status": "passed",
+        "duration_s": 325.363
+      }
+    },
+    {
+      "target": "nss-main",
+      "artifact": "artifacts/nss-main-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 36750,
+        "failed": 110,
+        "skipped": 72880,
+        "xfailed": 1998,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 7,
+        "timeout": 0,
+        "total": 111745
+      },
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 11,
+      "summed_duration_s": 1156.896,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_hkdf.py",
+        "status": "passed",
+        "duration_s": 333.382
+      }
+    },
+    {
+      "target": "nss-slot0",
+      "artifact": "artifacts/nss-slot0-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 1441,
+        "failed": 59,
+        "skipped": 693,
+        "xfailed": 192,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 6,
+        "timeout": 0,
+        "total": 2391
+      },
+      "shards": 1,
+      "units": 39,
+      "file_skipped_units": 0,
+      "summed_duration_s": 127.074,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+        "status": "failed",
+        "duration_s": 61.849
+      }
+    },
+    {
+      "target": "nss-pqc-slot0",
+      "artifact": "artifacts/nss-pqc-slot0-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 1471,
+        "failed": 59,
+        "skipped": 710,
+        "xfailed": 195,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 7,
+        "timeout": 0,
+        "total": 2442
+      },
+      "shards": 1,
+      "units": 39,
+      "file_skipped_units": 0,
+      "summed_duration_s": 120.658,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+        "status": "failed",
+        "duration_s": 58.481
+      }
+    },
+    {
+      "target": "nss-main-slot0",
+      "artifact": "artifacts/nss-main-slot0-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 1471,
+        "failed": 59,
+        "skipped": 710,
+        "xfailed": 195,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 7,
+        "timeout": 0,
+        "total": 2442
+      },
+      "shards": 1,
+      "units": 39,
+      "file_skipped_units": 0,
+      "summed_duration_s": 127.078,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+        "status": "failed",
+        "duration_s": 71.779
+      }
+    },
+    {
+      "target": "opencryptoki",
+      "artifact": "artifacts/opencryptoki-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 64438,
+        "failed": 199,
+        "skipped": 45611,
+        "xfailed": 2374,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 112622
+      },
+      "shards": 3,
+      "units": 254,
+      "file_skipped_units": 8,
+      "summed_duration_s": 936.858,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdsa.py",
+        "status": "passed",
+        "duration_s": 131.232
+      }
+    },
+    {
+      "target": "opencryptoki-master",
+      "artifact": "artifacts/opencryptoki-master-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 64437,
+        "failed": 199,
+        "skipped": 45611,
+        "xfailed": 2375,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 112622
+      },
+      "shards": 3,
+      "units": 254,
+      "file_skipped_units": 8,
+      "summed_duration_s": 926.29,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdsa.py",
+        "status": "passed",
+        "duration_s": 135.782
+      }
+    },
+    {
+      "target": "wolfpkcs11",
+      "artifact": "artifacts/wolfpkcs11-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 46544,
+        "failed": 876,
+        "skipped": 47438,
+        "xfailed": 15916,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 18,
+        "timeout": 0,
+        "total": 110792
+      },
+      "shards": 8,
+      "units": 254,
+      "file_skipped_units": 15,
+      "summed_duration_s": 5196.745,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdsa.py",
+        "status": "passed",
+        "duration_s": 498.837
+      }
+    },
+    {
+      "target": "wolfpkcs11-master",
+      "artifact": "artifacts/wolfpkcs11-master-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 48627,
+        "failed": 464,
+        "skipped": 47812,
+        "xfailed": 13982,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 4,
+        "timeout": 0,
+        "total": 110889
+      },
+      "shards": 8,
+      "units": 254,
+      "file_skipped_units": 11,
+      "summed_duration_s": 5151.747,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdsa.py",
+        "status": "failed",
+        "duration_s": 471.434
+      }
+    },
+    {
+      "target": "corepkcs11",
+      "artifact": "artifacts/corepkcs11-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 11088,
+        "failed": 680,
+        "skipped": 88553,
+        "xfailed": 9818,
+        "xpassed": 0,
+        "error": 3,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 110142
+      },
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 23,
+      "summed_duration_s": 987.662,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdsa.py",
+        "status": "passed",
+        "duration_s": 595.608
+      }
+    },
+    {
+      "target": "corepkcs11-main",
+      "artifact": "artifacts/corepkcs11-main-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 11088,
+        "failed": 680,
+        "skipped": 88553,
+        "xfailed": 9818,
+        "xpassed": 0,
+        "error": 3,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 110142
+      },
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 23,
+      "summed_duration_s": 992.271,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdsa.py",
+        "status": "passed",
+        "duration_s": 604.479
+      }
+    },
+    {
+      "target": "tpm2",
+      "artifact": "artifacts/tpm2-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 18134,
+        "failed": 49,
+        "skipped": 66905,
+        "xfailed": 25492,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 110580
+      },
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 20,
+      "summed_duration_s": 2228.094,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdsa.py",
+        "status": "passed",
+        "duration_s": 738.92
+      }
+    },
+    {
+      "target": "pkcs11-mock",
+      "artifact": "artifacts/pkcs11-mock-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 737,
+        "failed": 267,
+        "skipped": 109098,
+        "xfailed": 71,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 110173
+      },
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 25,
+      "summed_duration_s": 246.939,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/security/test_parameter_validation.py",
+        "status": "passed",
+        "duration_s": 18.965
+      }
+    },
+    {
+      "target": "bouncyhsm",
+      "artifact": "artifacts/bouncyhsm-pooled",
+      "sweep_date": "2026-06-11",
+      "cascade_fix_status": "post-fix",
+      "summary": {
+        "passed": 54186,
+        "failed": 2129,
+        "skipped": 41160,
+        "xfailed": 15858,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 7,
+        "timeout": 0,
+        "total": 113340
+      },
+      "shards": 16,
+      "units": 254,
+      "file_skipped_units": 4,
+      "summed_duration_s": 7382.914,
+      "top_duration_unit": {
+        "target": "src/pkcs11_check/testcases/acvp/aes/test_cfb128.py",
+        "status": "failed",
+        "duration_s": 1108.007
+      }
+    }
+  ]
+}

@@ -1,227 +1,426 @@
 {
-  "generated_at": "2026-05-27T00:00:00Z",
-  "generated_from": "current artifacts/<target>/quality.json summaries (regenerated 2026-05-27)",
+  "generated_at": "2026-06-11T00:00:00Z",
+  "generated_from": "latest full docker/test_pool.py --all output in artifacts/<target>-pooled; regenerated 2026-06-11",
   "records": [
     {
-      "artifact": "artifacts/softhsm2/results.json",
+      "target": "softhsm2",
+      "artifact": "artifacts/softhsm2-pooled/results.json",
       "source": "SoftHSM2 2.7.0, OpenSSL 3.6.2",
       "status": "full",
       "summary": {
-        "crashed": 0,
+        "passed": 44887,
+        "failed": 66,
+        "skipped": 60290,
+        "xfailed": 6041,
+        "xpassed": 0,
         "error": 0,
-        "failed": 85,
-        "passed": 44878,
-        "skipped": 32267,
+        "crashed": 0,
         "timeout": 0,
-        "total": 82105,
-        "xfailed": 4875,
-        "xpassed": 0
+        "total": 111284
       },
-      "target": "softhsm2"
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 17
     },
     {
-      "artifact": "artifacts/softhsm2-main/results.json",
+      "target": "softhsm2-generated-iv",
+      "artifact": "artifacts/softhsm2-generated-iv-pooled/results.json",
+      "source": "SoftHSM2 2.7.0 + generated-IV patch, OpenSSL 3.6.2",
+      "status": "full",
+      "summary": {
+        "passed": 44892,
+        "failed": 63,
+        "skipped": 60288,
+        "xfailed": 6041,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 111284
+      },
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 17
+    },
+    {
+      "target": "softhsm2-main",
+      "artifact": "artifacts/softhsm2-main-pooled/results.json",
       "source": "SoftHSM2 main, OpenSSL 4.0.0",
       "status": "full",
       "summary": {
-        "crashed": 0,
+        "passed": 47052,
+        "failed": 63,
+        "skipped": 58699,
+        "xfailed": 5505,
+        "xpassed": 0,
         "error": 0,
-        "failed": 97,
-        "passed": 46301,
-        "skipped": 31526,
+        "crashed": 0,
         "timeout": 0,
-        "total": 82884,
-        "xfailed": 4960,
-        "xpassed": 0
+        "total": 111319
       },
-      "target": "softhsm2-main"
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 13
     },
     {
-      "artifact": "artifacts/kryoptic/results.json",
-      "source": "Kryoptic v1.5.0, OpenSSL 4.0.0",
+      "target": "kryoptic",
+      "artifact": "artifacts/kryoptic-pooled/results.json",
+      "source": "Kryoptic v1.5.1, OpenSSL 4.0.0",
       "status": "full",
       "summary": {
-        "crashed": 0,
+        "passed": 58613,
+        "failed": 119,
+        "skipped": 29615,
+        "xfailed": 24247,
+        "xpassed": 0,
         "error": 0,
-        "failed": 115,
-        "passed": 51645,
-        "skipped": 44756,
+        "crashed": 0,
         "timeout": 0,
-        "total": 108611,
-        "xfailed": 12095,
-        "xpassed": 0
+        "total": 112594
       },
-      "target": "kryoptic"
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 3
     },
     {
-      "artifact": "artifacts/kryoptic-main/results.json",
+      "target": "kryoptic-main",
+      "artifact": "artifacts/kryoptic-main-pooled/results.json",
       "source": "Kryoptic main, OpenSSL 4.0.0",
       "status": "full",
       "summary": {
-        "crashed": 0,
+        "passed": 58614,
+        "failed": 119,
+        "skipped": 29615,
+        "xfailed": 24246,
+        "xpassed": 0,
         "error": 0,
-        "failed": 106,
-        "passed": 51660,
-        "skipped": 44755,
+        "crashed": 0,
         "timeout": 0,
-        "total": 108611,
-        "xfailed": 12090,
-        "xpassed": 0
+        "total": 112594
       },
-      "target": "kryoptic-main"
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 3
     },
     {
-      "artifact": "artifacts/kryoptic-fips/results.json",
+      "target": "kryoptic-fips",
+      "artifact": "artifacts/kryoptic-fips-pooled/results.json",
       "source": "Kryoptic FIPS/PQC + custom OpenSSL branch",
       "status": "full diagnostic",
       "summary": {
+        "passed": 43939,
+        "failed": 155,
+        "skipped": 37637,
+        "xfailed": 23382,
+        "xpassed": 0,
+        "error": 0,
         "crashed": 12,
-        "error": 0,
-        "failed": 70,
-        "passed": 37071,
-        "skipped": 44558,
         "timeout": 0,
-        "total": 92534,
-        "xfailed": 10823,
-        "xpassed": 0
+        "total": 105125
       },
-      "target": "kryoptic-fips"
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 8
     },
     {
-      "artifact": "artifacts/nss/results.json",
-      "source": "Fedora NSS softoken package",
+      "target": "nss",
+      "artifact": "artifacts/nss-pooled/results.json",
+      "source": "Fedora NSS softoken package (slot 1)",
       "status": "full",
       "summary": {
-        "crashed": 3,
+        "passed": 38221,
+        "failed": 121,
+        "skipped": 71257,
+        "xfailed": 2089,
+        "xpassed": 0,
         "error": 0,
-        "failed": 151,
-        "passed": 38271,
-        "skipped": 53184,
+        "crashed": 6,
         "timeout": 0,
-        "total": 92972,
-        "xfailed": 1363,
-        "xpassed": 0
+        "total": 111694
       },
-      "target": "nss"
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 7
     },
     {
-      "artifact": "artifacts/nss-pqc/results.json",
-      "source": "NSS/NSPR RTM tags (identical to nss-main; confirm/rerun)",
+      "target": "nss-pqc",
+      "artifact": "artifacts/nss-pqc-pooled/results.json",
+      "source": "NSS/NSPR RTM tags (slot 1)",
       "status": "full",
       "summary": {
-        "crashed": 4,
+        "passed": 36752,
+        "failed": 109,
+        "skipped": 72880,
+        "xfailed": 1997,
+        "xpassed": 0,
         "error": 0,
-        "failed": 119,
-        "passed": 36916,
-        "skipped": 53957,
+        "crashed": 7,
         "timeout": 0,
-        "total": 92276,
-        "xfailed": 1280,
-        "xpassed": 0
+        "total": 111745
       },
-      "target": "nss-pqc"
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 11
     },
     {
-      "artifact": "artifacts/nss-main/results.json",
-      "source": "NSS/NSPR source tips",
+      "target": "nss-main",
+      "artifact": "artifacts/nss-main-pooled/results.json",
+      "source": "NSS/NSPR source tips (slot 1)",
       "status": "full",
       "summary": {
-        "crashed": 4,
+        "passed": 36750,
+        "failed": 110,
+        "skipped": 72880,
+        "xfailed": 1998,
+        "xpassed": 0,
         "error": 0,
-        "failed": 119,
-        "passed": 36916,
-        "skipped": 53957,
+        "crashed": 7,
         "timeout": 0,
-        "total": 92276,
-        "xfailed": 1280,
-        "xpassed": 0
+        "total": 111745
       },
-      "target": "nss-main"
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 11
     },
     {
-      "artifact": "artifacts/opencryptoki/results.json",
+      "target": "nss-slot0",
+      "artifact": "artifacts/nss-slot0-pooled/results.json",
+      "source": "Fedora NSS softoken, slot 0 (Internal Crypto Services); scoped to slot-0-unique files",
+      "status": "slot-0-scoped",
+      "summary": {
+        "passed": 1441,
+        "failed": 59,
+        "skipped": 693,
+        "xfailed": 192,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 6,
+        "timeout": 0,
+        "total": 2391
+      },
+      "shards": 1,
+      "units": 39,
+      "file_skipped_units": 0
+    },
+    {
+      "target": "nss-pqc-slot0",
+      "artifact": "artifacts/nss-pqc-slot0-pooled/results.json",
+      "source": "NSS/NSPR RTM tags, slot 0; scoped",
+      "status": "slot-0-scoped",
+      "summary": {
+        "passed": 1471,
+        "failed": 59,
+        "skipped": 710,
+        "xfailed": 195,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 7,
+        "timeout": 0,
+        "total": 2442
+      },
+      "shards": 1,
+      "units": 39,
+      "file_skipped_units": 0
+    },
+    {
+      "target": "nss-main-slot0",
+      "artifact": "artifacts/nss-main-slot0-pooled/results.json",
+      "source": "NSS/NSPR source tips, slot 0; scoped",
+      "status": "slot-0-scoped",
+      "summary": {
+        "passed": 1471,
+        "failed": 59,
+        "skipped": 710,
+        "xfailed": 195,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 7,
+        "timeout": 0,
+        "total": 2442
+      },
+      "shards": 1,
+      "units": 39,
+      "file_skipped_units": 0
+    },
+    {
+      "target": "opencryptoki",
+      "artifact": "artifacts/opencryptoki-pooled/results.json",
       "source": "OpenCryptoki v3.27.0, OpenSSL 4.0.0",
       "status": "full",
       "summary": {
-        "crashed": 0,
+        "passed": 64438,
+        "failed": 199,
+        "skipped": 45611,
+        "xfailed": 2374,
+        "xpassed": 0,
         "error": 0,
-        "failed": 270,
-        "passed": 63262,
-        "skipped": 32922,
+        "crashed": 0,
         "timeout": 0,
-        "total": 97356,
-        "xfailed": 902,
-        "xpassed": 0
+        "total": 112622
       },
-      "target": "opencryptoki"
+      "shards": 3,
+      "units": 254,
+      "file_skipped_units": 8
     },
     {
-      "artifact": "artifacts/opencryptoki-master/results.json",
+      "target": "opencryptoki-master",
+      "artifact": "artifacts/opencryptoki-master-pooled/results.json",
       "source": "OpenCryptoki master, OpenSSL 4.0.0",
       "status": "full",
       "summary": {
-        "crashed": 0,
+        "passed": 64437,
+        "failed": 199,
+        "skipped": 45611,
+        "xfailed": 2375,
+        "xpassed": 0,
         "error": 0,
-        "failed": 271,
-        "passed": 63261,
-        "skipped": 32922,
+        "crashed": 0,
         "timeout": 0,
-        "total": 97356,
-        "xfailed": 902,
-        "xpassed": 0
+        "total": 112622
       },
-      "target": "opencryptoki-master"
+      "shards": 3,
+      "units": 254,
+      "file_skipped_units": 8
     },
     {
-      "artifact": "artifacts/tpm2/results.json",
+      "target": "wolfpkcs11",
+      "artifact": "artifacts/wolfpkcs11-pooled/results.json",
+      "source": "wolfPKCS11 v2.0.0-stable, wolfSSL v5.9.1-stable",
+      "status": "full",
+      "summary": {
+        "passed": 46544,
+        "failed": 876,
+        "skipped": 47438,
+        "xfailed": 15916,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 18,
+        "timeout": 0,
+        "total": 110792
+      },
+      "shards": 8,
+      "units": 254,
+      "file_skipped_units": 15
+    },
+    {
+      "target": "wolfpkcs11-master",
+      "artifact": "artifacts/wolfpkcs11-master-pooled/results.json",
+      "source": "wolfPKCS11 master, wolfSSL master, PKCS#11 v3.2/PQC enabled",
+      "status": "full",
+      "summary": {
+        "passed": 48627,
+        "failed": 464,
+        "skipped": 47812,
+        "xfailed": 13982,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 4,
+        "timeout": 0,
+        "total": 110889
+      },
+      "shards": 8,
+      "units": 254,
+      "file_skipped_units": 11
+    },
+    {
+      "target": "corepkcs11",
+      "artifact": "artifacts/corepkcs11-pooled/results.json",
+      "source": "corePKCS11 v3.6.4 MbedTLS software mock",
+      "status": "full",
+      "summary": {
+        "passed": 11088,
+        "failed": 680,
+        "skipped": 88553,
+        "xfailed": 9818,
+        "xpassed": 0,
+        "error": 3,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 110142
+      },
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 23
+    },
+    {
+      "target": "corepkcs11-main",
+      "artifact": "artifacts/corepkcs11-main-pooled/results.json",
+      "source": "corePKCS11 main MbedTLS software mock",
+      "status": "full",
+      "summary": {
+        "passed": 11088,
+        "failed": 680,
+        "skipped": 88553,
+        "xfailed": 9818,
+        "xpassed": 0,
+        "error": 3,
+        "crashed": 0,
+        "timeout": 0,
+        "total": 110142
+      },
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 23
+    },
+    {
+      "target": "tpm2",
+      "artifact": "artifacts/tpm2-pooled/results.json",
       "source": "source-built tpm2-pkcs11 1.10.0",
       "status": "full",
       "summary": {
-        "crashed": 0,
+        "passed": 18134,
+        "failed": 49,
+        "skipped": 66905,
+        "xfailed": 25492,
+        "xpassed": 0,
         "error": 0,
-        "failed": 213,
-        "passed": 8306,
-        "skipped": 68534,
+        "crashed": 0,
         "timeout": 0,
-        "total": 81357,
-        "xfailed": 4304,
-        "xpassed": 0
+        "total": 110580
       },
-      "target": "tpm2"
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 20
     },
     {
-      "artifact": "artifacts/pkcs11-mock/results.json",
+      "target": "pkcs11-mock",
+      "artifact": "artifacts/pkcs11-mock-pooled/results.json",
       "source": "pkcs11-mock v2.0.0",
       "status": "full mock baseline",
       "summary": {
-        "crashed": 0,
+        "passed": 737,
+        "failed": 267,
+        "skipped": 109098,
+        "xfailed": 71,
+        "xpassed": 0,
         "error": 0,
-        "failed": 1353,
-        "passed": 1320,
-        "skipped": 28866,
+        "crashed": 0,
         "timeout": 0,
-        "total": 32590,
-        "xfailed": 1051,
-        "xpassed": 0
+        "total": 110173
       },
-      "target": "pkcs11-mock"
+      "shards": 1,
+      "units": 254,
+      "file_skipped_units": 25
     },
     {
-      "artifact": "artifacts/bouncyhsm/results.json",
-      "source": "BouncyHSM v2.1.0",
+      "target": "bouncyhsm",
+      "artifact": "artifacts/bouncyhsm-pooled/results.json",
+      "source": "BouncyHSM v2.1.1",
       "status": "full",
       "summary": {
-        "crashed": 5,
+        "passed": 54186,
+        "failed": 2129,
+        "skipped": 41160,
+        "xfailed": 15858,
+        "xpassed": 0,
         "error": 0,
-        "failed": 7692,
-        "passed": 55485,
-        "skipped": 36233,
+        "crashed": 7,
         "timeout": 0,
-        "total": 108118,
-        "xfailed": 8703,
-        "xpassed": 0
+        "total": 113340
       },
-      "target": "bouncyhsm"
+      "shards": 16,
+      "units": 254,
+      "file_skipped_units": 4
     }
   ]
 }
