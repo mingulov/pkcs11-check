@@ -37,7 +37,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases.conftest import import_secret_key_negotiated
 
-pytestmark = [pytest.mark.wycheproof]
+pytestmark = [pytest.mark.wycheproof, pytest.mark.subprocess_per_test]
 REQUIRED_MECHANISMS = ["HKDF_DERIVE"]
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402

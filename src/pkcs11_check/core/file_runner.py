@@ -414,12 +414,23 @@ def _group_results_by_file(
         file_results = groups[file_target]
         merged_counts: dict[str, int] = {key: 0 for key in _DETAIL_COUNT_KEYS}
         merged_tests: list[dict[str, Any]] = []
+        merged_skip_reasons: dict[str, int] = {}
+        file_skip = False
         for r in file_results:
-            detail = details.get(r.target, {})
+            detail = _copy_detail(details.get(r.target, {}))
             for key in merged_counts:
                 merged_counts[key] += detail.get("counts", {}).get(key, 0)
             merged_tests.extend(detail.get("tests", []))
-        out.append((file_target, file_results, {"counts": merged_counts, "tests": merged_tests}))
+            for reason, count in detail.get("skip_reasons", {}).items():
+                merged_skip_reasons[reason] = merged_skip_reasons.get(reason, 0) + count
+            if detail.get("file_skip"):
+                file_skip = True
+        merged_detail: dict[str, Any] = {"counts": merged_counts, "tests": merged_tests}
+        if merged_skip_reasons:
+            merged_detail["skip_reasons"] = merged_skip_reasons
+        if file_skip:
+            merged_detail["file_skip"] = True
+        out.append((file_target, file_results, merged_detail))
     return out
 
 
@@ -2321,9 +2332,9 @@ def run_isolated_pytest_units(
                 state.report_records_by_unit.pop(unit, None)
             console.print(f"[cyan][{index + 1}/{len(units)}][/cyan] {unit}")
 
-            # -- File-level mechanism skip --
+            # -- Static mechanism skip --
             if available_mechanisms is not None:
-                required = extract_required_mechanisms(unit)
+                required = extract_required_mechanisms(unit.split("::", 1)[0])
                 if required is not None:
                     missing = [m for m in required if m not in available_mechanisms]
                     if missing:
