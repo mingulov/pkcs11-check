@@ -960,8 +960,9 @@ call records, across 34 files** (matches the bucket counts in the triage brief).
 the cross-provider split is on identical test ids), and against the §NSS / §NSS-PQC / §NSS-main
 sections of [module-issues.md](../module-issues.md). The ChaCha20-Poly1305 KAT vector was decoded
 and recomputed independently against the RFC 8439 / OpenSSL reference to decide vector-vs-module
-fault. No harness bug was proven on nss this pass — every failing test is sound and provider-general
-(the cross-provider splits are the proof), so this is a **documentation-only** triage.
+fault. **Note (post-triage correction):** the `test_mech_encrypt` ChaCha bucket was subsequently
+proven to be a **harness bug**, not an NSS bug — see the HARNESS BUG determination below and the
+retraction in module-issues.md §NSS.
 
 ### Bucket table (file → count → determination)
 
@@ -986,7 +987,7 @@ fault. No harness bug was proven on nss this pass — every failing test is soun
 | 2 | `security/test_padding_oracle.py` | 📋 noise | **KNOWN** — probabilistic AES-CBC-PAD Vaudenay (`CKR_OK_DIFFERENT`=1) + RSA-OAEP Manger non-uniform error codes. Documented cross-run nondeterminism ([[reference_oracle_tests_probabilistic]]); verify-don't-alarm. |
 | 2 | `security/test_recover_length_boundary.py` | 💥/📋 | **KNOWN** — `C_SignRecover` isize_max+1 accepted + `C_VerifyRecover` one-byte-output guard subprocess fail. C-cluster value-shape / buffer-guard, KEEP. |
 | 2 | `test_remaining_gaps.py` | 📋 | **KNOWN** — `CKA_UNWRAP_TEMPLATE`/`CKA_WRAP_TEMPLATE` created-object/target-attribute enforcement (Type-B). softoken attribute-non-enforcement family (umbrella note). |
-| 1 | `test_mech_encrypt.py` | 📋 ⚠️**NEW** | **GENUINE nss ChaCha20-Poly1305 KAT mismatch (Type-A; param-layout root-cause DEFERRED to docker).** nss `C_Encrypt(CKM_CHACHA20_POLY1305)` accepts the standard `CK_SALSA20_CHACHA20_POLY1305_PARAMS` and returns ciphertext `257028bd…` ≠ the RFC-8439 reference (independently recomputed = the harness vector `b2af6bdc…`, verified correct). See determination below. |
+| 1 | `test_mech_encrypt.py` | 🔧 ⚠️**RETRACTED→HARNESS BUG FIXED** | **HARNESS BUG, not an NSS finding.** `build_params_from_vector` had no `chacha20_poly1305` branch and fell through to `build_test_params`, generating a fresh random nonce instead of the vector's `iv_hex`. Encrypting under a random nonce then comparing against a fixed-nonce KAT vector is unpassable by any correct module. Fixed: `chacha20_poly1305` branch added to `build_params_from_vector`; regression test `tests/test_chacha_kat_params.py`. NSS is NOT at fault. See full determination below. |
 | 1 | `test_mech_wrap.py` | 📋 ⚠️**NEW** | **GENUINE nss `CKM_RSA_X_509` unwrap finding (Type-A roundtrip break).** nss derives the unwrapped AES key from the **leading** bytes of the raw RSA block; `CKM_RSA_X_509` right-justifies the key (trailing bytes). The harness `_raw_rsa_unwrap_hint` confirms `unwrapped == leading ≠ trailing`. wrap→unwrap on the same module recovers a different key. Stays `fail`. See determination below. |
 | 1 | `acvp/aes/test_cts_detect.py` | 📋 | **KNOWN** — nss advertises `CKM_AES_CTS` but errors on CTS encrypt probes (CTS non-functional). Advertised-but-not-operational; recorded module-issues.md §NSS (mechanism fuzz). |
 | 1 | `ckr/test_ckr_general.py` | 📋 ⚠️**NEW(minor)** | nss accepts `C_Finalize` after `C_Finalize` (`finalize_accepted`) where spec wants `CKR_CRYPTOKI_NOT_INITIALIZED`; softhsm2/kryoptic/opencryptoki reject. Lifecycle deviation (nss + wolfpkcs11). Stays `fail`; minor, recorded here. |
@@ -1087,33 +1088,29 @@ documented module-issues.md §NSS.**
   as such. `ffi_null_pointer` (7, NULL *data*-with-nonzero-len) stays in the broad C-cluster KEEP set.
 - **Confidence: HIGH.** Direct `returncode<0` signal-11 records + a clean cross-provider survival split.
 
-### NEW — `test_mech_encrypt::test_kat_vector[CHACHA20_POLY1305]` (1) = GENUINE nss Type-A KAT mismatch (param-layout root-cause DEFERRED)
+### RETRACTED — `test_mech_encrypt::test_kat_vector[CHACHA20_POLY1305]` (1) = HARNESS BUG (param-wiring), NOT nss Type-A
 
-**Verdict: GENUINE Type-A (positive op, `CKR_OK` + WRONG output). Stays `fail`. Root-cause
-(genuine crypto bug vs nss's documented non-standard AEAD param layout) DEFERRED to a focused docker
-run — recorded honestly, not reclassified.**
+**Verdict: HARNESS BUG. The original "GENUINE Type-A" determination was incorrect. Retracted.**
 
-- **What.** nss accepts the standard `CK_SALSA20_CHACHA20_POLY1305_PARAMS` (`pNonce`/`ulNonceLen`,
-  `pAAD`/`ulAADLen`; 12-byte nonce, 16-byte AAD, 256-bit key) at `C_Encrypt` and returns ciphertext
-  `257028bd…` (32 B) + tag `b0312a45…`, which does **not** equal the vector.
-- **The vector is correct (verified independently).** Recomputed the KAT with
-  `cryptography`/OpenSSL `ChaCha20Poly1305.encrypt(iv, pt, aad)` → ct `b2af6bdc…`, tag `fc9c3b3b…`,
-  **byte-identical to the stored vector**. So the harness KAT is RFC-8439-correct; nss's output is
-  wrong. Per the model a positive op returning `CKR_OK` with wrong output is Type-A → `fail` (correct).
-- **Not a shared harness param bug.** bouncyhsm also fails this vector but with a **different** wrong
-  ciphertext (`dca3f69b…`); a shared harness miscomputation would give identical wrong output on both.
-  The builder uses the spec-standard struct.
-- **Why root-cause is deferred (honest).** module-issues.md §NSS already documents that nss's
-  ChaCha20-Poly1305 uses a **non-standard parameter format** (historically `CK_NSS_AEAD_PARAMS` with an
-  extra `ulTagLen`), which is why the Wycheproof path *rejects* the standard struct at `C_EncryptInit`
-  and xfails. Here nss *accepts* and computes — so either (i) nss genuinely mis-encrypts, or (ii) nss
-  silently reads the standard struct under its non-standard layout and encrypts under a shifted
-  nonce/tag-len. Distinguishing (i) vs (ii) needs a focused docker run that re-encrypts under
-  `CK_NSS_AEAD_PARAMS` and compares; cannot be settled from static pool data. The verdict (`fail`) is
-  the same under the model either way (wrong output on a valid input); only the upstream-report wording
-  depends on it. **Deferred to docker; flagged, not reclassified.**
-- **Confidence: HIGH that it `fail`s correctly; MEDIUM on the precise root cause** (the param-layout
-  caveat is why root-cause is deferred).
+- **Root cause.** `build_params_from_vector` in `mechanism_helpers.py` had no `chacha20_poly1305`
+  branch. The function fell through to `build_test_params`, which generates a **fresh random nonce**
+  with `aad=None` and ignores the vector's `iv_hex`/`aad_hex` entirely. Encrypting under a random
+  nonce and comparing against a fixed-nonce KAT vector is unpassable by any correct module — the
+  test was guaranteed to produce a ciphertext mismatch regardless of the module's correctness.
+- **Evidence from verification.** Five nss and bouncyhsm pools each produced a *different* "wrong"
+  ciphertext (nondeterministic, matching the random-nonce signature). NSS passes 325/325 Wycheproof
+  ChaCha vectors through the standard `mech_chacha20_poly1305` packer, proving NSS consumes
+  `CK_SALSA20_CHACHA20_POLY1305_PARAMS` correctly. bouncyhsm failing the same vector with a
+  *different* wrong ciphertext is also explained by random nonce (each pool draw a new nonce).
+- **The "vector independently recomputed" check was sound but insufficient.** The KAT vector IS
+  RFC-8439-correct; what the triage did not catch was that the harness was never feeding that
+  vector's nonce to the module at all.
+- **Fix.** A `chacha20_poly1305` branch was added to `build_params_from_vector` (analogous to the
+  `gcm`/`ccm` branches) that reads `iv_hex` as nonce and `aad_hex` as optional AAD. Regression
+  test: `tests/test_chacha_kat_params.py` (3 cases: vector nonce wired, no-AAD path, no-iv fallback).
+- **nss is not at fault.** This entry is removed from the NSS finding list (module-issues.md §NSS
+  retracted the Type-A entry and replaced it with a harness-bug note).
+- **Confidence: HIGH (the harness bug is proven and fixed; regression test is GREEN).**
 
 ### NEW — `test_mech_wrap::test_wrap_unwrap_aes_key[RSA_X_509]` (1) = GENUINE nss Type-A unwrap break
 
@@ -1121,26 +1118,32 @@ run — recorded honestly, not reclassified.**
 change.**
 
 - **What.** With `CKM_RSA_X_509` (raw RSA, no padding) the decrypted block is a full modulus-width
-  block with the 16-byte AES key **right-justified** (trailing bytes, zero-padded on the left). nss
-  derives the unwrapped key from the **leading** bytes instead; the harness `_raw_rsa_unwrap_hint`
-  confirms `unwrapped_value == leading and != trailing`. A wrap→unwrap on the same nss module recovers
-  a different AES key (`2643ad30…` vs the original `5aa55aa5…`).
-- **Why it's the wrong thing (Type-A).** `CKM_RSA_X_509` unwrap must take the key from the low-order
-  (trailing) bytes of the raw block; taking the leading bytes yields a wrong key — a self-inconsistent
-  roundtrip (a real application would get garbage key material). opencryptoki passes this exact id.
+  block with the key **right-justified** (spec §6.1.12: key bytes taken from the *end* of the
+  block, zero-padded on the left). NSS softoken reads `CKA_VALUE` as the **first** `ulValueLen`
+  bytes instead (leading bytes). With RSA-2048 and a 16-byte AES key the leading 16 bytes are all
+  zeros (the zero-padding), so the unwrapped key is observationally zero-filled. The harness
+  `_raw_rsa_unwrap_hint` confirms `unwrapped_value == leading and != trailing`: `2643ad30…` is
+  the wrong decryption output (leading-bytes read), and `5aa55aa5…` is the original test plaintext
+  (the AES key being wrapped/unwrapped). A wrap→unwrap on the same nss module recovers incorrect
+  key material.
+- **Why it's the wrong thing (Type-A).** `CKM_RSA_X_509` unwrap must take the key from the
+  low-order (trailing) bytes of the raw block; taking the leading bytes yields wrong key material —
+  a self-inconsistent roundtrip (a real application would get garbage). opencryptoki passes this id.
 - **Confidence: HIGH.** Direct decrypt-mismatch + the leading-vs-trailing diagnostic, and a passing
   cross-provider comparator (opencryptoki).
 
 ### Code + docs this triage
 
-- **No code change.** No harness bug was proven on nss — every failing test is sound and
-  provider-general (the cross-provider splits are the proof). The two harness over-strictness classes
+- **Post-triage harness fix.** Adversarial verification after this triage session proved the
+  `test_mech_encrypt` ChaCha20-Poly1305 bucket was a harness param-wiring bug (see RETRACTED
+  section above). The `chacha20_poly1305` branch was added to `build_params_from_vector`;
+  regression test `tests/test_chacha_kat_params.py` guards the fix.
+- **No other code change.** All other failing tests are sound and provider-general
+  (the cross-provider splits are the proof). The two harness over-strictness classes
   that touch nss (X25519 jwk, ML-DSA-sign clean-reject) were already fixed in the kryoptic pass
   (9908f272 / 439fc3a1) and drop next run.
 - module-issues.md §NSS: NEW entries — attribute-length-validation gap (keygen + object creation);
-  empty-`CKA_ALLOWED_MECHANISMS` Type-B; nss-specific NULL-pointer SIGSEGV family; ChaCha20-Poly1305
-  KAT mismatch (Type-A, param-layout root-cause deferred); `CKM_RSA_X_509` leading-vs-trailing unwrap
-  break (Type-A); minor `C_Finalize`-after-`C_Finalize` acceptance. All stay `fail`
-  ("failures ARE findings").
-- **Deferred (docker):** ChaCha20-Poly1305 KAT param-layout root-cause (genuine mis-encrypt vs
-  non-standard `CK_NSS_AEAD_PARAMS` re-read) — verdict unchanged, only upstream-report wording pends.
+  empty-`CKA_ALLOWED_MECHANISMS` Type-B; nss-specific NULL-pointer SIGSEGV family;
+  `CKM_RSA_X_509` leading-vs-trailing unwrap break (Type-A); minor `C_Finalize`-after-`C_Finalize`
+  acceptance. All stay `fail` ("failures ARE findings"). ChaCha20-Poly1305 entry RETRACTED (harness
+  bug, not NSS bug).

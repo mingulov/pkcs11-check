@@ -924,6 +924,15 @@ def build_params_from_vector(mech_id: int, recipe: ParamRecipe, vec: dict[str, A
             mgf=_resolve_const(d.get("mgf", "CKG_MGF1_SHA256")),
         )
 
+    if style == "chacha20_poly1305":
+        iv_hex_cp: str | None = vp.get("iv_hex")
+        if iv_hex_cp is None:
+            return build_test_params(mech_id, recipe)
+        nonce_cp = bytes.fromhex(iv_hex_cp)
+        aad_hex_cp: str | None = vp.get("aad_hex")
+        aad_cp: bytes | None = bytes.fromhex(aad_hex_cp) if aad_hex_cp else None
+        return mech_chacha20_poly1305(CKM(mech_id), nonce=nonce_cp, aad=aad_cp)
+
     # All other styles (eddsa, ecdh, hkdf, etc.) delegate to random generation
     return build_test_params(mech_id, recipe)
 

@@ -285,25 +285,27 @@ provider package versions where the finding was first recorded.
   C-cluster `test_ffi_null_pointer.py`/`test_ffi_length_boundary.py` NULL-*data*-with-nonzero-length
   and lying-buffer probes remain Denis-KEEP UB.)
 
-- **ChaCha20-Poly1305 KAT ciphertext mismatch (Type-A, NEW 2026-06-11; param-layout root-cause
-  deferred)**: `C_Encrypt(CKM_CHACHA20_POLY1305)` with the standard
-  `CK_SALSA20_CHACHA20_POLY1305_PARAMS` (12-byte nonce, 16-byte AAD, 256-bit key) returns `CKR_OK`
-  with ciphertext `257028bd…`+tag `b0312a45…`, which does **not** match the RFC-8439 reference. The
-  stored KAT vector was recomputed independently (`cryptography`/OpenSSL) → `b2af6bdc…`+`fc9c3b3b…`,
-  byte-identical to the vector, so the vector is correct and NSS's output is wrong (positive op,
-  wrong output → Type-A). Not a shared harness param bug (bouncyhsm fails the same vector with a
-  *different* wrong ciphertext). Root cause — genuine mis-encryption vs NSS silently reading the
-  standard struct under its documented non-standard layout (historically `CK_NSS_AEAD_PARAMS` with an
-  extra `ulTagLen`, see Group 1 below) and encrypting under a shifted nonce — is **deferred to a
-  focused docker run**; the `fail` verdict holds either way, only the upstream-report wording pends.
-  Detected by: `test_mech_encrypt.py::TestMechEncryptKAT::test_kat_vector[CHACHA20_POLY1305]`.
+- **ChaCha20-Poly1305 KAT ciphertext mismatch — RETRACTED (was harness bug, not NSS bug)**: the
+  apparent Type-A finding in `test_mech_encrypt.py::TestMechEncryptKAT::test_kat_vector[CHACHA20_POLY1305]`
+  was caused by a harness param-wiring bug: `build_params_from_vector` had no `chacha20_poly1305`
+  branch and fell through to `build_test_params`, which generates a **fresh random nonce** (ignoring
+  the vector's `iv_hex`/`aad_hex`). Encrypting under a random nonce and comparing against a
+  fixed-nonce KAT vector is unpassable by any correct module. Fixed in the commit that adds the
+  `chacha20_poly1305` branch to `build_params_from_vector` (regression test:
+  `tests/test_chacha_kat_params.py`). This is NOT an NSS bug; NSS correctly processes
+  `CK_SALSA20_CHACHA20_POLY1305_PARAMS` (passes 325/325 Wycheproof ChaCha vectors).
 
 - **`CKM_RSA_X_509` unwrap uses the wrong end of the raw block (Type-A, NEW 2026-06-11)**: with
   `CKM_RSA_X_509` (raw RSA, no padding) the decrypted block is a full modulus-width block with the
-  key right-justified (trailing bytes). NSS derives the unwrapped AES key from the **leading** bytes
-  instead, so a wrap→unwrap roundtrip on the same module recovers a *different* key
-  (`2643ad30…` vs original `5aa55aa5…`). The harness `_raw_rsa_unwrap_hint` confirms
-  `unwrapped == leading != trailing`. opencryptoki passes this id. Detected by:
+  key **right-justified** in the block (spec §6.1.12: key bytes taken from the *end* of the block,
+  zero-padded on the left). NSS softoken instead reads `CKA_VALUE` as the **first** `ulValueLen`
+  bytes of the raw RSA block (leading bytes). With RSA-2048 and a 16-byte AES key, the leading 16
+  bytes are all zeros (the zero-padding), so the unwrapped key is observationally zero-filled rather
+  than the original key material. The harness `_raw_rsa_unwrap_hint` confirms
+  `unwrapped == leading != trailing`: the wrong decryption output (`2643ad30…`) is the leading-bytes
+  read, and `5aa55aa5…` is the original test plaintext (the AES key), not key values in the hint.
+  A wrap→unwrap roundtrip on the same NSS module therefore recovers incorrect key material.
+  opencryptoki passes this id. Detected by:
   `test_mech_wrap.py::TestMechWrapRoundtrip::test_wrap_unwrap_aes_key[RSA_X_509]`. Reportable upstream.
 
 - **`C_Finalize` after `C_Finalize` accepted (minor lifecycle deviation, NEW 2026-06-11)**: a second
@@ -417,9 +419,11 @@ cascade stays bounded), but `C_EncryptFinal` itself not terminating is the bug.
 - **Needs configDir for full functionality**: `libsoftokn3.so` must be loaded with `configDir='sql:/path/to/db'` NSS init args to access the writable database slot. Without this, only the read-only crypto services slot is available. Use the NSS setup in `local-builds/providers/nss-softokn.sh` or the NSS Docker targets as reference configurations.
 - **RSA keypair requires CKA_PUBLIC_EXPONENT**: NSS requires `CKA_PUBLIC_EXPONENT` in the public key template for `CKM_RSA_PKCS_KEY_PAIR_GEN`. Kryoptic and SoftHSM2 are more lenient and accept the default (65537). The recipe now includes this attribute for cross-module compatibility.
 - **CKM_RSA_X_509 unwrap takes the wrong end of the raw RSA block**: For raw RSA unwrap,
-  PKCS#11 requires the key bytes to be taken from the trailing end of the decrypted modulus-sized
-  block. NSS softoken instead appears to derive the unwrapped key from the leading bytes, which
-  yields the wrong AES key value and breaks roundtrip decrypt in `test_mech_wrap.py`.
+  PKCS#11 spec §6.1.12 requires the key bytes to be taken from the **trailing** end of the
+  decrypted modulus-sized block (key is right-justified, zero-padded on the left). NSS softoken
+  reads `CKA_VALUE` from the **leading** bytes instead, which with RSA-2048 and a 16-byte key
+  yields an observationally zero-filled key (the leading bytes are the zero-padding). This breaks
+  the wrap→unwrap roundtrip in `test_mech_wrap.py`.
 - **EdDSA sign/verify rejects CK_EDDSA_PARAMS**: NSS softoken returns `CKR_MECHANISM_PARAM_INVALID`
   when `CK_EDDSA_PARAMS` is provided for `CKM_EDDSA`. NSS requires NULL mechanism params for pure
   EdDSA, contrary to PKCS#11 v3.0 which mandates explicit `CK_EDDSA_PARAMS`. Tests in
