@@ -114,7 +114,7 @@ class TestSessionTypes:
             key_h = gen_aes_key_or_xfail(
                 rs,
                 sh=ro_sh,
-                purpose="RO-session object setup key generation",
+                purpose="RO-session object setup",
             )
             assert key_h != 0
             destroy_quietly(rs.raw, ro_sh, key_h)
