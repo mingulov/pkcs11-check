@@ -9,17 +9,58 @@ PKCS#11 reference: v3.0 Sec.2.42 (BLAKE2b Message Digesting).
 from __future__ import annotations
 
 import hashlib
-from typing import Any
+import hmac
+from ctypes import byref
+from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.raw.recipes import digest_single
+from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_bytes, mech_simple, template
+from pkcs11_check.raw.recipes import (
+    derive_key,
+    destroy_quietly,
+    digest_single,
+    import_secret_key,
+    read_attributes,
+    sign_single,
+    verify_single,
+)
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
+    CK_OBJECT_HANDLE,
+    CKA_DERIVE,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKA_VALUE_LEN,
+    CKA_VERIFY,
+    CKK_BLAKE2B_256_HMAC,
+    CKK_GENERIC_SECRET,
     CKM_BLAKE2B_160,
     CKM_BLAKE2B_256,
+    CKM_BLAKE2B_256_HMAC,
+    CKM_BLAKE2B_256_HMAC_GENERAL,
+    CKM_BLAKE2B_256_KEY_DERIVE,
+    CKM_BLAKE2B_256_KEY_GEN,
     CKM_BLAKE2B_384,
     CKM_BLAKE2B_512,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
@@ -34,6 +75,26 @@ _BLAKE2_MECHS = {
 
 _EMPTY_DIGEST_REJECT_RVS = (CKR_ARGUMENTS_BAD,)
 
+_BLAKE2B_256_LEN = 32
+_BLAKE2B_TEST_KEY = b"pkcs11-check blake2b hmac key"
+_BLAKE2B_TEST_DATA = b"pkcs11-check blake2b keyed data"
+
+_BLAKE2B_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
 
 def _digest_empty_or_xfail(raw: Any, sh: int, mechanism: Any, mech_name: str) -> bytes:
     try:
@@ -41,6 +102,59 @@ def _digest_empty_or_xfail(raw: Any, sh: int, mechanism: Any, mech_name: str) ->
     except AssertionError as exc:
         xfail_if_known_ckr(exc, _EMPTY_DIGEST_REJECT_RVS, f"CKM_{mech_name} empty digest")
         raise
+
+
+def _blake2b_hmac_reference(key: bytes, data: bytes, digest_size: int) -> bytes:
+    def _digest(payload: bytes = b"") -> Any:
+        return hashlib.blake2b(payload, digest_size=digest_size)
+
+    return hmac.new(key, data, _digest).digest()
+
+
+def _xfail_blake2b_reject(exc: AssertionError, label: str) -> NoReturn:
+    xfail_if_known_ckr(exc, _BLAKE2B_RUNTIME_REJECT_RVS, label)
+    raise
+
+
+def _import_blake2b_setup_key(
+    rs: Any,
+    key_value: bytes = _BLAKE2B_TEST_KEY,
+    *,
+    sign: bool = False,
+    verify: bool = False,
+    derive: bool = False,
+) -> int:
+    attrs = {
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_SIGN: sign,
+        CKA_VERIFY: verify,
+        CKA_DERIVE: derive,
+    }
+    try:
+        return import_secret_key(rs.raw, rs.sh, CKK_GENERIC_SECRET, key_value, attrs)
+    except AssertionError as e:
+        _xfail_blake2b_reject(e, "BLAKE2B setup generic-secret import rejected")
+
+
+def _generate_blake2b_256_hmac_key(rs: Any) -> int:
+    tmpl = template(
+        attr_ulong(CKA_VALUE_LEN, _BLAKE2B_256_LEN),
+        attr_bool(CKA_TOKEN, False),
+        attr_bool(CKA_SENSITIVE, False),
+        attr_bool(CKA_EXTRACTABLE, True),
+        attr_bool(CKA_SIGN, True),
+        attr_bool(CKA_VERIFY, True),
+    )
+    handle = CK_OBJECT_HANDLE(0)
+    mech = mech_simple(CKM_BLAKE2B_256_KEY_GEN)
+    rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
+    try:
+        expect_rv(rv, CKR_OK)
+    except AssertionError as e:
+        _xfail_blake2b_reject(e, "BLAKE2B_256_KEY_GEN advertised but keygen failed")
+    return handle.value
 
 
 class TestBlake2bDigestLength:
@@ -178,3 +292,194 @@ class TestBlake2bProperties:
         p11_digest = digest_single(rs.raw, rs.sh, CKM_BLAKE2B_256, data)
         expected = hashlib.blake2b(data, digest_size=32).digest()
         assert p11_digest == expected
+
+
+class TestBlake2bKeyed:
+    """Representative keyed BLAKE2b HMAC, key generation, and key derivation tests."""
+
+    def test_blake2b_256_hmac_matches_reference(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("BLAKE2B_256_HMAC"):
+            pytest.skip("CKM_BLAKE2B_256_HMAC not supported")
+
+        key = _import_blake2b_setup_key(rs, sign=True, verify=True)
+        try:
+            try:
+                mac = sign_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_BLAKE2B_256_HMAC,
+                    _BLAKE2B_TEST_DATA,
+                )
+            except AssertionError as e:
+                _xfail_blake2b_reject(
+                    e,
+                    "BLAKE2B_256_HMAC advertised but sign failed",
+                )
+
+            expected = _blake2b_hmac_reference(
+                _BLAKE2B_TEST_KEY,
+                _BLAKE2B_TEST_DATA,
+                _BLAKE2B_256_LEN,
+            )
+            assert mac == expected
+
+            try:
+                assert verify_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_BLAKE2B_256_HMAC,
+                    _BLAKE2B_TEST_DATA,
+                    mac,
+                )
+            except AssertionError as e:
+                _xfail_blake2b_reject(
+                    e,
+                    "BLAKE2B_256_HMAC advertised but verify failed",
+                )
+
+            tampered = bytes([mac[0] ^ 0x01]) + mac[1:]
+            try:
+                assert not verify_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_BLAKE2B_256_HMAC,
+                    _BLAKE2B_TEST_DATA,
+                    tampered,
+                )
+            except AssertionError as e:
+                _xfail_blake2b_reject(
+                    e,
+                    "BLAKE2B_256_HMAC tampered verify rejected with unexpected CKR",
+                )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_blake2b_256_hmac_general_truncates(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("BLAKE2B_256_HMAC_GENERAL"):
+            pytest.skip("CKM_BLAKE2B_256_HMAC_GENERAL not supported")
+
+        key = _import_blake2b_setup_key(rs, sign=True, verify=True)
+        mac_len = 12
+        mech_param = mech_bytes(
+            CKM_BLAKE2B_256_HMAC_GENERAL,
+            mac_len.to_bytes(8, "little"),
+        )
+        try:
+            try:
+                mac = sign_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_BLAKE2B_256_HMAC_GENERAL,
+                    _BLAKE2B_TEST_DATA,
+                    mech_param=mech_param,
+                )
+            except AssertionError as e:
+                _xfail_blake2b_reject(
+                    e,
+                    "BLAKE2B_256_HMAC_GENERAL advertised but sign failed",
+                )
+
+            expected_full = _blake2b_hmac_reference(
+                _BLAKE2B_TEST_KEY,
+                _BLAKE2B_TEST_DATA,
+                _BLAKE2B_256_LEN,
+            )
+            assert mac == expected_full[:mac_len]
+
+            try:
+                assert verify_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_BLAKE2B_256_HMAC_GENERAL,
+                    _BLAKE2B_TEST_DATA,
+                    mac,
+                    mech_param=mech_param,
+                )
+            except AssertionError as e:
+                _xfail_blake2b_reject(
+                    e,
+                    "BLAKE2B_256_HMAC_GENERAL advertised but verify failed",
+                )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_blake2b_256_key_gen_signs_reference(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("BLAKE2B_256_KEY_GEN"):
+            pytest.skip("CKM_BLAKE2B_256_KEY_GEN not supported")
+        if not rs.has_mechanism("BLAKE2B_256_HMAC"):
+            pytest.skip("CKM_BLAKE2B_256_HMAC not supported")
+
+        key = _generate_blake2b_256_hmac_key(rs)
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_TYPE, CKA_VALUE])
+            assert attrs[CKA_KEY_TYPE] == CKK_BLAKE2B_256_HMAC
+            key_value = attrs[CKA_VALUE]
+            assert isinstance(key_value, bytes)
+            assert len(key_value) == _BLAKE2B_256_LEN
+
+            try:
+                mac = sign_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_BLAKE2B_256_HMAC,
+                    _BLAKE2B_TEST_DATA,
+                )
+            except AssertionError as e:
+                _xfail_blake2b_reject(
+                    e,
+                    "BLAKE2B_256_KEY_GEN produced key but HMAC sign failed",
+                )
+
+            expected = _blake2b_hmac_reference(
+                key_value,
+                _BLAKE2B_TEST_DATA,
+                _BLAKE2B_256_LEN,
+            )
+            assert mac == expected
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_blake2b_256_key_derive_value(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("BLAKE2B_256_KEY_DERIVE"):
+            pytest.skip("CKM_BLAKE2B_256_KEY_DERIVE not supported")
+
+        base = _import_blake2b_setup_key(rs, derive=True)
+        derived = 0
+        try:
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base,
+                    CKM_BLAKE2B_256_KEY_DERIVE,
+                    attrs={
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_VALUE_LEN: _BLAKE2B_256_LEN,
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                )
+            except AssertionError as e:
+                _xfail_blake2b_reject(
+                    e,
+                    "BLAKE2B_256_KEY_DERIVE advertised but derive failed",
+                )
+
+            value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+            expected = hashlib.blake2b(_BLAKE2B_TEST_KEY, digest_size=_BLAKE2B_256_LEN).digest()
+            assert value == expected
+        finally:
+            destroy_quietly(rs.raw, rs.sh, base)
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)
