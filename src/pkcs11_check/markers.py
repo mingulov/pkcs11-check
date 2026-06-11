@@ -36,6 +36,10 @@ MARKER_DEFINITIONS: list[MarkerDef] = [
     MarkerDef("lab", "Lab profile including expensive or invasive tests"),
     MarkerDef("mechflags", "Mechanism flags validation test"),
     MarkerDef("metamorphic", "Metamorphic relation test"),
+    MarkerDef(
+        "module_session_fast",
+        "Skip steady-state shared-session health checks for vector-style tests",
+    ),
     MarkerDef("multipart", "Multi-part or dual-function operation test"),
     MarkerDef("operation_state", "C_GetOperationState / C_SetOperationState test"),
     MarkerDef("pqc", "Post-quantum cryptography test"),

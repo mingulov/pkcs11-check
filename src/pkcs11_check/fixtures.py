@@ -17,6 +17,7 @@ from pkcs11_check.core.loader import P11Module, load_module
 from pkcs11_check.raw.api import RawPKCS11
 
 _RV_TRACE_TRUTHY = frozenset({"1", "true", "yes", "on"})
+MODULE_SESSION_CALL_FAILED_ATTR = "_pkcs11_module_session_call_failed"
 
 
 def _resolve_rv_trace(
@@ -462,6 +463,7 @@ class _ModuleSessionHolder:
         self._logged_in: bool = False
         self._bootstrap_log: dict[str, int] = {}
         self._reopen_count: int = 0
+        self._health_check_required: bool = False
 
     @property
     def raw(self) -> RawPKCS11:
@@ -472,7 +474,11 @@ class _ModuleSessionHolder:
         """Number of times the session was re-opened due to damage."""
         return self._reopen_count
 
-    def get_session(self) -> tuple[int, int, dict[str, int]]:
+    def require_health_check(self) -> None:
+        """Force a health check before the next shared-session handout."""
+        self._health_check_required = True
+
+    def get_session(self, *, skip_health_check: bool = False) -> tuple[int, int, dict[str, int]]:
         """Return (sh, slot_id, bootstrap_log); reopen if damaged or if a prior test
         left an unclearable active operation (see recipes._init_or_recover)."""
         from pkcs11_check.raw.recipes import consume_session_reopen_request
@@ -481,8 +487,15 @@ class _ModuleSessionHolder:
         # cleared -- a short-circuit on the health check must not leave a stale
         # request that triggers a spurious reopen on a later handout.
         reopen_requested = consume_session_reopen_request()
-        if reopen_requested or not self._is_healthy():
+        if reopen_requested:
             self._reopen()
+            self._health_check_required = False
+        elif self._sh is None:
+            self._reopen()
+        elif self._health_check_required or not skip_health_check:
+            if not self._is_healthy():
+                self._reopen()
+            self._health_check_required = False
         assert self._sh is not None and self._slot_id is not None
         return self._sh, self._slot_id, dict(self._bootstrap_log)
 
@@ -552,6 +565,7 @@ def _p11_module_session_holder(
 def p11_module_session(
     _p11_module_session_holder: _ModuleSessionHolder,
     p11_config: P11TestConfig,
+    request: pytest.FixtureRequest,
 ) -> Generator[RawSession]:
     """Module-scoped PKCS#11 session with per-test counter reset.
 
@@ -577,9 +591,14 @@ def p11_module_session(
     login overhead.
     """
     holder = _p11_module_session_holder
-    sh, slot_id, bootstrap_log = holder.get_session()
+    fast_reuse = request.node.get_closest_marker("module_session_fast") is not None
+    sh, slot_id, bootstrap_log = holder.get_session(skip_health_check=fast_reuse)
     raw = holder.raw
     raw.reset_call_log()
     raw.reset_used_mechanisms()
     _apply_rv_trace(raw, p11_config)
-    yield RawSession(raw, sh, slot_id, bootstrap_call_counts=bootstrap_log)
+    try:
+        yield RawSession(raw, sh, slot_id, bootstrap_call_counts=bootstrap_log)
+    finally:
+        if fast_reuse and getattr(request.node, MODULE_SESSION_CALL_FAILED_ATTR, False):
+            holder.require_health_check()

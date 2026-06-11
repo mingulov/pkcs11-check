@@ -36,7 +36,11 @@ from pkcs11_check.testcases.x509.conftest import (
     pem_to_der,
 )
 
-pytestmark = [pytest.mark.cert, pytest.mark.object]
+pytestmark = [
+    pytest.mark.cert,
+    pytest.mark.object,
+    pytest.mark.module_session_fast,
+]
 
 _all_cases = load_limbo_testcases()
 

@@ -47,7 +47,12 @@ from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 from pkcs11_check.testcases.data import CCTV_DIR
 
-pytestmark = [pytest.mark.interop, pytest.mark.security, pytest.mark.cctv]
+pytestmark = [
+    pytest.mark.interop,
+    pytest.mark.security,
+    pytest.mark.cctv,
+    pytest.mark.module_session_fast,
+]
 
 REQUIRED_MECHANISMS = ["EDDSA"]
 

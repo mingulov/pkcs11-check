@@ -48,7 +48,12 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.data import CCTV_DIR
 
-pytestmark = [pytest.mark.pqc, pytest.mark.kat, pytest.mark.cctv]
+pytestmark = [
+    pytest.mark.pqc,
+    pytest.mark.kat,
+    pytest.mark.cctv,
+    pytest.mark.module_session_fast,
+]
 
 REQUIRED_MECHANISMS = ["ML_DSA", "ML_DSA_KEY_PAIR_GEN"]
 

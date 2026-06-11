@@ -36,7 +36,11 @@ from pkcs11_check.testcases.x509.conftest import (
     load_limbo_testcases,
 )
 
-pytestmark = [pytest.mark.stress, pytest.mark.security]
+pytestmark = [
+    pytest.mark.stress,
+    pytest.mark.security,
+    pytest.mark.module_session_fast,
+]
 
 _CERT_CAP = 1000  # Enough diversity for crash-probing; full set is ~30K.
 

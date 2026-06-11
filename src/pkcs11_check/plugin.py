@@ -20,6 +20,7 @@ from pkcs11_check.core.test_selection import parse_disabled_nodeids
 
 # Re-export fixtures so pytest discovers them
 from pkcs11_check.fixtures import (  # noqa: F401
+    MODULE_SESSION_CALL_FAILED_ATTR,
     RawSession,
     _p11_module_session_holder,
     p11_config,
@@ -792,11 +793,20 @@ def _convert_missing_function_to_skip(report: Any, call: pytest.CallInfo[Any]) -
     report.longrepr = (str(getattr(report, "fspath", "")), (lineno or 0) + 1, f"Skipped: {message}")
 
 
+def _remember_module_session_call_outcome(item: pytest.Item, report: Any) -> None:
+    """Mark failed call phases so fast shared-session reuse checks before reuse."""
+    if getattr(report, "when", None) != "call":
+        return
+    if getattr(report, "outcome", None) == "failed":
+        setattr(item, MODULE_SESSION_CALL_FAILED_ATTR, True)
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> Any:
     outcome = yield
     report = outcome.get_result()
     _convert_missing_function_to_skip(report, call)
+    _remember_module_session_call_outcome(item, report)
     _attach_rv_trace_to_report(item, report)
     _attach_compliance_notes_to_report(item, report)
 

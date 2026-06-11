@@ -20,6 +20,7 @@ class TestMarkerDefinitions:
         assert "pqc" in names
         assert "slow" in names
         assert "stress" in names
+        assert "module_session_fast" in names
         assert "wycheproof" in names
 
     def test_all_testcase_markers_registered(self) -> None:
