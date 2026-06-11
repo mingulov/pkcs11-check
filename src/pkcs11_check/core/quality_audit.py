@@ -51,6 +51,30 @@ _MECHANISM_STATE_ORDER = (
     "timeout",
     "not_invoked",
 )
+_MECHANISM_COMPARISON_STATES = (
+    "accepted",
+    "attempted",
+    "rejected_cleanly",
+    "skipped_by_capability",
+    "crashed",
+    "timeout",
+    "selected",
+    "selection_rejected",
+    "invoked",
+)
+_MECHANISM_STATE_FIELDS = {
+    "advertised": "advertised_names",
+    "selected": "selected_names",
+    "selection_rejected": "selection_rejected_names",
+    "attempted": "attempted_names",
+    "invoked": "invoked_names",
+    "accepted": "accepted_names",
+    "rejected_cleanly": "rejected_cleanly_names",
+    "skipped_by_capability": "skipped_by_capability_names",
+    "crashed": "crashed_names",
+    "timeout": "timeout_names",
+    "not_invoked": "not_invoked_names",
+}
 
 
 def classify_skip_reason(reason: str | None) -> SkipReasonCategory:
@@ -241,6 +265,46 @@ def build_quality_audit(
         "mechanism_findings": mechanism_findings,
         "data_quality_warnings": _dedupe_preserve_order(warnings),
     }
+
+
+def compare_mechanism_coverage_states(
+    baseline: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Compare provider-local mechanism coverage states between two artifacts.
+
+    Only states present in the baseline are compared. This keeps older
+    artifacts usable while still detecting when a newer run silently stops
+    reaching a mechanism state that the baseline reached.
+    """
+    baseline_mechanisms = _mechanism_coverage_mapping(baseline)
+    candidate_mechanisms = _mechanism_coverage_mapping(candidate)
+
+    lost_by_state: dict[str, list[str]] = {}
+    states_compared: list[str] = []
+    for state in _MECHANISM_COMPARISON_STATES:
+        field = _MECHANISM_STATE_FIELDS[state]
+        if field not in baseline_mechanisms:
+            continue
+        states_compared.append(state)
+        baseline_names = set(_string_list(baseline_mechanisms.get(field)))
+        candidate_names = set(_string_list(candidate_mechanisms.get(field)))
+        lost = sorted(baseline_names - candidate_names)
+        if lost:
+            lost_by_state[state] = lost
+
+    return {
+        "has_loss": bool(lost_by_state),
+        "states_compared": states_compared,
+        "lost_by_state": lost_by_state,
+    }
+
+
+def _mechanism_coverage_mapping(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    mechanism_coverage = payload.get("mechanism_coverage")
+    if isinstance(mechanism_coverage, Mapping):
+        return mechanism_coverage
+    return payload
 
 
 def _collect_file_skipped_units(results: Mapping[str, Any]) -> list[dict[str, str]]:

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from pkcs11_check.core.quality_audit import build_quality_audit, classify_skip_reason
+from pkcs11_check.core.quality_audit import (
+    build_quality_audit,
+    classify_skip_reason,
+    compare_mechanism_coverage_states,
+)
 
 
 def test_classify_skip_reason_falls_back_to_unknown() -> None:
@@ -208,6 +212,51 @@ def test_build_quality_audit_reports_mechanism_coverage_states() -> None:
     assert findings["CKM_HKDF_DERIVE"]["status"] == "crashed"
     assert findings["CKM_ML_DSA"]["status"] == "timeout"
     assert findings["CKM_SHA256_HMAC"]["status"] == "attempted"
+
+
+def test_compare_mechanism_coverage_states_reports_losses() -> None:
+    baseline = {
+        "mechanism_coverage": {
+            "accepted_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+            "attempted_names": ["CKM_AES_CBC", "CKM_AES_GCM", "CKM_SHA256_HMAC"],
+            "rejected_cleanly_names": ["CKM_AES_XTS"],
+            "skipped_by_capability_names": ["CKM_EDDSA"],
+        },
+    }
+    candidate = {
+        "mechanism_coverage": {
+            "accepted_names": ["CKM_AES_CBC"],
+            "attempted_names": ["CKM_AES_CBC", "CKM_SHA256_HMAC"],
+            "rejected_cleanly_names": [],
+            "skipped_by_capability_names": ["CKM_EDDSA"],
+        },
+    }
+
+    comparison = compare_mechanism_coverage_states(baseline, candidate)
+
+    assert comparison["has_loss"] is True
+    assert comparison["lost_by_state"] == {
+        "accepted": ["CKM_AES_GCM"],
+        "attempted": ["CKM_AES_GCM"],
+        "rejected_cleanly": ["CKM_AES_XTS"],
+    }
+    assert comparison["states_compared"] == [
+        "accepted",
+        "attempted",
+        "rejected_cleanly",
+        "skipped_by_capability",
+    ]
+
+
+def test_compare_mechanism_coverage_states_skips_missing_baseline_states() -> None:
+    baseline = {"mechanism_coverage": {"invoked_names": ["CKM_AES_CBC"]}}
+    candidate = {"mechanism_coverage": {}}
+
+    comparison = compare_mechanism_coverage_states(baseline, candidate)
+
+    assert comparison["has_loss"] is True
+    assert comparison["lost_by_state"] == {"invoked": ["CKM_AES_CBC"]}
+    assert "accepted" not in comparison["states_compared"]
 
 
 def test_build_quality_audit_selection_report_enables_selected_but_not_invoked() -> None:

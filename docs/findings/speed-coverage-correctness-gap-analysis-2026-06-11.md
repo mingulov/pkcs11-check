@@ -316,16 +316,18 @@ Status: improved in the current branch. Coverage reports and JSONL merge now
 preserve advertised, selected, attempted, accepted, rejected-cleanly,
 skipped-by-capability, crash, and timeout buckets, and `quality.json`
 mechanism findings surface those states instead of collapsing every mechanism
-into old invoked/not-invoked status. A future provider-run comparison gate is
-still needed to flag speed-induced coverage loss automatically across artifact
-sets.
+into old invoked/not-invoked status. The pure
+`compare_mechanism_coverage_states()` helper can compare provider-local
+baseline/candidate coverage buckets and flag lost mechanisms by state; a future
+CLI/Docker integration can wire that into automatic speed-regression gates.
 
 ## Recommended Next Round
 
 The next implementation round should be harness-first, because it makes every
 later provider run more interpretable:
 
-1. Expand mechanism coverage telemetry states.
+1. Wire mechanism-state comparison into provider-local artifact comparison and
+   speed-regression gates.
 2. Continue targeted provider-speed work once artifact semantics can prove
    coverage preservation.
 3. Continue legacy/deprecated mechanism coverage where reliable vectors and
