@@ -218,8 +218,9 @@ Current status:
 - Implemented: final isolated-run report generation now streams per-unit
   report-record cache shards when rebuilding merged `report.jsonl` and per-unit
   details, instead of loading the whole cached record map.
-- Remaining work: reduce the narrower resume fallback that splits an existing
-  merged `report.jsonl` back into per-unit chunks when no cache shard exists.
+- Implemented: the complete/partial resume fallback now seeds missing per-unit
+  report-record cache shards by streaming an existing merged `report.jsonl`,
+  instead of splitting the whole merged report into an in-memory per-unit map.
 
 ## Coverage Findings
 

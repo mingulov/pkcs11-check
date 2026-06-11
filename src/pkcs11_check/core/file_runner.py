@@ -1252,18 +1252,34 @@ def _extract_unit_report_records_from_jsonl(
 ) -> dict[str, list[dict[str, Any]]]:
     """Split a merged report.jsonl back into per-unit record chunks."""
     records_by_unit: dict[str, list[dict[str, Any]]] = {}
+    for unit_target, records in _iter_unit_report_record_chunks_from_jsonl(
+        jsonl_path,
+        candidate_targets=candidate_targets,
+    ):
+        records_by_unit.setdefault(unit_target, []).extend(records)
+    return records_by_unit
+
+
+def _iter_unit_report_record_chunks_from_jsonl(
+    jsonl_path: Path,
+    *,
+    candidate_targets: set[str],
+) -> Iterable[tuple[str, list[dict[str, Any]]]]:
+    """Yield per-unit record chunks from a merged report.jsonl without a full map."""
     current_chunk: list[dict[str, Any]] = []
     current_target: str | None = None
 
-    def flush_current_chunk() -> None:
+    def pop_current_chunk() -> tuple[str, list[dict[str, Any]]] | None:
         nonlocal current_chunk, current_target
         if not current_chunk:
-            return
+            return None
         unit_target = _infer_unit_target_from_records(current_chunk, candidate_targets)
-        if unit_target is not None:
-            records_by_unit.setdefault(unit_target, []).extend(current_chunk)
+        chunk = current_chunk
         current_chunk = []
         current_target = None
+        if unit_target is not None:
+            return unit_target, chunk
+        return None
 
     for record in _iter_report_log_records(jsonl_path):
         record_target = _unit_candidate_from_record(record, candidate_targets)
@@ -1273,15 +1289,64 @@ def _extract_unit_report_records_from_jsonl(
             and record_target is not None
             and record_target != current_target
         ):
-            flush_current_chunk()
+            chunk = pop_current_chunk()
+            if chunk is not None:
+                yield chunk
         current_chunk.append(record)
         if current_target is None and record_target is not None:
             current_target = record_target
         if record.get("$report_type") == "CoverageReport":
-            flush_current_chunk()
+            chunk = pop_current_chunk()
+            if chunk is not None:
+                yield chunk
 
-    flush_current_chunk()
-    return records_by_unit
+    chunk = pop_current_chunk()
+    if chunk is not None:
+        yield chunk
+
+
+def _report_record_cache_has_records(state_file: Path, unit: str) -> bool:
+    for _record in _iter_report_log_records(_report_record_cache_path(state_file, unit)):
+        return True
+    return False
+
+
+def _seed_missing_report_record_caches_from_jsonl(
+    state_file: Path,
+    jsonl_path: Path,
+    *,
+    candidate_targets: set[str],
+    skip_units: Iterable[str] = (),
+) -> None:
+    """Populate absent per-unit cache shards by streaming an existing merged report."""
+    skip_unit_set = set(skip_units)
+    existing_cache_units: set[str] = set()
+    tmp_paths: dict[str, Path] = {}
+    try:
+        for unit, records in _iter_unit_report_record_chunks_from_jsonl(
+            jsonl_path,
+            candidate_targets=candidate_targets,
+        ):
+            if unit in skip_unit_set or unit in existing_cache_units:
+                continue
+            if unit not in tmp_paths and _report_record_cache_has_records(state_file, unit):
+                existing_cache_units.add(unit)
+                continue
+            cache_path = _report_record_cache_path(state_file, unit)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = tmp_paths.get(unit)
+            if tmp_path is None:
+                tmp_path = cache_path.with_suffix(".jsonl.resume.tmp")
+                tmp_path.unlink(missing_ok=True)
+                tmp_paths[unit] = tmp_path
+            with tmp_path.open("a", encoding="utf-8") as out_fh:
+                for record in records:
+                    out_fh.write(json.dumps(record) + "\n")
+        for unit, tmp_path in tmp_paths.items():
+            tmp_path.replace(_report_record_cache_path(state_file, unit))
+    finally:
+        for tmp_path in tmp_paths.values():
+            tmp_path.unlink(missing_ok=True)
 
 
 def _write_report_jsonl_from_record_map(
@@ -2588,12 +2653,12 @@ def run_isolated_pytest_units(
                 and report_config.jsonl_path.exists()
             ):
                 candidate_targets = set(state.units) | {result.target for result in state.results}
-                parsed_report_records = _extract_unit_report_records_from_jsonl(
+                _seed_missing_report_record_caches_from_jsonl(
+                    state_file,
                     report_config.jsonl_path,
                     candidate_targets=candidate_targets,
+                    skip_units=inline_report_records_by_unit,
                 )
-                for unit, records in parsed_report_records.items():
-                    inline_report_records_by_unit.setdefault(unit, records)
             merged_details = _build_per_unit_details_from_record_sources(
                 state_file,
                 units=state.units,
@@ -3492,14 +3557,14 @@ def run_isolated_pytest_units(
                     candidate_targets = set(state.units) | {
                         result.target for result in state.results
                     }
-                    parsed_report_records = _extract_unit_report_records_from_jsonl(
-                        report_config.jsonl_path,
-                        candidate_targets=candidate_targets,
-                    )
-                    for unit, records in parsed_report_records.items():
-                        inline_report_records_by_unit.setdefault(unit, records)
                     for unit in executed_units:
                         inline_report_records_by_unit.pop(unit, None)
+                    _seed_missing_report_record_caches_from_jsonl(
+                        state_file,
+                        report_config.jsonl_path,
+                        candidate_targets=candidate_targets,
+                        skip_units=set(inline_report_records_by_unit) | executed_units,
+                    )
                 wrote_report_jsonl = _write_report_jsonl_from_record_sources(
                     state_file,
                     units=state.units,

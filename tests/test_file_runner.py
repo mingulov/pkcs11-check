@@ -1184,6 +1184,300 @@ def test_run_isolated_pytest_units_resume_json_streams_complete_cache(
     assert coverage["mechanism_coverage"]["invoked_names"] == ["CKM_AES_CBC"]
 
 
+def test_run_isolated_pytest_units_resume_json_streams_complete_existing_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen_cmds: list[list[str]] = []
+    units = ["test_a.py"]
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    state_file = tmp_path / "state.json"
+    results_path = tmp_path / "results.json"
+    report_jsonl_path = tmp_path / "report.jsonl"
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        seen_cmds.append(list(cmd))
+        return (0, "", "")
+
+    def extract_all_forbidden(
+        _jsonl_path: Path, *, candidate_targets: set[str]
+    ) -> dict[str, list[dict[str, object]]]:
+        del candidate_targets
+        pytest.fail("complete resume fallback must stream existing report records")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(
+        file_runner_mod,
+        "_extract_unit_report_records_from_jsonl",
+        extract_all_forbidden,
+    )
+    save_run_state(
+        state_file,
+        FileRunState(
+            units=units,
+            fingerprint=build_state_fingerprint(units, pytest_args),
+            results=[FileRunResult("test_a.py", "passed", 0, 0.1)],
+        ),
+    )
+    report_jsonl_path.write_text(
+        "\n".join(
+            [
+                _jsonl_line(nodeid="test_a.py::test_case", when="call", outcome="passed"),
+                json.dumps(
+                    {
+                        "$report_type": "SelectionReport",
+                        "selection_coverage": {
+                            "encrypt_roundtrip": {
+                                "selected_mechanisms": ["CKM_AES_CBC"],
+                                "rejected_mechanisms": [],
+                                "rejected_reason_counts": {},
+                            }
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "$report_type": "CoverageReport",
+                        "function_coverage": {
+                            "available": 1,
+                            "called_names": ["C_Encrypt"],
+                            "uncalled_names": [],
+                            "called_counts": {"C_Encrypt": 1},
+                            "bootstrap_counts": {},
+                        },
+                        "mechanism_coverage": {
+                            "available": 1,
+                            "available_names": ["CKM_AES_CBC"],
+                            "invoked": 1,
+                            "invoked_names": ["CKM_AES_CBC"],
+                            "invoked_counts": {"CKM_AES_CBC": 1},
+                            "not_invoked": 0,
+                            "not_invoked_names": [],
+                            "invoked_detail": ["encrypt_roundtrip"],
+                            "invoked_detail_counts": {"encrypt_roundtrip": 1},
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+
+    exit_code = run_isolated_pytest_units(
+        units,
+        pytest_args,
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=IsolatedReportConfig(
+            "json",
+            results_path,
+            jsonl_path=report_jsonl_path,
+        ),
+        resume=True,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    assert seen_cmds == []
+    report = json.loads(results_path.read_text())
+    assert report["units"][0]["counts"]["passed"] == 1
+    coverage = json.loads((tmp_path / "coverage.json").read_text())
+    assert coverage["mechanism_coverage"]["invoked_names"] == ["CKM_AES_CBC"]
+
+
+def test_run_isolated_pytest_units_resume_json_streams_partial_existing_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    units = ["test_a.py", "test_b.py"]
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    state_file = tmp_path / "state.json"
+    results_path = tmp_path / "results.json"
+    report_jsonl_path = tmp_path / "report.jsonl"
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        for i, arg in enumerate(cmd):
+            if arg == "--report-log" and i + 1 < len(cmd):
+                Path(cmd[i + 1]).write_text(
+                    "\n".join(
+                        [
+                            _jsonl_line(
+                                nodeid="test_b.py::test_new",
+                                when="call",
+                                outcome="passed",
+                            ),
+                            json.dumps(
+                                {
+                                    "$report_type": "SelectionReport",
+                                    "selection_coverage": {
+                                        "encrypt_roundtrip": {
+                                            "selected_mechanisms": ["CKM_AES_GCM"],
+                                            "rejected_mechanisms": [],
+                                            "rejected_reason_counts": {},
+                                        }
+                                    },
+                                }
+                            ),
+                            json.dumps(
+                                {
+                                    "$report_type": "CoverageReport",
+                                    "function_coverage": {
+                                        "available": 1,
+                                        "called_names": ["C_Encrypt"],
+                                        "uncalled_names": [],
+                                        "called_counts": {"C_Encrypt": 1},
+                                        "bootstrap_counts": {},
+                                    },
+                                    "mechanism_coverage": {
+                                        "available": 2,
+                                        "available_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+                                        "invoked": 1,
+                                        "invoked_names": ["CKM_AES_GCM"],
+                                        "invoked_counts": {"CKM_AES_GCM": 1},
+                                        "not_invoked": 1,
+                                        "not_invoked_names": ["CKM_AES_CBC"],
+                                        "invoked_detail": ["encrypt_roundtrip"],
+                                        "invoked_detail_counts": {"encrypt_roundtrip": 1},
+                                    },
+                                }
+                            ),
+                        ]
+                    )
+                    + "\n"
+                )
+                break
+        return (0, "", "")
+
+    def extract_all_forbidden(
+        _jsonl_path: Path, *, candidate_targets: set[str]
+    ) -> dict[str, list[dict[str, object]]]:
+        del candidate_targets
+        pytest.fail("partial resume fallback must stream existing report records")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(
+        file_runner_mod,
+        "_extract_unit_report_records_from_jsonl",
+        extract_all_forbidden,
+    )
+    save_run_state(
+        state_file,
+        FileRunState(
+            units=units,
+            fingerprint=build_state_fingerprint(units, pytest_args),
+            results=[FileRunResult("test_a.py", "passed", 0, 0.1)],
+        ),
+    )
+    report_jsonl_path.write_text(
+        "\n".join(
+            [
+                _jsonl_line(nodeid="test_a.py::test_old", when="call", outcome="passed"),
+                json.dumps(
+                    {
+                        "$report_type": "SelectionReport",
+                        "selection_coverage": {
+                            "encrypt_roundtrip": {
+                                "selected_mechanisms": ["CKM_AES_CBC"],
+                                "rejected_mechanisms": [],
+                                "rejected_reason_counts": {},
+                            }
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "$report_type": "CoverageReport",
+                        "function_coverage": {
+                            "available": 1,
+                            "called_names": ["C_Encrypt"],
+                            "uncalled_names": [],
+                            "called_counts": {"C_Encrypt": 1},
+                            "bootstrap_counts": {},
+                        },
+                        "mechanism_coverage": {
+                            "available": 2,
+                            "available_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+                            "invoked": 1,
+                            "invoked_names": ["CKM_AES_CBC"],
+                            "invoked_counts": {"CKM_AES_CBC": 1},
+                            "not_invoked": 1,
+                            "not_invoked_names": ["CKM_AES_GCM"],
+                            "invoked_detail": ["encrypt_roundtrip"],
+                            "invoked_detail_counts": {"encrypt_roundtrip": 1},
+                        },
+                    }
+                ),
+                _jsonl_line(nodeid="test_b.py::test_stale", when="call", outcome="failed"),
+                json.dumps(
+                    {
+                        "$report_type": "CoverageReport",
+                        "function_coverage": {
+                            "available": 1,
+                            "called_names": ["C_Encrypt"],
+                            "uncalled_names": [],
+                            "called_counts": {"C_Encrypt": 1},
+                            "bootstrap_counts": {},
+                        },
+                        "mechanism_coverage": {
+                            "available": 2,
+                            "available_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+                            "invoked": 1,
+                            "invoked_names": ["CKM_AES_CBC"],
+                            "invoked_counts": {"CKM_AES_CBC": 1},
+                            "not_invoked": 1,
+                            "not_invoked_names": ["CKM_AES_GCM"],
+                            "invoked_detail": ["encrypt_roundtrip"],
+                            "invoked_detail_counts": {"encrypt_roundtrip": 1},
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+
+    exit_code = run_isolated_pytest_units(
+        units,
+        pytest_args,
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=IsolatedReportConfig(
+            "json",
+            results_path,
+            jsonl_path=report_jsonl_path,
+        ),
+        resume=True,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    merged_report = report_jsonl_path.read_text()
+    assert "test_a.py::test_old" in merged_report
+    assert "test_b.py::test_new" in merged_report
+    assert "test_b.py::test_stale" not in merged_report
+    results = json.loads(results_path.read_text())
+    assert [unit["target"] for unit in results["units"]] == units
+    assert [unit["counts"]["passed"] for unit in results["units"]] == [1, 1]
+    coverage = json.loads((tmp_path / "coverage.json").read_text())
+    assert coverage["mechanism_coverage"]["invoked_names"] == ["CKM_AES_CBC", "CKM_AES_GCM"]
+
+
 def test_run_isolated_pytest_units_resume_json_uses_state_records_without_coverage_report(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
