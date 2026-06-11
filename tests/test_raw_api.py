@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+from collections import Counter, defaultdict
 from unittest.mock import Mock, patch
 
 
@@ -169,7 +170,6 @@ def test_call_log_increments_on_call() -> None:
 
     raw = object.__new__(RawPKCS11)
     raw._funcs = {"C_Initialize": Mock(return_value=0)}
-    from collections import defaultdict
 
     raw._call_log = defaultdict(int)
     raw._rv_trace = None
@@ -186,12 +186,42 @@ def test_call_log_increments_on_call() -> None:
     assert raw.call_count == 3
 
 
+def test_mechanism_rv_counts_track_accept_and_clean_reject() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+    from pkcs11_check.raw.types_std import (
+        CK_MECHANISM,
+        CKM_AES_CBC,
+        CKR_MECHANISM_INVALID,
+        CKR_OK,
+    )
+
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {"C_EncryptInit": Mock(side_effect=[CKR_OK, CKR_MECHANISM_INVALID])}
+    raw._call_log = defaultdict(int)
+    raw._used_mechanisms = set()
+    raw._mechanism_counts = Counter()
+    raw._mechanism_rv_counts = defaultdict(Counter)
+    raw._rv_trace = None
+    raw._journal = None
+    mech = CK_MECHANISM(CKM_AES_CBC, None, 0)
+
+    raw.C_EncryptInit(1, ctypes.byref(mech), 2)
+    raw.C_EncryptInit(1, ctypes.byref(mech), 2)
+
+    assert raw.mechanism_counts == {int(CKM_AES_CBC): 2}
+    assert raw.mechanism_rv_counts == {
+        int(CKM_AES_CBC): {
+            int(CKR_OK): 1,
+            int(CKR_MECHANISM_INVALID): 1,
+        }
+    }
+
+
 def test_call_log_reset_clears_counts() -> None:
     from pkcs11_check.raw.api import RawPKCS11
 
     raw = object.__new__(RawPKCS11)
     raw._funcs = {"C_Initialize": Mock(return_value=0)}
-    from collections import defaultdict
 
     raw._call_log = defaultdict(int)
     raw._rv_trace = None

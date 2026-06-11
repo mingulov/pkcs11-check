@@ -35,6 +35,7 @@ from pkcs11_check.raw.types_std import (
     CKF_DIGEST,
     CKF_GENERATE,
     CKF_GENERATE_KEY_PAIR,
+    CKR_OK,
 )
 from pkcs11_check.testcases._mock_gating import is_pkcs11_mock_target, should_skip_on_mock
 from pkcs11_check.testcases._subprocess_trace import (
@@ -340,6 +341,63 @@ def _serialize_selection_telemetry(
             "rejected_reason_counts": dict(sorted(data["rejected_reason_counts"].items())),
         }
     return selection_coverage
+
+
+def _name_set(value: Any) -> set[str]:
+    if not isinstance(value, (set, list, tuple)):
+        return set()
+    return {str(item) for item in value if item is not None}
+
+
+def _selection_state_names(telemetry: dict[str, dict[str, Any]]) -> tuple[set[str], set[str]]:
+    selected: set[str] = set()
+    rejected: set[str] = set()
+    for data in telemetry.values():
+        selected.update(_name_set(data.get("selected_mechanisms")))
+        rejected.update(_name_set(data.get("rejected_mechanisms")))
+    return selected, rejected
+
+
+def _reported_names_for_mechanism(
+    mechanism_id: int,
+    ckm_alias_map: dict[int, list[str]],
+    ckm_name_fn: Any,
+    advertised_names: set[str],
+) -> set[str]:
+    names = {ckm_name_fn(mechanism_id), *ckm_alias_map.get(mechanism_id, [])}
+    advertised_matches = names & advertised_names
+    if advertised_matches:
+        return advertised_matches
+    return {ckm_name_fn(mechanism_id)}
+
+
+def _mechanism_rv_state_names(
+    mechanism_rv_counts: Any,
+    ckm_alias_map: dict[int, list[str]],
+    ckm_name_fn: Any,
+    advertised_names: set[str],
+) -> tuple[set[str], set[str]]:
+    accepted: set[str] = set()
+    rejected_cleanly: set[str] = set()
+    if not isinstance(mechanism_rv_counts, dict):
+        return accepted, rejected_cleanly
+    for raw_mid, raw_counts in mechanism_rv_counts.items():
+        if not isinstance(raw_mid, int) or not isinstance(raw_counts, dict):
+            continue
+        names = _reported_names_for_mechanism(
+            raw_mid,
+            ckm_alias_map,
+            ckm_name_fn,
+            advertised_names,
+        )
+        for raw_rv, raw_count in raw_counts.items():
+            if not isinstance(raw_rv, int) or not isinstance(raw_count, int) or raw_count <= 0:
+                continue
+            if raw_rv == int(CKR_OK):
+                accepted.update(names)
+            else:
+                rejected_cleanly.update(names)
+    return accepted, rejected_cleanly
 
 
 def _selected_entries_for_scenario(
@@ -904,6 +962,18 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     invoked_names = sorted(invoked_names_set)
     available_set = set(mech_ckm)
     not_invoked = sorted(available_set - invoked_names_set)
+    attempted_names_set = set()
+    for mid in used_ids:
+        attempted_names_set.update(
+            _reported_names_for_mechanism(mid, ckm_alias_map, ckm_name, available_set)
+        )
+    selected_names_set, selection_rejected_names_set = _selection_state_names(selection_telemetry)
+    accepted_names_set, rejected_cleanly_names_set = _mechanism_rv_state_names(
+        getattr(raw, "mechanism_rv_counts", {}),
+        ckm_alias_map,
+        ckm_name,
+        available_set,
+    )
 
     # Stacked mechanism details
     detail_set = config.stash.get(_CUMULATIVE_MECHANISM_DETAILS, set())
@@ -938,6 +1008,10 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         "mechanism_coverage": {
             "available": len(mech_ckm),
             "available_names": mech_ckm,
+            "advertised_names": mech_ckm,
+            "selected_names": sorted(selected_names_set),
+            "selection_rejected_names": sorted(selection_rejected_names_set),
+            "attempted_names": sorted(attempted_names_set),
             "invoked": len(invoked_names),
             "invoked_names": invoked_names,
             "invoked_counts": dict(sorted(mech_counts_named.items())),
@@ -945,6 +1019,11 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             "not_invoked_names": not_invoked,
             "invoked_detail": stacked,
             "invoked_detail_counts": dict(sorted(detail_counts.items())),
+            "accepted_names": sorted(accepted_names_set),
+            "rejected_cleanly_names": sorted(rejected_cleanly_names_set),
+            "skipped_by_capability_names": [],
+            "crashed_names": [],
+            "timeout_names": [],
         },
     }
     config.stash[_COVERAGE_DATA] = coverage_data

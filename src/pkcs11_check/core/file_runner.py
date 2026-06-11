@@ -1357,6 +1357,15 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     all_invoked: set[str] = set()
     all_not_invoked: set[str] = set()
     all_available_mechs: set[str] = set()
+    all_advertised_mechs: set[str] = set()
+    all_selected_mechs: set[str] = set()
+    all_selection_rejected_mechs: set[str] = set()
+    all_attempted_mechs: set[str] = set()
+    all_accepted_mechs: set[str] = set()
+    all_rejected_cleanly_mechs: set[str] = set()
+    all_skipped_by_capability_mechs: set[str] = set()
+    all_crashed_mechs: set[str] = set()
+    all_timeout_mechs: set[str] = set()
     all_detail: set[str] = set()
     all_func_counts: Counter[str] = Counter()
     all_bootstrap_counts: Counter[str] = Counter()
@@ -1392,6 +1401,17 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             all_available_mechs.update(mc.get("available_names", []))
             all_invoked.update(mc.get("invoked_names", []))
             all_not_invoked.update(mc.get("not_invoked_names", []))
+            all_advertised_mechs.update(
+                mc.get("advertised_names", mc.get("available_names", []))
+            )
+            all_selected_mechs.update(mc.get("selected_names", []))
+            all_selection_rejected_mechs.update(mc.get("selection_rejected_names", []))
+            all_attempted_mechs.update(mc.get("attempted_names", mc.get("invoked_names", [])))
+            all_accepted_mechs.update(mc.get("accepted_names", []))
+            all_rejected_cleanly_mechs.update(mc.get("rejected_cleanly_names", []))
+            all_skipped_by_capability_mechs.update(mc.get("skipped_by_capability_names", []))
+            all_crashed_mechs.update(mc.get("crashed_names", []))
+            all_timeout_mechs.update(mc.get("timeout_names", []))
             all_detail.update(mc.get("invoked_detail", []))
             all_mech_counts.update(mc.get("invoked_counts", {}))
             all_detail_counts.update(mc.get("invoked_detail_counts", {}))
@@ -1413,6 +1433,10 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
         "mechanism_coverage": {
             "available": len(all_available_mechs),
             "available_names": sorted(all_available_mechs),
+            "advertised_names": sorted(all_advertised_mechs),
+            "selected_names": sorted(all_selected_mechs),
+            "selection_rejected_names": sorted(all_selection_rejected_mechs),
+            "attempted_names": sorted(all_attempted_mechs),
             "invoked": len(all_invoked),
             "invoked_names": sorted(all_invoked),
             "invoked_counts": dict(all_mech_counts),
@@ -1420,6 +1444,11 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             "not_invoked_names": merged_not_invoked,
             "invoked_detail": sorted(all_detail),
             "invoked_detail_counts": dict(all_detail_counts),
+            "accepted_names": sorted(all_accepted_mechs),
+            "rejected_cleanly_names": sorted(all_rejected_cleanly_mechs),
+            "skipped_by_capability_names": sorted(all_skipped_by_capability_mechs),
+            "crashed_names": sorted(all_crashed_mechs),
+            "timeout_names": sorted(all_timeout_mechs),
         },
     }
 

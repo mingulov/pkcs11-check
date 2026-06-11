@@ -11,6 +11,13 @@ import pytest
 import pkcs11_check.plugin as plugin_mod
 from pkcs11_check.core.preflight import CapabilityManifest
 from pkcs11_check.fixtures import p11_config
+from pkcs11_check.raw.types_std import (
+    CKM_AES_CBC,
+    CKM_AES_GCM,
+    CKM_EC_KEY_PAIR_GEN,
+    CKR_MECHANISM_INVALID,
+    CKR_OK,
+)
 from pkcs11_check.testcases import mechanism_selection as selection
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 
@@ -417,6 +424,7 @@ def test_sessionfinish_emits_selection_report(
                 call_log={},
                 used_mechanisms=set(),
                 mechanism_counts={},
+                mechanism_rv_counts={},
             ),
             plugin_mod._CUMULATIVE_MECHANISMS: set(),
             plugin_mod._CUMULATIVE_USED_MECHANISMS: set(),
@@ -449,6 +457,99 @@ def test_sessionfinish_emits_selection_report(
     assert selection_reports[0]["selection_coverage"]["encrypt_roundtrip"][
         "selected_mechanisms"
     ] == ["CKM_ENCRYPT_OK"]
+
+
+def test_sessionfinish_emits_mechanism_state_coverage() -> None:
+    report_log = _FakeReportLogPlugin()
+    config = SimpleNamespace(
+        stash={
+            plugin_mod._CUMULATIVE_FUNCTIONS: set(),
+            plugin_mod._RAW_INSTANCE: SimpleNamespace(
+                available_function_names=lambda: set(),
+                call_log={},
+                used_mechanisms={int(CKM_AES_CBC), int(CKM_AES_GCM)},
+                mechanism_counts={int(CKM_AES_CBC): 1, int(CKM_AES_GCM): 2},
+                mechanism_rv_counts={
+                    int(CKM_AES_CBC): {int(CKR_OK): 1},
+                    int(CKM_AES_GCM): {int(CKR_MECHANISM_INVALID): 2},
+                },
+            ),
+            plugin_mod._CUMULATIVE_MECHANISMS: {"CKM_AES_CBC", "CKM_AES_GCM"},
+            plugin_mod._CUMULATIVE_USED_MECHANISMS: {int(CKM_AES_CBC), int(CKM_AES_GCM)},
+            plugin_mod._CUMULATIVE_MECHANISM_DETAILS: set(),
+            plugin_mod._CUMULATIVE_FUNCTION_COUNTS: {},
+            plugin_mod._CUMULATIVE_MECHANISM_COUNTS: {
+                int(CKM_AES_CBC): 1,
+                int(CKM_AES_GCM): 2,
+            },
+            plugin_mod._CUMULATIVE_DETAIL_COUNTS: {},
+            plugin_mod._BOOTSTRAP_FUNCTION_COUNTS: {},
+            plugin_mod._SELECTION_TELEMETRY_KEY: {
+                "encrypt_roundtrip": {
+                    "selected_mechanisms": {"CKM_AES_CBC"},
+                    "rejected_mechanisms": {"CKM_AES_GCM"},
+                    "rejected_reason_counts": Counter({"missing_flags": 1}),
+                }
+            },
+        },
+        getoption=lambda name, default=None: {"p11_module": "/tmp/module.so"}.get(name, default),
+        _report_log_plugin=report_log,
+    )
+    session = SimpleNamespace(config=config)
+
+    plugin_mod.pytest_sessionfinish(session, 0)
+
+    coverage_reports = [
+        record for record in report_log.records if record.get("$report_type") == "CoverageReport"
+    ]
+    assert coverage_reports
+    mechanism_coverage = coverage_reports[0]["mechanism_coverage"]
+    assert mechanism_coverage["advertised_names"] == ["CKM_AES_CBC", "CKM_AES_GCM"]
+    assert mechanism_coverage["selected_names"] == ["CKM_AES_CBC"]
+    assert mechanism_coverage["selection_rejected_names"] == ["CKM_AES_GCM"]
+    assert mechanism_coverage["attempted_names"] == ["CKM_AES_CBC", "CKM_AES_GCM"]
+    assert mechanism_coverage["accepted_names"] == ["CKM_AES_CBC"]
+    assert mechanism_coverage["rejected_cleanly_names"] == ["CKM_AES_GCM"]
+    assert mechanism_coverage["crashed_names"] == []
+    assert mechanism_coverage["timeout_names"] == []
+
+
+def test_sessionfinish_mechanism_states_prefer_advertised_alias() -> None:
+    report_log = _FakeReportLogPlugin()
+    config = SimpleNamespace(
+        stash={
+            plugin_mod._CUMULATIVE_FUNCTIONS: set(),
+            plugin_mod._RAW_INSTANCE: SimpleNamespace(
+                available_function_names=lambda: set(),
+                call_log={},
+                used_mechanisms={int(CKM_EC_KEY_PAIR_GEN)},
+                mechanism_counts={int(CKM_EC_KEY_PAIR_GEN): 1},
+                mechanism_rv_counts={int(CKM_EC_KEY_PAIR_GEN): {int(CKR_OK): 1}},
+            ),
+            plugin_mod._CUMULATIVE_MECHANISMS: {"CKM_EC_KEY_PAIR_GEN"},
+            plugin_mod._CUMULATIVE_USED_MECHANISMS: {int(CKM_EC_KEY_PAIR_GEN)},
+            plugin_mod._CUMULATIVE_MECHANISM_DETAILS: set(),
+            plugin_mod._CUMULATIVE_FUNCTION_COUNTS: {},
+            plugin_mod._CUMULATIVE_MECHANISM_COUNTS: {int(CKM_EC_KEY_PAIR_GEN): 1},
+            plugin_mod._CUMULATIVE_DETAIL_COUNTS: {},
+            plugin_mod._BOOTSTRAP_FUNCTION_COUNTS: {},
+            plugin_mod._SELECTION_TELEMETRY_KEY: {},
+        },
+        getoption=lambda name, default=None: {"p11_module": "/tmp/module.so"}.get(name, default),
+        _report_log_plugin=report_log,
+    )
+    session = SimpleNamespace(config=config)
+
+    plugin_mod.pytest_sessionfinish(session, 0)
+
+    coverage_report = next(
+        record for record in report_log.records if record.get("$report_type") == "CoverageReport"
+    )
+    mechanism_coverage = coverage_report["mechanism_coverage"]
+    assert mechanism_coverage["attempted_names"] == ["CKM_EC_KEY_PAIR_GEN"]
+    assert mechanism_coverage["accepted_names"] == ["CKM_EC_KEY_PAIR_GEN"]
+    assert "CKM_ECDSA_KEY_PAIR_GEN" not in mechanism_coverage["attempted_names"]
+    assert "CKM_ECDSA_KEY_PAIR_GEN" not in mechanism_coverage["accepted_names"]
 
 
 def test_collection_modifyitems_applies_only_static_skips() -> None:

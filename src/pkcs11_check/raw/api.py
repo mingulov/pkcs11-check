@@ -308,6 +308,7 @@ class RawPKCS11:
         self._call_log: dict[str, int] = defaultdict(int)
         self._used_mechanisms: set[int] = set()
         self._mechanism_counts: Counter[int] = Counter()
+        self._mechanism_rv_counts: defaultdict[int, Counter[int]] = defaultdict(Counter)
         # Optional per-test CK_RV trace (off unless enable_rv_trace() is called).
         # When None, _call records nothing and output is byte-identical.
         self._rv_trace: deque[dict[str, Any]] | None = None
@@ -451,9 +452,23 @@ class RawPKCS11:
         """Per-mechanism invocation counts (CKM int -> call count)."""
         return dict(self._mechanism_counts)
 
+    def _mechanism_rv_counter(self) -> defaultdict[int, Counter[int]]:
+        counts = self.__dict__.get("_mechanism_rv_counts")
+        if isinstance(counts, defaultdict):
+            return counts
+        counts = defaultdict(Counter)
+        self._mechanism_rv_counts = counts
+        return counts
+
+    @property
+    def mechanism_rv_counts(self) -> dict[int, dict[int, int]]:
+        """Per-mechanism CK_RV counts (CKM int -> CK_RV int -> call count)."""
+        return {mid: dict(counts) for mid, counts in self._mechanism_rv_counter().items()}
+
     def reset_used_mechanisms(self) -> None:
         self._used_mechanisms.clear()
         self._mechanism_counts.clear()
+        self._mechanism_rv_counter().clear()
 
     def enable_rv_trace(self, *, maxlen: int | None = None) -> None:
         """Start (or restart) per-test CK_RV tracing.
@@ -526,6 +541,8 @@ class RawPKCS11:
             else None
         )
         result = int(func(*args))
+        if mech_id is not None:
+            self._mechanism_rv_counter()[mech_id][result] += 1
         ckr = _to_ckr(result)
         out_len = _read_out_len(name, args, result) if tracing else None
         if journal_i is not None and self._journal is not None:
