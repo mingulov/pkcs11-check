@@ -4,6 +4,26 @@ This file restores the goal + loop after a context clear / new session. History:
 `fix/triage-harness-improvements` is MERGED into `dev`; all work now lands on `dev` via small
 feature branches or direct doc commits. Auto-memory: `project_issue_triage_loop.md`.
 
+## LOOP STOPPED by Denis 2026-06-11 (cron 45473fc2 deleted). Campaign complete — see below.
+
+**Triage campaign DONE: all 4 control/major providers' long tails fully accounted for.** dev is
+clean (suite 2217P/3s/0F/0xf, CI gates green). To resume autonomous work, re-arm via "How to
+restore the loop" below. Remaining substantive work = mechanism-registry Phases B–D (a
+design-then-implement arc — start with `/brainstorm`, not a raw loop). Highlights this session:
+- **Advertised-capability honesty package** (12 plan tasks) + **import-skip audit COMPLETE**
+  (A1-A16/A18/A19; A17 evidence-deferred) + **D1-D3 determinations**, all two-stage reviewed.
+- **tpm2 advertised-but-not-operational keygen class fully resolved** (75 setup sites → xfail via
+  canonical `gen_*_or_xfail` helpers; local-wrapper duplication consolidated; new `hmac_sign_or_xfail`).
+- **5 genuine module findings** documented + upstream-reportable: nss ML-DSA non-malleability,
+  nss RSA_X_509 wrong-key-recovery, opencryptoki CBC-PAD malformed-ciphertext accept, softhsm2
+  bad-OID EC accept, kryoptic empty-AES-KW accept. **X25519 over-strictness flag RESOLVED**
+  (RFC 7748, effect-gated). ML-DSA(kryoptic) non-spec-reject → xfail.
+- **2 finding-hiding-class harness bugs killed:** test_data_paths WYCHEPROOF_DIR poisoning
+  (silently skipped 4 HKDF meta-tests); ChaCha20-Poly1305 dead-KAT (random-nonce, unpassable since
+  v0.1.0 — was a FALSE nss accusation, retracted). LESSON: [[feedback_triage_verify_typea]].
+- Validated pool comparison FINAL; `artifacts3/` = validated baseline for pkcs11-proxy-ng.
+- **NOT pushed:** dev is ahead of origin (~230 commits) / behind 1 — Denis to `git pull --rebase && git push` when ready.
+
 ## CURRENT STATE — POOL COMPLETE + VALIDATED, artifacts3 baseline created (2026-06-11)
 
 **The 21-provider full pool is COMPLETE and VALIDATED.** All `artifacts/<provider>-pooled/`
