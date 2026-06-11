@@ -15,6 +15,7 @@ from pkcs11_check.raw.types_std import (
     CKM_RC4,
     CKM_RC5_CBC,
     CKM_RC5_ECB,
+    CKM_TWOFISH_CBC,
 )
 from pkcs11_check.testcases.mechanism_helpers import build_params_from_vector
 from pkcs11_check.testcases.mechanism_registry import MECHANISM_REGISTRY
@@ -170,3 +171,22 @@ def test_idea_cbc_vector_params_replay_iv() -> None:
     assert ctypes.string_at(params.ck.pParameter, params.ck.ulParameterLen) == bytes.fromhex(
         vec["params"]["iv_hex"]
     )
+
+
+def test_twofish_cbc_encrypt_mechanism_has_schneier_kat_vector() -> None:
+    config = MECHANISM_REGISTRY[int(CKM_TWOFISH_CBC)]
+    assert config.vector_file == "twofish_cbc.json"
+
+    vectors = load_positive_vectors("twofish_cbc.json")
+    assert vectors, "twofish_cbc.json must contain positive vectors"
+    for vec in vectors:
+        assert vec["type"] == "positive"
+        assert vec["key_bits"] == 128
+        assert vec["key_hex"] == "00000000000000000000000000000000"
+        assert vec["plaintext_hex"] == "00000000000000000000000000000000"
+        assert vec["ciphertext_hex"] == "9f589f5cf6122c32b6bfec2f2ae8c35a"
+        assert vec["params"]["iv_hex"] == "00000000000000000000000000000000"
+        assert vec["params"]["source"] == (
+            "Bruce Schneier Twofish ECB intermediate value test, "
+            "replayed as single-block CBC with zero IV"
+        )

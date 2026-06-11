@@ -1055,6 +1055,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="twofish_cbc.json",
         notes="Twofish-CBC: 16-byte block, requires 16-byte IV param",
     )
 
