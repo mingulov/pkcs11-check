@@ -12,7 +12,21 @@ from pkcs11_check.compliance_report import (
     _classify_functions_from_observed_coverage,
     _load_observed_function_coverage,
     _parse_test_results,
+    generate_report,
 )
+
+
+class _FakeSlot:
+    def get_mechanisms(self) -> list[object]:
+        return []
+
+
+class _FakeModule:
+    interface_version = "3.2"
+
+    def get_slots(self, *, token_present: bool) -> list[_FakeSlot]:
+        assert token_present is True
+        return [_FakeSlot()]
 
 
 def test_parse_test_results_unified_format(tmp_path: Path) -> None:
@@ -194,13 +208,14 @@ def test_observed_coverage_prevents_filename_heuristic_overstatement(tmp_path: P
         observed,
     )
 
-    assert functions["C_GetInfo"]["status"] == "PASS"
+    assert functions["C_GetInfo"]["status"] == "NOT_TESTED"
     assert functions["C_GetInfo"]["tests"] == 1
+    assert functions["C_GetInfo"]["passed"] == 0
     assert functions["C_Encrypt"]["status"] == "NOT_TESTED"
     assert functions["C_Encrypt"]["tests"] == 0
 
 
-def test_observed_coverage_can_come_from_sibling_coverage_json(tmp_path: Path) -> None:
+def test_observed_coverage_only_counts_do_not_imply_pass(tmp_path: Path) -> None:
     results_file = tmp_path / "results.json"
     results_file.write_text(
         json.dumps(
@@ -226,7 +241,12 @@ def test_observed_coverage_can_come_from_sibling_coverage_json(tmp_path: Path) -
 
     observed = _load_observed_function_coverage(results_file)
 
-    assert observed == {"C_Encrypt": {"passed": 2, "tests": 2}}
+    assert observed == {"C_Encrypt": {"tests": 2}}
+
+    functions = _classify_functions_from_observed_coverage(observed)
+    assert functions["C_Encrypt"]["status"] == "NOT_TESTED"
+    assert functions["C_Encrypt"]["tests"] == 2
+    assert functions["C_Encrypt"]["passed"] == 0
 
 
 def test_observed_coverage_can_come_from_sibling_report_jsonl_trace(tmp_path: Path) -> None:
@@ -413,3 +433,118 @@ def test_compliance_notes_attach_to_testcase_call_reports() -> None:
         )
     ]
     clear_notes()
+
+
+def test_generate_report_includes_compliance_notes_from_result_units(tmp_path: Path) -> None:
+    clear_notes()
+    results_file = tmp_path / "results.json"
+    results_file.write_text(
+        json.dumps(
+            {
+                "tool": "pkcs11-check",
+                "kind": "test-run",
+                "summary": {"passed": 1, "total": 1},
+                "units": [
+                    {
+                        "target": "src/pkcs11_check/testcases/test_mech_encrypt.py",
+                        "status": "passed",
+                        "counts": {"passed": 1},
+                        "compliance_notes": [
+                            {
+                                "description": "validation policy refused advertised encrypt",
+                                "level": "standard",
+                                "reference": "PKCS#11 v3.2 CKR_OPERATION_NOT_VALIDATED",
+                                "test_id": "test_encrypt",
+                                "nodeid": (
+                                    "src/pkcs11_check/testcases/"
+                                    "test_mech_encrypt.py::test_encrypt"
+                                ),
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    report = generate_report(
+        module_path="/fake-pkcs11.so",
+        module=_FakeModule(),
+        test_results_path=results_file,
+    )
+
+    assert report["compliance_notes"] == [
+        {
+            "description": "validation policy refused advertised encrypt",
+            "level": "standard",
+            "reference": "PKCS#11 v3.2 CKR_OPERATION_NOT_VALIDATED",
+            "test_id": "test_encrypt",
+            "nodeid": "src/pkcs11_check/testcases/test_mech_encrypt.py::test_encrypt",
+        }
+    ]
+
+
+def test_generate_report_includes_compliance_notes_from_report_jsonl(tmp_path: Path) -> None:
+    clear_notes()
+    results_file = tmp_path / "results.json"
+    results_file.write_text(
+        json.dumps(
+            {
+                "tool": "pkcs11-check",
+                "kind": "test-run",
+                "summary": {"xfailed": 1, "total": 1},
+                "units": [
+                    {
+                        "target": "src/pkcs11_check/testcases/test_mech_encrypt.py",
+                        "status": "xfailed",
+                        "counts": {"xfailed": 1},
+                    }
+                ],
+            }
+        )
+    )
+    (tmp_path / "report.jsonl").write_text(
+        json.dumps(
+            {
+                "$report_type": "TestReport",
+                "nodeid": "src/pkcs11_check/testcases/test_mech_encrypt.py::test_encrypt",
+                "when": "call",
+                "outcome": "skipped",
+                "wasxfail": "provider clean rejection",
+                "user_properties": [
+                    [
+                        "pkcs11_compliance_notes",
+                        [
+                            {
+                                "description": "advertised mechanism refused operation",
+                                "level": "vendor",
+                                "reference": "PKCS#11 operation contract",
+                                "test_id": "test_encrypt",
+                                "nodeid": (
+                                    "src/pkcs11_check/testcases/"
+                                    "test_mech_encrypt.py::test_encrypt"
+                                ),
+                            }
+                        ],
+                    ]
+                ],
+            }
+        )
+        + "\n"
+    )
+
+    report = generate_report(
+        module_path="/fake-pkcs11.so",
+        module=_FakeModule(),
+        test_results_path=results_file,
+    )
+
+    assert report["compliance_notes"] == [
+        {
+            "description": "advertised mechanism refused operation",
+            "level": "vendor",
+            "reference": "PKCS#11 operation contract",
+            "test_id": "test_encrypt",
+            "nodeid": "src/pkcs11_check/testcases/test_mech_encrypt.py::test_encrypt",
+        }
+    ]

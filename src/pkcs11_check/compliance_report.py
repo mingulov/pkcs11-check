@@ -25,6 +25,14 @@ _OUTCOME_KEYS: tuple[str, ...] = (
     "timeout",
 )
 
+_COMPLIANCE_NOTE_FIELDS: tuple[str, ...] = (
+    "description",
+    "level",
+    "reference",
+    "test_id",
+    "nodeid",
+)
+
 
 def _empty_test_counts() -> dict[str, int]:
     counts = {key: 0 for key in _OUTCOME_KEYS}
@@ -592,8 +600,137 @@ def _counts_from_coverage_payload(coverage: Mapping[str, Any]) -> dict[str, dict
         count = _count_value(called_counts.get(name))
         if count <= 0:
             count = 1
-        result[name] = {"passed": count, "tests": count}
+        result[name] = {"tests": count}
     return result
+
+
+def _compliance_note_from_mapping(
+    raw_note: Mapping[str, Any],
+    *,
+    nodeid: str = "",
+) -> dict[str, str] | None:
+    note = {
+        field: str(raw_note.get(field, ""))
+        for field in _COMPLIANCE_NOTE_FIELDS
+        if raw_note.get(field, "") not in (None, "")
+    }
+    if "nodeid" not in note and nodeid:
+        note["nodeid"] = nodeid
+    if not note.get("description") or not note.get("level"):
+        return None
+    return note
+
+
+def _compliance_notes_from_user_properties(
+    user_properties: Any,
+    *,
+    nodeid: str = "",
+) -> list[dict[str, str]]:
+    if not isinstance(user_properties, list):
+        return []
+
+    notes: list[dict[str, str]] = []
+    for prop in user_properties:
+        if not isinstance(prop, (list, tuple)) or len(prop) != 2:
+            continue
+        name, value = prop
+        if name != "pkcs11_compliance_notes" or not isinstance(value, list):
+            continue
+        for raw_note in value:
+            if not isinstance(raw_note, Mapping):
+                continue
+            note = _compliance_note_from_mapping(raw_note, nodeid=nodeid)
+            if note is not None:
+                notes.append(note)
+    return notes
+
+
+def _append_unique_compliance_note(
+    notes: list[dict[str, str]],
+    seen: set[tuple[tuple[str, str], ...]],
+    note: Mapping[str, str],
+) -> None:
+    key = tuple((field, note.get(field, "")) for field in _COMPLIANCE_NOTE_FIELDS)
+    if key in seen:
+        return
+    seen.add(key)
+    notes.append(dict(note))
+
+
+def _compliance_notes_from_results_payload(payload: Mapping[str, Any]) -> list[dict[str, str]]:
+    notes: list[dict[str, str]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+
+    units = payload.get("units")
+    if isinstance(units, list):
+        for unit in units:
+            if not isinstance(unit, Mapping):
+                continue
+            target = str(unit.get("target", ""))
+            raw_notes = unit.get("compliance_notes")
+            if not isinstance(raw_notes, list):
+                continue
+            for raw_note in raw_notes:
+                if not isinstance(raw_note, Mapping):
+                    continue
+                note = _compliance_note_from_mapping(raw_note, nodeid=target)
+                if note is not None:
+                    _append_unique_compliance_note(notes, seen, note)
+
+    tests = payload.get("tests")
+    if isinstance(tests, list):
+        for test in tests:
+            if not isinstance(test, Mapping):
+                continue
+            nodeid = str(test.get("nodeid", ""))
+            for note in _compliance_notes_from_user_properties(
+                test.get("user_properties"),
+                nodeid=nodeid,
+            ):
+                _append_unique_compliance_note(notes, seen, note)
+
+    return notes
+
+
+def _compliance_notes_from_report_jsonl(jsonl_path: Path) -> list[dict[str, str]]:
+    notes: list[dict[str, str]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    try:
+        fh = jsonl_path.open(encoding="utf-8")
+    except OSError:
+        return notes
+    with fh:
+        for line in fh:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, Mapping):
+                continue
+            if record.get("$report_type", "TestReport") != "TestReport":
+                continue
+            nodeid = str(record.get("nodeid", ""))
+            for note in _compliance_notes_from_user_properties(
+                record.get("user_properties"),
+                nodeid=nodeid,
+            ):
+                _append_unique_compliance_note(notes, seen, note)
+    return notes
+
+
+def _load_artifact_compliance_notes(results_path: Path) -> list[dict[str, str]]:
+    notes: list[dict[str, str]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+
+    payload = _json_mapping(results_path)
+    if payload is not None:
+        for note in _compliance_notes_from_results_payload(payload):
+            _append_unique_compliance_note(notes, seen, note)
+
+    for note in _compliance_notes_from_report_jsonl(results_path.parent / "report.jsonl"):
+        _append_unique_compliance_note(notes, seen, note)
+
+    return notes
 
 
 def _rv_trace_from_user_properties(user_properties: Any) -> list[Mapping[str, Any]]:
@@ -682,9 +819,6 @@ def _classify_functions_from_observed_coverage(
                 totals[key] = _count_value(raw_counts.get(key))
             explicit_tests = _count_value(raw_counts.get("tests"))
             outcome_total = sum(totals[key] for key in _OUTCOME_KEYS)
-            if outcome_total == 0 and explicit_tests > 0:
-                totals["passed"] = explicit_tests
-                outcome_total = explicit_tests
             totals["tests"] = max(explicit_tests, outcome_total)
 
         result[func_name] = {
@@ -811,6 +945,17 @@ def _compliance_notes_list() -> list[dict[str, str]]:
     return result
 
 
+def _merge_compliance_notes(
+    process_notes: list[dict[str, str]],
+    artifact_notes: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    notes: list[dict[str, str]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    for note in [*process_notes, *artifact_notes]:
+        _append_unique_compliance_note(notes, seen, note)
+    return notes
+
+
 def generate_report(
     module_path: str,
     module: Any,
@@ -868,7 +1013,13 @@ def generate_report(
     ckr_coverage = _ckr_coverage_summary(test_counts)
 
     # Compliance notes
-    compliance_notes = _compliance_notes_list()
+    artifact_compliance_notes: list[dict[str, str]] = []
+    if test_results_path and test_results_path.exists():
+        artifact_compliance_notes = _load_artifact_compliance_notes(test_results_path)
+    compliance_notes = _merge_compliance_notes(
+        _compliance_notes_list(),
+        artifact_compliance_notes,
+    )
 
     # Aggregate scores
     mechs_supported = sum(1 for v in mechanisms.values() if v == "SUPPORTED")
