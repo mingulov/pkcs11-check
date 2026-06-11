@@ -11,6 +11,8 @@ Phase 4.1: High-priority mechanism roundtrip tests for:
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -20,10 +22,12 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     gen_aes_key,
+    to_ubyte_buf,
     wrap_key,
 )
-from pkcs11_check.raw.rv import expect_rv
+from pkcs11_check.raw.rv import CkrAssertionError, expect_rv
 from pkcs11_check.raw.types_std import (
+    CK_BYTE,
     CKA_CLASS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -39,10 +43,29 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_224,
     CKM_SHA512_256,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_DEVICE_MEMORY,
+    CKR_DEVICE_REMOVED,
+    CKR_FUNCTION_CANCELED,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_HOST_MEMORY,
     CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_OPERATION_ACTIVE,
+    CKR_OPERATION_NOT_INITIALIZED,
+    CKR_PENDING,
+    CKR_SESSION_CLOSED,
+    CKR_SESSION_HANDLE_INVALID,
+    CKR_USER_NOT_LOGGED_IN,
 )
-from pkcs11_check.testcases.conftest import unwrap_key_for_mechanism_roundtrip
+from pkcs11_check.testcases.conftest import (
+    unwrap_key_for_mechanism_roundtrip,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.full
 
@@ -50,66 +73,193 @@ _CKM_SHAKE_128 = CKM(0x00000418, "CKM_SHAKE_128")
 _CKM_SHAKE_256 = CKM(0x00000419, "CKM_SHAKE_256")
 
 
+@dataclass(frozen=True)
+class _ShakeXofCase:
+    name: str
+    mechanism: CKM
+    reference_factory: Callable[[bytes], Any]
+    single_output_len: int
+    extract_len: int
+    final_len: int
+
+    @property
+    def mechanism_label(self) -> str:
+        return f"CKM_{self.name}"
+
+    def reference(self, data: bytes, output_len: int) -> bytes:
+        return bytes(self.reference_factory(data).digest(output_len))
+
+
+_SHAKE_XOF_CASES = (
+    _ShakeXofCase("SHAKE_128", _CKM_SHAKE_128, hashlib.shake_128, 32, 13, 19),
+    _ShakeXofCase("SHAKE_256", _CKM_SHAKE_256, hashlib.shake_256, 64, 23, 41),
+)
+_SHAKE_XOF_CASE_BY_NAME = {case.name: case for case in _SHAKE_XOF_CASES}
+
+_XOF_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_DEVICE_MEMORY,
+    CKR_DEVICE_REMOVED,
+    CKR_FUNCTION_CANCELED,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_HOST_MEMORY,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_OPERATION_ACTIVE,
+    CKR_OPERATION_NOT_INITIALIZED,
+    CKR_PENDING,
+    CKR_SESSION_CLOSED,
+    CKR_SESSION_HANDLE_INVALID,
+    CKR_USER_NOT_LOGGED_IN,
+)
+
+
+def _require_xof_support(rs: Any, case: _ShakeXofCase, function_names: tuple[str, ...]) -> None:
+    if not rs.has_mechanism(case.name):
+        pytest.skip(f"{case.mechanism_label} not supported")
+    for function_name in function_names:
+        if not hasattr(rs.raw, function_name):
+            pytest.skip(f"{function_name} not available in this raw binding")
+
+
+def _expect_xof_ok(rv: int, case: _ShakeXofCase, operation: str) -> None:
+    try:
+        expect_rv(rv, CKR_OK, context=f"{case.mechanism_label} {operation}")
+    except CkrAssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _XOF_RUNTIME_REJECT_RVS,
+            f"{case.mechanism_label} {operation} not operational",
+        )
+
+
+def _shake_xof_single_shot_matches_reference(
+    rs: Any,
+    case: _ShakeXofCase,
+    data: bytes,
+    output_len: int,
+) -> None:
+    mech = mech_simple(case.mechanism)
+    _expect_xof_ok(
+        rs.raw.C_DigestXofInit(rs.sh, mech.byref()),
+        case,
+        "XOF init",
+    )
+
+    data_buf = to_ubyte_buf(data)
+    output = (CK_BYTE * output_len)()
+    _expect_xof_ok(
+        rs.raw.C_DigestXof(rs.sh, data_buf, len(data), output, output_len),
+        case,
+        "XOF single-shot",
+    )
+
+    actual = bytes(output)
+    expected = case.reference(data, output_len)
+    assert actual == expected, f"{case.mechanism_label} XOF single-shot mismatch"
+
+
+def _shake_xof_multipart_matches_reference(
+    rs: Any,
+    case: _ShakeXofCase,
+    data_parts: tuple[bytes, ...],
+    *,
+    extract_len: int,
+    final_len: int,
+) -> None:
+    mech = mech_simple(case.mechanism)
+    _expect_xof_ok(
+        rs.raw.C_DigestXofInit(rs.sh, mech.byref()),
+        case,
+        "XOF init",
+    )
+
+    for part in data_parts:
+        part_buf = to_ubyte_buf(part)
+        _expect_xof_ok(
+            rs.raw.C_DigestXofUpdate(rs.sh, part_buf, len(part)),
+            case,
+            "XOF update",
+        )
+
+    extract_output = (CK_BYTE * extract_len)()
+    _expect_xof_ok(
+        rs.raw.C_DigestXofExtract(rs.sh, extract_output, extract_len),
+        case,
+        "XOF extract",
+    )
+
+    final_output = (CK_BYTE * final_len)()
+    _expect_xof_ok(
+        rs.raw.C_DigestXofFinal(rs.sh, final_output, final_len),
+        case,
+        "XOF final",
+    )
+
+    actual = bytes(extract_output) + bytes(final_output)
+    expected = case.reference(b"".join(data_parts), extract_len + final_len)
+    assert actual == expected, f"{case.mechanism_label} XOF multipart mismatch"
+
+
 class TestSHAKEDigest:
     """CKM_SHAKE_128 and CKM_SHAKE_256 XOF digest via C_DigestXof functions.
 
-    SHAKE is an extendable-output function. Per PKCS#11 v3.1 working draft,
-    it requires C_DigestXofInit/C_DigestXofUpdate/C_DigestXofExtract/
-    C_DigestXofFinal which are not yet in the published stable headers.
-
-    Most current modules do not expose SHAKE as a standalone digest mechanism.
-    Tests skip cleanly when the functions or mechanism are unavailable.
+    SHAKE is an extendable-output function. The tests verify both the
+    single-shot path (C_DigestXof) and multipart absorb/squeeze path
+    (C_DigestXofUpdate/C_DigestXofExtract/C_DigestXofFinal) against Python's
+    hashlib SHAKE implementations.
     """
 
-    def test_shake_128_availability(self, p11_raw_session: Any) -> None:
+    @pytest.mark.needs_function("C_DigestXofInit")
+    @pytest.mark.needs_function("C_DigestXof")
+    @pytest.mark.parametrize("case", _SHAKE_XOF_CASES, ids=lambda case: case.name)
+    def test_single_shot_matches_hashlib(
+        self,
+        p11_raw_session: Any,
+        case: _ShakeXofCase,
+    ) -> None:
         rs = p11_raw_session
-        if not rs.has_mechanism("SHAKE_128"):
-            pytest.skip("CKM_SHAKE_128 not supported")
-        has_xof = hasattr(rs.raw, "C_DigestXofInit")
-        if not has_xof:
-            pytest.skip("C_DigestXofInit not available in this raw binding")
+        _require_xof_support(rs, case, ("C_DigestXofInit", "C_DigestXof"))
 
-    def test_shake_128_xof_init(self, p11_raw_session: Any) -> None:
-        rs = p11_raw_session
-        if not rs.has_mechanism("SHAKE_128"):
-            pytest.skip("CKM_SHAKE_128 not supported")
-        if not hasattr(rs.raw, "C_DigestXofInit"):
-            pytest.skip("C_DigestXofInit not available in this raw binding")
-        try:
-            mech = mech_simple(_CKM_SHAKE_128)
-            rv = rs.raw.C_DigestXofInit(rs.sh, mech.byref())
-            expect_rv(rv, CKR_OK, CKR_MECHANISM_INVALID)
-        except (AttributeError, TypeError):
-            pytest.skip("C_DigestXofInit call failed")
-            return
-        if rv == CKR_MECHANISM_INVALID:
-            pytest.xfail("CKM_SHAKE_128 mechanism rejected by module")
-            return
+        _shake_xof_single_shot_matches_reference(
+            rs,
+            case,
+            b"pkcs11-check SHAKE XOF single-shot KAT",
+            case.single_output_len,
+        )
 
-    def test_shake_256_availability(self, p11_raw_session: Any) -> None:
+    @pytest.mark.needs_function("C_DigestXofInit")
+    @pytest.mark.needs_function("C_DigestXofUpdate")
+    @pytest.mark.needs_function("C_DigestXofExtract")
+    @pytest.mark.needs_function("C_DigestXofFinal")
+    @pytest.mark.parametrize("case", _SHAKE_XOF_CASES, ids=lambda case: case.name)
+    def test_multipart_matches_hashlib(
+        self,
+        p11_raw_session: Any,
+        case: _ShakeXofCase,
+    ) -> None:
         rs = p11_raw_session
-        if not rs.has_mechanism("SHAKE_256"):
-            pytest.skip("CKM_SHAKE_256 not supported")
-        has_xof = hasattr(rs.raw, "C_DigestXofInit")
-        if not has_xof:
-            pytest.skip("C_DigestXofInit not available in this raw binding")
+        _require_xof_support(
+            rs,
+            case,
+            (
+                "C_DigestXofInit",
+                "C_DigestXofUpdate",
+                "C_DigestXofExtract",
+                "C_DigestXofFinal",
+            ),
+        )
 
-    def test_shake_256_xof_init(self, p11_raw_session: Any) -> None:
-        rs = p11_raw_session
-        if not rs.has_mechanism("SHAKE_256"):
-            pytest.skip("CKM_SHAKE_256 not supported")
-        if not hasattr(rs.raw, "C_DigestXofInit"):
-            pytest.skip("C_DigestXofInit not available in this raw binding")
-        try:
-            mech = mech_simple(_CKM_SHAKE_256)
-            rv = rs.raw.C_DigestXofInit(rs.sh, mech.byref())
-            expect_rv(rv, CKR_OK, CKR_MECHANISM_INVALID)
-        except (AttributeError, TypeError):
-            pytest.skip("C_DigestXofInit call failed")
-            return
-        if rv == CKR_MECHANISM_INVALID:
-            pytest.xfail("CKM_SHAKE_256 mechanism rejected by module")
-            return
+        _shake_xof_multipart_matches_reference(
+            rs,
+            case,
+            (b"pkcs11-check ", b"SHAKE XOF ", b"multipart KAT"),
+            extract_len=case.extract_len,
+            final_len=case.final_len,
+        )
 
 
 class TestSHA512Truncated:
