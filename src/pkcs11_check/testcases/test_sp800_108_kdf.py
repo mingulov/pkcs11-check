@@ -14,6 +14,8 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 from __future__ import annotations
 
 import ctypes
+import hashlib
+import hmac
 from typing import Any
 
 import pytest
@@ -84,6 +86,26 @@ _DERIVE_ERROR_RVS = {
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
 }
+
+
+def _sp800_108_counter_hmac_sha256_reference(
+    base_key: bytes,
+    label: bytes,
+    context: bytes,
+    key_bits: int,
+) -> bytes:
+    """Compute SP800-108 counter-mode HMAC-SHA256 output for the test parameter order."""
+    if key_bits <= 0 or key_bits % 8 != 0:
+        raise ValueError("key_bits must be a positive multiple of 8")
+    wanted = key_bits // 8
+    fixed_input_suffix = label + b"\x00" + context + key_bits.to_bytes(4, "big")
+    output = b""
+    counter = 1
+    while len(output) < wanted:
+        data = counter.to_bytes(4, "big") + fixed_input_suffix
+        output += hmac.new(base_key, data, hashlib.sha256).digest()
+        counter += 1
+    return output[:wanted]
 
 
 def _create_base_key(rs: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> int:
@@ -189,19 +211,22 @@ def _build_counter_kdf_mech(
     p_label, ka2 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=label)
     keepalive.extend(ka2)
 
-    p_ctx, ka3 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=context)
+    p_sep, ka3 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=b"\x00")
     keepalive.extend(ka3)
 
-    dlf = _dkm_length_format()
-    p_dkm, ka4 = _make_prf_data_param(CK_SP800_108_DKM_LENGTH, struct=dlf)
+    p_ctx, ka4 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=context)
     keepalive.extend(ka4)
 
-    data_params = (CK_PRF_DATA_PARAM * 4)(p_iter, p_label, p_ctx, p_dkm)
+    dlf = _dkm_length_format()
+    p_dkm, ka5 = _make_prf_data_param(CK_SP800_108_DKM_LENGTH, struct=dlf)
+    keepalive.extend(ka5)
+
+    data_params = (CK_PRF_DATA_PARAM * 5)(p_iter, p_label, p_sep, p_ctx, p_dkm)
     keepalive.append(data_params)
 
     params = CK_SP800_108_KDF_PARAMS()
     params.prfType = CKM_SHA256_HMAC
-    params.ulNumberOfDataParams = 4
+    params.ulNumberOfDataParams = 5
     params.pDataParams = ctypes.cast(data_params, CK_VOID_PTR)
     params.ulAdditionalDerivedKeys = 0
     params.pAdditionalDerivedKeys = None
@@ -237,19 +262,22 @@ def _build_feedback_kdf_mech(
     p_label, ka2 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=label)
     keepalive.extend(ka2)
 
-    p_ctx, ka3 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=context)
+    p_sep, ka3 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=b"\x00")
     keepalive.extend(ka3)
 
-    dlf = _dkm_length_format()
-    p_dkm, ka4 = _make_prf_data_param(CK_SP800_108_DKM_LENGTH, struct=dlf)
+    p_ctx, ka4 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=context)
     keepalive.extend(ka4)
 
-    data_params = (CK_PRF_DATA_PARAM * 4)(p_iter, p_label, p_ctx, p_dkm)
+    dlf = _dkm_length_format()
+    p_dkm, ka5 = _make_prf_data_param(CK_SP800_108_DKM_LENGTH, struct=dlf)
+    keepalive.extend(ka5)
+
+    data_params = (CK_PRF_DATA_PARAM * 5)(p_iter, p_label, p_sep, p_ctx, p_dkm)
     keepalive.append(data_params)
 
     params = CK_SP800_108_FEEDBACK_KDF_PARAMS()
     params.prfType = CKM_SHA256_HMAC
-    params.ulNumberOfDataParams = 4
+    params.ulNumberOfDataParams = 5
     params.pDataParams = ctypes.cast(data_params, CK_VOID_PTR)
     if iv:
         iv_buf = (ctypes.c_ubyte * len(iv))(*iv)
@@ -292,19 +320,22 @@ def _build_double_pipeline_kdf_mech(
     p_label, ka2 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=label)
     keepalive.extend(ka2)
 
-    p_ctx, ka3 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=context)
+    p_sep, ka3 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=b"\x00")
     keepalive.extend(ka3)
 
-    dlf = _dkm_length_format()
-    p_dkm, ka4 = _make_prf_data_param(CK_SP800_108_DKM_LENGTH, struct=dlf)
+    p_ctx, ka4 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=context)
     keepalive.extend(ka4)
 
-    data_params = (CK_PRF_DATA_PARAM * 4)(p_iter, p_label, p_ctx, p_dkm)
+    dlf = _dkm_length_format()
+    p_dkm, ka5 = _make_prf_data_param(CK_SP800_108_DKM_LENGTH, struct=dlf)
+    keepalive.extend(ka5)
+
+    data_params = (CK_PRF_DATA_PARAM * 5)(p_iter, p_label, p_sep, p_ctx, p_dkm)
     keepalive.append(data_params)
 
     params = CK_SP800_108_KDF_PARAMS()
     params.prfType = CKM_SHA256_HMAC
-    params.ulNumberOfDataParams = 4
+    params.ulNumberOfDataParams = 5
     params.pDataParams = ctypes.cast(data_params, CK_VOID_PTR)
     params.ulAdditionalDerivedKeys = 0
     params.pAdditionalDerivedKeys = None
@@ -371,7 +402,13 @@ class TestSP800108CounterKDF:
             mp = _build_counter_kdf_mech()
             derived = _sp800_derive(rs, base_key, CKM_SP800_108_COUNTER_KDF, 128, mp)
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert len(val) == 16, f"Expected 16 bytes, got {len(val)}"
+            expected = _sp800_108_counter_hmac_sha256_reference(
+                _BASE_KEY_BYTES, _LABEL, _CONTEXT, 128
+            )
+            assert val == expected, (
+                "CKM_SP800_108_COUNTER_KDF AES-128 output mismatch: "
+                f"got {val.hex()}, expected {expected.hex()}"
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_COUNTER_KDF derivation not operational"
@@ -393,7 +430,13 @@ class TestSP800108CounterKDF:
             mp = _build_counter_kdf_mech()
             derived = _sp800_derive(rs, base_key, CKM_SP800_108_COUNTER_KDF, 256, mp)
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert len(val) == 32, f"Expected 32 bytes, got {len(val)}"
+            expected = _sp800_108_counter_hmac_sha256_reference(
+                _BASE_KEY_BYTES, _LABEL, _CONTEXT, 256
+            )
+            assert val == expected, (
+                "CKM_SP800_108_COUNTER_KDF AES-256 output mismatch: "
+                f"got {val.hex()}, expected {expected.hex()}"
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(
                 exc,

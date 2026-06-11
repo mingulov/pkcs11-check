@@ -16,6 +16,8 @@ OASIS spec: tls_1.2_mechanisms.md
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import subprocess
 import sys
@@ -108,6 +110,30 @@ _TLS_ERROR_RVS = {
     CKR_TEMPLATE_INCONSISTENT,
     CKR_DEVICE_ERROR,
 }
+
+
+def _tls12_prf_sha256(
+    secret: bytes,
+    label: bytes,
+    client_random: bytes,
+    server_random: bytes,
+    output_len: int,
+    *,
+    context_data: bytes | None = None,
+) -> bytes:
+    """Compute the TLS 1.2 PRF output used by CKM_TLS12_KDF tests."""
+    if output_len <= 0:
+        raise ValueError("output_len must be positive")
+    seed = label + client_random + server_random
+    if context_data is not None:
+        seed += len(context_data).to_bytes(2, "big") + context_data
+
+    output = b""
+    a_value = seed
+    while len(output) < output_len:
+        a_value = hmac.new(secret, a_value, hashlib.sha256).digest()
+        output += hmac.new(secret, a_value + seed, hashlib.sha256).digest()
+    return output[:output_len]
 
 
 def _create_generic_secret(
@@ -632,7 +658,17 @@ class TestTLS12KDF:
             try:
                 value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
-                assert len(value) == 32
+                expected = _tls12_prf_sha256(
+                    _PRE_MASTER_SECRET,
+                    b"key expansion",
+                    _CLIENT_RANDOM,
+                    _SERVER_RANDOM,
+                    32,
+                )
+                assert value == expected, (
+                    "CKM_TLS12_KDF output mismatch: "
+                    f"got {value.hex()}, expected {expected.hex()}"
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
