@@ -1409,6 +1409,44 @@ not an OpenCryptoki finding. pkcs11-check was using generic
 `CKM_EC_KEY_PAIR_GEN` for Ed25519 setup; current source uses
 `CKM_EC_EDWARDS_KEY_PAIR_GEN`.
 
+### AES-CBC-PAD accepts invalid PKCS#5 padding — 144 (NEW 2026-06-11, Type A)
+`test_wycheproof.py::TestAESCBCPKCS5Wycheproof::test_aes_cbc_pkcs5` — **144 failed /
+72 passed** on both the 3.26 RPM pool (`opencryptoki-pooled`) and the master pool
+(`opencryptoki-master-pooled`) — identical failing tcId set. `CKM_AES_CBC_PAD` decrypts
+Wycheproof `result:invalid` vectors and returns `CKR_OK` instead of rejecting with
+`CKR_ENCRYPTED_DATA_INVALID`. The 144 invalid vectors break down as **`BadPadding` ×141**
+(last block uses non-PKCS#5 padding: zero-byte, `0xff`, ISO/IEC 7816-4, ANSI X.923,
+ISO 10126, over-length count) and **`NoPadding` ×3** (tc25/97/169 "empty ciphertext").
+
+**Determination — GENUINE module finding, `fail` is correct (Type A, not a strictness
+call).** Per the classification-model design doc (`docs/classification-model-design.md`,
+Type A): "a wrong-length or **malformed ciphertext decrypts**" is a crypto-correctness
+break → `fail` on acceptance, no claim-check. A non-PKCS#5-padded ciphertext IS a malformed
+ciphertext for `CKM_AES_CBC_PAD`; stripping it and returning a plaintext is precisely that
+case (and the classic padding-oracle attack surface). This **supersedes the earlier
+"flagged deliberate-strictness" note** in the wolfpkcs11 section below — the model already
+classifies it.
+
+**Cross-check evidence (fresh 2026-06-11 from the validated pools):**
+- opencryptoki-pooled == opencryptoki-master-pooled == wolfpkcs11-pooled (stable): all fail
+  the **byte-identical 144-tcId set** (set difference empty in both directions). So
+  opencryptoki's deviation is structurally the *same* lax-PKCS#5 acceptance as wolfpkcs11
+  stable — not merely a matching count.
+- Strict providers reject all 144 → **softhsm2 216P, kryoptic 216P** (live-confirmed:
+  local softhsm2 run = `216 passed`). The test is provider-general and effect-gated
+  (line 503-504 fails unconditionally on an `invalid` vector decrypting), so strict modules
+  pass and lax modules fail with no provider keying.
+- Graded structure across providers: **wolfpkcs11-master** and **bouncyhsm** each fail
+  *only* the 3 `NoPadding` empty-ciphertext vectors (tc25/97/169) — i.e. they fixed
+  BadPadding enforcement but still accept empty ciphertext. opencryptoki accepts both
+  classes (all 144). This grading confirms a real, providers-differ validation deviation,
+  not a harness artifact.
+
+**Severity:** MEDIUM (conformance — `CKM_AES_CBC_PAD` does not validate PKCS#5 padding on
+decrypt; a padding-oracle-style channel and acceptance of malformed ciphertext).
+**Action:** documentation only; the test classification is already correct. Report upstream
+against OpenCryptoki SW token.
+
 ### RSA-PSS distinct hash and MGF rejected (NEW 2026-04-30)
 `test_wycheproof_rsa_pss.py` — **435 failures**. RSA-PSS signatures where
 the message hash (e.g. SHA-256) differs from the MGF1 hash (e.g. SHA-1) are
@@ -1874,10 +1912,16 @@ so no precise total is asserted here.)
   should reject with `CKR_ENCRYPTED_DATA_INVALID`; wolfpkcs11 decrypts them (`CKR_OK`). **Shared with
   opencryptoki** (both 72P/144F), whereas softhsm2 and kryoptic reject correctly (216P) and bouncyhsm
   rejects all but 3 — so this is a real lax-padding-validation deviation, not a harness artifact.
-  ⚖️ **Flagged decision:** the test hard-`fail`s acceptance; per the classification model, accepting
-  an invalid negative-op input is `fail` only on a Type-A/self-contradiction (lax padding is neither a
-  crypto-correctness break nor a self-contradiction), so fail-vs-xfail here is a deliberate-strictness
-  call — recorded, not yet reclassified.
+  ⚖️ **Decision RESOLVED (2026-06-11) — `fail` is correct (Type A), not a strictness call.** The
+  earlier "neither crypto-correctness nor self-contradiction" framing was an incomplete reading of the
+  model: `docs/classification-model-design.md` Type A explicitly lists "a wrong-length or **malformed
+  ciphertext decrypts**" as a crypto-correctness break → `fail`. A non-PKCS#5-padded ciphertext is a
+  malformed ciphertext for `CKM_AES_CBC_PAD`, so decrypting it (returning a plaintext) is the Type-A
+  case directly (and the padding-oracle attack surface). Provider-general/effect-gated: strict modules
+  (softhsm2/kryoptic 216P) pass, lax modules fail, no provider keying. Cross-check 2026-06-11:
+  wolfpkcs11-stable and opencryptoki fail the **byte-identical 144-tcId set**; wolfpkcs11-master and
+  bouncyhsm fail only the 3 `NoPadding` empty-ciphertext vectors (tc25/97/169). See the OpenCryptoki
+  master section for the full determination.
 - **AES-CCM decrypt accepts an invalid tag (tag-auth bypass, Type A)**: `test_ccm` -- "accepted
   invalid (CKR_OK) -- must reject" (same no-authentication class as bouncyhsm CCM). CCM is also
   partly non-operational (the H2 operability probe xfails those vectors); the ops that complete
