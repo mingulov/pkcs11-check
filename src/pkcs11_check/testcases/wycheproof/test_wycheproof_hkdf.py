@@ -14,13 +14,12 @@ import pytest
 
 from pkcs11_check.raw.pack import mech_hkdf
 from pkcs11_check.raw.recipes import (
-    create_object,
     derive_key,
     destroy_quietly,
     read_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
     CKA_DERIVE,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -34,8 +33,9 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA384,
     CKM_SHA512,
     CKM_SHA_1,
-    CKO_SECRET_KEY,
 )
+from pkcs11_check.testcases._operability import not_operational_reason
+from pkcs11_check.testcases.conftest import import_secret_key_negotiated
 
 pytestmark = [pytest.mark.wycheproof]
 REQUIRED_MECHANISMS = ["HKDF_DERIVE"]
@@ -98,25 +98,32 @@ def test_hkdf(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
     if hash_mech is None:
         pytest.skip(f"No hash mechanism mapping for {sha}")
 
-    # Import IKM as a generic secret key
+    # Import IKM as a generic secret key. The IKM is the subject key of the
+    # advertised HKDF op (it is what the derive runs FROM), so its negotiated
+    # import is the canonical capability path for HKDF_DERIVE.
     try:
-        ikm_key = create_object(
-            rs.raw,
-            rs.sh,
-            {
-                CKA_CLASS: CKO_SECRET_KEY,
-                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-                CKA_VALUE: ikm,
+        ikm_key = import_secret_key_negotiated(
+            rs,
+            int(CKK_GENERIC_SECRET),
+            ikm,
+            attrs={
                 CKA_VALUE_LEN: len(ikm),
                 CKA_DERIVE: True,
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
             },
         )
-    except AssertionError:
+    except AssertionError as exc:
         if result == "invalid":
             return
-        pytest.skip("Cannot import IKM key for HKDF")
+        if not isinstance(exc, CkrAssertionError):
+            # Non-CKR AssertionError -- a harness/ctypes bug must never be
+            # classified as "not operational".
+            raise
+        # HKDF_DERIVE was advertised (has_mechanism gate passed above); a
+        # negotiation-exhausted IKM import refusal is "advertised but not
+        # operational" -> xfail per the classification model, never skip.
+        pytest.xfail(not_operational_reason("HKDF_DERIVE:key-import", ckr_name(exc.rv)))
 
     # CK_HKDF_PARAMS: (hash_mechanism, salt, info)
     # Uses extract+expand mode (standard HKDF)

@@ -67,10 +67,10 @@ setup skips are excluded as out of scope (they are correct by construction).
 | A13 | `wycheproof/test_wycheproof.py:365`, `:513` (EC) | `Cannot import EC public key on this module: …` | raw `import_ec_public_key` | `has_mechanism("ECDSA")` via `_skip_unless_mechanism` :337/:486 | **DONE (Batch 3b)** → `import_ec_public_key_negotiated` + `_classify_ec_public_import_reject` (curve-absence skip / broad xfail split added) |
 | A14 | `acvp/test_acvp_ecdsa.py:263` | `Cannot import EC public key for {curve}: …` | raw `import_ec_public_key` | `has_mechanism(mech_name)` :249 | **needs wiring** (split: curve-unsupported branch stays C) |
 | A15 | `test_cctv_rfc6979.py:104` (`_skip_or_xfail_cctv_ec_import_reject`, broad branch) | `Cannot import {label}: …` | raw `import_ec_public_key` (pub) + `import_ec_private_key` (priv) | `has_mechanism("ECDSA_SHA256")` :121/:165 | **DONE (Batch 3b)** → public site → `import_ec_public_key_negotiated`; tuple split into `_CCTV_EC_CURVE_UNSUPPORTED_CKRS` (skip) + broad (xfail); private site keeps raw `import_ec_private_key` but broad → xfail (D2 spec-path) |
-| A16 | `acvp/test_acvp_slhdsa.py:101` (`_skip_if_import_unsupported`) | `Cannot import SLH-DSA {label}: …` | raw `import_pqc_*` | `has_mechanism` (SLH-DSA mech) | **needs wiring** (no negotiated PQC importer yet — see plan) |
-| A17 | `wycheproof/test_wycheproof_dsa.py:228` | `Cannot import DSA public key` | raw `import_dsa_public_key` | `has_mechanism(name)` :188 | **needs wiring** (no negotiated DSA importer; low priority — DSA rare) |
-| A18 | `wycheproof/test_wycheproof_hkdf.py:119` | `Cannot import IKM key for HKDF` | raw `create_object` (generic secret) | `has_mechanism("HKDF_DERIVE")` :86 | **needs wiring** → `create_object_negotiated` / `import_secret_key_negotiated` |
-| A19 | `wycheproof/test_wycheproof_chacha.py:97` | `Cannot import ChaCha20 key` | raw `create_object` | `has_mechanism("CHACHA20_POLY1305")` :71 | **needs wiring** → `import_secret_key_negotiated` |
+| A16 | `acvp/test_acvp_slhdsa.py` import helper | `Cannot import SLH-DSA {label}: …` | raw `import_pqc_*` | `has_mechanism` (SLH-DSA mech) | **DONE (D3, commit 9a040f98)** → `_skip_if_import_unsupported` removed; replaced by `_xfail_if_import_not_operational` (unified `_PQC_IMPORT_NOT_OPERATIONAL_RVS`; boundary = mechanism advertisement, see §4a D3) |
+| A17 | `wycheproof/test_wycheproof_dsa.py:228` | `Cannot import DSA public key` | raw `import_dsa_public_key` | `has_mechanism(name)` :188 | **DEFERRED (Batch 4)** — decision + per-provider evidence recorded in the A17 deferral commit. |
+| A18 | `wycheproof/test_wycheproof_hkdf.py:119` | `Cannot import IKM key for HKDF` | raw `create_object` (generic secret) | `has_mechanism("HKDF_DERIVE")` :86 | **DONE (Batch 4)** → `import_secret_key_negotiated` (CKK_GENERIC_SECRET); broad CKR after negotiation exhaustion → xfail `HKDF_DERIVE:key-import`; `result=="invalid"` keeps vacuous return; non-CKR propagates |
+| A19 | `wycheproof/test_wycheproof_chacha.py:97` | `Cannot import ChaCha20 key` | raw `create_object` | `has_mechanism("CHACHA20_POLY1305")` :71 | **DONE (Batch 4)** → `import_secret_key_negotiated` (CKK_CHACHA20); broad CKR after negotiation exhaustion → xfail `CHACHA20_POLY1305:key-import`; non-CKR propagates |
 
 **Note on the A5/A7/A8/A14 splits:** these sites already separate a true-absence branch
 (`CKR_CURVE_NOT_SUPPORTED` / `CKR_DOMAIN_PARAMS_INVALID` → keep as skip, category C) from a broad
@@ -200,9 +200,14 @@ onto the existing negotiated importers (`import_rsa_private_key_negotiated`,
 setup/op asymmetry on one mechanism family.
 
 **Batch 4 — needs new negotiated importers (A16 SLH-DSA, A17 DSA, A18 HKDF/secret, A19 ChaCha):**
-A18/A19 can reuse `import_secret_key_negotiated` / `create_object_negotiated` (cheap). A16 (PQC) and
-A17 (DSA) have no negotiated importer yet; defer until D3 (PQC CKR boundary) is resolved and weigh
-DSA's low value (A17 is the lowest priority — DSA is near-obsolete).
+A18/A19 reuse `import_secret_key_negotiated` (cheap) — **DONE** (HKDF IKM + ChaCha key wired,
+broad CKR after negotiation exhaustion → xfail; meta-tests in
+`tests/test_import_skip_xfail_batch4.py`). A16 (PQC) was **DONE** in D3 (commit 9a040f98 — the
+boundary is mechanism advertisement, no negotiated PQC importer needed). A17 (DSA) is **DEFERRED**:
+no negotiated DSA importer exists, wiring one is non-trivial, and the leak is theoretical — no
+provider in any `artifacts*/` baseline both advertises DSA and refuses the canonical public import
+(nss/softhsm2 advertise DSA and import successfully; all `test_dsa` skips are mechanism-absence /
+vector-shape, never an `import_dsa_public_key` refusal). See the A17 row for the resolution recipe.
 
 **Leave alone (do NOT touch):**
 - All of category B (B1–B5) and C (C1–C10): legitimate skips. In particular keep B1's

@@ -42,7 +42,7 @@ def test_chacha_invalid_vector_decrypt_success_is_reported(
 ) -> None:
     """An invalid ChaCha20-Poly1305 vector that decrypts must fail (forged accepted)."""
     vec_id, vec = _first("invalid")
-    monkeypatch.setattr(chacha, "create_object", _handle)
+    monkeypatch.setattr(chacha, "import_secret_key_negotiated", _handle)
     monkeypatch.setattr(chacha, "decrypt_single", lambda *_a, **_k: bytes.fromhex(vec["msg"]))
     monkeypatch.setattr(chacha, "destroy_quietly", lambda *_a: None)
 
@@ -53,7 +53,7 @@ def test_chacha_invalid_vector_decrypt_success_is_reported(
 def test_chacha_valid_vector_decrypts(monkeypatch: pytest.MonkeyPatch) -> None:
     """A valid ChaCha20-Poly1305 vector that decrypts to the expected plaintext passes."""
     vec_id, vec = _first("valid")
-    monkeypatch.setattr(chacha, "create_object", _handle)
+    monkeypatch.setattr(chacha, "import_secret_key_negotiated", _handle)
     monkeypatch.setattr(chacha, "decrypt_single", lambda *_a, **_k: bytes.fromhex(vec["msg"]))
     monkeypatch.setattr(chacha, "destroy_quietly", lambda *_a: None)
 
@@ -63,7 +63,7 @@ def test_chacha_valid_vector_decrypts(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_chacha_valid_vector_wrong_plaintext_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     """A valid ChaCha20-Poly1305 vector that decrypts to wrong plaintext is a finding (fail)."""
     vec_id, vec = _first("valid")
-    monkeypatch.setattr(chacha, "create_object", _handle)
+    monkeypatch.setattr(chacha, "import_secret_key_negotiated", _handle)
     monkeypatch.setattr(chacha, "decrypt_single", lambda *_a, **_k: b"\xde\xad\xbe\xef")
     monkeypatch.setattr(chacha, "destroy_quietly", lambda *_a: None)
 

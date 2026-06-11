@@ -15,22 +15,20 @@ import pytest
 
 from pkcs11_check.raw.pack import mech_chacha20_poly1305
 from pkcs11_check.raw.recipes import (
-    create_object,
     decrypt_single,
     destroy_quietly,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
-    CKA_KEY_TYPE,
     CKA_SENSITIVE,
     CKA_TOKEN,
-    CKA_VALUE,
     CKK_CHACHA20,
     CKM_CHACHA20_POLY1305,
-    CKO_SECRET_KEY,
 )
+from pkcs11_check.testcases._operability import not_operational_reason
+from pkcs11_check.testcases.conftest import import_secret_key_negotiated
 
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["CHACHA20_POLY1305"]
@@ -79,22 +77,30 @@ def test_chacha20_poly1305(p11_module_session: Any, vec_id: str, vec: dict[str, 
     tag = bytes.fromhex(vec["tag"])
     result = vec["result"]
 
+    # The ChaCha20 key is the subject key of the advertised AEAD op (it decrypts
+    # the supplied ct||tag), so its negotiated import is the canonical capability
+    # path for CHACHA20_POLY1305.
     try:
-        key = create_object(
-            rs.raw,
-            rs.sh,
-            {
-                CKA_CLASS: CKO_SECRET_KEY,
-                CKA_KEY_TYPE: CKK_CHACHA20,
-                CKA_VALUE: key_bytes,
+        key = import_secret_key_negotiated(
+            rs,
+            int(CKK_CHACHA20),
+            key_bytes,
+            attrs={
                 CKA_ENCRYPT: True,
                 CKA_DECRYPT: True,
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
             },
         )
-    except (AssertionError, AttributeError):
-        pytest.skip("Cannot import ChaCha20 key")
+    except AssertionError as exc:
+        if not isinstance(exc, CkrAssertionError):
+            # Non-CKR AssertionError -- a harness/ctypes bug must never be
+            # classified as "not operational".
+            raise
+        # CHACHA20_POLY1305 was advertised (has_mechanism gate passed above); a
+        # negotiation-exhausted key import refusal is "advertised but not
+        # operational" -> xfail per the classification model, never skip.
+        pytest.xfail(not_operational_reason("CHACHA20_POLY1305:key-import", ckr_name(exc.rv)))
 
     # CK_SALSA20_CHACHA20_POLY1305_PARAMS: (nonce, aad)
     chacha_param = mech_chacha20_poly1305(CKM_CHACHA20_POLY1305, iv, aad=aad if aad else None)
