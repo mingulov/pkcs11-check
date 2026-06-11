@@ -684,6 +684,62 @@ def test_mech_pbkdf2_with_password() -> None:
     assert m.params.pPassword is not None
 
 
+def test_mech_rc2_mac_general_sets_effective_bits_and_mac_length() -> None:
+    from pkcs11_check.raw import pack
+    from pkcs11_check.raw.types_std import CK_RC2_MAC_GENERAL_PARAMS, CKM_RC2_MAC_GENERAL
+
+    mech = pack.mech_rc2_mac_general(CKM_RC2_MAC_GENERAL, effective_bits=128, mac_len=8)
+
+    assert mech.ck.mechanism == CKM_RC2_MAC_GENERAL
+    params = mech.params
+    assert isinstance(params, CK_RC2_MAC_GENERAL_PARAMS)
+    assert params.ulEffectiveBits == 128
+    assert params.ulMacLength == 8
+
+
+def test_mech_rc5_sets_wordsize_and_rounds() -> None:
+    from pkcs11_check.raw import pack
+    from pkcs11_check.raw.types_std import CK_RC5_PARAMS, CKM_RC5_ECB
+
+    mech = pack.mech_rc5(CKM_RC5_ECB, word_bits=32, rounds=12)
+
+    assert mech.ck.mechanism == CKM_RC5_ECB
+    params = mech.params
+    assert isinstance(params, CK_RC5_PARAMS)
+    assert params.ulWordsize == 32
+    assert params.ulRounds == 12
+
+
+def test_mech_rc5_cbc_sets_wordsize_rounds_and_iv_pointer() -> None:
+    from pkcs11_check.raw import pack
+    from pkcs11_check.raw.types_std import CK_RC5_CBC_PARAMS, CKM_RC5_CBC
+
+    iv = b"12345678"
+    mech = pack.mech_rc5_cbc(CKM_RC5_CBC, word_bits=32, rounds=12, iv=iv)
+
+    assert mech.ck.mechanism == CKM_RC5_CBC
+    params = mech.params
+    assert isinstance(params, CK_RC5_CBC_PARAMS)
+    assert params.ulWordsize == 32
+    assert params.ulRounds == 12
+    assert params.ulIvLen == len(iv)
+    assert ctypes.string_at(params.pIv, params.ulIvLen) == iv
+
+
+def test_mech_rc5_mac_general_sets_wordsize_rounds_and_mac_length() -> None:
+    from pkcs11_check.raw import pack
+    from pkcs11_check.raw.types_std import CK_RC5_MAC_GENERAL_PARAMS, CKM_RC5_MAC_GENERAL
+
+    mech = pack.mech_rc5_mac_general(CKM_RC5_MAC_GENERAL, word_bits=32, rounds=12, mac_len=8)
+
+    assert mech.ck.mechanism == CKM_RC5_MAC_GENERAL
+    params = mech.params
+    assert isinstance(params, CK_RC5_MAC_GENERAL_PARAMS)
+    assert params.ulWordsize == 32
+    assert params.ulRounds == 12
+    assert params.ulMacLength == 8
+
+
 def test_mech_pbe_exposes_init_vector_output_buffer() -> None:
     from pkcs11_check.raw.pack import mech_pbe
     from pkcs11_check.raw.types_std import CK_PBE_PARAMS, CKM_PBE_SHA1_DES3_EDE_CBC

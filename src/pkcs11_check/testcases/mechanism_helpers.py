@@ -25,6 +25,10 @@ from pkcs11_check.raw.pack_mechanisms import (
     mech_pss,
     mech_rc2,
     mech_rc2_cbc,
+    mech_rc2_mac_general,
+    mech_rc5,
+    mech_rc5_cbc,
+    mech_rc5_mac_general,
 )
 from pkcs11_check.raw.recipes import (
     gen_keypair,
@@ -333,6 +337,30 @@ def build_test_params(mech_id: int, recipe: ParamRecipe) -> Any:
         effective_bits = d.get("effective_bits", 128)
         iv = os.urandom(8)
         return mech_rc2_cbc(CKM(mech_id), effective_bits=effective_bits, iv=iv)
+    elif style == "rc2_mac_general":
+        effective_bits = d.get("effective_bits", 128)
+        mac_len = d.get("mac_len", 8)
+        return mech_rc2_mac_general(CKM(mech_id), effective_bits=effective_bits, mac_len=mac_len)
+    elif style == "rc5":
+        return mech_rc5(
+            CKM(mech_id),
+            word_bits=d.get("word_bits", 32),
+            rounds=d.get("rounds", 12),
+        )
+    elif style == "rc5_cbc":
+        return mech_rc5_cbc(
+            CKM(mech_id),
+            word_bits=d.get("word_bits", 32),
+            rounds=d.get("rounds", 12),
+            iv=os.urandom((d.get("word_bits", 32) * 2 + 7) // 8),
+        )
+    elif style == "rc5_mac_general":
+        return mech_rc5_mac_general(
+            CKM(mech_id),
+            word_bits=d.get("word_bits", 32),
+            rounds=d.get("rounds", 12),
+            mac_len=d.get("mac_len", 8),
+        )
     elif style == "eddsa":
         return mech_eddsa(CKM(mech_id))
     elif style == "mac_general":
@@ -345,8 +373,6 @@ def build_test_params(mech_id: int, recipe: ParamRecipe) -> Any:
         return mech_pbe(CKM(mech_id), password=password, salt=salt, iteration=iteration)
     elif style in ("ecdh", "hkdf", "string_data", "pbkdf2", "tls", "sp800_108"):
         return "SKIP"  # Needs runtime data
-    elif style in ("rc2_mac_general", "rc5_mac_general"):
-        return "SKIP"  # Needs CK_RC2/RC5_MAC_GENERAL_PARAMS (multi-field struct)
     # Unknown style
     return "SKIP"
 

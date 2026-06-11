@@ -13,6 +13,12 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_CBC,
     CKM_AES_KEY_GEN,
     CKM_PKCS5_PBKD2,
+    CKM_RC2_MAC_GENERAL,
+    CKM_RC5_CBC,
+    CKM_RC5_CBC_PAD,
+    CKM_RC5_ECB,
+    CKM_RC5_MAC,
+    CKM_RC5_MAC_GENERAL,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SHA256_KEY_GEN,
     CKR_ARGUMENTS_BAD,
@@ -26,7 +32,12 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases import mechanism_helpers as helpers
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
-from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
+from pkcs11_check.testcases.mechanism_registry import (
+    MECHANISM_REGISTRY,
+    KeygenRecipe,
+    MechConfig,
+    ParamRecipe,
+)
 
 
 class _FakeMech:
@@ -270,6 +281,78 @@ def test_gen_symmetric_key_xfails_when_pbkdf2_returns_arguments_bad() -> None:
         helpers.gen_symmetric_key(rs, entry, config)
 
     assert len(fake_raw.calls) == 1
+
+
+def test_build_test_params_builds_rc2_mac_general_params() -> None:
+    from pkcs11_check.raw.types_std import CK_RC2_MAC_GENERAL_PARAMS
+
+    params = helpers.build_test_params(
+        int(CKM_RC2_MAC_GENERAL),
+        ParamRecipe("rc2_mac_general", {"effective_bits": 128, "mac_len": 8}),
+    )
+
+    assert params != "SKIP"
+    assert params.params is not None
+    assert isinstance(params.params, CK_RC2_MAC_GENERAL_PARAMS)
+    assert params.params.ulEffectiveBits == 128
+    assert params.params.ulMacLength == 8
+
+
+@pytest.mark.parametrize(
+    ("mech_id", "recipe", "expected_params_type"),
+    [
+        (CKM_RC5_ECB, ParamRecipe("rc5", {"word_bits": 32, "rounds": 12}), "CK_RC5_PARAMS"),
+        (CKM_RC5_MAC, ParamRecipe("rc5", {"word_bits": 32, "rounds": 12}), "CK_RC5_PARAMS"),
+        (
+            CKM_RC5_CBC,
+            ParamRecipe("rc5_cbc", {"word_bits": 32, "rounds": 12}),
+            "CK_RC5_CBC_PARAMS",
+        ),
+        (
+            CKM_RC5_CBC_PAD,
+            ParamRecipe("rc5_cbc", {"word_bits": 32, "rounds": 12}),
+            "CK_RC5_CBC_PARAMS",
+        ),
+        (
+            CKM_RC5_MAC_GENERAL,
+            ParamRecipe("rc5_mac_general", {"word_bits": 32, "rounds": 12, "mac_len": 8}),
+            "CK_RC5_MAC_GENERAL_PARAMS",
+        ),
+    ],
+)
+def test_build_test_params_builds_rc5_params(
+    mech_id: int,
+    recipe: ParamRecipe,
+    expected_params_type: str,
+) -> None:
+    params = helpers.build_test_params(int(mech_id), recipe)
+
+    assert params != "SKIP"
+    assert params.params is not None
+    assert type(params.params).__name__ == expected_params_type
+    assert params.params.ulWordsize == 32
+    assert params.params.ulRounds == 12
+
+
+@pytest.mark.parametrize(
+    ("mech_id", "expected_style"),
+    [
+        (CKM_RC5_ECB, "rc5"),
+        (CKM_RC5_MAC, "rc5"),
+        (CKM_RC5_CBC, "rc5_cbc"),
+        (CKM_RC5_CBC_PAD, "rc5_cbc"),
+        (CKM_RC5_MAC_GENERAL, "rc5_mac_general"),
+    ],
+)
+def test_rc5_registry_uses_buildable_parameter_recipes(
+    mech_id: int,
+    expected_style: str,
+) -> None:
+    config = MECHANISM_REGISTRY[int(mech_id)]
+
+    assert config.param_required is True
+    assert config.param_recipe.style == expected_style
+    assert helpers.build_test_params(int(mech_id), config.param_recipe) != "SKIP"
 
 
 def test_gen_keypair_for_mech_xfails_when_advertised_keypair_rejects_runtime() -> None:

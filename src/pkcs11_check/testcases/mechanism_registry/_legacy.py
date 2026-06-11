@@ -137,6 +137,12 @@ _fixed = KeygenRecipe("fixed_length")
 _iv8 = ParamRecipe("iv", {"iv_len": 8})
 _iv16 = ParamRecipe("iv", {"iv_len": 16})
 _mac_general = ParamRecipe("mac_general", {"mac_len": 8})
+_rc2 = ParamRecipe("rc2", {"effective_bits": 128})
+_rc2_cbc = ParamRecipe("rc2_cbc", {"effective_bits": 128})
+_rc2_mac_general = ParamRecipe("rc2_mac_general", {"effective_bits": 128, "mac_len": 8})
+_rc5 = ParamRecipe("rc5", {"word_bits": 32, "rounds": 12})
+_rc5_cbc = ParamRecipe("rc5_cbc", {"word_bits": 32, "rounds": 12})
+_rc5_mac_general = ParamRecipe("rc5_mac_general", {"word_bits": 32, "rounds": 12, "mac_len": 8})
 
 
 def populate(registry: dict[int, MechConfig]) -> None:
@@ -162,7 +168,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         param_required=True,
-        param_recipe=ParamRecipe("rc2", defaults={"effective_bits": 128}),
+        param_recipe=_rc2,
         deterministic=True,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
@@ -176,7 +182,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         param_required=True,
-        param_recipe=ParamRecipe("rc2_cbc", defaults={"effective_bits": 128}),
+        param_recipe=_rc2_cbc,
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
@@ -190,7 +196,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="any",
         param_required=True,
-        param_recipe=ParamRecipe("rc2_cbc", defaults={"effective_bits": 128}),
+        param_recipe=_rc2_cbc,
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
@@ -202,7 +208,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RC2_KEY_GEN,
         key_sizes=_RC2_SIZES,
         param_required=True,
-        param_recipe=ParamRecipe("rc2", defaults={"effective_bits": 128}),
+        param_recipe=_rc2,
         keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="RC2-MAC: CBC-MAC with fixed output, requires CK_RC2_PARAMS (effective key bits)",
@@ -213,7 +219,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RC2_KEY_GEN,
         key_sizes=_RC2_SIZES,
         param_required=True,
-        param_recipe=ParamRecipe("rc2_mac_general"),
+        param_recipe=_rc2_mac_general,
         keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="RC2-MAC-GENERAL: variable-length MAC, requires CK_RC2_MAC_GENERAL_PARAMS",
@@ -261,9 +267,10 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_RC5,
         keygen_mech=CKM_RC5_KEY_GEN,
         key_sizes=_RC5_SIZES,
+        block_size=8,
         input_constraint="block_aligned",
         param_required=True,
-        param_recipe=ParamRecipe("none"),
+        param_recipe=_rc5,
         deterministic=True,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
@@ -274,9 +281,10 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_RC5,
         keygen_mech=CKM_RC5_KEY_GEN,
         key_sizes=_RC5_SIZES,
+        block_size=8,
         input_constraint="block_aligned",
         param_required=True,
-        param_recipe=ParamRecipe("none"),
+        param_recipe=_rc5_cbc,
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
@@ -287,9 +295,10 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_RC5,
         keygen_mech=CKM_RC5_KEY_GEN,
         key_sizes=_RC5_SIZES,
+        block_size=8,
         input_constraint="any",
         param_required=True,
-        param_recipe=ParamRecipe("none"),
+        param_recipe=_rc5_cbc,
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
@@ -301,7 +310,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RC5_KEY_GEN,
         key_sizes=_RC5_SIZES,
         param_required=True,
-        param_recipe=ParamRecipe("none"),
+        param_recipe=_rc5,
         keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="RC5-MAC: CBC-MAC with fixed output, requires CK_RC5_PARAMS",
@@ -312,7 +321,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RC5_KEY_GEN,
         key_sizes=_RC5_SIZES,
         param_required=True,
-        param_recipe=ParamRecipe("rc5_mac_general"),
+        param_recipe=_rc5_mac_general,
         keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="RC5-MAC-GENERAL: variable-length MAC, requires CK_RC5_MAC_GENERAL_PARAMS",

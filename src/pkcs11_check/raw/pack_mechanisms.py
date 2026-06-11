@@ -36,6 +36,10 @@ from .types_std import (
     CK_PBE_PARAMS,
     CK_PKCS5_PBKD2_PARAMS2,
     CK_RC2_CBC_PARAMS,
+    CK_RC2_MAC_GENERAL_PARAMS,
+    CK_RC5_CBC_PARAMS,
+    CK_RC5_MAC_GENERAL_PARAMS,
+    CK_RC5_PARAMS,
     CK_RSA_PKCS_OAEP_PARAMS,
     CK_RSA_PKCS_PSS_PARAMS,
     CK_SALSA20_CHACHA20_POLY1305_PARAMS,
@@ -680,6 +684,85 @@ def mech_rc2_cbc(
     return _mech_struct(mechanism_type, params, "mech_rc2_cbc")
 
 
+def mech_rc2_mac_general(
+    mechanism_type: CKM | int,
+    *,
+    effective_bits: int = 128,
+    mac_len: int = 8,
+) -> PackedMechanism:
+    """Pack CK_RC2_MAC_GENERAL_PARAMS (effective bits + MAC length)."""
+    if effective_bits <= 0:
+        raise ValueError("effective_bits must be positive")
+    if mac_len <= 0:
+        raise ValueError("mac_len must be positive")
+    params = CK_RC2_MAC_GENERAL_PARAMS()
+    params.ulEffectiveBits = effective_bits
+    params.ulMacLength = mac_len
+    return _mech_struct(mechanism_type, params, "mech_rc2_mac_general")
+
+
+def mech_rc5(
+    mechanism_type: CKM | int,
+    *,
+    word_bits: int = 32,
+    rounds: int = 12,
+) -> PackedMechanism:
+    """Pack CK_RC5_PARAMS (word size in bits + rounds)."""
+    if word_bits <= 0:
+        raise ValueError("word_bits must be positive")
+    if rounds < 0:
+        raise ValueError("rounds must be non-negative")
+    params = CK_RC5_PARAMS()
+    params.ulWordsize = word_bits
+    params.ulRounds = rounds
+    return _mech_struct(mechanism_type, params, "mech_rc5")
+
+
+def mech_rc5_cbc(
+    mechanism_type: CKM | int,
+    *,
+    word_bits: int = 32,
+    rounds: int = 12,
+    iv: bytes | None = None,
+) -> PackedMechanism:
+    """Pack CK_RC5_CBC_PARAMS (word size, rounds, variable-length IV)."""
+    if word_bits <= 0:
+        raise ValueError("word_bits must be positive")
+    if rounds < 0:
+        raise ValueError("rounds must be non-negative")
+    if iv is None:
+        iv = bytes((word_bits * 2 + 7) // 8)
+    if len(iv) == 0:
+        raise ValueError("iv must be non-empty")
+    ka: list[Any] = []
+    params = CK_RC5_CBC_PARAMS()
+    params.ulWordsize = word_bits
+    params.ulRounds = rounds
+    params.pIv, params.ulIvLen = _pack_bytes(iv, ka)
+    return _mech_struct(mechanism_type, params, "mech_rc5_cbc", ka)
+
+
+def mech_rc5_mac_general(
+    mechanism_type: CKM | int,
+    *,
+    word_bits: int = 32,
+    rounds: int = 12,
+    mac_len: int = 8,
+) -> PackedMechanism:
+    """Pack CK_RC5_MAC_GENERAL_PARAMS (word size, rounds, MAC length)."""
+    if word_bits <= 0:
+        raise ValueError("word_bits must be positive")
+    if rounds < 0:
+        raise ValueError("rounds must be non-negative")
+    if mac_len <= 0:
+        raise ValueError("mac_len must be positive")
+    params = CK_RC5_MAC_GENERAL_PARAMS()
+    params.ulWordsize = word_bits
+    params.ulRounds = rounds
+    params.ulMacLength = mac_len
+    return _mech_struct(mechanism_type, params, "mech_rc5_mac_general")
+
+
 def mech_eddsa(
     mechanism_type: CKM | int,
     *,
@@ -1253,6 +1336,10 @@ __all__ = [
     "mech_pss",
     "mech_rc2",
     "mech_rc2_cbc",
+    "mech_rc2_mac_general",
+    "mech_rc5",
+    "mech_rc5_cbc",
+    "mech_rc5_mac_general",
     "mech_sign_context",
     "mech_ssl3_key_mat",
     "mech_ssl3_master_key_derive",
