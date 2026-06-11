@@ -26,16 +26,30 @@ have results; the post-pool procedure (Denis 2026-06-10) is DONE:
 - **Metrics refreshed:** `docs/docker-provider-results.md` Matrix Results table updated from this
   validated pool (corepkcs11/-main now included as full rows).
 
+**IMPORT-SKIP AUDIT COMPLETE (2026-06-11).** All of `docs/findings/import-skip-audit.md`
+A1–A16, A18, A19 shipped + two-stage reviewed across Batches 1–4 (b38ad9b2 e0340c2d 3c72cc3f
+45441f10 72b9b7d8 74d09c18 b25b9bd5 b75dd935) + D1–D3 (6857bebf b56c3f8c 9a040f98). A17 (DSA)
+= evidence-backed DEFER (skip hit by ZERO providers; resolution recipe in doc). §5 marks COMPLETE.
+- **Two fresh-data DETERMINATIONS (both GENUINE Type-A, HIGH confidence, upstream-reportable, docs only):**
+  nss `test_mldsa_verify` 8F = ML-DSA non-malleability break (verifies +1-byte-over-length
+  sigs/keys; FIPS-204 fixed-length; `b251ad1b`); opencryptoki AES-CBC-PKCS5 144F = malformed-
+  ciphertext acceptance (byte-identical to wolfpkcs11-stable; strict providers reject 216P;
+  `27e4e6b5`+`7fa1f587`). Both in module-issues.md + issues-triage.md.
+- **Finding-hiding bug KILLED (`a47170d0`):** `test_data_paths.py::test_env_var_overrides`
+  poisoned `WYCHEPROOF_DIR` process-wide (restore-reload ran with the bogus env still set),
+  silently SKIPPING 4 HKDF meta-tests in every full-suite run = hard-pins disabled in CI, masked
+  as "6 skipped". Fixed via monkeypatch.context() + module-level vector pre-import. Suite 6s→2s.
+- Suite now **2165 passed / 2 skipped / 0 xfailed**, gates green. dev ahead 214 / behind 1 of origin.
+
 **STILL PENDING (next session / next pool):**
-- **Batch 3a review** — import-skip audit Batch 3a (RSA-family raw imports → negotiated;
-  exhaustion on advertised mechs skip→xfail; A9-RSA, A10–A12) shipped at `45441f10`, needs the
-  two-stage review backfill.
-- **Batch 3b / Batch 4** of the import-skip→xfail audit (remaining `pytest.skip("Cannot import …")`
-  sites; only negotiated-exhausted + advertised mechanisms qualify).
-- **Next-run verification items** (changes merged AFTER these pool images — look for them in the
-  next pool): **R1 fix** (`9b3e52f9` — expect the 7 false fails to return to xfail),
-  import-skip **Batches 1–2** + **D1–D3** reclassifications, **FIPS unwrap** fix
-  (`xfail_if_op_not_operational` in `test_rsa_key_wrapping`).
+- **Mechanism-registry Phases B–D** — the remaining LONGER ARC (see [[project_mechanism_tests_progress]]:
+  Phase A 1-4 done, 439 entries; Task 5 + B-D remain). This is a design-then-implement effort —
+  warrants its own brainstorm/plan, not autonomous loop squeezing.
+- **A17 DSA importer** (low priority; deferred with recipe — no provider hits it).
+- **Next-run verification items** (changes merged AFTER the validated pool images — verify in the
+  NEXT pool vs `artifacts3/` baseline): R1 fix (`9b3e52f9`), import-skip Batches 1–4 + D1–D3
+  reclassifications (kryoptic-fips acvp_rsa ~216 skip→xf; tpm2 ~7k NIST-curve skip→xf;
+  EC/Montgomery private-import xfails), FIPS unwrap (`xfail_if_op_not_operational`, kryoptic-fips 3F→0).
 
 ## CURRENT STATE — advertised-capability honesty MERGED (2026-06-10, later session)
 
