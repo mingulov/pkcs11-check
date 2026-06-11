@@ -8,6 +8,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKK_AES,
     CKK_GENERIC_SECRET,
+    CKK_IDEA,
     CKK_RSA,
     CKK_SHA256_HMAC,
     CKM_AES_CBC,
@@ -115,6 +116,48 @@ def test_gen_symmetric_key_falls_back_to_mechanism_info_when_registry_sizes_miss
 
     assert handle == 99
     assert captured["value_len"] == 32
+    assert len(fake_raw.calls) == 1
+
+
+def test_gen_symmetric_key_omits_value_len_for_fixed_length_recipe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_value_len_attrs: list[int] = []
+    fake_raw = _FakeRaw()
+    rs = SimpleNamespace(raw=fake_raw, sh=7)
+
+    def fake_attr_ulong(attr: int, value: int) -> tuple[int, int]:
+        if attr == int(CKA_VALUE_LEN):
+            captured_value_len_attrs.append(value)
+        return (attr, value)
+
+    def fake_template(*items: object) -> SimpleNamespace:
+        return SimpleNamespace(ptr=object(), count=len(items))
+
+    monkeypatch.setattr("pkcs11_check.raw.pack.attr_ulong", fake_attr_ulong)
+    monkeypatch.setattr("pkcs11_check.raw.pack.template", fake_template)
+    monkeypatch.setattr(helpers, "pack_attrs", lambda attrs, skip=None: [("attrs", attrs, skip)])
+    monkeypatch.setattr(helpers, "mech_simple", lambda mech: _FakeMech())
+
+    entry = MechEntry(
+        mech_id=0x340,
+        mech_name="IDEA_KEY_GEN",
+        flags=0,
+        min_key_size=16,
+        max_key_size=16,
+        config=None,
+    )
+    config = MechConfig(
+        key_type=int(CKK_IDEA),
+        keygen_mech=0x340,
+        key_sizes=(128,),
+        keygen_recipe=KeygenRecipe("fixed_length"),
+    )
+
+    handle = helpers.gen_symmetric_key(rs, entry, config)
+
+    assert handle == 99
+    assert captured_value_len_attrs == []
     assert len(fake_raw.calls) == 1
 
 

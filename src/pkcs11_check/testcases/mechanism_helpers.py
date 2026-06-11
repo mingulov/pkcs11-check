@@ -453,7 +453,9 @@ def gen_symmetric_key(
     from pkcs11_check.raw.pack import attr_ulong, template
 
     key_type = config.key_type
-    is_fixed = key_type is not None and int(key_type) in FIXED_LENGTH_KEY_TYPES
+    is_fixed = config.keygen_recipe.style == "fixed_length" or (
+        key_type is not None and int(key_type) in FIXED_LENGTH_KEY_TYPES
+    )
 
     attrs: dict[int, Any] = {CKA_TOKEN: False}
     if key_type is not None:
@@ -981,9 +983,7 @@ def build_params_from_vector(mech_id: int, recipe: ParamRecipe, vec: dict[str, A
         )
 
     if style == "rc2_mac_general":
-        effective_bits_rc2_mac_general: int = vp.get(
-            "effective_bits", d.get("effective_bits", 128)
-        )
+        effective_bits_rc2_mac_general: int = vp.get("effective_bits", d.get("effective_bits", 128))
         mac_len_rc2_mac_general: int = vp.get("mac_len", d.get("mac_len", 8))
         return mech_rc2_mac_general(
             CKM(mech_id),
