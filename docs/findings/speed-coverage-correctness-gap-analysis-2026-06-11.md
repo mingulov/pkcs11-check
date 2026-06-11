@@ -436,6 +436,9 @@ Legacy/deprecated coverage addendum for the active goal:
   CAST-128 RFC 2144 one-block ECB KATs under the same zero-IV CBC-MAC
   equivalence. Remaining MAC_GENERAL gaps should continue family by family
   only where the block KAT source and PKCS#11 parameter mapping are clear.
+- Added: `CKM_RC2_MAC_GENERAL` now has a full-block expected-MAC vector derived
+  from the existing OpenSSL legacy RC2 one-block ECB vector, plus vector-param
+  replay for effective key bits and requested MAC length.
 
 Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks
 should follow once the harness can reuse provider-local history and prove

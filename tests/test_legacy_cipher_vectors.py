@@ -14,6 +14,7 @@ from pkcs11_check.raw.types_std import (
     CKM_IDEA_MAC_GENERAL,
     CKM_RC2_CBC,
     CKM_RC2_ECB,
+    CKM_RC2_MAC_GENERAL,
     CKM_RC4,
     CKM_RC5_CBC,
     CKM_RC5_ECB,
@@ -72,6 +73,35 @@ def test_rc2_cbc_vector_params_replay_effective_bits_and_iv() -> None:
 
     assert params.params.ulEffectiveBits == vec["params"]["effective_bits"]
     assert bytes(params.params.iv) == bytes.fromhex(vec["params"]["iv_hex"])
+
+
+def test_rc2_mac_general_mechanism_has_openssl_legacy_kat_vector() -> None:
+    config = MECHANISM_REGISTRY[int(CKM_RC2_MAC_GENERAL)]
+    assert config.vector_file == "rc2_mac_general.json"
+
+    vectors = load_positive_vectors("rc2_mac_general.json")
+    assert vectors, "rc2_mac_general.json must contain positive vectors"
+    for vec in vectors:
+        assert vec["type"] == "positive"
+        assert vec["mechanism_name"] == "CKM_RC2_MAC_GENERAL"
+        assert vec["key_hex"] == "000102030405060708090a0b0c0d0e0f"
+        assert vec["input_hex"] == "0123456789abcdef"
+        assert vec["mac_hex"] == "c1de66972a5efb2b"
+        assert vec["params"]["source"] == (
+            "OpenSSL legacy RC2 vector; one-block CBC-MAC with zero IV equals RC2-ECB"
+        )
+        assert vec["params"]["effective_bits"] == 128
+        assert vec["params"]["mac_len"] == 8
+
+
+def test_rc2_mac_general_vector_params_replay_effective_bits_and_length() -> None:
+    config = MECHANISM_REGISTRY[int(CKM_RC2_MAC_GENERAL)]
+    vector = load_positive_vectors("rc2_mac_general.json")[0]
+
+    params = build_params_from_vector(int(CKM_RC2_MAC_GENERAL), config.param_recipe, vector)
+
+    assert params.params.ulEffectiveBits == vector["params"]["effective_bits"]
+    assert params.params.ulMacLength == vector["params"]["mac_len"]
 
 
 def test_rc5_encrypt_mechanisms_have_rfc2040_kat_vectors() -> None:

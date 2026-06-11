@@ -880,6 +880,7 @@ def build_params_from_vector(mech_id: int, recipe: ParamRecipe, vec: dict[str, A
         ``"oaep"``   -- uses ``params["hash_mech_hex"]`` as CKM constant name.
         ``"rc2"``    -- uses ``params["effective_bits"]``.
         ``"rc2_cbc"`` -- uses ``effective_bits`` and ``iv_hex``.
+        ``"rc2_mac_general"`` -- uses ``effective_bits`` and ``mac_len``.
         ``"rc5"``    -- uses ``word_bits`` and ``rounds``.
         ``"rc5_cbc"`` -- uses ``word_bits``, ``rounds``, and ``iv_hex``.
         ``"rc5_mac_general"`` -- uses ``word_bits``, ``rounds``, and ``mac_len``.
@@ -977,6 +978,17 @@ def build_params_from_vector(mech_id: int, recipe: ParamRecipe, vec: dict[str, A
             CKM(mech_id),
             effective_bits=effective_bits_rc2_cbc,
             iv=bytes.fromhex(iv_hex_rc2),
+        )
+
+    if style == "rc2_mac_general":
+        effective_bits_rc2_mac_general: int = vp.get(
+            "effective_bits", d.get("effective_bits", 128)
+        )
+        mac_len_rc2_mac_general: int = vp.get("mac_len", d.get("mac_len", 8))
+        return mech_rc2_mac_general(
+            CKM(mech_id),
+            effective_bits=effective_bits_rc2_mac_general,
+            mac_len=mac_len_rc2_mac_general,
         )
 
     if style == "rc5":
