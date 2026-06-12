@@ -32,6 +32,7 @@ from .types_std import (
     CK_GCM_WRAP_PARAMS,
     CK_HASH_SIGN_ADDITIONAL_CONTEXT,
     CK_HKDF_PARAMS,
+    CK_IKE2_PRF_PLUS_DERIVE_PARAMS,
     CK_IKE_PRF_DERIVE_PARAMS,
     CK_KEY_DERIVATION_STRING_DATA,
     CK_PBE_PARAMS,
@@ -919,6 +920,33 @@ def mech_ike_prf_derive(
     )
 
 
+def mech_ike2_prf_plus_derive(
+    mechanism_type: CKM | int,
+    *,
+    prf_mechanism: CKM | int,
+    seed_data: bytes | None = None,
+    seed_key_handle: int = 0,
+) -> PackedMechanism:
+    """Pack CK_IKE2_PRF_PLUS_DERIVE_PARAMS for CKM_IKE2_PRF_PLUS_DERIVE."""
+    ka: list[Any] = []
+    params = CK_IKE2_PRF_PLUS_DERIVE_PARAMS()
+    params.prfMechanism = prf_mechanism
+    params.bHasSeedKey = CK_BBOOL(1 if seed_key_handle else 0)
+    params.hSeedKey = seed_key_handle
+    if seed_data is None:
+        params.pSeedData = None
+        params.ulSeedDataLen = 0
+    else:
+        params.pSeedData, params.ulSeedDataLen = _pack_bytes(seed_data, ka)
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_ike2_prf_plus_derive",
+        ka,
+        sub_mechanisms={"prfMechanism": int(prf_mechanism)},
+    )
+
+
 def _fill_random_data(
     random_info: Any,
     client_random: bytes,
@@ -1390,6 +1418,8 @@ __all__ = [
     "mech_gcm_wrap_generated_iv",
     "mech_hash_sign_context",
     "mech_hkdf",
+    "mech_ike2_prf_plus_derive",
+    "mech_ike_prf_derive",
     "mech_oaep",
     "mech_pbe",
     "mech_pbkdf2",

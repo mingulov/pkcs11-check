@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.pack import mech_bytes, mech_ike_prf_derive
+from pkcs11_check.raw.pack import mech_bytes, mech_ike2_prf_plus_derive, mech_ike_prf_derive
 from pkcs11_check.raw.recipes import (
     create_object,
     derive_key,
@@ -36,6 +36,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKK_AES,
     CKK_GENERIC_SECRET,
+    CKK_SHA256_HMAC,
     CKM_IKE1_EXTENDED_DERIVE,
     CKM_IKE1_PRF_DERIVE,
     CKM_IKE2_PRF_PLUS_DERIVE,
@@ -100,6 +101,23 @@ def _create_base_key(rs: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> int:
     )
 
 
+def _create_sha256_hmac_derive_key(rs: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> int:
+    """Create a SHA256-HMAC base key suitable for typed IKE2 PRF+ derivation."""
+    return create_object(
+        rs.raw,
+        rs.sh,
+        {
+            CKA_CLASS: CKO_SECRET_KEY,
+            CKA_KEY_TYPE: CKK_SHA256_HMAC,
+            CKA_VALUE: key_bytes,
+            CKA_DERIVE: True,
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: True,
+        },
+    )
+
+
 def _derive_generic(
     rs: Any,
     base_key: int,
@@ -138,7 +156,7 @@ def _derive_aes128(rs: Any, base_key: int, mech: int, param: bytes) -> int:
         base_key,
         mech,
         attrs=attrs,
-        mech_param=mech_bytes(mech, param),
+        mech_param=_ike_mech_param(mech, param),
     )
 
 
@@ -161,6 +179,12 @@ def _ike_mech_param(mech: int, param: bytes) -> Any:
             responder_nonce=param[half:],
             data_as_key=True,
         )
+    if mech == CKM_IKE2_PRF_PLUS_DERIVE:
+        return mech_ike2_prf_plus_derive(
+            CKM_IKE2_PRF_PLUS_DERIVE,
+            prf_mechanism=CKM_SHA256_HMAC,
+            seed_data=param,
+        )
     return mech_bytes(mech, param)
 
 
@@ -176,6 +200,26 @@ def _ike_prf_hmac_sha256_reference(
     if data_as_key:
         return hmac.new(nonce_data, base_key, hashlib.sha256).digest()
     return hmac.new(base_key, nonce_data, hashlib.sha256).digest()
+
+
+def _ike2_prf_plus_hmac_sha256_reference(
+    base_key: bytes,
+    seed: bytes,
+    output_len: int,
+) -> bytes:
+    """Compute the OASIS CKM_IKE2_PRF_PLUS_DERIVE HMAC-SHA256 reference value."""
+    if output_len < 0:
+        raise ValueError("output_len must be non-negative")
+    if output_len > 255 * hashlib.sha256().digest_size:
+        raise ValueError("output_len exceeds IKE2 PRF+ counter capacity")
+    result = b""
+    previous = b""
+    counter = 1
+    while len(result) < output_len:
+        previous = hmac.new(base_key, previous + seed + bytes([counter]), hashlib.sha256).digest()
+        result += previous
+        counter += 1
+    return result[:output_len]
 
 
 class TestIKE2PRFPlusDerive:
@@ -206,6 +250,39 @@ class TestIKE2PRFPlusDerive:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE2_PRF_PLUS_DERIVE not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
+
+    def test_prf_plus_hmac_sha256_exact_vector(self, p11_raw_session: Any) -> None:
+        """CKM_IKE2_PRF_PLUS_DERIVE follows OASIS prf+(baseKey, seedData)."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("IKE2_PRF_PLUS_DERIVE"):
+            pytest.skip("CKM_IKE2_PRF_PLUS_DERIVE not supported")
+        base_key = 0
+        try:
+            base_key = _create_sha256_hmac_derive_key(rs)
+            expected = _ike2_prf_plus_hmac_sha256_reference(
+                _BASE_KEY_BYTES,
+                _NONCE_I + _NONCE_R,
+                32,
+            )
+            derived = _derive_generic(
+                rs,
+                base_key,
+                CKM_IKE2_PRF_PLUS_DERIVE,
+                _NONCE_I + _NONCE_R,
+            )
+            try:
+                assert _get_value(rs, derived) == expected
+            finally:
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _DERIVE_ERROR_CKRS,
+                "CKM_IKE2_PRF_PLUS_DERIVE HMAC-SHA256 exact vector not operational",
+            )
+        finally:
+            if base_key:
+                destroy_quietly(rs.raw, rs.sh, base_key)
 
     def test_derive_aes128(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session

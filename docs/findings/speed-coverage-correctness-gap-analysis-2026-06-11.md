@@ -262,6 +262,9 @@ smoke behavior, or covered only by one narrow variation.
    WTLS PRF label-sensitivity coverage now verifies the same for
    `CK_WTLS_PRF_PARAMS.pLabel`. IKE2 PRF+ base-key sensitivity coverage now
    verifies that changing the shared-secret input changes the derived output.
+   IKE2 PRF+ HMAC-SHA256 exact-vector coverage now uses typed
+   `CK_IKE2_PRF_PLUS_DERIVE_PARAMS` and checks the OASIS `prf+(baseKey,
+   seedData)` recurrence.
    IKE PRF base-key sensitivity coverage now verifies the same for
    `CKM_IKE_PRF_DERIVE`. IKE PRF data-as-key HMAC-SHA256 exact-vector coverage
    now uses typed `CK_IKE_PRF_DERIVE_PARAMS` and checks the OASIS case-1

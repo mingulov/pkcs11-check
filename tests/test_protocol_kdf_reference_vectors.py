@@ -49,3 +49,14 @@ def test_ike_prf_data_as_key_hmac_sha256_reference_vector() -> None:
         ).hex()
         == "909be39279fec3ad8b16546a956974ee435bb4acfa8f0c9167f0f019ff977f45"
     )
+
+
+def test_ike2_prf_plus_hmac_sha256_reference_vector() -> None:
+    assert (
+        test_ike._ike2_prf_plus_hmac_sha256_reference(
+            test_ike._BASE_KEY_BYTES,
+            test_ike._NONCE_I + test_ike._NONCE_R,
+            32,
+        ).hex()
+        == "e3703ee905295e6c0141c98f382e17e9df07a5d0e7fb5d1d5eb45e117022cbb1"
+    )

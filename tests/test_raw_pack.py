@@ -467,6 +467,44 @@ def test_ike_prf_derive_packer_uses_typed_oasis_struct() -> None:
     assert _provider_read(params.pNr, params.ulNrLen) == b"r" * 16
 
 
+def test_ike2_prf_plus_derive_packer_uses_typed_oasis_struct() -> None:
+    from pkcs11_check.raw.pack import mech_ike2_prf_plus_derive
+    from pkcs11_check.raw.types_std import (
+        CK_IKE2_PRF_PLUS_DERIVE_PARAMS,
+        CKM_IKE2_PRF_PLUS_DERIVE,
+        CKM_SHA256_HMAC,
+    )
+
+    seed_only = mech_ike2_prf_plus_derive(
+        CKM_IKE2_PRF_PLUS_DERIVE,
+        prf_mechanism=CKM_SHA256_HMAC,
+        seed_data=b"seed",
+    )
+
+    assert seed_only.ck.mechanism == CKM_IKE2_PRF_PLUS_DERIVE
+    params = seed_only.params
+    assert isinstance(params, CK_IKE2_PRF_PLUS_DERIVE_PARAMS)
+    assert params.prfMechanism == CKM_SHA256_HMAC
+    assert params.bHasSeedKey == 0
+    assert params.hSeedKey == 0
+    assert params.ulSeedDataLen == 4
+    assert _provider_read(params.pSeedData, params.ulSeedDataLen) == b"seed"
+
+    seed_key = mech_ike2_prf_plus_derive(
+        CKM_IKE2_PRF_PLUS_DERIVE,
+        prf_mechanism=CKM_SHA256_HMAC,
+        seed_key_handle=123,
+    )
+
+    params = seed_key.params
+    assert isinstance(params, CK_IKE2_PRF_PLUS_DERIVE_PARAMS)
+    assert params.prfMechanism == CKM_SHA256_HMAC
+    assert params.bHasSeedKey == 1
+    assert params.hSeedKey == 123
+    assert params.pSeedData is None
+    assert params.ulSeedDataLen == 0
+
+
 def test_mech_pss_packs_hash_mgf_salt() -> None:
     from pkcs11_check.raw.pack import mech_pss
     from pkcs11_check.raw.types_std import (
