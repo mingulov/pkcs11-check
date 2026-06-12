@@ -18,6 +18,7 @@ OASIS spec: ssl.md
 from __future__ import annotations
 
 import ctypes
+import hashlib
 from ctypes import byref
 from typing import Any
 
@@ -79,8 +80,8 @@ pytestmark = pytest.mark.keymgmt
 _CLIENT_RANDOM = bytes(range(28))
 _SERVER_RANDOM = bytes(range(28, 56))
 
-# A 48-byte pre-master secret (SSL3 pre-master key size)
-_PRE_MASTER_SECRET = bytes(range(48))
+# A 48-byte pre-master secret (SSL3 pre-master key size) with version 3.0 prefix.
+_PRE_MASTER_SECRET = b"\x03\x00" + bytes(range(2, 48))
 
 # CKR values acceptable for operations using placeholder/unsupported params
 _DERIVE_ERROR_RVS = {
@@ -122,6 +123,27 @@ def _create_generic_secret(rs: Any, value: bytes) -> int:
             CKA_EXTRACTABLE: True,
         },
     )
+
+
+def _ssl3_master_secret_reference(
+    pre_master_secret: bytes,
+    client_random: bytes,
+    server_random: bytes,
+) -> bytes:
+    """Compute the SSL3 master_secret from RFC 6101 section 6.1."""
+    out = bytearray()
+    for pad in (b"A", b"BB", b"CCC"):
+        sha = hashlib.sha1(
+            pad + pre_master_secret + client_random + server_random,
+            usedforsecurity=False,
+        ).digest()
+        out.extend(
+            hashlib.md5(
+                pre_master_secret + sha,
+                usedforsecurity=False,
+            ).digest()
+        )
+    return bytes(out)
 
 
 class TestSSL3PreMasterKeyGen:
@@ -265,6 +287,53 @@ class TestSSL3MasterKeyDerive:
                 raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(raw_val, bytes)
                 assert len(raw_val) == 48, f"Expected 48 bytes, got {len(raw_val)}"
+            finally:
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            if is_known_error(exc, _DERIVE_ERROR_RVS):
+                pytest.xfail(f"CKM_SSL3_MASTER_KEY_DERIVE not operational: {exc}")
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pre_master)
+
+    def test_derive_master_secret_exact_vector(self, p11_raw_session: Any) -> None:
+        """CKM_SSL3_MASTER_KEY_DERIVE must match the SSL3 master_secret formula."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("SSL3_MASTER_KEY_DERIVE"):
+            pytest.skip("CKM_SSL3_MASTER_KEY_DERIVE not supported")
+
+        pre_master = _create_generic_secret(rs, _PRE_MASTER_SECRET)
+        expected = _ssl3_master_secret_reference(
+            _PRE_MASTER_SECRET,
+            _CLIENT_RANDOM,
+            _SERVER_RANDOM,
+        )
+        try:
+            mech = mech_ssl3_master_key_derive(
+                CKM_SSL3_MASTER_KEY_DERIVE,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+            )
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                pre_master,
+                CKM_SSL3_MASTER_KEY_DERIVE,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 48,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                    CKA_DERIVE: True,
+                },
+                mech_param=mech,
+            )
+            try:
+                raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(raw_val, bytes)
+                assert raw_val == expected
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:

@@ -129,6 +129,18 @@ def test_gap_analysis_marks_ike2_prf_plus_exact_vector_as_added() -> None:
     assert "IKE2 PRF+ HMAC-SHA256 exact-vector coverage" in doc
 
 
+def test_gap_analysis_marks_ssl3_master_secret_exact_vector_as_added() -> None:
+    """CKM_SSL3_MASTER_KEY_DERIVE has an SSL3 master-secret exact vector."""
+    ssl3 = _read("src/pkcs11_check/testcases/test_ssl3.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "_ssl3_master_secret_reference" in ssl3
+    assert "test_derive_master_secret_exact_vector" in ssl3
+    assert "assert raw_val == expected" in ssl3
+
+    assert "SSL3 master-secret exact-vector coverage" in doc
+
+
 def test_gap_analysis_marks_blake2b_keyed_semantics_as_covered() -> None:
     """BLAKE2B keyed HMAC, HMAC_GENERAL, KEY_GEN, and KEY_DERIVE are covered."""
     blake2 = _read("src/pkcs11_check/testcases/test_blake2.py")
