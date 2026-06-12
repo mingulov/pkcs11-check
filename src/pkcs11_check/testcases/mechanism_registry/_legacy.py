@@ -475,6 +475,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_CAST_SIZES,
         keygen_recipe=_sym,
         expected_flags=_SIG_VER,
+        vector_file="cast_mac.json",
         notes="CAST-MAC: CBC-MAC with fixed output length",
     )
 
@@ -548,6 +549,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_CAST3_SIZES,
         keygen_recipe=_sym,
         expected_flags=_SIG_VER,
+        vector_file="cast3_mac.json",
         notes="CAST3-MAC: CBC-MAC with fixed output length",
     )
 

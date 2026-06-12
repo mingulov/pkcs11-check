@@ -185,16 +185,24 @@ def test_gap_analysis_marks_des3_cmac_vectors_as_added() -> None:
 
 
 def test_gap_analysis_marks_legacy_fixed_mac_vectors_as_added() -> None:
-    """RC2, RC5, CAST128, and IDEA fixed-output MACs now have KAT vector links."""
+    """RC2, RC5, CAST/CAST3/CAST128, and IDEA fixed-output MACs have KAT links."""
     legacy_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_legacy.py")
     doc = GAP_DOC.read_text(encoding="utf-8")
 
-    for vector_file in ("rc2_mac.json", "rc5_mac.json", "cast128_mac.json", "idea_mac.json"):
+    for vector_file in (
+        "rc2_mac.json",
+        "rc5_mac.json",
+        "cast_mac.json",
+        "cast3_mac.json",
+        "cast128_mac.json",
+        "idea_mac.json",
+    ):
         assert vector_file in legacy_registry
         assert _read(f"src/pkcs11_check/testcases/data/mechanism_vectors/{vector_file}")
 
-    assert "RC2, RC5, CAST128/CAST5, and IDEA fixed-output MAC" in doc
+    assert "RC2, RC5, CAST/CAST3/CAST128/CAST5, and IDEA fixed-output MAC" in doc
     assert "RC2/RC5/CAST/CAST3/IDEA fixed-output MAC" not in doc
+    assert "CKM_CAST/CKM_CAST3 fixed-output MAC" not in doc
 
 
 def test_gap_analysis_marks_mixed_fail_crash_reporting_as_fixed() -> None:
