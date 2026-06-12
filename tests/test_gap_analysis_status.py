@@ -252,6 +252,19 @@ def test_gap_analysis_marks_ssl3_key_material_null_phkey_as_added() -> None:
     assert "SSL3 key-and-MAC NULL phKey coverage" in doc_flat
 
 
+def test_gap_analysis_marks_ssl3_dh_master_secret_exact_vector_as_added() -> None:
+    """CKM_SSL3_MASTER_KEY_DERIVE_DH has an SSL3 master-secret exact vector."""
+    ssl3 = _read("src/pkcs11_check/testcases/test_ssl3.py")
+    guard = _read("tests/test_ssl3_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_derive_master_secret_dh_exact_vector" in ssl3
+    assert "SSL3 master secret DH output mismatch" in ssl3
+    assert "test_ssl3_master_key_derive_dh_fails_on_wrong_exact_output" in guard
+
+    assert "SSL3 master-secret DH exact-vector coverage" in doc_flat
+
+
 def test_gap_analysis_marks_x2ratchet_typed_param_coverage_as_added() -> None:
     """CKM_X2RATCHET derive probes use OASIS mechanism parameter structs."""
     ratchet = _read("src/pkcs11_check/testcases/test_double_ratchet.py")

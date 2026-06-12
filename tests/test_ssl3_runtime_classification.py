@@ -7,7 +7,13 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.types_std import CKR_ATTRIBUTE_VALUE_INVALID, CKR_OK
+from pkcs11_check.raw.types_std import (
+    CKA_VALUE,
+    CKA_VALUE_LEN,
+    CKM_SSL3_MASTER_KEY_DERIVE_DH,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_OK,
+)
 from pkcs11_check.testcases import test_ssl3
 
 
@@ -87,3 +93,54 @@ def test_ssl3_key_and_mac_derive_uses_null_phkey(
     test_ssl3.TestSSL3KeyAndMacDerive().test_derive_key_material(rs)
 
     assert raw.ph_keys == [None]
+
+
+def test_ssl3_master_key_derive_dh_fails_on_wrong_exact_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wrong = b"\x00" * 48
+    derive_calls: list[dict[str, Any]] = []
+
+    def _create_generic_secret(_rs: object, data: bytes) -> int:
+        assert data == bytes(range(32))
+        return 101
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        base_key: int,
+        mechanism: int,
+        attrs: dict[int, Any],
+        *,
+        mech_param: Any,
+    ) -> int:
+        derive_calls.append(
+            {
+                "base_key": base_key,
+                "mechanism": int(mechanism),
+                "attrs": attrs,
+                "mech_param": mech_param,
+            }
+        )
+        return 202
+
+    rs = SimpleNamespace(
+        raw=object(),
+        sh=1,
+        has_mechanism=lambda name: name == "SSL3_MASTER_KEY_DERIVE_DH",
+    )
+    monkeypatch.setattr(test_ssl3, "_create_generic_secret", _create_generic_secret)
+    monkeypatch.setattr(test_ssl3, "derive_key", _derive_key)
+    monkeypatch.setattr(test_ssl3, "read_attributes", lambda *_args: {CKA_VALUE: wrong})
+    monkeypatch.setattr(test_ssl3, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(AssertionError, match="SSL3 master secret DH output mismatch"):
+        test_ssl3.TestSSL3MasterKeyDeriveDH().test_derive_master_secret_dh_exact_vector(
+            rs
+        )
+
+    assert len(derive_calls) == 1
+    assert derive_calls[0]["base_key"] == 101
+    assert derive_calls[0]["mechanism"] == int(CKM_SSL3_MASTER_KEY_DERIVE_DH)
+    assert derive_calls[0]["attrs"][CKA_VALUE_LEN] == 48
+    assert derive_calls[0]["mech_param"].params.pVersion is None

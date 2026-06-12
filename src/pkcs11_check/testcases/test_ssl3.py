@@ -86,6 +86,9 @@ _SERVER_RANDOM = bytes(range(28, 56))
 # A 48-byte pre-master secret (SSL3 pre-master key size) with version 3.0 prefix.
 _PRE_MASTER_SECRET = b"\x03\x00" + bytes(range(2, 48))
 
+# Arbitrary-length pre-master material for the DH master-key derive variant.
+_DH_PRE_MASTER_SECRET = bytes(range(32))
+
 # CKR values acceptable for operations using placeholder/unsupported params
 _DERIVE_ERROR_RVS = {
     CKR_MECHANISM_INVALID,
@@ -408,6 +411,57 @@ class TestSSL3MasterKeyDeriveDH:
                 raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(raw_val, bytes)
                 assert len(raw_val) == 48, f"Expected 48 bytes, got {len(raw_val)}"
+            finally:
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            if is_known_error(exc, _DERIVE_ERROR_RVS):
+                pytest.xfail(f"CKM_SSL3_MASTER_KEY_DERIVE_DH not operational: {exc}")
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pre_master)
+
+    def test_derive_master_secret_dh_exact_vector(self, p11_raw_session: Any) -> None:
+        """CKM_SSL3_MASTER_KEY_DERIVE_DH must match the SSL3 master_secret formula."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("SSL3_MASTER_KEY_DERIVE_DH"):
+            pytest.skip("CKM_SSL3_MASTER_KEY_DERIVE_DH not supported")
+
+        pre_master = _create_generic_secret(rs, _DH_PRE_MASTER_SECRET)
+        expected = _ssl3_master_secret_reference(
+            _DH_PRE_MASTER_SECRET,
+            _CLIENT_RANDOM,
+            _SERVER_RANDOM,
+        )
+        try:
+            mech = mech_ssl3_master_key_derive(
+                CKM_SSL3_MASTER_KEY_DERIVE_DH,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                with_version=False,
+            )
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                pre_master,
+                CKM_SSL3_MASTER_KEY_DERIVE_DH,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 48,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                    CKA_DERIVE: True,
+                },
+                mech_param=mech,
+            )
+            try:
+                raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(raw_val, bytes)
+                assert raw_val == expected, (
+                    "SSL3 master secret DH output mismatch: "
+                    f"expected {expected.hex()}, got {raw_val.hex()}"
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
