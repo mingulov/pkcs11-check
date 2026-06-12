@@ -6,10 +6,12 @@ import ctypes
 
 from pkcs11_check.raw.types_std import (
     CKM_ARIA_CBC_PAD,
+    CKM_ARIA_MAC,
     CKM_ARIA_MAC_GENERAL,
     CKM_BLOWFISH_CBC,
     CKM_BLOWFISH_CBC_PAD,
     CKM_CAMELLIA_CBC_PAD,
+    CKM_CAMELLIA_MAC,
     CKM_CAMELLIA_MAC_GENERAL,
     CKM_CAST128_CBC,
     CKM_CAST128_CBC_PAD,
@@ -33,6 +35,7 @@ from pkcs11_check.raw.types_std import (
     CKM_RC5_ECB,
     CKM_RC5_MAC_GENERAL,
     CKM_SEED_CBC_PAD,
+    CKM_SEED_MAC,
     CKM_SEED_MAC_GENERAL,
     CKM_TWOFISH_CBC,
 )
@@ -492,6 +495,42 @@ def test_block_cipher_mac_general_mechanisms_have_kat_vectors() -> None:
             assert vec["mac_hex"] == expected_mac
             assert vec["params"]["mac_len"] == mac_len
             assert "one-block CBC-MAC with zero IV equals" in vec["params"]["source"]
+
+
+def test_half_block_cipher_mac_mechanisms_have_kat_vectors() -> None:
+    expected = {
+        int(CKM_CAMELLIA_MAC): (
+            "camellia_mac.json",
+            "CKM_CAMELLIA_MAC",
+            "f96073b123ee5bdd",
+        ),
+        int(CKM_ARIA_MAC): (
+            "aria_mac.json",
+            "CKM_ARIA_MAC",
+            "b5c11c1494615dc7",
+        ),
+        int(CKM_SEED_MAC): (
+            "seed_mac.json",
+            "CKM_SEED_MAC",
+            "f353f89ce52d7929",
+        ),
+    }
+
+    for mech_id, (vector_file, mechanism_name, expected_mac) in expected.items():
+        config = MECHANISM_REGISTRY[mech_id]
+        assert config.vector_file == vector_file
+
+        vectors = load_positive_vectors(vector_file)
+        assert vectors, f"{vector_file} must contain positive vectors"
+        for vec in vectors:
+            assert vec["type"] == "positive"
+            assert vec["mechanism_name"] == mechanism_name
+            assert vec["key_hex"]
+            assert len(bytes.fromhex(vec["input_hex"])) == 16
+            assert vec["mac_hex"] == expected_mac
+            assert len(bytes.fromhex(vec["mac_hex"])) == 8
+            assert "special case" in vec["params"]["source"]
+            assert "half the block size" in vec["params"]["source"]
 
 
 def test_twofish_cbc_encrypt_mechanism_has_schneier_kat_vector() -> None:

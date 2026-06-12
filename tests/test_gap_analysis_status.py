@@ -117,6 +117,18 @@ def test_gap_analysis_marks_block_mac_general_vectors_as_added() -> None:
     assert "DES, 3DES, Camellia, ARIA, and SEED MAC_GENERAL" in doc
 
 
+def test_gap_analysis_marks_half_block_fixed_mac_vectors_as_added() -> None:
+    """Camellia, ARIA, and SEED fixed-output MACs now have half-block KAT vectors."""
+    cipher_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_ciphers.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    for vector_file in ("camellia_mac.json", "aria_mac.json", "seed_mac.json"):
+        assert vector_file in cipher_registry
+        assert _read(f"src/pkcs11_check/testcases/data/mechanism_vectors/{vector_file}")
+
+    assert "Camellia, ARIA, and SEED fixed-output MAC" in doc
+
+
 def test_gap_analysis_marks_mixed_fail_crash_reporting_as_fixed() -> None:
     """Mixed fail+crash units now surface crash status instead of only failed status."""
     runner = _read("src/pkcs11_check/core/file_runner.py")

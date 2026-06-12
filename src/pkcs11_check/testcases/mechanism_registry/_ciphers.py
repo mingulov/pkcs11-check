@@ -254,6 +254,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_CAMELLIA_SIZES,
         keygen_recipe=_sym,
         expected_flags=_CAMELLIA_SIG,
+        vector_file="camellia_mac.json",
         notes="Camellia-MAC: CBC-MAC with fixed output length",
     )
 
@@ -354,6 +355,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_ARIA_SIZES,
         keygen_recipe=_sym,
         expected_flags=_ARIA_SIG,
+        vector_file="aria_mac.json",
         notes="ARIA-MAC: CBC-MAC with fixed output length",
     )
 
@@ -454,6 +456,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(128,),
         keygen_recipe=_fixed,
         expected_flags=_SEED_SIG,
+        vector_file="seed_mac.json",
         notes="SEED-MAC: CBC-MAC with fixed output length",
     )
 
