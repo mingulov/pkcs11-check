@@ -166,6 +166,22 @@ def _tls12_extended_master_secret_reference(
     )
 
 
+def _tls12_master_secret_reference(
+    secret: bytes,
+    client_random: bytes,
+    server_random: bytes,
+    output_len: int,
+) -> bytes:
+    """Compute the TLS 1.2 master secret PRF output."""
+    return _tls12_prf_sha256(
+        secret,
+        b"master secret",
+        client_random,
+        server_random,
+        output_len,
+    )
+
+
 def _tls_prf_legacy_md5_sha1(
     secret: bytes,
     label: bytes,
@@ -440,6 +456,16 @@ class TestTLS12MasterKeyDerive:
                 value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
+                expected = _tls12_master_secret_reference(
+                    _PRE_MASTER_SECRET,
+                    _CLIENT_RANDOM,
+                    _SERVER_RANDOM,
+                    48,
+                )
+                assert value == expected, (
+                    "TLS 1.2 master secret output mismatch: "
+                    f"expected {expected.hex()}, got {value.hex()}"
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
@@ -489,6 +515,16 @@ class TestTLS12MasterKeyDerive:
                 value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
+                expected = _tls12_master_secret_reference(
+                    bytes(range(32)),
+                    _CLIENT_RANDOM,
+                    _SERVER_RANDOM,
+                    48,
+                )
+                assert value == expected, (
+                    "TLS 1.2 master secret DH output mismatch: "
+                    f"expected {expected.hex()}, got {value.hex()}"
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
