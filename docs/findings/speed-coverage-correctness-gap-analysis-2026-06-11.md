@@ -276,7 +276,13 @@ smoke behavior, or covered only by one narrow variation.
    MD5/SHA master-secret computation. X2RATCHET typed-parameter derive coverage
    now drives `CKM_X2RATCHET_INITIALIZE` and `CKM_X2RATCHET_RESPOND` through
    the OASIS `CK_X2RATCHET_*_PARAMS` structures instead of empty mechanism
-   parameters.
+   parameters. The independent-output probe and the `CKK_X2RATCHET` derived-key
+   probe now also pass typed `CK_X2RATCHET_INITIALIZE_PARAMS` and
+   `CK_X2RATCHET_RESPOND_PARAMS` structures instead of relying on
+   unparameterized `C_DeriveKey` calls. X2RATCHET invalid-curve negative
+   coverage now verifies both derive sides reject an `eCurve` value outside the
+   OASIS-defined 255/448 set through the shared provider-general negative
+   classifier.
 2. Regional cipher encrypt-data derive dispatch exists for Camellia, ARIA, and
    SEED ECB/CBC variants in `test_mech_derive.py`; focused meta-tests verify
    the family-specific CBC parameter structs are packed for generic derive
@@ -370,6 +376,14 @@ smoke behavior, or covered only by one narrow variation.
    MAC verification rejects modified output bytes. BLAKE2B HMAC_GENERAL
    wrong-length MAC coverage now verifies that verification rejects extended
    and truncated MAC byte strings for the requested general-MAC length.
+   BLAKE2B KEY_DERIVE default-template coverage now verifies the OASIS
+   no-key-type/no-length rule by omitting `CKA_KEY_TYPE` and `CKA_VALUE_LEN`
+   and checking for generic-secret, digest-length output. BLAKE2B KEY_DERIVE
+   overlong-key negative coverage now verifies that a BLAKE2B-160 derive
+   rejects a requested AES-256 key because the requested key length exceeds the
+   digest output length. BLAKE2B KEY_DERIVE variable-key-type negative
+   coverage now verifies that an AES-key derive without `CKA_VALUE_LEN` is
+   rejected because AES has no single well-defined length in that template.
    Remaining BLAKE2B work is broader negative parameter/regression expansion
    and provider-artifact evidence, not basic keyed semantic coverage.
 7. SHAKE/XOF dedicated coverage exists: raw `C_DigestXof*` function

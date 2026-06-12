@@ -73,7 +73,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import is_known_error, reject_or_classify, xfail_if_known_ckr
 
 pytestmark = pytest.mark.full
 
@@ -107,6 +107,13 @@ _MONTGOMERY_KEYGEN_REJECT_RVS = (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+)
+
+_X2RATCHET_INVALID_CURVE_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 
 _X2RATCHET_CURVES = (
@@ -333,6 +340,8 @@ class TestX2RatchetDerive:
 
         pub_a, priv_a = _create_ec_keypair(rs)
         pub_b, priv_b = _create_ec_keypair(rs)
+        peer_identity_pub, peer_identity_priv = _create_ec_keypair(rs)
+        peer_prekey_pub, peer_prekey_priv = _create_ec_keypair(rs)
         try:
             derive_attrs: dict[int, Any] = {
                 CKA_CLASS: CKO_SECRET_KEY,
@@ -348,6 +357,12 @@ class TestX2RatchetDerive:
                 priv_a,
                 CKM_X2RATCHET_INITIALIZE,
                 attrs=derive_attrs,
+                mech_param=_mech_x2ratchet_initialize(
+                    shared_secret=_X2RATCHET_SHARED_SECRET,
+                    peer_public_prekey=peer_prekey_pub,
+                    peer_public_identity=peer_identity_pub,
+                    own_public_identity=pub_a,
+                ),
             )
             derived_b = derive_key(
                 rs.raw,
@@ -355,6 +370,12 @@ class TestX2RatchetDerive:
                 priv_b,
                 CKM_X2RATCHET_INITIALIZE,
                 attrs=derive_attrs,
+                mech_param=_mech_x2ratchet_initialize(
+                    shared_secret=_X2RATCHET_SHARED_SECRET,
+                    peer_public_prekey=peer_prekey_pub,
+                    peer_public_identity=peer_identity_pub,
+                    own_public_identity=pub_b,
+                ),
             )
             try:
                 val_a = read_attributes(rs.raw, rs.sh, derived_a, [CKA_VALUE])[CKA_VALUE]
@@ -372,6 +393,64 @@ class TestX2RatchetDerive:
             destroy_quietly(rs.raw, rs.sh, priv_a)
             destroy_quietly(rs.raw, rs.sh, pub_b)
             destroy_quietly(rs.raw, rs.sh, priv_b)
+            destroy_quietly(rs.raw, rs.sh, peer_identity_pub)
+            destroy_quietly(rs.raw, rs.sh, peer_identity_priv)
+            destroy_quietly(rs.raw, rs.sh, peer_prekey_pub)
+            destroy_quietly(rs.raw, rs.sh, peer_prekey_priv)
+
+    def test_x2ratchet_initialize_rejects_invalid_curve(self, p11_raw_session: Any) -> None:
+        """CKM_X2RATCHET_INITIALIZE rejects eCurve values other than 255 or 448."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("X2RATCHET_INITIALIZE"):
+            pytest.skip("CKM_X2RATCHET_INITIALIZE not supported")
+
+        own_identity_pub, own_identity_priv = _create_ec_keypair(rs)
+        peer_identity_pub, peer_identity_priv = _create_ec_keypair(rs)
+        peer_prekey_pub, peer_prekey_priv = _create_ec_keypair(rs)
+        derived = 0
+        try:
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    own_identity_priv,
+                    CKM_X2RATCHET_INITIALIZE,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_VALUE_LEN: 32,
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                    mech_param=_mech_x2ratchet_initialize(
+                        shared_secret=_X2RATCHET_SHARED_SECRET,
+                        peer_public_prekey=peer_prekey_pub,
+                        peer_public_identity=peer_identity_pub,
+                        own_public_identity=own_identity_pub,
+                        curve=256,
+                    ),
+                )
+            except AssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    _X2RATCHET_INVALID_CURVE_REJECT_RVS,
+                    label="X2RATCHET_INITIALIZE invalid curve",
+                )
+                return
+            reject_or_classify(
+                None,
+                _X2RATCHET_INVALID_CURVE_REJECT_RVS,
+                label="X2RATCHET_INITIALIZE invalid curve",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, derived)
+            destroy_quietly(rs.raw, rs.sh, own_identity_pub)
+            destroy_quietly(rs.raw, rs.sh, own_identity_priv)
+            destroy_quietly(rs.raw, rs.sh, peer_identity_pub)
+            destroy_quietly(rs.raw, rs.sh, peer_identity_priv)
+            destroy_quietly(rs.raw, rs.sh, peer_prekey_pub)
+            destroy_quietly(rs.raw, rs.sh, peer_prekey_priv)
 
     # ------------------------------------------------------------------
     # CKM_X2RATCHET_RESPOND
@@ -452,12 +531,14 @@ class TestX2RatchetDerive:
         if not rs.has_mechanism("X2RATCHET_RESPOND"):
             pytest.skip("CKM_X2RATCHET_RESPOND not supported")
 
-        pub, priv = _create_ec_keypair(rs)
+        own_prekey_pub, own_prekey_priv = _create_ec_keypair(rs)
+        own_identity_pub, own_identity_priv = _create_ec_keypair(rs)
+        initiator_identity_pub, initiator_identity_priv = _create_ec_keypair(rs)
         try:
             derived = derive_key(
                 rs.raw,
                 rs.sh,
-                priv,
+                own_prekey_priv,
                 CKM_X2RATCHET_RESPOND,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
@@ -466,6 +547,12 @@ class TestX2RatchetDerive:
                     CKA_SENSITIVE: False,
                     CKA_EXTRACTABLE: True,
                 },
+                mech_param=_mech_x2ratchet_respond(
+                    shared_secret=_X2RATCHET_SHARED_SECRET,
+                    own_prekey=own_prekey_priv,
+                    initiator_identity=initiator_identity_pub,
+                    own_public_identity=own_identity_pub,
+                ),
             )
             try:
                 assert derived != 0
@@ -476,8 +563,66 @@ class TestX2RatchetDerive:
                 pytest.xfail(f"CKM_X2RATCHET_RESPOND X2RATCHET key not operational: {exc}")
             raise
         finally:
-            destroy_quietly(rs.raw, rs.sh, pub)
-            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, own_prekey_pub)
+            destroy_quietly(rs.raw, rs.sh, own_prekey_priv)
+            destroy_quietly(rs.raw, rs.sh, own_identity_pub)
+            destroy_quietly(rs.raw, rs.sh, own_identity_priv)
+            destroy_quietly(rs.raw, rs.sh, initiator_identity_pub)
+            destroy_quietly(rs.raw, rs.sh, initiator_identity_priv)
+
+    def test_x2ratchet_respond_rejects_invalid_curve(self, p11_raw_session: Any) -> None:
+        """CKM_X2RATCHET_RESPOND rejects eCurve values other than 255 or 448."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("X2RATCHET_RESPOND"):
+            pytest.skip("CKM_X2RATCHET_RESPOND not supported")
+
+        own_prekey_pub, own_prekey_priv = _create_ec_keypair(rs)
+        own_identity_pub, own_identity_priv = _create_ec_keypair(rs)
+        initiator_identity_pub, initiator_identity_priv = _create_ec_keypair(rs)
+        derived = 0
+        try:
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    own_prekey_priv,
+                    CKM_X2RATCHET_RESPOND,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_VALUE_LEN: 32,
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                    mech_param=_mech_x2ratchet_respond(
+                        shared_secret=_X2RATCHET_SHARED_SECRET,
+                        own_prekey=own_prekey_priv,
+                        initiator_identity=initiator_identity_pub,
+                        own_public_identity=own_identity_pub,
+                        curve=256,
+                    ),
+                )
+            except AssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    _X2RATCHET_INVALID_CURVE_REJECT_RVS,
+                    label="X2RATCHET_RESPOND invalid curve",
+                )
+                return
+            reject_or_classify(
+                None,
+                _X2RATCHET_INVALID_CURVE_REJECT_RVS,
+                label="X2RATCHET_RESPOND invalid curve",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, derived)
+            destroy_quietly(rs.raw, rs.sh, own_prekey_pub)
+            destroy_quietly(rs.raw, rs.sh, own_prekey_priv)
+            destroy_quietly(rs.raw, rs.sh, own_identity_pub)
+            destroy_quietly(rs.raw, rs.sh, own_identity_priv)
+            destroy_quietly(rs.raw, rs.sh, initiator_identity_pub)
+            destroy_quietly(rs.raw, rs.sh, initiator_identity_priv)
 
 
 class TestX2RatchetEncrypt:

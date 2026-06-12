@@ -38,6 +38,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKA_VERIFY,
+    CKK_AES,
     CKK_BLAKE2B_160_HMAC,
     CKK_BLAKE2B_256_HMAC,
     CKK_BLAKE2B_384_HMAC,
@@ -828,6 +829,131 @@ class TestBlake2bKeyed:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
 
+    def _key_derive_default_template_value(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism(case.key_derive_name):
+            pytest.skip(f"CKM_{case.key_derive_name} not supported")
+
+        base = _import_blake2b_setup_key(rs, derive=True)
+        derived = 0
+        try:
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base,
+                    case.key_derive_mech,
+                    attrs={
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                )
+            except AssertionError as e:
+                _xfail_blake2b_reject(
+                    e,
+                    f"{case.key_derive_name} advertised but default-template derive failed",
+                )
+
+            attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_KEY_TYPE, CKA_VALUE])
+            assert attrs[CKA_KEY_TYPE] == CKK_GENERIC_SECRET
+            value = attrs[CKA_VALUE]
+            expected = hashlib.blake2b(_BLAKE2B_TEST_KEY, digest_size=case.digest_len).digest()
+            assert value == expected
+        finally:
+            destroy_quietly(rs.raw, rs.sh, base)
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)
+
+    def _key_derive_rejects_overlong_requested_key(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism(case.key_derive_name):
+            pytest.skip(f"CKM_{case.key_derive_name} not supported")
+
+        base = _import_blake2b_setup_key(rs, derive=True)
+        derived = 0
+        try:
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base,
+                    case.key_derive_mech,
+                    attrs={
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_VALUE_LEN: 32,
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                )
+            except AssertionError as e:
+                reject_or_classify(
+                    e,
+                    (CKR_KEY_SIZE_RANGE,),
+                    label=f"{case.key_derive_name} overlong AES-256 output",
+                )
+                return
+
+            raise AssertionError(
+                f"accepted {case.key_derive_name} overlong AES-256 output; "
+                f"digest length is {case.digest_len} bytes"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, base)
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)
+
+    def _key_derive_rejects_variable_key_type_without_len(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism(case.key_derive_name):
+            pytest.skip(f"CKM_{case.key_derive_name} not supported")
+
+        base = _import_blake2b_setup_key(rs, derive=True)
+        derived = 0
+        try:
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base,
+                    case.key_derive_mech,
+                    attrs={
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                )
+            except AssertionError as e:
+                reject_or_classify(
+                    e,
+                    (CKR_TEMPLATE_INCOMPLETE, CKR_TEMPLATE_INCONSISTENT, CKR_KEY_SIZE_RANGE),
+                    label=f"{case.key_derive_name} AES without CKA_VALUE_LEN",
+                )
+                return
+
+            raise AssertionError(
+                f"accepted {case.key_derive_name} AES without CKA_VALUE_LEN; "
+                "AES is a variable-length key type"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, base)
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)
+
     @pytest.mark.parametrize(
         "case",
         _BLAKE2B_KEYED_CASES,
@@ -839,3 +965,35 @@ class TestBlake2bKeyed:
         case: _Blake2bKeyedCase,
     ) -> None:
         self._key_derive_value(p11_raw_session, case)
+
+    @pytest.mark.parametrize(
+        "case",
+        _BLAKE2B_KEYED_CASES,
+        ids=[case.id for case in _BLAKE2B_KEYED_CASES],
+    )
+    def test_blake2b_key_derive_default_template_value(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        self._key_derive_default_template_value(p11_raw_session, case)
+
+    def test_blake2b_key_derive_rejects_overlong_requested_key(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """BLAKE2B_160_KEY_DERIVE overlong AES-256 output is rejected."""
+        self._key_derive_rejects_overlong_requested_key(
+            p11_raw_session,
+            _BLAKE2B_KEYED_CASE_BY_BITS[160],
+        )
+
+    def test_blake2b_key_derive_rejects_aes_without_value_len(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """BLAKE2B_256_KEY_DERIVE AES without CKA_VALUE_LEN is rejected."""
+        self._key_derive_rejects_variable_key_type_without_len(
+            p11_raw_session,
+            _BLAKE2B_KEYED_CASE_BY_BITS[256],
+        )

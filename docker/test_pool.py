@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -561,6 +562,74 @@ def ensure_artifacts_root_writable(project_root: Path, env: dict[str, str]) -> N
         )
 
 
+def _provider_artifact_globs(providers: list[str]) -> list[str]:
+    paths: list[str] = []
+    for provider in providers:
+        provider_token = shlex.quote(provider)
+        paths.extend(
+            [
+                f"/artifacts/{provider_token}-shard-*",
+                f"/artifacts/{provider_token}-pooled",
+            ]
+        )
+    return paths
+
+
+def _needs_merge_permission_repair(artifacts_root: Path, providers: list[str]) -> bool:
+    if not os.access(artifacts_root, os.W_OK | os.X_OK):
+        return True
+    for provider in providers:
+        for shard_dir in artifacts_root.glob(f"{provider}-shard-*"):
+            if not os.access(shard_dir, os.R_OK | os.X_OK):
+                return True
+        pooled_dir = artifacts_root / f"{provider}-pooled"
+        if pooled_dir.exists() and not os.access(pooled_dir, os.W_OK | os.X_OK):
+            return True
+    return False
+
+
+def repair_artifacts_for_merge(
+    project_root: Path, providers: list[str], env: dict[str, str]
+) -> None:
+    """Repair Docker-created artifact ownership before Python merges shard results."""
+    artifacts_root = project_root / "artifacts"
+    artifacts_root.mkdir(parents=True, exist_ok=True)
+    if not _needs_merge_permission_repair(artifacts_root, providers):
+        return
+
+    mount = f"{artifacts_root}:/artifacts"
+    provider_paths = " ".join(_provider_artifact_globs(providers))
+    owner = shlex.quote(HOST_ARTIFACT_OWNER)
+    repair_script = (
+        f"chown {owner} /artifacts 2>/dev/null || true; "
+        f"chown -R {owner} {provider_paths} 2>/dev/null || true; "
+        "chmod u+rwx /artifacts 2>/dev/null || true; "
+        f"chmod -R u+rwX {provider_paths} 2>/dev/null || true"
+    )
+    subprocess.run(  # noqa: S603
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            mount,
+            "busybox",
+            "sh",
+            "-c",
+            repair_script,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=env,
+        check=False,
+    )
+    if not os.access(artifacts_root, os.W_OK | os.X_OK):
+        raise PermissionError(
+            f"{artifacts_root} is not writable by the current user after Docker cleanup; "
+            "remove it or fix ownership before generating pooled results"
+        )
+
+
 def clean_prior_shards(project_root: Path, providers: list[str]) -> None:
     # Remove BOTH the per-shard dirs and the merged *-pooled dir for each
     # provider being run. Clearing -pooled too is essential: if a provider
@@ -757,6 +826,11 @@ def main() -> int:
         print_pool_event(
             f"  note: {nonzero} item(s) exited with an unexpected code (see /tmp/pool-*.log)"
         )
+    try:
+        repair_artifacts_for_merge(project_root, providers, docker_env)
+    except PermissionError as exc:
+        print_pool_event(f"ERROR: {exc}", file=sys.stderr)
+        return 1
 
     # Merge per provider + comparison summary.
     print()

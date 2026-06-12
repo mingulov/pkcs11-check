@@ -421,6 +421,118 @@ def test_artifacts_root_repair_chowns_docker_created_root(
     ]
 
 
+def test_artifact_merge_repair_normalizes_provider_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    access_results = iter((False, True))
+    calls: list[list[str]] = []
+
+    def fake_access(path: Path, mode: int) -> bool:
+        assert path == artifacts
+        assert mode == test_pool.os.W_OK | test_pool.os.X_OK
+        return next(access_results)
+
+    def fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+        calls.append(cmd)
+        assert kwargs["env"] == {"EXAMPLE": "1"}
+        assert kwargs["check"] is False
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(test_pool.os, "access", fake_access)
+    monkeypatch.setattr(test_pool.subprocess, "run", fake_run)
+
+    test_pool.repair_artifacts_for_merge(
+        tmp_path,
+        ["softhsm2", "nss-slot0"],
+        {"EXAMPLE": "1"},
+    )
+
+    assert calls == [
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{artifacts}:/artifacts",
+            "busybox",
+            "sh",
+            "-c",
+            (
+                f"chown {test_pool.HOST_ARTIFACT_OWNER} /artifacts 2>/dev/null || true; "
+                f"chown -R {test_pool.HOST_ARTIFACT_OWNER} "
+                "/artifacts/softhsm2-shard-* /artifacts/softhsm2-pooled "
+                "/artifacts/nss-slot0-shard-* /artifacts/nss-slot0-pooled "
+                "2>/dev/null || true; "
+                "chmod u+rwx /artifacts 2>/dev/null || true; "
+                "chmod -R u+rwX /artifacts/softhsm2-shard-* /artifacts/softhsm2-pooled "
+                "/artifacts/nss-slot0-shard-* /artifacts/nss-slot0-pooled "
+                "2>/dev/null || true"
+            ),
+        ],
+    ]
+
+
+def test_pool_repairs_artifact_permissions_before_final_merge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    testcases = tmp_path / "testcases"
+    testcases.mkdir()
+    (testcases / "test_one.py").write_text("def test_one():\n    pass\n")
+    events: list[str] = []
+
+    def fake_run_item(
+        provider: str, idx: int, files: list[str], env: dict[str, str]
+    ) -> tuple[str, int, int]:
+        events.append("run")
+        shard_dir = Path("artifacts") / f"{provider}-shard-{idx}"
+        shard_dir.mkdir(parents=True)
+        shard_dir.joinpath("results.json").write_text(
+            json.dumps({"summary": {"passed": len(files)}, "units": []})
+        )
+        return provider, idx, 0
+
+    def fake_repair(project_root: Path, providers: list[str], env: dict[str, str]) -> None:
+        assert project_root == tmp_path
+        assert providers == ["optee-pkcs11"]
+        assert "PKCS11_CHECK_HOST_DATA_DIR" in env
+        events.append("repair")
+
+    def fake_merge_shard_dirs(shard_dirs: list[Path], output_dir: Path) -> None:
+        assert len(shard_dirs) == 1
+        assert events[-1] == "repair"
+        events.append("merge")
+        output_dir.mkdir(parents=True)
+        output_dir.joinpath("results.json").write_text(
+            json.dumps(
+                {
+                    "summary": {
+                        "total": 1,
+                        "passed": 1,
+                        "failed": 0,
+                        "crashed": 0,
+                        "timeout": 0,
+                    }
+                }
+            )
+        )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(test_pool, "run_item", fake_run_item)
+    monkeypatch.setattr(test_pool, "clean_prior_shards", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(test_pool, "repair_artifacts_for_merge", fake_repair, raising=False)
+    monkeypatch.setattr(test_pool, "merge_shard_dirs", fake_merge_shard_dirs)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["test_pool.py", "--no-build", "--testcases", str(testcases), "optee-pkcs11:1"],
+    )
+
+    assert test_pool.main() == 0
+    assert events == ["run", "repair", "merge"]
+
+
 def test_pool_builds_provider_image_once_regardless_of_shard_count(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

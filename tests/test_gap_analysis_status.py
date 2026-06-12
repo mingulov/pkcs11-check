@@ -146,6 +146,7 @@ def test_gap_analysis_marks_x2ratchet_typed_param_coverage_as_added() -> None:
     ratchet = _read("src/pkcs11_check/testcases/test_double_ratchet.py")
     guard = _read("tests/test_double_ratchet_runtime_classification.py")
     doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
 
     assert "CK_X2RATCHET_INITIALIZE_PARAMS" in ratchet
     assert "CK_X2RATCHET_RESPOND_PARAMS" in ratchet
@@ -153,8 +154,14 @@ def test_gap_analysis_marks_x2ratchet_typed_param_coverage_as_added() -> None:
     assert "_mech_x2ratchet_respond" in ratchet
     assert "mech_param=mech_param" in ratchet
     assert "test_x2ratchet_initialize_runtime_calls_derive_with_params" in guard
+    assert "test_x2ratchet_initialize_sensitivity_probe_uses_spec_params" in guard
+    assert "test_x2ratchet_respond_x2ratchet_key_type_uses_spec_params" in guard
+    assert "test_x2ratchet_initialize_rejects_invalid_curve" in ratchet
+    assert "test_x2ratchet_respond_rejects_invalid_curve" in ratchet
 
     assert "X2RATCHET typed-parameter derive coverage" in doc
+    assert "unparameterized `C_DeriveKey` calls" in doc
+    assert "X2RATCHET invalid-curve negative coverage" in doc_flat
 
 
 def test_gap_analysis_marks_blake2b_keyed_semantics_as_covered() -> None:
@@ -190,6 +197,36 @@ def test_gap_analysis_marks_blake2b_hmac_general_tamper_negative_as_added() -> N
 
     assert "BLAKE2B HMAC_GENERAL tampered-MAC coverage" in doc_flat
     assert "BLAKE2B HMAC_GENERAL wrong-length MAC coverage" in doc_flat
+
+
+def test_gap_analysis_marks_blake2b_key_derive_default_template_as_added() -> None:
+    """BLAKE2B KEY_DERIVE covers the no-key-type/no-length default template rule."""
+    blake2 = _read("src/pkcs11_check/testcases/test_blake2.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_blake2b_key_derive_default_template_value" in blake2
+    assert "_key_derive_default_template_value" in blake2
+    assert "BLAKE2B KEY_DERIVE default-template coverage" in doc_flat
+
+
+def test_gap_analysis_marks_blake2b_key_derive_overlong_key_negative_as_added() -> None:
+    """BLAKE2B KEY_DERIVE rejects requested keys longer than the digest output."""
+    blake2 = _read("src/pkcs11_check/testcases/test_blake2.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_blake2b_key_derive_rejects_overlong_requested_key" in blake2
+    assert "BLAKE2B_160_KEY_DERIVE overlong AES-256 output" in blake2
+    assert "BLAKE2B KEY_DERIVE overlong-key negative coverage" in doc_flat
+
+
+def test_gap_analysis_marks_blake2b_key_derive_variable_key_type_negative_as_added() -> None:
+    """BLAKE2B KEY_DERIVE rejects variable-length key types without CKA_VALUE_LEN."""
+    blake2 = _read("src/pkcs11_check/testcases/test_blake2.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_blake2b_key_derive_rejects_aes_without_value_len" in blake2
+    assert "BLAKE2B_256_KEY_DERIVE AES without CKA_VALUE_LEN" in blake2
+    assert "BLAKE2B KEY_DERIVE variable-key-type negative coverage" in doc_flat
 
 
 def test_gap_analysis_marks_shake_xof_and_external_mu_as_dedicated_coverage() -> None:

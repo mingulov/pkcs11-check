@@ -7,14 +7,21 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from _pytest.outcomes import Failed
 
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_X2RATCHET_INITIALIZE_PARAMS,
+    CK_X2RATCHET_RESPOND_PARAMS,
+    CKA_KEY_TYPE,
+    CKA_VALUE,
+    CKK_X2RATCHET,
     CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
     CKM_X2RATCHET_INITIALIZE,
+    CKM_X2RATCHET_RESPOND,
     CKR_CURVE_NOT_SUPPORTED,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases import test_double_ratchet
 
@@ -207,3 +214,202 @@ def test_x2ratchet_initialize_runtime_calls_derive_with_params(
     assert derive_calls[0]["mechanism"] == int(CKM_X2RATCHET_INITIALIZE)
     assert isinstance(derive_calls[0]["mech_param"].params, CK_X2RATCHET_INITIALIZE_PARAMS)
     assert 999 in destroyed
+
+
+def test_x2ratchet_initialize_sensitivity_probe_uses_spec_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handles = iter(
+        (
+            (101, 201),
+            (102, 202),
+            (103, 203),
+            (104, 204),
+        )
+    )
+    derived_keys = iter((301, 302))
+    derive_calls: list[dict[str, Any]] = []
+
+    def _create_keypair(_rs: Any) -> tuple[int, int]:
+        return next(handles)
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        base_key: int,
+        mechanism: int,
+        attrs: dict[int, Any],
+        *,
+        mech_param: Any,
+    ) -> int:
+        derive_calls.append(
+            {
+                "base_key": base_key,
+                "mechanism": int(mechanism),
+                "attrs": attrs,
+                "mech_param": mech_param,
+            }
+        )
+        return next(derived_keys)
+
+    def _read_attributes(
+        _raw: object, _sh: int, handle: int, _attrs: list[int]
+    ) -> dict[int, bytes]:
+        return {CKA_VALUE: f"x2ratchet-{handle}".encode("ascii")}
+
+    monkeypatch.setattr(test_double_ratchet, "_create_ec_keypair", _create_keypair)
+    monkeypatch.setattr(test_double_ratchet, "derive_key", _derive_key)
+    monkeypatch.setattr(test_double_ratchet, "read_attributes", _read_attributes)
+    monkeypatch.setattr(test_double_ratchet, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    test_double_ratchet.TestX2RatchetDerive().test_x2ratchet_initialize_two_runs_differ(
+        _session_with_mechanisms("X2RATCHET_INITIALIZE")
+    )
+
+    assert [call["base_key"] for call in derive_calls] == [201, 202]
+    assert [call["mechanism"] for call in derive_calls] == [
+        int(CKM_X2RATCHET_INITIALIZE),
+        int(CKM_X2RATCHET_INITIALIZE),
+    ]
+    assert all(
+        isinstance(call["mech_param"].params, CK_X2RATCHET_INITIALIZE_PARAMS)
+        for call in derive_calls
+    )
+
+
+def test_x2ratchet_respond_x2ratchet_key_type_uses_spec_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    derive_calls: list[dict[str, Any]] = []
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        base_key: int,
+        mechanism: int,
+        attrs: dict[int, Any],
+        *,
+        mech_param: Any,
+    ) -> int:
+        derive_calls.append(
+            {
+                "base_key": base_key,
+                "mechanism": int(mechanism),
+                "attrs": attrs,
+                "mech_param": mech_param,
+            }
+        )
+        return 999
+
+    monkeypatch.setattr(test_double_ratchet, "_create_ec_keypair", lambda _rs: (101, 201))
+    monkeypatch.setattr(test_double_ratchet, "derive_key", _derive_key)
+    monkeypatch.setattr(test_double_ratchet, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    test_double_ratchet.TestX2RatchetDerive().test_x2ratchet_respond_derives_x2ratchet_key_type(
+        _session_with_mechanisms("X2RATCHET_RESPOND")
+    )
+
+    assert len(derive_calls) == 1
+    assert derive_calls[0]["base_key"] == 201
+    assert derive_calls[0]["mechanism"] == int(CKM_X2RATCHET_RESPOND)
+    assert derive_calls[0]["attrs"][CKA_KEY_TYPE] == CKK_X2RATCHET
+    assert isinstance(derive_calls[0]["mech_param"].params, CK_X2RATCHET_RESPOND_PARAMS)
+
+
+def test_x2ratchet_initialize_invalid_curve_is_expected_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handles = iter(((101, 201), (102, 202), (103, 203)))
+    derive_calls: list[dict[str, Any]] = []
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        base_key: int,
+        mechanism: int,
+        attrs: dict[int, Any],
+        *,
+        mech_param: Any,
+    ) -> int:
+        derive_calls.append(
+            {
+                "base_key": base_key,
+                "mechanism": int(mechanism),
+                "attrs": attrs,
+                "mech_param": mech_param,
+            }
+        )
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID",
+            int(CKR_MECHANISM_PARAM_INVALID),
+        )
+
+    monkeypatch.setattr(test_double_ratchet, "_create_ec_keypair", lambda _rs: next(handles))
+    monkeypatch.setattr(test_double_ratchet, "derive_key", _derive_key)
+    monkeypatch.setattr(test_double_ratchet, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    test_double_ratchet.TestX2RatchetDerive().test_x2ratchet_initialize_rejects_invalid_curve(
+        _session_with_mechanisms("X2RATCHET_INITIALIZE")
+    )
+
+    assert len(derive_calls) == 1
+    assert derive_calls[0]["base_key"] == 201
+    assert derive_calls[0]["mechanism"] == int(CKM_X2RATCHET_INITIALIZE)
+    assert derive_calls[0]["mech_param"].params.eCurve == 256
+
+
+def test_x2ratchet_respond_invalid_curve_is_expected_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handles = iter(((101, 201), (102, 202), (103, 203)))
+    derive_calls: list[dict[str, Any]] = []
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        base_key: int,
+        mechanism: int,
+        attrs: dict[int, Any],
+        *,
+        mech_param: Any,
+    ) -> int:
+        derive_calls.append(
+            {
+                "base_key": base_key,
+                "mechanism": int(mechanism),
+                "attrs": attrs,
+                "mech_param": mech_param,
+            }
+        )
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID",
+            int(CKR_MECHANISM_PARAM_INVALID),
+        )
+
+    monkeypatch.setattr(test_double_ratchet, "_create_ec_keypair", lambda _rs: next(handles))
+    monkeypatch.setattr(test_double_ratchet, "derive_key", _derive_key)
+    monkeypatch.setattr(test_double_ratchet, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    test_double_ratchet.TestX2RatchetDerive().test_x2ratchet_respond_rejects_invalid_curve(
+        _session_with_mechanisms("X2RATCHET_RESPOND")
+    )
+
+    assert len(derive_calls) == 1
+    assert derive_calls[0]["base_key"] == 201
+    assert derive_calls[0]["mechanism"] == int(CKM_X2RATCHET_RESPOND)
+    assert derive_calls[0]["mech_param"].params.eCurve == 256
+
+
+def test_x2ratchet_initialize_invalid_curve_acceptance_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handles = iter(((101, 201), (102, 202), (103, 203)))
+
+    monkeypatch.setattr(test_double_ratchet, "_create_ec_keypair", lambda _rs: next(handles))
+    monkeypatch.setattr(test_double_ratchet, "derive_key", lambda *_args, **_kwargs: 999)
+    monkeypatch.setattr(test_double_ratchet, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(Failed, match="X2RATCHET_INITIALIZE invalid curve"):
+        test_double_ratchet.TestX2RatchetDerive().test_x2ratchet_initialize_rejects_invalid_curve(
+            _session_with_mechanisms("X2RATCHET_INITIALIZE")
+        )
