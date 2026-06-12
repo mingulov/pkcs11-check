@@ -307,8 +307,12 @@ smoke behavior, or covered only by one narrow variation.
    bytes. X9.42 DH missing-peer-public negative coverage now verifies
    `CKM_X9_42_DH_DERIVE` rejects a missing DH1 derive parameter struct through
    the same classifier.
-4. Message API coverage is representative, not registry-driven. Scenario
-   selection does not yet cover `CKF_MESSAGE_*` flags generically.
+4. Message API registry-driven init coverage exists for advertised
+   `CKF_MESSAGE_*` flags through `TestRegistryMessageInit` and pytest plugin
+   fixtures for message encrypt, decrypt, sign, and verify entries. Richer
+   full-message semantic coverage is still representative for selected
+   AES-GCM, AES-CCM, and AES-GMAC paths rather than exhaustive across every
+   mechanism that advertises a message flag.
 5. Hybrid wrap parameter coverage exists for RSA-AES and ECDH-AES:
    `test_rsa_extended.py` covers `CK_RSA_AES_KEY_WRAP_PARAMS` positive
    roundtrips plus tampered-blob discrimination, and
@@ -394,8 +398,14 @@ smoke behavior, or covered only by one narrow variation.
    each new vector on a reliable source and an unambiguous PKCS#11
    parameter mapping; SKIPJACK short-segment CFB/wrap variants and KEA are
    lower confidence until a defensible vector/operation source is identified.
-9. CMS and CT-KIP are shallow: current tests mostly check mechanism info or
-   clean rejection rather than valid parameterized operations.
+9. CMS runtime parameter coverage exists for `CKM_CMS_SIG`: the test builds
+   `CK_CMS_SIG_PARAMS` and reaches `C_Sign` with that parameter struct rather
+   than stopping at mechanism-info or clean-reject checks. CT-KIP runtime
+   coverage exists for `CKM_KIP_DERIVE`, `CKM_KIP_WRAP`, and `CKM_KIP_MAC`:
+   the tests build `CK_KIP_PARAMS` and exercise derive, wrap, and sign/verify
+   paths with generated keys. Remaining CMS/CT-KIP work is exact-output,
+   interoperability, negative-parameter expansion, and provider-artifact
+   evidence.
 10. Generic negative coverage is narrow relative to 467 registry mechanisms.
     Wrong-key-type, missing-permission, bad-param, and linked-attribute
     self-contradiction tests should be table-driven from registry metadata.

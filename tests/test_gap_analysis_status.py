@@ -189,6 +189,58 @@ def test_gap_analysis_marks_shake_xof_and_external_mu_as_dedicated_coverage() ->
     assert "ML-DSA ExternalMu sign/verify coverage exists" in doc_flat
 
 
+def test_gap_analysis_marks_message_api_registry_init_coverage_as_added() -> None:
+    """Message API init coverage is driven from advertised CKF_MESSAGE_* flags."""
+    message = _read("src/pkcs11_check/testcases/test_mech_message.py")
+    plugin = _read("src/pkcs11_check/plugin.py")
+    guard = _read("tests/test_message_registry_coverage.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "TestRegistryMessageInit" in message
+    assert "_message_init_or_xfail" in message
+    assert "_message_init_mech_or_skip" in message
+    for fixture_name, flag_name in (
+        ("mech_message_encrypt_entry", "CKF_MESSAGE_ENCRYPT"),
+        ("mech_message_decrypt_entry", "CKF_MESSAGE_DECRYPT"),
+        ("mech_message_sign_entry", "CKF_MESSAGE_SIGN"),
+        ("mech_message_verify_entry", "CKF_MESSAGE_VERIFY"),
+    ):
+        assert fixture_name in message
+        assert fixture_name in plugin
+        assert fixture_name in guard
+        assert flag_name in plugin
+        assert flag_name in guard
+
+    assert "Message API coverage is representative, not registry-driven" not in doc_flat
+    assert "Message API registry-driven init coverage exists" in doc_flat
+
+
+def test_gap_analysis_marks_cms_and_ct_kip_runtime_coverage_as_added() -> None:
+    """CMS and CT-KIP have parameterized runtime coverage, not only info checks."""
+    cms = _read("src/pkcs11_check/testcases/test_cms.py")
+    cms_guard = _read("tests/test_cms_runtime_coverage.py")
+    otp = _read("src/pkcs11_check/testcases/test_otp.py")
+    ct_kip_guard = _read("tests/test_ct_kip_runtime_coverage.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_cms_sig_signs_with_params" in cms
+    assert "CK_CMS_SIG_PARAMS" in cms
+    assert "CKM_CMS_SIG requires a CK_CMS_SIG_PARAMS structure" in cms
+    assert "test_cms_runtime_calls_sign_with_params" in cms_guard
+
+    assert "TestCTKIP" in otp
+    assert "_mech_kip" in otp
+    assert "CK_KIP_PARAMS" in otp
+    assert "test_kip_derive_derives_generic_secret" in otp
+    assert "test_kip_wrap_wraps_generic_secret" in otp
+    assert "test_kip_mac_signs_and_verifies" in otp
+    assert "test_kip_derive_runtime_calls_derive_with_params" in ct_kip_guard
+
+    assert "CMS and CT-KIP are shallow" not in doc_flat
+    assert "CMS runtime parameter coverage exists" in doc_flat
+    assert "CT-KIP runtime coverage exists" in doc_flat
+
+
 def test_coverage_plan_does_not_count_ecmqv_as_kea_coverage() -> None:
     """ECMQV and KEA are different mechanisms; ECMQV tests do not cover KEA."""
     ecdh_extended = _read("src/pkcs11_check/testcases/test_ecdh_extended.py")
