@@ -946,6 +946,15 @@ class TestTLS12Extended:
                 value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
+                expected = _tls12_extended_master_secret_reference(
+                    bytes(range(32)),
+                    session_hash,
+                    48,
+                )
+                assert value == expected, (
+                    "TLS 1.2 extended master secret DH output mismatch: "
+                    f"got {value.hex()}, expected {expected.hex()}"
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
