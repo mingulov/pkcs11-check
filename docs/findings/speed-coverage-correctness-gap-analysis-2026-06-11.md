@@ -382,6 +382,9 @@ smoke behavior, or covered only by one narrow variation.
    `CKM_X9_42_MQV_DERIVE` through `CK_X9_42_MQV_DERIVE_PARAMS`; each probe
    imports deterministic X9.42 key material, runs both parties through
    `C_DeriveKey`, and verifies the extracted generic-secret values match.
+   X9.42 hybrid/MQV CKD_SHA1_KDF_CONCATENATE OtherInfo coverage now verifies
+   the optional `pOtherInfo` path for both extended derive mechanisms with
+   typed parameters and matching derived outputs.
    X9.42 hybrid/MQV requested-value-length truncation coverage now verifies
    both extended derive mechanisms keep the rightmost bytes when `CKA_VALUE_LEN`
    requests a shorter generic secret.
