@@ -293,16 +293,23 @@ def test_gap_analysis_marks_derived_linked_attribute_invariants_as_added() -> No
     assert "TestDerivedAttributeInvariants" in invariants
     assert "test_never_extractable_when_created_non_extractable" in invariants
     assert "test_always_sensitive_when_created_sensitive" in invariants
+    assert "test_generated_aes_key_reports_local_key_gen_mechanism" in invariants
     assert "CKA_NEVER_EXTRACTABLE on a key created EXTRACTABLE=False" in invariants
     assert "CKA_ALWAYS_SENSITIVE on a key created SENSITIVE=True" in invariants
+    assert "CKA_LOCAL/CKA_KEY_GEN_MECHANISM" in invariants
+    assert "linked-origin self-contradiction" in invariants
     assert "self-contradiction" in invariants
 
     assert "test_never_extractable_contradiction_fails" in guard
     assert "test_always_sensitive_contradiction_fails" in guard
+    assert "test_generated_aes_origin_wrong_mechanism_fails" in guard
     assert "test_never_extractable_absent_xfails" in guard
     assert "test_always_sensitive_absent_xfails" in guard
+    assert "test_generated_aes_origin_missing_local_xfails" in guard
+    assert "test_generated_aes_origin_missing_mechanism_xfails" in guard
 
     assert "Derived linked-attribute invariant coverage exists" in doc_flat
+    assert "Generated-key origin linked-attribute coverage exists" in doc_flat
     assert "Remaining work is linked-attribute self-contradiction expansion" not in doc_flat
 
 
