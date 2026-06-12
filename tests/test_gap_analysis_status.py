@@ -600,6 +600,19 @@ def test_gap_analysis_marks_raw_dsa_wrong_length_negative_as_hard_fail() -> None
     assert "Raw CKM_DSA wrong-length digest acceptance" in doc
 
 
+def test_gap_analysis_marks_raw_dsa_wrong_length_verify_negative_as_added() -> None:
+    """Raw DSA verification rejects wrong-length digest inputs."""
+    dsa = _read("src/pkcs11_check/testcases/test_dsa_complete.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
+
+    assert "test_raw_dsa_wrong_length_verify_digest" in dsa
+    assert "CKM_DSA wrong-length verify digest" in dsa
+    assert "classify_negative_rv(" in dsa
+
+    assert "Raw CKM_DSA wrong-length verify-digest coverage" in doc_flat
+
+
 def test_gap_analysis_marks_dsa_prehash_runtime_rejects_as_classified() -> None:
     """DSA prehash positive/negative runtime rejects use signature policy helpers."""
     dsa = _read("src/pkcs11_check/testcases/test_dsa_complete.py")

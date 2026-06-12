@@ -312,7 +312,10 @@ smoke behavior, or covered only by one narrow variation.
    OASIS-defined p/q and g-generation outputs. Raw CKM_DSA wrong-length digest acceptance
    is now a hard failure via the shared negative classifier; the spec-correct
    rejection remains `CKR_DATA_LEN_RANGE`, and other clean rejects are recorded
-   as xfail deviations. DSA prehash runtime-reject classification now uses the
+   as xfail deviations. Raw CKM_DSA wrong-length verify-digest coverage now
+   applies the same provider-general negative classifier to `C_Verify` data
+   lengths outside the OASIS 20/28/32/48/64-byte set. DSA prehash runtime-reject classification
+   now uses the
    shared signature policy: advertised positive sign/verify refusals are xfail
    deviations, while tampered-data/signature tests treat clean signature
    rejection as the intended negative outcome. DSA_SHA224 and DSA_SHA256 now participate in

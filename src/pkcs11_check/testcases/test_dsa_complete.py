@@ -526,6 +526,40 @@ class TestDSARaw:
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, dp)
 
+    def test_raw_dsa_wrong_length_verify_digest(self, p11_module_session: Any) -> None:
+        """Raw DSA verification with wrong-length digest should fail per spec."""
+        rs = p11_module_session
+        if not rs.has_mechanism("DSA"):
+            pytest.skip("CKM_DSA not supported")
+
+        dp, pub, priv = _generate_dsa_keypair(rs)
+        try:
+            digest = hashlib.sha1(  # noqa: S324
+                b"raw DSA verify length baseline",
+                usedforsecurity=False,
+            ).digest()
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_DSA, digest)
+            bad_digest = b"\x00" * 7
+
+            mech = mech_simple(CKM_DSA)
+            rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub)
+            if rv != CKR_OK:
+                return
+
+            in_buf = (ctypes.c_ubyte * len(bad_digest))(*bad_digest)
+            sig_buf = (ctypes.c_ubyte * len(sig))(*sig)
+            rv = rs.raw.C_Verify(rs.sh, in_buf, len(bad_digest), sig_buf, len(sig))
+
+            classify_negative_rv(
+                rv,
+                (CKR_DATA_LEN_RANGE,),
+                label="CKM_DSA wrong-length verify digest",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, dp)
+
 
 class TestDSAPrehash:
     """Tests for prehash DSA variants (SHA-1, SHA-224, SHA-384, SHA-512, SHA3-*)."""
