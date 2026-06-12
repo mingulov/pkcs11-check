@@ -207,6 +207,11 @@ _X942_INVALID_PEER_PUBLIC_RVS = (
     CKR_MECHANISM_PARAM_INVALID,
 )
 
+_X942_INVALID_OTHER_INFO_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -443,6 +448,8 @@ def _x942_derive_or_xfail(fn: Callable[[], int], label: str) -> int:
 def _build_x942_derive_mech(
     public_data: bytes,
     kdf: int = CKD_NULL,
+    *,
+    other_info: bytes | None = None,
 ) -> PackedMechanism:
     """Build CKM_X9_42_DH_DERIVE mechanism with CK_X9_42_DH1_DERIVE_PARAMS."""
     keepalive: list[Any] = []
@@ -454,8 +461,14 @@ def _build_x942_derive_mech(
     params.kdf = kdf
     params.ulPublicDataLen = len(public_data)
     params.pPublicData = ctypes.cast(pub_arr, CK_VOID_PTR)
-    params.ulOtherInfoLen = 0
-    params.pOtherInfo = None
+    if other_info is None:
+        params.ulOtherInfoLen = 0
+        params.pOtherInfo = None
+    else:
+        other_info_arr = (ctypes.c_ubyte * len(other_info))(*other_info)
+        keepalive.append(other_info_arr)
+        params.ulOtherInfoLen = len(other_info)
+        params.pOtherInfo = ctypes.cast(other_info_arr, CK_VOID_PTR)
     keepalive.append(params)
 
     pointer_arg = PointerArg.to_storage(params, origin="x942_dh1_derive")
@@ -709,6 +722,51 @@ class TestX942DHDerive:
                 destroy_quietly(rs.raw, rs.sh, derived.value)
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_x942_derive_rejects_ckd_null_other_info(self, p11_raw_session: Any) -> None:
+        """CKM_X9_42_DH_DERIVE CKD_NULL with OtherInfo must be rejected."""
+        rs = p11_raw_session
+        _skip_no_x942_keygen(rs)
+        _skip_no_x942_derive(rs)
+
+        alice_pub, alice_priv = _generate_x942_keypair(rs)
+        bob_pub, bob_priv = _generate_x942_keypair(rs)
+        derived = CK_OBJECT_HANDLE(0)
+        attrs = template(
+            attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
+            attr_ulong(CKA_VALUE_LEN, 16),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, True),
+            attr_bool(CKA_TOKEN, False),
+        )
+        try:
+            bob_value = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])[CKA_VALUE]
+            mech = _build_x942_derive_mech(
+                bob_value,
+                CKD_NULL,
+                other_info=b"not allowed with CKD_NULL",
+            )
+            rv = rs.raw.C_DeriveKey(
+                rs.sh,
+                mech.byref(),
+                alice_priv,
+                attrs.ptr,
+                attrs.count,
+                byref(derived),
+            )
+            classify_negative_rv(
+                rv,
+                _X942_INVALID_OTHER_INFO_RVS,
+                label="CKM_X9_42_DH_DERIVE CKD_NULL with OtherInfo",
+            )
+        finally:
+            if derived.value:
+                destroy_quietly(rs.raw, rs.sh, derived.value)
+            destroy_quietly(rs.raw, rs.sh, alice_pub)
+            destroy_quietly(rs.raw, rs.sh, alice_priv)
+            destroy_quietly(rs.raw, rs.sh, bob_pub)
+            destroy_quietly(rs.raw, rs.sh, bob_priv)
 
     def test_x942_dh_derive_rfc5114_exact_vector(self, p11_raw_session: Any) -> None:
         """CKM_X9_42_DH_DERIVE returns the expected RFC 5114 shared secret."""

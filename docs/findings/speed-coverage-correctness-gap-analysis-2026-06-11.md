@@ -314,7 +314,10 @@ smoke behavior, or covered only by one narrow variation.
    `CKM_X9_42_DH_DERIVE` rejects a missing DH1 derive parameter struct through
    the same classifier. X9.42 DH malformed-peer-public negative coverage now
    verifies typed `CK_X9_42_DH1_DERIVE_PARAMS` carrying a one-byte public value
-   is rejected through the same provider-general negative model.
+   is rejected through the same provider-general negative model. X9.42 DH
+   CKD_NULL OtherInfo negative coverage now verifies the OASIS rule that
+   `pOtherInfo` must be NULL and `ulOtherInfoLen` must be zero when the KDF is
+   `CKD_NULL`.
 4. Message API registry-driven init coverage exists for advertised
    `CKF_MESSAGE_*` flags through `TestRegistryMessageInit` and pytest plugin
    fixtures for message encrypt, decrypt, sign, and verify entries. Richer
