@@ -278,8 +278,8 @@ smoke behavior, or covered only by one narrow variation.
    advertised GOST 28147-89 non-ECB operations.
    SKIPJACK ECB64 exact-output KATs are covered from NIST SP 800-17.
    Remaining shallow areas are
-   SKIPJACK stream/wrap variants, CDMF, BATON/JUNIPER, GOST28147
-   exact-output KATs, Twofish CBC_PAD output, and the
+   SKIPJACK non-ECB64 variants, CDMF, BATON/JUNIPER, GOST28147 exact-output
+   KATs, Twofish CBC_PAD output, and the
    fixed-output MAC/MAC_GENERAL KATs where a block-vector source and output
    length mapping are still missing. GOST28147 exact-output KATs remain source-first
    until the vector source and parameter-set mapping are unambiguous.
@@ -296,8 +296,8 @@ smoke behavior, or covered only by one narrow variation.
    KATs grounded in NIST SP 800-38B semantics and the local OASIS DES3-CMAC
    mapping. Continue this sweep for CDMF and less-sourced legacy families, but
    gate each new vector on a reliable source and an unambiguous PKCS#11
-   parameter mapping; SKIPJACK and KEA are lower confidence until a defensible
-   vector/operation source is identified.
+   parameter mapping; SKIPJACK non-ECB64 variants and KEA are lower confidence
+   until a defensible vector/operation source is identified.
 9. CMS and CT-KIP are shallow: current tests mostly check mechanism info or
    clean rejection rather than valid parameterized operations.
 10. Generic negative coverage is narrow relative to 467 registry mechanisms.
@@ -438,7 +438,7 @@ later provider run more interpretable:
    present, and RC5 CBC_PAD is now covered from RFC 2040. Their next useful
    work is independent fixed-length MAC expected-output vectors, if the PKCS#11
    truncation/output-length rule is sourced clearly. SKIPJACK ECB64 now has
-   NIST SP 800-17 exact-output KATs; its stream/wrap variants and KEA remain
+   NIST SP 800-17 exact-output KATs; its non-ECB64 variants and KEA remain
    lower-priority because their vector and operation mappings are less
    straightforward.
 3. Continue broader semantic coverage expansion once artifact semantics can prove
@@ -454,11 +454,11 @@ After that, do the first coverage expansion round:
 4. RSA-AES and ECDH-AES wrap params.
 5. Registry-driven wrong-key/permission negatives.
 6. Legacy/deprecated mechanisms not yet covered by reliable KATs or semantic
-   probes: remaining SKIPJACK stream/wrap variants only with trustworthy
-   operation-specific vectors, KEA only with defensible domain-parameter/derive
-   semantics, plus CDMF, BATON/JUNIPER, GOST28147 exact-output KATs, remaining
-   CBC_PAD outputs such as Twofish, and remaining MAC_GENERAL or fixed-output
-   vectors where reliable sources exist.
+   probes: remaining SKIPJACK non-ECB64 variants only with trustworthy
+   operation-specific vectors and reconciled PKCS#11 parameters, KEA only with
+   defensible domain-parameter/derive semantics, plus CDMF, BATON/JUNIPER,
+   GOST28147 exact-output KATs, remaining CBC_PAD outputs such as Twofish, and
+   remaining MAC_GENERAL or fixed-output vectors where reliable sources exist.
 
 Legacy/deprecated coverage addendum for the active goal:
 
@@ -470,14 +470,16 @@ Legacy/deprecated coverage addendum for the active goal:
 - Prefer reliable, externally traceable vectors. RC5 and IDEA encrypt vectors
   are already covered; RC5 CBC_PAD is now covered directly from RFC 2040.
   Continue with fixed-length MAC and remaining CBC_PAD gaps only when the source
-  and PKCS#11 mapping are unambiguous. SKIPJACK ECB64 now has source-backed KATs,
-  while remaining SKIPJACK variants and KEA remain source-first candidates
-  because their vector and operation mappings are less straightforward. Also
-  evaluate CDMF, CAST/CAST3, BATON/JUNIPER, GOST28147, old PBE fixed-output
-  cases, and other deprecated mechanisms that a PKCS#11 provider might still
-  advertise. Treat the named families as starting points; the coverage round
-  should account for every uncovered legacy/deprecated registry entry that can
-  be tested with provider-general semantics.
+  and PKCS#11 mapping are unambiguous. SKIPJACK ECB64 now has source-backed KATs.
+  SKIPJACK non-ECB64 variants remain source-first because the historical
+  PKCS#11 text has 24-byte IV parameter text that must be reconciled with the
+  current registry recipes before adding exact-output KATs. KEA remains a
+  source-first candidate because its vector and operation mapping is less
+  straightforward. Also evaluate CDMF, CAST/CAST3, BATON/JUNIPER, GOST28147,
+  old PBE fixed-output cases, and other deprecated mechanisms that a PKCS#11
+  provider might still advertise. Treat the named families as starting points;
+  the coverage round should account for every uncovered legacy/deprecated
+  registry entry that can be tested with provider-general semantics.
 - Started: `CKM_RC5_MAC_GENERAL` now has a KAT-backed expected-MAC vector using
   the existing RFC 2040 RC5 block result as the one-block zero-IV CBC-MAC
   output, plus vector-param replay for word size, rounds, and MAC length.

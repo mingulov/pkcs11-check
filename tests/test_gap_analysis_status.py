@@ -265,6 +265,15 @@ def test_gap_analysis_marks_skipjack_ecb64_kat_vectors_as_added() -> None:
     assert "SKIPJACK ECB64 exact-output KATs are covered" in doc
 
 
+def test_gap_analysis_keeps_skipjack_non_ecb64_variants_source_first() -> None:
+    """Skipjack non-ECB64 KATs stay pending until IV parameter shape is reconciled."""
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "SKIPJACK non-ECB64 variants remain source-first" in doc
+    assert "24-byte IV parameter text" in doc
+    assert "SKIPJACK stream/wrap variants" not in doc
+
+
 def test_gap_analysis_marks_mixed_fail_crash_reporting_as_fixed() -> None:
     """Mixed fail+crash units now surface crash status instead of only failed status."""
     runner = _read("src/pkcs11_check/core/file_runner.py")
