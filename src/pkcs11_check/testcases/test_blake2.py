@@ -996,6 +996,49 @@ class TestBlake2bKeyed:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
 
+    def _key_derive_rejects_length_only_overlong(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism(case.key_derive_name):
+            pytest.skip(f"CKM_{case.key_derive_name} not supported")
+
+        requested_len = case.digest_len + 1
+        base = _import_blake2b_setup_key(rs, derive=True)
+        derived = 0
+        try:
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base,
+                    case.key_derive_mech,
+                    attrs={
+                        CKA_VALUE_LEN: requested_len,
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                )
+            except AssertionError as e:
+                reject_or_classify(
+                    e,
+                    (CKR_KEY_SIZE_RANGE,),
+                    label=f"{case.key_derive_name} length-only overlong output",
+                )
+                return
+
+            raise AssertionError(
+                f"accepted {case.key_derive_name} length-only overlong output; "
+                f"requested {requested_len} bytes exceeds digest length {case.digest_len}"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, base)
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)
+
     @pytest.mark.parametrize(
         "case",
         _BLAKE2B_KEYED_CASES,
@@ -1050,4 +1093,14 @@ class TestBlake2bKeyed:
         self._key_derive_rejects_variable_key_type_without_len(
             p11_raw_session,
             _BLAKE2B_KEYED_CASE_BY_BITS[256],
+        )
+
+    def test_blake2b_key_derive_rejects_length_only_overlong(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """BLAKE2B_160_KEY_DERIVE length-only overlong output is rejected."""
+        self._key_derive_rejects_length_only_overlong(
+            p11_raw_session,
+            _BLAKE2B_KEYED_CASE_BY_BITS[160],
         )

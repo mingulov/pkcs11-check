@@ -360,3 +360,40 @@ def test_blake2b_key_derive_aes_without_length_is_expected_reject(
         }
     ]
     assert CKA_VALUE_LEN not in derive_attrs[0]
+
+
+def test_blake2b_key_derive_length_only_overlong_is_expected_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = test_blake2._BLAKE2B_KEYED_CASE_BY_BITS[160]
+    derive_attrs: list[dict[int, Any]] = []
+
+    def _derive_reject(
+        _raw: object,
+        _sh: int,
+        _base_key: int,
+        _mechanism: int,
+        attrs: dict[int, Any],
+    ) -> int:
+        derive_attrs.append(attrs)
+        raise CkrAssertionError("Unexpected CK_RV CKR_KEY_SIZE_RANGE", int(CKR_KEY_SIZE_RANGE))
+
+    rs = _session_with_mechanisms("BLAKE2B_160_KEY_DERIVE")
+    monkeypatch.setattr(test_blake2, "_import_blake2b_setup_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_blake2, "derive_key", _derive_reject)
+    monkeypatch.setattr(test_blake2, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    test_blake2.TestBlake2bKeyed()._key_derive_rejects_length_only_overlong(
+        rs,
+        case,
+    )
+
+    assert derive_attrs == [
+        {
+            CKA_VALUE_LEN: case.digest_len + 1,
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: True,
+        }
+    ]
+    assert CKA_KEY_TYPE not in derive_attrs[0]
