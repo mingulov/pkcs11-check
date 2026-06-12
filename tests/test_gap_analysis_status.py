@@ -160,6 +160,29 @@ def test_gap_analysis_marks_blake2b_hmac_general_tamper_negative_as_added() -> N
     assert "BLAKE2B HMAC_GENERAL wrong-length MAC coverage" in doc_flat
 
 
+def test_gap_analysis_marks_shake_xof_and_external_mu_as_dedicated_coverage() -> None:
+    """SHAKE/XOF and ML-DSA ExternalMu are no longer registry/smoke only."""
+    extended = _read("src/pkcs11_check/testcases/test_extended_mechanisms.py")
+    shake_guard = _read("tests/test_shake_xof_coverage.py")
+    external_mu_guard = _read("tests/test_mldsa_external_mu_coverage.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "C_DigestXofInit" in extended
+    assert "C_DigestXofExtract" in extended
+    assert "_shake_xof_single_shot_matches_reference" in extended
+    assert "_shake_xof_multipart_matches_reference" in extended
+    assert "hashlib.shake_128" in shake_guard
+    assert "hashlib.shake_256" in shake_guard
+    assert "_external_mu_sign_verify_roundtrip" in extended
+    assert "CKM_ML_DSA_EXTERNAL_MU verify rejected a fresh signature" in extended
+    assert "CKM_ML_DSA_EXTERNAL_MU verified a tampered mu" in extended
+    assert "test_external_mu_roundtrip_helper_uses_64_byte_mu" in external_mu_guard
+
+    assert "SHAKE/XOF and ML-DSA ExternalMu are registry/smoke only" not in doc_flat
+    assert "SHAKE/XOF dedicated coverage exists" in doc_flat
+    assert "ML-DSA ExternalMu sign/verify coverage exists" in doc_flat
+
+
 def test_coverage_plan_does_not_count_ecmqv_as_kea_coverage() -> None:
     """ECMQV and KEA are different mechanisms; ECMQV tests do not cover KEA."""
     ecdh_extended = _read("src/pkcs11_check/testcases/test_ecdh_extended.py")
