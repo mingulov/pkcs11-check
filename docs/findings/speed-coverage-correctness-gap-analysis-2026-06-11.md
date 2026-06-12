@@ -454,6 +454,19 @@ gate. Docker pool runs can now take `--coverage-baseline-artifacts-dir` to
 compare each just-merged `<provider>-pooled` artifact against the same
 provider's baseline and fail the pool on lost mechanism states.
 
+### 6. Controlled child subprocess crash/timeout stats
+
+Crash-safe child probes intentionally report provider crashes and child
+timeouts as failed tests, not as isolated-runner `crashed`/`timeout` units. That
+classification is correct, but the pool headline table previously hid the
+distinction inside the broad `failed` count.
+
+Status: fixed in the current branch. `docker/test_pool.py` keeps the original
+`failed`, `crashed`, and `timeout` counts intact, and adds `child_crash` and
+`child_timeout` columns by scanning failed test longreprs for controlled
+subprocess crash/timeout markers. Focused tests prove controlled child findings
+are surfaced separately without double-counting unit-level crash records.
+
 ## Recommended Next Round
 
 The next implementation round should be harness-first, because it makes every

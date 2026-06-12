@@ -409,6 +409,41 @@ def timestamped_message(message: str) -> str:
     return f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}"
 
 
+_CONTROLLED_CHILD_CRASH_MARKERS = (
+    "module crashed with signal",
+    "subprocess crashed with signal",
+)
+_CONTROLLED_CHILD_TIMEOUT_MARKERS = (
+    "subprocess.timeoutexpired",
+    "subprocess timeout",
+    "timed out after",
+)
+
+
+def controlled_child_counts(results: Mapping[str, Any]) -> tuple[int, int]:
+    """Count crash-safe child subprocess findings that live inside failed tests."""
+    child_crash = 0
+    child_timeout = 0
+    units = results.get("units")
+    if not isinstance(units, list):
+        return child_crash, child_timeout
+    for unit in units:
+        if not isinstance(unit, Mapping):
+            continue
+        tests = unit.get("tests")
+        if not isinstance(tests, list):
+            continue
+        for record in tests:
+            if not isinstance(record, Mapping) or record.get("outcome") != "failed":
+                continue
+            longrepr = str(record.get("longrepr", "")).lower()
+            if any(marker in longrepr for marker in _CONTROLLED_CHILD_CRASH_MARKERS):
+                child_crash += 1
+            elif any(marker in longrepr for marker in _CONTROLLED_CHILD_TIMEOUT_MARKERS):
+                child_timeout += 1
+    return child_crash, child_timeout
+
+
 def print_pool_event(
     message: str, output_lock: Any | None = None, *, file: Any | None = None
 ) -> None:
@@ -682,7 +717,7 @@ def main() -> int:
     hdr = (
         f"{'provider':<20} {'shards':>6} {'total':>8} {'passed':>8} "
         f"{'failed':>8} {'xfailed':>8} {'crashed':>8} {'timeout':>8} "
-        f"{'shard_time':>10}"
+        f"{'child_crash':>11} {'child_timeout':>13} {'shard_time':>10}"
     )
     print(hdr)
     print("-" * len(hdr))
@@ -714,17 +749,20 @@ def main() -> int:
         res = Path(f"artifacts/{p}-pooled/results.json")
         shard_time = format_elapsed(shard_time_by_provider[p])
         if res.exists():
-            s = json.loads(res.read_text())["summary"]
+            result_payload = json.loads(res.read_text())
+            s = result_payload["summary"]
+            child_crash, child_timeout = controlled_child_counts(result_payload)
             print(
                 f"{p:<20} {n:>6} {s.get('total', 0):>8} {s.get('passed', 0):>8} "
                 f"{s.get('failed', 0):>8} {s.get('xfailed', 0):>8} "
-                f"{s.get('crashed', 0):>8} {s.get('timeout', 0):>8} {shard_time:>10}"
+                f"{s.get('crashed', 0):>8} {s.get('timeout', 0):>8} "
+                f"{child_crash:>11} {child_timeout:>13} {shard_time:>10}"
             )
         else:
             incomplete_results = True
             print(
                 f"{p:<20} {n:>6} {'NO-RESULTS':>8} {'':>8} {'':>8} "
-                f"{'':>8} {'':>8} {'':>8} {shard_time:>10}"
+                f"{'':>8} {'':>8} {'':>8} {'':>11} {'':>13} {shard_time:>10}"
             )
         if coverage_baseline_root is not None:
             status, comparison = compare_provider_coverage(

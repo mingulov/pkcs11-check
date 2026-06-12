@@ -459,6 +459,96 @@ def test_pool_reports_shard_progress_and_provider_elapsed_time(
     assert "3.8s" in out
 
 
+def test_pool_reports_controlled_child_crashes_and_timeouts_separately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    testcases = tmp_path / "testcases"
+    testcases.mkdir()
+    (testcases / "test_one.py").write_text("def test_one():\n    pass\n")
+
+    def fake_run_item(
+        provider: str, idx: int, files: list[str], env: dict[str, str]
+    ) -> tuple[str, int, int]:
+        shard_dir = Path("artifacts") / f"{provider}-shard-{idx}"
+        shard_dir.mkdir(parents=True)
+        shard_dir.joinpath("results.json").write_text(
+            json.dumps({"summary": {"passed": len(files)}, "units": []})
+        )
+        return provider, idx, 1
+
+    def fake_merge_shard_dirs(shard_dirs: list[Path], output_dir: Path) -> None:
+        assert len(shard_dirs) == 1
+        output_dir.mkdir(parents=True)
+        output_dir.joinpath("results.json").write_text(
+            json.dumps(
+                {
+                    "summary": {
+                        "total": 6,
+                        "passed": 1,
+                        "failed": 3,
+                        "xfailed": 0,
+                        "crashed": 1,
+                        "timeout": 1,
+                    },
+                    "units": [
+                        {
+                            "target": "test_boundary.py",
+                            "tests": [
+                                {
+                                    "nodeid": "test_boundary.py::test_child_signal",
+                                    "outcome": "failed",
+                                    "longrepr": (
+                                        "Failed: C_GetInfo(NULL): module crashed "
+                                        "with signal 11"
+                                    ),
+                                },
+                                {
+                                    "nodeid": "test_boundary.py::test_child_subprocess_signal",
+                                    "outcome": "failed",
+                                    "longrepr": "subprocess crashed with signal 7",
+                                },
+                                {
+                                    "nodeid": "test_boundary.py::test_child_timeout",
+                                    "outcome": "failed",
+                                    "longrepr": (
+                                        "subprocess.TimeoutExpired: Command "
+                                        "timed out after 15 seconds"
+                                    ),
+                                },
+                                {
+                                    "nodeid": "test_boundary.py::test_unit_crash",
+                                    "outcome": "crashed",
+                                    "longrepr": "module crashed with signal 11",
+                                },
+                            ],
+                        }
+                    ],
+                }
+            )
+        )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(test_pool, "build_image", lambda provider, env: (provider, True))
+    monkeypatch.setattr(test_pool, "run_item", fake_run_item)
+    monkeypatch.setattr(test_pool, "clean_prior_shards", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(test_pool, "merge_shard_dirs", fake_merge_shard_dirs)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["test_pool.py", "--testcases", str(testcases), "optee-pkcs11:1"],
+    )
+
+    assert test_pool.main() == 0
+
+    out = capsys.readouterr().out
+    assert "child_crash" in out
+    assert "child_timeout" in out
+    provider_row = next(line for line in out.splitlines() if line.startswith("optee-pkcs11"))
+    columns = provider_row.split()
+    assert columns[8] == "2"
+    assert columns[9] == "1"
+
+
 def test_pool_reports_elapsed_time_when_provider_has_no_results(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

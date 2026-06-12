@@ -147,6 +147,18 @@ def test_gap_analysis_marks_dsa_sha224_prehash_matrix_as_added() -> None:
     assert "DSA_SHA224 now participates" in doc
 
 
+def test_gap_analysis_marks_controlled_child_crash_stats_as_added() -> None:
+    """Pool stats separately surface controlled child crashes/timeouts."""
+    pool = _read("docker/test_pool.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "controlled_child_counts" in pool
+    assert "child_crash" in pool
+    assert "child_timeout" in pool
+
+    assert "Controlled child subprocess crash/timeout stats" in doc
+
+
 def test_gap_analysis_marks_classic_dh_runtime_rejects_as_classified() -> None:
     """Classic DH positive derive runtime rejects use provider-general xfail logic."""
     dh = _read("src/pkcs11_check/testcases/test_dh_key_agreement.py")
