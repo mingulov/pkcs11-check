@@ -467,13 +467,18 @@ class TestBlake2bKeyed:
     ) -> None:
         self._hmac_matches_reference(p11_raw_session, case)
 
-    def _hmac_general_truncates(self, p11_raw_session: Any, case: _Blake2bKeyedCase) -> None:
+    def _hmac_general_matches_reference(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+        *,
+        mac_len: int,
+    ) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism(case.hmac_general_name):
             pytest.skip(f"CKM_{case.hmac_general_name} not supported")
 
         key = _import_blake2b_setup_key(rs, sign=True, verify=True)
-        mac_len = 12
         mech_param = mech_bytes(
             case.hmac_general_mech,
             _ck_ulong_param(mac_len),
@@ -519,6 +524,9 @@ class TestBlake2bKeyed:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
+    def _hmac_general_truncates(self, p11_raw_session: Any, case: _Blake2bKeyedCase) -> None:
+        self._hmac_general_matches_reference(p11_raw_session, case, mac_len=12)
+
     @pytest.mark.parametrize(
         "case",
         _BLAKE2B_KEYED_CASES,
@@ -530,6 +538,21 @@ class TestBlake2bKeyed:
         case: _Blake2bKeyedCase,
     ) -> None:
         self._hmac_general_truncates(p11_raw_session, case)
+
+    @pytest.mark.parametrize(
+        "case",
+        _BLAKE2B_KEYED_CASES,
+        ids=[case.id for case in _BLAKE2B_KEYED_CASES],
+    )
+    @pytest.mark.parametrize("mac_len_kind", ("minimum", "maximum"))
+    def test_blake2b_hmac_general_boundary_lengths(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+        mac_len_kind: str,
+    ) -> None:
+        mac_len = 1 if mac_len_kind == "minimum" else case.digest_len
+        self._hmac_general_matches_reference(p11_raw_session, case, mac_len=mac_len)
 
     def _hmac_general_invalid_length_rejected(
         self,

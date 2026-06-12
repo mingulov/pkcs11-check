@@ -57,6 +57,41 @@ def test_blake2b_hmac_general_runtime_reject_is_xfail(
         )
 
 
+@pytest.mark.parametrize("mac_len", (1, 32))
+def test_blake2b_hmac_general_boundary_lengths_match_reference(
+    monkeypatch: pytest.MonkeyPatch,
+    mac_len: int,
+) -> None:
+    case = test_blake2._BLAKE2B_KEYED_CASE_BY_BITS[256]
+    expected = test_blake2._blake2b_hmac_reference(
+        test_blake2._BLAKE2B_TEST_KEY,
+        test_blake2._BLAKE2B_TEST_DATA,
+        case.digest_len,
+    )[:mac_len]
+    signed: list[bytes] = []
+
+    def _sign_reference(*_args: Any, **_kwargs: Any) -> bytes:
+        signed.append(expected)
+        return expected
+
+    def _verify_reference(*_args: Any, **_kwargs: Any) -> bool:
+        return True
+
+    rs = _session_with_mechanisms("BLAKE2B_256_HMAC_GENERAL")
+    monkeypatch.setattr(test_blake2, "_import_blake2b_setup_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_blake2, "destroy_quietly", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(test_blake2, "sign_single", _sign_reference)
+    monkeypatch.setattr(test_blake2, "verify_single", _verify_reference)
+
+    test_blake2.TestBlake2bKeyed()._hmac_general_matches_reference(
+        rs,
+        case,
+        mac_len=mac_len,
+    )
+
+    assert signed == [expected]
+
+
 def test_blake2b_hmac_general_invalid_length_acceptance_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
