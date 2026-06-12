@@ -12,8 +12,12 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.recipes import digest_single
+from pkcs11_check.raw.pack import mech_simple
+from pkcs11_check.raw.recipes import digest_single, to_ubyte_buf
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
+    CK_BYTE,
+    CKM,
     CKM_SHA3_224,
     CKM_SHA3_256,
     CKM_SHA3_384,
@@ -23,8 +27,27 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA384,
     CKM_SHA512,
     CKM_SHA_1,
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_DEVICE_MEMORY,
+    CKR_DEVICE_REMOVED,
+    CKR_FUNCTION_CANCELED,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_HOST_MEMORY,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_OK,
+    CKR_OPERATION_ACTIVE,
+    CKR_OPERATION_NOT_INITIALIZED,
+    CKR_PENDING,
+    CKR_SESSION_CLOSED,
+    CKR_SESSION_HANDLE_INVALID,
+    CKR_USER_NOT_LOGGED_IN,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -51,10 +74,33 @@ _ALG_MAP: dict[str, tuple[Any, str, int]] = {
 }
 
 
-# SHAKE digest mechanisms (CKM_SHAKE_128, CKM_SHAKE_256) are NOT in the PKCS#11 v3.2
-# header -- only SHAKE KEY_DERIVE variants exist.  C_DigestXof functions needed for XOF
-# are also absent from v3.2.  Map is empty until a future spec revision adds them.
-_SHAKE_ALG_MAP: dict[str, tuple[Any, str]] = {}
+_CKM_SHAKE_128 = CKM(0x00000418, "CKM_SHAKE_128")
+_CKM_SHAKE_256 = CKM(0x00000419, "CKM_SHAKE_256")
+
+_SHAKE_ALG_MAP: dict[str, tuple[Any, str]] = {
+    "SHAKE-128-1.0": (_CKM_SHAKE_128, "SHAKE_128"),
+    "SHAKE-256-1.0": (_CKM_SHAKE_256, "SHAKE_256"),
+}
+
+_SHAKE_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_DEVICE_MEMORY,
+    CKR_DEVICE_REMOVED,
+    CKR_FUNCTION_CANCELED,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_HOST_MEMORY,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_OPERATION_ACTIVE,
+    CKR_OPERATION_NOT_INITIALIZED,
+    CKR_PENDING,
+    CKR_SESSION_CLOSED,
+    CKR_SESSION_HANDLE_INVALID,
+    CKR_USER_NOT_LOGGED_IN,
+)
 
 
 def _load_hash_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -140,6 +186,8 @@ def _load_shake_vectors() -> list[tuple[str, dict[str, Any]]]:
             # Skip partial-bit messages
             if msg_len % 8 != 0:
                 continue
+            if out_len_bits % 8 != 0:
+                continue
 
             out_len_bytes = out_len_bits // 8
 
@@ -196,6 +244,35 @@ def test_acvp_hash(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) ->
     )
 
 
+def _run_acvp_shake_vector(rs: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    for function_name in ("C_DigestXofInit", "C_DigestXof"):
+        if not hasattr(rs.raw, function_name):
+            pytest.skip(f"{function_name} not available in this raw binding")
+
+    mech = mech_simple(vec["mech_int"])
+    rv = rs.raw.C_DigestXofInit(rs.sh, mech.byref())
+    try:
+        expect_rv(rv, CKR_OK, context=f"{vec_id} C_DigestXofInit")
+    except AssertionError as exc:
+        xfail_if_known_ckr(exc, _SHAKE_RUNTIME_REJECT_RVS, f"{vec_id} XOF init not operational")
+
+    msg: bytes = vec["msg"]
+    expected_md: bytes = vec["expected_md"]
+    msg_buf = to_ubyte_buf(msg)
+    out_len = len(expected_md)
+    output = (CK_BYTE * out_len)()
+    rv = rs.raw.C_DigestXof(rs.sh, msg_buf, len(msg), output, out_len)
+    try:
+        expect_rv(rv, CKR_OK, context=f"{vec_id} C_DigestXof")
+    except AssertionError as exc:
+        xfail_if_known_ckr(exc, _SHAKE_RUNTIME_REJECT_RVS, f"{vec_id} XOF not operational")
+
+    digest = bytes(output)
+    assert digest == expected_md, (
+        f"{vec_id}: SHAKE XOF mismatch\n  expected: {expected_md.hex()}\n  got:      {digest.hex()}"
+    )
+
+
 @pytest.mark.parametrize("vec_id,vec", _SHAKE_VECTORS, ids=[v[0] for v in _SHAKE_VECTORS])
 def test_acvp_shake(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """SHAKE XOF (extendable-output function) from NIST ACVP vectors.
@@ -204,8 +281,6 @@ def test_acvp_shake(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -
     The ACVP vectors specify outLen in bits, which we convert to bytes for
     the PKCS#11 digest operation.
     """
-    # TODO: SHAKE requires C_DigestXof functions (not yet in pkcs11_check.raw headers)
-    pytest.skip("SHAKE requires C_DigestXof (not yet in pkcs11_check.raw)")
     rs = p11_module_session
     mech_name: str = vec["mech_name"]
 
@@ -213,15 +288,4 @@ def test_acvp_shake(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -
     if not rs.has_mechanism(mech_name):
         pytest.skip(f"{mech_name} not supported")
 
-    mech: Any = vec["mech_int"]
-    msg: bytes = vec["msg"]
-    expected_md: bytes = vec["expected_md"]
-
-    try:
-        digest = digest_single(rs.raw, rs.sh, mech, msg)
-    except AssertionError as e:
-        pytest.fail(f"SHAKE digest failed for {vec_id}: {e}")
-
-    assert digest == expected_md, (
-        f"{vec_id}: SHAKE XOF mismatch\n  expected: {expected_md.hex()}\n  got:      {digest.hex()}"
-    )
+    _run_acvp_shake_vector(rs, vec_id, vec)

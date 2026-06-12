@@ -63,6 +63,10 @@ def _session(raw: Any) -> SimpleNamespace:
     return SimpleNamespace(raw=raw, sh=7, has_mechanism=lambda _name: True)
 
 
+def _acvp_hash_module() -> Any:
+    return pytest.importorskip("pkcs11_check.testcases.acvp.test_acvp_hash")
+
+
 def test_shake_xof_case_table_has_hashlib_reference_outputs() -> None:
     cases = tem._SHAKE_XOF_CASES
 
@@ -100,3 +104,45 @@ def test_shake_xof_multipart_helper_uses_update_extract_and_final() -> None:
         ("extract", 13),
         ("final", 19),
     ]
+
+
+def test_acvp_shake_map_uses_digest_xof_mechanisms() -> None:
+    test_acvp_hash = _acvp_hash_module()
+
+    assert test_acvp_hash._SHAKE_ALG_MAP == {
+        "SHAKE-128-1.0": (tem._CKM_SHAKE_128, "SHAKE_128"),
+        "SHAKE-256-1.0": (tem._CKM_SHAKE_256, "SHAKE_256"),
+    }
+
+
+def test_acvp_shake_helper_uses_single_shot_digest_xof() -> None:
+    test_acvp_hash = _acvp_hash_module()
+    expected = hashlib.shake_128(b"abc").digest(16)
+    raw = _FakeXofRaw(expected)
+    vec = {
+        "mech_int": tem._CKM_SHAKE_128,
+        "mech_name": "SHAKE_128",
+        "msg": b"abc",
+        "expected_md": expected,
+    }
+
+    test_acvp_hash._run_acvp_shake_vector(_session(raw), "SHAKE-128-1.0-tc1", vec)
+
+    assert raw.calls == [
+        ("init", 7),
+        ("single", b"abc", 16),
+    ]
+
+
+def test_acvp_shake_helper_detects_wrong_output() -> None:
+    test_acvp_hash = _acvp_hash_module()
+    raw = _FakeXofRaw(b"\x00" * 16)
+    vec = {
+        "mech_int": tem._CKM_SHAKE_128,
+        "mech_name": "SHAKE_128",
+        "msg": b"abc",
+        "expected_md": hashlib.shake_128(b"abc").digest(16),
+    }
+
+    with pytest.raises(AssertionError, match="SHAKE XOF mismatch"):
+        test_acvp_hash._run_acvp_shake_vector(_session(raw), "SHAKE-128-1.0-tc1", vec)

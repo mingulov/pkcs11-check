@@ -342,10 +342,13 @@ smoke behavior, or covered only by one narrow variation.
 7. SHAKE/XOF dedicated coverage exists: raw `C_DigestXof*` function
    signatures are wired, and `test_extended_mechanisms.py` verifies both
    single-shot and multipart SHAKE-128/SHAKE-256 XOF output against Python
-   `hashlib` references. ML-DSA ExternalMu sign/verify coverage exists for a
-   64-byte `mu` value and rejects tampered `mu` input. Remaining adjacent
-   work is KMAC parameterized signing and deeper ML-DSA ExternalMuGen/PQC
-   provider evidence, not basic SHAKE/XOF raw API coverage.
+   `hashlib` references. ACVP SHAKE vector replay now loads the NIST
+   `SHAKE-128-1.0` and `SHAKE-256-1.0` XOF vectors and runs them through
+   `C_DigestXof` instead of the old unconditional skip. ML-DSA ExternalMu
+   sign/verify coverage exists for a 64-byte `mu` value and rejects tampered
+   `mu` input. Remaining adjacent work is KMAC parameterized signing and
+   deeper ML-DSA ExternalMuGen/PQC provider evidence, not basic SHAKE/XOF raw
+   API coverage.
 8. Legacy cipher coverage is now mixed rather than mostly generic: RC2, RC4,
    RC5, CAST/CAST3/CAST128/CAST5, IDEA, Blowfish, and Twofish have KAT-backed
    encrypt coverage where the PKCS#11 mechanism shape is reliable. RC2, RC5,

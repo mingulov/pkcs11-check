@@ -163,6 +163,7 @@ def test_gap_analysis_marks_blake2b_hmac_general_tamper_negative_as_added() -> N
 def test_gap_analysis_marks_shake_xof_and_external_mu_as_dedicated_coverage() -> None:
     """SHAKE/XOF and ML-DSA ExternalMu are no longer registry/smoke only."""
     extended = _read("src/pkcs11_check/testcases/test_extended_mechanisms.py")
+    acvp_hash = _read("src/pkcs11_check/testcases/acvp/test_acvp_hash.py")
     shake_guard = _read("tests/test_shake_xof_coverage.py")
     external_mu_guard = _read("tests/test_mldsa_external_mu_coverage.py")
     doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
@@ -171,6 +172,10 @@ def test_gap_analysis_marks_shake_xof_and_external_mu_as_dedicated_coverage() ->
     assert "C_DigestXofExtract" in extended
     assert "_shake_xof_single_shot_matches_reference" in extended
     assert "_shake_xof_multipart_matches_reference" in extended
+    assert '"SHAKE-128-1.0"' in acvp_hash
+    assert '"SHAKE-256-1.0"' in acvp_hash
+    assert "_run_acvp_shake_vector" in acvp_hash
+    assert "SHAKE requires C_DigestXof (not yet in pkcs11_check.raw)" not in acvp_hash
     assert "hashlib.shake_128" in shake_guard
     assert "hashlib.shake_256" in shake_guard
     assert "_external_mu_sign_verify_roundtrip" in extended
@@ -180,6 +185,7 @@ def test_gap_analysis_marks_shake_xof_and_external_mu_as_dedicated_coverage() ->
 
     assert "SHAKE/XOF and ML-DSA ExternalMu are registry/smoke only" not in doc_flat
     assert "SHAKE/XOF dedicated coverage exists" in doc_flat
+    assert "ACVP SHAKE vector replay" in doc_flat
     assert "ML-DSA ExternalMu sign/verify coverage exists" in doc_flat
 
 
