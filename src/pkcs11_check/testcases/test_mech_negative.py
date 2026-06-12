@@ -12,6 +12,7 @@ operation, asserts CKR != CKR_OK, then destroys the key.
 
 from __future__ import annotations
 
+import ctypes
 from ctypes import byref
 from typing import Any
 
@@ -19,8 +20,10 @@ import pytest
 
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.ec import encode_named_curve_parameters
-from pkcs11_check.raw.pack import attr_ulong, mech_simple, template
+from pkcs11_check.raw.pack import attr_ulong, mech_bytes, mech_simple, template
+from pkcs11_check.raw.pack_mechanisms import mech_string_data
 from pkcs11_check.raw.recipes import (
+    derive_key,
     destroy_quietly,
     encrypt_single,
     pack_attrs,
@@ -47,6 +50,7 @@ from pkcs11_check.raw.types_std import (
     CKA_WRAP,
     CKK_AES,
     CKK_GENERIC_SECRET,
+    CKM,
     CKM_AES_ECB,
     CKM_AES_KEY_WRAP_KWP,
     CKM_ECDSA,
@@ -108,6 +112,117 @@ def _wrap_output_size_hint(entry: MechEntry) -> int:
     if int(entry.mech_id) == int(CKM_AES_KEY_WRAP_KWP):
         return 64
     return 0
+
+
+_DERIVE_SHA_KEY_DERIV_MECHS: set[int] = set()
+try:
+    from pkcs11_check.raw.types_std import (
+        CKM_SHA1_KEY_DERIVATION,
+        CKM_SHA3_224_KEY_DERIVATION,
+        CKM_SHA3_256_KEY_DERIVATION,
+        CKM_SHA3_384_KEY_DERIVATION,
+        CKM_SHA3_512_KEY_DERIVATION,
+        CKM_SHA224_KEY_DERIVATION,
+        CKM_SHA256_KEY_DERIVATION,
+        CKM_SHA384_KEY_DERIVATION,
+        CKM_SHA512_224_KEY_DERIVATION,
+        CKM_SHA512_256_KEY_DERIVATION,
+        CKM_SHA512_KEY_DERIVATION,
+        CKM_SHA512_T_KEY_DERIVATION,
+        CKM_SHAKE_128_KEY_DERIVATION,
+        CKM_SHAKE_256_KEY_DERIVATION,
+    )
+
+    _DERIVE_SHA_KEY_DERIV_MECHS = {
+        int(CKM_SHA1_KEY_DERIVATION),
+        int(CKM_SHA224_KEY_DERIVATION),
+        int(CKM_SHA256_KEY_DERIVATION),
+        int(CKM_SHA384_KEY_DERIVATION),
+        int(CKM_SHA512_KEY_DERIVATION),
+        int(CKM_SHA512_224_KEY_DERIVATION),
+        int(CKM_SHA512_256_KEY_DERIVATION),
+        int(CKM_SHA512_T_KEY_DERIVATION),
+        int(CKM_SHA3_224_KEY_DERIVATION),
+        int(CKM_SHA3_256_KEY_DERIVATION),
+        int(CKM_SHA3_384_KEY_DERIVATION),
+        int(CKM_SHA3_512_KEY_DERIVATION),
+        int(CKM_SHAKE_128_KEY_DERIVATION),
+        int(CKM_SHAKE_256_KEY_DERIVATION),
+    }
+except ImportError:
+    pass
+
+_DERIVE_STRING_DATA_MECHS: set[int] = set()
+_DERIVE_CONCAT_KEY_MECH_ID: int = 0
+_DERIVE_EXTRACT_MECH_ID: int = 0
+try:
+    from pkcs11_check.raw.types_std import (
+        CKM_CONCATENATE_BASE_AND_DATA,
+        CKM_CONCATENATE_BASE_AND_KEY,
+        CKM_CONCATENATE_DATA_AND_BASE,
+        CKM_EXTRACT_KEY_FROM_KEY,
+        CKM_XOR_BASE_AND_DATA,
+    )
+
+    _DERIVE_STRING_DATA_MECHS = {
+        int(CKM_CONCATENATE_BASE_AND_DATA),
+        int(CKM_CONCATENATE_DATA_AND_BASE),
+        int(CKM_XOR_BASE_AND_DATA),
+    }
+    _DERIVE_CONCAT_KEY_MECH_ID = int(CKM_CONCATENATE_BASE_AND_KEY)
+    _DERIVE_EXTRACT_MECH_ID = int(CKM_EXTRACT_KEY_FROM_KEY)
+except ImportError:
+    pass
+
+_DERIVE_AES_ECB_ENCRYPT_DATA_ID: int = 0
+try:
+    from pkcs11_check.raw.types_std import CKM_AES_ECB_ENCRYPT_DATA
+
+    _DERIVE_AES_ECB_ENCRYPT_DATA_ID = int(CKM_AES_ECB_ENCRYPT_DATA)
+except ImportError:
+    pass
+
+_DERIVED_GENERIC_SECRET_ATTRS: dict[int, Any] = {
+    CKA_CLASS: CKO_SECRET_KEY,
+    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+    CKA_VALUE_LEN: 16,
+    CKA_DERIVE: True,
+    CKA_TOKEN: False,
+    CKA_EXTRACTABLE: True,
+    CKA_SENSITIVE: False,
+}
+
+
+def _derive_negative_param_or_skip(
+    rs: RawSession,
+    entry: MechEntry,
+) -> tuple[Any | None, list[int]]:
+    mech_id = int(entry.mech_id)
+    if mech_id in _DERIVE_SHA_KEY_DERIV_MECHS:
+        return None, []
+    if _DERIVE_AES_ECB_ENCRYPT_DATA_ID and mech_id == _DERIVE_AES_ECB_ENCRYPT_DATA_ID:
+        return mech_string_data(CKM(mech_id), b"derive__test__01"), []
+    if mech_id in _DERIVE_STRING_DATA_MECHS:
+        return mech_string_data(CKM(mech_id), b"pkcs11-check-derive"), []
+    if _DERIVE_EXTRACT_MECH_ID and mech_id == _DERIVE_EXTRACT_MECH_ID:
+        bit_index = ctypes.c_ulong(0)
+        param_bytes = bytes(ctypes.string_at(ctypes.addressof(bit_index), ctypes.sizeof(bit_index)))
+        return mech_bytes(CKM(mech_id), param_bytes), []
+    if _DERIVE_CONCAT_KEY_MECH_ID and mech_id == _DERIVE_CONCAT_KEY_MECH_ID:
+        config = entry.config
+        assert config is not None
+        addon_key = gen_symmetric_key(
+            rs,
+            entry,
+            config,
+            extra_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+        )
+        handle_ctype = CK_OBJECT_HANDLE(addon_key)
+        param_bytes = bytes(
+            ctypes.string_at(ctypes.addressof(handle_ctype), ctypes.sizeof(handle_ctype))
+        )
+        return mech_bytes(CKM(mech_id), param_bytes), [addon_key]
+    pytest.skip(f"{entry.mech_name}: registry derive negative needs dedicated params")
 
 
 def _skip_if_not_secret_key_registry_case(entry: MechEntry) -> None:
@@ -612,6 +727,50 @@ class TestMissingPermission:
                 destroy_quietly(rs.raw, rs.sh, unwrapped_key)
             destroy_quietly(rs.raw, rs.sh, unwrapping_key)
             destroy_quietly(rs.raw, rs.sh, target_key)
+
+    def test_registry_derive_without_flag(
+        self, p11_module_session: RawSession, mech_derive_entry: MechEntry
+    ) -> None:
+        """Registry-driven CKA_DERIVE=False check for advertised derive mechanisms."""
+        rs = p11_module_session
+        entry = mech_derive_entry
+        _skip_if_not_secret_key_registry_case(entry)
+
+        base_key = 0
+        derived_key = 0
+        param_handles: list[int] = []
+        label = f"{entry.mech_name} C_DeriveKey with CKA_DERIVE=False"
+        try:
+            mech_param, param_handles = _derive_negative_param_or_skip(rs, entry)
+            base_key = _gen_claimed_false_secret_key(rs, entry, CKA_DERIVE)
+            _claim_false_or_xfail(rs, base_key, CKA_DERIVE, label)
+
+            derive_exc: AssertionError | None = None
+            try:
+                derived_key = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base_key,
+                    entry.mech_id,
+                    attrs=_DERIVED_GENERIC_SECRET_ATTRS,
+                    mech_param=mech_param,
+                )
+            except AssertionError as caught:
+                derive_exc = caught
+            if derive_exc is None:
+                classify_policy_enforcement(claimed=True, violated=True, label=label)
+            reject_or_classify(
+                derive_exc,
+                (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                label=label,
+            )
+        finally:
+            if derived_key != 0:
+                destroy_quietly(rs.raw, rs.sh, derived_key)
+            if base_key != 0:
+                destroy_quietly(rs.raw, rs.sh, base_key)
+            for handle in param_handles:
+                destroy_quietly(rs.raw, rs.sh, handle)
 
     def test_encrypt_without_flag(self, p11_module_session: RawSession) -> None:
         """Key with CKA_ENCRYPT=False cannot EncryptInit."""

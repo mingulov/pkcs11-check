@@ -28,7 +28,12 @@ def test_negative_tests_use_registry_operation_fixtures() -> None:
     """Negative coverage must scale beyond the fixed explicit examples."""
     fixtures = _fixture_names()
 
-    for fixture in ("mech_encrypt_entry", "mech_sign_entry", "mech_wrap_entry"):
+    for fixture in (
+        "mech_encrypt_entry",
+        "mech_sign_entry",
+        "mech_wrap_entry",
+        "mech_derive_entry",
+    ):
         assert fixture in fixtures
 
 
@@ -61,5 +66,6 @@ def test_permission_negatives_cover_roundtrip_pairs() -> None:
         "test_registry_verify_without_flag",
         "test_registry_wrap_without_flag",
         "test_registry_unwrap_without_flag",
+        "test_registry_derive_without_flag",
     ):
         assert test_name in source
