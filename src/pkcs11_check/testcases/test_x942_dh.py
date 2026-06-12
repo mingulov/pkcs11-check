@@ -79,7 +79,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import classify_negative_rv, is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
 
@@ -554,6 +554,42 @@ class TestX942DHDerive:
                 destroy_quietly(rs.raw, rs.sh, shared_key)
             if bob_key:
                 destroy_quietly(rs.raw, rs.sh, bob_key)
+
+    def test_x942_derive_rejects_missing_peer_public_value(self, p11_raw_session: Any) -> None:
+        """CKM_X9_42_DH_DERIVE must reject a missing DH1 derive parameter struct."""
+        rs = p11_raw_session
+        _skip_no_x942_keygen(rs)
+        _skip_no_x942_derive(rs)
+
+        pub, priv = _generate_x942_keypair(rs)
+        mech = mech_simple(CKM_X9_42_DH_DERIVE)
+        derived = CK_OBJECT_HANDLE(0)
+        attrs = template(
+            attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_AES),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, True),
+            attr_bool(CKA_TOKEN, False),
+        )
+        try:
+            rv = rs.raw.C_DeriveKey(
+                rs.sh,
+                mech.byref(),
+                priv,
+                attrs.ptr,
+                attrs.count,
+                byref(derived),
+            )
+            classify_negative_rv(
+                rv,
+                (CKR_MECHANISM_PARAM_INVALID,),
+                label="CKM_X9_42_DH_DERIVE missing peer public value",
+            )
+        finally:
+            if derived.value:
+                destroy_quietly(rs.raw, rs.sh, derived.value)
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_different_exchanges_produce_different_secrets(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
