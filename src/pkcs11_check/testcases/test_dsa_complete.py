@@ -78,6 +78,10 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._signature_policy import (
+    signature_rejected_or_xfail,
+    xfail_if_op_not_operational,
+)
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     is_known_error,
@@ -356,6 +360,41 @@ def _generate_dsa_keypair(
     return dp_handle, pub, priv
 
 
+def _dsa_sign_or_xfail(rs: Any, priv: int, mechanism: int, data: bytes, label: str) -> bytes:
+    try:
+        return sign_single(rs.raw, rs.sh, priv, mechanism, data)
+    except AssertionError as exc:
+        xfail_if_op_not_operational(exc, label)
+
+
+def _dsa_verify_or_xfail(
+    rs: Any,
+    pub: int,
+    mechanism: int,
+    data: bytes,
+    signature: bytes,
+    label: str,
+) -> bool:
+    try:
+        return verify_single(rs.raw, rs.sh, pub, mechanism, data, signature)
+    except AssertionError as exc:
+        xfail_if_op_not_operational(exc, label)
+
+
+def _dsa_invalid_verify_rejected_or_xfail(
+    rs: Any,
+    pub: int,
+    mechanism: int,
+    data: bytes,
+    signature: bytes,
+    label: str,
+) -> bool:
+    try:
+        return verify_single(rs.raw, rs.sh, pub, mechanism, data, signature)
+    except AssertionError as exc:
+        return signature_rejected_or_xfail(exc, label)
+
+
 class TestDSARaw:
     """Tests for raw CKM_DSA with pre-hashed data."""
 
@@ -477,10 +516,10 @@ class TestDSAPrehash:
         dp, pub, priv = _generate_dsa_keypair(rs)
         try:
             data = b"DSA prehash sign/verify roundtrip test data"
-            sig = sign_single(rs.raw, rs.sh, priv, mechanism, data)
+            sig = _dsa_sign_or_xfail(rs, priv, mechanism, data, f"CKM_{mech_name_str}")
             assert len(sig) > 0
 
-            result = verify_single(rs.raw, rs.sh, pub, mechanism, data, sig)
+            result = _dsa_verify_or_xfail(rs, pub, mechanism, data, sig, f"CKM_{mech_name_str}")
             assert result is True
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -502,10 +541,17 @@ class TestDSAPrehash:
         dp, pub, priv = _generate_dsa_keypair(rs)
         try:
             data = b"original prehash data"
-            sig = sign_single(rs.raw, rs.sh, priv, mechanism, data)
+            sig = _dsa_sign_or_xfail(rs, priv, mechanism, data, f"CKM_{mech_name_str}")
 
             tampered = b"tampered prehash data"
-            result = verify_single(rs.raw, rs.sh, pub, mechanism, tampered, sig)
+            result = _dsa_invalid_verify_rejected_or_xfail(
+                rs,
+                pub,
+                mechanism,
+                tampered,
+                sig,
+                f"CKM_{mech_name_str}",
+            )
             assert result is False
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -527,14 +573,21 @@ class TestDSAPrehash:
         dp, pub, priv = _generate_dsa_keypair(rs)
         try:
             data = b"signature tamper test"
-            sig = sign_single(rs.raw, rs.sh, priv, mechanism, data)
+            sig = _dsa_sign_or_xfail(rs, priv, mechanism, data, f"CKM_{mech_name_str}")
 
             # Flip a byte in the signature
             sig_arr = bytearray(sig)
             sig_arr[len(sig_arr) // 2] ^= 0xFF
             tampered_sig = bytes(sig_arr)
 
-            result = verify_single(rs.raw, rs.sh, pub, mechanism, data, tampered_sig)
+            result = _dsa_invalid_verify_rejected_or_xfail(
+                rs,
+                pub,
+                mechanism,
+                data,
+                tampered_sig,
+                f"CKM_{mech_name_str}",
+            )
             assert result is False
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -556,10 +609,10 @@ class TestDSAPrehash:
         dp, pub, priv = _generate_dsa_keypair(rs)
         try:
             data = b""
-            sig = sign_single(rs.raw, rs.sh, priv, mechanism, data)
+            sig = _dsa_sign_or_xfail(rs, priv, mechanism, data, f"CKM_{mech_name_str}")
             assert len(sig) > 0
 
-            result = verify_single(rs.raw, rs.sh, pub, mechanism, data, sig)
+            result = _dsa_verify_or_xfail(rs, pub, mechanism, data, sig, f"CKM_{mech_name_str}")
             assert result is True
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -581,10 +634,10 @@ class TestDSAPrehash:
         dp, pub, priv = _generate_dsa_keypair(rs)
         try:
             data = b"A" * 10240
-            sig = sign_single(rs.raw, rs.sh, priv, mechanism, data)
+            sig = _dsa_sign_or_xfail(rs, priv, mechanism, data, f"CKM_{mech_name_str}")
             assert len(sig) > 0
 
-            result = verify_single(rs.raw, rs.sh, pub, mechanism, data, sig)
+            result = _dsa_verify_or_xfail(rs, pub, mechanism, data, sig, f"CKM_{mech_name_str}")
             assert result is True
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

@@ -268,7 +268,10 @@ smoke behavior, or covered only by one narrow variation.
    OASIS-defined p/q and g-generation outputs. Raw CKM_DSA wrong-length digest acceptance
    is now a hard failure via the shared negative classifier; the spec-correct
    rejection remains `CKR_DATA_LEN_RANGE`, and other clean rejects are recorded
-   as xfail deviations.
+   as xfail deviations. DSA prehash runtime-reject classification now uses the
+   shared signature policy: advertised positive sign/verify refusals are xfail
+   deviations, while tampered-data/signature tests treat clean signature
+   rejection as the intended negative outcome.
 4. Message API coverage is representative, not registry-driven. Scenario
    selection does not yet cover `CKF_MESSAGE_*` flags generically.
 5. Hybrid and AEAD wrap coverage has explicit holes: RSA-AES key wrap,

@@ -12,9 +12,12 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_DSA_PARAMETER_GEN_PARAM,
     CKM_DSA_PROBABILISTIC_PARAMETER_GEN,
+    CKM_DSA_SHA1,
     CKM_SHA256,
+    CKR_DEVICE_ERROR,
     CKR_GENERAL_ERROR,
     CKR_OK,
+    CKR_SIGNATURE_INVALID,
 )
 from pkcs11_check.testcases import test_dsa_complete
 
@@ -114,3 +117,42 @@ def test_raw_dsa_wrong_length_digest_acceptance_is_hard_failure(
 
     assert type(excinfo.value) is pytest.fail.Exception
     assert "CKM_DSA wrong-length digest: accepted invalid" in str(excinfo.value)
+
+
+def test_dsa_prehash_sign_clean_refusal_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _sign_reject(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))
+
+    rs = _session_with_mechanisms("DSA_SHA1")
+    monkeypatch.setattr(test_dsa_complete, "_generate_dsa_keypair", lambda _rs: (10, 11, 12))
+    monkeypatch.setattr(test_dsa_complete, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(test_dsa_complete, "sign_single", _sign_reject)
+
+    with pytest.raises(pytest.xfail.Exception, match="not operational"):
+        test_dsa_complete.TestDSAPrehash().test_sign_verify_roundtrip(
+            rs,
+            "DSA_SHA1",
+            CKM_DSA_SHA1,
+        )
+
+
+def test_dsa_prehash_tampered_data_clean_signature_reject_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _verify_reject(*_args: Any, **_kwargs: Any) -> bool:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SIGNATURE_INVALID",
+            int(CKR_SIGNATURE_INVALID),
+        )
+
+    rs = _session_with_mechanisms("DSA_SHA1")
+    monkeypatch.setattr(test_dsa_complete, "_generate_dsa_keypair", lambda _rs: (10, 11, 12))
+    monkeypatch.setattr(test_dsa_complete, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(test_dsa_complete, "sign_single", lambda *_args, **_kwargs: b"sig")
+    monkeypatch.setattr(test_dsa_complete, "verify_single", _verify_reject)
+
+    test_dsa_complete.TestDSAPrehash().test_tampered_data_fails(
+        rs,
+        "DSA_SHA1",
+        CKM_DSA_SHA1,
+    )

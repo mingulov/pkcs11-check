@@ -123,6 +123,19 @@ def test_gap_analysis_marks_raw_dsa_wrong_length_negative_as_hard_fail() -> None
     assert "Raw CKM_DSA wrong-length digest acceptance" in doc
 
 
+def test_gap_analysis_marks_dsa_prehash_runtime_rejects_as_classified() -> None:
+    """DSA prehash positive/negative runtime rejects use signature policy helpers."""
+    dsa = _read("src/pkcs11_check/testcases/test_dsa_complete.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "xfail_if_op_not_operational" in dsa
+    assert "signature_rejected_or_xfail" in dsa
+    assert "_dsa_sign_or_xfail" in dsa
+    assert "_dsa_invalid_verify_rejected_or_xfail" in dsa
+
+    assert "DSA prehash runtime-reject classification" in doc
+
+
 def test_gap_analysis_marks_block_cbc_pad_vectors_as_added() -> None:
     """DES-family, Camellia, ARIA, and SEED CBC_PAD now have KAT vector links."""
     des_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_des.py")
