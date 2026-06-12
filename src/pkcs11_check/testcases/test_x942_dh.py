@@ -163,6 +163,7 @@ _X942_PARAM_SIZE_CANDIDATES = (
     (1024, 160),
     (_X942_PARAM_PRIME_BITS, _X942_PARAM_SUBPRIME_BITS),
 )
+type _X942PartyKeys = tuple[int, int, int, int, bytes, bytes]
 
 _X942_PARAMETER_SIZE_REJECT_RVS = (
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -704,6 +705,62 @@ def _x942_derive_generic_secret_len(
         ),
         label,
     )
+
+
+def _x942_extended_other_info_negative(
+    rs: Any,
+    *,
+    mechanism_name: str,
+    build_mech: Callable[[_X942PartyKeys, _X942PartyKeys], PackedMechanism],
+    label: str,
+) -> None:
+    if not rs.has_mechanism(mechanism_name):
+        pytest.skip(f"CKM_{mechanism_name} not supported")
+
+    alice: _X942PartyKeys = (0, 0, 0, 0, b"", b"")
+    bob: _X942PartyKeys = (0, 0, 0, 0, b"", b"")
+    derived = CK_OBJECT_HANDLE(0)
+    attrs = template(
+        attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+        attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
+        attr_ulong(CKA_VALUE_LEN, 16),
+        attr_bool(CKA_SENSITIVE, False),
+        attr_bool(CKA_EXTRACTABLE, True),
+        attr_bool(CKA_TOKEN, False),
+    )
+    try:
+        alice = _x942_setup_or_xfail(
+            lambda: _import_x942_party_keys(
+                rs,
+                _X942_RFC5114_ALICE_PRIVATE,
+                _X942_EXTENDED_ALICE_PRIVATE_2,
+            ),
+            f"CKM_{mechanism_name} deterministic key import",
+        )
+        bob = _x942_setup_or_xfail(
+            lambda: _import_x942_party_keys(
+                rs,
+                _X942_EXTENDED_BOB_PRIVATE_1,
+                _X942_EXTENDED_BOB_PRIVATE_2,
+            ),
+            f"CKM_{mechanism_name} deterministic key import",
+        )
+        mech = build_mech(alice, bob)
+        rv = rs.raw.C_DeriveKey(
+            rs.sh,
+            mech.byref(),
+            alice[1],
+            attrs.ptr,
+            attrs.count,
+            byref(derived),
+        )
+        classify_negative_rv(rv, _X942_INVALID_OTHER_INFO_RVS, label=label)
+    finally:
+        if derived.value:
+            destroy_quietly(rs.raw, rs.sh, derived.value)
+        for handle in (*alice[:4], *bob[:4]):
+            if handle:
+                destroy_quietly(rs.raw, rs.sh, handle)
 
 
 def _x942_derive_aes(
@@ -1668,6 +1725,40 @@ class TestX942DHHybridDerive:
                 if handle:
                     destroy_quietly(rs.raw, rs.sh, handle)
 
+    def test_hybrid_derive_rejects_ckd_null_other_info(self, p11_raw_session: Any) -> None:
+        """CKM_X9_42_DH_HYBRID_DERIVE rejects CKD_NULL with OtherInfo."""
+        _x942_extended_other_info_negative(
+            p11_raw_session,
+            mechanism_name="X9_42_DH_HYBRID_DERIVE",
+            build_mech=lambda alice, bob: _build_x942_dh2_derive_mech(
+                bob[4],
+                alice[3],
+                len(_X942_EXTENDED_ALICE_PRIVATE_2),
+                bob[5],
+                CKD_NULL,
+                other_info=b"not allowed with CKD_NULL",
+            ),
+            label="CKM_X9_42_DH_HYBRID_DERIVE CKD_NULL with OtherInfo",
+        )
+
+    def test_hybrid_derive_rejects_asn1_kdf_missing_other_info(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_X9_42_DH_HYBRID_DERIVE rejects ASN.1 KDF without OtherInfo."""
+        _x942_extended_other_info_negative(
+            p11_raw_session,
+            mechanism_name="X9_42_DH_HYBRID_DERIVE",
+            build_mech=lambda alice, bob: _build_x942_dh2_derive_mech(
+                bob[4],
+                alice[3],
+                len(_X942_EXTENDED_ALICE_PRIVATE_2),
+                bob[5],
+                CKD_SHA1_KDF_ASN1,
+            ),
+            label="CKM_X9_42_DH_HYBRID_DERIVE CKD_SHA1_KDF_ASN1 missing OtherInfo",
+        )
+
 
 class TestX942MQVDerive:
     """Test CKM_X9_42_MQV_DERIVE."""
@@ -1987,3 +2078,39 @@ class TestX942MQVDerive:
             for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
                 if handle:
                     destroy_quietly(rs.raw, rs.sh, handle)
+
+    def test_mqv_derive_rejects_ckd_null_other_info(self, p11_raw_session: Any) -> None:
+        """CKM_X9_42_MQV_DERIVE rejects CKD_NULL with OtherInfo."""
+        _x942_extended_other_info_negative(
+            p11_raw_session,
+            mechanism_name="X9_42_MQV_DERIVE",
+            build_mech=lambda alice, bob: _build_x942_mqv_derive_mech(
+                bob[4],
+                alice[3],
+                len(_X942_EXTENDED_ALICE_PRIVATE_2),
+                bob[5],
+                alice[2],
+                CKD_NULL,
+                other_info=b"not allowed with CKD_NULL",
+            ),
+            label="CKM_X9_42_MQV_DERIVE CKD_NULL with OtherInfo",
+        )
+
+    def test_mqv_derive_rejects_asn1_kdf_missing_other_info(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_X9_42_MQV_DERIVE rejects ASN.1 KDF without OtherInfo."""
+        _x942_extended_other_info_negative(
+            p11_raw_session,
+            mechanism_name="X9_42_MQV_DERIVE",
+            build_mech=lambda alice, bob: _build_x942_mqv_derive_mech(
+                bob[4],
+                alice[3],
+                len(_X942_EXTENDED_ALICE_PRIVATE_2),
+                bob[5],
+                alice[2],
+                CKD_SHA1_KDF_ASN1,
+            ),
+            label="CKM_X9_42_MQV_DERIVE CKD_SHA1_KDF_ASN1 missing OtherInfo",
+        )
