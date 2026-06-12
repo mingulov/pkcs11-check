@@ -77,6 +77,7 @@ def test_unwrap_shape_negatives_are_registry_driven() -> None:
     source = _source()
 
     assert "test_registry_unwrap_rejects_truncated_blob" in source
+    assert "test_registry_unwrap_rejects_empty_blob" in source
     assert "_MALFORMED_WRAPPED_BLOB_RVS" in source
 
 

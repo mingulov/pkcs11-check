@@ -460,11 +460,14 @@ smoke behavior, or covered only by one narrow variation.
     families beyond derived protection and generated/imported-key origin,
     malformed parameter expansion beyond current classic/message init and simple
     derive coverage, and deeper derive/wrap/digest/message semantic negative
-    coverage for protocol/asymmetric/custom-parameter families. Registry-driven unwrap
-    malformed-blob coverage exists for advertised secret-key wrap mechanisms:
-    the test wraps a key, truncates the resulting wrapped-key bytes, and
-    classifies wrapped/encrypted-data invalid or length-range rejects as
-    spec-correct.
+    coverage for protocol/asymmetric/custom-parameter families.
+    Registry-driven unwrap malformed-blob coverage exists for advertised
+    secret-key wrap mechanisms: the test wraps a key, truncates the resulting
+    wrapped-key bytes, and classifies wrapped/encrypted-data invalid or
+    length-range rejects as spec-correct. Registry-driven unwrap empty-blob
+    coverage exists for the same advertised unwrap mechanisms and verifies that
+    `C_UnwrapKey` rejects a zero-length wrapped-key input instead of accepting
+    a forged secret key object.
 
 ### Recommended coverage order
 
@@ -483,7 +486,7 @@ smoke behavior, or covered only by one narrow variation.
    invariants,
    malformed parameter cases beyond current classic/message init and simple derive
    coverage, deeper derive custom-parameter cases, and additional unwrap
-   tamper/shape variants beyond the current truncated-blob coverage.
+   tamper/shape variants beyond the current empty/truncated-blob coverage.
 
 ## Correctness and Reporting Findings
 

@@ -817,6 +817,56 @@ class TestBadParameters:
 class TestMalformedWrappedBlob:
     """C_UnwrapKey must reject malformed wrapped-key bytes."""
 
+    def test_registry_unwrap_rejects_empty_blob(
+        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+    ) -> None:
+        """Registry-driven empty wrapped-blob check for advertised unwrap mechanisms."""
+        rs = p11_module_session
+        entry = mech_wrap_entry
+        _skip_if_not_secret_key_registry_case(entry)
+        config = entry.config
+        assert config is not None
+
+        wrapping_key = gen_symmetric_key(
+            rs,
+            entry,
+            config,
+            extra_attrs={CKA_WRAP: True, CKA_UNWRAP: True, CKA_TOKEN: False},
+        )
+        unwrapped_key = 0
+        label = f"{entry.mech_name} C_UnwrapKey with empty wrapped blob"
+        try:
+            mech_param = make_mech_param_or_skip(entry)
+            unwrap_exc: AssertionError | None = None
+            try:
+                unwrapped_key = unwrap_key(
+                    rs.raw,
+                    rs.sh,
+                    wrapping_key,
+                    b"",
+                    entry.mech_id,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_TOKEN: False,
+                    },
+                    mech_param=mech_param,
+                )
+            except AssertionError as caught:
+                unwrap_exc = caught
+            if unwrap_exc is None and unwrapped_key != 0:
+                destroy_quietly(rs.raw, rs.sh, unwrapped_key)
+                unwrapped_key = 0
+            reject_or_classify(
+                unwrap_exc,
+                _MALFORMED_WRAPPED_BLOB_RVS,
+                label=label,
+            )
+        finally:
+            if unwrapped_key != 0:
+                destroy_quietly(rs.raw, rs.sh, unwrapped_key)
+            destroy_quietly(rs.raw, rs.sh, wrapping_key)
+
     def test_registry_unwrap_rejects_truncated_blob(
         self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
     ) -> None:
