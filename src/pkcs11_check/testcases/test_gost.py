@@ -96,13 +96,14 @@ _GOST28147_RFC7836_CONTENT_KEY = bytes.fromhex(
     "202122232425262728292a2b2c2d2e2f"
     "303132333435363738393a3b3c3d3e3f"
 )
-# RFC 7836 wraps as seed || CEK_ENC || CEK_MAC; CKM_GOST28147_KEY_WRAP takes the
-# seed/IV as the mechanism parameter and returns the OASIS CEK_ENC || CEK_MAC body.
-_GOST28147_RFC7836_WRAPPED_KEY = bytes.fromhex(
+_GOST28147_RFC7836_CEK_MAC = bytes.fromhex("be33f052")
+_GOST28147_RFC7836_CEK_ENC = bytes.fromhex(
     "d15547f8ee85121bc87d4b1027d26027"
     "ecc071bba6e72f3fec6f620f56834c5a"
-    "be33f052"
 )
+# RFC 7836 wraps as seed || CEK_ENC || CEK_MAC; CKM_GOST28147_KEY_WRAP takes the
+# seed/IV as the mechanism parameter and returns the OASIS CEK_ENC || CEK_MAC body.
+_GOST28147_RFC7836_WRAPPED_KEY = _GOST28147_RFC7836_CEK_ENC + _GOST28147_RFC7836_CEK_MAC
 _GOST28147_RFC8891_MAGMA_KEY = bytes.fromhex(
     "ffeeddccbbaa99887766554433221100"
     "f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"
@@ -355,6 +356,58 @@ class TestGOST28147Encryption:
 
 class TestGOST28147MAC:
     """CKM_GOST28147_MAC - GOST 28147-89 message authentication code."""
+
+    def test_mac_rfc7836_tc26_z_vector(self, p11_raw_session: Any) -> None:
+        """Sign and verify the RFC 7836 TC26 param-Z CEK_MAC vector."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("GOST28147_MAC"):
+            pytest.skip("CKM_GOST28147_MAC not supported")
+
+        key = 0
+        try:
+
+            def _setup() -> int:
+                return _import_gost28147_key(
+                    rs.raw,
+                    rs.sh,
+                    _GOST28147_RFC7836_DERIVED_KEK,
+                    {
+                        CKA_SIGN: True,
+                        CKA_VERIFY: True,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                )
+
+            key = _try_or_xfail(_setup, "CKM_GOST28147_MAC RFC 7836 key import not operational")
+
+            def _do() -> bytes:
+                mech = mech_bytes(CKM_GOST28147_MAC, _GOST28147_RFC7836_SEED)
+                mac = sign_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_GOST28147_MAC,
+                    _GOST28147_RFC7836_CONTENT_KEY,
+                    mech_param=mech,
+                    output_size_hint=len(_GOST28147_RFC7836_CEK_MAC),
+                )
+                ok = verify_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_GOST28147_MAC,
+                    _GOST28147_RFC7836_CONTENT_KEY,
+                    _GOST28147_RFC7836_CEK_MAC,
+                    mech_param=mech_bytes(CKM_GOST28147_MAC, _GOST28147_RFC7836_SEED),
+                )
+                assert ok, "CKM_GOST28147_MAC rejected the RFC 7836 CEK_MAC"
+                return mac
+
+            mac = _try_or_xfail(_do, "CKM_GOST28147_MAC RFC 7836 KAT not operational")
+            assert mac == _GOST28147_RFC7836_CEK_MAC
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
     def test_mac_sign_verify(self, p11_raw_session: Any) -> None:
         """Sign and verify a MAC with CKM_GOST28147_MAC."""

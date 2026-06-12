@@ -474,7 +474,7 @@ def test_gap_analysis_marks_cast_mac_general_vectors_as_added() -> None:
 
 
 def test_gap_analysis_marks_gost28147_iv_param_registry_coverage() -> None:
-    """GOST28147 has a registry IV recipe but non-ECB/MAC KATs remain pending."""
+    """GOST28147 has a registry IV recipe but non-ECB KATs remain pending."""
     legacy_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_legacy.py")
     doc = GAP_DOC.read_text(encoding="utf-8")
     doc_flat = " ".join(doc.split())
@@ -482,7 +482,7 @@ def test_gap_analysis_marks_gost28147_iv_param_registry_coverage() -> None:
     assert "registry[CKM_GOST28147]" in legacy_registry
     assert "param_recipe=_iv8" in legacy_registry
     assert "CKM_GOST28147 IV-parameter registry coverage" in doc
-    assert "GOST28147 non-ECB/MAC exact-output KATs remain source-first" in doc_flat
+    assert "GOST28147 non-ECB exact-output KATs remain source-first" in doc_flat
 
 
 def test_gap_analysis_marks_gost28147_key_wrap_kat_as_added() -> None:
@@ -509,6 +509,18 @@ def test_gap_analysis_marks_gost28147_ecb_kat_as_added() -> None:
     assert "CKM_GOST28147_ECB` now has an RFC 8891" in doc
     assert "CKA_GOST28147_PARAMS" in doc
     assert "CKM_GOST28147_ECB" not in gost_row
+
+
+def test_gap_analysis_marks_gost28147_mac_kat_as_added() -> None:
+    """GOST28147 MAC has a source-backed RFC 7836 exact-output KAT."""
+    gost_tests = _read("src/pkcs11_check/testcases/test_gost.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+    gost_row = doc[doc.index("| GOST28147 |") :].splitlines()[0]
+
+    assert "test_mac_rfc7836_tc26_z_vector" in gost_tests
+    assert "CKM_GOST28147_MAC` now has an RFC 7836" in doc
+    assert "CEK_MAC" in doc
+    assert "CKM_GOST28147_MAC" not in gost_row
 
 
 def test_gap_analysis_marks_skipjack_ecb64_kat_vectors_as_added() -> None:
@@ -602,7 +614,6 @@ def test_gap_analysis_inventories_remaining_legacy_source_first_operations() -> 
         "CKM_JUNIPER_SHUFFLE",
         "CKM_JUNIPER_WRAP",
         "CKM_GOST28147",
-        "CKM_GOST28147_MAC",
     ):
         assert token in doc
 

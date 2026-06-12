@@ -344,12 +344,15 @@ smoke behavior, or covered only by one narrow variation.
    wrapped-key output.
    `CKM_GOST28147_ECB` now has an RFC 8891 Magma exact-output KAT with the
    same TC26 param-Z OID attached through `CKA_GOST28147_PARAMS`.
+   `CKM_GOST28147_MAC` now has an RFC 7836 exact-output KAT for the
+   TC26 param-Z `CEK_MAC` value, using the RFC seed as the OASIS MAC-IV
+   mechanism parameter.
    SKIPJACK ECB64 exact-output KATs are covered from NIST SP 800-17.
    Remaining shallow areas are
-   SKIPJACK non-ECB64 variants, BATON/JUNIPER, GOST28147 non-ECB/MAC
+   SKIPJACK non-ECB64 variants, BATON/JUNIPER, GOST28147 non-ECB
    exact-output KATs, and the fixed-output MAC/MAC_GENERAL KATs where a
    block-vector source and output length mapping are still missing. GOST28147
-   non-ECB/MAC exact-output KATs remain source-first until the vector source and
+   non-ECB exact-output KATs remain source-first until the vector source and
    parameter-set mapping are unambiguous.
    Older PBE variants now have semantic `C_GenerateKey` coverage for key type
    and IV writeback where `CK_PBE_PARAMS` applies, but not independent
@@ -566,7 +569,8 @@ Legacy/deprecated coverage addendum for the active goal:
   straightforward. `CKM_GOST28147_KEY_WRAP` now has an RFC 7836 TC26 param-Z
   exact-output KAT mapped through the OASIS PKCS#11 key-wrap semantics, and
   `CKM_GOST28147_ECB` now has an RFC 8891 Magma TC26 param-Z exact-output KAT;
-  GOST28147 non-ECB/MAC remain source-first. Also evaluate CAST/CAST3,
+  `CKM_GOST28147_MAC` now has an RFC 7836 TC26 param-Z `CEK_MAC` KAT;
+  GOST28147 non-ECB remains source-first. Also evaluate CAST/CAST3,
   BATON/JUNIPER, GOST28147,
   old PBE fixed-output cases, and other deprecated mechanisms that a PKCS#11
   provider might still advertise. Treat the named families as starting points;
@@ -579,7 +583,7 @@ Legacy/deprecated coverage addendum for the active goal:
   | SKIPJACK | `CKM_SKIPJACK_CBC64`, `CKM_SKIPJACK_OFB64`, `CKM_SKIPJACK_CFB64`, `CKM_SKIPJACK_CFB32`, `CKM_SKIPJACK_CFB16`, `CKM_SKIPJACK_CFB8`, `CKM_SKIPJACK_WRAP`, `CKM_SKIPJACK_PRIVATE_WRAP`, `CKM_SKIPJACK_RELAYX` |
   | BATON | `CKM_BATON_ECB128`, `CKM_BATON_ECB96`, `CKM_BATON_CBC128`, `CKM_BATON_COUNTER`, `CKM_BATON_SHUFFLE`, `CKM_BATON_WRAP` |
   | JUNIPER | `CKM_JUNIPER_ECB128`, `CKM_JUNIPER_CBC128`, `CKM_JUNIPER_COUNTER`, `CKM_JUNIPER_SHUFFLE`, `CKM_JUNIPER_WRAP` |
-  | GOST28147 | `CKM_GOST28147`, `CKM_GOST28147_MAC` |
+  | GOST28147 | `CKM_GOST28147` |
 
   Key-generation-only entries are already exercised by generic keygen paths;
   the table is limited to encrypt, MAC, wrap, and stream/counter operations
