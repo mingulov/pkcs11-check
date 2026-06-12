@@ -107,6 +107,14 @@ def _tls_master_session() -> SimpleNamespace:
     )
 
 
+def _tls_prf_session() -> SimpleNamespace:
+    return SimpleNamespace(
+        raw=object(),
+        sh=1,
+        has_mechanism=lambda name: name == "TLS_PRF",
+    )
+
+
 def _tls12_ems_session() -> SimpleNamespace:
     return SimpleNamespace(
         raw=object(),
@@ -319,6 +327,45 @@ def test_tls_master_key_derive_fails_on_wrong_exact_output(
     assert len(derive_calls) == 1
     assert derive_calls[0]["base_key"] == 101
     assert derive_calls[0]["mechanism"] == int(CKM_TLS_MASTER_KEY_DERIVE)
+    assert derive_calls[0]["attrs"][CKA_VALUE_LEN] == 48
+
+
+def test_tls_prf_fails_on_wrong_exact_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wrong = b"\x00" * 48
+    derive_calls: list[dict[str, Any]] = []
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        base_key: int,
+        mechanism: int,
+        attrs: dict[int, Any],
+        *,
+        mech_param: Any,
+    ) -> int:
+        derive_calls.append(
+            {
+                "base_key": base_key,
+                "mechanism": int(mechanism),
+                "attrs": attrs,
+                "mech_param": mech_param,
+            }
+        )
+        return 204
+
+    monkeypatch.setattr(test_tls12, "_create_tls_pms", lambda _rs: 101)
+    monkeypatch.setattr(test_tls12, "derive_key", _derive_key)
+    monkeypatch.setattr(test_tls12, "read_attributes", lambda *_args: {CKA_VALUE: wrong})
+    monkeypatch.setattr(test_tls12, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(AssertionError, match="CKM_TLS_PRF output mismatch"):
+        test_tls12.TestTLS10PreMasterKeyGen().test_tls_prf(_tls_prf_session())
+
+    assert len(derive_calls) == 1
+    assert derive_calls[0]["base_key"] == 101
+    assert derive_calls[0]["mechanism"] == int(CKM_TLS_PRF)
     assert derive_calls[0]["attrs"][CKA_VALUE_LEN] == 48
 
 

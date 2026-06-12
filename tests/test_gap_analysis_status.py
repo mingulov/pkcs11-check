@@ -179,6 +179,18 @@ def test_gap_analysis_marks_tls_master_secret_exact_vector_as_added() -> None:
     assert "TLS 1.0/1.1 master-secret exact-vector coverage" in doc_flat
 
 
+def test_gap_analysis_marks_tls_prf_exact_vector_as_added() -> None:
+    """CKM_TLS_PRF has an RFC 2246 exact-output check."""
+    tls = _read("src/pkcs11_check/testcases/test_tls12.py")
+    guard = _read("tests/test_tls_key_material_derivation.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "CKM_TLS_PRF output mismatch" in tls
+    assert "test_tls_prf_fails_on_wrong_exact_output" in guard
+
+    assert "TLS PRF exact-vector coverage" in doc_flat
+
+
 def test_gap_analysis_marks_tls12_extended_master_secret_exact_vector_as_added() -> None:
     """TLS 1.2 extended master secret mechanisms have RFC 7627 PRF exact vectors."""
     tls = _read("src/pkcs11_check/testcases/test_tls12.py")
