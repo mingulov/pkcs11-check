@@ -760,6 +760,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
+        vector_file="skipjack_cbc64.json",
         notes="Skipjack-CBC64: 8-byte block CBC mode, requires 8-byte IV",
     )
 

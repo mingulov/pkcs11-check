@@ -262,7 +262,19 @@ def test_gap_analysis_marks_skipjack_ecb64_kat_vectors_as_added() -> None:
     vector_file = _read("src/pkcs11_check/testcases/data/mechanism_vectors/skipjack_ecb64.json")
     assert "NIST SP 800-17 appendix B" in vector_file
     assert "CKM_SKIPJACK_ECB64 now has NIST SP 800-17 exact-output KATs" in doc
-    assert "SKIPJACK ECB64 exact-output KATs are covered" in doc
+    assert "SKIPJACK ECB64 and CBC64 exact-output KATs are covered" in doc
+
+
+def test_gap_analysis_marks_skipjack_cbc64_kat_vectors_as_added() -> None:
+    """Skipjack CBC64 has a source-backed NIST SP 800-17 zero-IV KAT link."""
+    legacy_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_legacy.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "skipjack_cbc64.json" in legacy_registry
+    vector_file = _read("src/pkcs11_check/testcases/data/mechanism_vectors/skipjack_cbc64.json")
+    assert "NIST SP 800-17 appendix B" in vector_file
+    assert "CKM_SKIPJACK_CBC64 now has a NIST SP 800-17 zero-IV exact-output KAT" in doc
+    assert "SKIPJACK ECB64 and CBC64 exact-output KATs are covered" in doc
 
 
 def test_gap_analysis_marks_mixed_fail_crash_reporting_as_fixed() -> None:

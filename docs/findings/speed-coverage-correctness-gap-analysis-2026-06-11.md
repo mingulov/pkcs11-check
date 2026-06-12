@@ -276,7 +276,7 @@ smoke behavior, or covered only by one narrow variation.
    a reliable source exists. CKM_GOST28147 IV-parameter registry coverage
    now lets generic mechanism tests build the OASIS 8-byte IV parameter for
    advertised GOST 28147-89 non-ECB operations.
-   SKIPJACK ECB64 exact-output KATs are covered from NIST SP 800-17.
+   SKIPJACK ECB64 and CBC64 exact-output KATs are covered from NIST SP 800-17.
    Remaining shallow areas are
    SKIPJACK stream/wrap variants, CDMF, BATON/JUNIPER, GOST28147
    exact-output KATs, Twofish CBC_PAD output, and the
@@ -437,7 +437,7 @@ later provider run more interpretable:
    sweep, not just another RC5/IDEA pass: RC5 and IDEA encrypt KATs are already
    present, and RC5 CBC_PAD is now covered from RFC 2040. Their next useful
    work is independent fixed-length MAC expected-output vectors, if the PKCS#11
-   truncation/output-length rule is sourced clearly. SKIPJACK ECB64 now has
+   truncation/output-length rule is sourced clearly. SKIPJACK ECB64 and CBC64 now have
    NIST SP 800-17 exact-output KATs; its stream/wrap variants and KEA remain
    lower-priority because their vector and operation mappings are less
    straightforward.
@@ -470,8 +470,8 @@ Legacy/deprecated coverage addendum for the active goal:
 - Prefer reliable, externally traceable vectors. RC5 and IDEA encrypt vectors
   are already covered; RC5 CBC_PAD is now covered directly from RFC 2040.
   Continue with fixed-length MAC and remaining CBC_PAD gaps only when the source
-  and PKCS#11 mapping are unambiguous. SKIPJACK ECB64 now has source-backed KATs,
-  while remaining SKIPJACK variants and KEA remain source-first candidates
+  and PKCS#11 mapping are unambiguous. SKIPJACK ECB64 and CBC64 now have
+  source-backed KATs, while remaining SKIPJACK variants and KEA remain source-first candidates
   because their vector and operation mappings are less straightforward. Also
   evaluate CDMF, CAST/CAST3, BATON/JUNIPER, GOST28147, old PBE fixed-output
   cases, and other deprecated mechanisms that a PKCS#11 provider might still
@@ -538,6 +538,9 @@ Legacy/deprecated coverage addendum for the active goal:
   registry `vector_file` link. The rows cover both the variable-plaintext and
   variable-key known-answer tables while avoiding the less-clear stream and
   wrap-mode mappings.
+- Added: CKM_SKIPJACK_CBC64 now has a NIST SP 800-17 zero-IV exact-output KAT
+  plus a registry `vector_file` link. This exercises the PKCS#11 IV parameter
+  path while relying on the table's explicit all-zero IV condition.
   CDMF and the remaining less-sourced classified/obsolete families remain pending.
 
 Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks
