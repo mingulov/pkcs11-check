@@ -265,6 +265,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_mac_general,
         keygen_recipe=_sym,
         expected_flags=_CAMELLIA_SIG,
+        vector_file="camellia_mac_general.json",
         notes="Camellia-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
 
@@ -364,6 +365,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_mac_general,
         keygen_recipe=_sym,
         expected_flags=_ARIA_SIG,
+        vector_file="aria_mac_general.json",
         notes="ARIA-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
 
@@ -463,6 +465,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_mac_general,
         keygen_recipe=_fixed,
         expected_flags=_SEED_SIG,
+        vector_file="seed_mac_general.json",
         notes="SEED-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
 

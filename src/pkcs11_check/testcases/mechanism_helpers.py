@@ -1020,6 +1020,10 @@ def build_params_from_vector(mech_id: int, recipe: ParamRecipe, vec: dict[str, A
             mac_len=mac_len_rc5_mac_general,
         )
 
+    if style == "mac_general":
+        mac_len_general: int = vp.get("mac_len", d.get("mac_len", 8))
+        return mech_bytes(CKM(mech_id), mac_len_general.to_bytes(8, "little"))
+
     if style == "chacha20_poly1305":
         iv_hex_cp: str | None = vp.get("iv_hex")
         if iv_hex_cp is None:

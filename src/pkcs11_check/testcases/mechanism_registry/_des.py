@@ -128,6 +128,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_mac_general,
         keygen_recipe=_fixed,
         expected_flags=_DES_SIG,
+        vector_file="des_mac_general.json",
         notes="DES-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
 
@@ -292,6 +293,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_mac_general,
         keygen_recipe=_fixed,
         expected_flags=_DES_SIG,
+        vector_file="des3_mac_general.json",
         notes="3DES-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
 

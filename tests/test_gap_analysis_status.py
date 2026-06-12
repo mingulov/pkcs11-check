@@ -94,3 +94,24 @@ def test_gap_analysis_marks_block_cbc_pad_vectors_as_added() -> None:
         assert _read(f"src/pkcs11_check/testcases/data/mechanism_vectors/{vector_file}")
 
     assert "DES, 3DES, Camellia, ARIA, and SEED CBC_PAD" in doc
+
+
+def test_gap_analysis_marks_block_mac_general_vectors_as_added() -> None:
+    """DES-family, Camellia, ARIA, and SEED MAC_GENERAL now have KAT vector links."""
+    des_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_des.py")
+    cipher_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_ciphers.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    for vector_file in ("des_mac_general.json", "des3_mac_general.json"):
+        assert vector_file in des_registry
+        assert _read(f"src/pkcs11_check/testcases/data/mechanism_vectors/{vector_file}")
+
+    for vector_file in (
+        "camellia_mac_general.json",
+        "aria_mac_general.json",
+        "seed_mac_general.json",
+    ):
+        assert vector_file in cipher_registry
+        assert _read(f"src/pkcs11_check/testcases/data/mechanism_vectors/{vector_file}")
+
+    assert "DES, 3DES, Camellia, ARIA, and SEED MAC_GENERAL" in doc

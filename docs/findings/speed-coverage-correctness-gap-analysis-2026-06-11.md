@@ -273,11 +273,12 @@ smoke behavior, or covered only by one narrow variation.
    Older PBE variants now have semantic `C_GenerateKey` coverage for key type
    and IV writeback where `CK_PBE_PARAMS` applies, but not independent
    fixed-output KAT vectors. MAC_GENERAL mechanisms now assert the returned MAC
-   length matches the requested parameter length, but still lack independent
-   expected-MAC vectors for the legacy cipher-MAC families. Continue this sweep,
-   but gate each new legacy vector on a reliable source and an unambiguous
-   PKCS#11 parameter mapping; SKIPJACK and KEA are lower confidence until a
-   defensible vector/operation source is identified.
+   length matches the requested parameter length, and RC2/RC5/CAST128/IDEA plus
+   DES, 3DES, Camellia, ARIA, and SEED have expected-MAC vectors. Continue this
+   sweep for fixed-output `*_MAC`, DES3 CMAC/CMAC_GENERAL, CDMF, CAST/CAST3,
+   and less-sourced legacy families, but gate each new vector on a reliable
+   source and an unambiguous PKCS#11 parameter mapping; SKIPJACK and KEA are
+   lower confidence until a defensible vector/operation source is identified.
 9. CMS and CT-KIP are shallow: current tests mostly check mechanism info or
    clean rejection rather than valid parameterized operations.
 10. Generic negative coverage is narrow relative to 467 registry mechanisms.
@@ -484,6 +485,12 @@ Legacy/deprecated coverage addendum for the active goal:
   generation already had a reliable local cipher implementation. Twofish
   CBC_PAD remains pending because the current local OpenSSL/cryptography setup
   does not expose Twofish, so a stronger source or generator is still needed.
+- Added: DES, 3DES, Camellia, ARIA, and SEED MAC_GENERAL now have full-block
+  exact-output KAT vectors plus registry `vector_file` links. The 16-byte block
+  families use vector-level `mac_len=16`, and generic `mac_general` vector
+  replay now honors the per-vector length instead of always using the registry
+  default. Fixed-output `*_MAC`, DES3 CMAC/CMAC_GENERAL, CDMF, CAST/CAST3, and
+  the less-sourced classified/obsolete families remain pending.
 
 Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks
 should follow once the harness can reuse provider-local history and prove

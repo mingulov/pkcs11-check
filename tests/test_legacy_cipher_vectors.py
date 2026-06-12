@@ -6,15 +6,19 @@ import ctypes
 
 from pkcs11_check.raw.types_std import (
     CKM_ARIA_CBC_PAD,
+    CKM_ARIA_MAC_GENERAL,
     CKM_BLOWFISH_CBC,
     CKM_BLOWFISH_CBC_PAD,
     CKM_CAMELLIA_CBC_PAD,
+    CKM_CAMELLIA_MAC_GENERAL,
     CKM_CAST128_CBC,
     CKM_CAST128_CBC_PAD,
     CKM_CAST128_ECB,
     CKM_CAST128_MAC_GENERAL,
     CKM_DES3_CBC_PAD,
+    CKM_DES3_MAC_GENERAL,
     CKM_DES_CBC_PAD,
+    CKM_DES_MAC_GENERAL,
     CKM_IDEA_CBC,
     CKM_IDEA_CBC_PAD,
     CKM_IDEA_ECB,
@@ -29,6 +33,7 @@ from pkcs11_check.raw.types_std import (
     CKM_RC5_ECB,
     CKM_RC5_MAC_GENERAL,
     CKM_SEED_CBC_PAD,
+    CKM_SEED_MAC_GENERAL,
     CKM_TWOFISH_CBC,
 )
 from pkcs11_check.testcases.mechanism_helpers import build_params_from_vector
@@ -437,6 +442,56 @@ def test_cast128_mac_general_mechanism_has_rfc2144_kat_vector() -> None:
             "RFC 2144 appendix B.1; one-block CBC-MAC with zero IV equals CAST-128 ECB"
         )
         assert vec["params"]["mac_len"] == 8
+
+
+def test_block_cipher_mac_general_mechanisms_have_kat_vectors() -> None:
+    expected = {
+        int(CKM_DES_MAC_GENERAL): (
+            "des_mac_general.json",
+            "CKM_DES_MAC_GENERAL",
+            8,
+            "795b284fe8a85625",
+        ),
+        int(CKM_DES3_MAC_GENERAL): (
+            "des3_mac_general.json",
+            "CKM_DES3_MAC_GENERAL",
+            8,
+            "2bc46d1df3349c3b",
+        ),
+        int(CKM_CAMELLIA_MAC_GENERAL): (
+            "camellia_mac_general.json",
+            "CKM_CAMELLIA_MAC_GENERAL",
+            16,
+            "f96073b123ee5bdd75675f790362a798",
+        ),
+        int(CKM_ARIA_MAC_GENERAL): (
+            "aria_mac_general.json",
+            "CKM_ARIA_MAC_GENERAL",
+            16,
+            "b5c11c1494615dc7d4bcd3aecf6852e4",
+        ),
+        int(CKM_SEED_MAC_GENERAL): (
+            "seed_mac_general.json",
+            "CKM_SEED_MAC_GENERAL",
+            16,
+            "f353f89ce52d7929a1df5e2a37fdbf5b",
+        ),
+    }
+
+    for mech_id, (vector_file, mechanism_name, mac_len, expected_mac) in expected.items():
+        config = MECHANISM_REGISTRY[mech_id]
+        assert config.vector_file == vector_file
+
+        vectors = load_positive_vectors(vector_file)
+        assert vectors, f"{vector_file} must contain positive vectors"
+        for vec in vectors:
+            assert vec["type"] == "positive"
+            assert vec["mechanism_name"] == mechanism_name
+            assert vec["key_hex"]
+            assert len(bytes.fromhex(vec["input_hex"])) == mac_len
+            assert vec["mac_hex"] == expected_mac
+            assert vec["params"]["mac_len"] == mac_len
+            assert "one-block CBC-MAC with zero IV equals" in vec["params"]["source"]
 
 
 def test_twofish_cbc_encrypt_mechanism_has_schneier_kat_vector() -> None:

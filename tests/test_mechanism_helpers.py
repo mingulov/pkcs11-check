@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +14,7 @@ from pkcs11_check.raw.types_std import (
     CKK_SHA256_HMAC,
     CKM_AES_CBC,
     CKM_AES_KEY_GEN,
+    CKM_ARIA_MAC_GENERAL,
     CKM_PKCS5_PBKD2,
     CKM_RC2_MAC_GENERAL,
     CKM_RC5_CBC,
@@ -341,6 +343,19 @@ def test_build_test_params_builds_rc2_mac_general_params() -> None:
     assert isinstance(params.params, CK_RC2_MAC_GENERAL_PARAMS)
     assert params.params.ulEffectiveBits == 128
     assert params.params.ulMacLength == 8
+
+
+def test_build_params_from_vector_replays_generic_mac_general_length() -> None:
+    params = helpers.build_params_from_vector(
+        int(CKM_ARIA_MAC_GENERAL),
+        ParamRecipe("mac_general", {"mac_len": 8}),
+        {"params": {"mac_len": 16}},
+    )
+
+    assert params != "SKIP"
+    assert ctypes.string_at(params.ck.pParameter, params.ck.ulParameterLen) == (
+        (16).to_bytes(8, "little")
+    )
 
 
 @pytest.mark.parametrize(
