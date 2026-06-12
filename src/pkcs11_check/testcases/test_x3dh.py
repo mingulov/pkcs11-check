@@ -54,7 +54,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
     CKR_USER_NOT_LOGGED_IN,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import is_known_error, reject_or_classify, xfail_if_known_ckr
 
 pytestmark = pytest.mark.full
 
@@ -99,6 +99,9 @@ _X3DH_DERIVE_REJECT_RVS = (
     CKR_TEMPLATE_INCONSISTENT,
     CKR_USER_NOT_LOGGED_IN,
 )
+
+_X3DH_INVALID_KDF_REJECT_RVS = (CKR_MECHANISM_PARAM_INVALID,)
+_X3DH_INVALID_KDF = 0xDEADBEEF
 
 
 def _bytes_pointer(data: bytes | None, keepalive: list[Any]) -> Any:
@@ -312,6 +315,57 @@ class TestX3DH:
                 peer_prekey_priv,
             )
 
+    def test_x3dh_initialize_rejects_invalid_kdf(self, p11_raw_session: Any) -> None:
+        """CKM_X3DH_INITIALIZE rejects KDF selectors outside the OASIS table."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("X3DH_INITIALIZE"):
+            pytest.skip("CKM_X3DH_INITIALIZE not supported")
+
+        own_identity_pub, own_identity_priv = _create_ec_keypair(rs)
+        own_ephemeral_pub, own_ephemeral_priv = _create_ec_keypair(rs)
+        peer_identity_pub, peer_identity_priv = _create_ec_keypair(rs)
+        peer_prekey_pub, peer_prekey_priv = _create_ec_keypair(rs)
+        derived = 0
+        try:
+            exc: AssertionError | None = None
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    own_identity_priv,
+                    CKM_X3DH_INITIALIZE,
+                    attrs=_derive_attrs(),
+                    mech_param=_mech_x3dh_initialize(
+                        peer_identity=peer_identity_pub,
+                        peer_prekey=peer_prekey_pub,
+                        prekey_signature=b"pkcs11-check-x3dh-prekey-signature",
+                        onetime_key=None,
+                        own_identity=own_identity_priv,
+                        own_ephemeral=own_ephemeral_priv,
+                        kdf=_X3DH_INVALID_KDF,
+                    ),
+                )
+            except AssertionError as caught:
+                exc = caught
+            reject_or_classify(
+                exc,
+                _X3DH_INVALID_KDF_REJECT_RVS,
+                label="X3DH_INITIALIZE invalid KDF",
+            )
+        finally:
+            _destroy_all(
+                rs,
+                derived,
+                own_identity_pub,
+                own_identity_priv,
+                own_ephemeral_pub,
+                own_ephemeral_priv,
+                peer_identity_pub,
+                peer_identity_priv,
+                peer_prekey_pub,
+                peer_prekey_priv,
+            )
+
     def test_x3dh_respond_derive_generic_secret(self, p11_raw_session: Any) -> None:
         """Responder side reaches C_DeriveKey with CK_X3DH_RESPOND_PARAMS."""
         rs = p11_raw_session
@@ -345,6 +399,50 @@ class TestX3DH:
                     _X3DH_DERIVE_REJECT_RVS,
                     "CKM_X3DH_RESPOND advertised but derive is not operational",
                 )
+        finally:
+            _destroy_all(
+                rs,
+                derived,
+                responder_identity_pub,
+                responder_identity_priv,
+                initiator_identity_pub,
+                initiator_identity_priv,
+            )
+
+    def test_x3dh_respond_rejects_invalid_kdf(self, p11_raw_session: Any) -> None:
+        """CKM_X3DH_RESPOND rejects KDF selectors outside the OASIS table."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("X3DH_RESPOND"):
+            pytest.skip("CKM_X3DH_RESPOND not supported")
+
+        responder_identity_pub, responder_identity_priv = _create_ec_keypair(rs)
+        initiator_identity_pub, initiator_identity_priv = _create_ec_keypair(rs)
+        derived = 0
+        try:
+            exc: AssertionError | None = None
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    responder_identity_priv,
+                    CKM_X3DH_RESPOND,
+                    attrs=_derive_attrs(),
+                    mech_param=_mech_x3dh_respond(
+                        identity_id=b"pkcs11-check-responder-identity",
+                        prekey_id=b"pkcs11-check-responder-prekey",
+                        onetime_id=None,
+                        initiator_identity=initiator_identity_pub,
+                        initiator_ephemeral=b"pkcs11-check-initiator-ephemeral",
+                        kdf=_X3DH_INVALID_KDF,
+                    ),
+                )
+            except AssertionError as caught:
+                exc = caught
+            reject_or_classify(
+                exc,
+                _X3DH_INVALID_KDF_REJECT_RVS,
+                label="X3DH_RESPOND invalid KDF",
+            )
         finally:
             _destroy_all(
                 rs,

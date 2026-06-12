@@ -186,6 +186,23 @@ def test_gap_analysis_marks_x2ratchet_typed_param_coverage_as_added() -> None:
     assert "X2RATCHET invalid-curve negative coverage" in doc_flat
 
 
+def test_gap_analysis_marks_x3dh_invalid_kdf_negative_as_added() -> None:
+    """X3DH derive rejects KDF selectors outside the OASIS-defined table."""
+    x3dh = _read("src/pkcs11_check/testcases/test_x3dh.py")
+    guard = _read("tests/test_x3dh_runtime_coverage.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_x3dh_initialize_rejects_invalid_kdf" in x3dh
+    assert "test_x3dh_respond_rejects_invalid_kdf" in x3dh
+    assert "X3DH_INITIALIZE invalid KDF" in x3dh
+    assert "X3DH_RESPOND invalid KDF" in x3dh
+    assert "test_x3dh_initialize_invalid_kdf_is_expected_reject" in guard
+    assert "test_x3dh_respond_invalid_kdf_is_expected_reject" in guard
+    assert "test_x3dh_initialize_invalid_kdf_acceptance_fails" in guard
+
+    assert "X3DH invalid-KDF negative coverage" in doc_flat
+
+
 def test_gap_analysis_marks_blake2b_keyed_semantics_as_covered() -> None:
     """BLAKE2B keyed HMAC, HMAC_GENERAL, KEY_GEN, and KEY_DERIVE are covered."""
     blake2 = _read("src/pkcs11_check/testcases/test_blake2.py")

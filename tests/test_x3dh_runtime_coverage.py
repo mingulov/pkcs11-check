@@ -8,8 +8,16 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from _pytest.outcomes import Failed
 
-from pkcs11_check.raw.types_std import CK_X3DH_INITIATE_PARAMS, CKM_X3DH_INITIALIZE
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import (
+    CK_X3DH_INITIATE_PARAMS,
+    CK_X3DH_RESPOND_PARAMS,
+    CKM_X3DH_INITIALIZE,
+    CKM_X3DH_RESPOND,
+    CKR_MECHANISM_PARAM_INVALID,
+)
 from pkcs11_check.testcases import test_x3dh
 
 
@@ -102,3 +110,104 @@ def test_x3dh_initialize_runtime_calls_derive_with_params(
     assert derive_calls[0]["mechanism"] == int(CKM_X3DH_INITIALIZE)
     assert isinstance(derive_calls[0]["mech_param"].params, CK_X3DH_INITIATE_PARAMS)
     assert 999 in destroyed
+
+
+def test_x3dh_initialize_invalid_kdf_is_expected_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handles = iter(((101, 201), (102, 202), (103, 203), (104, 204)))
+    derive_calls: list[dict[str, Any]] = []
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        base_key: int,
+        mechanism: int,
+        attrs: dict[int, Any],
+        *,
+        mech_param: Any,
+    ) -> int:
+        derive_calls.append(
+            {
+                "base_key": base_key,
+                "mechanism": int(mechanism),
+                "attrs": attrs,
+                "mech_param": mech_param,
+            }
+        )
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID",
+            int(CKR_MECHANISM_PARAM_INVALID),
+        )
+
+    monkeypatch.setattr(test_x3dh, "_create_ec_keypair", lambda _rs: next(handles))
+    monkeypatch.setattr(test_x3dh, "derive_key", _derive_key)
+    monkeypatch.setattr(test_x3dh, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    test_x3dh.TestX3DH().test_x3dh_initialize_rejects_invalid_kdf(
+        _session_with_mechanisms("X3DH_INITIALIZE")
+    )
+
+    assert len(derive_calls) == 1
+    assert derive_calls[0]["base_key"] == 201
+    assert derive_calls[0]["mechanism"] == int(CKM_X3DH_INITIALIZE)
+    assert isinstance(derive_calls[0]["mech_param"].params, CK_X3DH_INITIATE_PARAMS)
+    assert derive_calls[0]["mech_param"].params.kdf == 0xDEADBEEF
+
+
+def test_x3dh_respond_invalid_kdf_is_expected_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handles = iter(((101, 201), (102, 202)))
+    derive_calls: list[dict[str, Any]] = []
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        base_key: int,
+        mechanism: int,
+        attrs: dict[int, Any],
+        *,
+        mech_param: Any,
+    ) -> int:
+        derive_calls.append(
+            {
+                "base_key": base_key,
+                "mechanism": int(mechanism),
+                "attrs": attrs,
+                "mech_param": mech_param,
+            }
+        )
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID",
+            int(CKR_MECHANISM_PARAM_INVALID),
+        )
+
+    monkeypatch.setattr(test_x3dh, "_create_ec_keypair", lambda _rs: next(handles))
+    monkeypatch.setattr(test_x3dh, "derive_key", _derive_key)
+    monkeypatch.setattr(test_x3dh, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    test_x3dh.TestX3DH().test_x3dh_respond_rejects_invalid_kdf(
+        _session_with_mechanisms("X3DH_RESPOND")
+    )
+
+    assert len(derive_calls) == 1
+    assert derive_calls[0]["base_key"] == 201
+    assert derive_calls[0]["mechanism"] == int(CKM_X3DH_RESPOND)
+    assert isinstance(derive_calls[0]["mech_param"].params, CK_X3DH_RESPOND_PARAMS)
+    assert derive_calls[0]["mech_param"].params.kdf == 0xDEADBEEF
+
+
+def test_x3dh_initialize_invalid_kdf_acceptance_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handles = iter(((101, 201), (102, 202), (103, 203), (104, 204)))
+
+    monkeypatch.setattr(test_x3dh, "_create_ec_keypair", lambda _rs: next(handles))
+    monkeypatch.setattr(test_x3dh, "derive_key", lambda *_args, **_kwargs: 999)
+    monkeypatch.setattr(test_x3dh, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(Failed, match="X3DH_INITIALIZE invalid KDF"):
+        test_x3dh.TestX3DH().test_x3dh_initialize_rejects_invalid_kdf(
+            _session_with_mechanisms("X3DH_INITIALIZE")
+        )

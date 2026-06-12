@@ -282,7 +282,10 @@ smoke behavior, or covered only by one narrow variation.
    parameters. The independent-output probe and the `CKK_X2RATCHET` derived-key
    probe now also pass typed `CK_X2RATCHET_INITIALIZE_PARAMS` and
    `CK_X2RATCHET_RESPOND_PARAMS` structures instead of relying on
-   unparameterized `C_DeriveKey` calls. X2RATCHET invalid-curve negative
+   unparameterized `C_DeriveKey` calls. X3DH invalid-KDF negative coverage now
+   verifies both derive sides reject a KDF selector outside the OASIS-defined
+   `CK_X3DH_KDF_TYPE` table through the shared provider-general negative
+   classifier. X2RATCHET invalid-curve negative
    coverage now verifies both derive sides reject an `eCurve` value outside the
    OASIS-defined 255/448 set through the shared provider-general negative
    classifier.
