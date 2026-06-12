@@ -2613,6 +2613,34 @@ def generate_rc2_cbc_pad() -> dict:
     }
 
 
+def generate_rc2_mac() -> dict[str, object]:
+    """RC2-MAC vector as the 4-byte fixed-output MAC_GENERAL special case."""
+    source = (
+        "OpenSSL legacy RC2 vector; one-block CBC-MAC with zero IV equals RC2-ECB; "
+        "PKCS#11 RC2-MAC is a special case producing half the block size"
+    )
+    vectors = [
+        {
+            "id": "rc2_mac_128_half_block",
+            "type": "positive",
+            "mechanism_name": "CKM_RC2_MAC",
+            "key_type": "symmetric",
+            "key_bits": 128,
+            "key_hex": "000102030405060708090a0b0c0d0e0f",
+            "params": {"source": source, "effective_bits": 128},
+            "input_hex": "0123456789abcdef",
+            "mac_hex": "c1de6697",
+        }
+    ]
+    return {
+        "mechanism": "CKM_RC2_MAC",
+        "family": "rc2_mac",
+        "key_type": "CKK_RC2",
+        "source": source,
+        "vectors": vectors,
+    }
+
+
 def generate_cast128_cbc_pad() -> dict:
     """CAST128/CAST5 CBC_PAD vector via cryptography plus PKCS#7 padding."""
     from cryptography.hazmat.decrepit.ciphers import algorithms
@@ -2638,6 +2666,34 @@ def generate_cast128_cbc_pad() -> dict:
     return {
         "mechanism": "CKM_CAST128_CBC_PAD",
         "family": "cast128_cbc_pad",
+        "key_type": "CKK_CAST128",
+        "source": source,
+        "vectors": vectors,
+    }
+
+
+def generate_cast128_mac() -> dict[str, object]:
+    """CAST128-MAC vector as the half-block fixed-output MAC_GENERAL special case."""
+    source = (
+        "RFC 2144 appendix B.1; one-block CBC-MAC with zero IV equals CAST-128 ECB; "
+        "PKCS#11 CAST128-MAC is a special case producing half the block size"
+    )
+    vectors = [
+        {
+            "id": "cast128_mac_rfc2144_128_half_block",
+            "type": "positive",
+            "mechanism_name": "CKM_CAST128_MAC",
+            "key_type": "symmetric",
+            "key_bits": 128,
+            "key_hex": "0123456712345678234567893456789a",
+            "params": {"source": source},
+            "input_hex": "0123456789abcdef",
+            "mac_hex": "238b4fe5",
+        }
+    ]
+    return {
+        "mechanism": "CKM_CAST128_MAC",
+        "family": "cast128_mac",
         "key_type": "CKK_CAST128",
         "source": source,
         "vectors": vectors,
@@ -2688,6 +2744,40 @@ def generate_idea_cbc_pad() -> dict:
     }
 
 
+def generate_idea_mac() -> dict[str, object]:
+    """IDEA-MAC vector as the half-block fixed-output MAC_GENERAL special case."""
+    source = (
+        "NESSIE IDEA verified test vectors via pyca cryptography; "
+        "one-block CBC-MAC with zero IV equals IDEA-ECB; "
+        "PKCS#11 IDEA-MAC is a special case producing half the block size"
+    )
+    source_url = (
+        "https://raw.githubusercontent.com/pyca/cryptography/main/"
+        "vectors/cryptography_vectors/ciphers/IDEA/idea-ecb.txt"
+    )
+    vectors = [
+        {
+            "id": "idea_mac_nessie_count_0_half_block",
+            "type": "positive",
+            "mechanism_name": "CKM_IDEA_MAC",
+            "key_type": "symmetric",
+            "key_bits": 128,
+            "key_hex": "80000000000000000000000000000000",
+            "params": {"source": source},
+            "input_hex": "0000000000000000",
+            "mac_hex": "b1f5f7f8",
+        }
+    ]
+    return {
+        "mechanism": "CKM_IDEA_MAC",
+        "family": "idea_mac",
+        "key_type": "CKK_IDEA",
+        "source": source,
+        "source_url": source_url,
+        "vectors": vectors,
+    }
+
+
 def generate_rc5_cbc_pad() -> dict:
     """RC5 CBC_PAD vector from RFC 2040 section 9.3."""
     key = bytes.fromhex("0102030405")
@@ -2718,6 +2808,36 @@ def generate_rc5_cbc_pad() -> dict:
     return {
         "mechanism": "CKM_RC5_CBC_PAD",
         "family": "rc5_cbc_pad",
+        "key_type": "CKK_RC5",
+        "source": source,
+        "source_url": source_url,
+        "vectors": vectors,
+    }
+
+
+def generate_rc5_mac() -> dict[str, object]:
+    """RC5-MAC vector as the half-block fixed-output MAC_GENERAL special case."""
+    source = (
+        "RFC 2040 section 9.3; one-block CBC-MAC with zero IV equals RC5-ECB; "
+        "PKCS#11 RC5-MAC is a special case producing half the block size"
+    )
+    source_url = "https://www.rfc-editor.org/rfc/rfc2040"
+    vectors = [
+        {
+            "id": "rc5_mac_r12_key64_half_block",
+            "type": "positive",
+            "mechanism_name": "CKM_RC5_MAC",
+            "key_type": "symmetric",
+            "key_bits": 64,
+            "key_hex": "0102030405060708",
+            "params": {"source": source, "source_url": source_url, "word_bits": 32, "rounds": 12},
+            "input_hex": "ffffffffffffffff",
+            "mac_hex": "e493f1c1",
+        }
+    ]
+    return {
+        "mechanism": "CKM_RC5_MAC",
+        "family": "rc5_mac",
         "key_type": "CKK_RC5",
         "source": source,
         "source_url": source_url,
@@ -2820,8 +2940,12 @@ GENERATORS = {
     "rc2_ecb": generate_rc2_ecb,
     "rc2_cbc": generate_rc2_cbc,
     "rc2_cbc_pad": generate_rc2_cbc_pad,
+    "rc2_mac": generate_rc2_mac,
+    "cast128_mac": generate_cast128_mac,
     "idea_cbc_pad": generate_idea_cbc_pad,
+    "idea_mac": generate_idea_mac,
     "rc5_cbc_pad": generate_rc5_cbc_pad,
+    "rc5_mac": generate_rc5_mac,
     "blowfish_cbc_pad": generate_blowfish_cbc_pad,
     "des_ecb": generate_des_ecb,
     "des_cbc": generate_des_cbc,

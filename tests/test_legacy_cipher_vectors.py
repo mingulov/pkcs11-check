@@ -16,6 +16,7 @@ from pkcs11_check.raw.types_std import (
     CKM_CAST128_CBC,
     CKM_CAST128_CBC_PAD,
     CKM_CAST128_ECB,
+    CKM_CAST128_MAC,
     CKM_CAST128_MAC_GENERAL,
     CKM_DES3_CBC_PAD,
     CKM_DES3_CMAC,
@@ -28,15 +29,18 @@ from pkcs11_check.raw.types_std import (
     CKM_IDEA_CBC,
     CKM_IDEA_CBC_PAD,
     CKM_IDEA_ECB,
+    CKM_IDEA_MAC,
     CKM_IDEA_MAC_GENERAL,
     CKM_RC2_CBC,
     CKM_RC2_CBC_PAD,
     CKM_RC2_ECB,
+    CKM_RC2_MAC,
     CKM_RC2_MAC_GENERAL,
     CKM_RC4,
     CKM_RC5_CBC,
     CKM_RC5_CBC_PAD,
     CKM_RC5_ECB,
+    CKM_RC5_MAC,
     CKM_RC5_MAC_GENERAL,
     CKM_SEED_CBC_PAD,
     CKM_SEED_MAC,
@@ -578,6 +582,69 @@ def test_half_block_cipher_mac_mechanisms_have_kat_vectors() -> None:
             assert len(bytes.fromhex(vec["mac_hex"])) == 8
             assert "special case" in vec["params"]["source"]
             assert "half the block size" in vec["params"]["source"]
+
+
+def test_legacy_fixed_mac_mechanisms_have_half_block_kat_vectors() -> None:
+    expected = {
+        int(CKM_RC2_MAC): (
+            "rc2_mac.json",
+            "CKM_RC2_MAC",
+            "000102030405060708090a0b0c0d0e0f",
+            "0123456789abcdef",
+            "c1de6697",
+            {"effective_bits": 128},
+        ),
+        int(CKM_RC5_MAC): (
+            "rc5_mac.json",
+            "CKM_RC5_MAC",
+            "0102030405060708",
+            "ffffffffffffffff",
+            "e493f1c1",
+            {"word_bits": 32, "rounds": 12},
+        ),
+        int(CKM_CAST128_MAC): (
+            "cast128_mac.json",
+            "CKM_CAST128_MAC",
+            "0123456712345678234567893456789a",
+            "0123456789abcdef",
+            "238b4fe5",
+            {},
+        ),
+        int(CKM_IDEA_MAC): (
+            "idea_mac.json",
+            "CKM_IDEA_MAC",
+            "80000000000000000000000000000000",
+            "0000000000000000",
+            "b1f5f7f8",
+            {},
+        ),
+    }
+
+    for mech_id, (
+        vector_file,
+        mechanism_name,
+        key_hex,
+        input_hex,
+        expected_mac,
+        expected_params,
+    ) in expected.items():
+        config = MECHANISM_REGISTRY[mech_id]
+        assert config.vector_file == vector_file
+
+        vectors = load_positive_vectors(vector_file)
+        assert vectors, f"{vector_file} must contain positive vectors"
+        for vec in vectors:
+            assert vec["type"] == "positive"
+            assert vec["mechanism_name"] == mechanism_name
+            assert vec["key_hex"] == key_hex
+            assert vec["input_hex"] == input_hex
+            assert vec["mac_hex"] == expected_mac
+            assert len(bytes.fromhex(vec["mac_hex"])) == 4
+            assert "special case" in vec["params"]["source"]
+            assert "half the block size" in vec["params"]["source"]
+            assert "mac_len" not in vec["params"]
+            for key, value in expected_params.items():
+                assert vec["params"][key] == value
 
 
 def test_des3_cmac_mechanisms_have_kat_vectors() -> None:

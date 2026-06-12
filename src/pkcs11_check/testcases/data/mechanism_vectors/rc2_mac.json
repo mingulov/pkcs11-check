@@ -1,0 +1,22 @@
+{
+  "mechanism": "CKM_RC2_MAC",
+  "family": "rc2_mac",
+  "key_type": "CKK_RC2",
+  "source": "OpenSSL legacy RC2 vector; one-block CBC-MAC with zero IV equals RC2-ECB; PKCS#11 RC2-MAC is a special case producing half the block size",
+  "vectors": [
+    {
+      "id": "rc2_mac_128_half_block",
+      "type": "positive",
+      "mechanism_name": "CKM_RC2_MAC",
+      "key_type": "symmetric",
+      "key_bits": 128,
+      "key_hex": "000102030405060708090a0b0c0d0e0f",
+      "params": {
+        "source": "OpenSSL legacy RC2 vector; one-block CBC-MAC with zero IV equals RC2-ECB; PKCS#11 RC2-MAC is a special case producing half the block size",
+        "effective_bits": 128
+      },
+      "input_hex": "0123456789abcdef",
+      "mac_hex": "c1de6697"
+    }
+  ]
+}

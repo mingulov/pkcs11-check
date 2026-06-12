@@ -1,0 +1,25 @@
+{
+  "mechanism": "CKM_RC5_MAC",
+  "family": "rc5_mac",
+  "key_type": "CKK_RC5",
+  "source": "RFC 2040 section 9.3; one-block CBC-MAC with zero IV equals RC5-ECB; PKCS#11 RC5-MAC is a special case producing half the block size",
+  "source_url": "https://www.rfc-editor.org/rfc/rfc2040",
+  "vectors": [
+    {
+      "id": "rc5_mac_r12_key64_half_block",
+      "type": "positive",
+      "mechanism_name": "CKM_RC5_MAC",
+      "key_type": "symmetric",
+      "key_bits": 64,
+      "key_hex": "0102030405060708",
+      "params": {
+        "source": "RFC 2040 section 9.3; one-block CBC-MAC with zero IV equals RC5-ECB; PKCS#11 RC5-MAC is a special case producing half the block size",
+        "source_url": "https://www.rfc-editor.org/rfc/rfc2040",
+        "word_bits": 32,
+        "rounds": 12
+      },
+      "input_hex": "ffffffffffffffff",
+      "mac_hex": "e493f1c1"
+    }
+  ]
+}

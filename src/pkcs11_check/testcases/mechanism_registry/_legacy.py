@@ -214,6 +214,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_rc2,
         keygen_recipe=_sym,
         expected_flags=_SIG_VER,
+        vector_file="rc2_mac.json",
         notes="RC2-MAC: CBC-MAC with fixed output, requires CK_RC2_PARAMS (effective key bits)",
     )
 
@@ -321,6 +322,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_rc5,
         keygen_recipe=_sym,
         expected_flags=_SIG_VER,
+        vector_file="rc5_mac.json",
         notes="RC5-MAC: CBC-MAC with fixed output, requires CK_RC5_PARAMS",
     )
 
@@ -398,6 +400,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_IDEA_SIZES,
         keygen_recipe=_fixed,
         expected_flags=_SIG_VER,
+        vector_file="idea_mac.json",
         notes="IDEA-MAC: CBC-MAC with fixed output length",
     )
 
@@ -621,6 +624,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_CAST128_SIZES,
         keygen_recipe=_sym,
         expected_flags=_SIG_VER,
+        vector_file="cast128_mac.json",
         notes="CAST128-MAC: CBC-MAC fixed output; CKM_CAST5_MAC is an alias",
     )
 

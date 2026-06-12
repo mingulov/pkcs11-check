@@ -276,13 +276,15 @@ smoke behavior, or covered only by one narrow variation.
    length matches the requested parameter length, and RC2/RC5/CAST128/IDEA plus
    DES, 3DES, Camellia, ARIA, and SEED have expected-MAC vectors. DES, 3DES,
    Camellia, ARIA, and SEED fixed-output MAC KATs now cover the spec-defined
-   half-block special case. DES3 CMAC/CMAC_GENERAL now have full-block CMAC
+   half-block special case. RC2, RC5, CAST128/CAST5, and IDEA fixed-output MAC
+   KATs now do the same for the legacy 8-byte-block families with existing
+   reliable full-block sources. DES3 CMAC/CMAC_GENERAL now have full-block CMAC
    KATs grounded in NIST SP 800-38B semantics and the local OASIS DES3-CMAC
-   mapping. Continue this sweep for remaining RC2/RC5/CAST/CAST3/IDEA
-   fixed-output `*_MAC`, CDMF, and less-sourced legacy families, but gate each
-   new vector on a reliable source and an unambiguous PKCS#11 parameter mapping;
-   SKIPJACK and KEA are lower confidence until a defensible vector/operation
-   source is identified.
+   mapping. Continue this sweep for remaining CKM_CAST/CKM_CAST3 fixed-output
+   `*_MAC`, CDMF, and less-sourced legacy families, but gate each new vector on
+   a reliable source and an unambiguous PKCS#11 parameter mapping; SKIPJACK and
+   KEA are lower confidence until a defensible vector/operation source is
+   identified.
 9. CMS and CT-KIP are shallow: current tests mostly check mechanism info or
    clean rejection rather than valid parameterized operations.
 10. Generic negative coverage is narrow relative to 467 registry mechanisms.
@@ -499,6 +501,10 @@ Legacy/deprecated coverage addendum for the active goal:
   FIPS-PUB-113-style CBC-MAC/ECB-equivalent full-block material and apply the
   general block cipher MAC rule that fixed `*_MAC` is the no-parameter special
   case producing half the block size.
+- Added: RC2, RC5, CAST128/CAST5, and IDEA fixed-output MAC now have half-block
+  exact-output KAT vectors plus registry `vector_file` links. RC2 and RC5 keep
+  their required effective-bits / rounds / word-size parameter replay fields,
+  while CAST128/CAST5 and IDEA use the general block-cipher fixed-MAC rule.
 - Added: Camellia, ARIA, and SEED fixed-output MAC now have half-block
   exact-output KAT vectors plus registry `vector_file` links. These are sourced
   from the local OASIS mechanism text that defines each fixed `*_MAC` as the
@@ -507,7 +513,7 @@ Legacy/deprecated coverage addendum for the active goal:
   plus registry `vector_file` links. These use NIST SP 800-38B CMAC via pyca
   cryptography and the local OASIS DES3-CMAC text, with a non-block-aligned
   input to exercise CMAC padding/subkey semantics.
-  RC2/RC5/CAST/CAST3/IDEA fixed-output MAC, CDMF, and the less-sourced
+  CKM_CAST/CKM_CAST3 fixed-output MAC, CDMF, and the less-sourced
   classified/obsolete families remain pending.
 
 Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks

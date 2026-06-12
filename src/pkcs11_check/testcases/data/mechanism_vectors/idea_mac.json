@@ -1,0 +1,22 @@
+{
+  "mechanism": "CKM_IDEA_MAC",
+  "family": "idea_mac",
+  "key_type": "CKK_IDEA",
+  "source": "NESSIE IDEA verified test vectors via pyca cryptography; one-block CBC-MAC with zero IV equals IDEA-ECB; PKCS#11 IDEA-MAC is a special case producing half the block size",
+  "source_url": "https://raw.githubusercontent.com/pyca/cryptography/main/vectors/cryptography_vectors/ciphers/IDEA/idea-ecb.txt",
+  "vectors": [
+    {
+      "id": "idea_mac_nessie_count_0_half_block",
+      "type": "positive",
+      "mechanism_name": "CKM_IDEA_MAC",
+      "key_type": "symmetric",
+      "key_bits": 128,
+      "key_hex": "80000000000000000000000000000000",
+      "params": {
+        "source": "NESSIE IDEA verified test vectors via pyca cryptography; one-block CBC-MAC with zero IV equals IDEA-ECB; PKCS#11 IDEA-MAC is a special case producing half the block size"
+      },
+      "input_hex": "0000000000000000",
+      "mac_hex": "b1f5f7f8"
+    }
+  ]
+}
