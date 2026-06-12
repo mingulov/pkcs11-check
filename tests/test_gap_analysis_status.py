@@ -279,10 +279,17 @@ def test_gap_analysis_marks_mixed_fail_crash_reporting_as_fixed() -> None:
     runner = _read("src/pkcs11_check/core/file_runner.py")
     tests = _read("tests/test_file_runner.py")
     doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
 
     assert 'for status in ("timeout", "crashed", "failed"' in runner
+    assert "_status_with_detail_counts" in runner
     assert "test_write_isolated_json_report_crash_status_wins_over_failed_count" in tests
-    assert 'status: "crashed"' in doc
+    assert (
+        "test_write_isolated_json_report_special_detail_status_wins_over_failed_file_result"
+        in tests
+    )
+    assert "the emitted artifact unit surfaces the special status" in doc_flat
+    assert "Merged per-test detail counts also promote the emitted unit status" in doc_flat
     assert "Status: fixed in the current branch. `_overall_unit_status()` gives" in doc
 
 

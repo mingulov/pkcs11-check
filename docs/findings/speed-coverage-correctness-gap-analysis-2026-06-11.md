@@ -396,9 +396,12 @@ Completed task:
 
 Status: fixed in the current branch. `_overall_unit_status()` gives timeout
 and crash precedence over ordinary failure while preserving failed counts in the
-unit details. A regression test covers a file with one failed test and one
-crashed test: the emitted artifact unit has `status: "crashed"`, and both the
-failed and crashed counters survive.
+unit details. Merged per-test detail counts also promote the emitted unit status
+when a crash or timeout is discovered during retry/confirmation rather than
+represented as the final file process status. Regression tests cover both a file
+with one failed test and one crashed test, and a failed file result whose merged
+detail contains crash/timeout evidence: the emitted artifact unit surfaces the
+special status, and the failed plus special counters survive.
 
 ### 5. Mechanism coverage telemetry needs more states
 

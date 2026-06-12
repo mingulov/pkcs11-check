@@ -2644,7 +2644,7 @@ def test_run_isolated_pytest_units_preserves_confirmed_crash_in_json_report_afte
     report = json.loads(results_path.read_text())
     unit = report["units"][0]
     assert unit["target"] == "test_a.py"
-    assert unit["status"] == "failed"
+    assert unit["status"] == "crashed"
     assert unit["counts"]["failed"] == 1
     assert unit["counts"]["crashed"] == 1
     assert unit["counts"]["error"] == 0
@@ -3826,6 +3826,63 @@ def test_write_isolated_json_report_crash_status_wins_over_failed_count(
         "test_a.py::test_bad": "failed",
         "test_a.py::test_crash": "crashed",
     }
+
+
+@pytest.mark.parametrize(
+    ("special_outcome", "expected_status"),
+    [("crashed", "crashed"), ("timeout", "timeout")],
+)
+def test_write_isolated_json_report_special_detail_status_wins_over_failed_file_result(
+    tmp_path: Path,
+    special_outcome: str,
+    expected_status: str,
+) -> None:
+    state = FileRunState(
+        units=["test_a.py"],
+        fingerprint="abc123",
+        results=[FileRunResult("test_a.py", "failed", 1, 0.2)],
+    )
+    counts = {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+    }
+    counts[special_outcome] = 1
+    per_unit_details = {
+        "test_a.py": {
+            "counts": counts,
+            "tests": [
+                {
+                    "nodeid": "test_a.py::test_bad",
+                    "outcome": "failed",
+                    "duration": 0.1,
+                    "longrepr": "assert False",
+                },
+                {
+                    "nodeid": f"test_a.py::test_{special_outcome}",
+                    "outcome": special_outcome,
+                    "duration": 0.1,
+                    "longrepr": special_outcome,
+                },
+            ],
+        }
+    }
+    report_path = tmp_path / "results.json"
+
+    write_isolated_json_report(report_path, state, per_unit_details=per_unit_details)
+
+    report = json.loads(report_path.read_text())
+    unit = report["units"][0]
+    assert unit["status"] == expected_status
+    assert unit["counts"]["failed"] == 1
+    assert unit["counts"][special_outcome] == 1
+    assert report["summary"]["failed"] == 1
+    assert report["summary"][special_outcome] == 1
 
 
 # ---------------------------------------------------------------------------

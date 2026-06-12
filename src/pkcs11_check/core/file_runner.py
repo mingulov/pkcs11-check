@@ -623,6 +623,16 @@ def _overall_unit_status(file_results: list[FileRunResult]) -> str:
     return file_results[0].status
 
 
+def _status_with_detail_counts(status: str, counts: Mapping[str, int] | None) -> str:
+    if not counts:
+        return status
+    if counts.get("timeout", 0) > 0:
+        return "timeout"
+    if counts.get("crashed", 0) > 0:
+        return "crashed"
+    return status
+
+
 def _merge_supplemental_special_details(
     base_details: Mapping[str, dict[str, Any]],
     supplemental_details: Mapping[str, dict[str, Any]],
@@ -762,6 +772,8 @@ def _build_isolated_json_payload(
             if (entry := _special_test_entry_from_result(result)) is not None
         ]
         detail = _merge_special_entries_into_detail(merged_detail, special_entries)
+        counts = detail.get("counts")
+        overall_status = _status_with_detail_counts(overall_status, counts)
         if overall_status in {"crashed", "timeout"} and not any(detail["counts"].values()):
             detail["counts"][overall_status] = 1
         duration = sum(r.duration_s for r in file_results)
@@ -783,7 +795,6 @@ def _build_isolated_json_payload(
         if stderr_parts:
             unit["stderr"] = "\n".join(stderr_parts)
 
-        counts = detail.get("counts")
         if counts and any(v > 0 for v in counts.values()):
             unit["counts"] = counts
             for key in summary:
