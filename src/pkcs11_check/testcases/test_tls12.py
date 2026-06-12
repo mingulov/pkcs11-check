@@ -346,6 +346,17 @@ class TestTLS10PreMasterKeyGen:
                 value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
+                expected = _tls_prf_legacy_md5_sha1(
+                    _PRE_MASTER_SECRET,
+                    b"master secret",
+                    _CLIENT_RANDOM,
+                    _SERVER_RANDOM,
+                    48,
+                )
+                assert value == expected, (
+                    "TLS 1.0/1.1 master secret output mismatch: "
+                    f"expected {expected.hex()}, got {value.hex()}"
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:

@@ -17,12 +17,17 @@ from pkcs11_check.raw.types_std import (
     CKM_TLS12_MASTER_KEY_DERIVE,
     CKM_TLS12_MASTER_KEY_DERIVE_DH,
     CKM_TLS_KDF,
+    CKM_TLS_MASTER_KEY_DERIVE,
     CKM_TLS_PRF,
     CKR_OK,
 )
 from pkcs11_check.testcases import test_tls12
 
 _TLS10_KDF_EXPECTED_HEX = "023d49a0cea8ad8071bf64519dc8f45bd302c1db3e33d39d1f21c548d05194aa"
+_TLS_MASTER_EXPECTED_HEX = (
+    "539391828d1d131678646180c5bda5c9a2eb62382c8cfb9440545cae85c8c205"
+    "b93e0d22161e06be1189235aefca7570"
+)
 _TLS12_MASTER_EXPECTED_HEX = (
     "2b7cccb6d48adb8692df640b9252502fb000fd68fb2dc4b6a8cd67d870492f38"
     "e4c5dd509ba7c4863c003c07d23f9a3b"
@@ -91,6 +96,14 @@ def _tls_kdf_session() -> SimpleNamespace:
         raw=object(),
         sh=1,
         has_mechanism=lambda name: name == "TLS_KDF",
+    )
+
+
+def _tls_master_session() -> SimpleNamespace:
+    return SimpleNamespace(
+        raw=object(),
+        sh=1,
+        has_mechanism=lambda name: name == "TLS_MASTER_KEY_DERIVE",
     )
 
 
@@ -174,6 +187,18 @@ def test_tls10_prf_reference_matches_rfc2246_split_secret_vector() -> None:
     assert value.hex() == _TLS10_KDF_EXPECTED_HEX
 
 
+def test_tls_master_secret_reference_matches_rfc2246_prf_vector() -> None:
+    value = test_tls12._tls_prf_legacy_md5_sha1(
+        bytes(range(48)),
+        b"master secret",
+        bytes(range(32)),
+        bytes(range(32, 64)),
+        48,
+    )
+
+    assert value.hex() == _TLS_MASTER_EXPECTED_HEX
+
+
 def test_tls12_master_secret_reference_matches_prf_vector() -> None:
     value = test_tls12._tls12_prf_sha256(
         bytes(range(48)),
@@ -254,6 +279,47 @@ def test_tls_kdf_tls10_exact_vector_uses_tls_prf_mechanism(
     assert derive_calls[0]["base_key"] == 101
     assert derive_calls[0]["mechanism"] == int(CKM_TLS_KDF)
     assert derive_calls[0]["mech_param"].params.prfMechanism == int(CKM_TLS_PRF)
+
+
+def test_tls_master_key_derive_fails_on_wrong_exact_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wrong = b"\x00" * 48
+    derive_calls: list[dict[str, Any]] = []
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        base_key: int,
+        mechanism: int,
+        attrs: dict[int, Any],
+        *,
+        mech_param: Any,
+    ) -> int:
+        derive_calls.append(
+            {
+                "base_key": base_key,
+                "mechanism": int(mechanism),
+                "attrs": attrs,
+                "mech_param": mech_param,
+            }
+        )
+        return 203
+
+    monkeypatch.setattr(test_tls12, "_create_tls_pms", lambda _rs: 101)
+    monkeypatch.setattr(test_tls12, "derive_key", _derive_key)
+    monkeypatch.setattr(test_tls12, "read_attributes", lambda *_args: {CKA_VALUE: wrong})
+    monkeypatch.setattr(test_tls12, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(AssertionError, match="TLS 1.0/1.1 master secret output mismatch"):
+        test_tls12.TestTLS10PreMasterKeyGen().test_tls_master_key_derive(
+            _tls_master_session()
+        )
+
+    assert len(derive_calls) == 1
+    assert derive_calls[0]["base_key"] == 101
+    assert derive_calls[0]["mechanism"] == int(CKM_TLS_MASTER_KEY_DERIVE)
+    assert derive_calls[0]["attrs"][CKA_VALUE_LEN] == 48
 
 
 def test_tls12_master_key_derive_fails_on_wrong_exact_output(
