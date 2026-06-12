@@ -93,6 +93,22 @@ def test_gap_analysis_marks_ike_prf_base_key_sensitivity_as_added() -> None:
     assert "IKE PRF base-key sensitivity coverage" in doc
 
 
+def test_gap_analysis_marks_ike_prf_exact_vector_as_added() -> None:
+    """CKM_IKE_PRF_DERIVE has a typed-param HMAC-SHA256 exact vector."""
+    ike = _read("src/pkcs11_check/testcases/test_ike.py")
+    pack = _read("src/pkcs11_check/raw/pack_mechanisms.py")
+    raw_pack_tests = _read("tests/test_raw_pack.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "mech_ike_prf_derive" in pack
+    assert "CK_IKE_PRF_DERIVE_PARAMS" in pack
+    assert "test_ike_prf_derive_packer_uses_typed_oasis_struct" in raw_pack_tests
+    assert "test_data_as_key_hmac_sha256_exact_vector" in ike
+    assert "_ike_prf_hmac_sha256_reference" in ike
+
+    assert "IKE PRF data-as-key HMAC-SHA256 exact-vector coverage" in doc
+
+
 def test_gap_analysis_marks_blake2b_keyed_semantics_as_covered() -> None:
     """BLAKE2B keyed HMAC, HMAC_GENERAL, KEY_GEN, and KEY_DERIVE are covered."""
     blake2 = _read("src/pkcs11_check/testcases/test_blake2.py")

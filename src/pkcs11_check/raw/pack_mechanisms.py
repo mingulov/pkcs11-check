@@ -32,6 +32,7 @@ from .types_std import (
     CK_GCM_WRAP_PARAMS,
     CK_HASH_SIGN_ADDITIONAL_CONTEXT,
     CK_HKDF_PARAMS,
+    CK_IKE_PRF_DERIVE_PARAMS,
     CK_KEY_DERIVATION_STRING_DATA,
     CK_PBE_PARAMS,
     CK_PKCS5_PBKD2_PARAMS2,
@@ -888,6 +889,34 @@ def mech_string_data(mechanism_type: CKM | int, data: bytes) -> PackedMechanism:
 # ---------------------------------------------------------------------------
 # SSL3 / TLS / WTLS mechanism packers
 # ---------------------------------------------------------------------------
+
+
+def mech_ike_prf_derive(
+    mechanism_type: CKM | int,
+    *,
+    prf_mechanism: CKM | int,
+    initiator_nonce: bytes,
+    responder_nonce: bytes,
+    data_as_key: bool = False,
+    rekey: bool = False,
+    new_key_handle: int = 0,
+) -> PackedMechanism:
+    """Pack CK_IKE_PRF_DERIVE_PARAMS for CKM_IKE_PRF_DERIVE."""
+    ka: list[Any] = []
+    params = CK_IKE_PRF_DERIVE_PARAMS()
+    params.prfMechanism = prf_mechanism
+    params.bDataAsKey = CK_BBOOL(1 if data_as_key else 0)
+    params.bRekey = CK_BBOOL(1 if rekey else 0)
+    params.pNi, params.ulNiLen = _pack_bytes(initiator_nonce, ka)
+    params.pNr, params.ulNrLen = _pack_bytes(responder_nonce, ka)
+    params.hNewKey = new_key_handle
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_ike_prf_derive",
+        ka,
+        sub_mechanisms={"prfMechanism": int(prf_mechanism)},
+    )
 
 
 def _fill_random_data(

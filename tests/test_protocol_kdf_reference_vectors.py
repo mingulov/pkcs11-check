@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pkcs11_check.testcases import test_sp800_108_kdf, test_tls12
+from pkcs11_check.testcases import test_ike, test_sp800_108_kdf, test_tls12
 
 
 def test_sp800_108_counter_reference_vector() -> None:
@@ -36,4 +36,16 @@ def test_tls12_prf_sha256_reference_vector() -> None:
             32,
         ).hex()
         == "4ac38c4d46e5ff44538c63cd6644009fd1aa1b19a81b76452615cb3f94ce61ea"
+    )
+
+
+def test_ike_prf_data_as_key_hmac_sha256_reference_vector() -> None:
+    assert (
+        test_ike._ike_prf_hmac_sha256_reference(
+            test_ike._BASE_KEY_BYTES,
+            test_ike._NONCE_I,
+            test_ike._NONCE_R,
+            data_as_key=True,
+        ).hex()
+        == "909be39279fec3ad8b16546a956974ee435bb4acfa8f0c9167f0f019ff977f45"
     )

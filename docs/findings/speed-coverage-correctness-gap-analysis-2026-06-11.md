@@ -263,7 +263,9 @@ smoke behavior, or covered only by one narrow variation.
    `CK_WTLS_PRF_PARAMS.pLabel`. IKE2 PRF+ base-key sensitivity coverage now
    verifies that changing the shared-secret input changes the derived output.
    IKE PRF base-key sensitivity coverage now verifies the same for
-   `CKM_IKE_PRF_DERIVE`.
+   `CKM_IKE_PRF_DERIVE`. IKE PRF data-as-key HMAC-SHA256 exact-vector coverage
+   now uses typed `CK_IKE_PRF_DERIVE_PARAMS` and checks the OASIS case-1
+   `prf(Ni|Nr, baseKey)` output.
 2. Regional cipher encrypt-data derive dispatch exists for Camellia, ARIA, and
    SEED ECB/CBC variants in `test_mech_derive.py`; focused meta-tests verify
    the family-specific CBC parameter structs are packed for generic derive

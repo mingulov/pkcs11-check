@@ -31,6 +31,11 @@ def _provider_write(ptr: Any, data: bytes) -> None:
     ctypes.memmove(ptr, data, len(data))
 
 
+def _provider_read(ptr: Any, length: int) -> bytes:
+    assert ptr is not None
+    return ctypes.string_at(ptr, length)
+
+
 def test_pack_template_keeps_pointer_and_length_separate() -> None:
     from pkcs11_check.raw.pack import LengthArg, attr_ulong
 
@@ -431,6 +436,35 @@ def test_prf_output_buffers_reflect_provider_writes() -> None:
 
     assert tls.buffer_bytes("output") == bytes(range(16))
     assert wtls.buffer_bytes("output") == bytes(range(16, 24))
+
+
+def test_ike_prf_derive_packer_uses_typed_oasis_struct() -> None:
+    from pkcs11_check.raw.pack import mech_ike_prf_derive
+    from pkcs11_check.raw.types_std import (
+        CK_IKE_PRF_DERIVE_PARAMS,
+        CKM_IKE_PRF_DERIVE,
+        CKM_SHA256_HMAC,
+    )
+
+    mech = mech_ike_prf_derive(
+        CKM_IKE_PRF_DERIVE,
+        prf_mechanism=CKM_SHA256_HMAC,
+        initiator_nonce=b"i" * 16,
+        responder_nonce=b"r" * 16,
+        data_as_key=True,
+    )
+
+    assert mech.ck.mechanism == CKM_IKE_PRF_DERIVE
+    params = mech.params
+    assert isinstance(params, CK_IKE_PRF_DERIVE_PARAMS)
+    assert params.prfMechanism == CKM_SHA256_HMAC
+    assert params.bDataAsKey == 1
+    assert params.bRekey == 0
+    assert params.hNewKey == 0
+    assert params.ulNiLen == 16
+    assert params.ulNrLen == 16
+    assert _provider_read(params.pNi, params.ulNiLen) == b"i" * 16
+    assert _provider_read(params.pNr, params.ulNrLen) == b"r" * 16
 
 
 def test_mech_pss_packs_hash_mgf_salt() -> None:

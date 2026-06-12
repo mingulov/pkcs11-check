@@ -12,11 +12,13 @@ OASIS spec: ike_mechanisms.md
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.pack import mech_bytes
+from pkcs11_check.raw.pack import mech_bytes, mech_ike_prf_derive
 from pkcs11_check.raw.recipes import (
     create_object,
     derive_key,
@@ -38,6 +40,7 @@ from pkcs11_check.raw.types_std import (
     CKM_IKE1_PRF_DERIVE,
     CKM_IKE2_PRF_PLUS_DERIVE,
     CKM_IKE_PRF_DERIVE,
+    CKM_SHA256_HMAC,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
     CKR_DEVICE_ERROR,
@@ -117,7 +120,7 @@ def _derive_generic(
         base_key,
         mech,
         attrs=attrs,
-        mech_param=mech_bytes(mech, param),
+        mech_param=_ike_mech_param(mech, param),
     )
 
 
@@ -145,6 +148,34 @@ def _get_value(rs: Any, handle: int) -> bytes:
     value = attrs[CKA_VALUE]
     assert isinstance(value, bytes)
     return value
+
+
+def _ike_mech_param(mech: int, param: bytes) -> Any:
+    """Build typed IKE mechanism params where the PKCS#11 shape is clear."""
+    if mech == CKM_IKE_PRF_DERIVE:
+        half = len(param) // 2
+        return mech_ike_prf_derive(
+            CKM_IKE_PRF_DERIVE,
+            prf_mechanism=CKM_SHA256_HMAC,
+            initiator_nonce=param[:half],
+            responder_nonce=param[half:],
+            data_as_key=True,
+        )
+    return mech_bytes(mech, param)
+
+
+def _ike_prf_hmac_sha256_reference(
+    base_key: bytes,
+    initiator_nonce: bytes,
+    responder_nonce: bytes,
+    *,
+    data_as_key: bool,
+) -> bytes:
+    """Compute the OASIS CKM_IKE_PRF_DERIVE HMAC-SHA256 reference value."""
+    nonce_data = initiator_nonce + responder_nonce
+    if data_as_key:
+        return hmac.new(nonce_data, base_key, hashlib.sha256).digest()
+    return hmac.new(base_key, nonce_data, hashlib.sha256).digest()
 
 
 class TestIKE2PRFPlusDerive:
@@ -296,6 +327,33 @@ class TestIKEPRFDerive:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE_PRF_DERIVE not operational")
+        finally:
+            destroy_quietly(rs.raw, rs.sh, base_key)
+
+    def test_data_as_key_hmac_sha256_exact_vector(self, p11_raw_session: Any) -> None:
+        """CKM_IKE_PRF_DERIVE case 1 follows OASIS prf(Ni|Nr, baseKey)."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("IKE_PRF_DERIVE"):
+            pytest.skip("CKM_IKE_PRF_DERIVE not supported")
+        base_key = _create_base_key(rs)
+        expected = _ike_prf_hmac_sha256_reference(
+            _BASE_KEY_BYTES,
+            _NONCE_I,
+            _NONCE_R,
+            data_as_key=True,
+        )
+        try:
+            derived = _derive_generic(rs, base_key, CKM_IKE_PRF_DERIVE, _NONCE_I + _NONCE_R)
+            try:
+                assert _get_value(rs, derived) == expected
+            finally:
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _DERIVE_ERROR_CKRS,
+                "CKM_IKE_PRF_DERIVE HMAC-SHA256 exact vector not operational",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
