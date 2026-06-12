@@ -328,6 +328,22 @@ def test_gap_analysis_marks_malformed_param_negatives_as_added() -> None:
     )
 
 
+def test_gap_analysis_marks_unwrap_shape_negative_as_added() -> None:
+    """Registry-driven unwrap coverage rejects malformed wrapped-key blobs."""
+    negative = _read("src/pkcs11_check/testcases/test_mech_negative.py")
+    guard = _read("tests/test_mech_negative_registry_coverage.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_registry_unwrap_rejects_truncated_blob" in negative
+    assert "_MALFORMED_WRAPPED_BLOB_RVS" in negative
+    assert "CKR_WRAPPED_KEY_LEN_RANGE" in negative
+    assert "CKR_WRAPPED_KEY_INVALID" in negative
+    assert "test_unwrap_shape_negatives_are_registry_driven" in guard
+
+    assert "Registry-driven unwrap malformed-blob coverage exists" in doc_flat
+    assert "deeper unwrap shape/error cases" not in doc_flat
+
+
 def test_coverage_plan_does_not_count_ecmqv_as_kea_coverage() -> None:
     """ECMQV and KEA are different mechanisms; ECMQV tests do not cover KEA."""
     ecdh_extended = _read("src/pkcs11_check/testcases/test_ecdh_extended.py")

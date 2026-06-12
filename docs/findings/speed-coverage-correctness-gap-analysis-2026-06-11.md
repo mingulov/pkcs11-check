@@ -434,7 +434,11 @@ smoke behavior, or covered only by one narrow variation.
     one-byte parameter length. Remaining work is broader linked-attribute
     families, malformed parameter expansion beyond encrypt/sign init, and deeper
     derive/wrap/digest/message semantic negative coverage for
-    protocol/asymmetric/custom-parameter families.
+    protocol/asymmetric/custom-parameter families. Registry-driven unwrap
+    malformed-blob coverage exists for advertised secret-key wrap mechanisms:
+    the test wraps a key, truncates the resulting wrapped-key bytes, and
+    classifies wrapped/encrypted-data invalid or length-range rejects as
+    spec-correct.
 
 ### Recommended coverage order
 
@@ -451,7 +455,8 @@ smoke behavior, or covered only by one narrow variation.
 5. Continue registry-driven negative tests for broader linked-attribute families
    beyond the current `NEVER_EXTRACTABLE`/`ALWAYS_SENSITIVE` derived invariants,
    malformed parameter cases beyond current encrypt/sign init coverage, deeper
-   derive custom-parameter cases, and deeper unwrap shape/error cases.
+   derive custom-parameter cases, and additional unwrap tamper/shape variants
+   beyond the current truncated-blob coverage.
 
 ## Correctness and Reporting Findings
 

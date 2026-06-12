@@ -61,6 +61,8 @@ from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_BUFFER_TOO_SMALL,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
@@ -68,6 +70,8 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_WRAPPED_KEY_INVALID,
+    CKR_WRAPPED_KEY_LEN_RANGE,
     CKR_WRAPPING_KEY_SIZE_RANGE,
     CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
 )
@@ -103,6 +107,13 @@ _WRONG_KEY_SETUP_REJECTS = (
 _NO_SPECIFIC_WRAP_PERMISSION_RVS: tuple[int, ...] = ()
 _MISSING_REQUIRED_PARAM_RVS = (CKR_MECHANISM_PARAM_INVALID,)
 _MALFORMED_REQUIRED_PARAM_RVS = (CKR_MECHANISM_PARAM_INVALID, CKR_ARGUMENTS_BAD)
+_MALFORMED_WRAPPED_BLOB_RVS = (
+    CKR_WRAPPED_KEY_LEN_RANGE,
+    CKR_WRAPPED_KEY_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ARGUMENTS_BAD,
+)
 _WRAP_SETUP_REJECT_RVS = (
     *CIPHER_OP_RUNTIME_REJECT_RVS,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -615,6 +626,87 @@ class TestBadParameters:
             destroy_quietly(rs.raw, rs.sh, sign_key)
             if verify_key is not None and verify_key != sign_key:
                 destroy_quietly(rs.raw, rs.sh, verify_key)
+
+
+class TestMalformedWrappedBlob:
+    """C_UnwrapKey must reject malformed wrapped-key bytes."""
+
+    def test_registry_unwrap_rejects_truncated_blob(
+        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+    ) -> None:
+        """Registry-driven truncated wrapped-blob check for advertised unwrap mechanisms."""
+        rs = p11_module_session
+        entry = mech_wrap_entry
+        _skip_if_not_secret_key_registry_case(entry)
+        config = entry.config
+        assert config is not None
+
+        wrapping_key = gen_symmetric_key(
+            rs,
+            entry,
+            config,
+            extra_attrs={CKA_WRAP: True, CKA_UNWRAP: True, CKA_TOKEN: False},
+        )
+        target_key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False, CKA_TOKEN: False},
+            purpose="registry unwrap truncated-blob target setup",
+        )
+        unwrapped_key = 0
+        label = f"{entry.mech_name} C_UnwrapKey with truncated wrapped blob"
+        try:
+            mech_param = make_mech_param_or_skip(entry)
+            try:
+                wrapped = wrap_key(
+                    rs.raw,
+                    rs.sh,
+                    wrapping_key,
+                    target_key,
+                    entry.mech_id,
+                    mech_param=mech_param,
+                    output_size_hint=_wrap_output_size_hint(entry),
+                )
+            except AssertionError as setup_exc:
+                xfail_if_known_ckr(
+                    setup_exc,
+                    _WRAP_SETUP_REJECT_RVS,
+                    f"{entry.mech_name} wrap setup not operational",
+                )
+                raise
+            if len(wrapped) < 2:
+                pytest.xfail(f"{entry.mech_name}: wrap output too short to truncate")
+
+            unwrap_exc: AssertionError | None = None
+            try:
+                unwrapped_key = unwrap_key(
+                    rs.raw,
+                    rs.sh,
+                    wrapping_key,
+                    wrapped[:-1],
+                    entry.mech_id,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_TOKEN: False,
+                    },
+                    mech_param=mech_param,
+                )
+            except AssertionError as caught:
+                unwrap_exc = caught
+            if unwrap_exc is None and unwrapped_key != 0:
+                destroy_quietly(rs.raw, rs.sh, unwrapped_key)
+                unwrapped_key = 0
+            reject_or_classify(
+                unwrap_exc,
+                _MALFORMED_WRAPPED_BLOB_RVS,
+                label=label,
+            )
+        finally:
+            if unwrapped_key != 0:
+                destroy_quietly(rs.raw, rs.sh, unwrapped_key)
+            destroy_quietly(rs.raw, rs.sh, wrapping_key)
+            destroy_quietly(rs.raw, rs.sh, target_key)
 
 
 class TestMissingPermission:

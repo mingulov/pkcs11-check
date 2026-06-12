@@ -71,6 +71,14 @@ def test_permission_negatives_cover_roundtrip_pairs() -> None:
         assert test_name in source
 
 
+def test_unwrap_shape_negatives_are_registry_driven() -> None:
+    """Malformed wrapped-blob negatives should scale with wrap registry entries."""
+    source = _source()
+
+    assert "test_registry_unwrap_rejects_truncated_blob" in source
+    assert "_MALFORMED_WRAPPED_BLOB_RVS" in source
+
+
 def test_bad_param_negatives_are_registry_driven() -> None:
     """Bad-parameter coverage should not be limited to fixed named mechanisms."""
     source = _source()
