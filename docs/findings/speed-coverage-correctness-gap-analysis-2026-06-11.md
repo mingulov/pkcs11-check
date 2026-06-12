@@ -406,6 +406,9 @@ smoke behavior, or covered only by one narrow variation.
    BLAKE2B KEY_DERIVE default-template coverage now verifies the OASIS
    no-key-type/no-length rule by omitting `CKA_KEY_TYPE` and `CKA_VALUE_LEN`
    and checking for generic-secret, digest-length output. BLAKE2B KEY_DERIVE
+   length-only-template coverage now verifies the OASIS no-key-type/with-length
+   rule by checking for generic-secret output at the requested value length.
+   BLAKE2B KEY_DERIVE
    overlong-key negative coverage now verifies that a BLAKE2B-160 derive
    rejects a requested AES-256 key because the requested key length exceeds the
    digest output length. BLAKE2B KEY_DERIVE variable-key-type negative

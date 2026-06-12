@@ -869,6 +869,48 @@ class TestBlake2bKeyed:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
 
+    def _key_derive_length_only_template_value(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism(case.key_derive_name):
+            pytest.skip(f"CKM_{case.key_derive_name} not supported")
+
+        requested_len = 12
+        base = _import_blake2b_setup_key(rs, derive=True)
+        derived = 0
+        try:
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base,
+                    case.key_derive_mech,
+                    attrs={
+                        CKA_VALUE_LEN: requested_len,
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                )
+            except AssertionError as e:
+                _xfail_blake2b_reject(
+                    e,
+                    f"{case.key_derive_name} advertised but length-only derive failed",
+                )
+
+            attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_KEY_TYPE, CKA_VALUE])
+            assert attrs[CKA_KEY_TYPE] == CKK_GENERIC_SECRET
+            value = attrs[CKA_VALUE]
+            assert isinstance(value, bytes)
+            assert len(value) == requested_len
+        finally:
+            destroy_quietly(rs.raw, rs.sh, base)
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)
+
     def _key_derive_rejects_overlong_requested_key(
         self,
         p11_raw_session: Any,
@@ -977,6 +1019,18 @@ class TestBlake2bKeyed:
         case: _Blake2bKeyedCase,
     ) -> None:
         self._key_derive_default_template_value(p11_raw_session, case)
+
+    @pytest.mark.parametrize(
+        "case",
+        _BLAKE2B_KEYED_CASES,
+        ids=[case.id for case in _BLAKE2B_KEYED_CASES],
+    )
+    def test_blake2b_key_derive_length_only_template_value(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        self._key_derive_length_only_template_value(p11_raw_session, case)
 
     def test_blake2b_key_derive_rejects_overlong_requested_key(
         self,

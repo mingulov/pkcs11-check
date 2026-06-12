@@ -245,6 +245,49 @@ def test_blake2b_key_derive_default_template_omits_type_and_length(
     assert CKA_VALUE_LEN not in derive_attrs[0]
 
 
+def test_blake2b_key_derive_length_only_template_omits_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = test_blake2._BLAKE2B_KEYED_CASE_BY_BITS[256]
+    expected = hashlib.blake2b(
+        test_blake2._BLAKE2B_TEST_KEY,
+        digest_size=case.digest_len,
+    ).digest()[:12]
+    derive_attrs: list[dict[int, Any]] = []
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        _base_key: int,
+        _mechanism: int,
+        attrs: dict[int, Any],
+    ) -> int:
+        derive_attrs.append(attrs)
+        return 78
+
+    def _read_attributes(
+        _raw: object,
+        _sh: int,
+        handle: int,
+        attrs: list[int],
+    ) -> dict[int, Any]:
+        assert handle == 78
+        assert attrs == [CKA_KEY_TYPE, CKA_VALUE]
+        return {CKA_KEY_TYPE: CKK_GENERIC_SECRET, CKA_VALUE: expected}
+
+    rs = _session_with_mechanisms("BLAKE2B_256_KEY_DERIVE")
+    monkeypatch.setattr(test_blake2, "_import_blake2b_setup_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_blake2, "derive_key", _derive_key)
+    monkeypatch.setattr(test_blake2, "read_attributes", _read_attributes)
+    monkeypatch.setattr(test_blake2, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    test_blake2.TestBlake2bKeyed()._key_derive_length_only_template_value(rs, case)
+
+    assert len(derive_attrs) == 1
+    assert derive_attrs[0][CKA_VALUE_LEN] == 12
+    assert CKA_KEY_TYPE not in derive_attrs[0]
+
+
 def test_blake2b_key_derive_overlong_aes256_request_is_expected_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

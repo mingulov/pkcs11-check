@@ -299,6 +299,16 @@ def test_gap_analysis_marks_blake2b_key_derive_default_template_as_added() -> No
     assert "BLAKE2B KEY_DERIVE default-template coverage" in doc_flat
 
 
+def test_gap_analysis_marks_blake2b_key_derive_length_only_template_as_added() -> None:
+    """BLAKE2B KEY_DERIVE covers the no-key-type/with-length template rule."""
+    blake2 = _read("src/pkcs11_check/testcases/test_blake2.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_blake2b_key_derive_length_only_template_value" in blake2
+    assert "_key_derive_length_only_template_value" in blake2
+    assert "BLAKE2B KEY_DERIVE length-only-template coverage" in doc_flat
+
+
 def test_gap_analysis_marks_blake2b_key_derive_overlong_key_negative_as_added() -> None:
     """BLAKE2B KEY_DERIVE rejects requested keys longer than the digest output."""
     blake2 = _read("src/pkcs11_check/testcases/test_blake2.py")
