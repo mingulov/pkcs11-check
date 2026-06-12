@@ -159,6 +159,16 @@ def test_gap_analysis_marks_controlled_child_crash_stats_as_added() -> None:
     assert "Controlled child subprocess crash/timeout stats" in doc
 
 
+def test_gap_analysis_marks_wolf_session_fast_evidence_as_recorded() -> None:
+    """wolfPKCS11 session-fast speed evidence is recorded, not left pending."""
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "Remaining evidence: run targeted wolfPKCS11 X.509/CCTV batches" not in doc
+    assert "Focused wolfPKCS11 X.509/CCTV evidence now exists" in doc
+    assert "artifacts/_focused/wolfpkcs11-health-current/results.json" in doc
+    assert 'module_session_health: {"checks": 0, "duration_s": 0.0}' in doc
+
+
 def test_gap_analysis_marks_classic_dh_runtime_rejects_as_classified() -> None:
     """Classic DH positive derive runtime rejects use provider-general xfail logic."""
     dh = _read("src/pkcs11_check/testcases/test_dh_key_agreement.py")

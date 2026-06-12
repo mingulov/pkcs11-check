@@ -194,9 +194,16 @@ Current status:
 - Verified by focused tests: fixture behavior, forced health checks after
   failures, health-metric accumulation, JSONL aggregation, and fast-marker
   metadata are covered.
-- Remaining evidence: run targeted wolfPKCS11 X.509/CCTV batches with
-  provider-local duration and coverage baselines before claiming a provider
-  wall-time reduction.
+- Focused wolfPKCS11 X.509/CCTV evidence now exists in
+  `artifacts/_focused/wolfpkcs11-health-current/results.json`: X.509 limbo
+  import passed 663 tests in 2.809s, X.509 limbo stress passed 1009 tests in
+  3.166s, CCTV Ed25519 file-skipped 914 tests, CCTV ML-DSA file-skipped 449
+  tests, and the merged function coverage records
+  `module_session_health: {"checks": 0, "duration_s": 0.0}` for the fast-marked
+  run. This is the provider-local comparison point against the original
+  setup-dominated wolfPKCS11 master measurements in
+  `docs/superpowers/specs/2026-06-11-pkcs11-session-reuse-speed-design.md`
+  (857s/424s CCTV setup and 548s/842s X.509 setup).
 
 ### 6. Continue artifact I/O and data-loader slimming
 
