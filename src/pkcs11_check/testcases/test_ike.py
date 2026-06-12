@@ -18,7 +18,13 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.pack import mech_bytes, mech_ike2_prf_plus_derive, mech_ike_prf_derive
+from pkcs11_check.raw.pack import (
+    mech_bytes,
+    mech_ike1_extended_derive,
+    mech_ike1_prf_derive,
+    mech_ike2_prf_plus_derive,
+    mech_ike_prf_derive,
+)
 from pkcs11_check.raw.recipes import (
     create_object,
     derive_key,
@@ -69,6 +75,7 @@ _DERIVE_ERROR_CKRS = (
 
 # 32-byte base key material (shared secret / SKEYSEED)
 _BASE_KEY_BYTES = bytes(range(32))
+_IKE1_KEYGXY_BYTES = bytes(range(32, 64))
 
 # Nonce data used in IKE exchanges (Ni | Nr)
 _NONCE_I = b"\x01" * 16  # initiator nonce
@@ -118,6 +125,23 @@ def _create_sha256_hmac_derive_key(rs: Any, key_bytes: bytes = _BASE_KEY_BYTES) 
     )
 
 
+def _create_ike1_keygxy_key(rs: Any, key_bytes: bytes = _IKE1_KEYGXY_BYTES) -> int:
+    """Create the generic-secret g^xy input key used by IKEv1 derivation."""
+    return create_object(
+        rs.raw,
+        rs.sh,
+        {
+            CKA_CLASS: CKO_SECRET_KEY,
+            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+            CKA_VALUE: key_bytes,
+            CKA_DERIVE: True,
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: True,
+        },
+    )
+
+
 def _derive_generic(
     rs: Any,
     base_key: int,
@@ -157,6 +181,74 @@ def _derive_aes128(rs: Any, base_key: int, mech: int, param: bytes) -> int:
         mech,
         attrs=attrs,
         mech_param=_ike_mech_param(mech, param),
+    )
+
+
+def _derive_ike1_prf(
+    rs: Any,
+    base_key: int,
+    keygxy_key: int,
+    *,
+    initiator_cookie: bytes = _NONCE_I,
+    responder_cookie: bytes = _NONCE_R,
+    key_number: int = 0,
+    previous_key_handle: int = 0,
+    value_len: int = 32,
+    key_type: int = CKK_GENERIC_SECRET,
+) -> int:
+    """Derive a key with typed CK_IKE1_PRF_DERIVE_PARAMS."""
+    attrs: dict[int, Any] = {
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: key_type,
+        CKA_VALUE_LEN: value_len,
+        **_DERIVE_ATTRS,
+    }
+    return derive_key(
+        rs.raw,
+        rs.sh,
+        base_key,
+        CKM_IKE1_PRF_DERIVE,
+        attrs=attrs,
+        mech_param=mech_ike1_prf_derive(
+            CKM_IKE1_PRF_DERIVE,
+            prf_mechanism=CKM_SHA256_HMAC,
+            keygxy_handle=keygxy_key,
+            initiator_cookie=initiator_cookie,
+            responder_cookie=responder_cookie,
+            key_number=key_number,
+            previous_key_handle=previous_key_handle,
+        ),
+    )
+
+
+def _derive_ike1_extended(
+    rs: Any,
+    base_key: int,
+    *,
+    keygxy_key: int = 0,
+    extra_data: bytes = b"",
+    value_len: int = 32,
+    key_type: int = CKK_GENERIC_SECRET,
+) -> int:
+    """Derive a key with typed CK_IKE1_EXTENDED_DERIVE_PARAMS."""
+    attrs: dict[int, Any] = {
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: key_type,
+        CKA_VALUE_LEN: value_len,
+        **_DERIVE_ATTRS,
+    }
+    return derive_key(
+        rs.raw,
+        rs.sh,
+        base_key,
+        CKM_IKE1_EXTENDED_DERIVE,
+        attrs=attrs,
+        mech_param=mech_ike1_extended_derive(
+            CKM_IKE1_EXTENDED_DERIVE,
+            prf_mechanism=CKM_SHA256_HMAC,
+            keygxy_handle=keygxy_key,
+            extra_data=extra_data,
+        ),
     )
 
 
@@ -219,6 +311,44 @@ def _ike2_prf_plus_hmac_sha256_reference(
         previous = hmac.new(base_key, previous + seed + bytes([counter]), hashlib.sha256).digest()
         result += previous
         counter += 1
+    return result[:output_len]
+
+
+def _ike1_prf_hmac_sha256_reference(
+    base_key: bytes,
+    keygxy: bytes,
+    initiator_cookie: bytes,
+    responder_cookie: bytes,
+    *,
+    key_number: int,
+    previous_key: bytes | None = None,
+) -> bytes:
+    """Compute the OASIS CKM_IKE1_PRF_DERIVE HMAC-SHA256 reference value."""
+    if not 0 <= key_number <= 0xFF:
+        raise ValueError("key_number must fit in one byte")
+    prefix = b"" if previous_key is None else previous_key
+    data = prefix + keygxy + initiator_cookie + responder_cookie + bytes([key_number])
+    return hmac.new(base_key, data, hashlib.sha256).digest()
+
+
+def _ike1_extended_hmac_sha256_reference(
+    base_key: bytes,
+    keygxy: bytes | None,
+    extra_data: bytes,
+    output_len: int,
+) -> bytes:
+    """Compute the OASIS CKM_IKE1_EXTENDED_DERIVE HMAC-SHA256 reference value."""
+    if output_len < 0:
+        raise ValueError("output_len must be non-negative")
+    if keygxy is None and not extra_data and output_len <= len(base_key):
+        return base_key[:output_len]
+    seed = (keygxy or b"") + extra_data
+    result = b""
+    previous = b""
+    while len(result) < output_len:
+        message = previous + seed if previous else seed or b"\x00"
+        previous = hmac.new(base_key, message, hashlib.sha256).digest()
+        result += previous
     return result[:output_len]
 
 
@@ -538,9 +668,10 @@ class TestIKE1PRFDerive:
         rs = p11_raw_session
         if not rs.has_mechanism("IKE1_PRF_DERIVE"):
             pytest.skip("CKM_IKE1_PRF_DERIVE not supported")
-        base_key = _create_base_key(rs)
+        base_key = _create_sha256_hmac_derive_key(rs)
+        keygxy_key = _create_ike1_keygxy_key(rs)
         try:
-            derived = _derive_generic(rs, base_key, CKM_IKE1_PRF_DERIVE, _NONCE_I + _NONCE_R)
+            derived = _derive_ike1_prf(rs, base_key, keygxy_key)
             try:
                 assert len(_get_value(rs, derived)) == 32
             finally:
@@ -548,15 +679,53 @@ class TestIKE1PRFDerive:
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_PRF_DERIVE not operational")
         finally:
+            destroy_quietly(rs.raw, rs.sh, keygxy_key)
+            destroy_quietly(rs.raw, rs.sh, base_key)
+
+    def test_prf_hmac_sha256_exact_vector(self, p11_raw_session: Any) -> None:
+        """CKM_IKE1_PRF_DERIVE follows OASIS prf(SKEYID, g^xy|CKYi|CKYr|n)."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("IKE1_PRF_DERIVE"):
+            pytest.skip("CKM_IKE1_PRF_DERIVE not supported")
+        base_key = _create_sha256_hmac_derive_key(rs)
+        keygxy_key = _create_ike1_keygxy_key(rs)
+        expected = _ike1_prf_hmac_sha256_reference(
+            _BASE_KEY_BYTES,
+            _IKE1_KEYGXY_BYTES,
+            _NONCE_I,
+            _NONCE_R,
+            key_number=0,
+        )
+        try:
+            derived = _derive_ike1_prf(rs, base_key, keygxy_key, key_number=0)
+            try:
+                assert _get_value(rs, derived) == expected
+            finally:
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _DERIVE_ERROR_CKRS,
+                "CKM_IKE1_PRF_DERIVE HMAC-SHA256 exact vector not operational",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)
 
     def test_derive_aes128(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("IKE1_PRF_DERIVE"):
             pytest.skip("CKM_IKE1_PRF_DERIVE not supported")
-        base_key = _create_base_key(rs)
+        base_key = _create_sha256_hmac_derive_key(rs)
+        keygxy_key = _create_ike1_keygxy_key(rs)
         try:
-            derived = _derive_aes128(rs, base_key, CKM_IKE1_PRF_DERIVE, _NONCE_I + _NONCE_R)
+            derived = _derive_ike1_prf(
+                rs,
+                base_key,
+                keygxy_key,
+                value_len=16,
+                key_type=CKK_AES,
+            )
             try:
                 assert len(_get_value(rs, derived)) == 16
             finally:
@@ -566,16 +735,24 @@ class TestIKE1PRFDerive:
                 exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_PRF_DERIVE AES-128 not operational"
             )
         finally:
+            destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)
 
     def test_different_nonces_produce_different_keys(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("IKE1_PRF_DERIVE"):
             pytest.skip("CKM_IKE1_PRF_DERIVE not supported")
-        base_key = _create_base_key(rs)
+        base_key = _create_sha256_hmac_derive_key(rs)
+        keygxy_key = _create_ike1_keygxy_key(rs)
         try:
-            da = _derive_generic(rs, base_key, CKM_IKE1_PRF_DERIVE, _NONCE_I + _NONCE_R)
-            db = _derive_generic(rs, base_key, CKM_IKE1_PRF_DERIVE, b"\x07" * 16 + b"\x08" * 16)
+            da = _derive_ike1_prf(rs, base_key, keygxy_key)
+            db = _derive_ike1_prf(
+                rs,
+                base_key,
+                keygxy_key,
+                initiator_cookie=b"\x07" * 16,
+                responder_cookie=b"\x08" * 16,
+            )
             try:
                 assert _get_value(rs, da) != _get_value(rs, db)
             finally:
@@ -584,16 +761,18 @@ class TestIKE1PRFDerive:
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_PRF_DERIVE not operational")
         finally:
+            destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)
 
     def test_derive_deterministic(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("IKE1_PRF_DERIVE"):
             pytest.skip("CKM_IKE1_PRF_DERIVE not supported")
-        base_key = _create_base_key(rs)
+        base_key = _create_sha256_hmac_derive_key(rs)
+        keygxy_key = _create_ike1_keygxy_key(rs)
         try:
-            d1 = _derive_generic(rs, base_key, CKM_IKE1_PRF_DERIVE, _NONCE_I + _NONCE_R)
-            d2 = _derive_generic(rs, base_key, CKM_IKE1_PRF_DERIVE, _NONCE_I + _NONCE_R)
+            d1 = _derive_ike1_prf(rs, base_key, keygxy_key)
+            d2 = _derive_ike1_prf(rs, base_key, keygxy_key)
             try:
                 assert _get_value(rs, d1) == _get_value(rs, d2)
             finally:
@@ -602,6 +781,7 @@ class TestIKE1PRFDerive:
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_PRF_DERIVE not operational")
         finally:
+            destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)
 
 
@@ -616,10 +796,11 @@ class TestIKE1ExtendedDerive:
         rs = p11_raw_session
         if not rs.has_mechanism("IKE1_EXTENDED_DERIVE"):
             pytest.skip("CKM_IKE1_EXTENDED_DERIVE not supported")
-        base_key = _create_base_key(rs)
+        base_key = _create_sha256_hmac_derive_key(rs)
+        keygxy_key = _create_ike1_keygxy_key(rs)
         param = _NONCE_I + _NONCE_R + _SPI_I + _SPI_R
         try:
-            derived = _derive_generic(rs, base_key, CKM_IKE1_EXTENDED_DERIVE, param)
+            derived = _derive_ike1_extended(rs, base_key, keygxy_key=keygxy_key, extra_data=param)
             try:
                 assert len(_get_value(rs, derived)) == 32
             finally:
@@ -627,16 +808,60 @@ class TestIKE1ExtendedDerive:
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_EXTENDED_DERIVE not operational")
         finally:
+            destroy_quietly(rs.raw, rs.sh, keygxy_key)
+            destroy_quietly(rs.raw, rs.sh, base_key)
+
+    def test_extended_hmac_sha256_exact_vector(self, p11_raw_session: Any) -> None:
+        """CKM_IKE1_EXTENDED_DERIVE follows OASIS prf(SKEYID, g^xy|extraData)."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("IKE1_EXTENDED_DERIVE"):
+            pytest.skip("CKM_IKE1_EXTENDED_DERIVE not supported")
+        base_key = _create_sha256_hmac_derive_key(rs)
+        keygxy_key = _create_ike1_keygxy_key(rs)
+        extra_data = _NONCE_I + _NONCE_R + _SPI_I + _SPI_R
+        expected = _ike1_extended_hmac_sha256_reference(
+            _BASE_KEY_BYTES,
+            _IKE1_KEYGXY_BYTES,
+            extra_data,
+            32,
+        )
+        try:
+            derived = _derive_ike1_extended(
+                rs,
+                base_key,
+                keygxy_key=keygxy_key,
+                extra_data=extra_data,
+            )
+            try:
+                assert _get_value(rs, derived) == expected
+            finally:
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _DERIVE_ERROR_CKRS,
+                "CKM_IKE1_EXTENDED_DERIVE HMAC-SHA256 exact vector not operational",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)
 
     def test_derive_aes128(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("IKE1_EXTENDED_DERIVE"):
             pytest.skip("CKM_IKE1_EXTENDED_DERIVE not supported")
-        base_key = _create_base_key(rs)
+        base_key = _create_sha256_hmac_derive_key(rs)
+        keygxy_key = _create_ike1_keygxy_key(rs)
         param = _NONCE_I + _NONCE_R + _SPI_I + _SPI_R
         try:
-            derived = _derive_aes128(rs, base_key, CKM_IKE1_EXTENDED_DERIVE, param)
+            derived = _derive_ike1_extended(
+                rs,
+                base_key,
+                keygxy_key=keygxy_key,
+                extra_data=param,
+                value_len=16,
+                key_type=CKK_AES,
+            )
             try:
                 assert len(_get_value(rs, derived)) == 16
             finally:
@@ -646,18 +871,20 @@ class TestIKE1ExtendedDerive:
                 exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_EXTENDED_DERIVE AES-128 not operational"
             )
         finally:
+            destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)
 
     def test_different_spis_produce_different_keys(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("IKE1_EXTENDED_DERIVE"):
             pytest.skip("CKM_IKE1_EXTENDED_DERIVE not supported")
-        base_key = _create_base_key(rs)
+        base_key = _create_sha256_hmac_derive_key(rs)
+        keygxy_key = _create_ike1_keygxy_key(rs)
         try:
             pa = _NONCE_I + _NONCE_R + _SPI_I + _SPI_R
             pb = _NONCE_I + _NONCE_R + b"\xcc" * 8 + b"\xdd" * 8
-            da = _derive_generic(rs, base_key, CKM_IKE1_EXTENDED_DERIVE, pa)
-            db = _derive_generic(rs, base_key, CKM_IKE1_EXTENDED_DERIVE, pb)
+            da = _derive_ike1_extended(rs, base_key, keygxy_key=keygxy_key, extra_data=pa)
+            db = _derive_ike1_extended(rs, base_key, keygxy_key=keygxy_key, extra_data=pb)
             try:
                 assert _get_value(rs, da) != _get_value(rs, db)
             finally:
@@ -666,17 +893,19 @@ class TestIKE1ExtendedDerive:
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_EXTENDED_DERIVE not operational")
         finally:
+            destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)
 
     def test_derive_deterministic(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("IKE1_EXTENDED_DERIVE"):
             pytest.skip("CKM_IKE1_EXTENDED_DERIVE not supported")
-        base_key = _create_base_key(rs)
+        base_key = _create_sha256_hmac_derive_key(rs)
+        keygxy_key = _create_ike1_keygxy_key(rs)
         param = _NONCE_I + _NONCE_R + _SPI_I + _SPI_R
         try:
-            d1 = _derive_generic(rs, base_key, CKM_IKE1_EXTENDED_DERIVE, param)
-            d2 = _derive_generic(rs, base_key, CKM_IKE1_EXTENDED_DERIVE, param)
+            d1 = _derive_ike1_extended(rs, base_key, keygxy_key=keygxy_key, extra_data=param)
+            d2 = _derive_ike1_extended(rs, base_key, keygxy_key=keygxy_key, extra_data=param)
             try:
                 assert _get_value(rs, d1) == _get_value(rs, d2)
             finally:
@@ -685,4 +914,5 @@ class TestIKE1ExtendedDerive:
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_EXTENDED_DERIVE not operational")
         finally:
+            destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)

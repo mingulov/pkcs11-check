@@ -271,8 +271,11 @@ smoke behavior, or covered only by one narrow variation.
    IKE PRF base-key sensitivity coverage now verifies the same for
    `CKM_IKE_PRF_DERIVE`. IKE PRF data-as-key HMAC-SHA256 exact-vector coverage
    now uses typed `CK_IKE_PRF_DERIVE_PARAMS` and checks the OASIS case-1
-   `prf(Ni|Nr, baseKey)` output. SSL3 master-secret exact-vector coverage now
-   checks `CKM_SSL3_MASTER_KEY_DERIVE` output against the RFC 6101 SSL3
+   `prf(Ni|Nr, baseKey)` output. IKE1 PRF HMAC-SHA256 exact-vector coverage
+   now uses typed `CK_IKE1_PRF_DERIVE_PARAMS` and checks the OASIS
+   `prf(SKEYID, g^xy|CKYi|CKYr|key_number)` output. IKE1 Extended Derive HMAC-SHA256 exact-vector coverage now uses typed `CK_IKE1_EXTENDED_DERIVE_PARAMS` and checks
+   the OASIS `prf(SKEYID, g^xy|extraData)` output. SSL3 master-secret exact-vector coverage
+   now checks `CKM_SSL3_MASTER_KEY_DERIVE` output against the RFC 6101 SSL3
    MD5/SHA master-secret computation. X2RATCHET typed-parameter derive coverage
    now drives `CKM_X2RATCHET_INITIALIZE` and `CKM_X2RATCHET_RESPOND` through
    the OASIS `CK_X2RATCHET_*_PARAMS` structures instead of empty mechanism
@@ -516,8 +519,9 @@ smoke behavior, or covered only by one narrow variation.
    tests: exact-vector checks where practical and richer negative cases.
 2. Protocol KDF expansion beyond the already-covered priority set
    (`CKM_SP800_108_COUNTER_KDF`, `CKM_TLS12_KDF`, and `CKM_PKCS5_PBKD2`):
-   add exact external vectors and tamper/negative checks for SSL3, WTLS, IKE,
-   X3DH, and X2RATCHET where the mechanism semantics allow it.
+   continue exact-vector and tamper/negative checks for the remaining shallow
+   SSL3, WTLS, X3DH, and X2RATCHET paths where the mechanism semantics allow
+   it; IKE/IKEv1 now have typed HMAC-SHA256 exact-vector coverage.
 3. BLAKE2B keyed negative/parameter edge cases, now that HMAC, HMAC_GENERAL,
    KEY_GEN, and KEY_DERIVE positive semantics are covered.
 4. No remaining generic AEAD wrap parameter gap: ChaCha20-Poly1305 stays
@@ -678,7 +682,7 @@ After that, do the first coverage expansion round:
 1. DSA/DH/X9.42 exact-vector, negative, and parameter-variant expansion beyond
    the existing dedicated generated-parameter coverage.
 2. Protocol KDF exact-vector expansion beyond already-covered SP800-108
-   counter KDF, TLS 1.2 KDF, and PBKDF2.
+   counter KDF, TLS 1.2 KDF, PBKDF2, SSL3, and IKE/IKEv1 paths.
 3. BLAKE2B keyed negative/parameter edge cases.
 4. ChaCha20-Poly1305 wrap/unwrap only if a spec-backed `C_WrapKey` mapping is
    identified; otherwise keep it source-first and limited to encrypt/decrypt

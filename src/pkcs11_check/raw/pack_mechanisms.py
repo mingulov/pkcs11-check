@@ -22,6 +22,7 @@ from .types_std import (
     CK_AES_GCM_PARAMS,
     CK_BBOOL,
     CK_BYTE,
+    CK_BYTE_PTR,
     CK_CCM_MESSAGE_PARAMS,
     CK_CCM_WRAP_PARAMS,
     CK_CHACHA20_PARAMS,
@@ -32,6 +33,8 @@ from .types_std import (
     CK_GCM_WRAP_PARAMS,
     CK_HASH_SIGN_ADDITIONAL_CONTEXT,
     CK_HKDF_PARAMS,
+    CK_IKE1_EXTENDED_DERIVE_PARAMS,
+    CK_IKE1_PRF_DERIVE_PARAMS,
     CK_IKE2_PRF_PLUS_DERIVE_PARAMS,
     CK_IKE_PRF_DERIVE_PARAMS,
     CK_KEY_DERIVATION_STRING_DATA,
@@ -632,7 +635,10 @@ def mech_kmac(
     params = CK_KMAC_PARAMS()
     params.hKey = key_handle
     params.ulMacLength = mac_len
-    params.pCustomizationString, params.ulCustomizationStringLen = _pack_bytes(customization, ka)
+    customization_ptr, params.ulCustomizationStringLen = _pack_bytes(customization, ka)
+    params.pCustomizationString = (
+        ctypes.cast(customization_ptr, CK_BYTE_PTR) if customization_ptr is not None else None
+    )
     return _mech_struct(mechanism_type, params, "mech_kmac", ka, sub_mechanisms={"macLen": mac_len})
 
 
@@ -934,6 +940,64 @@ def mech_ike_prf_derive(
         mechanism_type,
         params,
         "mech_ike_prf_derive",
+        ka,
+        sub_mechanisms={"prfMechanism": int(prf_mechanism)},
+    )
+
+
+def mech_ike1_prf_derive(
+    mechanism_type: CKM | int,
+    *,
+    prf_mechanism: CKM | int,
+    keygxy_handle: int,
+    initiator_cookie: bytes,
+    responder_cookie: bytes,
+    key_number: int,
+    previous_key_handle: int = 0,
+) -> PackedMechanism:
+    """Pack CK_IKE1_PRF_DERIVE_PARAMS for CKM_IKE1_PRF_DERIVE."""
+    if not 0 <= key_number <= 0xFF:
+        raise ValueError("key_number must fit in CK_BYTE")
+    ka: list[Any] = []
+    params = CK_IKE1_PRF_DERIVE_PARAMS()
+    params.prfMechanism = prf_mechanism
+    params.bHasPrevKey = CK_BBOOL(1 if previous_key_handle else 0)
+    params.hKeygxy = keygxy_handle
+    params.hPrevKey = previous_key_handle
+    params.pCKYi, params.ulCKYiLen = _pack_bytes(initiator_cookie, ka)
+    params.pCKYr, params.ulCKYrLen = _pack_bytes(responder_cookie, ka)
+    params.keyNumber = CK_BYTE(key_number)
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_ike1_prf_derive",
+        ka,
+        sub_mechanisms={"prfMechanism": int(prf_mechanism)},
+    )
+
+
+def mech_ike1_extended_derive(
+    mechanism_type: CKM | int,
+    *,
+    prf_mechanism: CKM | int,
+    keygxy_handle: int = 0,
+    extra_data: bytes | None = None,
+) -> PackedMechanism:
+    """Pack CK_IKE1_EXTENDED_DERIVE_PARAMS for CKM_IKE1_EXTENDED_DERIVE."""
+    ka: list[Any] = []
+    params = CK_IKE1_EXTENDED_DERIVE_PARAMS()
+    params.prfMechanism = prf_mechanism
+    params.bHasKeygxy = CK_BBOOL(1 if keygxy_handle else 0)
+    params.hKeygxy = keygxy_handle
+    if extra_data:
+        params.pExtraData, params.ulExtraDataLen = _pack_bytes(extra_data, ka)
+    else:
+        params.pExtraData = None
+        params.ulExtraDataLen = 0
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_ike1_extended_derive",
         ka,
         sub_mechanisms={"prfMechanism": int(prf_mechanism)},
     )
@@ -1437,6 +1501,8 @@ __all__ = [
     "mech_gcm_wrap_generated_iv",
     "mech_hash_sign_context",
     "mech_hkdf",
+    "mech_ike1_extended_derive",
+    "mech_ike1_prf_derive",
     "mech_ike2_prf_plus_derive",
     "mech_ike_prf_derive",
     "mech_kmac",

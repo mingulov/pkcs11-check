@@ -467,6 +467,76 @@ def test_ike_prf_derive_packer_uses_typed_oasis_struct() -> None:
     assert _provider_read(params.pNr, params.ulNrLen) == b"r" * 16
 
 
+def test_ike1_prf_derive_packer_uses_typed_oasis_struct() -> None:
+    from pkcs11_check.raw.pack import mech_ike1_prf_derive
+    from pkcs11_check.raw.types_std import (
+        CK_IKE1_PRF_DERIVE_PARAMS,
+        CKM_IKE1_PRF_DERIVE,
+        CKM_SHA256_HMAC,
+    )
+
+    mech = mech_ike1_prf_derive(
+        CKM_IKE1_PRF_DERIVE,
+        prf_mechanism=CKM_SHA256_HMAC,
+        keygxy_handle=123,
+        initiator_cookie=b"i" * 8,
+        responder_cookie=b"r" * 8,
+        key_number=2,
+        previous_key_handle=456,
+    )
+
+    assert mech.ck.mechanism == CKM_IKE1_PRF_DERIVE
+    params = mech.params
+    assert isinstance(params, CK_IKE1_PRF_DERIVE_PARAMS)
+    assert params.prfMechanism == CKM_SHA256_HMAC
+    assert params.bHasPrevKey == 1
+    assert params.hKeygxy == 123
+    assert params.hPrevKey == 456
+    assert params.ulCKYiLen == 8
+    assert params.ulCKYrLen == 8
+    assert params.keyNumber == 2
+    assert _provider_read(params.pCKYi, params.ulCKYiLen) == b"i" * 8
+    assert _provider_read(params.pCKYr, params.ulCKYrLen) == b"r" * 8
+
+
+def test_ike1_extended_derive_packer_uses_typed_oasis_struct() -> None:
+    from pkcs11_check.raw.pack import mech_ike1_extended_derive
+    from pkcs11_check.raw.types_std import (
+        CK_IKE1_EXTENDED_DERIVE_PARAMS,
+        CKM_IKE1_EXTENDED_DERIVE,
+        CKM_SHA256_HMAC,
+    )
+
+    mech = mech_ike1_extended_derive(
+        CKM_IKE1_EXTENDED_DERIVE,
+        prf_mechanism=CKM_SHA256_HMAC,
+        keygxy_handle=123,
+        extra_data=b"extra",
+    )
+
+    assert mech.ck.mechanism == CKM_IKE1_EXTENDED_DERIVE
+    params = mech.params
+    assert isinstance(params, CK_IKE1_EXTENDED_DERIVE_PARAMS)
+    assert params.prfMechanism == CKM_SHA256_HMAC
+    assert params.bHasKeygxy == 1
+    assert params.hKeygxy == 123
+    assert params.ulExtraDataLen == 5
+    assert _provider_read(params.pExtraData, params.ulExtraDataLen) == b"extra"
+
+    no_keygxy = mech_ike1_extended_derive(
+        CKM_IKE1_EXTENDED_DERIVE,
+        prf_mechanism=CKM_SHA256_HMAC,
+        extra_data=b"",
+    )
+
+    params = no_keygxy.params
+    assert isinstance(params, CK_IKE1_EXTENDED_DERIVE_PARAMS)
+    assert params.bHasKeygxy == 0
+    assert params.hKeygxy == 0
+    assert params.ulExtraDataLen == 0
+    assert params.pExtraData is None
+
+
 def test_ike2_prf_plus_derive_packer_uses_typed_oasis_struct() -> None:
     from pkcs11_check.raw.pack import mech_ike2_prf_plus_derive
     from pkcs11_check.raw.types_std import (
@@ -622,6 +692,10 @@ def test_mech_kmac_packs_key_handle_mac_length_and_customization() -> None:
     assert params.ulMacLength == 32
     assert params.ulCustomizationStringLen == len(customization)
     assert params.pCustomizationString is not None
+    assert (
+        _provider_read(params.pCustomizationString, params.ulCustomizationStringLen)
+        == customization
+    )
 
 
 def test_mech_cbc_pad_sets_mechanism_and_iv_length() -> None:

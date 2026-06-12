@@ -129,6 +129,28 @@ def test_gap_analysis_marks_ike2_prf_plus_exact_vector_as_added() -> None:
     assert "IKE2 PRF+ HMAC-SHA256 exact-vector coverage" in doc
 
 
+def test_gap_analysis_marks_ike1_exact_vectors_as_added() -> None:
+    """IKEv1 PRF and Extended Derive have typed-param HMAC-SHA256 exact vectors."""
+    ike = _read("src/pkcs11_check/testcases/test_ike.py")
+    pack = _read("src/pkcs11_check/raw/pack_mechanisms.py")
+    raw_pack_tests = _read("tests/test_raw_pack.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "mech_ike1_prf_derive" in pack
+    assert "CK_IKE1_PRF_DERIVE_PARAMS" in pack
+    assert "mech_ike1_extended_derive" in pack
+    assert "CK_IKE1_EXTENDED_DERIVE_PARAMS" in pack
+    assert "test_ike1_prf_derive_packer_uses_typed_oasis_struct" in raw_pack_tests
+    assert "test_ike1_extended_derive_packer_uses_typed_oasis_struct" in raw_pack_tests
+    assert "test_prf_hmac_sha256_exact_vector" in ike
+    assert "_ike1_prf_hmac_sha256_reference" in ike
+    assert "test_extended_hmac_sha256_exact_vector" in ike
+    assert "_ike1_extended_hmac_sha256_reference" in ike
+
+    assert "IKE1 PRF HMAC-SHA256 exact-vector coverage" in doc
+    assert "IKE1 Extended Derive HMAC-SHA256 exact-vector coverage" in doc
+
+
 def test_gap_analysis_marks_ssl3_master_secret_exact_vector_as_added() -> None:
     """CKM_SSL3_MASTER_KEY_DERIVE has an SSL3 master-secret exact vector."""
     ssl3 = _read("src/pkcs11_check/testcases/test_ssl3.py")
