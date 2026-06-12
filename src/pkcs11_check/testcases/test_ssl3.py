@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+from collections.abc import Mapping
 from ctypes import byref
 from typing import Any
 
@@ -30,11 +31,13 @@ from pkcs11_check.raw.pack import (
     mech_ssl3_key_mat,
     mech_ssl3_master_key_derive,
     template,
+    template_ptr_count,
 )
 from pkcs11_check.raw.recipes import (
     create_object,
     derive_key,
     destroy_quietly,
+    pack_attrs,
     read_attributes,
     sign_single,
 )
@@ -144,6 +147,25 @@ def _ssl3_master_secret_reference(
             ).digest()
         )
     return bytes(out)
+
+
+def _derive_key_material_to_params(
+    rs: Any,
+    base_key: int,
+    attrs: Mapping[Any, Any],
+    mech: Any,
+) -> None:
+    """Run SSL3 key-material derive, whose output handles live in mechanism params."""
+    packed = pack_attrs(attrs)
+    tmpl = template(*packed)
+    rv = rs.raw.C_DeriveKey(
+        rs.sh,
+        mech.byref(),
+        base_key,
+        *template_ptr_count(tmpl),
+        None,
+    )
+    expect_rv(rv, CKR_OK)
 
 
 class TestSSL3PreMasterKeyGen:
@@ -418,29 +440,24 @@ class TestSSL3KeyAndMacDerive:
                 _SERVER_RANDOM,
                 key_size_bits=128,
             )
-            derived = derive_key(
-                rs.raw,
-                rs.sh,
-                master_secret,
-                CKM_SSL3_KEY_AND_MAC_DERIVE,
-                attrs={
-                    CKA_CLASS: CKO_SECRET_KEY,
-                    CKA_KEY_TYPE: CKK_AES,
-                    CKA_SENSITIVE: False,
-                    CKA_EXTRACTABLE: True,
-                    CKA_TOKEN: False,
-                },
-                mech_param=mech,
-            )
             try:
+                _derive_key_material_to_params(
+                    rs,
+                    master_secret,
+                    {
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
+                    },
+                    mech,
+                )
                 out = mech.key_mat_out
                 assert out.hClientKey != 0
                 assert out.hServerKey != 0
                 assert any(mech.buffer_bytes("iv_client"))
                 assert any(mech.buffer_bytes("iv_server"))
-                raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-                assert isinstance(raw_val, bytes)
-                assert len(raw_val) == 16, f"Expected 16 bytes, got {len(raw_val)}"
             finally:
                 out = mech.key_mat_out
                 destroy_returned_handles(
@@ -450,14 +467,12 @@ class TestSSL3KeyAndMacDerive:
                     out.hClientKey,
                     out.hServerKey,
                 )
-                destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
                 pytest.xfail(f"CKM_SSL3_KEY_AND_MAC_DERIVE not operational: {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, master_secret)
-
 
 class TestSSL3Mac:
     """CKM_SSL3_MD5_MAC and CKM_SSL3_SHA1_MAC - SSL3 MAC mechanisms.

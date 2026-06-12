@@ -290,7 +290,10 @@ smoke behavior, or covered only by one narrow variation.
    `prf(SKEYID, g^xy|CKYi|CKYr|key_number)` output. IKE1 Extended Derive HMAC-SHA256 exact-vector coverage now uses typed `CK_IKE1_EXTENDED_DERIVE_PARAMS` and checks
    the OASIS `prf(SKEYID, g^xy|extraData)` output. SSL3 master-secret exact-vector coverage
    now checks `CKM_SSL3_MASTER_KEY_DERIVE` output against the RFC 6101 SSL3
-   MD5/SHA master-secret computation. X2RATCHET typed-parameter derive coverage
+   MD5/SHA master-secret computation. SSL3 key-and-MAC NULL phKey coverage
+   now follows the OASIS convention that `CKM_SSL3_KEY_AND_MAC_DERIVE` returns
+   its handles through `CK_SSL3_KEY_MAT_OUT`, not through a primary `phKey`.
+   X2RATCHET typed-parameter derive coverage
    now drives `CKM_X2RATCHET_INITIALIZE` and `CKM_X2RATCHET_RESPOND` through
    the OASIS `CK_X2RATCHET_*_PARAMS` structures instead of empty mechanism
    parameters. The independent-output probe and the `CKK_X2RATCHET` derived-key
