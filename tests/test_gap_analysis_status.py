@@ -305,6 +305,28 @@ def test_gap_analysis_marks_derived_linked_attribute_invariants_as_added() -> No
     assert "Remaining work is linked-attribute self-contradiction expansion" not in doc_flat
 
 
+def test_gap_analysis_marks_malformed_param_negatives_as_added() -> None:
+    """Registry-driven bad-parameter coverage includes non-NULL malformed params."""
+    negative = _read("src/pkcs11_check/testcases/test_mech_negative.py")
+    guard = _read("tests/test_mech_negative_registry_coverage.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_registry_encrypt_malformed_required_param" in negative
+    assert "test_registry_sign_malformed_required_param" in negative
+    assert "_MALFORMED_REQUIRED_PARAM_RVS" in negative
+    assert "CKR_ARGUMENTS_BAD" in negative
+    assert 'mech_bytes(entry.mech_id, b"\\x00")' in negative
+
+    assert "test_registry_encrypt_malformed_required_param" in guard
+    assert "test_registry_sign_malformed_required_param" in guard
+
+    assert "Registry-driven malformed non-NULL parameter coverage exists" in doc_flat
+    assert (
+        "Remaining work is broader linked-attribute families, malformed non-NULL parameter coverage"
+        not in doc_flat
+    )
+
+
 def test_coverage_plan_does_not_count_ecmqv_as_kea_coverage() -> None:
     """ECMQV and KEA are different mechanisms; ECMQV tests do not cover KEA."""
     ecdh_extended = _read("src/pkcs11_check/testcases/test_ecdh_extended.py")

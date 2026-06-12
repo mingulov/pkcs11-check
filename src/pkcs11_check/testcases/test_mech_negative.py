@@ -58,6 +58,7 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS,
     CKM_SHA256_HMAC,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_BUFFER_TOO_SMALL,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
@@ -101,6 +102,7 @@ _WRONG_KEY_SETUP_REJECTS = (
 )
 _NO_SPECIFIC_WRAP_PERMISSION_RVS: tuple[int, ...] = ()
 _MISSING_REQUIRED_PARAM_RVS = (CKR_MECHANISM_PARAM_INVALID,)
+_MALFORMED_REQUIRED_PARAM_RVS = (CKR_MECHANISM_PARAM_INVALID, CKR_ARGUMENTS_BAD)
 _WRAP_SETUP_REJECT_RVS = (
     *CIPHER_OP_RUNTIME_REJECT_RVS,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -520,7 +522,7 @@ class TestWrongKeyType:
 
 
 class TestBadParameters:
-    """Mechanisms requiring params must reject missing mechanism parameters."""
+    """Mechanisms requiring params must reject missing or malformed mechanism parameters."""
 
     def test_registry_encrypt_missing_required_param(
         self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry
@@ -545,6 +547,29 @@ class TestBadParameters:
             if decrypt_key is not None and decrypt_key != encrypt_key:
                 destroy_quietly(rs.raw, rs.sh, decrypt_key)
 
+    def test_registry_encrypt_malformed_required_param(
+        self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry
+    ) -> None:
+        """Registry-driven malformed-param check for advertised encrypt mechanisms."""
+        rs = p11_module_session
+        entry = mech_encrypt_entry
+        _skip_if_not_required_param_registry_case(entry)
+        config = entry.config
+        assert config is not None
+
+        encrypt_key = 0
+        decrypt_key: int | None = None
+        label = f"{entry.mech_name} C_EncryptInit with malformed non-NULL params"
+        try:
+            encrypt_key, decrypt_key = generate_key_for_encrypt(rs, entry, config)
+            mech = mech_bytes(entry.mech_id, b"\x00")
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), encrypt_key)
+            classify_negative_rv(rv, _MALFORMED_REQUIRED_PARAM_RVS, label=label)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, encrypt_key)
+            if decrypt_key is not None and decrypt_key != encrypt_key:
+                destroy_quietly(rs.raw, rs.sh, decrypt_key)
+
     def test_registry_sign_missing_required_param(
         self, p11_module_session: RawSession, mech_sign_entry: MechEntry
     ) -> None:
@@ -563,6 +588,29 @@ class TestBadParameters:
             mech = mech_simple(entry.mech_id)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), sign_key)
             classify_negative_rv(rv, _MISSING_REQUIRED_PARAM_RVS, label=label)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, sign_key)
+            if verify_key is not None and verify_key != sign_key:
+                destroy_quietly(rs.raw, rs.sh, verify_key)
+
+    def test_registry_sign_malformed_required_param(
+        self, p11_module_session: RawSession, mech_sign_entry: MechEntry
+    ) -> None:
+        """Registry-driven malformed-param check for advertised sign mechanisms."""
+        rs = p11_module_session
+        entry = mech_sign_entry
+        _skip_if_not_required_param_registry_case(entry)
+        config = entry.config
+        assert config is not None
+
+        sign_key = 0
+        verify_key: int | None = None
+        label = f"{entry.mech_name} C_SignInit with malformed non-NULL params"
+        try:
+            sign_key, verify_key = generate_key_for_sign(rs, entry, config)
+            mech = mech_bytes(entry.mech_id, b"\x00")
+            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), sign_key)
+            classify_negative_rv(rv, _MALFORMED_REQUIRED_PARAM_RVS, label=label)
         finally:
             destroy_quietly(rs.raw, rs.sh, sign_key)
             if verify_key is not None and verify_key != sign_key:

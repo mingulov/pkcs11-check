@@ -425,9 +425,13 @@ smoke behavior, or covered only by one narrow variation.
     `CKA_NEVER_EXTRACTABLE`/`CKA_EXTRACTABLE` and
     `CKA_ALWAYS_SENSITIVE`/`CKA_SENSITIVE` on suite-generated, never-modified
     keys, with Type-D self-contradictions classified as failures and honest
-    non-support as xfail. Remaining work is broader linked-attribute families,
-    malformed non-NULL parameter coverage, and deeper derive/wrap/digest/message
-    negative coverage for protocol/asymmetric/custom-parameter families.
+    non-support as xfail. Registry-driven malformed non-NULL parameter coverage
+    exists for advertised encrypt/sign mechanisms whose registry config requires
+    a mechanism parameter, using a valid non-NULL pointer with an invalid
+    one-byte parameter length. Remaining work is broader linked-attribute
+    families, malformed parameter expansion beyond encrypt/sign init, and deeper
+    derive/wrap/digest/message negative coverage for
+    protocol/asymmetric/custom-parameter families.
 
 ### Recommended coverage order
 
@@ -443,8 +447,8 @@ smoke behavior, or covered only by one narrow variation.
    source-first for wrap/unwrap unless a spec-backed `C_WrapKey` mapping appears.
 5. Continue registry-driven negative tests for broader linked-attribute families
    beyond the current `NEVER_EXTRACTABLE`/`ALWAYS_SENSITIVE` derived invariants,
-   malformed non-NULL parameter cases, deeper derive custom-parameter cases, and
-   deeper unwrap shape/error cases.
+   malformed parameter cases beyond current encrypt/sign init coverage, deeper
+   derive custom-parameter cases, and deeper unwrap shape/error cases.
 
 ## Correctness and Reporting Findings
 

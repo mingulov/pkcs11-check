@@ -76,4 +76,6 @@ def test_bad_param_negatives_are_registry_driven() -> None:
     source = _source()
 
     assert "test_registry_encrypt_missing_required_param" in source
+    assert "test_registry_encrypt_malformed_required_param" in source
     assert "test_registry_sign_missing_required_param" in source
+    assert "test_registry_sign_malformed_required_param" in source
