@@ -219,6 +219,44 @@ class TestIKE2PRFPlusDerive:
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
+    def test_base_key_affects_output(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("IKE2_PRF_PLUS_DERIVE"):
+            pytest.skip("CKM_IKE2_PRF_PLUS_DERIVE not supported")
+        base_key_a = _create_base_key(rs)
+        base_key_b: int | None = None
+        try:
+            base_key_b = _create_base_key(rs, bytes(reversed(_BASE_KEY_BYTES)))
+            derived_a: int | None = None
+            derived_b: int | None = None
+            try:
+                derived_a = _derive_generic(
+                    rs,
+                    base_key_a,
+                    CKM_IKE2_PRF_PLUS_DERIVE,
+                    _NONCE_I + _NONCE_R,
+                )
+                derived_b = _derive_generic(
+                    rs,
+                    base_key_b,
+                    CKM_IKE2_PRF_PLUS_DERIVE,
+                    _NONCE_I + _NONCE_R,
+                )
+                assert _get_value(rs, derived_a) != _get_value(rs, derived_b), (
+                    "IKE2 PRF+ base key change did not affect derived output"
+                )
+            finally:
+                if derived_b is not None:
+                    destroy_quietly(rs.raw, rs.sh, derived_b)
+                if derived_a is not None:
+                    destroy_quietly(rs.raw, rs.sh, derived_a)
+        except AssertionError as exc:
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE2_PRF_PLUS_DERIVE not operational")
+        finally:
+            if base_key_b is not None:
+                destroy_quietly(rs.raw, rs.sh, base_key_b)
+            destroy_quietly(rs.raw, rs.sh, base_key_a)
+
     def test_derive_deterministic(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("IKE2_PRF_PLUS_DERIVE"):

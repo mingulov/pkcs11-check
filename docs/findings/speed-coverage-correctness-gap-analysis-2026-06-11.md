@@ -242,7 +242,8 @@ smoke behavior, or covered only by one narrow variation.
    mechanisms. WTLS PRF seed-sensitivity coverage now verifies that changing
    the explicit `CK_WTLS_PRF_PARAMS.pSeed` input changes the derived output.
    WTLS PRF label-sensitivity coverage now verifies the same for
-   `CK_WTLS_PRF_PARAMS.pLabel`.
+   `CK_WTLS_PRF_PARAMS.pLabel`. IKE2 PRF+ base-key sensitivity coverage now
+   verifies that changing the shared-secret input changes the derived output.
 2. Many derive mechanisms still lack runtime dispatch: Camellia/ARIA/SEED
    encrypt-data and any remaining protocol KDF variants not covered by
    dedicated files.
