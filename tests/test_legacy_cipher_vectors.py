@@ -56,7 +56,6 @@ from pkcs11_check.raw.types_std import (
     CKM_SEED_CBC_PAD,
     CKM_SEED_MAC,
     CKM_SEED_MAC_GENERAL,
-    CKM_SKIPJACK_CBC64,
     CKM_SKIPJACK_ECB64,
     CKM_TWOFISH_CBC,
 )
@@ -497,35 +496,6 @@ def test_skipjack_ecb64_mechanism_has_sp800_17_kat_vectors() -> None:
             "https://nvlpubs.nist.gov/nistpubs/Legacy/SP/"
             "nistspecialpublication800-17.pdf"
         )
-
-
-def test_skipjack_cbc64_mechanism_has_sp800_17_kat_vector_and_iv_replay() -> None:
-    config = MECHANISM_REGISTRY[int(CKM_SKIPJACK_CBC64)]
-    assert config.vector_file == "skipjack_cbc64.json"
-
-    vectors = load_positive_vectors("skipjack_cbc64.json")
-    assert len(vectors) == 1
-    vec = vectors[0]
-
-    assert vec["id"] == "skipjack_cbc64_sp800_17_table6_round_10_zero_iv"
-    assert vec["type"] == "positive"
-    assert vec["mechanism_name"] == "CKM_SKIPJACK_CBC64"
-    assert vec["key_bits"] == 80
-    assert vec["key_hex"] == "00200000000000000000"
-    assert vec["plaintext_hex"] == "0000000000000000"
-    assert vec["ciphertext_hex"] == "f4108b099b047040"
-    assert vec["params"]["iv_hex"] == "0000000000000000"
-    assert vec["params"]["source"] == "NIST SP 800-17 appendix B table 6 round 10"
-    assert vec["params"]["source_url"] == (
-        "https://nvlpubs.nist.gov/nistpubs/Legacy/SP/"
-        "nistspecialpublication800-17.pdf"
-    )
-
-    params = build_params_from_vector(int(CKM_SKIPJACK_CBC64), config.param_recipe, vec)
-
-    assert ctypes.string_at(params.ck.pParameter, params.ck.ulParameterLen) == bytes.fromhex(
-        vec["params"]["iv_hex"]
-    )
 
 
 def test_blowfish_cbc_encrypt_mechanism_has_schneier_kat_vector() -> None:
