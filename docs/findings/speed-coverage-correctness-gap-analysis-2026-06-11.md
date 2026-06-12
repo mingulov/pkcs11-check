@@ -276,11 +276,13 @@ smoke behavior, or covered only by one narrow variation.
    length matches the requested parameter length, and RC2/RC5/CAST128/IDEA plus
    DES, 3DES, Camellia, ARIA, and SEED have expected-MAC vectors. Camellia,
    ARIA, and SEED fixed-output MAC KATs now cover the spec-defined half-block
-   special case. Continue this sweep for remaining fixed-output `*_MAC`, DES3
-   CMAC/CMAC_GENERAL, CDMF, CAST/CAST3, and less-sourced legacy families, but
-   gate each new vector on a reliable source and an unambiguous PKCS#11
-   parameter mapping; SKIPJACK and KEA are lower confidence until a defensible
-   vector/operation source is identified.
+   special case. DES3 CMAC/CMAC_GENERAL now have full-block CMAC KATs grounded
+   in NIST SP 800-38B semantics and the local OASIS DES3-CMAC mapping.
+   Continue this sweep for remaining DES/DES3 fixed-output `*_MAC`, CDMF,
+   CAST/CAST3, and less-sourced legacy families, but gate each new vector on a
+   reliable source and an unambiguous PKCS#11 parameter mapping; SKIPJACK and
+   KEA are lower confidence until a defensible vector/operation source is
+   identified.
 9. CMS and CT-KIP are shallow: current tests mostly check mechanism info or
    clean rejection rather than valid parameterized operations.
 10. Generic negative coverage is narrow relative to 467 registry mechanisms.
@@ -496,9 +498,12 @@ Legacy/deprecated coverage addendum for the active goal:
   exact-output KAT vectors plus registry `vector_file` links. These are sourced
   from the local OASIS mechanism text that defines each fixed `*_MAC` as the
   no-parameter special case of `*_MAC_GENERAL` producing half the block size.
-  DES/DES3 fixed-output MAC, DES3 CMAC/CMAC_GENERAL, RC2/RC5/CAST/CAST3/IDEA
-  fixed-output MAC, CDMF, and the less-sourced classified/obsolete families
-  remain pending.
+- Added: DES3 CMAC/CMAC_GENERAL now have full-block exact-output KAT vectors
+  plus registry `vector_file` links. These use NIST SP 800-38B CMAC via pyca
+  cryptography and the local OASIS DES3-CMAC text, with a non-block-aligned
+  input to exercise CMAC padding/subkey semantics.
+  DES/DES3 fixed-output MAC, RC2/RC5/CAST/CAST3/IDEA fixed-output MAC, CDMF,
+  and the less-sourced classified/obsolete families remain pending.
 
 Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks
 should follow once the harness can reuse provider-local history and prove

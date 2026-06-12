@@ -18,6 +18,8 @@ from pkcs11_check.raw.types_std import (
     CKM_CAST128_ECB,
     CKM_CAST128_MAC_GENERAL,
     CKM_DES3_CBC_PAD,
+    CKM_DES3_CMAC,
+    CKM_DES3_CMAC_GENERAL,
     CKM_DES3_MAC_GENERAL,
     CKM_DES_CBC_PAD,
     CKM_DES_MAC_GENERAL,
@@ -531,6 +533,43 @@ def test_half_block_cipher_mac_mechanisms_have_kat_vectors() -> None:
             assert len(bytes.fromhex(vec["mac_hex"])) == 8
             assert "special case" in vec["params"]["source"]
             assert "half the block size" in vec["params"]["source"]
+
+
+def test_des3_cmac_mechanisms_have_kat_vectors() -> None:
+    expected = {
+        int(CKM_DES3_CMAC): (
+            "des3_cmac.json",
+            "CKM_DES3_CMAC",
+            "c0e7032f42c24c81",
+            None,
+        ),
+        int(CKM_DES3_CMAC_GENERAL): (
+            "des3_cmac_general.json",
+            "CKM_DES3_CMAC_GENERAL",
+            "c0e7032f42c24c81",
+            8,
+        ),
+    }
+
+    for mech_id, (vector_file, mechanism_name, expected_mac, mac_len) in expected.items():
+        config = MECHANISM_REGISTRY[mech_id]
+        assert config.vector_file == vector_file
+
+        vectors = load_positive_vectors(vector_file)
+        assert vectors, f"{vector_file} must contain positive vectors"
+        for vec in vectors:
+            assert vec["type"] == "positive"
+            assert vec["mechanism_name"] == mechanism_name
+            assert vec["key_hex"] == "96dea09d832e4609742ccd800a8958caecdb70730c27d8b1"
+            assert vec["input_hex"] == "0546f43bf28360e17bdeb5648f3ab9ab94424219eca9da"
+            assert vec["mac_hex"] == expected_mac
+            assert len(bytes.fromhex(vec["mac_hex"])) == 8
+            assert "NIST SP 800-38B CMAC" in vec["params"]["source"]
+            assert "PKCS#11 DES3-CMAC" in vec["params"]["source"]
+            if mac_len is None:
+                assert "mac_len" not in vec["params"]
+            else:
+                assert vec["params"]["mac_len"] == mac_len
 
 
 def test_twofish_cbc_encrypt_mechanism_has_schneier_kat_vector() -> None:

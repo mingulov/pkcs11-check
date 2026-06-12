@@ -129,6 +129,19 @@ def test_gap_analysis_marks_half_block_fixed_mac_vectors_as_added() -> None:
     assert "Camellia, ARIA, and SEED fixed-output MAC" in doc
 
 
+def test_gap_analysis_marks_des3_cmac_vectors_as_added() -> None:
+    """DES3 CMAC and CMAC_GENERAL now have full-block KAT vector links."""
+    des_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_des.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    for vector_file in ("des3_cmac.json", "des3_cmac_general.json"):
+        assert vector_file in des_registry
+        assert _read(f"src/pkcs11_check/testcases/data/mechanism_vectors/{vector_file}")
+
+    assert "DES3 CMAC/CMAC_GENERAL now have full-block" in doc
+    assert "DES3 CMAC/CMAC_GENERAL, RC2/RC5/CAST/CAST3/IDEA fixed-output MAC" not in doc
+
+
 def test_gap_analysis_marks_mixed_fail_crash_reporting_as_fixed() -> None:
     """Mixed fail+crash units now surface crash status instead of only failed status."""
     runner = _read("src/pkcs11_check/core/file_runner.py")
