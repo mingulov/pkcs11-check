@@ -26,12 +26,14 @@ def test_gap_analysis_marks_protocol_kdf_semantics_as_dedicated_coverage() -> No
     assert "_tls12_prf_sha256" in tls12
     assert "assert value == expected" in tls12
     assert "test_prf_seed_affects_output" in wtls
+    assert "test_prf_label_affects_output" in wtls
     assert 'REQUIRED_MECHANISMS = ["PKCS5_PBKD2"]' in pbkdf2
     assert "assert dk_actual == dk_expected" in pbkdf2
 
     assert "Protocol KDFs are intentionally skipped" not in doc
     assert "Dedicated protocol KDF semantic coverage exists" in doc
     assert "WTLS PRF seed-sensitivity coverage" in doc
+    assert "WTLS PRF label-sensitivity coverage" in doc
 
 
 def test_gap_analysis_marks_blake2b_keyed_semantics_as_covered() -> None:

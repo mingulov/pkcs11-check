@@ -514,12 +514,19 @@ class TestWTLSKeyAndMacDerive:
 class TestWTLSPRF:
     """CKM_WTLS_PRF - WTLS pseudo-random function for key material expansion."""
 
-    def _derive_prf_value(self, rs: Any, secret: int, *, seed: bytes) -> tuple[int, bytes]:
+    def _derive_prf_value(
+        self,
+        rs: Any,
+        secret: int,
+        *,
+        seed: bytes,
+        label: bytes = b"key expansion",
+    ) -> tuple[int, bytes]:
         mech = mech_wtls_prf(
             CKM_WTLS_PRF,
             digest_mechanism=CKM_SHA256,
             seed=seed,
-            label=b"key expansion",
+            label=label,
             output_len=16,
         )
         derived = derive_key(
@@ -614,6 +621,42 @@ class TestWTLSPRF:
                     seed=bytes(range(1, 33)),
                 )
                 assert val1 != val2, "WTLS PRF seed change did not affect derived output"
+            except AssertionError as exc:
+                if is_known_error(exc, _WTLS_ERROR_RVS):
+                    pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
+                raise
+            finally:
+                if derived2:
+                    destroy_quietly(rs.raw, rs.sh, derived2)
+                if derived1:
+                    destroy_quietly(rs.raw, rs.sh, derived1)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, secret)
+
+    def test_prf_label_affects_output(self, p11_raw_session: Any) -> None:
+        """Changing only the WTLS PRF label must change the derived output."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("WTLS_PRF"):
+            pytest.skip("CKM_WTLS_PRF not supported")
+
+        secret = _create_generic_secret(rs, 20)
+        try:
+            derived1 = 0
+            derived2 = 0
+            try:
+                derived1, val1 = self._derive_prf_value(
+                    rs,
+                    secret,
+                    seed=bytes(range(32)),
+                    label=b"key expansion",
+                )
+                derived2, val2 = self._derive_prf_value(
+                    rs,
+                    secret,
+                    seed=bytes(range(32)),
+                    label=b"client expansion",
+                )
+                assert val1 != val2, "WTLS PRF label change did not affect derived output"
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
