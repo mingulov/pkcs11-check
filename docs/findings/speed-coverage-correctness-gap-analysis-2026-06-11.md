@@ -282,8 +282,11 @@ smoke behavior, or covered only by one narrow variation.
    deviations, while tampered-data/signature tests treat clean signature
    rejection as the intended negative outcome. DSA_SHA224 now participates in
    the complete generated-key prehash roundtrip, tampered-data,
-   tampered-signature, empty-data, and large-data matrix. Classic DH derive runtime-reject classification
-   now uses a shared wrapper for positive `CKM_DH_PKCS_DERIVE` operations:
+   tampered-signature, empty-data, and large-data matrix. Raw CKM_DSA
+   wrong-signature-length coverage now verifies verification rejects a
+   truncated signature through the shared invalid-signature policy. Classic DH
+   derive runtime-reject classification now uses a shared wrapper for positive
+   `CKM_DH_PKCS_DERIVE` operations:
    advertised clean derive refusals are provider-general xfail deviations,
    while successful derives still verify exact shared-secret and
    encryption/readback effects. Classic DH missing-peer-public negative

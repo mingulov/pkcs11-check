@@ -136,6 +136,19 @@ def test_gap_analysis_marks_dsa_prehash_runtime_rejects_as_classified() -> None:
     assert "DSA prehash runtime-reject classification" in doc
 
 
+def test_gap_analysis_marks_raw_dsa_wrong_signature_length_negative_as_added() -> None:
+    """Raw DSA verification rejects wrong-length signatures."""
+    dsa = _read("src/pkcs11_check/testcases/test_dsa_complete.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
+
+    assert "test_raw_dsa_wrong_signature_length_fails" in dsa
+    assert "CKM_DSA wrong-length signature" in dsa
+    assert "_dsa_invalid_verify_rejected_or_xfail" in dsa
+
+    assert "Raw CKM_DSA wrong-signature-length coverage" in doc_flat
+
+
 def test_gap_analysis_marks_dsa_sha224_prehash_matrix_as_added() -> None:
     """DSA_SHA224 is part of the complete DSA prehash roundtrip/tamper matrix."""
     dsa = _read("src/pkcs11_check/testcases/test_dsa_complete.py")
@@ -173,12 +186,13 @@ def test_gap_analysis_marks_classic_dh_runtime_rejects_as_classified() -> None:
     """Classic DH positive derive runtime rejects use provider-general xfail logic."""
     dh = _read("src/pkcs11_check/testcases/test_dh_key_agreement.py")
     doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
 
     assert "_dh_derive_or_xfail" in dh
     assert "_DH_DERIVE_RUNTIME_REJECT_RVS" in dh
     assert "xfail_if_known_ckr" in dh
 
-    assert "Classic DH derive runtime-reject classification" in doc
+    assert "Classic DH derive runtime-reject classification" in doc_flat
 
 
 def test_gap_analysis_marks_dh_missing_peer_public_negative_as_added() -> None:

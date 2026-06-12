@@ -440,6 +440,33 @@ class TestDSARaw:
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, dp)
 
+    def test_raw_dsa_wrong_signature_length_fails(self, p11_module_session: Any) -> None:
+        """Raw DSA verification with a truncated signature must fail."""
+        rs = p11_module_session
+        if not rs.has_mechanism("DSA"):
+            pytest.skip("CKM_DSA not supported")
+
+        dp, pub, priv = _generate_dsa_keypair(rs)
+        try:
+            digest = hashlib.sha1(b"wrong signature length", usedforsecurity=False).digest()  # noqa: S324
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_DSA, digest)
+            assert len(sig) > 1
+
+            truncated_sig = sig[:-1]
+            result = _dsa_invalid_verify_rejected_or_xfail(
+                rs,
+                pub,
+                CKM_DSA,
+                digest,
+                truncated_sig,
+                "CKM_DSA wrong-length signature",
+            )
+            assert result is False
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, dp)
+
     def test_raw_dsa_nondeterministic(self, p11_module_session: Any) -> None:
         """Raw DSA signatures for the same digest should differ (random k)."""
         rs = p11_module_session
