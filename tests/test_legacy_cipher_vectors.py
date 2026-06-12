@@ -14,6 +14,7 @@ from pkcs11_check.raw.types_std import (
     CKM_CAMELLIA_MAC,
     CKM_CAMELLIA_MAC_GENERAL,
     CKM_CAST3_CBC,
+    CKM_CAST3_CBC_PAD,
     CKM_CAST3_ECB,
     CKM_CAST3_MAC,
     CKM_CAST3_MAC_GENERAL,
@@ -23,6 +24,7 @@ from pkcs11_check.raw.types_std import (
     CKM_CAST128_MAC,
     CKM_CAST128_MAC_GENERAL,
     CKM_CAST_CBC,
+    CKM_CAST_CBC_PAD,
     CKM_CAST_ECB,
     CKM_CAST_MAC,
     CKM_CAST_MAC_GENERAL,
@@ -189,6 +191,18 @@ def test_legacy_cbc_pad_mechanisms_have_kat_vectors() -> None:
             8,
             "c5aa82a2a6c97d5ce48c18e4fbda3d5d",
         ),
+        int(CKM_CAST_CBC_PAD): (
+            "cast_cbc_pad.json",
+            "CKM_CAST_CBC_PAD",
+            8,
+            "7ac816d16e9b302e849d0f944d28e9d9",
+        ),
+        int(CKM_CAST3_CBC_PAD): (
+            "cast3_cbc_pad.json",
+            "CKM_CAST3_CBC_PAD",
+            8,
+            "eb6a711a2c02271bea91f7857df6373b",
+        ),
         int(CKM_IDEA_CBC_PAD): (
             "idea_cbc_pad.json",
             "CKM_IDEA_CBC_PAD",
@@ -300,6 +314,8 @@ def test_block_cipher_cbc_pad_mechanisms_have_kat_vectors() -> None:
 def test_legacy_cbc_pad_vector_params_replay_iv_and_effective_bits() -> None:
     expected = {
         int(CKM_RC2_CBC_PAD): "rc2_cbc_pad.json",
+        int(CKM_CAST_CBC_PAD): "cast_cbc_pad.json",
+        int(CKM_CAST3_CBC_PAD): "cast3_cbc_pad.json",
         int(CKM_CAST128_CBC_PAD): "cast128_cbc_pad.json",
         int(CKM_IDEA_CBC_PAD): "idea_cbc_pad.json",
         int(CKM_BLOWFISH_CBC_PAD): "blowfish_cbc_pad.json",

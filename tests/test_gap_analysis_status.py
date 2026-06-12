@@ -217,6 +217,19 @@ def test_gap_analysis_marks_cast_encrypt_vectors_as_added() -> None:
     assert "CAST/CAST3 ECB/CBC" in doc
 
 
+def test_gap_analysis_marks_cast_cbc_pad_vectors_as_added() -> None:
+    """CAST and CAST3 CBC_PAD have non-block-aligned KAT vector links."""
+    legacy_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_legacy.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    for vector_file in ("cast_cbc_pad.json", "cast3_cbc_pad.json"):
+        assert vector_file in legacy_registry
+        assert _read(f"src/pkcs11_check/testcases/data/mechanism_vectors/{vector_file}")
+
+    assert "CAST/CAST3 CBC_PAD" in doc
+    assert "CAST/CAST3 CBC_PAD variants" not in doc
+
+
 def test_gap_analysis_marks_cast_mac_general_vectors_as_added() -> None:
     """CAST and CAST3 MAC_GENERAL have full-block KAT vector links."""
     legacy_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_legacy.py")
