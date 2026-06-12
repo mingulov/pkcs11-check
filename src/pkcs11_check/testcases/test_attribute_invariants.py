@@ -27,28 +27,43 @@ Classification (Type D, derived-invariant contradiction):
 
 from __future__ import annotations
 
-from typing import Any
+import ctypes
+from typing import Any, Literal
 
 import pytest
 
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_aes_key,
+    import_secret_key,
     read_attributes,
 )
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
+    CK_ATTRIBUTE,
+    CK_ULONG,
+    CK_UNAVAILABLE_INFORMATION,
+    CK_VOID_PTR,
     CKA_ALWAYS_SENSITIVE,
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_GEN_MECHANISM,
     CKA_LOCAL,
     CKA_NEVER_EXTRACTABLE,
     CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKK_AES,
     CKM_AES_KEY_GEN,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_OK,
 )
 from pkcs11_check.testcases._attribute_values import require_ulong_attr
 from pkcs11_check.testcases.conftest import require_operational_aes_keygen
 
 pytestmark = pytest.mark.security
+
+_UlongAttrState = Literal["present", "unavailable", "unsupported"]
 
 
 def _classify_derived_invariant(
@@ -127,6 +142,68 @@ def _classify_generated_key_origin_invariant(
         )
 
 
+def _read_ulong_attr_state(
+    raw: Any, session: int, handle: int, attr_type: int
+) -> tuple[_UlongAttrState, int | None]:
+    """Read a CK_ULONG-like attribute while preserving unavailable state."""
+    query = CK_ATTRIBUTE()
+    query.type = attr_type
+    query.pValue = None
+    query.ulValueLen = 0
+
+    rv = raw.C_GetAttributeValue(session, handle, ctypes.byref(query), 1)
+    if rv == CKR_ATTRIBUTE_TYPE_INVALID:
+        return "unsupported", None
+    if rv != CKR_OK:
+        pytest.fail(f"C_GetAttributeValue({attr_type:#x}) returned {ckr_name(rv)}")
+    if query.ulValueLen == CK_UNAVAILABLE_INFORMATION:
+        return "unavailable", None
+    if query.ulValueLen != ctypes.sizeof(CK_ULONG):
+        pytest.xfail(
+            f"attribute {attr_type:#x}: malformed CK_ULONG length {query.ulValueLen}"
+        )
+
+    value = CK_ULONG(0)
+    attr = CK_ATTRIBUTE()
+    attr.type = attr_type
+    attr.pValue = ctypes.cast(ctypes.pointer(value), CK_VOID_PTR)
+    attr.ulValueLen = ctypes.sizeof(value)
+
+    rv = raw.C_GetAttributeValue(session, handle, ctypes.byref(attr), 1)
+    if rv == CKR_ATTRIBUTE_TYPE_INVALID:
+        return "unsupported", None
+    if rv != CKR_OK:
+        pytest.fail(f"C_GetAttributeValue({attr_type:#x}) returned {ckr_name(rv)}")
+    if attr.ulValueLen == CK_UNAVAILABLE_INFORMATION or value.value == CK_UNAVAILABLE_INFORMATION:
+        return "unavailable", None
+    return "present", int(value.value)
+
+
+def _classify_imported_key_origin_invariant(
+    *,
+    local_present: bool,
+    local_value: Any,
+    mechanism_state: _UlongAttrState,
+    mechanism_value: int | None,
+    label: str,
+) -> None:
+    """Classify linked origin attributes on an imported key."""
+    if not local_present:
+        pytest.xfail(f"{label}: CKA_LOCAL not reported (honest non-support)")
+    if local_value is not False:
+        pytest.xfail(f"{label}: CKA_LOCAL is {local_value!r} (isolated wrong value)")
+    if mechanism_state == "unsupported":
+        pytest.xfail(f"{label}: CKA_KEY_GEN_MECHANISM not reported (honest non-support)")
+    if mechanism_state == "unavailable":
+        return
+    if mechanism_state == "present":
+        pytest.fail(
+            f"{label}: CKA_LOCAL=False but CKA_KEY_GEN_MECHANISM is "
+            f"{mechanism_value!r}, expected unavailable (linked-origin self-contradiction)"
+        )
+    pytest.fail(f"{label}: unexpected CKA_KEY_GEN_MECHANISM state {mechanism_state!r}")
+
+
 class TestDerivedAttributeInvariants:
     """Derived-attribute invariants on suite-generated, never-modified keys."""
 
@@ -144,6 +221,34 @@ class TestDerivedAttributeInvariants:
                 derived_value=attrs.get(CKA_NEVER_EXTRACTABLE),
                 label="CKA_NEVER_EXTRACTABLE on a key created EXTRACTABLE=False and never changed "
                 "(PKCS#11 v3.1 Sec.4.9.4)",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_imported_aes_key_reports_not_local_no_key_gen_mechanism(
+        self, p11_raw_session: Any
+    ) -> None:
+        """An imported AES key must not report a generation mechanism."""
+        rs = p11_raw_session
+        key = import_secret_key(
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            b"\x00" * 16,
+            attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
+        )
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LOCAL])
+            mechanism_state, mechanism_value = _read_ulong_attr_state(
+                rs.raw, rs.sh, key, CKA_KEY_GEN_MECHANISM
+            )
+            _classify_imported_key_origin_invariant(
+                local_present=CKA_LOCAL in attrs,
+                local_value=attrs.get(CKA_LOCAL),
+                mechanism_state=mechanism_state,
+                mechanism_value=mechanism_value,
+                label="CKA_LOCAL/CKA_KEY_GEN_MECHANISM on an AES key imported by "
+                "C_CreateObject",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

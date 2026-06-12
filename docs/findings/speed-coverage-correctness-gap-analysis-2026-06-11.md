@@ -433,6 +433,11 @@ smoke behavior, or covered only by one narrow variation.
     `CKM_AES_KEY_GEN`; isolated `CKA_LOCAL=False` remains xfail per the
     classification model, while a local generated key reporting the wrong
     generation mechanism fails as a linked-origin self-contradiction.
+    Imported-key origin linked-attribute coverage exists for AES keys imported
+    by `C_CreateObject`; an imported key with `CKA_LOCAL=False` must not expose
+    a readable `CKA_KEY_GEN_MECHANISM`, and doing so fails as the opposite
+    linked-origin self-contradiction. Honest non-support of either origin
+    attribute remains xfail.
     Registry-driven malformed non-NULL parameter coverage exists for advertised
     encrypt/sign mechanisms whose registry config requires a mechanism
     parameter, using a valid non-NULL pointer with an invalid one-byte parameter
@@ -440,8 +445,8 @@ smoke behavior, or covered only by one narrow variation.
     simple key-object derivation shapes already supported by the generic
     negative helper, using the same invalid one-byte mechanism parameter shape.
     Remaining work is further linked-attribute families beyond derived
-    protection and generated-key origin, malformed parameter expansion beyond
-    current encrypt/sign init and simple derive coverage, and deeper
+    protection and generated/imported-key origin, malformed parameter expansion
+    beyond current encrypt/sign init and simple derive coverage, and deeper
     derive/wrap/digest/message semantic negative coverage for
     protocol/asymmetric/custom-parameter families. Registry-driven unwrap
     malformed-blob coverage exists for advertised secret-key wrap mechanisms:
@@ -462,7 +467,8 @@ smoke behavior, or covered only by one narrow variation.
 4. No remaining generic AEAD wrap parameter gap: ChaCha20-Poly1305 stays
    source-first for wrap/unwrap unless a spec-backed `C_WrapKey` mapping appears.
 5. Continue registry-driven negative tests for broader linked-attribute families
-   beyond the current derived-protection and generated-key-origin invariants,
+   beyond the current derived-protection and generated/imported-key-origin
+   invariants,
    malformed parameter cases beyond current encrypt/sign init and simple derive
    coverage, deeper derive custom-parameter cases, and additional unwrap
    tamper/shape variants beyond the current truncated-blob coverage.
