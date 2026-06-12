@@ -102,6 +102,7 @@ _X3DH_DERIVE_REJECT_RVS = (
 
 _X3DH_INVALID_KDF_REJECT_RVS = (CKR_MECHANISM_PARAM_INVALID,)
 _X3DH_INVALID_KDF = 0xDEADBEEF
+_X3DH_MISSING_PREKEY_SIGNATURE_REJECT_RVS = (CKR_MECHANISM_PARAM_INVALID,)
 
 
 def _bytes_pointer(data: bytes | None, keepalive: list[Any]) -> Any:
@@ -351,6 +352,59 @@ class TestX3DH:
                 exc,
                 _X3DH_INVALID_KDF_REJECT_RVS,
                 label="X3DH_INITIALIZE invalid KDF",
+            )
+        finally:
+            _destroy_all(
+                rs,
+                derived,
+                own_identity_pub,
+                own_identity_priv,
+                own_ephemeral_pub,
+                own_ephemeral_priv,
+                peer_identity_pub,
+                peer_identity_priv,
+                peer_prekey_pub,
+                peer_prekey_priv,
+            )
+
+    def test_x3dh_initialize_rejects_missing_prekey_signature(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_X3DH_INITIALIZE rejects a NULL required pPrekey_signature."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("X3DH_INITIALIZE"):
+            pytest.skip("CKM_X3DH_INITIALIZE not supported")
+
+        own_identity_pub, own_identity_priv = _create_ec_keypair(rs)
+        own_ephemeral_pub, own_ephemeral_priv = _create_ec_keypair(rs)
+        peer_identity_pub, peer_identity_priv = _create_ec_keypair(rs)
+        peer_prekey_pub, peer_prekey_priv = _create_ec_keypair(rs)
+        derived = 0
+        try:
+            exc: AssertionError | None = None
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    own_identity_priv,
+                    CKM_X3DH_INITIALIZE,
+                    attrs=_derive_attrs(),
+                    mech_param=_mech_x3dh_initialize(
+                        peer_identity=peer_identity_pub,
+                        peer_prekey=peer_prekey_pub,
+                        prekey_signature=None,
+                        onetime_key=None,
+                        own_identity=own_identity_priv,
+                        own_ephemeral=own_ephemeral_priv,
+                    ),
+                )
+            except AssertionError as caught:
+                exc = caught
+            reject_or_classify(
+                exc,
+                _X3DH_MISSING_PREKEY_SIGNATURE_REJECT_RVS,
+                label="X3DH_INITIALIZE missing prekey signature",
             )
         finally:
             _destroy_all(

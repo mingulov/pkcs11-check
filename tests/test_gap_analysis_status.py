@@ -363,6 +363,20 @@ def test_gap_analysis_marks_x3dh_invalid_kdf_negative_as_added() -> None:
     assert "X3DH invalid-KDF negative coverage" in doc_flat
 
 
+def test_gap_analysis_marks_x3dh_missing_prekey_signature_negative_as_added() -> None:
+    """X3DH initiator rejects a missing required prekey signature pointer."""
+    x3dh = _read("src/pkcs11_check/testcases/test_x3dh.py")
+    guard = _read("tests/test_x3dh_runtime_coverage.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_x3dh_initialize_rejects_missing_prekey_signature" in x3dh
+    assert "X3DH_INITIALIZE missing prekey signature" in x3dh
+    assert "prekey_signature=None" in x3dh
+    assert "test_x3dh_initialize_missing_prekey_signature_is_expected_reject" in guard
+
+    assert "X3DH missing-prekey-signature negative coverage" in doc_flat
+
+
 def test_gap_analysis_marks_x2ratchet_invalid_kdf_negative_as_added() -> None:
     """X2RATCHET derive rejects KDF selectors outside the OASIS-defined table."""
     ratchet = _read("src/pkcs11_check/testcases/test_double_ratchet.py")

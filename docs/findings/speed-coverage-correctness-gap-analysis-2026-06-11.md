@@ -316,7 +316,9 @@ smoke behavior, or covered only by one narrow variation.
    unparameterized `C_DeriveKey` calls. X3DH invalid-KDF negative coverage now
    verifies both derive sides reject a KDF selector outside the OASIS-defined
    `CK_X3DH_KDF_TYPE` table through the shared provider-general negative
-   classifier. X2RATCHET invalid-curve negative
+   classifier. X3DH missing-prekey-signature negative coverage now verifies the
+   initiator side rejects a NULL `pPrekey_signature` while keeping the optional
+   one-time key NULL. X2RATCHET invalid-curve negative
    coverage now verifies both derive sides reject an `eCurve` value outside the
    OASIS-defined 255/448 set through the shared provider-general negative
    classifier. X2RATCHET invalid-KDF negative coverage now verifies both derive
