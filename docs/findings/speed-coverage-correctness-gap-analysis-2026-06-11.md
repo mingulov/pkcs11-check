@@ -431,10 +431,13 @@ smoke behavior, or covered only by one narrow variation.
     non-support as xfail. Registry-driven malformed non-NULL parameter coverage
     exists for advertised encrypt/sign mechanisms whose registry config requires
     a mechanism parameter, using a valid non-NULL pointer with an invalid
-    one-byte parameter length. Remaining work is broader linked-attribute
-    families, malformed parameter expansion beyond encrypt/sign init, and deeper
-    derive/wrap/digest/message semantic negative coverage for
-    protocol/asymmetric/custom-parameter families. Registry-driven unwrap
+    one-byte parameter length. Registry-driven derive malformed-parameter
+    coverage exists for the simple key-object derivation shapes already supported
+    by the generic negative helper, using the same invalid one-byte mechanism
+    parameter shape. Remaining work is broader linked-attribute families,
+    malformed parameter expansion beyond current encrypt/sign init and simple
+    derive coverage, and deeper derive/wrap/digest/message semantic negative
+    coverage for protocol/asymmetric/custom-parameter families. Registry-driven unwrap
     malformed-blob coverage exists for advertised secret-key wrap mechanisms:
     the test wraps a key, truncates the resulting wrapped-key bytes, and
     classifies wrapped/encrypted-data invalid or length-range rejects as
@@ -454,9 +457,9 @@ smoke behavior, or covered only by one narrow variation.
    source-first for wrap/unwrap unless a spec-backed `C_WrapKey` mapping appears.
 5. Continue registry-driven negative tests for broader linked-attribute families
    beyond the current `NEVER_EXTRACTABLE`/`ALWAYS_SENSITIVE` derived invariants,
-   malformed parameter cases beyond current encrypt/sign init coverage, deeper
-   derive custom-parameter cases, and additional unwrap tamper/shape variants
-   beyond the current truncated-blob coverage.
+   malformed parameter cases beyond current encrypt/sign init and simple derive
+   coverage, deeper derive custom-parameter cases, and additional unwrap
+   tamper/shape variants beyond the current truncated-blob coverage.
 
 ## Correctness and Reporting Findings
 

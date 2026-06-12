@@ -627,6 +627,58 @@ class TestBadParameters:
             if verify_key is not None and verify_key != sign_key:
                 destroy_quietly(rs.raw, rs.sh, verify_key)
 
+    def test_registry_derive_malformed_required_param(
+        self, p11_module_session: RawSession, mech_derive_entry: MechEntry
+    ) -> None:
+        """Registry-driven malformed-param check for simple advertised derive mechanisms."""
+        rs = p11_module_session
+        entry = mech_derive_entry
+        _skip_if_not_required_param_registry_case(entry)
+        _skip_if_not_secret_key_registry_case(entry)
+        config = entry.config
+        assert config is not None
+
+        base_key = 0
+        derived_key = 0
+        param_handles: list[int] = []
+        label = f"{entry.mech_name} C_DeriveKey with malformed non-NULL params"
+        try:
+            _valid_param, param_handles = _derive_negative_param_or_skip(rs, entry)
+            base_key = gen_symmetric_key(
+                rs,
+                entry,
+                config,
+                extra_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+            )
+
+            derive_exc: AssertionError | None = None
+            try:
+                derived_key = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base_key,
+                    entry.mech_id,
+                    attrs=_DERIVED_GENERIC_SECRET_ATTRS,
+                    mech_param=mech_bytes(entry.mech_id, b"\x00"),
+                )
+            except AssertionError as caught:
+                derive_exc = caught
+            if derive_exc is None and derived_key != 0:
+                destroy_quietly(rs.raw, rs.sh, derived_key)
+                derived_key = 0
+            reject_or_classify(
+                derive_exc,
+                _MALFORMED_REQUIRED_PARAM_RVS,
+                label=label,
+            )
+        finally:
+            if derived_key != 0:
+                destroy_quietly(rs.raw, rs.sh, derived_key)
+            if base_key != 0:
+                destroy_quietly(rs.raw, rs.sh, base_key)
+            for handle in param_handles:
+                destroy_quietly(rs.raw, rs.sh, handle)
+
 
 class TestMalformedWrappedBlob:
     """C_UnwrapKey must reject malformed wrapped-key bytes."""
