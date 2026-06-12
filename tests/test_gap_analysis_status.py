@@ -215,8 +215,10 @@ def test_gap_analysis_marks_message_api_registry_init_coverage_as_added() -> Non
     doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
 
     assert "TestRegistryMessageInit" in message
+    assert "TestRegistryMessageBadParameters" in message
     assert "_message_init_or_xfail" in message
     assert "_message_init_mech_or_skip" in message
+    assert "_message_bad_param_init_must_reject" in message
     for fixture_name, flag_name in (
         ("mech_message_encrypt_entry", "CKF_MESSAGE_ENCRYPT"),
         ("mech_message_decrypt_entry", "CKF_MESSAGE_DECRYPT"),
@@ -232,6 +234,7 @@ def test_gap_analysis_marks_message_api_registry_init_coverage_as_added() -> Non
     assert "Message API coverage is representative, not registry-driven" not in doc_flat
     assert "Message API registry-driven init coverage exists" in doc_flat
     assert "Registry-driven message API permission negative coverage exists" in doc_flat
+    assert "Registry-driven message API required-parameter coverage exists" in doc_flat
 
 
 def test_gap_analysis_marks_cms_and_ct_kip_runtime_coverage_as_added() -> None:

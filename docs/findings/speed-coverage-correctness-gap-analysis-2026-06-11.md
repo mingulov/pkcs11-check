@@ -316,6 +316,11 @@ smoke behavior, or covered only by one narrow variation.
    permission negative coverage exists for `C_MessageEncryptInit`,
    `C_MessageDecryptInit`, `C_MessageSignInit`, and `C_MessageVerifyInit` on
    secret-key mechanisms that advertise the corresponding message flags.
+   Registry-driven message API required-parameter coverage exists for
+   `C_MessageEncryptInit`, `C_MessageDecryptInit`, `C_MessageSignInit`, and
+   `C_MessageVerifyInit` on mechanisms that advertise the corresponding
+   message flag and require mechanism parameters, including both missing
+   parameters and malformed non-NULL one-byte parameter payloads.
 5. Hybrid wrap parameter coverage exists for RSA-AES and ECDH-AES:
    `test_rsa_extended.py` covers `CK_RSA_AES_KEY_WRAP_PARAMS` positive
    roundtrips plus tampered-blob discrimination, and
@@ -453,9 +458,9 @@ smoke behavior, or covered only by one narrow variation.
     invalid one-byte mechanism parameter shape. Remaining work is further
     linked-attribute
     families beyond derived protection and generated/imported-key origin,
-    malformed parameter expansion beyond current init and simple derive
-    coverage, and deeper derive/wrap/digest/message semantic negative coverage for
-    protocol/asymmetric/custom-parameter families. Registry-driven unwrap
+    malformed parameter expansion beyond current classic/message init and simple
+    derive coverage, and deeper derive/wrap/digest/message semantic negative
+    coverage for protocol/asymmetric/custom-parameter families. Registry-driven unwrap
     malformed-blob coverage exists for advertised secret-key wrap mechanisms:
     the test wraps a key, truncates the resulting wrapped-key bytes, and
     classifies wrapped/encrypted-data invalid or length-range rejects as
@@ -476,7 +481,7 @@ smoke behavior, or covered only by one narrow variation.
 5. Continue registry-driven negative tests for broader linked-attribute families
    beyond the current derived-protection and generated/imported-key-origin
    invariants,
-   malformed parameter cases beyond current init and simple derive
+   malformed parameter cases beyond current classic/message init and simple derive
    coverage, deeper derive custom-parameter cases, and additional unwrap
    tamper/shape variants beyond the current truncated-blob coverage.
 

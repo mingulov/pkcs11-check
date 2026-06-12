@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.fixtures import RawSession
-from pkcs11_check.raw.pack import mech_simple
+from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes, to_ubyte_buf
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
@@ -27,7 +27,9 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VERIFY,
     CKM,
+    CKR_ARGUMENTS_BAD,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
 )
 from pkcs11_check.testcases.conftest import classify_negative_rv, classify_policy_enforcement
@@ -46,6 +48,8 @@ pytestmark = [
 
 _SECRET_KEY_RECIPE_STYLES = frozenset({"symmetric", "fixed_length", "generic"})
 _MESSAGE_PERMISSION_RVS = (CKR_KEY_FUNCTION_NOT_PERMITTED,)
+_MESSAGE_MISSING_REQUIRED_PARAM_RVS = (CKR_MECHANISM_PARAM_INVALID,)
+_MESSAGE_MALFORMED_REQUIRED_PARAM_RVS = (CKR_MECHANISM_PARAM_INVALID, CKR_ARGUMENTS_BAD)
 
 
 def _xfail_if_message_init_rejected(rv: int, *, label: str) -> None:
@@ -100,6 +104,14 @@ def _skip_if_not_secret_key_registry_case(entry: MechEntry) -> None:
         pytest.skip(
             f"{entry.mech_name}: registry message permission test needs secret-key keygen"
         )
+
+
+def _skip_if_not_required_param_registry_case(entry: MechEntry) -> None:
+    config = entry.config
+    if config is None:
+        pytest.skip(f"{entry.mech_name}: no registry config")
+    if not config.param_required:
+        pytest.skip(f"{entry.mech_name}: mechanism params are not required")
 
 
 def _gen_claimed_false_message_key(
@@ -193,6 +205,29 @@ def _message_permission_init_must_reject(
         classify_policy_enforcement(claimed=True, violated=True, label=label)
         return
     classify_negative_rv(rv, _MESSAGE_PERMISSION_RVS, label=label)
+
+
+def _message_bad_param_init_must_reject(
+    rs: RawSession,
+    *,
+    entry: MechEntry,
+    key: int,
+    init_name: str,
+    final_name: str,
+    malformed: bool,
+    label: str,
+) -> None:
+    init = getattr(rs.raw, init_name)
+    mech = mech_bytes(entry.mech_id, b"\x00") if malformed else mech_simple(CKM(entry.mech_id))
+    rv = init(rs.sh, mech.byref(), key)
+    if rv == CKR_OK:
+        getattr(rs.raw, final_name)(rs.sh)
+    expected = (
+        _MESSAGE_MALFORMED_REQUIRED_PARAM_RVS
+        if malformed
+        else _MESSAGE_MISSING_REQUIRED_PARAM_RVS
+    )
+    classify_negative_rv(rv, expected, label=label)
 
 
 class TestRegistryMessageInit:
@@ -429,6 +464,246 @@ class TestRegistryMessagePermission:
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
+
+
+class TestRegistryMessageBadParameters:
+    """Message API init must reject missing or malformed required mechanism params."""
+
+    @pytest.mark.needs_function("C_MessageEncryptInit")
+    def test_registry_message_encrypt_missing_required_param(
+        self,
+        p11_module_session: RawSession,
+        mech_message_encrypt_entry: MechEntry,
+    ) -> None:
+        rs = p11_module_session
+        entry = mech_message_encrypt_entry
+        _skip_if_not_required_param_registry_case(entry)
+        config = entry.config
+        assert config is not None
+        _require_message_functions(rs, "C_MessageEncryptInit", "C_MessageEncryptFinal")
+
+        encrypt_key, decrypt_key = generate_key_for_encrypt(rs, entry, config)
+        try:
+            _message_bad_param_init_must_reject(
+                rs,
+                entry=entry,
+                key=encrypt_key,
+                init_name="C_MessageEncryptInit",
+                final_name="C_MessageEncryptFinal",
+                malformed=False,
+                label=f"{entry.mech_name} C_MessageEncryptInit with missing required params",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, encrypt_key)
+            if decrypt_key is not None:
+                destroy_quietly(rs.raw, rs.sh, decrypt_key)
+
+    @pytest.mark.needs_function("C_MessageEncryptInit")
+    def test_registry_message_encrypt_malformed_required_param(
+        self,
+        p11_module_session: RawSession,
+        mech_message_encrypt_entry: MechEntry,
+    ) -> None:
+        rs = p11_module_session
+        entry = mech_message_encrypt_entry
+        _skip_if_not_required_param_registry_case(entry)
+        config = entry.config
+        assert config is not None
+        _require_message_functions(rs, "C_MessageEncryptInit", "C_MessageEncryptFinal")
+
+        encrypt_key, decrypt_key = generate_key_for_encrypt(rs, entry, config)
+        try:
+            _message_bad_param_init_must_reject(
+                rs,
+                entry=entry,
+                key=encrypt_key,
+                init_name="C_MessageEncryptInit",
+                final_name="C_MessageEncryptFinal",
+                malformed=True,
+                label=f"{entry.mech_name} C_MessageEncryptInit with malformed non-NULL params",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, encrypt_key)
+            if decrypt_key is not None:
+                destroy_quietly(rs.raw, rs.sh, decrypt_key)
+
+    @pytest.mark.needs_function("C_MessageDecryptInit")
+    def test_registry_message_decrypt_missing_required_param(
+        self,
+        p11_module_session: RawSession,
+        mech_message_decrypt_entry: MechEntry,
+    ) -> None:
+        rs = p11_module_session
+        entry = mech_message_decrypt_entry
+        _skip_if_not_required_param_registry_case(entry)
+        config = entry.config
+        assert config is not None
+        _require_message_functions(rs, "C_MessageDecryptInit", "C_MessageDecryptFinal")
+
+        encrypt_key, decrypt_key = generate_key_for_encrypt(rs, entry, config)
+        try:
+            key = decrypt_key if decrypt_key is not None else encrypt_key
+            _message_bad_param_init_must_reject(
+                rs,
+                entry=entry,
+                key=key,
+                init_name="C_MessageDecryptInit",
+                final_name="C_MessageDecryptFinal",
+                malformed=False,
+                label=f"{entry.mech_name} C_MessageDecryptInit with missing required params",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, encrypt_key)
+            if decrypt_key is not None:
+                destroy_quietly(rs.raw, rs.sh, decrypt_key)
+
+    @pytest.mark.needs_function("C_MessageDecryptInit")
+    def test_registry_message_decrypt_malformed_required_param(
+        self,
+        p11_module_session: RawSession,
+        mech_message_decrypt_entry: MechEntry,
+    ) -> None:
+        rs = p11_module_session
+        entry = mech_message_decrypt_entry
+        _skip_if_not_required_param_registry_case(entry)
+        config = entry.config
+        assert config is not None
+        _require_message_functions(rs, "C_MessageDecryptInit", "C_MessageDecryptFinal")
+
+        encrypt_key, decrypt_key = generate_key_for_encrypt(rs, entry, config)
+        try:
+            key = decrypt_key if decrypt_key is not None else encrypt_key
+            _message_bad_param_init_must_reject(
+                rs,
+                entry=entry,
+                key=key,
+                init_name="C_MessageDecryptInit",
+                final_name="C_MessageDecryptFinal",
+                malformed=True,
+                label=f"{entry.mech_name} C_MessageDecryptInit with malformed non-NULL params",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, encrypt_key)
+            if decrypt_key is not None:
+                destroy_quietly(rs.raw, rs.sh, decrypt_key)
+
+    @pytest.mark.needs_function("C_MessageSignInit")
+    def test_registry_message_sign_missing_required_param(
+        self,
+        p11_module_session: RawSession,
+        mech_message_sign_entry: MechEntry,
+    ) -> None:
+        rs = p11_module_session
+        entry = mech_message_sign_entry
+        _skip_if_not_required_param_registry_case(entry)
+        config = entry.config
+        assert config is not None
+        _require_message_functions(rs, "C_MessageSignInit", "C_MessageSignFinal")
+
+        sign_key, verify_key = generate_key_for_sign(rs, entry, config)
+        try:
+            _message_bad_param_init_must_reject(
+                rs,
+                entry=entry,
+                key=sign_key,
+                init_name="C_MessageSignInit",
+                final_name="C_MessageSignFinal",
+                malformed=False,
+                label=f"{entry.mech_name} C_MessageSignInit with missing required params",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, sign_key)
+            if verify_key is not None:
+                destroy_quietly(rs.raw, rs.sh, verify_key)
+
+    @pytest.mark.needs_function("C_MessageSignInit")
+    def test_registry_message_sign_malformed_required_param(
+        self,
+        p11_module_session: RawSession,
+        mech_message_sign_entry: MechEntry,
+    ) -> None:
+        rs = p11_module_session
+        entry = mech_message_sign_entry
+        _skip_if_not_required_param_registry_case(entry)
+        config = entry.config
+        assert config is not None
+        _require_message_functions(rs, "C_MessageSignInit", "C_MessageSignFinal")
+
+        sign_key, verify_key = generate_key_for_sign(rs, entry, config)
+        try:
+            _message_bad_param_init_must_reject(
+                rs,
+                entry=entry,
+                key=sign_key,
+                init_name="C_MessageSignInit",
+                final_name="C_MessageSignFinal",
+                malformed=True,
+                label=f"{entry.mech_name} C_MessageSignInit with malformed non-NULL params",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, sign_key)
+            if verify_key is not None:
+                destroy_quietly(rs.raw, rs.sh, verify_key)
+
+    @pytest.mark.needs_function("C_MessageVerifyInit")
+    def test_registry_message_verify_missing_required_param(
+        self,
+        p11_module_session: RawSession,
+        mech_message_verify_entry: MechEntry,
+    ) -> None:
+        rs = p11_module_session
+        entry = mech_message_verify_entry
+        _skip_if_not_required_param_registry_case(entry)
+        config = entry.config
+        assert config is not None
+        _require_message_functions(rs, "C_MessageVerifyInit", "C_MessageVerifyFinal")
+
+        sign_key, verify_key = generate_key_for_sign(rs, entry, config)
+        try:
+            key = verify_key if verify_key is not None else sign_key
+            _message_bad_param_init_must_reject(
+                rs,
+                entry=entry,
+                key=key,
+                init_name="C_MessageVerifyInit",
+                final_name="C_MessageVerifyFinal",
+                malformed=False,
+                label=f"{entry.mech_name} C_MessageVerifyInit with missing required params",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, sign_key)
+            if verify_key is not None:
+                destroy_quietly(rs.raw, rs.sh, verify_key)
+
+    @pytest.mark.needs_function("C_MessageVerifyInit")
+    def test_registry_message_verify_malformed_required_param(
+        self,
+        p11_module_session: RawSession,
+        mech_message_verify_entry: MechEntry,
+    ) -> None:
+        rs = p11_module_session
+        entry = mech_message_verify_entry
+        _skip_if_not_required_param_registry_case(entry)
+        config = entry.config
+        assert config is not None
+        _require_message_functions(rs, "C_MessageVerifyInit", "C_MessageVerifyFinal")
+
+        sign_key, verify_key = generate_key_for_sign(rs, entry, config)
+        try:
+            key = verify_key if verify_key is not None else sign_key
+            _message_bad_param_init_must_reject(
+                rs,
+                entry=entry,
+                key=key,
+                init_name="C_MessageVerifyInit",
+                final_name="C_MessageVerifyFinal",
+                malformed=True,
+                label=f"{entry.mech_name} C_MessageVerifyInit with malformed non-NULL params",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, sign_key)
+            if verify_key is not None:
+                destroy_quietly(rs.raw, rs.sh, verify_key)
 
 
 class TestMessageEncrypt:

@@ -52,3 +52,22 @@ def test_mech_message_has_registry_permission_negatives() -> None:
 
     assert "classify_policy_enforcement(" in source
     assert "classify_negative_rv(" in source
+
+
+def test_mech_message_has_registry_required_param_negatives() -> None:
+    source = MECH_MESSAGE.read_text()
+
+    for test_name in (
+        "test_registry_message_encrypt_missing_required_param",
+        "test_registry_message_encrypt_malformed_required_param",
+        "test_registry_message_decrypt_missing_required_param",
+        "test_registry_message_decrypt_malformed_required_param",
+        "test_registry_message_sign_missing_required_param",
+        "test_registry_message_sign_malformed_required_param",
+        "test_registry_message_verify_missing_required_param",
+        "test_registry_message_verify_malformed_required_param",
+    ):
+        assert test_name in source
+
+    assert "_MESSAGE_MISSING_REQUIRED_PARAM_RVS" in source
+    assert "_MESSAGE_MALFORMED_REQUIRED_PARAM_RVS" in source
