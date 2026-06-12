@@ -667,6 +667,24 @@ def _x942_derive_generic_secret(
     mech_param: PackedMechanism,
     label: str,
 ) -> int:
+    return _x942_derive_generic_secret_len(
+        rs,
+        base_private,
+        mechanism,
+        mech_param,
+        _X942_EXTENDED_SECRET_LEN,
+        label,
+    )
+
+
+def _x942_derive_generic_secret_len(
+    rs: Any,
+    base_private: int,
+    mechanism: int,
+    mech_param: PackedMechanism,
+    value_len: int,
+    label: str,
+) -> int:
     return _x942_derive_or_xfail(
         lambda: derive_key(
             rs.raw,
@@ -676,7 +694,7 @@ def _x942_derive_generic_secret(
             attrs={
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-                CKA_VALUE_LEN: _X942_EXTENDED_SECRET_LEN,
+                CKA_VALUE_LEN: value_len,
                 CKA_SENSITIVE: False,
                 CKA_EXTRACTABLE: True,
                 CKA_TOKEN: False,
@@ -1323,6 +1341,72 @@ class TestX942DHHybridDerive:
                 if handle:
                     destroy_quietly(rs.raw, rs.sh, handle)
 
+    def test_hybrid_derive_value_len_truncation(self, p11_raw_session: Any) -> None:
+        """CKM_X9_42_DH_HYBRID_DERIVE honors CKA_VALUE_LEN by leading-byte truncation."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("X9_42_DH_HYBRID_DERIVE"):
+            pytest.skip("CKM_X9_42_DH_HYBRID_DERIVE not supported")
+
+        alice = (0, 0, 0, 0, b"", b"")
+        bob = (0, 0, 0, 0, b"", b"")
+        derived_keys: list[int] = []
+        try:
+            alice = _x942_setup_or_xfail(
+                lambda: _import_x942_party_keys(
+                    rs,
+                    _X942_RFC5114_ALICE_PRIVATE,
+                    _X942_EXTENDED_ALICE_PRIVATE_2,
+                ),
+                "CKM_X9_42_DH_HYBRID_DERIVE deterministic key import",
+            )
+            bob = _x942_setup_or_xfail(
+                lambda: _import_x942_party_keys(
+                    rs,
+                    _X942_EXTENDED_BOB_PRIVATE_1,
+                    _X942_EXTENDED_BOB_PRIVATE_2,
+                ),
+                "CKM_X9_42_DH_HYBRID_DERIVE deterministic key import",
+            )
+            (
+                _alice_pub1,
+                alice_priv1,
+                _alice_pub2,
+                alice_priv2,
+                _alice_pub1_value,
+                _alice_pub2_value,
+            ) = alice
+            _bob_pub1, _bob_priv1, _bob_pub2, _bob_priv2, bob_pub1_value, bob_pub2_value = bob
+
+            derived_values: dict[int, bytes] = {}
+            for requested_len in (_X942_EXTENDED_SECRET_LEN, 16):
+                derived = _x942_derive_generic_secret_len(
+                    rs,
+                    alice_priv1,
+                    CKM_X9_42_DH_HYBRID_DERIVE,
+                    _build_x942_dh2_derive_mech(
+                        bob_pub1_value,
+                        alice_priv2,
+                        len(_X942_EXTENDED_ALICE_PRIVATE_2),
+                        bob_pub2_value,
+                    ),
+                    requested_len,
+                    f"CKM_X9_42_DH_HYBRID_DERIVE CKA_VALUE_LEN={requested_len}",
+                )
+                derived_keys.append(derived)
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(value, bytes)
+                assert len(value) == requested_len
+                derived_values[requested_len] = value
+
+            assert derived_values[16] == derived_values[_X942_EXTENDED_SECRET_LEN][-16:], (
+                "X9.42 hybrid CKA_VALUE_LEN=16 must keep the rightmost bytes "
+                "of the longer derived secret"
+            )
+        finally:
+            for handle in (*alice[:4], *bob[:4], *derived_keys):
+                if handle:
+                    destroy_quietly(rs.raw, rs.sh, handle)
+
 
 class TestX942MQVDerive:
     """Test CKM_X9_42_MQV_DERIVE."""
@@ -1413,5 +1497,72 @@ class TestX942MQVDerive:
             assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
         finally:
             for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
+                if handle:
+                    destroy_quietly(rs.raw, rs.sh, handle)
+
+    def test_mqv_derive_value_len_truncation(self, p11_raw_session: Any) -> None:
+        """CKM_X9_42_MQV_DERIVE honors CKA_VALUE_LEN by leading-byte truncation."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("X9_42_MQV_DERIVE"):
+            pytest.skip("CKM_X9_42_MQV_DERIVE not supported")
+
+        alice = (0, 0, 0, 0, b"", b"")
+        bob = (0, 0, 0, 0, b"", b"")
+        derived_keys: list[int] = []
+        try:
+            alice = _x942_setup_or_xfail(
+                lambda: _import_x942_party_keys(
+                    rs,
+                    _X942_RFC5114_ALICE_PRIVATE,
+                    _X942_EXTENDED_ALICE_PRIVATE_2,
+                ),
+                "CKM_X9_42_MQV_DERIVE deterministic key import",
+            )
+            bob = _x942_setup_or_xfail(
+                lambda: _import_x942_party_keys(
+                    rs,
+                    _X942_EXTENDED_BOB_PRIVATE_1,
+                    _X942_EXTENDED_BOB_PRIVATE_2,
+                ),
+                "CKM_X9_42_MQV_DERIVE deterministic key import",
+            )
+            (
+                _alice_pub1,
+                alice_priv1,
+                alice_pub2,
+                alice_priv2,
+                _alice_pub1_value,
+                _alice_pub2_value,
+            ) = alice
+            _bob_pub1, _bob_priv1, _bob_pub2, _bob_priv2, bob_pub1_value, bob_pub2_value = bob
+
+            derived_values: dict[int, bytes] = {}
+            for requested_len in (_X942_EXTENDED_SECRET_LEN, 16):
+                derived = _x942_derive_generic_secret_len(
+                    rs,
+                    alice_priv1,
+                    CKM_X9_42_MQV_DERIVE,
+                    _build_x942_mqv_derive_mech(
+                        bob_pub1_value,
+                        alice_priv2,
+                        len(_X942_EXTENDED_ALICE_PRIVATE_2),
+                        bob_pub2_value,
+                        alice_pub2,
+                    ),
+                    requested_len,
+                    f"CKM_X9_42_MQV_DERIVE CKA_VALUE_LEN={requested_len}",
+                )
+                derived_keys.append(derived)
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(value, bytes)
+                assert len(value) == requested_len
+                derived_values[requested_len] = value
+
+            assert derived_values[16] == derived_values[_X942_EXTENDED_SECRET_LEN][-16:], (
+                "X9.42 MQV CKA_VALUE_LEN=16 must keep the rightmost bytes "
+                "of the longer derived secret"
+            )
+        finally:
+            for handle in (*alice[:4], *bob[:4], *derived_keys):
                 if handle:
                     destroy_quietly(rs.raw, rs.sh, handle)

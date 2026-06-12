@@ -213,3 +213,107 @@ def test_x942_extended_derive_tests_reach_c_derive_key_with_typed_params(
 
     assert party_calls == 2
     assert seen_param_types == [param_type, param_type]
+
+
+@pytest.mark.parametrize(
+    ("case_cls", "method_name", "mechanism", "param_type"),
+    (
+        (
+            test_x942_dh.TestX942DHHybridDerive,
+            "test_hybrid_derive_value_len_truncation",
+            CKM_X9_42_DH_HYBRID_DERIVE,
+            CK_X9_42_DH2_DERIVE_PARAMS,
+        ),
+        (
+            test_x942_dh.TestX942MQVDerive,
+            "test_mqv_derive_value_len_truncation",
+            CKM_X9_42_MQV_DERIVE,
+            CK_X9_42_MQV_DERIVE_PARAMS,
+        ),
+    ),
+)
+def test_x942_extended_derive_value_len_truncation_uses_rightmost_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    case_cls: type,
+    method_name: str,
+    mechanism: int,
+    param_type: type[Any],
+) -> None:
+    assert hasattr(case_cls, method_name)
+
+    party_calls = 0
+    next_handle = 100
+    base_value = b"x9.42 extended truncation vector"
+    base_value = base_value[:32].ljust(32, b"\x00")
+    derived_values: dict[int, bytes] = {}
+    derive_calls: list[dict[str, Any]] = []
+
+    def _import_party_keys(_rs: Any, _first_private: bytes, _second_private: bytes) -> tuple[
+        int,
+        int,
+        int,
+        int,
+        bytes,
+        bytes,
+    ]:
+        nonlocal party_calls, next_handle
+        party_calls += 1
+        prefix = b"alice" if party_calls == 1 else b"bob"
+        handles = tuple(range(next_handle, next_handle + 4))
+        next_handle += 4
+        return (
+            handles[0],
+            handles[1],
+            handles[2],
+            handles[3],
+            prefix + b"-public-1",
+            prefix + b"-public-2",
+        )
+
+    def _derive_key(
+        _raw: Any,
+        _sh: int,
+        base_key: int,
+        actual_mechanism: int,
+        *,
+        attrs: dict[int, Any],
+        mech_param: Any,
+    ) -> int:
+        nonlocal next_handle
+        assert actual_mechanism == mechanism
+        assert int(mech_param.ck.mechanism) == int(mechanism)
+        assert isinstance(mech_param.params, param_type)
+        requested_len = attrs[CKA_VALUE_LEN]
+        handle = next_handle
+        next_handle += 1
+        derived_values[handle] = base_value[-requested_len:]
+        derive_calls.append(
+            {
+                "base_key": base_key,
+                "mechanism": int(actual_mechanism),
+                "value_len": requested_len,
+                "param_type": type(mech_param.params),
+            }
+        )
+        return handle
+
+    def _read_attributes(_raw: Any, _sh: int, handle: int, attrs: list[int]) -> dict[int, Any]:
+        assert attrs == [CKA_VALUE]
+        return {CKA_VALUE: derived_values[handle]}
+
+    monkeypatch.setattr(test_x942_dh, "_import_x942_party_keys", _import_party_keys)
+    monkeypatch.setattr(test_x942_dh, "derive_key", _derive_key)
+    monkeypatch.setattr(test_x942_dh, "read_attributes", _read_attributes)
+    monkeypatch.setattr(test_x942_dh, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(pytest, "skip", lambda message: pytest.fail(f"unexpected skip: {message}"))
+
+    rs = _session_with_mechanisms(
+        "X9_42_DH_HYBRID_DERIVE",
+        "X9_42_MQV_DERIVE",
+    )
+    getattr(case_cls(), method_name)(rs)
+
+    assert party_calls == 2
+    assert [call["value_len"] for call in derive_calls] == [32, 16]
+    assert {call["mechanism"] for call in derive_calls} == {int(mechanism)}
+    assert {call["param_type"] for call in derive_calls} == {param_type}

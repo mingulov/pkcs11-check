@@ -351,6 +351,9 @@ smoke behavior, or covered only by one narrow variation.
    `CKM_X9_42_MQV_DERIVE` through `CK_X9_42_MQV_DERIVE_PARAMS`; each probe
    imports deterministic X9.42 key material, runs both parties through
    `C_DeriveKey`, and verifies the extracted generic-secret values match.
+   X9.42 hybrid/MQV requested-value-length truncation coverage now verifies
+   both extended derive mechanisms keep the rightmost bytes when `CKA_VALUE_LEN`
+   requests a shorter generic secret.
 4. Message API registry-driven init coverage exists for advertised
    `CKF_MESSAGE_*` flags through `TestRegistryMessageInit` and pytest plugin
    fixtures for message encrypt, decrypt, sign, and verify entries. Richer
