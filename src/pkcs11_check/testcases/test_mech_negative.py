@@ -285,6 +285,28 @@ class TestWrongKeyType:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
+    def test_registry_decrypt_wrong_key_type(
+        self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry
+    ) -> None:
+        """Registry-driven wrong-secret-key-type check for advertised decrypt mechanisms."""
+        rs = p11_module_session
+        entry = mech_encrypt_entry
+        _skip_if_not_secret_key_registry_case(entry)
+
+        key = _import_wrong_secret_key_or_xfail(
+            rs,
+            entry,
+            attrs={CKA_TOKEN: False, CKA_ENCRYPT: True, CKA_DECRYPT: True},
+        )
+        label = f"{entry.mech_name} decrypt with wrong key type"
+        try:
+            mech_param = make_mech_param_or_skip(entry)
+            mech = mech_param if mech_param is not None else mech_simple(entry.mech_id)
+            rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
+            classify_negative_rv(rv, (CKR_KEY_TYPE_INCONSISTENT,), label=label)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
     def test_registry_sign_wrong_key_type(
         self, p11_module_session: RawSession, mech_sign_entry: MechEntry
     ) -> None:
@@ -314,6 +336,28 @@ class TestWrongKeyType:
             except AssertionError as caught:
                 exc = caught
             reject_or_classify(exc, (CKR_KEY_TYPE_INCONSISTENT,), label=label)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_registry_verify_wrong_key_type(
+        self, p11_module_session: RawSession, mech_sign_entry: MechEntry
+    ) -> None:
+        """Registry-driven wrong-secret-key-type check for advertised verify mechanisms."""
+        rs = p11_module_session
+        entry = mech_sign_entry
+        _skip_if_not_secret_key_registry_case(entry)
+
+        key = _import_wrong_secret_key_or_xfail(
+            rs,
+            entry,
+            attrs={CKA_TOKEN: False, CKA_SIGN: True, CKA_VERIFY: True},
+        )
+        label = f"{entry.mech_name} verify with wrong key type"
+        try:
+            mech_param = make_mech_param_or_skip(entry)
+            mech = mech_param if mech_param is not None else mech_simple(entry.mech_id)
+            rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), key)
+            classify_negative_rv(rv, (CKR_KEY_TYPE_INCONSISTENT,), label=label)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -347,6 +391,32 @@ class TestMissingPermission:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
+    def test_registry_decrypt_without_flag(
+        self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry
+    ) -> None:
+        """Registry-driven CKA_DECRYPT=False check for advertised decrypt mechanisms."""
+        rs = p11_module_session
+        entry = mech_encrypt_entry
+        _skip_if_not_secret_key_registry_case(entry)
+
+        key = _gen_claimed_false_secret_key(
+            rs,
+            entry,
+            CKA_DECRYPT,
+            companion_attrs={CKA_ENCRYPT: True},
+        )
+        label = f"{entry.mech_name} C_DecryptInit with CKA_DECRYPT=False"
+        try:
+            _claim_false_or_xfail(rs, key, CKA_DECRYPT, label)
+            mech_param = make_mech_param_or_skip(entry)
+            mech = mech_param if mech_param is not None else mech_simple(entry.mech_id)
+            rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
+            if rv == CKR_OK:
+                classify_policy_enforcement(claimed=True, violated=True, label=label)
+            classify_negative_rv(rv, (CKR_KEY_FUNCTION_NOT_PERMITTED,), label=label)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
     def test_registry_sign_without_flag(
         self, p11_module_session: RawSession, mech_sign_entry: MechEntry
     ) -> None:
@@ -367,6 +437,32 @@ class TestMissingPermission:
             mech_param = make_mech_param_or_skip(entry)
             mech = mech_param if mech_param is not None else mech_simple(entry.mech_id)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), key)
+            if rv == CKR_OK:
+                classify_policy_enforcement(claimed=True, violated=True, label=label)
+            classify_negative_rv(rv, (CKR_KEY_FUNCTION_NOT_PERMITTED,), label=label)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_registry_verify_without_flag(
+        self, p11_module_session: RawSession, mech_sign_entry: MechEntry
+    ) -> None:
+        """Registry-driven CKA_VERIFY=False check for advertised verify mechanisms."""
+        rs = p11_module_session
+        entry = mech_sign_entry
+        _skip_if_not_secret_key_registry_case(entry)
+
+        key = _gen_claimed_false_secret_key(
+            rs,
+            entry,
+            CKA_VERIFY,
+            companion_attrs={CKA_SIGN: True},
+        )
+        label = f"{entry.mech_name} C_VerifyInit with CKA_VERIFY=False"
+        try:
+            _claim_false_or_xfail(rs, key, CKA_VERIFY, label)
+            mech_param = make_mech_param_or_skip(entry)
+            mech = mech_param if mech_param is not None else mech_simple(entry.mech_id)
+            rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), key)
             if rv == CKR_OK:
                 classify_policy_enforcement(claimed=True, violated=True, label=label)
             classify_negative_rv(rv, (CKR_KEY_FUNCTION_NOT_PERMITTED,), label=label)

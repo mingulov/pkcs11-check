@@ -259,6 +259,24 @@ def test_gap_analysis_marks_cms_and_ct_kip_runtime_coverage_as_added() -> None:
     assert "CT-KIP runtime coverage exists" in doc_flat
 
 
+def test_gap_analysis_marks_registry_negative_decrypt_verify_as_added() -> None:
+    """Registry-driven negative coverage includes decrypt and verify operation halves."""
+    negative = _read("src/pkcs11_check/testcases/test_mech_negative.py")
+    guard = _read("tests/test_mech_negative_registry_coverage.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    for test_name in (
+        "test_registry_decrypt_wrong_key_type",
+        "test_registry_verify_wrong_key_type",
+        "test_registry_decrypt_without_flag",
+        "test_registry_verify_without_flag",
+    ):
+        assert test_name in negative
+        assert test_name in guard
+
+    assert "Registry-driven decrypt/verify negative coverage exists" in doc_flat
+
+
 def test_coverage_plan_does_not_count_ecmqv_as_kea_coverage() -> None:
     """ECMQV and KEA are different mechanisms; ECMQV tests do not cover KEA."""
     ecdh_extended = _read("src/pkcs11_check/testcases/test_ecdh_extended.py")

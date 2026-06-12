@@ -409,9 +409,14 @@ smoke behavior, or covered only by one narrow variation.
    paths with generated keys. Remaining CMS/CT-KIP work is exact-output,
    interoperability, negative-parameter expansion, and provider-artifact
    evidence.
-10. Generic negative coverage is narrow relative to 467 registry mechanisms.
-    Wrong-key-type, missing-permission, bad-param, and linked-attribute
-    self-contradiction tests should be table-driven from registry metadata.
+10. Generic negative coverage is improving but still incomplete relative to
+    467 registry mechanisms. Registry-driven wrong-key-type coverage now
+    includes encrypt, decrypt, sign, and verify operation families.
+    Registry-driven decrypt/verify negative coverage exists for both
+    wrong-key-type and missing-permission cases, alongside the existing
+    encrypt/sign/wrap permission coverage. Remaining work is unwrap, derive,
+    bad-param, and linked-attribute self-contradiction expansion from registry
+    metadata.
 
 ### Recommended coverage order
 
@@ -425,8 +430,8 @@ smoke behavior, or covered only by one narrow variation.
    KEY_GEN, and KEY_DERIVE positive semantics are covered.
 4. No remaining generic AEAD wrap parameter gap: ChaCha20-Poly1305 stays
    source-first for wrap/unwrap unless a spec-backed `C_WrapKey` mapping appears.
-5. Registry-driven negative tests for wrong key type and missing operation
-   permission across advertised operation families.
+5. Continue registry-driven negative tests for unwrap, derive, bad-param, and
+   linked-attribute invariant families.
 
 ## Correctness and Reporting Findings
 

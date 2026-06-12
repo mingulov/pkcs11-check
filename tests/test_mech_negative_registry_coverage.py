@@ -45,4 +45,20 @@ def test_wrong_key_negatives_are_registry_driven() -> None:
     source = _source()
 
     assert "test_registry_encrypt_wrong_key_type" in source
+    assert "test_registry_decrypt_wrong_key_type" in source
     assert "test_registry_sign_wrong_key_type" in source
+    assert "test_registry_verify_wrong_key_type" in source
+
+
+def test_permission_negatives_cover_roundtrip_pairs() -> None:
+    """Permission negatives should exercise both halves of selected operation pairs."""
+    source = _source()
+
+    for test_name in (
+        "test_registry_encrypt_without_flag",
+        "test_registry_decrypt_without_flag",
+        "test_registry_sign_without_flag",
+        "test_registry_verify_without_flag",
+        "test_registry_wrap_without_flag",
+    ):
+        assert test_name in source
