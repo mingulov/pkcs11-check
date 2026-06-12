@@ -414,9 +414,10 @@ smoke behavior, or covered only by one narrow variation.
     includes encrypt, decrypt, sign, and verify operation families.
     Registry-driven decrypt/verify negative coverage exists for both
     wrong-key-type and missing-permission cases, alongside the existing
-    encrypt/sign/wrap permission coverage. Remaining work is unwrap, derive,
-    bad-param, and linked-attribute self-contradiction expansion from registry
-    metadata.
+    encrypt/sign permission coverage. Registry-driven wrap/unwrap
+    missing-permission coverage exists for advertised wrap-roundtrip
+    mechanisms. Remaining work is derive, bad-param, and linked-attribute
+    self-contradiction expansion from registry metadata.
 
 ### Recommended coverage order
 
@@ -430,8 +431,8 @@ smoke behavior, or covered only by one narrow variation.
    KEY_GEN, and KEY_DERIVE positive semantics are covered.
 4. No remaining generic AEAD wrap parameter gap: ChaCha20-Poly1305 stays
    source-first for wrap/unwrap unless a spec-backed `C_WrapKey` mapping appears.
-5. Continue registry-driven negative tests for unwrap, derive, bad-param, and
-   linked-attribute invariant families.
+5. Continue registry-driven negative tests for derive, bad-param, deeper
+   unwrap shape/error cases, and linked-attribute invariant families.
 
 ## Correctness and Reporting Findings
 

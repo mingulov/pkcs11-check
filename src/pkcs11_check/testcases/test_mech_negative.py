@@ -26,10 +26,13 @@ from pkcs11_check.raw.recipes import (
     pack_attrs,
     read_attributes,
     sign_single,
+    unwrap_key,
+    wrap_key,
 )
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
+    CKA_CLASS,
     CKA_DECRYPT,
     CKA_DERIVE,
     CKA_ENCRYPT,
@@ -45,16 +48,25 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKK_GENERIC_SECRET,
     CKM_AES_ECB,
+    CKM_AES_KEY_WRAP_KWP,
     CKM_ECDSA,
     CKM_GENERIC_SECRET_KEY_GEN,
     CKM_RSA_PKCS,
     CKM_SHA256_HMAC,
+    CKO_SECRET_KEY,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_BUFFER_TOO_SMALL,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_WRAPPING_KEY_SIZE_RANGE,
+    CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
+    CIPHER_OP_RUNTIME_REJECT_RVS,
     IMPORT_STORAGE_SHAPE_REJECTS,
     classify_negative_rv,
     classify_policy_enforcement,
@@ -66,7 +78,10 @@ from pkcs11_check.testcases.conftest import (
     xfail_if_known_ckr,
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
-from pkcs11_check.testcases.mechanism_helpers import gen_symmetric_key, make_mech_param_or_skip
+from pkcs11_check.testcases.mechanism_helpers import (
+    gen_symmetric_key,
+    make_mech_param_or_skip,
+)
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.negative]
 
@@ -78,6 +93,21 @@ _WRONG_KEY_SETUP_REJECTS = (
     CKR_KEY_TYPE_INCONSISTENT,
 )
 _NO_SPECIFIC_WRAP_PERMISSION_RVS: tuple[int, ...] = ()
+_WRAP_SETUP_REJECT_RVS = (
+    *CIPHER_OP_RUNTIME_REJECT_RVS,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_BUFFER_TOO_SMALL,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_WRAPPING_KEY_SIZE_RANGE,
+    CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
+)
+
+
+def _wrap_output_size_hint(entry: MechEntry) -> int:
+    if int(entry.mech_id) == int(CKM_AES_KEY_WRAP_KWP):
+        return 64
+    return 0
 
 
 def _skip_if_not_secret_key_registry_case(entry: MechEntry) -> None:
@@ -508,6 +538,79 @@ class TestMissingPermission:
             classify_negative_rv(rv, _NO_SPECIFIC_WRAP_PERMISSION_RVS, label=label)
         finally:
             destroy_quietly(rs.raw, rs.sh, wrapping_key)
+            destroy_quietly(rs.raw, rs.sh, target_key)
+
+    def test_registry_unwrap_without_flag(
+        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+    ) -> None:
+        """Registry-driven CKA_UNWRAP=False check for advertised unwrap mechanisms."""
+        rs = p11_module_session
+        entry = mech_wrap_entry
+        _skip_if_not_secret_key_registry_case(entry)
+
+        unwrapping_key = _gen_claimed_false_secret_key(
+            rs,
+            entry,
+            CKA_UNWRAP,
+            companion_attrs={CKA_WRAP: True},
+        )
+        target_key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False, CKA_TOKEN: False},
+            purpose="registry unwrap-permission target setup",
+        )
+        unwrapped_key = 0
+        label = f"{entry.mech_name} C_UnwrapKey with CKA_UNWRAP=False"
+        try:
+            _claim_false_or_xfail(rs, unwrapping_key, CKA_UNWRAP, label)
+            mech_param = make_mech_param_or_skip(entry)
+            try:
+                wrapped = wrap_key(
+                    rs.raw,
+                    rs.sh,
+                    unwrapping_key,
+                    target_key,
+                    entry.mech_id,
+                    mech_param=mech_param,
+                    output_size_hint=_wrap_output_size_hint(entry),
+                )
+            except AssertionError as setup_exc:
+                xfail_if_known_ckr(
+                    setup_exc,
+                    _WRAP_SETUP_REJECT_RVS,
+                    f"{entry.mech_name} wrap setup not operational",
+                )
+                raise
+
+            unwrap_exc: AssertionError | None = None
+            try:
+                unwrapped_key = unwrap_key(
+                    rs.raw,
+                    rs.sh,
+                    unwrapping_key,
+                    wrapped,
+                    entry.mech_id,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_TOKEN: False,
+                    },
+                    mech_param=mech_param,
+                )
+            except AssertionError as caught:
+                unwrap_exc = caught
+            if unwrap_exc is None:
+                classify_policy_enforcement(claimed=True, violated=True, label=label)
+            reject_or_classify(
+                unwrap_exc,
+                (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                label=label,
+            )
+        finally:
+            if unwrapped_key != 0:
+                destroy_quietly(rs.raw, rs.sh, unwrapped_key)
+            destroy_quietly(rs.raw, rs.sh, unwrapping_key)
             destroy_quietly(rs.raw, rs.sh, target_key)
 
     def test_encrypt_without_flag(self, p11_module_session: RawSession) -> None:

@@ -60,5 +60,6 @@ def test_permission_negatives_cover_roundtrip_pairs() -> None:
         "test_registry_sign_without_flag",
         "test_registry_verify_without_flag",
         "test_registry_wrap_without_flag",
+        "test_registry_unwrap_without_flag",
     ):
         assert test_name in source
