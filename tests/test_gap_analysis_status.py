@@ -39,6 +39,17 @@ def test_gap_analysis_marks_protocol_kdf_semantics_as_dedicated_coverage() -> No
     assert "IKE2 PRF+ base-key sensitivity coverage" in doc
 
 
+def test_gap_analysis_marks_ike_prf_base_key_sensitivity_as_added() -> None:
+    """CKM_IKE_PRF_DERIVE changes output when only the base key changes."""
+    ike = _read("src/pkcs11_check/testcases/test_ike.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "test_prf_base_key_affects_output" in ike
+    assert "IKE PRF base key change did not affect derived output" in ike
+
+    assert "IKE PRF base-key sensitivity coverage" in doc
+
+
 def test_gap_analysis_marks_blake2b_keyed_semantics_as_covered() -> None:
     """BLAKE2B keyed HMAC, HMAC_GENERAL, KEY_GEN, and KEY_DERIVE are covered."""
     blake2 = _read("src/pkcs11_check/testcases/test_blake2.py")
