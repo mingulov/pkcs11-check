@@ -289,8 +289,13 @@ smoke behavior, or covered only by one narrow variation.
    encryption/readback effects.
 4. Message API coverage is representative, not registry-driven. Scenario
    selection does not yet cover `CKF_MESSAGE_*` flags generically.
-5. Hybrid and AEAD wrap coverage has explicit holes: RSA-AES key wrap,
-   ECDH-AES key wrap, AEAD wrap styles, and AES-CTR wrap params.
+5. Hybrid wrap parameter coverage exists for RSA-AES and ECDH-AES:
+   `test_rsa_extended.py` covers `CK_RSA_AES_KEY_WRAP_PARAMS` positive
+   roundtrips plus tampered-blob discrimination, and
+   `test_authenticated_wrap.py` covers the `CK_ECDH_AES_KEY_WRAP_PARAMS`
+   family (`CKM_ECDH_AES_KEY_WRAP`, `CKM_ECDH_COF_AES_KEY_WRAP`, and
+   `CKM_ECDH_X_AES_KEY_WRAP`) with roundtrip and bit-flip integrity checks.
+   Remaining wrap work is AEAD wrap style expansion and AES-CTR wrap params.
 6. BLAKE2B keyed coverage exists for HMAC, HMAC_GENERAL truncation, KEY_GEN,
    and KEY_DERIVE across 160/256/384/512-bit variants, with Python reference
    checks plus key-type and extracted-value assertions. BLAKE2B invalid-length
@@ -348,8 +353,7 @@ smoke behavior, or covered only by one narrow variation.
    X3DH, and X2RATCHET where the mechanism semantics allow it.
 3. BLAKE2B keyed negative/parameter edge cases, now that HMAC, HMAC_GENERAL,
    KEY_GEN, and KEY_DERIVE positive semantics are covered.
-4. Hybrid wrap params: `CK_RSA_AES_KEY_WRAP_PARAMS` and
-   `CK_ECDH_AES_KEY_WRAP_PARAMS`, with positive and tamper tests.
+4. Remaining AEAD/AES-CTR wrap parameter expansion.
 5. Registry-driven negative tests for wrong key type and missing operation
    permission across advertised operation families.
 
@@ -503,7 +507,7 @@ After that, do the first coverage expansion round:
 2. Protocol KDF exact-vector expansion beyond already-covered SP800-108
    counter KDF, TLS 1.2 KDF, and PBKDF2.
 3. BLAKE2B keyed negative/parameter edge cases.
-4. RSA-AES and ECDH-AES wrap params.
+4. Remaining AEAD/AES-CTR wrap params.
 5. Registry-driven wrong-key/permission negatives.
 6. Legacy/deprecated mechanisms not yet covered by reliable KATs or semantic
    probes: remaining SKIPJACK non-ECB64 variants only with trustworthy

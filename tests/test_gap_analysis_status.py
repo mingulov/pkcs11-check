@@ -202,6 +202,29 @@ def test_gap_analysis_marks_regional_cipher_encrypt_data_dispatch_as_added() -> 
     assert "Regional cipher encrypt-data derive dispatch exists" in doc
 
 
+def test_gap_analysis_marks_hybrid_wrap_param_coverage_as_added() -> None:
+    """RSA-AES and ECDH-AES hybrid wrap params have positive and tamper coverage."""
+    rsa = _read("src/pkcs11_check/testcases/test_rsa_extended.py")
+    ecdh = _read("src/pkcs11_check/testcases/test_authenticated_wrap.py")
+    guards = _read("tests/test_hybrid_wrap_coverage.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "CK_RSA_AES_KEY_WRAP_PARAMS" in rsa
+    assert "test_tampered_blob_rejected" in rsa
+    assert "classify_discrimination(" in rsa
+    assert "_ECDH_AES_KW_CASES" in ecdh
+    for token in (
+        "CKM_ECDH_AES_KEY_WRAP",
+        "CKM_ECDH_COF_AES_KEY_WRAP",
+        "CKM_ECDH_X_AES_KEY_WRAP",
+    ):
+        assert token in ecdh
+        assert token in guards
+
+    assert "RSA-AES key wrap, ECDH-AES key wrap" not in doc
+    assert "Hybrid wrap parameter coverage exists for RSA-AES and ECDH-AES" in doc
+
+
 def test_gap_analysis_marks_block_cbc_pad_vectors_as_added() -> None:
     """DES-family, Camellia, ARIA, and SEED CBC_PAD now have KAT vector links."""
     des_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_des.py")
