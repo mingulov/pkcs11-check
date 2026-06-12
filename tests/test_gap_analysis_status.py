@@ -115,3 +115,15 @@ def test_gap_analysis_marks_block_mac_general_vectors_as_added() -> None:
         assert _read(f"src/pkcs11_check/testcases/data/mechanism_vectors/{vector_file}")
 
     assert "DES, 3DES, Camellia, ARIA, and SEED MAC_GENERAL" in doc
+
+
+def test_gap_analysis_marks_mixed_fail_crash_reporting_as_fixed() -> None:
+    """Mixed fail+crash units now surface crash status instead of only failed status."""
+    runner = _read("src/pkcs11_check/core/file_runner.py")
+    tests = _read("tests/test_file_runner.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert 'for status in ("timeout", "crashed", "failed"' in runner
+    assert "test_write_isolated_json_report_crash_status_wins_over_failed_count" in tests
+    assert 'status: "crashed"' in doc
+    assert "Status: fixed in the current branch. `_overall_unit_status()` gives" in doc

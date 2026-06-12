@@ -363,22 +363,22 @@ coverage; CKR coverage counts only executed CKR spec files, not unrelated or
 all-skipped files. Focused tests cover xfail, crash, timeout, observed
 coverage, and skipped-only CKR cases.
 
-### 4. Mixed fail+crash units can be summarized as failed
+### 4. Mixed fail+crash units surface crash status
 
-`_overall_unit_status()` currently gives `failed` precedence over `crashed`.
-Crash counts are preserved elsewhere, but consumers that scan only unit status
-can miss that a file had a crash.
+Earlier `_overall_unit_status()` behavior could let a mixed failed+crashed file
+look like an ordinary failed unit to consumers that scan only unit status.
 
-Next task:
+Completed task:
 
-- Either give crash/timeout precedence, or add explicit `has_crash` and
-  `has_timeout` fields.
+- Give crash/timeout precedence over ordinary failure in unit status.
+- Keep ordinary failed counts in the same unit details.
 - Add a unit test for mixed failed plus crashed file results.
 
 Status: fixed in the current branch. `_overall_unit_status()` gives timeout
 and crash precedence over ordinary failure while preserving failed counts in the
 unit details. A regression test covers a file with one failed test and one
-crashed test: the unit status remains `crashed`, and both counters survive.
+crashed test: the emitted artifact unit has `status: "crashed"`, and both the
+failed and crashed counters survive.
 
 ### 5. Mechanism coverage telemetry needs more states
 
