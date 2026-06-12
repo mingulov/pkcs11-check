@@ -11,8 +11,8 @@ Key types covered:
 - RSA mechanisms (RSA_PKCS, RSA_PKCS_OAEP): wrapping key is RSA
 
 Mechanisms not covered here (skipped with clear message):
-- AEAD wrap styles (GCM/CCM/ChaCha20-Poly1305) -- require generated output
-  parameters or matching unwrap tags
+- ChaCha20-Poly1305 wrap style -- needs a separate wrap/unwrap parameter
+  semantics check
 - hybrid wraps covered by dedicated tests (RSA_AES, ECDH_AES family)
 """
 
@@ -25,7 +25,7 @@ import pytest
 
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.api import ckm_name
-from pkcs11_check.raw.pack import mech_bytes, mech_ctr
+from pkcs11_check.raw.pack import mech_bytes, mech_ccm_wrap, mech_ctr, mech_gcm_wrap
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -281,8 +281,27 @@ def _make_wrap_mech_param(entry: MechEntry) -> Any:
         pytest.skip(f"{entry.mech_name}: RSA_AES hybrid wrap needs CK_RSA_AES_KEY_WRAP_PARAMS")
 
     config = entry.config
-    if config is not None and config.param_recipe.style in ("gcm", "ccm", "chacha20_poly1305"):
-        pytest.skip(f"{entry.mech_name}: AEAD wrap not covered here")
+    if config is not None:
+        style = config.param_recipe.style
+        defaults = config.param_recipe.defaults
+        if style == "gcm":
+            return mech_gcm_wrap(
+                CKM(mech_id),
+                os.urandom(defaults.get("iv_len", 12)),
+                tag_bits=defaults.get("tag_bits", 128),
+            )
+        if style == "ccm":
+            return mech_ccm_wrap(
+                CKM(mech_id),
+                os.urandom(defaults.get("nonce_len", 12)),
+                data_len=16,
+                mac_len=defaults.get("mac_len", 16),
+            )
+        if style == "chacha20_poly1305":
+            pytest.skip(
+                f"{entry.mech_name}: ChaCha20-Poly1305 wrap parameter semantics "
+                "not covered here"
+            )
 
     if config is not None and config.param_required:
         from pkcs11_check.testcases.mechanism_helpers import build_test_params

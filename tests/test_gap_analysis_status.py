@@ -301,6 +301,22 @@ def test_gap_analysis_marks_aes_ctr_wrap_params_as_added() -> None:
     assert "AEAD wrap style expansion and AES-CTR wrap params" not in doc
 
 
+def test_gap_analysis_marks_gcm_ccm_wrap_params_as_added() -> None:
+    """AES-GCM and AES-CCM generic wrap coverage builds wrap-specific params."""
+    wrap = _read("src/pkcs11_check/testcases/test_mech_wrap.py")
+    guards = _read("tests/test_mech_wrap.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
+
+    assert "mech_gcm_wrap(" in wrap
+    assert "mech_ccm_wrap(" in wrap
+    assert "AEAD wrap not covered here" not in wrap
+    assert "test_make_wrap_mech_param_builds_gcm_wrap_params" in guards
+    assert "test_make_wrap_mech_param_builds_ccm_wrap_params" in guards
+
+    assert "AES-GCM and AES-CCM wrap params are now covered" in doc_flat
+
+
 def test_gap_analysis_marks_block_cbc_pad_vectors_as_added() -> None:
     """DES-family, Camellia, ARIA, and SEED CBC_PAD now have KAT vector links."""
     des_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_des.py")
