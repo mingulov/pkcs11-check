@@ -672,6 +672,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=True,
         keygen_recipe=_fixed,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="cdmf_ecb.json",
         notes="CDMF-ECB: 8-byte block, no padding, deterministic",
     )
 
@@ -686,6 +687,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="cdmf_cbc.json",
         notes="CDMF-CBC: 8-byte block, requires 8-byte IV param",
     )
 
@@ -700,6 +702,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="cdmf_cbc_pad.json",
         notes="CDMF-CBC with PKCS#7 padding: any-length plaintext, requires 8-byte IV",
     )
 
@@ -709,6 +712,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_CDMF_SIZES,
         keygen_recipe=_fixed,
         expected_flags=_SIG_VER,
+        vector_file="cdmf_mac.json",
         notes="CDMF-MAC: CBC-MAC with fixed output length",
     )
 
@@ -720,6 +724,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_mac_general,
         keygen_recipe=_fixed,
         expected_flags=_SIG_VER,
+        vector_file="cdmf_mac_general.json",
         notes="CDMF-MAC-GENERAL: variable-length MAC (CK_MAC_GENERAL_PARAMS)",
     )
 

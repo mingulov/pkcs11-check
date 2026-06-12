@@ -50,6 +50,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKA_VERIFY,
     CKK_AES,
+    CKK_CDMF,
     CKK_DES,
     CKK_DES2,
     CKK_DES3,
@@ -57,6 +58,7 @@ from pkcs11_check.raw.types_std import (
     CKK_EC_EDWARDS,
     CKK_EC_MONTGOMERY,
     CKK_GENERIC_SECRET,
+    CKK_IDEA,
     CKK_RSA,
     CKK_SEED,
     CKM,
@@ -99,7 +101,7 @@ except ImportError:
 
 # Fixed-length symmetric key types: CKA_VALUE_LEN must NOT be set.
 FIXED_LENGTH_KEY_TYPES: frozenset[int] = frozenset(
-    [int(CKK_DES), int(CKK_DES2), int(CKK_DES3), int(CKK_SEED)]
+    [int(CKK_DES), int(CKK_DES2), int(CKK_DES3), int(CKK_IDEA), int(CKK_CDMF), int(CKK_SEED)]
 )
 
 # EC key types that need CKA_EC_PARAMS

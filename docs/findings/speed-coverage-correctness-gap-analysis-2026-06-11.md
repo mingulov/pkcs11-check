@@ -340,8 +340,7 @@ smoke behavior, or covered only by one narrow variation.
    advertised GOST 28147-89 non-ECB operations.
    SKIPJACK ECB64 exact-output KATs are covered from NIST SP 800-17.
    Remaining shallow areas are
-   SKIPJACK non-ECB64 variants, CDMF, BATON/JUNIPER, GOST28147 exact-output
-   KATs, and the
+   SKIPJACK non-ECB64 variants, BATON/JUNIPER, GOST28147 exact-output KATs, and the
    fixed-output MAC/MAC_GENERAL KATs where a block-vector source and output
    length mapping are still missing. GOST28147 exact-output KATs remain source-first
    until the vector source and parameter-set mapping are unambiguous.
@@ -356,8 +355,8 @@ smoke behavior, or covered only by one narrow variation.
    fixed-output MAC KATs now do the same for the legacy 8-byte-block families
    with existing reliable full-block sources. DES3 CMAC/CMAC_GENERAL now have full-block CMAC
    KATs grounded in NIST SP 800-38B semantics and the local OASIS DES3-CMAC
-   mapping. Continue this sweep for CDMF and less-sourced legacy families, but
-   gate each new vector on a reliable source and an unambiguous PKCS#11
+   mapping. Continue this sweep for less-sourced legacy families, but gate
+   each new vector on a reliable source and an unambiguous PKCS#11
    parameter mapping; SKIPJACK non-ECB64 variants and KEA are lower confidence
    until a defensible vector/operation source is identified.
 9. CMS and CT-KIP are shallow: current tests mostly check mechanism info or
@@ -538,9 +537,9 @@ After that, do the first coverage expansion round:
 6. Legacy/deprecated mechanisms not yet covered by reliable KATs or semantic
    probes: remaining SKIPJACK non-ECB64 variants only with trustworthy
    operation-specific vectors and reconciled PKCS#11 parameters, KEA only with
-   defensible domain-parameter/derive semantics, plus CDMF, BATON/JUNIPER,
-   GOST28147 exact-output KATs, remaining CBC_PAD outputs such as Twofish, and
-   remaining MAC_GENERAL or fixed-output vectors where reliable sources exist.
+   defensible domain-parameter/derive semantics, plus BATON/JUNIPER and
+   GOST28147 exact-output KATs, and remaining MAC_GENERAL or fixed-output
+   vectors where reliable sources exist.
 
 Legacy/deprecated coverage addendum for the active goal:
 
@@ -557,7 +556,7 @@ Legacy/deprecated coverage addendum for the active goal:
   PKCS#11 text has 24-byte IV parameter text that must be reconciled with the
   current registry recipes before adding exact-output KATs. KEA remains a
   source-first candidate because its vector and operation mapping is less
-  straightforward. Also evaluate CDMF, CAST/CAST3, BATON/JUNIPER, GOST28147,
+  straightforward. Also evaluate CAST/CAST3, BATON/JUNIPER, GOST28147,
   old PBE fixed-output cases, and other deprecated mechanisms that a PKCS#11
   provider might still advertise. Treat the named families as starting points;
   the coverage round should account for every uncovered legacy/deprecated
@@ -566,7 +565,6 @@ Legacy/deprecated coverage addendum for the active goal:
 
   | Family | Operation mechanisms still without source-backed exact vectors |
   | --- | --- |
-  | CDMF | `CKM_CDMF_ECB`, `CKM_CDMF_CBC`, `CKM_CDMF_CBC_PAD`, `CKM_CDMF_MAC`, `CKM_CDMF_MAC_GENERAL` |
   | SKIPJACK | `CKM_SKIPJACK_CBC64`, `CKM_SKIPJACK_OFB64`, `CKM_SKIPJACK_CFB64`, `CKM_SKIPJACK_CFB32`, `CKM_SKIPJACK_CFB16`, `CKM_SKIPJACK_CFB8`, `CKM_SKIPJACK_WRAP`, `CKM_SKIPJACK_PRIVATE_WRAP`, `CKM_SKIPJACK_RELAYX` |
   | BATON | `CKM_BATON_ECB128`, `CKM_BATON_ECB96`, `CKM_BATON_CBC128`, `CKM_BATON_COUNTER`, `CKM_BATON_SHUFFLE`, `CKM_BATON_WRAP` |
   | JUNIPER | `CKM_JUNIPER_ECB128`, `CKM_JUNIPER_CBC128`, `CKM_JUNIPER_COUNTER`, `CKM_JUNIPER_SHUFFLE`, `CKM_JUNIPER_WRAP` |
@@ -576,11 +574,10 @@ Legacy/deprecated coverage addendum for the active goal:
   the table is limited to encrypt, MAC, wrap, and stream/counter operations
   where exact-output or semantic operation vectors would materially improve
   coverage.
-- Started: `CKM_RC5_MAC_GENERAL` now has a KAT-backed expected-MAC vector using
-  the existing RFC 2040 RC5 block result as the one-block zero-IV CBC-MAC
-  output, plus vector-param replay for word size, rounds, and MAC length.
-  Fixed-length `CKM_RC5_MAC` still needs a clearer source for its mandated
-  truncation length before adding an expected-output KAT.
+- Added: `CKM_RC5_MAC_GENERAL` has a KAT-backed expected-MAC vector using the
+  existing RFC 2040 RC5 block result as the one-block zero-IV CBC-MAC output,
+  plus vector-param replay for word size, rounds, and MAC length. Fixed-length
+  `CKM_RC5_MAC` is covered by the fixed-output legacy MAC vector set below.
 - Added: `CKM_IDEA_MAC_GENERAL`, CAST/CAST3 MAC_GENERAL, and
   `CKM_CAST128_MAC_GENERAL` now have full-block expected-MAC vectors derived
   from the existing IDEA NESSIE and CAST RFC 2144 one-block ECB KATs under the
@@ -639,7 +636,12 @@ Legacy/deprecated coverage addendum for the active goal:
   registry `vector_file` link. The rows cover both the variable-plaintext and
   variable-key known-answer tables while avoiding the less-clear stream and
   wrap-mode mappings.
-  CDMF and the remaining less-sourced classified/obsolete families remain pending.
+- Added: CDMF ECB/CBC/CBC_PAD/MAC/MAC_GENERAL now have IBM CDMF
+  key-shortening-derived exact-output KATs plus registry `vector_file` links.
+  The vectors use an 8-byte odd-parity CDMF key value, replay the historical
+  PKCS#11 general block-cipher mappings, and cover both full-block
+  `MAC_GENERAL` and the fixed half-block `MAC` special case.
+  The remaining less-sourced classified/obsolete families remain pending.
 
 Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks
 should follow once the harness can reuse provider-local history and prove

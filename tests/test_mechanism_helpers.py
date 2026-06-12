@@ -8,6 +8,7 @@ import pytest
 from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKK_AES,
+    CKK_CDMF,
     CKK_GENERIC_SECRET,
     CKK_IDEA,
     CKK_RSA,
@@ -66,7 +67,7 @@ class _FakeRaw:
         handle_ptr: object,
     ) -> int:
         self.calls.append((sh, mech, tmpl_ptr, tmpl_count))
-        handle_ptr._obj.value = 99
+        handle_ptr._obj.value = 99  # type: ignore[attr-defined]
         return self.rv
 
     def C_GenerateKeyPair(self, *args: object) -> int:  # noqa: N802
@@ -161,6 +162,12 @@ def test_gen_symmetric_key_omits_value_len_for_fixed_length_recipe(
     assert handle == 99
     assert captured_value_len_attrs == []
     assert len(fake_raw.calls) == 1
+
+
+def test_legacy_fixed_length_key_types_include_idea_and_cdmf() -> None:
+    """Historical fixed-length ciphers must not get CKA_VALUE_LEN templates."""
+    assert int(CKK_IDEA) in helpers.FIXED_LENGTH_KEY_TYPES
+    assert int(CKK_CDMF) in helpers.FIXED_LENGTH_KEY_TYPES
 
 
 def test_generate_key_from_recipe_skips_when_keygen_mechanism_absent() -> None:

@@ -517,17 +517,43 @@ def test_gap_analysis_marks_twofish_cbc_pad_vector_as_added() -> None:
     assert "| Twofish |" not in doc
 
 
+def test_gap_analysis_marks_cdmf_kat_vectors_as_added() -> None:
+    """CDMF operations have IBM-derived exact-output KAT vector links."""
+    legacy_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_legacy.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    for vector_file in (
+        "cdmf_ecb.json",
+        "cdmf_cbc.json",
+        "cdmf_cbc_pad.json",
+        "cdmf_mac.json",
+        "cdmf_mac_general.json",
+    ):
+        assert vector_file in legacy_registry
+        assert _read(f"src/pkcs11_check/testcases/data/mechanism_vectors/{vector_file}")
+
+    assert "CDMF ECB/CBC/CBC_PAD/MAC/MAC_GENERAL" in doc
+    assert "| CDMF |" not in doc
+
+
+def test_gap_analysis_does_not_mark_rc5_fixed_mac_pending() -> None:
+    """RC5 fixed-output MAC coverage should not remain listed as pending."""
+    legacy_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_legacy.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert 'vector_file="rc5_mac.json"' in legacy_registry
+    assert _read("src/pkcs11_check/testcases/data/mechanism_vectors/rc5_mac.json")
+
+    assert "Fixed-length `CKM_RC5_MAC` still needs" not in doc
+    assert "RC2, RC5, CAST/CAST3/CAST128/CAST5, and IDEA fixed-output MAC" in doc
+
+
 def test_gap_analysis_inventories_remaining_legacy_source_first_operations() -> None:
     """Remaining legacy/deprecated operation gaps are explicit and source-first."""
     doc = GAP_DOC.read_text(encoding="utf-8")
 
     assert "Current source-first operation inventory" in doc
     for token in (
-        "CKM_CDMF_ECB",
-        "CKM_CDMF_CBC",
-        "CKM_CDMF_CBC_PAD",
-        "CKM_CDMF_MAC",
-        "CKM_CDMF_MAC_GENERAL",
         "CKM_SKIPJACK_CBC64",
         "CKM_SKIPJACK_OFB64",
         "CKM_SKIPJACK_CFB64",

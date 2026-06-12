@@ -1,0 +1,25 @@
+{
+  "mechanism": "CKM_CDMF_ECB",
+  "family": "cdmf_ecb",
+  "key_type": "CKK_CDMF",
+  "source": "IBM CDMF key-shortening algorithm, evaluated with OpenSSL DES-ECB; historical PKCS#11 CDMF uses the general block cipher ECB mapping",
+  "source_url": "https://bitsavers.trailing-edge.com/pdf/ibm/IBM_Journal_of_Research_and_Development/382/johnson.pdf",
+  "vectors": [
+    {
+      "id": "cdmf_ecb_ibm_key_shortening_key64",
+      "type": "positive",
+      "mechanism_name": "CKM_CDMF_ECB",
+      "key_type": "symmetric",
+      "key_bits": 64,
+      "key_hex": "0123456789abcdef",
+      "params": {
+        "source": "IBM CDMF key-shortening algorithm, evaluated with OpenSSL DES-ECB; historical PKCS#11 CDMF uses the general block cipher ECB mapping",
+        "source_url": "https://bitsavers.trailing-edge.com/pdf/ibm/IBM_Journal_of_Research_and_Development/382/johnson.pdf",
+        "pkcs11_source_url": "https://docs.oasis-open.org/pkcs11/pkcs11-hist/v2.40/os/pkcs11-hist-v2.40-os.html",
+        "derived_des_key_hex": "1fb26b1a81089f12"
+      },
+      "plaintext_hex": "0123456789abcdef",
+      "ciphertext_hex": "230d53ce98eb0939"
+    }
+  ]
+}

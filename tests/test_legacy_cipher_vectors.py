@@ -28,6 +28,11 @@ from pkcs11_check.raw.types_std import (
     CKM_CAST_ECB,
     CKM_CAST_MAC,
     CKM_CAST_MAC_GENERAL,
+    CKM_CDMF_CBC,
+    CKM_CDMF_CBC_PAD,
+    CKM_CDMF_ECB,
+    CKM_CDMF_MAC,
+    CKM_CDMF_MAC_GENERAL,
     CKM_DES3_CBC_PAD,
     CKM_DES3_CMAC,
     CKM_DES3_CMAC_GENERAL,
@@ -180,6 +185,42 @@ def test_rc2_cbc_vector_params_replay_effective_bits_and_iv() -> None:
     assert bytes(params.params.iv) == bytes.fromhex(vec["params"]["iv_hex"])
 
 
+def test_cdmf_encrypt_mechanisms_have_ibm_derived_kat_vectors() -> None:
+    expected = {
+        int(CKM_CDMF_ECB): ("cdmf_ecb.json", "CKM_CDMF_ECB"),
+        int(CKM_CDMF_CBC): ("cdmf_cbc.json", "CKM_CDMF_CBC"),
+    }
+
+    for mech_id, (vector_file, mechanism_name) in expected.items():
+        config = MECHANISM_REGISTRY[mech_id]
+        assert config.vector_file == vector_file
+
+        vectors = load_positive_vectors(vector_file)
+        assert vectors, f"{vector_file} must contain positive vectors"
+        for vec in vectors:
+            assert vec["type"] == "positive"
+            assert vec["mechanism_name"] == mechanism_name
+            assert vec["key_bits"] == 64
+            assert vec["key_hex"] == "0123456789abcdef"
+            assert vec["plaintext_hex"] == "0123456789abcdef"
+            assert vec["ciphertext_hex"] == "230d53ce98eb0939"
+            assert vec["params"]["source"].startswith(
+                "IBM CDMF key-shortening algorithm"
+            )
+            assert vec["params"]["derived_des_key_hex"] == "1fb26b1a81089f12"
+
+
+def test_cdmf_cbc_vector_params_replay_iv() -> None:
+    config = MECHANISM_REGISTRY[int(CKM_CDMF_CBC)]
+    vec = load_positive_vectors("cdmf_cbc.json")[0]
+
+    params = build_params_from_vector(int(CKM_CDMF_CBC), config.param_recipe, vec)
+
+    assert ctypes.string_at(params.ck.pParameter, params.ck.ulParameterLen) == bytes.fromhex(
+        vec["params"]["iv_hex"]
+    )
+
+
 def test_legacy_cbc_pad_mechanisms_have_kat_vectors() -> None:
     expected = {
         int(CKM_RC2_CBC_PAD): (
@@ -223,6 +264,12 @@ def test_legacy_cbc_pad_mechanisms_have_kat_vectors() -> None:
             "CKM_RC5_CBC_PAD",
             8,
             "7875dbf6738c64787cb3f1df34f948117fd1a023a5bba217",
+        ),
+        int(CKM_CDMF_CBC_PAD): (
+            "cdmf_cbc_pad.json",
+            "CKM_CDMF_CBC_PAD",
+            8,
+            "b01eb29905bb02a0",
         ),
     }
 
@@ -324,6 +371,7 @@ def test_legacy_cbc_pad_vector_params_replay_iv_and_effective_bits() -> None:
         int(CKM_BLOWFISH_CBC_PAD): "blowfish_cbc_pad.json",
         int(CKM_RC5_CBC_PAD): "rc5_cbc_pad.json",
         int(CKM_TWOFISH_CBC_PAD): "twofish_cbc_pad.json",
+        int(CKM_CDMF_CBC_PAD): "cdmf_cbc_pad.json",
     }
 
     for mech_id, vector_file in expected.items():
@@ -373,6 +421,51 @@ def test_rc2_mac_general_vector_params_replay_effective_bits_and_length() -> Non
 
     assert params.params.ulEffectiveBits == vector["params"]["effective_bits"]
     assert params.params.ulMacLength == vector["params"]["mac_len"]
+
+
+def test_cdmf_mac_mechanisms_have_ibm_derived_kat_vectors() -> None:
+    expected = {
+        int(CKM_CDMF_MAC_GENERAL): (
+            "cdmf_mac_general.json",
+            "CKM_CDMF_MAC_GENERAL",
+            "230d53ce98eb0939",
+            8,
+        ),
+        int(CKM_CDMF_MAC): (
+            "cdmf_mac.json",
+            "CKM_CDMF_MAC",
+            "230d53ce",
+            4,
+        ),
+    }
+
+    for mech_id, (vector_file, mechanism_name, mac_hex, mac_len) in expected.items():
+        config = MECHANISM_REGISTRY[mech_id]
+        assert config.vector_file == vector_file
+
+        vectors = load_positive_vectors(vector_file)
+        assert vectors, f"{vector_file} must contain positive vectors"
+        for vec in vectors:
+            assert vec["type"] == "positive"
+            assert vec["mechanism_name"] == mechanism_name
+            assert vec["key_hex"] == "0123456789abcdef"
+            assert vec["input_hex"] == "0123456789abcdef"
+            assert vec["mac_hex"] == mac_hex
+            assert vec["params"]["mac_len"] == mac_len
+            assert vec["params"]["source"].startswith(
+                "IBM CDMF key-shortening algorithm"
+            )
+
+
+def test_cdmf_mac_general_vector_params_replay_length() -> None:
+    config = MECHANISM_REGISTRY[int(CKM_CDMF_MAC_GENERAL)]
+    vector = load_positive_vectors("cdmf_mac_general.json")[0]
+
+    params = build_params_from_vector(int(CKM_CDMF_MAC_GENERAL), config.param_recipe, vector)
+
+    assert ctypes.string_at(params.ck.pParameter, params.ck.ulParameterLen) == (
+        vector["params"]["mac_len"].to_bytes(8, "little")
+    )
 
 
 def test_rc5_encrypt_mechanisms_have_rfc2040_kat_vectors() -> None:
