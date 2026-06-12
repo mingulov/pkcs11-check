@@ -4,6 +4,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -308,6 +309,116 @@ def test_pool_keeps_explicit_host_data_dir(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setenv("PKCS11_CHECK_HOST_DATA_DIR", str(explicit))
 
     assert test_pool.resolve_host_data_dir(tmp_path / "repo") == explicit
+
+
+def test_pool_repairs_artifacts_root_before_docker_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    testcases = tmp_path / "testcases"
+    testcases.mkdir()
+    (testcases / "test_one.py").write_text("def test_one():\n    pass\n")
+    events: list[str] = []
+
+    def fake_prepare(project_root: Path, env: dict[str, str]) -> None:
+        assert project_root == tmp_path
+        assert "PKCS11_CHECK_HOST_DATA_DIR" in env
+        events.append("prepare")
+        (project_root / "artifacts").mkdir(exist_ok=True)
+
+    def fake_clean(project_root: Path, providers: list[str]) -> None:
+        assert project_root == tmp_path
+        assert providers == ["optee-pkcs11"]
+        events.append("clean")
+
+    def fake_run_item(
+        provider: str, idx: int, files: list[str], env: dict[str, str]
+    ) -> tuple[str, int, int]:
+        shard_dir = Path("artifacts") / f"{provider}-shard-{idx}"
+        shard_dir.mkdir(parents=True)
+        shard_dir.joinpath("results.json").write_text(
+            json.dumps({"summary": {"passed": len(files)}, "units": []})
+        )
+        return provider, idx, 0
+
+    def fake_merge_shard_dirs(shard_dirs: list[Path], output_dir: Path) -> None:
+        output_dir.mkdir(parents=True)
+        output_dir.joinpath("results.json").write_text(
+            json.dumps(
+                {
+                    "summary": {
+                        "total": 1,
+                        "passed": 1,
+                        "failed": 0,
+                        "crashed": 0,
+                        "timeout": 0,
+                    }
+                }
+            )
+        )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(test_pool, "ensure_artifacts_root_writable", fake_prepare)
+    monkeypatch.setattr(test_pool, "clean_prior_shards", fake_clean)
+    monkeypatch.setattr(test_pool, "run_item", fake_run_item)
+    monkeypatch.setattr(test_pool, "merge_shard_dirs", fake_merge_shard_dirs)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["test_pool.py", "--no-build", "--testcases", str(testcases), "optee-pkcs11:1"],
+    )
+
+    assert test_pool.main() == 0
+    assert events[:2] == ["prepare", "clean"]
+
+
+def test_artifacts_root_repair_chowns_docker_created_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    access_results = iter((False, True))
+    calls: list[list[str]] = []
+
+    def fake_access(path: Path, mode: int) -> bool:
+        assert path == artifacts
+        assert mode == test_pool.os.W_OK | test_pool.os.X_OK
+        return next(access_results)
+
+    def fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+        calls.append(cmd)
+        assert kwargs["env"] == {"EXAMPLE": "1"}
+        assert kwargs["check"] is False
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(test_pool.os, "access", fake_access)
+    monkeypatch.setattr(test_pool.subprocess, "run", fake_run)
+
+    test_pool.ensure_artifacts_root_writable(tmp_path, {"EXAMPLE": "1"})
+
+    assert calls == [
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{artifacts}:/artifacts",
+            "busybox",
+            "chown",
+            test_pool.HOST_ARTIFACT_OWNER,
+            "/artifacts",
+        ],
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{artifacts}:/artifacts",
+            "busybox",
+            "chmod",
+            "u+rwx",
+            "/artifacts",
+        ],
+    ]
 
 
 def test_pool_builds_provider_image_once_regardless_of_shard_count(

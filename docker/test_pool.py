@@ -513,6 +513,54 @@ def run_workitem(
     return RunResult(provider_out, idx_out, rc, elapsed)
 
 
+def ensure_artifacts_root_writable(project_root: Path, env: dict[str, str]) -> None:
+    """Create or repair the host artifacts root before Docker bind mounts use it."""
+    artifacts_root = project_root / "artifacts"
+    artifacts_root.mkdir(parents=True, exist_ok=True)
+    if os.access(artifacts_root, os.W_OK | os.X_OK):
+        return
+
+    mount = f"{artifacts_root}:/artifacts"
+    repair_commands = (
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            mount,
+            "busybox",
+            "chown",
+            HOST_ARTIFACT_OWNER,
+            "/artifacts",
+        ],
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            mount,
+            "busybox",
+            "chmod",
+            "u+rwx",
+            "/artifacts",
+        ],
+    )
+    for command in repair_commands:
+        subprocess.run(  # noqa: S603
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+            check=False,
+        )
+
+    if not os.access(artifacts_root, os.W_OK | os.X_OK):
+        raise PermissionError(
+            f"{artifacts_root} is not writable by the current user; "
+            "remove it or fix ownership before running docker/test_pool.py"
+        )
+
+
 def clean_prior_shards(project_root: Path, providers: list[str]) -> None:
     # Remove BOTH the per-shard dirs and the merged *-pooled dir for each
     # provider being run. Clearing -pooled too is essential: if a provider
@@ -693,6 +741,7 @@ def main() -> int:
             print_pool_event(f"  {p}:{i}  {len(batch)} {unit_label}  load~{load:.1f}s")
         return 0
 
+    ensure_artifacts_root_writable(project_root, docker_env)
     clean_prior_shards(project_root, providers)
 
     print_pool_event(
