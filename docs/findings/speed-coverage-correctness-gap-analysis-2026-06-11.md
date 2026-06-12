@@ -317,7 +317,9 @@ smoke behavior, or covered only by one narrow variation.
    is rejected through the same provider-general negative model. X9.42 DH
    CKD_NULL OtherInfo negative coverage now verifies the OASIS rule that
    `pOtherInfo` must be NULL and `ulOtherInfoLen` must be zero when the KDF is
-   `CKD_NULL`.
+   `CKD_NULL`. X9.42 DH CKD_SHA1_KDF_ASN1 missing-OtherInfo coverage now
+   verifies the matching OASIS rule that ASN.1 KDF derives must supply
+   `pOtherInfo`.
 4. Message API registry-driven init coverage exists for advertised
    `CKF_MESSAGE_*` flags through `TestRegistryMessageInit` and pytest plugin
    fixtures for message encrypt, decrypt, sign, and verify entries. Richer

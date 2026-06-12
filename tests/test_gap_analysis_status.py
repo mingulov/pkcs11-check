@@ -593,6 +593,19 @@ def test_gap_analysis_marks_x942_ckd_null_other_info_negative_as_added() -> None
     assert "X9.42 DH CKD_NULL OtherInfo negative coverage" in doc_flat
 
 
+def test_gap_analysis_marks_x942_asn1_kdf_missing_other_info_negative_as_added() -> None:
+    """X9.42 DH CKD_SHA1_KDF_ASN1 derive rejects missing OtherInfo."""
+    x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
+
+    assert "CKD_SHA1_KDF_ASN1" in x942
+    assert "test_x942_derive_rejects_asn1_kdf_missing_other_info" in x942
+    assert "CKM_X9_42_DH_DERIVE CKD_SHA1_KDF_ASN1 missing OtherInfo" in x942
+
+    assert "X9.42 DH CKD_SHA1_KDF_ASN1 missing-OtherInfo coverage" in doc_flat
+
+
 def test_gap_analysis_marks_x942_exact_vector_as_added() -> None:
     """X9.42 DH derive checks a deterministic RFC 5114 exact vector."""
     x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")

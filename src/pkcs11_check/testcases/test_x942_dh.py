@@ -61,6 +61,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKD_NULL,
+    CKD_SHA1_KDF_ASN1,
     CKK_AES,
     CKK_GENERIC_SECRET,
     CKK_X9_42_DH,
@@ -759,6 +760,50 @@ class TestX942DHDerive:
                 rv,
                 _X942_INVALID_OTHER_INFO_RVS,
                 label="CKM_X9_42_DH_DERIVE CKD_NULL with OtherInfo",
+            )
+        finally:
+            if derived.value:
+                destroy_quietly(rs.raw, rs.sh, derived.value)
+            destroy_quietly(rs.raw, rs.sh, alice_pub)
+            destroy_quietly(rs.raw, rs.sh, alice_priv)
+            destroy_quietly(rs.raw, rs.sh, bob_pub)
+            destroy_quietly(rs.raw, rs.sh, bob_priv)
+
+    def test_x942_derive_rejects_asn1_kdf_missing_other_info(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_X9_42_DH_DERIVE CKD_SHA1_KDF_ASN1 missing OtherInfo must be rejected."""
+        rs = p11_raw_session
+        _skip_no_x942_keygen(rs)
+        _skip_no_x942_derive(rs)
+
+        alice_pub, alice_priv = _generate_x942_keypair(rs)
+        bob_pub, bob_priv = _generate_x942_keypair(rs)
+        derived = CK_OBJECT_HANDLE(0)
+        attrs = template(
+            attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
+            attr_ulong(CKA_VALUE_LEN, 16),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, True),
+            attr_bool(CKA_TOKEN, False),
+        )
+        try:
+            bob_value = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])[CKA_VALUE]
+            mech = _build_x942_derive_mech(bob_value, CKD_SHA1_KDF_ASN1)
+            rv = rs.raw.C_DeriveKey(
+                rs.sh,
+                mech.byref(),
+                alice_priv,
+                attrs.ptr,
+                attrs.count,
+                byref(derived),
+            )
+            classify_negative_rv(
+                rv,
+                _X942_INVALID_OTHER_INFO_RVS,
+                label="CKM_X9_42_DH_DERIVE CKD_SHA1_KDF_ASN1 missing OtherInfo",
             )
         finally:
             if derived.value:
