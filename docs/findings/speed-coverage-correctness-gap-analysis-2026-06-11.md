@@ -312,7 +312,10 @@ smoke behavior, or covered only by one narrow variation.
    fixtures for message encrypt, decrypt, sign, and verify entries. Richer
    full-message semantic coverage is still representative for selected
    AES-GCM, AES-CCM, and AES-GMAC paths rather than exhaustive across every
-   mechanism that advertises a message flag.
+   mechanism that advertises a message flag. Registry-driven message API
+   permission negative coverage exists for `C_MessageEncryptInit`,
+   `C_MessageDecryptInit`, `C_MessageSignInit`, and `C_MessageVerifyInit` on
+   secret-key mechanisms that advertise the corresponding message flags.
 5. Hybrid wrap parameter coverage exists for RSA-AES and ECDH-AES:
    `test_rsa_extended.py` covers `CK_RSA_AES_KEY_WRAP_PARAMS` positive
    roundtrips plus tampered-blob discrimination, and
@@ -430,7 +433,7 @@ smoke behavior, or covered only by one narrow variation.
     a mechanism parameter, using a valid non-NULL pointer with an invalid
     one-byte parameter length. Remaining work is broader linked-attribute
     families, malformed parameter expansion beyond encrypt/sign init, and deeper
-    derive/wrap/digest/message negative coverage for
+    derive/wrap/digest/message semantic negative coverage for
     protocol/asymmetric/custom-parameter families.
 
 ### Recommended coverage order

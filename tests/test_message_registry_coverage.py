@@ -37,3 +37,18 @@ def test_mech_message_consumes_registry_message_fixtures() -> None:
         "mech_message_verify_entry",
     ):
         assert fixture in source
+
+
+def test_mech_message_has_registry_permission_negatives() -> None:
+    source = MECH_MESSAGE.read_text()
+
+    for test_name in (
+        "test_registry_message_encrypt_without_flag",
+        "test_registry_message_decrypt_without_flag",
+        "test_registry_message_sign_without_flag",
+        "test_registry_message_verify_without_flag",
+    ):
+        assert test_name in source
+
+    assert "classify_policy_enforcement(" in source
+    assert "classify_negative_rv(" in source
