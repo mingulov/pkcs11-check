@@ -289,6 +289,10 @@ class CK_KEY_WRAP_SET_OAEP_PARAMS(ctypes.Structure):
     pass
 
 
+class CK_KMAC_PARAMS(ctypes.Structure):
+    pass
+
+
 class CK_KIP_PARAMS(ctypes.Structure):
     pass
 
@@ -646,6 +650,8 @@ CK_KEY_TYPE = CK_ULONG
 CK_KEY_TYPE_PTR = ctypes.POINTER(CK_KEY_TYPE)
 CK_KEY_WRAP_SET_OAEP_PARAMS_PTR = ctypes.POINTER(CK_KEY_WRAP_SET_OAEP_PARAMS)
 CK_KEY_WRAP_SET_OAEP_PARAMS_PTR_PTR = ctypes.POINTER(ctypes.POINTER(CK_KEY_WRAP_SET_OAEP_PARAMS))
+CK_KMAC_PARAMS_PTR = ctypes.POINTER(CK_KMAC_PARAMS)
+CK_KMAC_PARAMS_PTR_PTR = ctypes.POINTER(ctypes.POINTER(CK_KMAC_PARAMS))
 CK_KIP_PARAMS_PTR = ctypes.POINTER(CK_KIP_PARAMS)
 CK_KIP_PARAMS_PTR_PTR = ctypes.POINTER(ctypes.POINTER(CK_KIP_PARAMS))
 CK_LMOTS_TYPE = CK_ULONG
@@ -1569,6 +1575,13 @@ CK_KEY_WRAP_SET_OAEP_PARAMS._fields_ = [
     ("bBC", CK_BYTE),
     ("pX", ctypes.c_void_p),
     ("ulXLen", CK_ULONG),
+]
+
+CK_KMAC_PARAMS._fields_ = [
+    ("hKey", CK_OBJECT_HANDLE),
+    ("ulMacLength", CK_ULONG),
+    ("pCustomizationString", ctypes.c_void_p),
+    ("ulCustomizationStringLen", CK_ULONG),
 ]
 
 CK_KIP_PARAMS._fields_ = [

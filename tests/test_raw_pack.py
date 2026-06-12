@@ -603,6 +603,27 @@ def test_mech_hkdf_packs_extract_expand_and_hash() -> None:
     assert params.ulInfoLen == 12
 
 
+def test_mech_kmac_packs_key_handle_mac_length_and_customization() -> None:
+    from pkcs11_check.raw.pack import mech_kmac
+    from pkcs11_check.raw.types_std import CK_KMAC_PARAMS, CKM
+
+    customization = b"custom"
+    mech = mech_kmac(
+        CKM(0x80010001, "CKM_TEST_KMAC"),
+        key_handle=42,
+        mac_len=32,
+        customization=customization,
+    )
+
+    assert mech.ck.mechanism == 0x80010001
+    params = mech.params
+    assert isinstance(params, CK_KMAC_PARAMS)
+    assert params.hKey == 42
+    assert params.ulMacLength == 32
+    assert params.ulCustomizationStringLen == len(customization)
+    assert params.pCustomizationString is not None
+
+
 def test_mech_cbc_pad_sets_mechanism_and_iv_length() -> None:
     from pkcs11_check.raw.pack import mech_cbc_pad
     from pkcs11_check.raw.types_std import CKM_AES_CBC_PAD

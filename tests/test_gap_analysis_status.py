@@ -189,6 +189,24 @@ def test_gap_analysis_marks_shake_xof_and_external_mu_as_dedicated_coverage() ->
     assert "ML-DSA ExternalMu sign/verify coverage exists" in doc_flat
 
 
+def test_gap_analysis_marks_kmac_parameter_packing_as_added() -> None:
+    """KMAC tests no longer block on a missing CK_KMAC_PARAMS raw binding."""
+    extended = _read("src/pkcs11_check/testcases/test_extended_mechanisms.py")
+    pack = _read("src/pkcs11_check/raw/pack_mechanisms.py")
+    raw_types = _read("src/pkcs11_check/raw/types_std.py")
+    raw_pack_tests = _read("tests/test_raw_pack.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "class CK_KMAC_PARAMS" in raw_types
+    assert "CK_KMAC_PARAMS._fields_" in raw_types
+    assert "def mech_kmac" in pack
+    assert "test_mech_kmac_packs_key_handle_mac_length_and_customization" in raw_pack_tests
+    assert "requires CK_KMAC_PARAMS mechanism parameter" not in extended
+
+    assert "KMAC parameter packing coverage exists" in doc_flat
+    assert "KMAC parameterized signing" in doc_flat
+
+
 def test_gap_analysis_marks_message_api_registry_init_coverage_as_added() -> None:
     """Message API init coverage is driven from advertised CKF_MESSAGE_* flags."""
     message = _read("src/pkcs11_check/testcases/test_mech_message.py")

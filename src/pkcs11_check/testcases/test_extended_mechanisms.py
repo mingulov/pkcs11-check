@@ -17,12 +17,14 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.pack import attr_ulong, mech_simple
+from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
+from pkcs11_check.raw.pack import attr_ulong, mech_kmac, mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     gen_aes_key,
     gen_keypair,
+    import_secret_key,
     sign_single,
     to_ubyte_buf,
     verify_single,
@@ -44,6 +46,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKA_WRAP,
     CKK_AES,
+    CKK_GENERIC_SECRET,
     CKM,
     CKM_AES_KEY_WRAP_KWP,
     CKM_ML_DSA_EXTERNAL_MU,
@@ -458,6 +461,104 @@ class TestKMAC:
     Most current modules do not yet support KMAC. Tests skip cleanly.
     """
 
+    def _mechanism_or_skip(self, name: str) -> CKM:
+        ckm_name = f"CKM_{name}"
+        for mechanism_id, mechanism_name in MECHANISM_NAMES.items():
+            if mechanism_name == ckm_name:
+                return CKM(mechanism_id, ckm_name)
+        pytest.skip(f"{ckm_name} numeric value not available in standard metadata")
+
+    def _run_roundtrip(self, rs: Any, name: str, mac_len: int) -> None:
+        if not rs.has_mechanism(name):
+            pytest.skip(f"CKM_{name} not supported")
+        mechanism = self._mechanism_or_skip(name)
+        key = 0
+        try:
+            try:
+                key = import_secret_key(
+                    rs.raw,
+                    rs.sh,
+                    CKK_GENERIC_SECRET,
+                    bytes(range(32)),
+                    {
+                        CKA_SIGN: True,
+                        CKA_VERIFY: True,
+                        CKA_TOKEN: False,
+                    },
+                )
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    f"CKM_{name} KMAC key import not operational",
+                )
+
+            data = b"pkcs11-check KMAC parameterized signing"
+            customization = b"pkcs11-check"
+            try:
+                signature = sign_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    mechanism,
+                    data,
+                    mech_param=mech_kmac(
+                        mechanism,
+                        key_handle=key,
+                        mac_len=mac_len,
+                        customization=customization,
+                    ),
+                    output_size_hint=mac_len,
+                )
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    f"CKM_{name} KMAC sign not operational",
+                )
+
+            assert len(signature) == mac_len, f"CKM_{name} returned wrong KMAC length"
+
+            try:
+                assert verify_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    mechanism,
+                    data,
+                    signature,
+                    mech_param=mech_kmac(
+                        mechanism,
+                        key_handle=key,
+                        mac_len=mac_len,
+                        customization=customization,
+                    ),
+                ), f"CKM_{name} rejected its own KMAC signature"
+
+                tampered = signature[:-1] + bytes([signature[-1] ^ 0x01])
+                assert not verify_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    mechanism,
+                    data,
+                    tampered,
+                    mech_param=mech_kmac(
+                        mechanism,
+                        key_handle=key,
+                        mac_len=mac_len,
+                        customization=customization,
+                    ),
+                ), f"CKM_{name} verified a tampered KMAC signature"
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    f"CKM_{name} KMAC verify not operational",
+                )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
     def test_kmac_128_availability(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("KMAC_128"):
@@ -470,21 +571,11 @@ class TestKMAC:
 
     def test_kmac_128_sign_roundtrip(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
-        if not rs.has_mechanism("KMAC_128"):
-            pytest.skip("CKM_KMAC_128 not supported")
-        pytest.skip(
-            "CKM_KMAC_128 requires CK_KMAC_PARAMS mechanism parameter "
-            "not yet available in pkcs11_check.raw bindings"
-        )
+        self._run_roundtrip(rs, "KMAC_128", 32)
 
     def test_kmac_256_sign_roundtrip(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
-        if not rs.has_mechanism("KMAC_256"):
-            pytest.skip("CKM_KMAC_256 not supported")
-        pytest.skip(
-            "CKM_KMAC_256 requires CK_KMAC_PARAMS mechanism parameter "
-            "not yet available in pkcs11_check.raw bindings"
-        )
+        self._run_roundtrip(rs, "KMAC_256", 64)
 
 
 _EXTERNAL_MU_SAMPLE = bytes(range(64))

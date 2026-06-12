@@ -35,6 +35,7 @@ from .types_std import (
     CK_IKE2_PRF_PLUS_DERIVE_PARAMS,
     CK_IKE_PRF_DERIVE_PARAMS,
     CK_KEY_DERIVATION_STRING_DATA,
+    CK_KMAC_PARAMS,
     CK_PBE_PARAMS,
     CK_PKCS5_PBKD2_PARAMS2,
     CK_RC2_CBC_PARAMS,
@@ -615,6 +616,24 @@ def mech_hkdf(
         ka,
         sub_mechanisms={"prfHashMechanism": hash_mech},
     )
+
+
+def mech_kmac(
+    mechanism_type: CKM | int,
+    *,
+    key_handle: int,
+    mac_len: int,
+    customization: bytes | None = None,
+) -> PackedMechanism:
+    """Pack CK_KMAC_PARAMS for CKM_KMAC_128 / CKM_KMAC_256 operations."""
+    if mac_len < 0:
+        raise ValueError("mac_len must be non-negative")
+    ka: list[Any] = []
+    params = CK_KMAC_PARAMS()
+    params.hKey = key_handle
+    params.ulMacLength = mac_len
+    params.pCustomizationString, params.ulCustomizationStringLen = _pack_bytes(customization, ka)
+    return _mech_struct(mechanism_type, params, "mech_kmac", ka, sub_mechanisms={"macLen": mac_len})
 
 
 def mech_cbc_pad(mechanism_type: CKM | int, iv: bytes) -> PackedMechanism:
@@ -1420,6 +1439,7 @@ __all__ = [
     "mech_hkdf",
     "mech_ike2_prf_plus_derive",
     "mech_ike_prf_derive",
+    "mech_kmac",
     "mech_oaep",
     "mech_pbe",
     "mech_pbkdf2",

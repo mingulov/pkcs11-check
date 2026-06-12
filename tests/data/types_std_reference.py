@@ -134,6 +134,9 @@ class CK_KEY_DERIVATION_STRING_DATA(ctypes.Structure):
 class CK_KEY_WRAP_SET_OAEP_PARAMS(ctypes.Structure):
     pass
 
+class CK_KMAC_PARAMS(ctypes.Structure):
+    pass
+
 class CK_KIP_PARAMS(ctypes.Structure):
     pass
 
@@ -405,6 +408,7 @@ CK_PARAM_TYPE = CK_OTP_PARAM_TYPE
 CK_OTP_PARAM_PTR = ctypes.POINTER(CK_OTP_PARAM)
 CK_OTP_PARAMS_PTR = ctypes.POINTER(CK_OTP_PARAMS)
 CK_OTP_SIGNATURE_INFO_PTR = ctypes.POINTER(CK_OTP_SIGNATURE_INFO)
+CK_KMAC_PARAMS_PTR = ctypes.POINTER(CK_KMAC_PARAMS)
 CK_KIP_PARAMS_PTR = ctypes.POINTER(CK_KIP_PARAMS)
 CK_AES_CTR_PARAMS_PTR = ctypes.POINTER(CK_AES_CTR_PARAMS)
 CK_GCM_PARAMS_PTR = ctypes.POINTER(CK_GCM_PARAMS)
@@ -986,6 +990,13 @@ CK_OTP_PARAMS._fields_ = [
 CK_OTP_SIGNATURE_INFO._fields_ = [
     ("pParams", CK_OTP_PARAM_PTR),
     ("ulCount", CK_ULONG),
+    ]
+
+CK_KMAC_PARAMS._fields_ = [
+    ("hKey", CK_OBJECT_HANDLE),
+    ("ulMacLength", CK_ULONG),
+    ("pCustomizationString", CK_VOID_PTR),
+    ("ulCustomizationStringLen", CK_ULONG),
     ]
 
 CK_KIP_PARAMS._fields_ = [
