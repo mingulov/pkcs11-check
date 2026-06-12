@@ -380,6 +380,21 @@ def test_gap_analysis_marks_x2ratchet_invalid_kdf_negative_as_added() -> None:
     assert "X2RATCHET invalid-KDF negative coverage" in doc_flat
 
 
+def test_gap_analysis_marks_x2ratchet_invalid_aead_negative_as_added() -> None:
+    """X2RATCHET derive rejects nested mechanisms that are not AEAD ciphers."""
+    ratchet = _read("src/pkcs11_check/testcases/test_double_ratchet.py")
+    guard = _read("tests/test_double_ratchet_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_x2ratchet_initialize_rejects_invalid_aead" in ratchet
+    assert "test_x2ratchet_respond_rejects_invalid_aead" in ratchet
+    assert "X2RATCHET_INITIALIZE invalid AEAD" in ratchet
+    assert "X2RATCHET_RESPOND invalid AEAD" in ratchet
+    assert "test_x2ratchet_invalid_aead_is_expected_reject" in guard
+
+    assert "X2RATCHET invalid-AEAD negative coverage" in doc_flat
+
+
 def test_gap_analysis_marks_blake2b_keyed_semantics_as_covered() -> None:
     """BLAKE2B keyed HMAC, HMAC_GENERAL, KEY_GEN, and KEY_DERIVE are covered."""
     blake2 = _read("src/pkcs11_check/testcases/test_blake2.py")

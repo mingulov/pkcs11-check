@@ -54,6 +54,7 @@ from pkcs11_check.raw.types_std import (
     CKK_X2RATCHET,
     CKM_AES_GCM,
     CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
+    CKM_VENDOR_DEFINED,
     CKM_X2RATCHET_DECRYPT,
     CKM_X2RATCHET_ENCRYPT,
     CKM_X2RATCHET_INITIALIZE,
@@ -117,6 +118,8 @@ _X2RATCHET_INVALID_CURVE_REJECT_RVS = (
 )
 _X2RATCHET_INVALID_KDF_REJECT_RVS = (CKR_MECHANISM_PARAM_INVALID,)
 _X2RATCHET_INVALID_KDF = 0xDEADBEEF
+_X2RATCHET_INVALID_AEAD_REJECT_RVS = (CKR_MECHANISM_PARAM_INVALID,)
+_X2RATCHET_INVALID_AEAD = int(CKM_VENDOR_DEFINED)
 
 _X2RATCHET_CURVES = (
     ("X25519", encode_named_curve_parameters("x25519")),
@@ -508,6 +511,60 @@ class TestX2RatchetDerive:
             destroy_quietly(rs.raw, rs.sh, peer_prekey_pub)
             destroy_quietly(rs.raw, rs.sh, peer_prekey_priv)
 
+    def test_x2ratchet_initialize_rejects_invalid_aead(self, p11_raw_session: Any) -> None:
+        """CKM_X2RATCHET_INITIALIZE rejects non-AEAD nested mechanisms."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("X2RATCHET_INITIALIZE"):
+            pytest.skip("CKM_X2RATCHET_INITIALIZE not supported")
+
+        own_identity_pub, own_identity_priv = _create_ec_keypair(rs)
+        peer_identity_pub, peer_identity_priv = _create_ec_keypair(rs)
+        peer_prekey_pub, peer_prekey_priv = _create_ec_keypair(rs)
+        derived = 0
+        try:
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    own_identity_priv,
+                    CKM_X2RATCHET_INITIALIZE,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_VALUE_LEN: 32,
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                    mech_param=_mech_x2ratchet_initialize(
+                        shared_secret=_X2RATCHET_SHARED_SECRET,
+                        peer_public_prekey=peer_prekey_pub,
+                        peer_public_identity=peer_identity_pub,
+                        own_public_identity=own_identity_pub,
+                        aead_mechanism=_X2RATCHET_INVALID_AEAD,
+                    ),
+                )
+            except AssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    _X2RATCHET_INVALID_AEAD_REJECT_RVS,
+                    label="X2RATCHET_INITIALIZE invalid AEAD",
+                )
+                return
+            reject_or_classify(
+                None,
+                _X2RATCHET_INVALID_AEAD_REJECT_RVS,
+                label="X2RATCHET_INITIALIZE invalid AEAD",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, derived)
+            destroy_quietly(rs.raw, rs.sh, own_identity_pub)
+            destroy_quietly(rs.raw, rs.sh, own_identity_priv)
+            destroy_quietly(rs.raw, rs.sh, peer_identity_pub)
+            destroy_quietly(rs.raw, rs.sh, peer_identity_priv)
+            destroy_quietly(rs.raw, rs.sh, peer_prekey_pub)
+            destroy_quietly(rs.raw, rs.sh, peer_prekey_priv)
+
     # ------------------------------------------------------------------
     # CKM_X2RATCHET_RESPOND
     # ------------------------------------------------------------------
@@ -724,6 +781,60 @@ class TestX2RatchetDerive:
                 None,
                 _X2RATCHET_INVALID_KDF_REJECT_RVS,
                 label="X2RATCHET_RESPOND invalid KDF",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, derived)
+            destroy_quietly(rs.raw, rs.sh, own_prekey_pub)
+            destroy_quietly(rs.raw, rs.sh, own_prekey_priv)
+            destroy_quietly(rs.raw, rs.sh, own_identity_pub)
+            destroy_quietly(rs.raw, rs.sh, own_identity_priv)
+            destroy_quietly(rs.raw, rs.sh, initiator_identity_pub)
+            destroy_quietly(rs.raw, rs.sh, initiator_identity_priv)
+
+    def test_x2ratchet_respond_rejects_invalid_aead(self, p11_raw_session: Any) -> None:
+        """CKM_X2RATCHET_RESPOND rejects non-AEAD nested mechanisms."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("X2RATCHET_RESPOND"):
+            pytest.skip("CKM_X2RATCHET_RESPOND not supported")
+
+        own_prekey_pub, own_prekey_priv = _create_ec_keypair(rs)
+        own_identity_pub, own_identity_priv = _create_ec_keypair(rs)
+        initiator_identity_pub, initiator_identity_priv = _create_ec_keypair(rs)
+        derived = 0
+        try:
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    own_prekey_priv,
+                    CKM_X2RATCHET_RESPOND,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_VALUE_LEN: 32,
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                    mech_param=_mech_x2ratchet_respond(
+                        shared_secret=_X2RATCHET_SHARED_SECRET,
+                        own_prekey=own_prekey_priv,
+                        initiator_identity=initiator_identity_pub,
+                        own_public_identity=own_identity_pub,
+                        aead_mechanism=_X2RATCHET_INVALID_AEAD,
+                    ),
+                )
+            except AssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    _X2RATCHET_INVALID_AEAD_REJECT_RVS,
+                    label="X2RATCHET_RESPOND invalid AEAD",
+                )
+                return
+            reject_or_classify(
+                None,
+                _X2RATCHET_INVALID_AEAD_REJECT_RVS,
+                label="X2RATCHET_RESPOND invalid AEAD",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, derived)

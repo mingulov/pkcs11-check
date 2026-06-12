@@ -321,7 +321,9 @@ smoke behavior, or covered only by one narrow variation.
    OASIS-defined 255/448 set through the shared provider-general negative
    classifier. X2RATCHET invalid-KDF negative coverage now verifies both derive
    sides reject a KDF selector outside the OASIS-defined
-   `CK_X2RATCHET_KDF_TYPE` table through the same classifier.
+   `CK_X2RATCHET_KDF_TYPE` table through the same classifier. X2RATCHET
+   invalid-AEAD negative coverage now verifies both derive sides reject a nested
+   `aeadMechanism` that is not an AEAD cipher mechanism.
 2. Regional cipher encrypt-data derive dispatch exists for Camellia, ARIA, and
    SEED ECB/CBC variants in `test_mech_derive.py`; focused meta-tests verify
    the family-specific CBC parameter structs are packed for generic derive

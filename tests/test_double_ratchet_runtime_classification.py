@@ -18,6 +18,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKK_X2RATCHET,
     CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
+    CKM_VENDOR_DEFINED,
     CKM_X2RATCHET_INITIALIZE,
     CKM_X2RATCHET_RESPOND,
     CKR_CURVE_NOT_SUPPORTED,
@@ -482,6 +483,63 @@ def test_x2ratchet_respond_invalid_kdf_is_expected_reject(
     assert derive_calls[0]["base_key"] == 201
     assert derive_calls[0]["mechanism"] == int(CKM_X2RATCHET_RESPOND)
     assert derive_calls[0]["mech_param"].params.kdfMechanism == 0xDEADBEEF
+
+
+def test_x2ratchet_invalid_aead_is_expected_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handles = iter(
+        (
+            (101, 201),
+            (102, 202),
+            (103, 203),
+            (104, 204),
+            (105, 205),
+            (106, 206),
+        )
+    )
+    derive_calls: list[dict[str, Any]] = []
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        base_key: int,
+        mechanism: int,
+        attrs: dict[int, Any],
+        *,
+        mech_param: Any,
+    ) -> int:
+        derive_calls.append(
+            {
+                "base_key": base_key,
+                "mechanism": int(mechanism),
+                "attrs": attrs,
+                "mech_param": mech_param,
+            }
+        )
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID",
+            int(CKR_MECHANISM_PARAM_INVALID),
+        )
+
+    monkeypatch.setattr(test_double_ratchet, "_create_ec_keypair", lambda _rs: next(handles))
+    monkeypatch.setattr(test_double_ratchet, "derive_key", _derive_key)
+    monkeypatch.setattr(test_double_ratchet, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    test_double_ratchet.TestX2RatchetDerive().test_x2ratchet_initialize_rejects_invalid_aead(
+        _session_with_mechanisms("X2RATCHET_INITIALIZE")
+    )
+    test_double_ratchet.TestX2RatchetDerive().test_x2ratchet_respond_rejects_invalid_aead(
+        _session_with_mechanisms("X2RATCHET_RESPOND")
+    )
+
+    assert [
+        (call["mechanism"], call["mech_param"].params.aeadMechanism)
+        for call in derive_calls
+    ] == [
+        (int(CKM_X2RATCHET_INITIALIZE), int(CKM_VENDOR_DEFINED)),
+        (int(CKM_X2RATCHET_RESPOND), int(CKM_VENDOR_DEFINED)),
+    ]
 
 
 def test_x2ratchet_initialize_invalid_kdf_acceptance_fails(
