@@ -275,8 +275,10 @@ smoke behavior, or covered only by one narrow variation.
    `CKM_TLS_PRF` output against the same RFC 2246 PRF. TLS 1.0/1.1
    master-secret exact-vector coverage now checks
    `CKM_TLS_MASTER_KEY_DERIVE` against the same RFC 2246 PRF with the "master
-   secret" label. TLS 1.2 master-secret exact-vector coverage now checks
-   `CKM_TLS12_MASTER_KEY_DERIVE` output against the SHA-256 PRF over the
+   secret" label. Legacy TLS key-and-MAC NULL phKey coverage now follows the
+   OASIS convention that `CKM_TLS_KEY_AND_MAC_DERIVE` returns handles through
+   `CK_SSL3_KEY_MAT_OUT`. TLS 1.2 master-secret exact-vector coverage now
+   checks `CKM_TLS12_MASTER_KEY_DERIVE` output against the SHA-256 PRF over the
    client/server randoms. TLS 1.2 master-secret DH
    exact-vector coverage now applies the same PRF check to
    `CKM_TLS12_MASTER_KEY_DERIVE_DH`. TLS 1.2 extended-master-secret

@@ -17,6 +17,7 @@ from pkcs11_check.raw.types_std import (
     CKM_TLS12_MASTER_KEY_DERIVE,
     CKM_TLS12_MASTER_KEY_DERIVE_DH,
     CKM_TLS_KDF,
+    CKM_TLS_KEY_AND_MAC_DERIVE,
     CKM_TLS_MASTER_KEY_DERIVE,
     CKM_TLS_PRF,
     CKR_OK,
@@ -96,6 +97,14 @@ def _tls_kdf_session() -> SimpleNamespace:
         raw=object(),
         sh=1,
         has_mechanism=lambda name: name == "TLS_KDF",
+    )
+
+
+def _tls_key_material_session(raw: _FakeRaw) -> SimpleNamespace:
+    return SimpleNamespace(
+        raw=raw,
+        sh=1,
+        has_mechanism=lambda name: name == "TLS_KEY_AND_MAC_DERIVE",
     )
 
 
@@ -179,6 +188,37 @@ def test_tls12_key_safe_derive_uses_null_phkey(monkeypatch: pytest.MonkeyPatch) 
     _patch_tls_material_dependencies(monkeypatch)
 
     test_tls12.TestTLS12KeyAndMacDerive().test_key_safe_derive(_session(raw))
+
+    assert raw.ph_keys == [None]
+
+
+def test_tls_key_and_mac_derive_uses_null_phkey(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _FakeRaw()
+
+    def fake_ssl3_key_mat(mechanism_type: int, *_args: object, **_kwargs: object) -> object:
+        assert mechanism_type == CKM_TLS_KEY_AND_MAC_DERIVE
+        return _FakeKeyMatMechanism()
+
+    monkeypatch.setattr(test_tls12, "_create_tls_pms", lambda _rs: 101)
+    monkeypatch.setattr(test_tls12, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(test_tls12, "destroy_returned_handles", lambda *_args: None)
+    monkeypatch.setattr(
+        test_tls12,
+        "read_attributes",
+        lambda *_args, **_kwargs: pytest.fail("should not read a primary derived handle"),
+    )
+    monkeypatch.setattr(
+        test_tls12,
+        "mech_ssl3_key_mat",
+        fake_ssl3_key_mat,
+        raising=False,
+    )
+
+    test_tls12.TestTLS10PreMasterKeyGen().test_tls_key_and_mac_derive(
+        _tls_key_material_session(raw)
+    )
 
     assert raw.ph_keys == [None]
 

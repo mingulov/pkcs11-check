@@ -31,6 +31,7 @@ import pytest
 from pkcs11_check.raw.pack import (
     attr_ulong,
     mech_bytes,
+    mech_ssl3_key_mat,
     mech_ssl3_master_key_derive,
     mech_tls12_extended_master_key_derive,
     mech_tls12_key_mat,
@@ -73,6 +74,7 @@ from pkcs11_check.raw.types_std import (
     CKM_TLS12_MASTER_KEY_DERIVE,
     CKM_TLS12_MASTER_KEY_DERIVE_DH,
     CKM_TLS_KDF,
+    CKM_TLS_KEY_AND_MAC_DERIVE,
     CKM_TLS_MAC,
     CKM_TLS_MASTER_KEY_DERIVE,
     CKM_TLS_PRE_MASTER_KEY_GEN,
@@ -370,6 +372,55 @@ class TestTLS10PreMasterKeyGen:
         """Probe whether CKM_TLS_KEY_AND_MAC_DERIVE is advertised."""
         if not p11_raw_session.has_mechanism("TLS_KEY_AND_MAC_DERIVE"):
             pytest.skip("CKM_TLS_KEY_AND_MAC_DERIVE not supported")
+
+    def test_tls_key_and_mac_derive(self, p11_raw_session: Any) -> None:
+        """Attempt CKM_TLS_KEY_AND_MAC_DERIVE with CK_SSL3_KEY_MAT_PARAMS."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("TLS_KEY_AND_MAC_DERIVE"):
+            pytest.skip("CKM_TLS_KEY_AND_MAC_DERIVE not supported")
+
+        master_secret = _create_tls_pms(rs)
+        try:
+            mech = mech_ssl3_key_mat(
+                CKM_TLS_KEY_AND_MAC_DERIVE,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                key_size_bits=128,
+            )
+            _derive_key_material_to_params(
+                rs,
+                master_secret,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_DERIVE: True,
+                    CKA_TOKEN: False,
+                },
+                mech=mech,
+            )
+            try:
+                out = mech.key_mat_out
+                assert out.hClientKey != 0
+                assert out.hServerKey != 0
+                assert any(mech.buffer_bytes("iv_client"))
+                assert any(mech.buffer_bytes("iv_server"))
+            finally:
+                out = mech.key_mat_out
+                destroy_returned_handles(
+                    rs,
+                    out.hClientMacSecret,
+                    out.hServerMacSecret,
+                    out.hClientKey,
+                    out.hServerKey,
+                )
+        except AssertionError as exc:
+            if is_known_error(exc, _TLS_ERROR_RVS):
+                pytest.xfail(f"CKM_TLS_KEY_AND_MAC_DERIVE not operational: {exc}")
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master_secret)
 
     def test_tls_master_key_derive_dh_availability(self, p11_raw_session: Any) -> None:
         """Probe whether CKM_TLS_MASTER_KEY_DERIVE_DH is advertised."""

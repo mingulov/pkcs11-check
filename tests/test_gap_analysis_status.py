@@ -206,6 +206,19 @@ def test_gap_analysis_marks_tls_prf_exact_vector_as_added() -> None:
     assert "TLS PRF exact-vector coverage" in doc_flat
 
 
+def test_gap_analysis_marks_tls_key_material_null_phkey_as_added() -> None:
+    """CKM_TLS_KEY_AND_MAC_DERIVE follows the OASIS NULL phKey convention."""
+    tls = _read("src/pkcs11_check/testcases/test_tls12.py")
+    guard = _read("tests/test_tls_key_material_derivation.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "def test_tls_key_and_mac_derive(" in tls
+    assert "CKM_TLS_KEY_AND_MAC_DERIVE" in tls
+    assert "test_tls_key_and_mac_derive_uses_null_phkey" in guard
+
+    assert "Legacy TLS key-and-MAC NULL phKey coverage" in doc_flat
+
+
 def test_gap_analysis_marks_tls12_extended_master_secret_exact_vector_as_added() -> None:
     """TLS 1.2 extended master secret mechanisms have RFC 7627 PRF exact vectors."""
     tls = _read("src/pkcs11_check/testcases/test_tls12.py")
