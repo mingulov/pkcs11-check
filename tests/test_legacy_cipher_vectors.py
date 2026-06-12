@@ -56,6 +56,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SEED_CBC_PAD,
     CKM_SEED_MAC,
     CKM_SEED_MAC_GENERAL,
+    CKM_SKIPJACK_ECB64,
     CKM_TWOFISH_CBC,
 )
 from pkcs11_check.testcases.mechanism_helpers import build_params_from_vector, build_test_params
@@ -455,6 +456,46 @@ def test_rc4_encrypt_mechanism_has_rfc6229_kat_vectors() -> None:
         assert vec["ciphertext_hex"]
         assert vec["params"]["source"] == "RFC 6229 section 2"
         assert vec["params"]["offset"] == 0
+
+
+def test_skipjack_ecb64_mechanism_has_sp800_17_kat_vectors() -> None:
+    config = MECHANISM_REGISTRY[int(CKM_SKIPJACK_ECB64)]
+    assert config.vector_file == "skipjack_ecb64.json"
+
+    vectors = load_positive_vectors("skipjack_ecb64.json")
+    assert {vec["id"] for vec in vectors} == {
+        "skipjack_ecb64_sp800_17_table5_round_01",
+        "skipjack_ecb64_sp800_17_table6_round_10",
+    }
+
+    expected = {
+        "skipjack_ecb64_sp800_17_table5_round_01": (
+            "00000000000000000000",
+            "4000000000000000",
+            "cc6843598c732bbe",
+            "table 5 round 01",
+        ),
+        "skipjack_ecb64_sp800_17_table6_round_10": (
+            "00200000000000000000",
+            "0000000000000000",
+            "f4108b099b047040",
+            "table 6 round 10",
+        ),
+    }
+
+    for vec in vectors:
+        key_hex, plaintext_hex, ciphertext_hex, table_ref = expected[vec["id"]]
+        assert vec["type"] == "positive"
+        assert vec["mechanism_name"] == "CKM_SKIPJACK_ECB64"
+        assert vec["key_bits"] == 80
+        assert vec["key_hex"] == key_hex
+        assert vec["plaintext_hex"] == plaintext_hex
+        assert vec["ciphertext_hex"] == ciphertext_hex
+        assert vec["params"]["source"] == f"NIST SP 800-17 appendix B {table_ref}"
+        assert vec["params"]["source_url"] == (
+            "https://nvlpubs.nist.gov/nistpubs/Legacy/SP/"
+            "nistspecialpublication800-17.pdf"
+        )
 
 
 def test_blowfish_cbc_encrypt_mechanism_has_schneier_kat_vector() -> None:

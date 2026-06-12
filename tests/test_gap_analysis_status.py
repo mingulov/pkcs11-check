@@ -253,6 +253,18 @@ def test_gap_analysis_marks_gost28147_iv_param_registry_coverage() -> None:
     assert "GOST28147 exact-output KATs remain source-first" in doc
 
 
+def test_gap_analysis_marks_skipjack_ecb64_kat_vectors_as_added() -> None:
+    """Skipjack ECB64 has source-backed NIST SP 800-17 KAT vector links."""
+    legacy_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_legacy.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "skipjack_ecb64.json" in legacy_registry
+    vector_file = _read("src/pkcs11_check/testcases/data/mechanism_vectors/skipjack_ecb64.json")
+    assert "NIST SP 800-17 appendix B" in vector_file
+    assert "CKM_SKIPJACK_ECB64 now has NIST SP 800-17 exact-output KATs" in doc
+    assert "SKIPJACK ECB64 exact-output KATs are covered" in doc
+
+
 def test_gap_analysis_marks_mixed_fail_crash_reporting_as_fixed() -> None:
     """Mixed fail+crash units now surface crash status instead of only failed status."""
     runner = _read("src/pkcs11_check/core/file_runner.py")

@@ -745,6 +745,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=True,
         keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
+        vector_file="skipjack_ecb64.json",
         notes="Skipjack-ECB64: 8-byte block ECB mode",
     )
 
