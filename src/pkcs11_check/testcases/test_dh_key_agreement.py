@@ -436,6 +436,65 @@ class TestDHKeyAgreement:
             if priv:
                 destroy_quietly(rs.raw, rs.sh, priv)
 
+    def test_dh_pkcs_derive_rfc3526_group14_value_len_truncation(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_DH_PKCS_DERIVE truncates the RFC 3526 secret by removing leading bytes."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("DH_PKCS_DERIVE"):
+            pytest.skip("CKM_DH_PKCS_DERIVE not supported")
+
+        priv = 0
+        derived_keys: list[int] = []
+        try:
+            priv = _dh_setup_or_xfail(
+                lambda: _import_dh_private_key(
+                    rs.raw,
+                    rs.sh,
+                    _DH_RFC3526_GROUP14_ALICE_PRIVATE,
+                ),
+                "CKM_DH_PKCS_DERIVE RFC 3526 Group 14 truncation vector",
+            )
+            derived_values: dict[int, bytes] = {}
+            for requested_len in (32, 16):
+                derived = _dh_derive_or_xfail(
+                    rs,
+                    priv,
+                    _DH_RFC3526_GROUP14_BOB_PUBLIC,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_VALUE_LEN: requested_len,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
+                    },
+                    label=(
+                        "CKM_DH_PKCS_DERIVE RFC 3526 Group 14 "
+                        f"CKA_VALUE_LEN={requested_len}"
+                    ),
+                )
+                derived_keys.append(derived)
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(value, bytes)
+                assert len(value) == requested_len, (
+                    "DH RFC 3526 derived key reported "
+                    f"{len(value)} bytes for CKA_VALUE_LEN={requested_len}"
+                )
+                derived_values[requested_len] = value
+
+            assert derived_values[32] == _DH_RFC3526_GROUP14_EXPECTED_SECRET_32
+            assert derived_values[16] == derived_values[32][-16:], (
+                "DH RFC 3526 CKA_VALUE_LEN=16 must keep the rightmost bytes "
+                "of the longer derived secret"
+            )
+        finally:
+            for derived in derived_keys:
+                destroy_quietly(rs.raw, rs.sh, derived)
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+
     def test_dh_derive_respects_requested_value_len_truncation(
         self,
         p11_raw_session: Any,

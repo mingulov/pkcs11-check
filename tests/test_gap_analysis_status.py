@@ -682,12 +682,16 @@ def test_gap_analysis_marks_dh_malformed_peer_public_negative_as_added() -> None
 def test_gap_analysis_marks_classic_dh_exact_vector_as_added() -> None:
     """Classic DH derive checks a deterministic RFC 3526 Group 14 exact vector."""
     dh = _read("src/pkcs11_check/testcases/test_dh_key_agreement.py")
+    guard = _read("tests/test_dh_key_agreement_runtime_classification.py")
     doc = GAP_DOC.read_text(encoding="utf-8")
     doc_flat = " ".join(doc.split())
 
     assert "test_dh_pkcs_derive_rfc3526_group14_exact_vector" in dh
+    assert "test_dh_pkcs_derive_rfc3526_group14_value_len_truncation" in dh
+    assert "test_dh_rfc3526_group14_value_len_truncation_uses_rightmost_bytes" in guard
     assert "_DH_RFC3526_GROUP14_EXPECTED_SECRET_32" in dh
     assert "Classic DH RFC 3526 Group 14 exact-vector coverage" in doc_flat
+    assert "Classic DH RFC 3526 Group 14 requested-value-length truncation" in doc_flat
 
 
 def test_gap_analysis_marks_x942_missing_peer_public_negative_as_added() -> None:

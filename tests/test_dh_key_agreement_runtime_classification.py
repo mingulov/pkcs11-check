@@ -8,7 +8,12 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKA_VALUE, CKR_DEVICE_ERROR
+from pkcs11_check.raw.types_std import (
+    CKA_VALUE,
+    CKA_VALUE_LEN,
+    CKM_DH_PKCS_DERIVE,
+    CKR_DEVICE_ERROR,
+)
 from pkcs11_check.testcases import test_dh_key_agreement as dh
 
 
@@ -54,3 +59,50 @@ def test_dh_rfc3526_group14_exact_vector_constant_matches_modexp() -> None:
 
     full_secret = pow(bob_public, alice_private, prime).to_bytes(len(dh.DH_PRIME_2048), "big")
     assert full_secret[-32:] == dh._DH_RFC3526_GROUP14_EXPECTED_SECRET_32
+
+
+def test_dh_rfc3526_group14_value_len_truncation_uses_rightmost_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    derived_values = {
+        501: dh._DH_RFC3526_GROUP14_EXPECTED_SECRET_32,
+        502: dh._DH_RFC3526_GROUP14_EXPECTED_SECRET_32[-16:],
+    }
+    handles_by_len = {32: 501, 16: 502}
+    derive_calls: list[dict[str, Any]] = []
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        private_key: int,
+        mechanism: int,
+        attrs: dict[int, Any],
+        *,
+        mech_param: Any,
+    ) -> int:
+        derive_calls.append(
+            {
+                "private_key": private_key,
+                "mechanism": int(mechanism),
+                "attrs": attrs,
+                "mech_param": mech_param,
+            }
+        )
+        return handles_by_len[attrs[CKA_VALUE_LEN]]
+
+    monkeypatch.setattr(dh, "_import_dh_private_key", lambda *_args: 301)
+    monkeypatch.setattr(dh, "derive_key", _derive_key)
+    monkeypatch.setattr(
+        dh,
+        "read_attributes",
+        lambda _raw, _sh, handle, _attrs: {CKA_VALUE: derived_values[handle]},
+    )
+    monkeypatch.setattr(dh, "destroy_quietly", lambda *_args: None)
+
+    dh.TestDHKeyAgreement().test_dh_pkcs_derive_rfc3526_group14_value_len_truncation(
+        _session()
+    )
+
+    assert [call["attrs"][CKA_VALUE_LEN] for call in derive_calls] == [32, 16]
+    assert {call["private_key"] for call in derive_calls} == {301}
+    assert {call["mechanism"] for call in derive_calls} == {int(CKM_DH_PKCS_DERIVE)}

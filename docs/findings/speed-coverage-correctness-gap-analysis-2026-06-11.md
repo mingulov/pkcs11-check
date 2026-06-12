@@ -318,7 +318,10 @@ smoke behavior, or covered only by one narrow variation.
    truncated signature through the shared invalid-signature policy. Classic DH
    RFC 3526 Group 14 exact-vector coverage now imports a fixed private value,
    derives with a fixed peer public value, and checks the exact derived
-   generic-secret bytes. Classic DH derive runtime-reject classification now
+   generic-secret bytes. Classic DH RFC 3526 Group 14
+   requested-value-length truncation now verifies the OASIS leading-byte
+   truncation rule against the deterministic shared secret. Classic DH derive
+   runtime-reject classification now
    uses a shared wrapper for positive
    `CKM_DH_PKCS_DERIVE` operations:
    advertised clean derive refusals are provider-general xfail deviations,
