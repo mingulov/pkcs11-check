@@ -308,8 +308,13 @@ smoke behavior, or covered only by one narrow variation.
    `CK_AES_CTR_PARAMS` through the shared `ctr` registry recipe and an
    explicit fallback for bare AES-CTR entries. AES-GCM and AES-CCM wrap params
    are now covered by `test_mech_wrap.py` using `CK_GCM_WRAP_PARAMS` and
-   `CK_CCM_WRAP_PARAMS`. Remaining wrap work is ChaCha20-Poly1305 parameter
-   expansion.
+   `CK_CCM_WRAP_PARAMS`. ChaCha20-Poly1305 generic wrap remains source-first:
+   the registry expects only encrypt/decrypt flags for
+   `CKM_CHACHA20_POLY1305`, and the local OASIS text classifies it as
+   authenticated encryption/decryption using Encrypt, Decrypt, MessageEncrypt,
+   and MessageDecrypt APIs rather than a generic `C_WrapKey` mechanism. Keep
+   the explicit generic-wrap skip for anomalous providers that advertise
+   `CKF_WRAP` until a defensible wrap/unwrap mapping exists.
 6. BLAKE2B keyed coverage exists for HMAC, HMAC_GENERAL truncation, KEY_GEN,
    and KEY_DERIVE across 160/256/384/512-bit variants, with Python reference
    checks plus key-type and extracted-value assertions. BLAKE2B invalid-length
@@ -369,7 +374,8 @@ smoke behavior, or covered only by one narrow variation.
    X3DH, and X2RATCHET where the mechanism semantics allow it.
 3. BLAKE2B keyed negative/parameter edge cases, now that HMAC, HMAC_GENERAL,
    KEY_GEN, and KEY_DERIVE positive semantics are covered.
-4. Remaining ChaCha20-Poly1305 wrap parameter expansion.
+4. No remaining generic AEAD wrap parameter gap: ChaCha20-Poly1305 stays
+   source-first for wrap/unwrap unless a spec-backed `C_WrapKey` mapping appears.
 5. Registry-driven negative tests for wrong key type and missing operation
    permission across advertised operation families.
 
@@ -523,7 +529,9 @@ After that, do the first coverage expansion round:
 2. Protocol KDF exact-vector expansion beyond already-covered SP800-108
    counter KDF, TLS 1.2 KDF, and PBKDF2.
 3. BLAKE2B keyed negative/parameter edge cases.
-4. Remaining ChaCha20-Poly1305 wrap params.
+4. ChaCha20-Poly1305 wrap/unwrap only if a spec-backed `C_WrapKey` mapping is
+   identified; otherwise keep it source-first and limited to encrypt/decrypt
+   semantics.
 5. Registry-driven wrong-key/permission negatives.
 6. Legacy/deprecated mechanisms not yet covered by reliable KATs or semantic
    probes: remaining SKIPJACK non-ECB64 variants only with trustworthy

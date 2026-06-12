@@ -317,6 +317,25 @@ def test_gap_analysis_marks_gcm_ccm_wrap_params_as_added() -> None:
     assert "AES-GCM and AES-CCM wrap params are now covered" in doc_flat
 
 
+def test_gap_analysis_marks_chacha20_poly1305_wrap_as_source_first() -> None:
+    """ChaCha20-Poly1305 is not treated as generic C_WrapKey coverage."""
+    registry = _read("src/pkcs11_check/testcases/mechanism_registry/_ciphers.py")
+    wrap = _read("src/pkcs11_check/testcases/test_mech_wrap.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    start = registry.index("registry[CKM_CHACHA20_POLY1305]")
+    end = registry.index("registry[CKM_SALSA20_KEY_GEN]")
+    chacha_config = registry[start:end]
+
+    assert "expected_flags=_ENC_DEC" in chacha_config
+    assert "CKF_WRAP" not in chacha_config
+    assert "ChaCha20-Poly1305 wrap parameter semantics" in wrap
+
+    assert "ChaCha20-Poly1305 generic wrap remains source-first" in doc_flat
+    assert "Remaining ChaCha20-Poly1305 wrap parameter expansion" not in doc_flat
+    assert "Remaining ChaCha20-Poly1305 wrap params" not in doc_flat
+
+
 def test_gap_analysis_marks_block_cbc_pad_vectors_as_added() -> None:
     """DES-family, Camellia, ARIA, and SEED CBC_PAD now have KAT vector links."""
     des_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_des.py")
