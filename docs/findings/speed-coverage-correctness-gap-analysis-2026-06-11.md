@@ -257,9 +257,11 @@ smoke behavior, or covered only by one narrow variation.
    ECDH-AES key wrap, AEAD wrap styles, and AES-CTR wrap params.
 6. BLAKE2B keyed coverage exists for HMAC, HMAC_GENERAL truncation, KEY_GEN,
    and KEY_DERIVE across 160/256/384/512-bit variants, with Python reference
-   checks plus key-type and extracted-value assertions. Remaining BLAKE2B work
-   is negative parameter/regression expansion and provider-artifact evidence,
-   not basic keyed semantic coverage.
+   checks plus key-type and extracted-value assertions. BLAKE2B invalid-length HMAC_GENERAL
+   parameter coverage now rejects zero-length and one-byte-too-long MAC requests
+   against the OASIS 1..digest-length rule. Remaining BLAKE2B work is broader
+   negative parameter/regression expansion and provider-artifact evidence, not
+   basic keyed semantic coverage.
 7. SHAKE/XOF and ML-DSA ExternalMu are registry/smoke only until raw XOF
    function signatures and KAT-backed tests exist.
 8. Legacy cipher coverage is now mixed rather than mostly generic: RC2, RC4,

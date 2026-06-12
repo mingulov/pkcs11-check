@@ -78,7 +78,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import reject_or_classify, xfail_if_known_ckr
 
 pytestmark = pytest.mark.full
 
@@ -530,6 +530,63 @@ class TestBlake2bKeyed:
         case: _Blake2bKeyedCase,
     ) -> None:
         self._hmac_general_truncates(p11_raw_session, case)
+
+    def _hmac_general_invalid_length_rejected(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+        *,
+        bad_len: int,
+    ) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism(case.hmac_general_name):
+            pytest.skip(f"CKM_{case.hmac_general_name} not supported")
+
+        key = _import_blake2b_setup_key(rs, sign=True, verify=True)
+        mech_param = mech_bytes(case.hmac_general_mech, _ck_ulong_param(bad_len))
+        try:
+            try:
+                mac = sign_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    case.hmac_general_mech,
+                    _BLAKE2B_TEST_DATA,
+                    mech_param=mech_param,
+                )
+            except AssertionError as e:
+                reject_or_classify(
+                    e,
+                    (CKR_MECHANISM_PARAM_INVALID,),
+                    label=f"{case.hmac_general_name} invalid output length {bad_len}",
+                )
+                return
+
+            raise AssertionError(
+                f"accepted invalid {case.hmac_general_name} output length {bad_len}; "
+                f"returned {len(mac)} bytes"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    @pytest.mark.parametrize(
+        "case",
+        _BLAKE2B_KEYED_CASES,
+        ids=[case.id for case in _BLAKE2B_KEYED_CASES],
+    )
+    @pytest.mark.parametrize("bad_kind", ("zero", "too-long"))
+    def test_blake2b_hmac_general_rejects_invalid_lengths(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+        bad_kind: str,
+    ) -> None:
+        bad_len = 0 if bad_kind == "zero" else case.digest_len + 1
+        self._hmac_general_invalid_length_rejected(
+            p11_raw_session,
+            case,
+            bad_len=bad_len,
+        )
 
     def _key_gen_signs_reference(self, p11_raw_session: Any, case: _Blake2bKeyedCase) -> None:
         rs = p11_raw_session

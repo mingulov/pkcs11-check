@@ -57,6 +57,25 @@ def test_blake2b_hmac_general_runtime_reject_is_xfail(
         )
 
 
+def test_blake2b_hmac_general_invalid_length_acceptance_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _sign_accepts_invalid_length(*_args: Any, **_kwargs: Any) -> bytes:
+        return b"invalid"
+
+    rs = _session_with_mechanisms("BLAKE2B_256_HMAC_GENERAL")
+    monkeypatch.setattr(test_blake2, "_import_blake2b_setup_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_blake2, "destroy_quietly", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(test_blake2, "sign_single", _sign_accepts_invalid_length)
+
+    with pytest.raises(AssertionError, match="accepted invalid BLAKE2B_256_HMAC_GENERAL"):
+        test_blake2.TestBlake2bKeyed()._hmac_general_invalid_length_rejected(
+            rs,
+            test_blake2._BLAKE2B_KEYED_CASE_BY_BITS[256],
+            bad_len=0,
+        )
+
+
 def test_blake2b_key_derive_runtime_reject_is_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

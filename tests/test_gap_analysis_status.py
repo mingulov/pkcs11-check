@@ -42,9 +42,11 @@ def test_gap_analysis_marks_blake2b_keyed_semantics_as_covered() -> None:
     assert "assert mac == expected_full[:mac_len]" in blake2
     assert "assert attrs[CKA_KEY_TYPE] == case.key_type" in blake2
     assert "assert value == expected" in blake2
+    assert "test_blake2b_hmac_general_rejects_invalid_lengths" in blake2
 
     assert "BLAKE2B coverage stops at unkeyed digest" not in doc
     assert "BLAKE2B keyed coverage exists" in doc
+    assert "BLAKE2B invalid-length HMAC_GENERAL" in doc
 
 
 def test_coverage_plan_does_not_count_ecmqv_as_kea_coverage() -> None:
