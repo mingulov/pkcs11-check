@@ -645,6 +645,17 @@ def test_gap_analysis_marks_x942_exact_vector_as_added() -> None:
     assert "X9.42 DH RFC 5114 exact-vector coverage" in doc_flat
 
 
+def test_gap_analysis_marks_x942_value_len_truncation_as_added() -> None:
+    """X9.42 DH CKD_NULL derive checks OASIS leading-byte truncation semantics."""
+    x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_x942_dh_derive_rfc5114_value_len_truncation" in x942
+    assert "X9.42 DH CKA_VALUE_LEN=16 must keep the rightmost bytes" in x942
+
+    assert "X9.42 DH requested-value-length truncation coverage" in doc_flat
+
+
 def test_gap_analysis_marks_regional_cipher_encrypt_data_dispatch_as_added() -> None:
     """Camellia/ARIA/SEED encrypt-data derive dispatch is no longer a gap."""
     derive = _read("src/pkcs11_check/testcases/test_mech_derive.py")

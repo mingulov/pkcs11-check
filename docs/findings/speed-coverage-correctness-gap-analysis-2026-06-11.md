@@ -324,7 +324,10 @@ smoke behavior, or covered only by one narrow variation.
    `pOtherInfo` must be NULL and `ulOtherInfoLen` must be zero when the KDF is
    `CKD_NULL`. X9.42 DH CKD_SHA1_KDF_ASN1 missing-OtherInfo coverage now
    verifies the matching OASIS rule that ASN.1 KDF derives must supply
-   `pOtherInfo`.
+   `pOtherInfo`. X9.42 DH requested-value-length truncation coverage now
+   verifies the OASIS leading-byte truncation rule by deriving the RFC 5114
+   vector at 32 bytes and 16 bytes and checking that the shorter output keeps
+   the rightmost bytes.
 4. Message API registry-driven init coverage exists for advertised
    `CKF_MESSAGE_*` flags through `TestRegistryMessageInit` and pytest plugin
    fixtures for message encrypt, decrypt, sign, and verify entries. Richer

@@ -855,6 +855,68 @@ class TestX942DHDerive:
             if priv:
                 destroy_quietly(rs.raw, rs.sh, priv)
 
+    def test_x942_dh_derive_rfc5114_value_len_truncation(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_X9_42_DH_DERIVE honors CKA_VALUE_LEN by leading-byte truncation."""
+        rs = p11_raw_session
+        _skip_no_x942_derive(rs)
+
+        priv = 0
+        derived_keys: list[int] = []
+        try:
+            priv = _x942_setup_or_xfail(
+                lambda: _import_x942_private_key(
+                    rs.raw,
+                    rs.sh,
+                    _X942_RFC5114_ALICE_PRIVATE,
+                ),
+                "CKM_X9_42_DH_DERIVE RFC 5114 truncation vector",
+            )
+            derived_values: dict[int, bytes] = {}
+            for requested_len in (32, 16):
+                def derive_requested_len(requested_len: int = requested_len) -> int:
+                    return derive_key(
+                        rs.raw,
+                        rs.sh,
+                        priv,
+                        CKM_X9_42_DH_DERIVE,
+                        attrs={
+                            CKA_CLASS: CKO_SECRET_KEY,
+                            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                            CKA_VALUE_LEN: requested_len,
+                            CKA_SENSITIVE: False,
+                            CKA_EXTRACTABLE: True,
+                            CKA_TOKEN: False,
+                        },
+                        mech_param=_build_x942_derive_mech(_X942_RFC5114_BOB_PUBLIC),
+                    )
+
+                derived = _x942_derive_or_xfail(
+                    derive_requested_len,
+                    f"CKM_X9_42_DH_DERIVE RFC 5114 CKA_VALUE_LEN={requested_len}",
+                )
+                derived_keys.append(derived)
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(value, bytes)
+                assert len(value) == requested_len, (
+                    "X9.42 DH derived key reported "
+                    f"{len(value)} bytes for CKA_VALUE_LEN={requested_len}"
+                )
+                derived_values[requested_len] = value
+
+            assert derived_values[32] == _X942_RFC5114_EXPECTED_SECRET_32
+            assert derived_values[16] == derived_values[32][-16:], (
+                "X9.42 DH CKA_VALUE_LEN=16 must keep the rightmost bytes "
+                "of the longer derived secret"
+            )
+        finally:
+            for derived in derived_keys:
+                destroy_quietly(rs.raw, rs.sh, derived)
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+
     def test_different_exchanges_produce_different_secrets(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         _skip_no_x942_keygen(rs)
