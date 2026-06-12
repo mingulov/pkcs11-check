@@ -136,6 +136,7 @@ _sym = KeygenRecipe("symmetric")
 _fixed = KeygenRecipe("fixed_length")
 _iv8 = ParamRecipe("iv", {"iv_len": 8})
 _iv16 = ParamRecipe("iv", {"iv_len": 16})
+_iv24 = ParamRecipe("iv", {"iv_len": 24})
 _mac_general = ParamRecipe("mac_general", {"mac_len": 8})
 _rc2 = ParamRecipe("rc2", {"effective_bits": 128})
 _rc2_cbc = ParamRecipe("rc2_cbc", {"effective_bits": 128})
@@ -761,12 +762,11 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         param_required=True,
-        param_recipe=_iv8,
+        param_recipe=_iv24,
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
-        vector_file="skipjack_cbc64.json",
-        notes="Skipjack-CBC64: 8-byte block CBC mode, requires 8-byte IV",
+        notes="Skipjack-CBC64: 8-byte block CBC mode, requires 24-byte IV",
     )
 
     registry[CKM_SKIPJACK_OFB64] = MechConfig(
@@ -776,12 +776,11 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_recipe=_iv8,
+        param_recipe=_iv24,
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
-        vector_file="skipjack_ofb64.json",
-        notes="Skipjack-OFB64: 64-bit output feedback stream mode",
+        notes="Skipjack-OFB64: 64-bit output feedback stream mode, requires 24-byte IV",
     )
 
     registry[CKM_SKIPJACK_CFB64] = MechConfig(
@@ -791,12 +790,11 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_recipe=_iv8,
+        param_recipe=_iv24,
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
-        vector_file="skipjack_cfb64.json",
-        notes="Skipjack-CFB64: 64-bit cipher feedback stream mode",
+        notes="Skipjack-CFB64: 64-bit cipher feedback stream mode, requires 24-byte IV",
     )
 
     registry[CKM_SKIPJACK_CFB32] = MechConfig(

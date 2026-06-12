@@ -2,7 +2,37 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
+from pkcs11_check.raw.types_std import (
+    CKM_BATON_CBC128,
+    CKM_BATON_COUNTER,
+    CKM_BATON_ECB96,
+    CKM_BATON_ECB128,
+    CKM_BATON_SHUFFLE,
+    CKM_BATON_WRAP,
+    CKM_FASTHASH,
+    CKM_GOST28147,
+    CKM_JUNIPER_CBC128,
+    CKM_JUNIPER_COUNTER,
+    CKM_JUNIPER_ECB128,
+    CKM_JUNIPER_SHUFFLE,
+    CKM_JUNIPER_WRAP,
+    CKM_KEY_WRAP_LYNKS,
+    CKM_KEY_WRAP_SET_OAEP,
+    CKM_SKIPJACK_CBC64,
+    CKM_SKIPJACK_CFB8,
+    CKM_SKIPJACK_CFB16,
+    CKM_SKIPJACK_CFB32,
+    CKM_SKIPJACK_CFB64,
+    CKM_SKIPJACK_OFB64,
+    CKM_SKIPJACK_PRIVATE_WRAP,
+    CKM_SKIPJACK_RELAYX,
+    CKM_SKIPJACK_WRAP,
+)
+from pkcs11_check.testcases.mechanism_registry import MECHANISM_REGISTRY
 
 ROOT = Path(__file__).resolve().parents[1]
 GAP_DOC = ROOT / "docs/findings/speed-coverage-correctness-gap-analysis-2026-06-11.md"
@@ -11,6 +41,19 @@ COVERAGE_GAPS_PLAN = ROOT / "docs/coverage-gaps-plan.md"
 
 def _read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
+
+
+def _gap_inventory_rows(doc: str) -> dict[str, set[str]]:
+    rows: dict[str, set[str]] = {}
+    for line in doc.splitlines():
+        match = re.fullmatch(r"\s*\|\s*([^|]+?)\s*\|\s*(.*?)\s*\|", line)
+        if match is None:
+            continue
+        family, mechanisms = match.groups()
+        if family in {"Family", "---"}:
+            continue
+        rows[family.strip()] = set(re.findall(r"`(CKM_[A-Z0-9_]+)`", mechanisms))
+    return rows
 
 
 def test_gap_analysis_marks_protocol_kdf_semantics_as_dedicated_coverage() -> None:
@@ -557,13 +600,13 @@ def test_gap_analysis_marks_skipjack_ecb64_kat_vectors_as_added() -> None:
     assert "SKIPJACK ECB64 exact-output KATs are covered" in doc
 
 
-def test_gap_analysis_keeps_skipjack_non_ecb64_variants_source_first() -> None:
-    """Skipjack non-ECB64 KATs stay pending until IV parameter shape is reconciled."""
+def test_gap_analysis_keeps_skipjack_short_cfb_and_wrap_variants_source_first() -> None:
+    """Skipjack short-CFB and wrap KATs stay pending until mappings are reconciled."""
     doc = GAP_DOC.read_text(encoding="utf-8")
 
-    assert "SKIPJACK non-ECB64 variants remain source-first" in doc
-    assert "24-byte IV parameter text" in doc
-    assert "SKIPJACK stream/wrap variants" not in doc
+    assert "SKIPJACK CBC64/OFB64/CFB64, CFB32/CFB16/CFB8, and wrap/private-wrap/" in doc
+    assert "PKCS#11 operation mappings must be reconciled" in doc
+    assert "SKIPJACK non-ECB64 variants remain source-first" not in doc
 
 
 def test_gap_analysis_marks_twofish_cbc_pad_vector_as_added() -> None:
@@ -612,32 +655,83 @@ def test_gap_analysis_does_not_mark_rc5_fixed_mac_pending() -> None:
 def test_gap_analysis_inventories_remaining_legacy_source_first_operations() -> None:
     """Remaining legacy/deprecated operation gaps are explicit and source-first."""
     doc = GAP_DOC.read_text(encoding="utf-8")
+    inventory = _gap_inventory_rows(doc)
+
+    expected = {
+        "SKIPJACK": {
+            "CKM_SKIPJACK_CBC64",
+            "CKM_SKIPJACK_OFB64",
+            "CKM_SKIPJACK_CFB64",
+            "CKM_SKIPJACK_CFB32",
+            "CKM_SKIPJACK_CFB16",
+            "CKM_SKIPJACK_CFB8",
+            "CKM_SKIPJACK_WRAP",
+            "CKM_SKIPJACK_PRIVATE_WRAP",
+            "CKM_SKIPJACK_RELAYX",
+        },
+        "BATON": {
+            "CKM_BATON_ECB128",
+            "CKM_BATON_ECB96",
+            "CKM_BATON_CBC128",
+            "CKM_BATON_COUNTER",
+            "CKM_BATON_SHUFFLE",
+            "CKM_BATON_WRAP",
+        },
+        "JUNIPER": {
+            "CKM_JUNIPER_ECB128",
+            "CKM_JUNIPER_CBC128",
+            "CKM_JUNIPER_COUNTER",
+            "CKM_JUNIPER_SHUFFLE",
+            "CKM_JUNIPER_WRAP",
+        },
+        "GOST28147": {"CKM_GOST28147"},
+        "Other legacy": {
+            "CKM_KEY_WRAP_LYNKS",
+            "CKM_KEY_WRAP_SET_OAEP",
+            "CKM_FASTHASH",
+        },
+    }
 
     assert "Current source-first operation inventory" in doc
-    for token in (
-        "CKM_SKIPJACK_CBC64",
-        "CKM_SKIPJACK_OFB64",
-        "CKM_SKIPJACK_CFB64",
-        "CKM_SKIPJACK_CFB32",
-        "CKM_SKIPJACK_CFB16",
-        "CKM_SKIPJACK_CFB8",
-        "CKM_SKIPJACK_WRAP",
-        "CKM_SKIPJACK_PRIVATE_WRAP",
-        "CKM_SKIPJACK_RELAYX",
-        "CKM_BATON_ECB128",
-        "CKM_BATON_ECB96",
-        "CKM_BATON_CBC128",
-        "CKM_BATON_COUNTER",
-        "CKM_BATON_SHUFFLE",
-        "CKM_BATON_WRAP",
-        "CKM_JUNIPER_ECB128",
-        "CKM_JUNIPER_CBC128",
-        "CKM_JUNIPER_COUNTER",
-        "CKM_JUNIPER_SHUFFLE",
-        "CKM_JUNIPER_WRAP",
-        "CKM_GOST28147",
-    ):
-        assert token in doc
+    for family, mechanisms in expected.items():
+        assert inventory[family] == mechanisms
+
+    for mechanism_name in set.union(*expected.values()):
+        mech_id = next(
+            mech_id for mech_id, name in MECHANISM_NAMES.items() if name == mechanism_name
+        )
+        config = MECHANISM_REGISTRY[mech_id]
+        assert config.vector_file is None, mechanism_name
+
+    tracked_source_first = {
+        int(CKM_SKIPJACK_CBC64),
+        int(CKM_SKIPJACK_OFB64),
+        int(CKM_SKIPJACK_CFB64),
+        int(CKM_SKIPJACK_CFB32),
+        int(CKM_SKIPJACK_CFB16),
+        int(CKM_SKIPJACK_CFB8),
+        int(CKM_SKIPJACK_WRAP),
+        int(CKM_SKIPJACK_PRIVATE_WRAP),
+        int(CKM_SKIPJACK_RELAYX),
+        int(CKM_BATON_ECB128),
+        int(CKM_BATON_ECB96),
+        int(CKM_BATON_CBC128),
+        int(CKM_BATON_COUNTER),
+        int(CKM_BATON_SHUFFLE),
+        int(CKM_BATON_WRAP),
+        int(CKM_JUNIPER_ECB128),
+        int(CKM_JUNIPER_CBC128),
+        int(CKM_JUNIPER_COUNTER),
+        int(CKM_JUNIPER_SHUFFLE),
+        int(CKM_JUNIPER_WRAP),
+        int(CKM_GOST28147),
+        int(CKM_KEY_WRAP_LYNKS),
+        int(CKM_KEY_WRAP_SET_OAEP),
+        int(CKM_FASTHASH),
+    }
+    assert {MECHANISM_NAMES[mech_id] for mech_id in tracked_source_first} == set.union(
+        *expected.values()
+    )
 
 
 def test_gap_analysis_marks_mixed_fail_crash_reporting_as_fixed() -> None:

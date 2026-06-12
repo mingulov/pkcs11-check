@@ -353,11 +353,15 @@ smoke behavior, or covered only by one narrow variation.
    `CKM_GOST28147_MAC` now has an RFC 7836 exact-output KAT for the
    TC26 param-Z `CEK_MAC` value, using the RFC seed as the OASIS MAC-IV
    mechanism parameter.
-   SKIPJACK ECB64, CBC64, OFB64, and CFB64 exact-output KATs are covered
-   from NIST SP 800-17, with the IV modes mapped through the PKCS#11 8-byte
-   IV parameter shape.
+   SKIPJACK ECB64 exact-output KATs are covered from NIST SP 800-17.
+   SKIPJACK CBC64/OFB64/CFB64 are deliberately back in source-first status:
+   NIST SP 800-17 provides useful 64-bit mode algorithm vectors, but OASIS
+   PKCS#11 historical mechanism text describes token-controlled 24-byte
+   SKIPJACK IV parameters, so those vectors are not safe as deterministic
+   PKCS#11 `C_Encrypt` KATs without a reconciled mechanism mapping.
    Remaining shallow areas are
-   SKIPJACK short-segment CFB and wrap variants, BATON/JUNIPER, GOST28147
+   SKIPJACK IV modes, short-segment CFB, and wrap variants,
+   BATON/JUNIPER, GOST28147
    non-ECB exact-output KATs, and the fixed-output MAC/MAC_GENERAL KATs where a
    block-vector source and output length mapping are still missing. GOST28147
    non-ECB exact-output KATs remain source-first until the vector source and
@@ -534,10 +538,10 @@ later provider run more interpretable:
    sweep, not just another RC5/IDEA pass: RC5 and IDEA encrypt KATs are already
    present, and RC5 CBC_PAD is now covered from RFC 2040. Their next useful
    work is independent fixed-length MAC expected-output vectors, if the PKCS#11
-   truncation/output-length rule is sourced clearly. SKIPJACK ECB64, CBC64,
-   OFB64, and CFB64 now have NIST SP 800-17 exact-output KATs; its
-   short-segment CFB/wrap variants and KEA remain lower-priority because their
-   vector and operation mappings are less straightforward.
+   truncation/output-length rule is sourced clearly. SKIPJACK ECB64 now has
+   NIST SP 800-17 exact-output KATs; the IV modes, short-segment CFB, wrap
+   variants, and KEA remain lower-priority because their PKCS#11 vector and
+   operation mappings are less straightforward.
 3. Continue broader semantic coverage expansion once artifact semantics can prove
    coverage preservation.
 
@@ -569,8 +573,8 @@ Legacy/deprecated coverage addendum for the active goal:
 - Prefer reliable, externally traceable vectors. RC5 and IDEA encrypt vectors
   are already covered; RC5 CBC_PAD is now covered directly from RFC 2040.
   Continue with fixed-length MAC and remaining CBC_PAD gaps only when the source
-  and PKCS#11 mapping are unambiguous. SKIPJACK ECB64, CBC64, OFB64, and CFB64
-  now have source-backed KATs. SKIPJACK CFB32/CFB16/CFB8 and wrap/private-wrap/
+  and PKCS#11 mapping are unambiguous. SKIPJACK ECB64 now has source-backed
+  KATs. SKIPJACK CBC64/OFB64/CFB64, CFB32/CFB16/CFB8, and wrap/private-wrap/
   RELAYX variants remain source-first because the historical vector and
   PKCS#11 operation mappings must be reconciled with the current registry
   recipes before adding exact-output KATs. KEA remains a source-first candidate
@@ -581,6 +585,7 @@ Legacy/deprecated coverage addendum for the active goal:
   `CKM_GOST28147_MAC` now has an RFC 7836 TC26 param-Z `CEK_MAC` KAT;
   GOST28147 non-ECB remains source-first. Also evaluate CAST/CAST3,
   BATON/JUNIPER, GOST28147,
+  `CKM_KEY_WRAP_LYNKS`, `CKM_KEY_WRAP_SET_OAEP`, `CKM_FASTHASH`,
   old PBE fixed-output cases, and other deprecated mechanisms that a PKCS#11
   provider might still advertise. Treat the named families as starting points;
   the coverage round should account for every uncovered legacy/deprecated
@@ -589,15 +594,24 @@ Legacy/deprecated coverage addendum for the active goal:
 
   | Family | Operation mechanisms still without source-backed exact vectors |
   | --- | --- |
-  | SKIPJACK | `CKM_SKIPJACK_CFB32`, `CKM_SKIPJACK_CFB16`, `CKM_SKIPJACK_CFB8`, `CKM_SKIPJACK_WRAP`, `CKM_SKIPJACK_PRIVATE_WRAP`, `CKM_SKIPJACK_RELAYX` |
+  | SKIPJACK | `CKM_SKIPJACK_CBC64`, `CKM_SKIPJACK_OFB64`, `CKM_SKIPJACK_CFB64`, `CKM_SKIPJACK_CFB32`, `CKM_SKIPJACK_CFB16`, `CKM_SKIPJACK_CFB8`, `CKM_SKIPJACK_WRAP`, `CKM_SKIPJACK_PRIVATE_WRAP`, `CKM_SKIPJACK_RELAYX` |
   | BATON | `CKM_BATON_ECB128`, `CKM_BATON_ECB96`, `CKM_BATON_CBC128`, `CKM_BATON_COUNTER`, `CKM_BATON_SHUFFLE`, `CKM_BATON_WRAP` |
   | JUNIPER | `CKM_JUNIPER_ECB128`, `CKM_JUNIPER_CBC128`, `CKM_JUNIPER_COUNTER`, `CKM_JUNIPER_SHUFFLE`, `CKM_JUNIPER_WRAP` |
   | GOST28147 | `CKM_GOST28147` |
+  | Other legacy | `CKM_KEY_WRAP_LYNKS`, `CKM_KEY_WRAP_SET_OAEP`, `CKM_FASTHASH` |
 
   Key-generation-only entries are already exercised by generic keygen paths;
-  the table is limited to encrypt, MAC, wrap, and stream/counter operations
-  where exact-output or semantic operation vectors would materially improve
-  coverage.
+  the table is limited to encrypt, MAC, wrap, digest, and stream/counter
+  operations where exact-output or semantic operation vectors would materially
+  improve coverage.
+- Source refresh: `CKM_SKIPJACK_CBC64`, `CKM_SKIPJACK_OFB64`, and
+  `CKM_SKIPJACK_CFB64` are not wired to mechanism-vector KATs. The NIST
+  SP 800-17 mode vectors are valid algorithm evidence, but the local OASIS
+  PKCS#11 historical text describes 24-byte SKIPJACK IV parameters and
+  token-selected encryption IVs; treating the 8-byte NIST values as
+  deterministic PKCS#11 encrypt parameters would create false failures on
+  conforming providers. Keep these modes source-first until the PKCS#11
+  IV/wrap mapping is reconciled.
 - Added: `CKM_RC5_MAC_GENERAL` has a KAT-backed expected-MAC vector using the
   existing RFC 2040 RC5 block result as the one-block zero-IV CBC-MAC output,
   plus vector-param replay for word size, rounds, and MAC length. Fixed-length
@@ -660,11 +674,6 @@ Legacy/deprecated coverage addendum for the active goal:
   registry `vector_file` link. The rows cover both the variable-plaintext and
   variable-key known-answer tables while avoiding the less-clear stream and
   wrap-mode mappings.
-- Added: CKM_SKIPJACK_CBC64, CKM_SKIPJACK_OFB64, and CKM_SKIPJACK_CFB64 now
-  have NIST SP 800-17 exact-output KATs plus registry `vector_file` links. CBC64
-  uses the section 5.2.1.1 zero-IV mapping; OFB64 and CFB64 use the
-  section 5.4.1.1 / 5.3.1.1 zero-text mapping with the table-5 first basis
-  vector as the PKCS#11 IV.
 - Added: CDMF ECB/CBC/CBC_PAD/MAC/MAC_GENERAL now have IBM CDMF
   key-shortening-derived exact-output KATs plus registry `vector_file` links.
   The vectors use an 8-byte odd-parity CDMF key value, replay the historical
