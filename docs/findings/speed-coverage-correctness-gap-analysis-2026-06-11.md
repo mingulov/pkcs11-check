@@ -357,7 +357,9 @@ Status: fixed in the current branch. The pytest plugin attaches serialized
 notes to call-phase report `user_properties` before teardown clears the
 process-local collector. The isolated runner promotes those notes into
 `results.json`; compliance report generation reloads notes from both
-`results.json` and `report.jsonl`; shard merge preserves them.
+`results.json` and `report.jsonl`; shard merge preserves them. An end-to-end
+isolated subprocess regression now proves a testcase-emitted note survives into
+both the final `results.json` unit and the merged `report.jsonl`.
 
 ### 3. Compliance report coverage can overstate execution
 

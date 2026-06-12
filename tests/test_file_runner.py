@@ -3163,6 +3163,65 @@ def test_run_isolated_pytest_units_preserves_compliance_notes(
     ]
 
 
+def test_run_isolated_pytest_units_preserves_real_subprocess_compliance_notes(
+    tmp_path: Path,
+) -> None:
+    testcases_dir = tmp_path / "src" / "pkcs11_check" / "testcases"
+    testcases_dir.mkdir(parents=True)
+    target = testcases_dir / "test_note.py"
+    target.write_text(
+        "\n".join(
+            [
+                "from pkcs11_check.compliance import ComplianceLevel, note",
+                "",
+                "def test_emits_note():",
+                "    note(",
+                "        'validation policy accepted',",
+                "        ComplianceLevel.STANDARD,",
+                "        reference='PKCS#11 v3.2',",
+                "        test_id='test_emits_note',",
+                "    )",
+                "",
+            ]
+        )
+    )
+    report_path = tmp_path / "results.json"
+    report_jsonl = tmp_path / "report.jsonl"
+
+    exit_code = run_isolated_pytest_units(
+        [str(target)],
+        ["--p11-module", "/tmp/mock-module.so"],
+        timeout=30,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path, jsonl_path=report_jsonl),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    report = json.loads(report_path.read_text())
+    expected_fields = {
+        "description": "validation policy accepted",
+        "level": "standard",
+        "reference": "PKCS#11 v3.2",
+        "test_id": "test_emits_note",
+    }
+    assert len(report["units"][0]["compliance_notes"]) == 1
+    unit_note = report["units"][0]["compliance_notes"][0]
+    for key, value in expected_fields.items():
+        assert unit_note[key] == value
+    assert unit_note["nodeid"].endswith(
+        "src/pkcs11_check/testcases/test_note.py::test_emits_note"
+    )
+    assert report_jsonl.exists()
+    report_records = [json.loads(line) for line in report_jsonl.read_text().splitlines()]
+    call_report = next(record for record in report_records if record.get("when") == "call")
+    assert ["pkcs11_compliance_notes", [unit_note]] in call_report["user_properties"]
+
+
 def test_run_isolated_pytest_units_does_not_retain_cached_report_records(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

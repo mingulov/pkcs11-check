@@ -284,3 +284,12 @@ def test_gap_analysis_marks_mixed_fail_crash_reporting_as_fixed() -> None:
     assert "test_write_isolated_json_report_crash_status_wins_over_failed_count" in tests
     assert 'status: "crashed"' in doc
     assert "Status: fixed in the current branch. `_overall_unit_status()` gives" in doc
+
+
+def test_gap_analysis_marks_compliance_note_persistence_as_end_to_end() -> None:
+    """Compliance-note persistence has an isolated-subprocess regression test."""
+    tests = _read("tests/test_file_runner.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "test_run_isolated_pytest_units_preserves_real_subprocess_compliance_notes" in tests
+    assert "end-to-end isolated subprocess regression" in " ".join(doc.split())
