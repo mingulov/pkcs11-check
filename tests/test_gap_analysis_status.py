@@ -982,6 +982,20 @@ def test_gap_analysis_marks_x942_hybrid_mqv_concatenate_other_info_as_added() ->
     assert "X9.42 hybrid/MQV CKD_SHA1_KDF_CONCATENATE OtherInfo coverage" in doc_flat
 
 
+def test_gap_analysis_marks_x942_hybrid_mqv_asn1_other_info_as_added() -> None:
+    """X9.42 hybrid/MQV derive carries supplied DER OtherInfo for ASN.1 KDF."""
+    x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")
+    guard = _read("tests/test_x942_dh_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_hybrid_derive_asn1_other_info" in x942
+    assert "test_mqv_derive_asn1_other_info" in x942
+    assert "CKD_SHA1_KDF_ASN1" in x942
+    assert "test_x942_extended_asn1_kdf_other_info_uses_typed_params" in guard
+
+    assert "X9.42 hybrid/MQV CKD_SHA1_KDF_ASN1 DER OtherInfo coverage" in doc_flat
+
+
 def test_gap_analysis_marks_regional_cipher_encrypt_data_dispatch_as_added() -> None:
     """Camellia/ARIA/SEED encrypt-data derive dispatch is no longer a gap."""
     derive = _read("src/pkcs11_check/testcases/test_mech_derive.py")

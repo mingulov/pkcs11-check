@@ -1590,6 +1590,84 @@ class TestX942DHHybridDerive:
                 if handle:
                     destroy_quietly(rs.raw, rs.sh, handle)
 
+    def test_hybrid_derive_asn1_other_info(self, p11_raw_session: Any) -> None:
+        """CKM_X9_42_DH_HYBRID_DERIVE supports ASN.1 KDF DER OtherInfo."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("X9_42_DH_HYBRID_DERIVE"):
+            pytest.skip("CKM_X9_42_DH_HYBRID_DERIVE not supported")
+
+        alice = (0, 0, 0, 0, b"", b"")
+        bob = (0, 0, 0, 0, b"", b"")
+        alice_secret = 0
+        bob_secret = 0
+        try:
+            alice = _x942_setup_or_xfail(
+                lambda: _import_x942_party_keys(
+                    rs,
+                    _X942_RFC5114_ALICE_PRIVATE,
+                    _X942_EXTENDED_ALICE_PRIVATE_2,
+                ),
+                "CKM_X9_42_DH_HYBRID_DERIVE deterministic key import",
+            )
+            bob = _x942_setup_or_xfail(
+                lambda: _import_x942_party_keys(
+                    rs,
+                    _X942_EXTENDED_BOB_PRIVATE_1,
+                    _X942_EXTENDED_BOB_PRIVATE_2,
+                ),
+                "CKM_X9_42_DH_HYBRID_DERIVE deterministic key import",
+            )
+            (
+                _alice_pub1,
+                alice_priv1,
+                _alice_pub2,
+                alice_priv2,
+                alice_pub1_value,
+                alice_pub2_value,
+            ) = alice
+            _bob_pub1, bob_priv1, _bob_pub2, bob_priv2, bob_pub1_value, bob_pub2_value = bob
+            other_info = b"\x04\x03der"
+
+            alice_secret = _x942_derive_generic_secret(
+                rs,
+                alice_priv1,
+                CKM_X9_42_DH_HYBRID_DERIVE,
+                _build_x942_dh2_derive_mech(
+                    bob_pub1_value,
+                    alice_priv2,
+                    len(_X942_EXTENDED_ALICE_PRIVATE_2),
+                    bob_pub2_value,
+                    CKD_SHA1_KDF_ASN1,
+                    other_info=other_info,
+                ),
+                "CKM_X9_42_DH_HYBRID_DERIVE CKD_SHA1_KDF_ASN1 DER OtherInfo Alice side",
+            )
+            bob_secret = _x942_derive_generic_secret(
+                rs,
+                bob_priv1,
+                CKM_X9_42_DH_HYBRID_DERIVE,
+                _build_x942_dh2_derive_mech(
+                    alice_pub1_value,
+                    bob_priv2,
+                    len(_X942_EXTENDED_BOB_PRIVATE_2),
+                    alice_pub2_value,
+                    CKD_SHA1_KDF_ASN1,
+                    other_info=other_info,
+                ),
+                "CKM_X9_42_DH_HYBRID_DERIVE CKD_SHA1_KDF_ASN1 DER OtherInfo Bob side",
+            )
+
+            alice_value = read_attributes(rs.raw, rs.sh, alice_secret, [CKA_VALUE])[CKA_VALUE]
+            bob_value = read_attributes(rs.raw, rs.sh, bob_secret, [CKA_VALUE])[CKA_VALUE]
+            assert isinstance(alice_value, bytes)
+            assert isinstance(bob_value, bytes)
+            assert alice_value == bob_value
+            assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
+        finally:
+            for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
+                if handle:
+                    destroy_quietly(rs.raw, rs.sh, handle)
+
 
 class TestX942MQVDerive:
     """Test CKM_X9_42_MQV_DERIVE."""
@@ -1817,6 +1895,86 @@ class TestX942MQVDerive:
                     other_info=other_info,
                 ),
                 "CKM_X9_42_MQV_DERIVE CKD_SHA1_KDF_CONCATENATE Bob side",
+            )
+
+            alice_value = read_attributes(rs.raw, rs.sh, alice_secret, [CKA_VALUE])[CKA_VALUE]
+            bob_value = read_attributes(rs.raw, rs.sh, bob_secret, [CKA_VALUE])[CKA_VALUE]
+            assert isinstance(alice_value, bytes)
+            assert isinstance(bob_value, bytes)
+            assert alice_value == bob_value
+            assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
+        finally:
+            for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
+                if handle:
+                    destroy_quietly(rs.raw, rs.sh, handle)
+
+    def test_mqv_derive_asn1_other_info(self, p11_raw_session: Any) -> None:
+        """CKM_X9_42_MQV_DERIVE supports ASN.1 KDF DER OtherInfo."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("X9_42_MQV_DERIVE"):
+            pytest.skip("CKM_X9_42_MQV_DERIVE not supported")
+
+        alice = (0, 0, 0, 0, b"", b"")
+        bob = (0, 0, 0, 0, b"", b"")
+        alice_secret = 0
+        bob_secret = 0
+        try:
+            alice = _x942_setup_or_xfail(
+                lambda: _import_x942_party_keys(
+                    rs,
+                    _X942_RFC5114_ALICE_PRIVATE,
+                    _X942_EXTENDED_ALICE_PRIVATE_2,
+                ),
+                "CKM_X9_42_MQV_DERIVE deterministic key import",
+            )
+            bob = _x942_setup_or_xfail(
+                lambda: _import_x942_party_keys(
+                    rs,
+                    _X942_EXTENDED_BOB_PRIVATE_1,
+                    _X942_EXTENDED_BOB_PRIVATE_2,
+                ),
+                "CKM_X9_42_MQV_DERIVE deterministic key import",
+            )
+            (
+                _alice_pub1,
+                alice_priv1,
+                alice_pub2,
+                alice_priv2,
+                alice_pub1_value,
+                alice_pub2_value,
+            ) = alice
+            _bob_pub1, bob_priv1, bob_pub2, bob_priv2, bob_pub1_value, bob_pub2_value = bob
+            other_info = b"\x04\x03der"
+
+            alice_secret = _x942_derive_generic_secret(
+                rs,
+                alice_priv1,
+                CKM_X9_42_MQV_DERIVE,
+                _build_x942_mqv_derive_mech(
+                    bob_pub1_value,
+                    alice_priv2,
+                    len(_X942_EXTENDED_ALICE_PRIVATE_2),
+                    bob_pub2_value,
+                    alice_pub2,
+                    CKD_SHA1_KDF_ASN1,
+                    other_info=other_info,
+                ),
+                "CKM_X9_42_MQV_DERIVE CKD_SHA1_KDF_ASN1 DER OtherInfo Alice side",
+            )
+            bob_secret = _x942_derive_generic_secret(
+                rs,
+                bob_priv1,
+                CKM_X9_42_MQV_DERIVE,
+                _build_x942_mqv_derive_mech(
+                    alice_pub1_value,
+                    bob_priv2,
+                    len(_X942_EXTENDED_BOB_PRIVATE_2),
+                    alice_pub2_value,
+                    bob_pub2,
+                    CKD_SHA1_KDF_ASN1,
+                    other_info=other_info,
+                ),
+                "CKM_X9_42_MQV_DERIVE CKD_SHA1_KDF_ASN1 DER OtherInfo Bob side",
             )
 
             alice_value = read_attributes(rs.raw, rs.sh, alice_secret, [CKA_VALUE])[CKA_VALUE]

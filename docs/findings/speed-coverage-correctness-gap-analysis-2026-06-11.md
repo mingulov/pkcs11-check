@@ -385,6 +385,9 @@ smoke behavior, or covered only by one narrow variation.
    X9.42 hybrid/MQV CKD_SHA1_KDF_CONCATENATE OtherInfo coverage now verifies
    the optional `pOtherInfo` path for both extended derive mechanisms with
    typed parameters and matching derived outputs.
+   X9.42 hybrid/MQV CKD_SHA1_KDF_ASN1 DER OtherInfo coverage now verifies the
+   required supplied-`pOtherInfo` path for both extended derive mechanisms with
+   typed parameters and matching derived outputs.
    X9.42 hybrid/MQV requested-value-length truncation coverage now verifies
    both extended derive mechanisms keep the rightmost bytes when `CKA_VALUE_LEN`
    requests a shorter generic secret.
