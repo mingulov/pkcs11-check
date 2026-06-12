@@ -269,7 +269,9 @@ smoke behavior, or covered only by one narrow variation.
    `CK_IKE2_PRF_PLUS_DERIVE_PARAMS` and checks the OASIS `prf+(baseKey,
    seedData)` recurrence. TLS KDF TLS1.0/1.1 exact-vector coverage now sets
    `CK_TLS_KDF_PARAMS.prfMechanism` to `CKM_TLS_PRF` and checks the RFC 2246
-   MD5/SHA-1 split-secret PRF output.
+   MD5/SHA-1 split-secret PRF output. TLS 1.2 extended-master-secret
+   exact-vector coverage now checks `CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE`
+   output against the RFC 7627 PRF over the session hash.
    IKE PRF base-key sensitivity coverage now verifies the same for
    `CKM_IKE_PRF_DERIVE`. IKE PRF data-as-key HMAC-SHA256 exact-vector coverage
    now uses typed `CK_IKE_PRF_DERIVE_PARAMS` and checks the OASIS case-1
