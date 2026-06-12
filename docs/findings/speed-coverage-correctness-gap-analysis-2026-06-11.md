@@ -532,6 +532,21 @@ Legacy/deprecated coverage addendum for the active goal:
   provider might still advertise. Treat the named families as starting points;
   the coverage round should account for every uncovered legacy/deprecated
   registry entry that can be tested with provider-general semantics.
+- Current source-first operation inventory after the latest vector sweep:
+
+  | Family | Operation mechanisms still without source-backed exact vectors |
+  | --- | --- |
+  | CDMF | `CKM_CDMF_ECB`, `CKM_CDMF_CBC`, `CKM_CDMF_CBC_PAD`, `CKM_CDMF_MAC`, `CKM_CDMF_MAC_GENERAL` |
+  | SKIPJACK | `CKM_SKIPJACK_CBC64`, `CKM_SKIPJACK_OFB64`, `CKM_SKIPJACK_CFB64`, `CKM_SKIPJACK_CFB32`, `CKM_SKIPJACK_CFB16`, `CKM_SKIPJACK_CFB8`, `CKM_SKIPJACK_WRAP`, `CKM_SKIPJACK_PRIVATE_WRAP`, `CKM_SKIPJACK_RELAYX` |
+  | BATON | `CKM_BATON_ECB128`, `CKM_BATON_ECB96`, `CKM_BATON_CBC128`, `CKM_BATON_COUNTER`, `CKM_BATON_SHUFFLE`, `CKM_BATON_WRAP` |
+  | JUNIPER | `CKM_JUNIPER_ECB128`, `CKM_JUNIPER_CBC128`, `CKM_JUNIPER_COUNTER`, `CKM_JUNIPER_SHUFFLE`, `CKM_JUNIPER_WRAP` |
+  | GOST28147 | `CKM_GOST28147_ECB`, `CKM_GOST28147`, `CKM_GOST28147_MAC`, `CKM_GOST28147_KEY_WRAP` |
+  | Twofish | `CKM_TWOFISH_CBC_PAD` |
+
+  Key-generation-only entries are already exercised by generic keygen paths;
+  the table is limited to encrypt, MAC, wrap, and stream/counter operations
+  where exact-output or semantic operation vectors would materially improve
+  coverage.
 - Started: `CKM_RC5_MAC_GENERAL` now has a KAT-backed expected-MAC vector using
   the existing RFC 2040 RC5 block result as the one-block zero-IV CBC-MAC
   output, plus vector-param replay for word size, rounds, and MAC length.

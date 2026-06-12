@@ -368,6 +368,46 @@ def test_gap_analysis_keeps_skipjack_non_ecb64_variants_source_first() -> None:
     assert "SKIPJACK stream/wrap variants" not in doc
 
 
+def test_gap_analysis_inventories_remaining_legacy_source_first_operations() -> None:
+    """Remaining legacy/deprecated operation gaps are explicit and source-first."""
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "Current source-first operation inventory" in doc
+    for token in (
+        "CKM_CDMF_ECB",
+        "CKM_CDMF_CBC",
+        "CKM_CDMF_CBC_PAD",
+        "CKM_CDMF_MAC",
+        "CKM_CDMF_MAC_GENERAL",
+        "CKM_SKIPJACK_CBC64",
+        "CKM_SKIPJACK_OFB64",
+        "CKM_SKIPJACK_CFB64",
+        "CKM_SKIPJACK_CFB32",
+        "CKM_SKIPJACK_CFB16",
+        "CKM_SKIPJACK_CFB8",
+        "CKM_SKIPJACK_WRAP",
+        "CKM_SKIPJACK_PRIVATE_WRAP",
+        "CKM_SKIPJACK_RELAYX",
+        "CKM_BATON_ECB128",
+        "CKM_BATON_ECB96",
+        "CKM_BATON_CBC128",
+        "CKM_BATON_COUNTER",
+        "CKM_BATON_SHUFFLE",
+        "CKM_BATON_WRAP",
+        "CKM_JUNIPER_ECB128",
+        "CKM_JUNIPER_CBC128",
+        "CKM_JUNIPER_COUNTER",
+        "CKM_JUNIPER_SHUFFLE",
+        "CKM_JUNIPER_WRAP",
+        "CKM_GOST28147_ECB",
+        "CKM_GOST28147",
+        "CKM_GOST28147_MAC",
+        "CKM_GOST28147_KEY_WRAP",
+        "CKM_TWOFISH_CBC_PAD",
+    ):
+        assert token in doc
+
+
 def test_gap_analysis_marks_mixed_fail_crash_reporting_as_fixed() -> None:
     """Mixed fail+crash units now surface crash status instead of only failed status."""
     runner = _read("src/pkcs11_check/core/file_runner.py")
