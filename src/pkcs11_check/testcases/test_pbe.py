@@ -31,6 +31,9 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKA_VERIFY,
     CKK_AES,
+    CKK_CAST,
+    CKK_CAST3,
+    CKK_CAST128,
     CKK_DES,
     CKK_DES2,
     CKK_DES3,
@@ -40,7 +43,11 @@ from pkcs11_check.raw.types_std import (
     CKK_SHA_1_HMAC,
     CKM_PBA_SHA1_WITH_SHA1_HMAC,
     CKM_PBE_MD2_DES_CBC,
+    CKM_PBE_MD5_CAST3_CBC,
+    CKM_PBE_MD5_CAST128_CBC,
+    CKM_PBE_MD5_CAST_CBC,
     CKM_PBE_MD5_DES_CBC,
+    CKM_PBE_SHA1_CAST128_CBC,
     CKM_PBE_SHA1_DES2_EDE_CBC,
     CKM_PBE_SHA1_DES3_EDE_CBC,
     CKM_PBE_SHA1_RC2_40_CBC,
@@ -92,6 +99,10 @@ _PBE_ERROR_RVS = {
 _PBE_MECH_NAMES: dict[int, str] = {
     int(CKM_PBE_MD2_DES_CBC): "CKM_PBE_MD2_DES_CBC",
     int(CKM_PBE_MD5_DES_CBC): "CKM_PBE_MD5_DES_CBC",
+    int(CKM_PBE_MD5_CAST_CBC): "CKM_PBE_MD5_CAST_CBC",
+    int(CKM_PBE_MD5_CAST3_CBC): "CKM_PBE_MD5_CAST3_CBC",
+    int(CKM_PBE_MD5_CAST128_CBC): "CKM_PBE_MD5_CAST128_CBC",
+    int(CKM_PBE_SHA1_CAST128_CBC): "CKM_PBE_SHA1_CAST128_CBC",
     int(CKM_PBE_SHA1_RC4_128): "CKM_PBE_SHA1_RC4_128",
     int(CKM_PBE_SHA1_RC4_40): "CKM_PBE_SHA1_RC4_40",
     int(CKM_PBE_SHA1_DES3_EDE_CBC): "CKM_PBE_SHA1_DES3_EDE_CBC",
@@ -132,6 +143,16 @@ class _LegacyPBECase:
 _LEGACY_PBE_CASES = (
     _LegacyPBECase(CKM_PBE_MD2_DES_CBC, "CKM_PBE_MD2_DES_CBC", CKK_DES, 64, 8),
     _LegacyPBECase(CKM_PBE_MD5_DES_CBC, "CKM_PBE_MD5_DES_CBC", CKK_DES, 64, 8),
+    _LegacyPBECase(CKM_PBE_MD5_CAST_CBC, "CKM_PBE_MD5_CAST_CBC", CKK_CAST, 40, 8),
+    _LegacyPBECase(CKM_PBE_MD5_CAST3_CBC, "CKM_PBE_MD5_CAST3_CBC", CKK_CAST3, 80, 8),
+    _LegacyPBECase(CKM_PBE_MD5_CAST128_CBC, "CKM_PBE_MD5_CAST128_CBC", CKK_CAST128, 128, 8),
+    _LegacyPBECase(
+        CKM_PBE_SHA1_CAST128_CBC,
+        "CKM_PBE_SHA1_CAST128_CBC",
+        CKK_CAST128,
+        128,
+        8,
+    ),
     _LegacyPBECase(CKM_PBE_SHA1_RC4_128, "CKM_PBE_SHA1_RC4_128", CKK_RC4, 128, None),
     _LegacyPBECase(CKM_PBE_SHA1_RC4_40, "CKM_PBE_SHA1_RC4_40", CKK_RC4, 40, None),
     _LegacyPBECase(CKM_PBE_SHA1_RC2_128_CBC, "CKM_PBE_SHA1_RC2_128_CBC", CKK_RC2, 128, 8),
@@ -258,7 +279,7 @@ class TestLegacyPBEVariants:
             pytest.skip(f"{case.mechanism_name} not supported")
 
         extra_attrs: dict[int, Any] = {}
-        if case.key_type in {CKK_RC2, CKK_RC4}:
+        if case.key_type in {CKK_CAST, CKK_CAST3, CKK_CAST128, CKK_RC2, CKK_RC4}:
             extra_attrs[CKA_VALUE_LEN] = case.key_bits // 8
 
         handle, mech = _pbe_gen_key(

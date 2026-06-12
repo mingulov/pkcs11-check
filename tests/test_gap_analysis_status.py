@@ -999,6 +999,22 @@ def test_gap_analysis_marks_legacy_fixed_mac_vectors_as_added() -> None:
     assert "CKM_CAST/CKM_CAST3 fixed-output MAC" not in doc
 
 
+def test_gap_analysis_marks_cast_pbe_semantic_cases_as_added() -> None:
+    """Historical CAST-family PBE mechanisms are in the semantic PBE case table."""
+    pbe = _read("src/pkcs11_check/testcases/test_pbe.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    for token in (
+        "CKM_PBE_MD5_CAST_CBC",
+        "CKM_PBE_MD5_CAST3_CBC",
+        "CKM_PBE_MD5_CAST128_CBC",
+        "CKM_PBE_SHA1_CAST128_CBC",
+    ):
+        assert token in pbe
+
+    assert "historical CAST/CAST3/CAST128 PBE mechanisms" in doc
+
+
 def test_gap_analysis_marks_cast_encrypt_vectors_as_added() -> None:
     """CAST and CAST3 ECB/CBC have RFC 2144 KAT vector links."""
     legacy_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_legacy.py")

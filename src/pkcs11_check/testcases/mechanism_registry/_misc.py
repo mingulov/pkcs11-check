@@ -302,6 +302,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=None,
         key_sizes=(),
         param_required=True,
+        param_recipe=ParamRecipe("pbe"),
         expected_flags=CKF_GENERATE,
         notes="PBE: MD5 + CAST-CBC key/IV derivation",
     )
@@ -311,6 +312,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=None,
         key_sizes=(),
         param_required=True,
+        param_recipe=ParamRecipe("pbe"),
         expected_flags=CKF_GENERATE,
         notes="PBE: MD5 + CAST3-CBC key/IV derivation",
     )
@@ -320,6 +322,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=None,
         key_sizes=(),
         param_required=True,
+        param_recipe=ParamRecipe("pbe"),
         expected_flags=CKF_GENERATE,
         notes="PBE: MD5 + CAST128-CBC key/IV derivation (alias CKM_PBE_MD5_CAST5_CBC)",
     )
@@ -329,6 +332,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=None,
         key_sizes=(),
         param_required=True,
+        param_recipe=ParamRecipe("pbe"),
         expected_flags=CKF_GENERATE,
         notes="PBE: SHA-1 + CAST128-CBC key/IV derivation (alias CKM_PBE_SHA1_CAST5_CBC)",
     )

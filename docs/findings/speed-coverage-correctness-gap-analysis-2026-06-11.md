@@ -453,9 +453,10 @@ smoke behavior, or covered only by one narrow variation.
    block-vector source and output length mapping are still missing. GOST28147
    non-ECB exact-output KATs remain source-first until the vector source and
    parameter-set mapping are unambiguous.
-   Older PBE variants now have semantic `C_GenerateKey` coverage for key type
-   and IV writeback where `CK_PBE_PARAMS` applies, but not independent
-   fixed-output KAT vectors. MAC_GENERAL mechanisms now assert the returned MAC
+   Older PBE variants, including historical CAST/CAST3/CAST128 PBE mechanisms,
+   now have semantic `C_GenerateKey` coverage for key type and IV writeback
+   where `CK_PBE_PARAMS` applies, but not independent fixed-output KAT vectors.
+   MAC_GENERAL mechanisms now assert the returned MAC
    length matches the requested parameter length, and RC2, RC5, CAST, CAST3,
    CAST128, IDEA, DES, 3DES, Camellia, ARIA, and SEED have expected-MAC
    vectors. DES, 3DES,
