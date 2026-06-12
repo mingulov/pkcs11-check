@@ -18,12 +18,13 @@ OASIS spec: double_ratchet.md (Signal Double Ratchet section)
 
 from __future__ import annotations
 
+import ctypes
 from typing import Any
 
 import pytest
 
 from pkcs11_check.raw.ec import encode_named_curve_parameters
-from pkcs11_check.raw.pack import attr_bytes
+from pkcs11_check.raw.pack import PackedMechanism, _mech_struct, attr_bytes
 from pkcs11_check.raw.recipes import (
     create_object,
     decrypt_single,
@@ -34,6 +35,9 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
+    CK_VOID_PTR,
+    CK_X2RATCHET_INITIALIZE_PARAMS,
+    CK_X2RATCHET_RESPOND_PARAMS,
     CKA_CLASS,
     CKA_DECRYPT,
     CKA_DERIVE,
@@ -45,8 +49,10 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VALUE,
     CKA_VALUE_LEN,
+    CKD_SHA256_KDF,
     CKK_GENERIC_SECRET,
     CKK_X2RATCHET,
+    CKM_AES_GCM,
     CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
     CKM_X2RATCHET_DECRYPT,
     CKM_X2RATCHET_ENCRYPT,
@@ -107,6 +113,80 @@ _X2RATCHET_CURVES = (
     ("X25519", encode_named_curve_parameters("x25519")),
     ("X448", encode_named_curve_parameters("x448")),
 )
+
+_X2RATCHET_SHARED_SECRET = bytes(range(32))
+
+
+def _bytes_pointer(data: bytes, keepalive: list[Any]) -> Any:
+    storage = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
+    keepalive.append(storage)
+    return ctypes.cast(storage, CK_VOID_PTR)
+
+
+def _mech_x2ratchet_initialize(
+    *,
+    shared_secret: bytes,
+    peer_public_prekey: int,
+    peer_public_identity: int,
+    own_public_identity: int,
+    encrypted_header: bool = False,
+    curve: int = 255,
+    aead_mechanism: int = int(CKM_AES_GCM),
+    kdf_mechanism: int = int(CKD_SHA256_KDF),
+) -> PackedMechanism:
+    keepalive: list[Any] = []
+    params = CK_X2RATCHET_INITIALIZE_PARAMS()
+    params.sk = _bytes_pointer(shared_secret, keepalive)
+    params.peer_public_prekey = peer_public_prekey
+    params.peer_public_identity = peer_public_identity
+    params.own_public_identity = own_public_identity
+    params.bEncryptedHeader = encrypted_header
+    params.eCurve = curve
+    params.aeadMechanism = aead_mechanism
+    params.kdfMechanism = kdf_mechanism
+    return _mech_struct(
+        CKM_X2RATCHET_INITIALIZE,
+        params,
+        "mech_x2ratchet_initialize",
+        keepalive,
+        sub_mechanisms={
+            "aeadMechanism": int(aead_mechanism),
+            "kdfMechanism": int(kdf_mechanism),
+        },
+    )
+
+
+def _mech_x2ratchet_respond(
+    *,
+    shared_secret: bytes,
+    own_prekey: int,
+    initiator_identity: int,
+    own_public_identity: int,
+    encrypted_header: bool = False,
+    curve: int = 255,
+    aead_mechanism: int = int(CKM_AES_GCM),
+    kdf_mechanism: int = int(CKD_SHA256_KDF),
+) -> PackedMechanism:
+    keepalive: list[Any] = []
+    params = CK_X2RATCHET_RESPOND_PARAMS()
+    params.sk = _bytes_pointer(shared_secret, keepalive)
+    params.own_prekey = own_prekey
+    params.initiator_identity = initiator_identity
+    params.own_public_identity = own_public_identity
+    params.bEncryptedHeader = encrypted_header
+    params.eCurve = curve
+    params.aeadMechanism = aead_mechanism
+    params.kdfMechanism = kdf_mechanism
+    return _mech_struct(
+        CKM_X2RATCHET_RESPOND,
+        params,
+        "mech_x2ratchet_respond",
+        keepalive,
+        sub_mechanisms={
+            "aeadMechanism": int(aead_mechanism),
+            "kdfMechanism": int(kdf_mechanism),
+        },
+    )
 
 
 def _create_ec_keypair(rs: Any) -> tuple[int, int]:
@@ -199,12 +279,20 @@ class TestX2RatchetDerive:
         if not rs.has_mechanism("X2RATCHET_INITIALIZE"):
             pytest.skip("CKM_X2RATCHET_INITIALIZE not supported")
 
-        pub, priv = _create_ec_keypair(rs)
+        own_identity_pub, own_identity_priv = _create_ec_keypair(rs)
+        peer_identity_pub, peer_identity_priv = _create_ec_keypair(rs)
+        peer_prekey_pub, peer_prekey_priv = _create_ec_keypair(rs)
         try:
+            mech_param = _mech_x2ratchet_initialize(
+                shared_secret=_X2RATCHET_SHARED_SECRET,
+                peer_public_prekey=peer_prekey_pub,
+                peer_public_identity=peer_identity_pub,
+                own_public_identity=own_identity_pub,
+            )
             derived = derive_key(
                 rs.raw,
                 rs.sh,
-                priv,
+                own_identity_priv,
                 CKM_X2RATCHET_INITIALIZE,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
@@ -214,6 +302,7 @@ class TestX2RatchetDerive:
                     CKA_SENSITIVE: False,
                     CKA_EXTRACTABLE: True,
                 },
+                mech_param=mech_param,
             )
             try:
                 assert derived != 0
@@ -225,8 +314,12 @@ class TestX2RatchetDerive:
                 pytest.xfail(f"CKM_X2RATCHET_INITIALIZE not yet operational: {exc}")
             raise
         finally:
-            destroy_quietly(rs.raw, rs.sh, pub)
-            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, own_identity_pub)
+            destroy_quietly(rs.raw, rs.sh, own_identity_priv)
+            destroy_quietly(rs.raw, rs.sh, peer_identity_pub)
+            destroy_quietly(rs.raw, rs.sh, peer_identity_priv)
+            destroy_quietly(rs.raw, rs.sh, peer_prekey_pub)
+            destroy_quietly(rs.raw, rs.sh, peer_prekey_priv)
 
     def test_x2ratchet_initialize_two_runs_differ(self, p11_raw_session: Any) -> None:
         """Two independent ratchet init calls should produce different session keys.
@@ -304,12 +397,20 @@ class TestX2RatchetDerive:
         if not rs.has_mechanism("X2RATCHET_RESPOND"):
             pytest.skip("CKM_X2RATCHET_RESPOND not supported")
 
-        pub, priv = _create_ec_keypair(rs)
+        own_prekey_pub, own_prekey_priv = _create_ec_keypair(rs)
+        own_identity_pub, own_identity_priv = _create_ec_keypair(rs)
+        initiator_identity_pub, initiator_identity_priv = _create_ec_keypair(rs)
         try:
+            mech_param = _mech_x2ratchet_respond(
+                shared_secret=_X2RATCHET_SHARED_SECRET,
+                own_prekey=own_prekey_priv,
+                initiator_identity=initiator_identity_pub,
+                own_public_identity=own_identity_pub,
+            )
             derived = derive_key(
                 rs.raw,
                 rs.sh,
-                priv,
+                own_prekey_priv,
                 CKM_X2RATCHET_RESPOND,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
@@ -319,6 +420,7 @@ class TestX2RatchetDerive:
                     CKA_SENSITIVE: False,
                     CKA_EXTRACTABLE: True,
                 },
+                mech_param=mech_param,
             )
             try:
                 assert derived != 0
@@ -329,8 +431,12 @@ class TestX2RatchetDerive:
                 pytest.xfail(f"CKM_X2RATCHET_RESPOND not yet operational: {exc}")
             raise
         finally:
-            destroy_quietly(rs.raw, rs.sh, pub)
-            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, own_prekey_pub)
+            destroy_quietly(rs.raw, rs.sh, own_prekey_priv)
+            destroy_quietly(rs.raw, rs.sh, own_identity_pub)
+            destroy_quietly(rs.raw, rs.sh, own_identity_priv)
+            destroy_quietly(rs.raw, rs.sh, initiator_identity_pub)
+            destroy_quietly(rs.raw, rs.sh, initiator_identity_priv)
 
     def test_x2ratchet_respond_derives_x2ratchet_key_type(
         self,

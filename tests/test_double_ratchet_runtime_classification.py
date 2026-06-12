@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 from types import SimpleNamespace
 from typing import Any
 
@@ -10,7 +11,9 @@ import pytest
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CK_X2RATCHET_INITIALIZE_PARAMS,
     CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
+    CKM_X2RATCHET_INITIALIZE,
     CKR_CURVE_NOT_SUPPORTED,
 )
 from pkcs11_check.testcases import test_double_ratchet
@@ -132,3 +135,75 @@ def test_x2ratchet_setup_falls_back_from_x25519_to_x448(
 
     assert result == (21, 22)
     assert seen_curves == [x25519_oid, x448_oid]
+
+
+def test_x2ratchet_initialize_mechanism_packs_spec_params() -> None:
+    mech = test_double_ratchet._mech_x2ratchet_initialize(
+        shared_secret=b"shared-secret-for-x2ratchet",
+        peer_public_prekey=11,
+        peer_public_identity=12,
+        own_public_identity=21,
+    )
+
+    assert int(mech.ck.mechanism) == int(CKM_X2RATCHET_INITIALIZE)
+    assert mech.ck.ulParameterLen == ctypes.sizeof(CK_X2RATCHET_INITIALIZE_PARAMS)
+    assert isinstance(mech.params, CK_X2RATCHET_INITIALIZE_PARAMS)
+    assert mech.params.sk is not None
+    assert mech.params.peer_public_prekey == 11
+    assert mech.params.peer_public_identity == 12
+    assert mech.params.own_public_identity == 21
+    assert mech.params.eCurve == 255
+
+
+def test_x2ratchet_initialize_runtime_calls_derive_with_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handles = iter(
+        (
+            (101, 201),
+            (102, 202),
+            (103, 203),
+        )
+    )
+    derive_calls: list[dict[str, Any]] = []
+    destroyed: list[int] = []
+
+    def _create_keypair(_rs: Any) -> tuple[int, int]:
+        return next(handles)
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        base_key: int,
+        mechanism: int,
+        attrs: dict[int, Any],
+        *,
+        mech_param: Any,
+    ) -> int:
+        derive_calls.append(
+            {
+                "base_key": base_key,
+                "mechanism": int(mechanism),
+                "attrs": attrs,
+                "mech_param": mech_param,
+            }
+        )
+        return 999
+
+    monkeypatch.setattr(test_double_ratchet, "_create_ec_keypair", _create_keypair)
+    monkeypatch.setattr(test_double_ratchet, "derive_key", _derive_key)
+    monkeypatch.setattr(
+        test_double_ratchet,
+        "destroy_quietly",
+        lambda _raw, _sh, h: destroyed.append(h),
+    )
+
+    test_double_ratchet.TestX2RatchetDerive().test_x2ratchet_initialize_derive_generic_secret(
+        _session_with_mechanisms("X2RATCHET_INITIALIZE")
+    )
+
+    assert len(derive_calls) == 1
+    assert derive_calls[0]["base_key"] == 201
+    assert derive_calls[0]["mechanism"] == int(CKM_X2RATCHET_INITIALIZE)
+    assert isinstance(derive_calls[0]["mech_param"].params, CK_X2RATCHET_INITIALIZE_PARAMS)
+    assert 999 in destroyed

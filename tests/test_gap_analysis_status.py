@@ -141,6 +141,22 @@ def test_gap_analysis_marks_ssl3_master_secret_exact_vector_as_added() -> None:
     assert "SSL3 master-secret exact-vector coverage" in doc
 
 
+def test_gap_analysis_marks_x2ratchet_typed_param_coverage_as_added() -> None:
+    """CKM_X2RATCHET derive probes use OASIS mechanism parameter structs."""
+    ratchet = _read("src/pkcs11_check/testcases/test_double_ratchet.py")
+    guard = _read("tests/test_double_ratchet_runtime_classification.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "CK_X2RATCHET_INITIALIZE_PARAMS" in ratchet
+    assert "CK_X2RATCHET_RESPOND_PARAMS" in ratchet
+    assert "_mech_x2ratchet_initialize" in ratchet
+    assert "_mech_x2ratchet_respond" in ratchet
+    assert "mech_param=mech_param" in ratchet
+    assert "test_x2ratchet_initialize_runtime_calls_derive_with_params" in guard
+
+    assert "X2RATCHET typed-parameter derive coverage" in doc
+
+
 def test_gap_analysis_marks_blake2b_keyed_semantics_as_covered() -> None:
     """BLAKE2B keyed HMAC, HMAC_GENERAL, KEY_GEN, and KEY_DERIVE are covered."""
     blake2 = _read("src/pkcs11_check/testcases/test_blake2.py")

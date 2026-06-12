@@ -273,7 +273,10 @@ smoke behavior, or covered only by one narrow variation.
    now uses typed `CK_IKE_PRF_DERIVE_PARAMS` and checks the OASIS case-1
    `prf(Ni|Nr, baseKey)` output. SSL3 master-secret exact-vector coverage now
    checks `CKM_SSL3_MASTER_KEY_DERIVE` output against the RFC 6101 SSL3
-   MD5/SHA master-secret computation.
+   MD5/SHA master-secret computation. X2RATCHET typed-parameter derive coverage
+   now drives `CKM_X2RATCHET_INITIALIZE` and `CKM_X2RATCHET_RESPOND` through
+   the OASIS `CK_X2RATCHET_*_PARAMS` structures instead of empty mechanism
+   parameters.
 2. Regional cipher encrypt-data derive dispatch exists for Camellia, ARIA, and
    SEED ECB/CBC variants in `test_mech_derive.py`; focused meta-tests verify
    the family-specific CBC parameter structs are packed for generic derive
