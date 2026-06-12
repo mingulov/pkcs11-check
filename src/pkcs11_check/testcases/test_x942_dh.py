@@ -14,6 +14,7 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 from __future__ import annotations
 
 import ctypes
+from collections.abc import Callable
 from ctypes import byref
 from typing import Any, NoReturn
 
@@ -30,6 +31,7 @@ from pkcs11_check.raw.pack import (
     template,
 )
 from pkcs11_check.raw.recipes import (
+    create_object,
     decrypt_single,
     derive_key,
     destroy_quietly,
@@ -46,6 +48,7 @@ from pkcs11_check.raw.types_std import (
     CKA_BASE,
     CKA_CLASS,
     CKA_DECRYPT,
+    CKA_DERIVE,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -56,13 +59,16 @@ from pkcs11_check.raw.types_std import (
     CKA_SUBPRIME_BITS,
     CKA_TOKEN,
     CKA_VALUE,
+    CKA_VALUE_LEN,
     CKD_NULL,
     CKK_AES,
+    CKK_GENERIC_SECRET,
     CKK_X9_42_DH,
     CKM_AES_ECB,
     CKM_X9_42_DH_DERIVE,
     CKM_X9_42_DH_KEY_PAIR_GEN,
     CKM_X9_42_DH_PARAMETER_GEN,
+    CKO_PRIVATE_KEY,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -118,6 +124,26 @@ X942_GEN = bytes.fromhex(
 )
 
 X942_SUBPRIME = bytes.fromhex("8CF83642A709A097B447997640129DA299B1A47D1EB3750BA308B0FE64F5FBD3")
+
+_X942_RFC5114_ALICE_PRIVATE = bytes.fromhex(
+    "0102030405060708090a0b0c0d0e0f10"
+    "1112131415161718191a1b1c1d1e1f20"
+)
+_X942_RFC5114_BOB_PUBLIC = bytes.fromhex(
+    "17f5faa191eea8f9f132a9a12177057727fd0222da1944f3779146396a1ba94b"
+    "8ac16ef5abab5482c21bcb179d4927d705a56e293c15e7dcbe186d153b6551"
+    "3ae94447da0648d0cdba17cb014cf718b7fca9042f4179c3ffdb75789d4d4"
+    "f3c3b73ae79c26a061b3c1ff591ea1a811c75130d295fdb4b70fbf398f4"
+    "ff596b010654927606657a9c9c67fe288b0a6079009751d7fcff27a8ecc7"
+    "58b4aeb8480eee1684f2fe82e6ac51e2c6003363c95bf8ca948af075296"
+    "5cf8617627f20099fdf788098eb24dfd82d555e06ad71a9b7e4d2b97a8b"
+    "735c68cbc6df76c75a51e6f017d501fdcc47e2643b4952a89c5384700f2"
+    "7dffe3f64cc5cf566e823a1121b28"
+)
+_X942_RFC5114_EXPECTED_SECRET_32 = bytes.fromhex(
+    "7c242567d649f58f68fd9650fe96a6e1"
+    "8a70f17920dbdca3dd51101239b18788"
+)
 
 _X942_PARAM_PRIME_BITS = 2048
 _X942_PARAM_SUBPRIME_BITS = 256
@@ -361,6 +387,52 @@ def _xfail_if_x942_derive_reject(exc: AssertionError) -> NoReturn:
     raise
 
 
+def _import_x942_private_key(
+    raw: Any,
+    sh: int,
+    private_value: bytes,
+) -> int:
+    """Import an X9.42 DH private key for deterministic derive vectors."""
+    return create_object(
+        raw,
+        sh,
+        {
+            CKA_CLASS: CKO_PRIVATE_KEY,
+            CKA_KEY_TYPE: CKK_X9_42_DH,
+            CKA_PRIME: X942_PRIME_2048,
+            CKA_BASE: X942_GEN,
+            CKA_SUBPRIME: X942_SUBPRIME,
+            CKA_VALUE: private_value,
+            CKA_DERIVE: True,
+            CKA_TOKEN: False,
+        },
+    )
+
+
+def _x942_setup_or_xfail(fn: Callable[[], int], label: str) -> int:
+    try:
+        return fn()
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _X942_DERIVE_RUNTIME_REJECT_RVS,
+            f"{label}: X9.42 DH exact-vector setup is not operational",
+        )
+        raise
+
+
+def _x942_derive_or_xfail(fn: Callable[[], int], label: str) -> int:
+    try:
+        return fn()
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _X942_DERIVE_RUNTIME_REJECT_RVS,
+            f"{label}: X9.42 DH derive advertised but not operational",
+        )
+        raise
+
+
 def _build_x942_derive_mech(
     public_data: bytes,
     kdf: int = CKD_NULL,
@@ -590,6 +662,48 @@ class TestX942DHDerive:
                 destroy_quietly(rs.raw, rs.sh, derived.value)
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_x942_dh_derive_rfc5114_exact_vector(self, p11_raw_session: Any) -> None:
+        """CKM_X9_42_DH_DERIVE returns the expected RFC 5114 shared secret."""
+        rs = p11_raw_session
+        _skip_no_x942_derive(rs)
+
+        priv = 0
+        derived = 0
+        try:
+            priv = _x942_setup_or_xfail(
+                lambda: _import_x942_private_key(
+                    rs.raw,
+                    rs.sh,
+                    _X942_RFC5114_ALICE_PRIVATE,
+                ),
+                "CKM_X9_42_DH_DERIVE RFC 5114 vector",
+            )
+            derived = _x942_derive_or_xfail(
+                lambda: derive_key(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_X9_42_DH_DERIVE,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_VALUE_LEN: len(_X942_RFC5114_EXPECTED_SECRET_32),
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
+                    },
+                    mech_param=_build_x942_derive_mech(_X942_RFC5114_BOB_PUBLIC),
+                ),
+                "CKM_X9_42_DH_DERIVE RFC 5114 exact vector",
+            )
+            value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+            assert value == _X942_RFC5114_EXPECTED_SECRET_32
+        finally:
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_different_exchanges_produce_different_secrets(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session

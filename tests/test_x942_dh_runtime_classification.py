@@ -92,3 +92,19 @@ def test_x942_keypair_from_generated_params_runtime_reject_is_xfail(
 
     with pytest.raises(pytest.xfail.Exception, match="X9_42_DH_KEY_PAIR_GEN advertised"):
         test_x942_dh.TestX942DHParameterGen().test_generated_params_produce_valid_derive(rs)
+
+
+def test_x942_rfc5114_exact_vector_constant_matches_modexp() -> None:
+    """The embedded X9.42 exact-vector expected value is derived from RFC 5114 params."""
+    prime = int.from_bytes(test_x942_dh.X942_PRIME_2048, "big")
+    generator = int.from_bytes(test_x942_dh.X942_GEN, "big")
+    alice_private = int.from_bytes(test_x942_dh._X942_RFC5114_ALICE_PRIVATE, "big")
+    bob_public = int.from_bytes(test_x942_dh._X942_RFC5114_BOB_PUBLIC, "big")
+
+    assert pow(generator, alice_private, prime) != bob_public
+
+    full_secret = pow(bob_public, alice_private, prime).to_bytes(
+        len(test_x942_dh.X942_PRIME_2048),
+        "big",
+    )
+    assert full_secret[-32:] == test_x942_dh._X942_RFC5114_EXPECTED_SECRET_32

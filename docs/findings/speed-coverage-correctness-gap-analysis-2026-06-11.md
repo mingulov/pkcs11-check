@@ -297,8 +297,11 @@ smoke behavior, or covered only by one narrow variation.
    encryption/readback effects. Classic DH missing-peer-public negative
    coverage now verifies `CKM_DH_PKCS_DERIVE` rejects a missing peer public
    mechanism parameter through the shared negative classifier. X9.42 DH
-   missing-peer-public negative coverage now verifies `CKM_X9_42_DH_DERIVE`
-   rejects a missing DH1 derive parameter struct through the same classifier.
+   RFC 5114 exact-vector coverage now imports a fixed private value, derives
+   with a fixed peer public value, and checks the exact derived generic-secret
+   bytes. X9.42 DH missing-peer-public negative coverage now verifies
+   `CKM_X9_42_DH_DERIVE` rejects a missing DH1 derive parameter struct through
+   the same classifier.
 4. Message API coverage is representative, not registry-driven. Scenario
    selection does not yet cover `CKF_MESSAGE_*` flags generically.
 5. Hybrid wrap parameter coverage exists for RSA-AES and ECDH-AES:
