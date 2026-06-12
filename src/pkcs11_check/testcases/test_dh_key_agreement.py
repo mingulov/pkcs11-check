@@ -8,7 +8,7 @@ Uses RFC 3526 Group 14 (2048-bit MODP) for known-good parameters.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from ctypes import byref
 from typing import Any
 
@@ -23,6 +23,7 @@ from pkcs11_check.raw.pack import (
     template,
 )
 from pkcs11_check.raw.recipes import (
+    create_object,
     decrypt_single,
     derive_key,
     destroy_quietly,
@@ -46,11 +47,13 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKK_AES,
+    CKK_DH,
     CKK_GENERIC_SECRET,
     CKM_AES_ECB,
     CKM_DH_PKCS_DERIVE,
     CKM_DH_PKCS_KEY_PAIR_GEN,
     CKM_DH_PKCS_PARAMETER_GEN,
+    CKO_PRIVATE_KEY,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
     CKR_DEVICE_ERROR,
@@ -85,6 +88,28 @@ DH_PRIME_2048 = bytes.fromhex(
     "15728E5A8AACAA68FFFFFFFFFFFFFFFF"
 )
 DH_GEN = bytes([0x02])
+
+_DH_RFC3526_GROUP14_ALICE_PRIVATE = bytes.fromhex(
+    "0102030405060708090a0b0c0d0e0f10"
+    "1112131415161718191a1b1c1d1e1f20"
+)
+_DH_RFC3526_GROUP14_BOB_PUBLIC = bytes.fromhex(
+    "f0fee7626bcec4d1c5c1fb11b8058af4061c0e877d02ca7a"
+    "edf42e33280eb58f4309a566a74456e01d97fdba45043cd6"
+    "74315204b9b2409f26aeffd643010ec5e197ee67b24f0f04"
+    "6d1dce630794822cfe9360ed40c6975d5a2bb5892686cea6"
+    "469fb9f92a52210564419dd6bfd3e023d33a4468e81b97f3"
+    "09c7df7be746d8660089738b09885dc100285952096132ca"
+    "8d3e369525e588df9cfa4ee06280f7a9acf92bf180187af"
+    "a6a9927b9d65f26adf2417a2e4cf3974bc5992dbd499733"
+    "7bec667f7b73c5b59fa03d6455070825c9f69c3f048e705"
+    "1485e2c7edd1ef972219ec6c98c973f895982c4ad77784"
+    "f8807ae75680ceeb8b1aafca61a1517b42ca7"
+)
+_DH_RFC3526_GROUP14_EXPECTED_SECRET_32 = bytes.fromhex(
+    "b11d9c9a159da66466777ab95e0081fa"
+    "91576855cdbac2286d05d90eef8fd436"
+)
 
 _DH_DERIVE_RUNTIME_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
@@ -185,6 +210,39 @@ def _dh_derive_or_xfail(
             exc,
             _DH_DERIVE_RUNTIME_REJECT_RVS,
             f"{label}: DH derive advertised but not operational",
+        )
+        raise
+
+
+def _import_dh_private_key(
+    raw: Any,
+    sh: int,
+    private_value: bytes,
+) -> int:
+    """Import a DH private key for deterministic derive vectors."""
+    return create_object(
+        raw,
+        sh,
+        {
+            CKA_CLASS: CKO_PRIVATE_KEY,
+            CKA_KEY_TYPE: CKK_DH,
+            CKA_PRIME: DH_PRIME_2048,
+            CKA_BASE: DH_GEN,
+            CKA_VALUE: private_value,
+            CKA_DERIVE: True,
+            CKA_TOKEN: False,
+        },
+    )
+
+
+def _dh_setup_or_xfail(fn: Callable[[], int], label: str) -> int:
+    try:
+        return fn()
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _DH_DERIVE_RUNTIME_REJECT_RVS,
+            f"{label}: DH exact-vector setup is not operational",
         )
         raise
 
@@ -328,6 +386,48 @@ class TestDHKeyAgreement:
             destroy_quietly(rs.raw, rs.sh, alice_priv)
             destroy_quietly(rs.raw, rs.sh, bob_pub)
             destroy_quietly(rs.raw, rs.sh, bob_priv)
+
+    def test_dh_pkcs_derive_rfc3526_group14_exact_vector(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_DH_PKCS_DERIVE returns the expected RFC 3526 Group 14 secret."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("DH_PKCS_DERIVE"):
+            pytest.skip("CKM_DH_PKCS_DERIVE not supported")
+
+        priv = 0
+        derived = 0
+        try:
+            priv = _dh_setup_or_xfail(
+                lambda: _import_dh_private_key(
+                    rs.raw,
+                    rs.sh,
+                    _DH_RFC3526_GROUP14_ALICE_PRIVATE,
+                ),
+                "CKM_DH_PKCS_DERIVE RFC 3526 Group 14 vector",
+            )
+            derived = _dh_derive_or_xfail(
+                rs,
+                priv,
+                _DH_RFC3526_GROUP14_BOB_PUBLIC,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: len(_DH_RFC3526_GROUP14_EXPECTED_SECRET_32),
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                },
+                label="CKM_DH_PKCS_DERIVE RFC 3526 Group 14 exact vector",
+            )
+            value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+            assert value == _DH_RFC3526_GROUP14_EXPECTED_SECRET_32
+        finally:
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_dh_derive_respects_requested_value_len_truncation(
         self,

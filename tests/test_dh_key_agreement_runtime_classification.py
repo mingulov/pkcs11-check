@@ -41,3 +41,16 @@ def test_dh_derive_clean_runtime_refusal_xfails(monkeypatch: pytest.MonkeyPatch)
 
     with pytest.raises(pytest.xfail.Exception, match="DH derive advertised"):
         dh.TestDHKeyAgreement().test_dh_derive_shared_secret(_session())
+
+
+def test_dh_rfc3526_group14_exact_vector_constant_matches_modexp() -> None:
+    """The embedded DH exact-vector expected value is the rightmost derived secret bytes."""
+    prime = int.from_bytes(dh.DH_PRIME_2048, "big")
+    generator = int.from_bytes(dh.DH_GEN, "big")
+    alice_private = int.from_bytes(dh._DH_RFC3526_GROUP14_ALICE_PRIVATE, "big")
+    bob_public = int.from_bytes(dh._DH_RFC3526_GROUP14_BOB_PUBLIC, "big")
+
+    assert pow(generator, alice_private, prime) != bob_public
+
+    full_secret = pow(bob_public, alice_private, prime).to_bytes(len(dh.DH_PRIME_2048), "big")
+    assert full_secret[-32:] == dh._DH_RFC3526_GROUP14_EXPECTED_SECRET_32

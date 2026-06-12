@@ -233,6 +233,17 @@ def test_gap_analysis_marks_dh_missing_peer_public_negative_as_added() -> None:
     assert "Classic DH missing-peer-public negative coverage" in doc_flat
 
 
+def test_gap_analysis_marks_classic_dh_exact_vector_as_added() -> None:
+    """Classic DH derive checks a deterministic RFC 3526 Group 14 exact vector."""
+    dh = _read("src/pkcs11_check/testcases/test_dh_key_agreement.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
+
+    assert "test_dh_pkcs_derive_rfc3526_group14_exact_vector" in dh
+    assert "_DH_RFC3526_GROUP14_EXPECTED_SECRET_32" in dh
+    assert "Classic DH RFC 3526 Group 14 exact-vector coverage" in doc_flat
+
+
 def test_gap_analysis_marks_x942_missing_peer_public_negative_as_added() -> None:
     """X9.42 DH derive has a negative test for missing peer public data."""
     x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")
