@@ -22,7 +22,7 @@ import os
 import subprocess
 import sys
 import textwrap
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from ctypes import byref
 from typing import Any
 
@@ -134,6 +134,50 @@ def _tls12_prf_sha256(
         a_value = hmac.new(secret, a_value, hashlib.sha256).digest()
         output += hmac.new(secret, a_value + seed, hashlib.sha256).digest()
     return output[:output_len]
+
+
+def _p_hash(
+    secret: bytes,
+    seed: bytes,
+    output_len: int,
+    digestmod: Callable[[], Any],
+) -> bytes:
+    output = bytearray()
+    a_value = seed
+    while len(output) < output_len:
+        a_value = hmac.new(secret, a_value, digestmod).digest()
+        output.extend(hmac.new(secret, a_value + seed, digestmod).digest())
+    return bytes(output[:output_len])
+
+
+def _tls_prf_legacy_md5_sha1(
+    secret: bytes,
+    label: bytes,
+    client_random: bytes,
+    server_random: bytes,
+    output_len: int,
+) -> bytes:
+    """Compute the RFC 2246 TLS 1.0/1.1 PRF used by CKM_TLS_KDF + CKM_TLS_PRF."""
+    if output_len <= 0:
+        raise ValueError("output_len must be positive")
+
+    seed = label + client_random + server_random
+    split_len = (len(secret) + 1) // 2
+    s1 = secret[:split_len]
+    s2 = secret[len(secret) - split_len :]
+    md5_part = _p_hash(
+        s1,
+        seed,
+        output_len,
+        lambda: hashlib.md5(usedforsecurity=False),
+    )
+    sha1_part = _p_hash(
+        s2,
+        seed,
+        output_len,
+        lambda: hashlib.sha1(usedforsecurity=False),
+    )
+    return bytes(a ^ b for a, b in zip(md5_part, sha1_part, strict=True))
 
 
 def _create_generic_secret(
@@ -723,6 +767,60 @@ class TestTLS12KDF:
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 pytest.xfail(f"CKM_TLS_KDF not operational: {exc}")
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, base_key)
+
+    def test_tls_kdf_tls10_prf_exact_vector(self, p11_raw_session: Any) -> None:
+        """CKM_TLS_KDF follows the RFC 2246 TLS1.0/1.1 PRF when prfMechanism is TLS_PRF."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("TLS_KDF"):
+            pytest.skip("CKM_TLS_KDF not supported")
+
+        base_key = _create_tls_pms(rs)
+        try:
+            mech = mech_tls_kdf(
+                CKM_TLS_KDF,
+                prf_mechanism=CKM_TLS_PRF,
+                label=b"key expansion",
+                client_random=_CLIENT_RANDOM,
+                server_random=_SERVER_RANDOM,
+            )
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_TLS_KDF,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 32,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_DERIVE: True,
+                    CKA_TOKEN: False,
+                },
+                mech_param=mech,
+            )
+            try:
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(value, bytes)
+                expected = _tls_prf_legacy_md5_sha1(
+                    _PRE_MASTER_SECRET,
+                    b"key expansion",
+                    _CLIENT_RANDOM,
+                    _SERVER_RANDOM,
+                    32,
+                )
+                assert value == expected, (
+                    "CKM_TLS_KDF TLS1.0/1.1 PRF output mismatch: "
+                    f"got {value.hex()}, expected {expected.hex()}"
+                )
+            finally:
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            if is_known_error(exc, _TLS_ERROR_RVS):
+                pytest.xfail(f"CKM_TLS_KDF TLS1.0/1.1 exact vector not operational: {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)

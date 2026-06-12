@@ -267,7 +267,9 @@ smoke behavior, or covered only by one narrow variation.
    verifies that changing the shared-secret input changes the derived output.
    IKE2 PRF+ HMAC-SHA256 exact-vector coverage now uses typed
    `CK_IKE2_PRF_PLUS_DERIVE_PARAMS` and checks the OASIS `prf+(baseKey,
-   seedData)` recurrence.
+   seedData)` recurrence. TLS KDF TLS1.0/1.1 exact-vector coverage now sets
+   `CK_TLS_KDF_PARAMS.prfMechanism` to `CKM_TLS_PRF` and checks the RFC 2246
+   MD5/SHA-1 split-secret PRF output.
    IKE PRF base-key sensitivity coverage now verifies the same for
    `CKM_IKE_PRF_DERIVE`. IKE PRF data-as-key HMAC-SHA256 exact-vector coverage
    now uses typed `CK_IKE_PRF_DERIVE_PARAMS` and checks the OASIS case-1

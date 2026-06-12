@@ -151,6 +151,21 @@ def test_gap_analysis_marks_ike1_exact_vectors_as_added() -> None:
     assert "IKE1 Extended Derive HMAC-SHA256 exact-vector coverage" in doc
 
 
+def test_gap_analysis_marks_tls_kdf_tls10_exact_vector_as_added() -> None:
+    """CKM_TLS_KDF has an RFC 2246 TLS1.0/1.1 PRF exact vector."""
+    tls = _read("src/pkcs11_check/testcases/test_tls12.py")
+    guard = _read("tests/test_tls_key_material_derivation.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "_tls_prf_legacy_md5_sha1" in tls
+    assert "test_tls_kdf_tls10_prf_exact_vector" in tls
+    assert "CKM_TLS_PRF" in tls
+    assert "test_tls10_prf_reference_matches_rfc2246_split_secret_vector" in guard
+    assert "test_tls_kdf_tls10_exact_vector_uses_tls_prf_mechanism" in guard
+
+    assert "TLS KDF TLS1.0/1.1 exact-vector coverage" in doc
+
+
 def test_gap_analysis_marks_ssl3_master_secret_exact_vector_as_added() -> None:
     """CKM_SSL3_MASTER_KEY_DERIVE has an SSL3 master-secret exact vector."""
     ssl3 = _read("src/pkcs11_check/testcases/test_ssl3.py")
