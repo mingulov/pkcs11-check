@@ -315,8 +315,10 @@ smoke behavior, or covered only by one narrow variation.
    MAC requests against the OASIS 1..digest-length rule.
    BLAKE2B HMAC_GENERAL boundary-length coverage now checks the minimum valid
    one-byte MAC and the maximum digest-length MAC for every BLAKE2B keyed
-   size. Remaining BLAKE2B work is broader negative parameter/regression
-   expansion and provider-artifact evidence, not basic keyed semantic coverage.
+   size. BLAKE2B HMAC_GENERAL tampered-MAC coverage now verifies truncated
+   MAC verification rejects modified output bytes. Remaining BLAKE2B work is
+   broader negative parameter/regression expansion and provider-artifact
+   evidence, not basic keyed semantic coverage.
 7. SHAKE/XOF and ML-DSA ExternalMu are registry/smoke only until raw XOF
    function signatures and KAT-backed tests exist.
 8. Legacy cipher coverage is now mixed rather than mostly generic: RC2, RC4,

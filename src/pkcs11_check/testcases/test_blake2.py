@@ -539,6 +539,67 @@ class TestBlake2bKeyed:
     ) -> None:
         self._hmac_general_truncates(p11_raw_session, case)
 
+    def _hmac_general_rejects_tampered_mac(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+        *,
+        mac_len: int,
+    ) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism(case.hmac_general_name):
+            pytest.skip(f"CKM_{case.hmac_general_name} not supported")
+
+        key = _import_blake2b_setup_key(rs, sign=True, verify=True)
+        mech_param = mech_bytes(case.hmac_general_mech, _ck_ulong_param(mac_len))
+        try:
+            try:
+                mac = sign_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    case.hmac_general_mech,
+                    _BLAKE2B_TEST_DATA,
+                    mech_param=mech_param,
+                )
+            except AssertionError as e:
+                _xfail_blake2b_reject(
+                    e,
+                    f"{case.hmac_general_name} advertised but sign failed",
+                )
+
+            tampered = bytes([mac[0] ^ 0x01]) + mac[1:]
+            try:
+                assert not verify_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    case.hmac_general_mech,
+                    _BLAKE2B_TEST_DATA,
+                    tampered,
+                    mech_param=mech_param,
+                )
+            except AssertionError as e:
+                _xfail_blake2b_reject(
+                    e,
+                    f"{case.hmac_general_name} tampered BLAKE2B HMAC_GENERAL verify "
+                    "rejected with unexpected CKR",
+                )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    @pytest.mark.parametrize(
+        "case",
+        _BLAKE2B_KEYED_CASES,
+        ids=[case.id for case in _BLAKE2B_KEYED_CASES],
+    )
+    def test_blake2b_hmac_general_rejects_tampered_mac(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        self._hmac_general_rejects_tampered_mac(p11_raw_session, case, mac_len=12)
+
     @pytest.mark.parametrize(
         "case",
         _BLAKE2B_KEYED_CASES,

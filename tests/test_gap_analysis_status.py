@@ -71,6 +71,17 @@ def test_gap_analysis_marks_blake2b_keyed_semantics_as_covered() -> None:
     assert "BLAKE2B HMAC_GENERAL boundary-length coverage" in doc_flat
 
 
+def test_gap_analysis_marks_blake2b_hmac_general_tamper_negative_as_added() -> None:
+    """BLAKE2B HMAC_GENERAL truncated MAC verification rejects tampering."""
+    blake2 = _read("src/pkcs11_check/testcases/test_blake2.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_blake2b_hmac_general_rejects_tampered_mac" in blake2
+    assert "tampered BLAKE2B HMAC_GENERAL verify" in blake2
+
+    assert "BLAKE2B HMAC_GENERAL tampered-MAC coverage" in doc_flat
+
+
 def test_coverage_plan_does_not_count_ecmqv_as_kea_coverage() -> None:
     """ECMQV and KEA are different mechanisms; ECMQV tests do not cover KEA."""
     ecdh_extended = _read("src/pkcs11_check/testcases/test_ecdh_extended.py")
