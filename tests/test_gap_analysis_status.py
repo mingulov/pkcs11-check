@@ -530,6 +530,19 @@ def test_gap_analysis_marks_dh_missing_peer_public_negative_as_added() -> None:
     assert "Classic DH missing-peer-public negative coverage" in doc_flat
 
 
+def test_gap_analysis_marks_dh_malformed_peer_public_negative_as_added() -> None:
+    """Classic DH derive rejects malformed peer public data."""
+    dh = _read("src/pkcs11_check/testcases/test_dh_key_agreement.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
+
+    assert "test_dh_derive_rejects_malformed_peer_public_value" in dh
+    assert "CKM_DH_PKCS_DERIVE malformed peer public value" in dh
+    assert "CKR_DOMAIN_PARAMS_INVALID" in dh
+
+    assert "Classic DH malformed-peer-public negative coverage" in doc_flat
+
+
 def test_gap_analysis_marks_classic_dh_exact_vector_as_added() -> None:
     """Classic DH derive checks a deterministic RFC 3526 Group 14 exact vector."""
     dh = _read("src/pkcs11_check/testcases/test_dh_key_agreement.py")
@@ -552,6 +565,19 @@ def test_gap_analysis_marks_x942_missing_peer_public_negative_as_added() -> None
     assert "classify_negative_rv(" in x942
 
     assert "X9.42 DH missing-peer-public negative coverage" in doc_flat
+
+
+def test_gap_analysis_marks_x942_malformed_peer_public_negative_as_added() -> None:
+    """X9.42 DH derive rejects malformed peer public data."""
+    x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
+
+    assert "test_x942_derive_rejects_malformed_peer_public_value" in x942
+    assert "CKM_X9_42_DH_DERIVE malformed peer public value" in x942
+    assert "CKR_DOMAIN_PARAMS_INVALID" in x942
+
+    assert "X9.42 DH malformed-peer-public negative coverage" in doc_flat
 
 
 def test_gap_analysis_marks_x942_exact_vector_as_added() -> None:

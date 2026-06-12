@@ -73,6 +73,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
@@ -198,6 +199,12 @@ _X942_DERIVE_RUNTIME_REJECT_RVS = (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+)
+
+_X942_INVALID_PEER_PUBLIC_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 
 
@@ -656,6 +663,46 @@ class TestX942DHDerive:
                 rv,
                 (CKR_MECHANISM_PARAM_INVALID,),
                 label="CKM_X9_42_DH_DERIVE missing peer public value",
+            )
+        finally:
+            if derived.value:
+                destroy_quietly(rs.raw, rs.sh, derived.value)
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_x942_derive_rejects_malformed_peer_public_value(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_X9_42_DH_DERIVE must reject a malformed peer public value."""
+        rs = p11_raw_session
+        _skip_no_x942_keygen(rs)
+        _skip_no_x942_derive(rs)
+
+        pub, priv = _generate_x942_keypair(rs)
+        mech = _build_x942_derive_mech(b"\x01")
+        derived = CK_OBJECT_HANDLE(0)
+        attrs = template(
+            attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
+            attr_ulong(CKA_VALUE_LEN, 16),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, True),
+            attr_bool(CKA_TOKEN, False),
+        )
+        try:
+            rv = rs.raw.C_DeriveKey(
+                rs.sh,
+                mech.byref(),
+                priv,
+                attrs.ptr,
+                attrs.count,
+                byref(derived),
+            )
+            classify_negative_rv(
+                rv,
+                _X942_INVALID_PEER_PUBLIC_RVS,
+                label="CKM_X9_42_DH_DERIVE malformed peer public value",
             )
         finally:
             if derived.value:

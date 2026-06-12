@@ -304,12 +304,17 @@ smoke behavior, or covered only by one narrow variation.
    while successful derives still verify exact shared-secret and
    encryption/readback effects. Classic DH missing-peer-public negative
    coverage now verifies `CKM_DH_PKCS_DERIVE` rejects a missing peer public
-   mechanism parameter through the shared negative classifier. X9.42 DH
+   mechanism parameter through the shared negative classifier. Classic DH
+   malformed-peer-public negative coverage now verifies the same derive path
+   rejects a one-byte peer public value with domain/mechanism-parameter
+   classification. X9.42 DH
    RFC 5114 exact-vector coverage now imports a fixed private value, derives
    with a fixed peer public value, and checks the exact derived generic-secret
    bytes. X9.42 DH missing-peer-public negative coverage now verifies
    `CKM_X9_42_DH_DERIVE` rejects a missing DH1 derive parameter struct through
-   the same classifier.
+   the same classifier. X9.42 DH malformed-peer-public negative coverage now
+   verifies typed `CK_X9_42_DH1_DERIVE_PARAMS` carrying a one-byte public value
+   is rejected through the same provider-general negative model.
 4. Message API registry-driven init coverage exists for advertised
    `CKF_MESSAGE_*` flags through `TestRegistryMessageInit` and pytest plugin
    fixtures for message encrypt, decrypt, sign, and verify entries. Richer
