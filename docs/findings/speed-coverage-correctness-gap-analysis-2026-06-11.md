@@ -262,9 +262,11 @@ smoke behavior, or covered only by one narrow variation.
    WTLS PRF label-sensitivity coverage now verifies the same for
    `CK_WTLS_PRF_PARAMS.pLabel`. IKE2 PRF+ base-key sensitivity coverage now
    verifies that changing the shared-secret input changes the derived output.
-2. Many derive mechanisms still lack runtime dispatch: Camellia/ARIA/SEED
-   encrypt-data and any remaining protocol KDF variants not covered by
-   dedicated files.
+2. Regional cipher encrypt-data derive dispatch exists for Camellia, ARIA, and
+   SEED ECB/CBC variants in `test_mech_derive.py`; focused meta-tests verify
+   the family-specific CBC parameter structs are packed for generic derive
+   dispatch. Remaining derive work is protocol KDF exact-vector expansion and
+   any families whose PKCS#11 parameter semantics are still source-first.
 3. Dedicated DSA/DH/X9.42 domain-parameter coverage exists in
    `test_dsa_complete.py`, `test_dh_key_agreement.py`, and `test_x942_dh.py`.
    The generic registry-driven keygen path still skips `dsa` and `dh` recipe

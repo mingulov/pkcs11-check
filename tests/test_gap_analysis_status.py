@@ -181,6 +181,27 @@ def test_gap_analysis_marks_classic_dh_runtime_rejects_as_classified() -> None:
     assert "Classic DH derive runtime-reject classification" in doc
 
 
+def test_gap_analysis_marks_regional_cipher_encrypt_data_dispatch_as_added() -> None:
+    """Camellia/ARIA/SEED encrypt-data derive dispatch is no longer a gap."""
+    derive = _read("src/pkcs11_check/testcases/test_mech_derive.py")
+    meta = _read("tests/test_mech_derive_cipher_dispatch.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    for token in (
+        "CKM_CAMELLIA_ECB_ENCRYPT_DATA",
+        "CKM_CAMELLIA_CBC_ENCRYPT_DATA",
+        "CKM_ARIA_ECB_ENCRYPT_DATA",
+        "CKM_ARIA_CBC_ENCRYPT_DATA",
+        "CKM_SEED_ECB_ENCRYPT_DATA",
+        "CKM_SEED_CBC_ENCRYPT_DATA",
+    ):
+        assert token in derive
+        assert token in meta
+
+    assert "Camellia/ARIA/SEED encrypt-data and any remaining protocol KDF variants" not in doc
+    assert "Regional cipher encrypt-data derive dispatch exists" in doc
+
+
 def test_gap_analysis_marks_block_cbc_pad_vectors_as_added() -> None:
     """DES-family, Camellia, ARIA, and SEED CBC_PAD now have KAT vector links."""
     des_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_des.py")
