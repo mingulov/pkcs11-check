@@ -136,6 +136,17 @@ def test_gap_analysis_marks_dsa_prehash_runtime_rejects_as_classified() -> None:
     assert "DSA prehash runtime-reject classification" in doc
 
 
+def test_gap_analysis_marks_dsa_sha224_prehash_matrix_as_added() -> None:
+    """DSA_SHA224 is part of the complete DSA prehash roundtrip/tamper matrix."""
+    dsa = _read("src/pkcs11_check/testcases/test_dsa_complete.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert 'pytest.param("DSA_SHA224"' in dsa
+    assert "SHA-224" in dsa
+
+    assert "DSA_SHA224 now participates" in doc
+
+
 def test_gap_analysis_marks_block_cbc_pad_vectors_as_added() -> None:
     """DES-family, Camellia, ARIA, and SEED CBC_PAD now have KAT vector links."""
     des_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_des.py")

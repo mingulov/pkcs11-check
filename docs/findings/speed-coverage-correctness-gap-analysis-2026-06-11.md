@@ -271,7 +271,9 @@ smoke behavior, or covered only by one narrow variation.
    as xfail deviations. DSA prehash runtime-reject classification now uses the
    shared signature policy: advertised positive sign/verify refusals are xfail
    deviations, while tampered-data/signature tests treat clean signature
-   rejection as the intended negative outcome.
+   rejection as the intended negative outcome. DSA_SHA224 now participates in
+   the complete generated-key prehash roundtrip, tampered-data,
+   tampered-signature, empty-data, and large-data matrix.
 4. Message API coverage is representative, not registry-driven. Scenario
    selection does not yet cover `CKF_MESSAGE_*` flags generically.
 5. Hybrid and AEAD wrap coverage has explicit holes: RSA-AES key wrap,

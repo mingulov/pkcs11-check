@@ -13,6 +13,7 @@ from pkcs11_check.raw.types_std import (
     CK_DSA_PARAMETER_GEN_PARAM,
     CKM_DSA_PROBABILISTIC_PARAMETER_GEN,
     CKM_DSA_SHA1,
+    CKM_DSA_SHA224,
     CKM_SHA256,
     CKR_DEVICE_ERROR,
     CKR_GENERAL_ERROR,
@@ -36,6 +37,15 @@ def test_dsa_complete_module_preserves_sign_and_slow_marks() -> None:
     marks = mark if isinstance(mark, list) else [mark]
 
     assert {item.mark.name for item in marks} == {"sign", "slow"}
+
+
+def test_dsa_complete_prehash_matrix_includes_sha224() -> None:
+    mechanisms: set[int] = set()
+    for param in test_dsa_complete._DSA_HASH_MECHS:
+        mechanisms.add(int(cast(Any, param.values[1])))
+
+    assert int(CKM_DSA_SHA1) in mechanisms
+    assert int(CKM_DSA_SHA224) in mechanisms
 
 
 def test_dsa_parameter_gen_runtime_reject_is_xfail(
