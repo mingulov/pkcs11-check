@@ -104,10 +104,15 @@ Next task:
 - Bound file-level timeout damage when collection metadata is available.
 - Re-run at least wolfPKCS11 HKDF to prove the old 90-minute file unit is gone.
 
-Status: fixed in the current branch, except the provider-local wolfPKCS11
-remeasurement remains a fresh-run follow-up. Auto-isolation expands
+Status: fixed in the current branch. Auto-isolation expands
 `subprocess_per_test` files to node-level units, resume rejects unexpanded
-subprocess-per-test state, and focused tests cover the guard.
+subprocess-per-test state, and focused tests cover the guard. wolfPKCS11 HKDF
+remeasurement evidence now exists in the current local artifacts:
+`artifacts/wolfpkcs11-pooled/results.json` and
+`artifacts/wolfpkcs11-master-pooled/results.json` show
+`wycheproof/test_wycheproof_hkdf.py` at roughly 241-252s, so the old roughly
+5,403s file-level long pole is gone. The current HKDF units still record
+provider crashes, which remain findings rather than skips or xfails.
 
 ### 4. Split or optimize bouncyhsm MCT long poles carefully
 
@@ -149,9 +154,15 @@ Current status:
   vector equivalence are covered in `tests/test_acvp_aes_runtime_classification.py`;
   duration-hot node expansion and caller environment propagation are covered in
   `tests/test_docker_pool.py`.
-- Remaining evidence: run a fresh bouncyhsm pool using provider-local
-  `--duration-artifacts-dir` and `--coverage-baseline-artifacts-dir` before
-  claiming a bouncyhsm wall-time improvement.
+- Fresh bouncyhsm provider-local pool evidence exists. The current
+  `artifacts/bouncyhsm-pooled/results.json` was produced from the preserved
+  provider-local baseline under
+  `/tmp/pkcs11-check-bouncyhsm-baseline-20260612080232`; `pkcs11-check
+  compare-coverage ... --fail-on-loss` reports `No mechanism coverage state
+  loss`. The former file-level MCT long poles are split into 13 emitted units
+  each for `test_ofb.py`, `test_cfb8.py`, and `test_cfb128.py`, with the
+  largest emitted MCT unit at about 334s instead of the prior roughly
+  1,100s-per-file shape.
 
 ### 5. Reduce remaining setup cost for module-session vector files
 

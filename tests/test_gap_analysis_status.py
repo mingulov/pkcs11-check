@@ -293,6 +293,27 @@ def test_gap_analysis_marks_mixed_fail_crash_reporting_as_fixed() -> None:
     assert "Status: fixed in the current branch. `_overall_unit_status()` gives" in doc
 
 
+def test_gap_analysis_records_bouncyhsm_provider_local_remeasurement() -> None:
+    """BouncyHSM MCT speed work has provider-local remeasurement evidence."""
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "Fresh bouncyhsm provider-local pool evidence exists" in doc_flat
+    assert "No mechanism coverage state loss" in doc_flat
+    assert (
+        "13 emitted units each for `test_ofb.py`, `test_cfb8.py`, and `test_cfb128.py`"
+        in doc_flat
+    )
+
+
+def test_gap_analysis_records_wolfpkcs11_hkdf_remeasurement() -> None:
+    """WolfPKCS11 HKDF subprocess-per-test expansion has fresh artifact evidence."""
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "wolfPKCS11 HKDF remeasurement evidence now exists" in doc_flat
+    assert "roughly 241-252s" in doc_flat
+    assert "the old roughly 5,403s file-level long pole is gone" in doc_flat
+
+
 def test_gap_analysis_marks_compliance_note_persistence_as_end_to_end() -> None:
     """Compliance-note persistence has an isolated-subprocess regression test."""
     tests = _read("tests/test_file_runner.py")
