@@ -385,6 +385,20 @@ def test_gap_analysis_marks_blake2b_hmac_general_tamper_negative_as_added() -> N
     assert "BLAKE2B HMAC_GENERAL wrong-length MAC coverage" in doc_flat
 
 
+def test_gap_analysis_marks_blake2b_hmac_wrong_length_mac_as_added() -> None:
+    """BLAKE2B fixed-length HMAC rejects truncated and extended MACs."""
+    blake2 = _read("src/pkcs11_check/testcases/test_blake2.py")
+    guard = _read("tests/test_blake2_keyed_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_blake2b_hmac_rejects_wrong_length_mac" in blake2
+    assert "_hmac_rejects_wrong_length_mac" in blake2
+    assert "accepted wrong-length" in blake2
+    assert "test_blake2b_hmac_wrong_length_mac_variants_are_rejected" in guard
+
+    assert "BLAKE2B fixed-length HMAC wrong-length MAC coverage" in doc_flat
+
+
 def test_gap_analysis_marks_blake2b_key_derive_default_template_as_added() -> None:
     """BLAKE2B KEY_DERIVE covers the no-key-type/no-length default template rule."""
     blake2 = _read("src/pkcs11_check/testcases/test_blake2.py")

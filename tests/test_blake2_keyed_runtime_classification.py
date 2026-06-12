@@ -185,6 +185,64 @@ def test_blake2b_hmac_general_wrong_length_mac_acceptance_fails(
         )
 
 
+def test_blake2b_hmac_wrong_length_mac_variants_are_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert hasattr(test_blake2.TestBlake2bKeyed, "_hmac_rejects_wrong_length_mac")
+
+    case = test_blake2._BLAKE2B_KEYED_CASE_BY_BITS[256]
+    mac = b"\x6b" * case.digest_len
+    verified: list[bytes] = []
+
+    def _sign_reference(*_args: Any, **_kwargs: Any) -> bytes:
+        return mac
+
+    def _verify_rejects(
+        _raw: Any,
+        _sh: int,
+        _key: int,
+        _mech: Any,
+        _data: bytes,
+        sig: bytes,
+        **_kwargs: Any,
+    ) -> bool:
+        verified.append(sig)
+        return False
+
+    rs = _session_with_mechanisms("BLAKE2B_256_HMAC")
+    monkeypatch.setattr(test_blake2, "_import_blake2b_setup_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_blake2, "destroy_quietly", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(test_blake2, "sign_single", _sign_reference)
+    monkeypatch.setattr(test_blake2, "verify_single", _verify_rejects)
+
+    test_blake2.TestBlake2bKeyed()._hmac_rejects_wrong_length_mac(rs, case)
+
+    assert verified == [mac + b"\x00", mac[:-1]]
+
+
+def test_blake2b_hmac_wrong_length_mac_acceptance_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert hasattr(test_blake2.TestBlake2bKeyed, "_hmac_rejects_wrong_length_mac")
+
+    case = test_blake2._BLAKE2B_KEYED_CASE_BY_BITS[256]
+
+    def _sign_reference(*_args: Any, **_kwargs: Any) -> bytes:
+        return b"\xa6" * case.digest_len
+
+    def _verify_accepts(*_args: Any, **_kwargs: Any) -> bool:
+        return True
+
+    rs = _session_with_mechanisms("BLAKE2B_256_HMAC")
+    monkeypatch.setattr(test_blake2, "_import_blake2b_setup_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_blake2, "destroy_quietly", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(test_blake2, "sign_single", _sign_reference)
+    monkeypatch.setattr(test_blake2, "verify_single", _verify_accepts)
+
+    with pytest.raises(AssertionError, match="accepted wrong-length BLAKE2B_256_HMAC"):
+        test_blake2.TestBlake2bKeyed()._hmac_rejects_wrong_length_mac(rs, case)
+
+
 def test_blake2b_key_derive_runtime_reject_is_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

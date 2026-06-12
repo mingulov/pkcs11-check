@@ -437,6 +437,9 @@ smoke behavior, or covered only by one narrow variation.
    MAC verification rejects modified output bytes. BLAKE2B HMAC_GENERAL
    wrong-length MAC coverage now verifies that verification rejects extended
    and truncated MAC byte strings for the requested general-MAC length.
+   BLAKE2B fixed-length HMAC wrong-length MAC coverage now verifies the same
+   extended/truncated rejection behavior for the fixed-output
+   `CKM_BLAKE2B_*_HMAC` mechanisms.
    BLAKE2B KEY_DERIVE default-template coverage now verifies the OASIS
    no-key-type/no-length rule by omitting `CKA_KEY_TYPE` and `CKA_VALUE_LEN`
    and checking for generic-secret, digest-length output. BLAKE2B KEY_DERIVE

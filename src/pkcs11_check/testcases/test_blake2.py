@@ -456,6 +456,55 @@ class TestBlake2bKeyed:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
+    def _hmac_rejects_wrong_length_mac(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism(case.hmac_name):
+            pytest.skip(f"CKM_{case.hmac_name} not supported")
+
+        key = _import_blake2b_setup_key(rs, sign=True, verify=True)
+        try:
+            try:
+                mac = sign_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    case.hmac_mech,
+                    _BLAKE2B_TEST_DATA,
+                )
+            except AssertionError as e:
+                _xfail_blake2b_reject(
+                    e,
+                    f"{case.hmac_name} advertised but sign failed",
+                )
+            assert len(mac) == case.digest_len
+
+            for bad_mac in (mac + b"\x00", mac[:-1]):
+                try:
+                    accepted = verify_single(
+                        rs.raw,
+                        rs.sh,
+                        key,
+                        case.hmac_mech,
+                        _BLAKE2B_TEST_DATA,
+                        bad_mac,
+                    )
+                except AssertionError as e:
+                    _xfail_blake2b_reject(
+                        e,
+                        f"{case.hmac_name} wrong-length BLAKE2B HMAC verify "
+                        "rejected with unexpected CKR",
+                    )
+                assert not accepted, (
+                    f"accepted wrong-length {case.hmac_name} BLAKE2B HMAC "
+                    f"({len(bad_mac)} bytes)"
+                )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
     @pytest.mark.parametrize(
         "case",
         _BLAKE2B_KEYED_CASES,
@@ -467,6 +516,18 @@ class TestBlake2bKeyed:
         case: _Blake2bKeyedCase,
     ) -> None:
         self._hmac_matches_reference(p11_raw_session, case)
+
+    @pytest.mark.parametrize(
+        "case",
+        _BLAKE2B_KEYED_CASES,
+        ids=[case.id for case in _BLAKE2B_KEYED_CASES],
+    )
+    def test_blake2b_hmac_rejects_wrong_length_mac(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        self._hmac_rejects_wrong_length_mac(p11_raw_session, case)
 
     def _hmac_general_matches_reference(
         self,
