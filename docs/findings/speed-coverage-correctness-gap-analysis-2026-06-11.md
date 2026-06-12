@@ -315,7 +315,7 @@ smoke behavior, or covered only by one narrow variation.
    as xfail deviations. DSA prehash runtime-reject classification now uses the
    shared signature policy: advertised positive sign/verify refusals are xfail
    deviations, while tampered-data/signature tests treat clean signature
-   rejection as the intended negative outcome. DSA_SHA224 now participates in
+   rejection as the intended negative outcome. DSA_SHA224 and DSA_SHA256 now participate in
    the complete generated-key prehash roundtrip, tampered-data,
    tampered-signature, empty-data, and large-data matrix. Raw CKM_DSA
    wrong-signature-length coverage now verifies verification rejects a

@@ -626,15 +626,17 @@ def test_gap_analysis_marks_raw_dsa_wrong_signature_length_negative_as_added() -
     assert "Raw CKM_DSA wrong-signature-length coverage" in doc_flat
 
 
-def test_gap_analysis_marks_dsa_sha224_prehash_matrix_as_added() -> None:
-    """DSA_SHA224 is part of the complete DSA prehash roundtrip/tamper matrix."""
+def test_gap_analysis_marks_dsa_sha224_sha256_prehash_matrix_as_added() -> None:
+    """DSA_SHA224 and DSA_SHA256 are in the complete DSA prehash matrix."""
     dsa = _read("src/pkcs11_check/testcases/test_dsa_complete.py")
     doc = GAP_DOC.read_text(encoding="utf-8")
 
     assert 'pytest.param("DSA_SHA224"' in dsa
+    assert 'pytest.param("DSA_SHA256"' in dsa
     assert "SHA-224" in dsa
+    assert "SHA-256" in dsa
 
-    assert "DSA_SHA224 now participates" in doc
+    assert "DSA_SHA224 and DSA_SHA256 now participate" in doc
 
 
 def test_gap_analysis_marks_controlled_child_crash_stats_as_added() -> None:

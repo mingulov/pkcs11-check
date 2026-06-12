@@ -1,10 +1,9 @@
 """Tests for the complete DSA mechanism family.
 
-Covers raw CKM_DSA, prehash variants (SHA-1, SHA-224, SHA-384, SHA-512, SHA3-*),
+Covers raw CKM_DSA, prehash variants (SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, SHA3-*),
 and CKM_DSA_PARAMETER_GEN.
 
-Note: CKM_DSA_KEY_PAIR_GEN and CKM_DSA_SHA256 are already tested in
-test_sign.py and test_wycheproof_dsa.py.
+Note: CKM_DSA_KEY_PAIR_GEN is already tested in test_sign.py.
 
 OASIS spec: dsa.md
 """
@@ -132,10 +131,11 @@ _DSA_KEYPAIR_RUNTIME_REJECT_RVS = (
     CKR_TEMPLATE_INCONSISTENT,
 )
 
-# Prehash DSA variants (excluding DSA_SHA256 which is tested elsewhere)
+# Prehash DSA variants.
 _DSA_HASH_MECHS = [
     pytest.param("DSA_SHA1", CKM_DSA_SHA1, id="SHA1"),
     pytest.param("DSA_SHA224", CKM_DSA_SHA224, id="SHA224"),
+    pytest.param("DSA_SHA256", CKM_DSA_SHA256, id="SHA256"),
     pytest.param("DSA_SHA384", CKM_DSA_SHA384, id="SHA384"),
     pytest.param("DSA_SHA512", CKM_DSA_SHA512, id="SHA512"),
     pytest.param("DSA_SHA3_224", CKM_DSA_SHA3_224, id="SHA3-224"),
