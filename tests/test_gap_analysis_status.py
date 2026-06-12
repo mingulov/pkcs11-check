@@ -242,6 +242,17 @@ def test_gap_analysis_marks_cast_mac_general_vectors_as_added() -> None:
     assert "CAST/CAST3 MAC_GENERAL" in doc
 
 
+def test_gap_analysis_marks_gost28147_iv_param_registry_coverage() -> None:
+    """GOST28147 has a registry IV recipe but remains source-first for KATs."""
+    legacy_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_legacy.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "registry[CKM_GOST28147]" in legacy_registry
+    assert "param_recipe=_iv8" in legacy_registry
+    assert "CKM_GOST28147 IV-parameter registry coverage" in doc
+    assert "GOST28147 exact-output KATs remain source-first" in doc
+
+
 def test_gap_analysis_marks_mixed_fail_crash_reporting_as_fixed() -> None:
     """Mixed fail+crash units now surface crash status instead of only failed status."""
     runner = _read("src/pkcs11_check/core/file_runner.py")

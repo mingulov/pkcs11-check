@@ -36,6 +36,7 @@ from pkcs11_check.raw.types_std import (
     CKM_DES_CBC_PAD,
     CKM_DES_MAC,
     CKM_DES_MAC_GENERAL,
+    CKM_GOST28147,
     CKM_IDEA_CBC,
     CKM_IDEA_CBC_PAD,
     CKM_IDEA_ECB,
@@ -57,7 +58,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SEED_MAC_GENERAL,
     CKM_TWOFISH_CBC,
 )
-from pkcs11_check.testcases.mechanism_helpers import build_params_from_vector
+from pkcs11_check.testcases.mechanism_helpers import build_params_from_vector, build_test_params
 from pkcs11_check.testcases.mechanism_registry import MECHANISM_REGISTRY
 from pkcs11_check.testcases.mechanism_vectors import load_positive_vectors
 
@@ -839,3 +840,17 @@ def test_twofish_cbc_encrypt_mechanism_has_schneier_kat_vector() -> None:
             "Bruce Schneier Twofish ECB intermediate value test, "
             "replayed as single-block CBC with zero IV"
         )
+
+
+def test_gost28147_registry_replays_oasis_iv_parameter_shape() -> None:
+    """CKM_GOST28147 generic tests must build the OASIS 8-byte IV parameter."""
+    config = MECHANISM_REGISTRY[int(CKM_GOST28147)]
+
+    assert config.param_required is True
+    assert config.param_recipe.style == "iv"
+    assert config.param_recipe.defaults["iv_len"] == 8
+
+    params = build_test_params(int(CKM_GOST28147), config.param_recipe)
+
+    assert ctypes.string_at(params.ck.pParameter, params.ck.ulParameterLen)
+    assert params.ck.ulParameterLen == 8

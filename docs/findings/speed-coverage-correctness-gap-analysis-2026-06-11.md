@@ -273,10 +273,14 @@ smoke behavior, or covered only by one narrow variation.
    encrypt coverage where the PKCS#11 mechanism shape is reliable. RC2, RC5,
    CAST/CAST3/CAST128/CAST5, IDEA, and Blowfish also have CBC_PAD exact-output
    vectors for padding behavior, with non-block-aligned plaintext covered where
-   a reliable source exists. Remaining shallow areas are SKIPJACK, CDMF,
-   BATON/JUNIPER, GOST28147, Twofish CBC_PAD output, and the
+   a reliable source exists. CKM_GOST28147 IV-parameter registry coverage
+   now lets generic mechanism tests build the OASIS 8-byte IV parameter for
+   advertised GOST 28147-89 non-ECB operations. Remaining shallow areas are
+   SKIPJACK, CDMF, BATON/JUNIPER, GOST28147 exact-output KATs, Twofish
+   CBC_PAD output, and the
    fixed-output MAC/MAC_GENERAL KATs where a block-vector source and output
-   length mapping are still missing.
+   length mapping are still missing. GOST28147 exact-output KATs remain source-first
+   until the vector source and parameter-set mapping are unambiguous.
    Older PBE variants now have semantic `C_GenerateKey` coverage for key type
    and IV writeback where `CK_PBE_PARAMS` applies, but not independent
    fixed-output KAT vectors. MAC_GENERAL mechanisms now assert the returned MAC
@@ -449,7 +453,7 @@ After that, do the first coverage expansion round:
 6. Legacy/deprecated mechanisms not yet covered by reliable KATs or semantic
    probes: SKIPJACK only if a trustworthy vector source is found, KEA only with
    defensible domain-parameter/derive semantics, plus CDMF, BATON/JUNIPER,
-   GOST28147, remaining CBC_PAD outputs such as Twofish, and
+   GOST28147 exact-output KATs, remaining CBC_PAD outputs such as Twofish, and
    remaining MAC_GENERAL or fixed-output vectors where reliable sources exist.
 
 Legacy/deprecated coverage addendum for the active goal:

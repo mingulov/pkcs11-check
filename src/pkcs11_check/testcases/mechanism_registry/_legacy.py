@@ -1164,10 +1164,11 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         param_required=True,
+        param_recipe=_iv8,
         deterministic=False,
         keygen_recipe=_gost28147,
         expected_flags=_ENC_DEC,
-        notes="GOST 28147-89 CBC mode: 8-byte block, requires params (S-box + IV)",
+        notes="GOST 28147-89 non-ECB mode: 8-byte IV mechanism param",
     )
 
     registry[CKM_GOST28147_MAC] = MechConfig(
