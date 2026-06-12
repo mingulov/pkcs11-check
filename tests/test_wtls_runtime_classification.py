@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -14,7 +15,11 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKM_SHA256,
     CKM_VENDOR_DEFINED,
+    CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE,
+    CKM_WTLS_MASTER_KEY_DERIVE,
+    CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC,
     CKM_WTLS_PRF,
+    CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
 )
@@ -151,6 +156,84 @@ def test_wtls_prf_invalid_digest_uses_negative_classifier(
     assert isinstance(classifier_calls[0][0], CkrAssertionError)
     assert int(CKR_MECHANISM_PARAM_INVALID) in classifier_calls[0][1]
     assert classifier_calls[0][2] == "WTLS PRF invalid digest mechanism"
+
+
+def test_wtls_derive_invalid_digest_uses_negative_classifier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_wtls, "_create_generic_secret", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_wtls, "destroy_quietly", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(test_wtls, "destroy_returned_handles", lambda *_args, **_kwargs: None)
+
+    derive_calls: list[tuple[int, int]] = []
+    key_mat_calls: list[tuple[int, int]] = []
+    classifier_calls: list[tuple[BaseException | None, tuple[int, ...], str]] = []
+
+    def _rejecting_derive_key(
+        _raw: object,
+        _session: int,
+        _base_key: int,
+        mechanism: int,
+        **kwargs: object,
+    ) -> int:
+        mech_param = cast(Any, kwargs["mech_param"])
+        derive_calls.append((int(mechanism), int(mech_param.params.DigestMechanism)))
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID",
+            int(CKR_MECHANISM_PARAM_INVALID),
+        )
+
+    def _rejecting_key_material(
+        _rs: object,
+        _base_key: int,
+        _attrs: object,
+        mech: Any,
+    ) -> None:
+        key_mat_calls.append((int(mech.ck.mechanism), int(mech.params.DigestMechanism)))
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID",
+            int(CKR_MECHANISM_PARAM_INVALID),
+        )
+
+    def _reject_or_classify(
+        exc: BaseException | None,
+        expected_rvs: tuple[int, ...],
+        *,
+        label: str,
+    ) -> None:
+        classifier_calls.append((exc, expected_rvs, label))
+
+    monkeypatch.setattr(test_wtls, "derive_key", _rejecting_derive_key)
+    monkeypatch.setattr(test_wtls, "_derive_key_material_to_params", _rejecting_key_material)
+    monkeypatch.setattr(test_wtls, "reject_or_classify", _reject_or_classify)
+
+    rs = _session_with_mechanisms(
+        "WTLS_MASTER_KEY_DERIVE",
+        "WTLS_MASTER_KEY_DERIVE_DH_ECC",
+        "WTLS_SERVER_KEY_AND_MAC_DERIVE",
+        "WTLS_CLIENT_KEY_AND_MAC_DERIVE",
+    )
+    test_wtls.TestWTLSMasterKeyDerive().test_rejects_invalid_digest_mechanism(rs)
+    test_wtls.TestWTLSMasterKeyDeriveDHECC().test_rejects_invalid_digest_mechanism(rs)
+    test_wtls.TestWTLSKeyAndMacDerive().test_server_rejects_invalid_digest_mechanism(rs)
+    test_wtls.TestWTLSKeyAndMacDerive().test_client_rejects_invalid_digest_mechanism(rs)
+
+    assert derive_calls == [
+        (int(CKM_WTLS_MASTER_KEY_DERIVE), int(CKM_VENDOR_DEFINED)),
+        (int(CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC), int(CKM_VENDOR_DEFINED)),
+    ]
+    assert key_mat_calls == [
+        (int(CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE), int(CKM_VENDOR_DEFINED)),
+        (int(CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE), int(CKM_VENDOR_DEFINED)),
+    ]
+    assert [call[2] for call in classifier_calls] == [
+        "WTLS master key derive invalid digest mechanism",
+        "WTLS master key derive DH/ECC invalid digest mechanism",
+        "WTLS server key-and-MAC derive invalid digest mechanism",
+        "WTLS client key-and-MAC derive invalid digest mechanism",
+    ]
+    assert all(isinstance(call[0], CkrAssertionError) for call in classifier_calls)
+    assert all(int(CKR_MECHANISM_PARAM_INVALID) in call[1] for call in classifier_calls)
 
 
 class _FakeWTLSKeyMatMechanism:

@@ -15,7 +15,7 @@ OASIS spec: wtls.md
 from __future__ import annotations
 
 import ctypes
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import pytest
@@ -105,6 +105,16 @@ def _create_generic_secret(rs: Any, size: int = 48) -> int:
     )
 
 
+def _wtls_derived_secret_attrs() -> dict[int, Any]:
+    return {
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_TOKEN: False,
+    }
+
+
 def _derive_key_material_to_params(
     rs: Any,
     base_key: int,
@@ -150,6 +160,84 @@ def _derive_wtls_prf_output(
             f"CKM_WTLS_PRF reported {actual_len} output bytes for a {output_len}-byte buffer"
         )
     return mech.buffer_bytes("output")[:actual_len]
+
+
+def _classify_invalid_wtls_digest(operation: Callable[[], int | None], *, label: str) -> None:
+    exc: AssertionError | None = None
+    try:
+        operation()
+    except AssertionError as caught:
+        exc = caught
+    reject_or_classify(
+        exc,
+        _WTLS_INVALID_DIGEST_REJECT_RVS,
+        label=label,
+    )
+
+
+def _derive_wtls_master_key_invalid_digest(
+    rs: Any,
+    base_key: int,
+    mechanism: int,
+    *,
+    label: str,
+    with_version: bool = True,
+) -> None:
+    mech = mech_wtls_master_key_derive(
+        mechanism,
+        digest_mechanism=int(CKM_VENDOR_DEFINED),
+        client_random=_CLIENT_RANDOM,
+        server_random=_SERVER_RANDOM,
+        with_version=with_version,
+    )
+    derived = 0
+
+    def operation() -> int:
+        nonlocal derived
+        derived = derive_key(
+            rs.raw,
+            rs.sh,
+            base_key,
+            mechanism,
+            attrs=_wtls_derived_secret_attrs(),
+            mech_param=mech,
+        )
+        return derived
+
+    try:
+        _classify_invalid_wtls_digest(operation, label=label)
+    finally:
+        destroy_quietly(rs.raw, rs.sh, derived)
+
+
+def _derive_wtls_key_material_invalid_digest(
+    rs: Any,
+    base_key: int,
+    mechanism: int,
+    *,
+    label: str,
+) -> None:
+    mech = mech_wtls_key_mat(
+        mechanism,
+        digest_mechanism=int(CKM_VENDOR_DEFINED),
+        client_random=_CLIENT_RANDOM,
+        server_random=_SERVER_RANDOM,
+        iv_size_bits=64,
+    )
+
+    def operation() -> None:
+        _derive_key_material_to_params(
+            rs,
+            base_key,
+            _wtls_derived_secret_attrs(),
+            mech,
+        )
+
+    try:
+        _classify_invalid_wtls_digest(operation, label=label)
+    finally:
+        out = mech.key_mat_out
+        destroy_returned_handles(rs, out.hMacSecret, out.hKey)
 
 
 class TestWTLSPreMasterKeyGen:
@@ -345,6 +433,23 @@ class TestWTLSMasterKeyDerive:
         finally:
             destroy_quietly(rs.raw, rs.sh, pms)
 
+    def test_rejects_invalid_digest_mechanism(self, p11_raw_session: Any) -> None:
+        """CKM_WTLS_MASTER_KEY_DERIVE must reject an invalid DigestMechanism."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("WTLS_MASTER_KEY_DERIVE"):
+            pytest.skip("CKM_WTLS_MASTER_KEY_DERIVE not supported")
+
+        pms = _create_generic_secret(rs, 20)
+        try:
+            _derive_wtls_master_key_invalid_digest(
+                rs,
+                pms,
+                int(CKM_WTLS_MASTER_KEY_DERIVE),
+                label="WTLS master key derive invalid digest mechanism",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pms)
+
 
 class TestWTLSMasterKeyDeriveDHECC:
     """CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC - derive WTLS master secret via DH/ECC."""
@@ -392,6 +497,24 @@ class TestWTLSMasterKeyDeriveDHECC:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC not operational: {exc}")
                 raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pms)
+
+    def test_rejects_invalid_digest_mechanism(self, p11_raw_session: Any) -> None:
+        """CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC must reject an invalid DigestMechanism."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("WTLS_MASTER_KEY_DERIVE_DH_ECC"):
+            pytest.skip("CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC not supported")
+
+        pms = _create_generic_secret(rs, 32)
+        try:
+            _derive_wtls_master_key_invalid_digest(
+                rs,
+                pms,
+                int(CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC),
+                label="WTLS master key derive DH/ECC invalid digest mechanism",
+                with_version=False,
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pms)
 
@@ -451,6 +574,23 @@ class TestWTLSKeyAndMacDerive:
         finally:
             destroy_quietly(rs.raw, rs.sh, master)
 
+    def test_server_rejects_invalid_digest_mechanism(self, p11_raw_session: Any) -> None:
+        """CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE must reject an invalid DigestMechanism."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("WTLS_SERVER_KEY_AND_MAC_DERIVE"):
+            pytest.skip("CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE not supported")
+
+        master = _create_generic_secret(rs, 20)
+        try:
+            _derive_wtls_key_material_invalid_digest(
+                rs,
+                master,
+                int(CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE),
+                label="WTLS server key-and-MAC derive invalid digest mechanism",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master)
+
     def test_client_key_and_mac_derive(self, p11_raw_session: Any) -> None:
         """Attempt CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE with proper struct params."""
         rs = p11_raw_session
@@ -490,6 +630,23 @@ class TestWTLSKeyAndMacDerive:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE not operational: {exc}")
                 raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master)
+
+    def test_client_rejects_invalid_digest_mechanism(self, p11_raw_session: Any) -> None:
+        """CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE must reject an invalid DigestMechanism."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("WTLS_CLIENT_KEY_AND_MAC_DERIVE"):
+            pytest.skip("CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE not supported")
+
+        master = _create_generic_secret(rs, 20)
+        try:
+            _derive_wtls_key_material_invalid_digest(
+                rs,
+                master,
+                int(CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE),
+                label="WTLS client key-and-MAC derive invalid digest mechanism",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, master)
 
