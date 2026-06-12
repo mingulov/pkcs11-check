@@ -418,9 +418,12 @@ smoke behavior, or covered only by one narrow variation.
     missing-permission coverage exists for advertised wrap-roundtrip
     mechanisms. Registry-driven derive missing-permission coverage exists for
     simple key-object derivation shapes: SHA key derivation, concatenate/XOR/
-    extract, concatenate-key, and AES-ECB encrypt-data. Remaining work is
-    bad-param, linked-attribute self-contradiction expansion, and deeper derive
-    negative coverage for protocol/asymmetric/custom-parameter families.
+    extract, concatenate-key, and AES-ECB encrypt-data. Registry-driven
+    missing-required-parameter coverage exists for advertised encrypt/sign
+    mechanisms whose registry config requires a mechanism parameter. Remaining
+    work is linked-attribute self-contradiction expansion, malformed non-NULL
+    parameter coverage, and deeper derive/wrap/digest/message negative
+    coverage for protocol/asymmetric/custom-parameter families.
 
 ### Recommended coverage order
 
@@ -434,9 +437,9 @@ smoke behavior, or covered only by one narrow variation.
    KEY_GEN, and KEY_DERIVE positive semantics are covered.
 4. No remaining generic AEAD wrap parameter gap: ChaCha20-Poly1305 stays
    source-first for wrap/unwrap unless a spec-backed `C_WrapKey` mapping appears.
-5. Continue registry-driven negative tests for bad-param, linked-attribute
-   invariant families, deeper derive custom-parameter cases, and deeper unwrap
-   shape/error cases.
+5. Continue registry-driven negative tests for linked-attribute invariant
+   families, malformed non-NULL parameter cases, deeper derive custom-parameter
+   cases, and deeper unwrap shape/error cases.
 
 ## Correctness and Reporting Findings
 

@@ -63,6 +63,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
@@ -84,6 +85,8 @@ from pkcs11_check.testcases.conftest import (
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     gen_symmetric_key,
+    generate_key_for_encrypt,
+    generate_key_for_sign,
     make_mech_param_or_skip,
 )
 
@@ -97,6 +100,7 @@ _WRONG_KEY_SETUP_REJECTS = (
     CKR_KEY_TYPE_INCONSISTENT,
 )
 _NO_SPECIFIC_WRAP_PERMISSION_RVS: tuple[int, ...] = ()
+_MISSING_REQUIRED_PARAM_RVS = (CKR_MECHANISM_PARAM_INVALID,)
 _WRAP_SETUP_REJECT_RVS = (
     *CIPHER_OP_RUNTIME_REJECT_RVS,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -233,6 +237,14 @@ def _skip_if_not_secret_key_registry_case(entry: MechEntry) -> None:
         pytest.skip(
             f"{entry.mech_name}: registry negative permission test needs secret-key keygen"
         )
+
+
+def _skip_if_not_required_param_registry_case(entry: MechEntry) -> None:
+    config = entry.config
+    if config is None:
+        pytest.skip(f"{entry.mech_name}: no registry config")
+    if not config.param_required:
+        pytest.skip(f"{entry.mech_name}: mechanism params are not required")
 
 
 def _gen_claimed_false_secret_key(
@@ -505,6 +517,56 @@ class TestWrongKeyType:
             classify_negative_rv(rv, (CKR_KEY_TYPE_INCONSISTENT,), label=label)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
+
+
+class TestBadParameters:
+    """Mechanisms requiring params must reject missing mechanism parameters."""
+
+    def test_registry_encrypt_missing_required_param(
+        self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry
+    ) -> None:
+        """Registry-driven missing-required-param check for advertised encrypt mechanisms."""
+        rs = p11_module_session
+        entry = mech_encrypt_entry
+        _skip_if_not_required_param_registry_case(entry)
+        config = entry.config
+        assert config is not None
+
+        encrypt_key = 0
+        decrypt_key: int | None = None
+        label = f"{entry.mech_name} C_EncryptInit with missing required params"
+        try:
+            encrypt_key, decrypt_key = generate_key_for_encrypt(rs, entry, config)
+            mech = mech_simple(entry.mech_id)
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), encrypt_key)
+            classify_negative_rv(rv, _MISSING_REQUIRED_PARAM_RVS, label=label)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, encrypt_key)
+            if decrypt_key is not None and decrypt_key != encrypt_key:
+                destroy_quietly(rs.raw, rs.sh, decrypt_key)
+
+    def test_registry_sign_missing_required_param(
+        self, p11_module_session: RawSession, mech_sign_entry: MechEntry
+    ) -> None:
+        """Registry-driven missing-required-param check for advertised sign mechanisms."""
+        rs = p11_module_session
+        entry = mech_sign_entry
+        _skip_if_not_required_param_registry_case(entry)
+        config = entry.config
+        assert config is not None
+
+        sign_key = 0
+        verify_key: int | None = None
+        label = f"{entry.mech_name} C_SignInit with missing required params"
+        try:
+            sign_key, verify_key = generate_key_for_sign(rs, entry, config)
+            mech = mech_simple(entry.mech_id)
+            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), sign_key)
+            classify_negative_rv(rv, _MISSING_REQUIRED_PARAM_RVS, label=label)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, sign_key)
+            if verify_key is not None and verify_key != sign_key:
+                destroy_quietly(rs.raw, rs.sh, verify_key)
 
 
 class TestMissingPermission:

@@ -69,3 +69,11 @@ def test_permission_negatives_cover_roundtrip_pairs() -> None:
         "test_registry_derive_without_flag",
     ):
         assert test_name in source
+
+
+def test_bad_param_negatives_are_registry_driven() -> None:
+    """Bad-parameter coverage should not be limited to fixed named mechanisms."""
+    source = _source()
+
+    assert "test_registry_encrypt_missing_required_param" in source
+    assert "test_registry_sign_missing_required_param" in source

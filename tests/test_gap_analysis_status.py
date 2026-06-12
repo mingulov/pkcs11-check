@@ -280,6 +280,7 @@ def test_gap_analysis_marks_registry_negative_roundtrip_halves_as_added() -> Non
     assert "Registry-driven decrypt/verify negative coverage exists" in doc_flat
     assert "Registry-driven wrap/unwrap missing-permission coverage exists" in doc_flat
     assert "Registry-driven derive missing-permission coverage exists" in doc_flat
+    assert "Registry-driven missing-required-parameter coverage exists" in doc_flat
 
 
 def test_coverage_plan_does_not_count_ecmqv_as_kea_coverage() -> None:
