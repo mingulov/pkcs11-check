@@ -422,8 +422,11 @@ smoke behavior, or covered only by one narrow variation.
     mechanisms. Registry-driven derive missing-permission coverage exists for
     simple key-object derivation shapes: SHA key derivation, concatenate/XOR/
     extract, concatenate-key, and AES-ECB encrypt-data. Registry-driven
-    missing-required-parameter coverage exists for advertised encrypt/sign
-    mechanisms whose registry config requires a mechanism parameter. Derived
+    missing-required-parameter coverage exists for advertised encrypt/decrypt
+    and sign/verify mechanisms whose registry config requires a mechanism
+    parameter. Registry-driven decrypt/verify required-parameter coverage
+    exists for the second half of those operation pairs, using the same
+    provider-general missing and malformed parameter classifiers. Derived
     linked-attribute invariant coverage exists for
     `CKA_NEVER_EXTRACTABLE`/`CKA_EXTRACTABLE` and
     `CKA_ALWAYS_SENSITIVE`/`CKA_SENSITIVE` on suite-generated, never-modified
@@ -439,15 +442,15 @@ smoke behavior, or covered only by one narrow variation.
     linked-origin self-contradiction. Honest non-support of either origin
     attribute remains xfail.
     Registry-driven malformed non-NULL parameter coverage exists for advertised
-    encrypt/sign mechanisms whose registry config requires a mechanism
-    parameter, using a valid non-NULL pointer with an invalid one-byte parameter
-    length. Registry-driven derive malformed-parameter coverage exists for the
-    simple key-object derivation shapes already supported by the generic
-    negative helper, using the same invalid one-byte mechanism parameter shape.
-    Remaining work is further linked-attribute families beyond derived
-    protection and generated/imported-key origin, malformed parameter expansion
-    beyond current encrypt/sign init and simple derive coverage, and deeper
-    derive/wrap/digest/message semantic negative coverage for
+    encrypt/decrypt and sign/verify mechanisms whose registry config requires
+    a mechanism parameter, using a valid non-NULL pointer with an invalid
+    one-byte parameter length. Registry-driven derive malformed-parameter
+    coverage exists for the simple key-object derivation shapes already
+    supported by the generic negative helper, using the same invalid one-byte
+    mechanism parameter shape. Remaining work is further linked-attribute
+    families beyond derived protection and generated/imported-key origin,
+    malformed parameter expansion beyond current init and simple derive
+    coverage, and deeper derive/wrap/digest/message semantic negative coverage for
     protocol/asymmetric/custom-parameter families. Registry-driven unwrap
     malformed-blob coverage exists for advertised secret-key wrap mechanisms:
     the test wraps a key, truncates the resulting wrapped-key bytes, and
@@ -469,7 +472,7 @@ smoke behavior, or covered only by one narrow variation.
 5. Continue registry-driven negative tests for broader linked-attribute families
    beyond the current derived-protection and generated/imported-key-origin
    invariants,
-   malformed parameter cases beyond current encrypt/sign init and simple derive
+   malformed parameter cases beyond current init and simple derive
    coverage, deeper derive custom-parameter cases, and additional unwrap
    tamper/shape variants beyond the current truncated-blob coverage.
 
