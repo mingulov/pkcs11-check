@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from pkcs11_check.raw.types_std import (
+    CK_AES_CTR_PARAMS,
     CKA_CLASS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -8,6 +11,7 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VALUE_LEN,
     CKK_AES,
+    CKM_AES_CTR,
     CKO_SECRET_KEY,
 )
 from pkcs11_check.testcases import test_mech_wrap
@@ -72,3 +76,26 @@ def test_raw_rsa_unwrap_hint_empty_without_known_pattern() -> None:
     unwrapped_value = original
 
     assert test_mech_wrap._raw_rsa_unwrap_hint(original, decrypted_block, unwrapped_value) == ""
+
+
+def test_make_wrap_mech_param_builds_ctr_params_without_registry_recipe() -> None:
+    entry = MechEntry(
+        mech_id=int(CKM_AES_CTR),
+        mech_name="CKM_AES_CTR",
+        flags=0,
+        min_key_size=0,
+        max_key_size=0,
+        config=None,
+    )
+
+    try:
+        mech = test_mech_wrap._make_wrap_mech_param(entry)
+    except pytest.skip.Exception as exc:
+        raise AssertionError(
+            f"CKM_AES_CTR wrap params should be built, not skipped: {exc}"
+        ) from exc
+
+    assert mech.ck.mechanism == CKM_AES_CTR
+    params = mech.params
+    assert isinstance(params, CK_AES_CTR_PARAMS)
+    assert params.ulCounterBits == 128

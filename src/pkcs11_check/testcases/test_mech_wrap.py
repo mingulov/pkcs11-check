@@ -11,9 +11,9 @@ Key types covered:
 - RSA mechanisms (RSA_PKCS, RSA_PKCS_OAEP): wrapping key is RSA
 
 Mechanisms not covered here (skipped with clear message):
-- ECDH-AES hybrid wraps (ECDH_AES_KEY_WRAP, ECDH_COF_AES_KEY_WRAP) -- need
-  ECDH parameter construction
-- AES-CTR: requires CK_AES_CTR_PARAMS (complex, skip here)
+- AEAD wrap styles (GCM/CCM/ChaCha20-Poly1305) -- require generated output
+  parameters or matching unwrap tags
+- hybrid wraps covered by dedicated tests (RSA_AES, ECDH_AES family)
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ import pytest
 
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.api import ckm_name
-from pkcs11_check.raw.pack import mech_bytes
+from pkcs11_check.raw.pack import mech_bytes, mech_ctr
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -249,7 +249,8 @@ try:
 except ImportError:
     pass
 
-# AES CTR -- needs CK_AES_CTR_PARAMS struct, skip here
+# AES CTR uses CK_AES_CTR_PARAMS. Registry-backed entries normally reach this
+# through the shared "ctr" ParamRecipe; keep an explicit fallback for bare entries.
 _AES_CTR_MECH_ID: int = 0
 try:
     from pkcs11_check.raw.types_std import CKM_AES_CTR
@@ -303,7 +304,7 @@ def _make_wrap_mech_param(entry: MechEntry) -> Any:
         return mech_bytes(CKM(mech_id), iv)
 
     if _AES_CTR_MECH_ID and mech_id == _AES_CTR_MECH_ID:
-        pytest.skip(f"{entry.mech_name}: CTR wrap needs CK_AES_CTR_PARAMS -- skipped here")
+        return mech_ctr(CKM(mech_id))
 
     # RSA OAEP
     try:

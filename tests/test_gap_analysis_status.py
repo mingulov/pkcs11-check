@@ -225,6 +225,20 @@ def test_gap_analysis_marks_hybrid_wrap_param_coverage_as_added() -> None:
     assert "Hybrid wrap parameter coverage exists for RSA-AES and ECDH-AES" in doc
 
 
+def test_gap_analysis_marks_aes_ctr_wrap_params_as_added() -> None:
+    """AES-CTR generic wrap coverage builds CK_AES_CTR_PARAMS instead of skipping."""
+    wrap = _read("src/pkcs11_check/testcases/test_mech_wrap.py")
+    guards = _read("tests/test_mech_wrap.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "mech_ctr(" in wrap
+    assert "CTR wrap needs CK_AES_CTR_PARAMS -- skipped here" not in wrap
+    assert "test_make_wrap_mech_param_builds_ctr_params_without_registry_recipe" in guards
+
+    assert "AES-CTR wrap params are now covered" in doc
+    assert "AEAD wrap style expansion and AES-CTR wrap params" not in doc
+
+
 def test_gap_analysis_marks_block_cbc_pad_vectors_as_added() -> None:
     """DES-family, Camellia, ARIA, and SEED CBC_PAD now have KAT vector links."""
     des_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_des.py")
