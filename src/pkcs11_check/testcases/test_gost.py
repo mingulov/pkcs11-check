@@ -24,6 +24,7 @@ from pkcs11_check.raw.recipes import (
     import_secret_key,
     sign_single,
     verify_single,
+    wrap_key,
 )
 from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
@@ -31,15 +32,19 @@ from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
+    CKA_GOST28147_PARAMS,
     CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
     CKA_VALUE_LEN,
     CKA_VERIFY,
+    CKA_WRAP,
+    CKK_GOST28147,
     CKK_GOSTR3411,
     CKM_GOST28147,
     CKM_GOST28147_ECB,
     CKM_GOST28147_KEY_GEN,
+    CKM_GOST28147_KEY_WRAP,
     CKM_GOST28147_MAC,
     CKM_GOSTR3410,
     CKM_GOSTR3410_KEY_PAIR_GEN,
@@ -81,6 +86,24 @@ _GOST_RUNTIME_REJECT_RVS = (
     CKR_TEMPLATE_INCONSISTENT,
 )
 
+_GOST28147_TC26_PARAM_Z_OID_DER = bytes.fromhex("06092a8503070102050101")
+_GOST28147_RFC7836_SEED = bytes.fromhex("af21434145656378")
+_GOST28147_RFC7836_DERIVED_KEK = bytes.fromhex(
+    "a1aa5f7de402d7b3d323f2991c8d4534"
+    "013137010a83754fd0af6d7cd4922ed9"
+)
+_GOST28147_RFC7836_CONTENT_KEY = bytes.fromhex(
+    "202122232425262728292a2b2c2d2e2f"
+    "303132333435363738393a3b3c3d3e3f"
+)
+# RFC 7836 wraps as seed || CEK_ENC || CEK_MAC; CKM_GOST28147_KEY_WRAP takes the
+# seed/IV as the mechanism parameter and returns the OASIS CEK_ENC || CEK_MAC body.
+_GOST28147_RFC7836_WRAPPED_KEY = bytes.fromhex(
+    "d15547f8ee85121bc87d4b1027d26027"
+    "ecc071bba6e72f3fec6f620f56834c5a"
+    "be33f052"
+)
+
 
 def _gost_key(raw: Any, sh: int, attrs: Mapping[Any, Any]) -> int:
     """Generate a 256-bit GOST 28147-89 key via C_GenerateKey."""
@@ -96,6 +119,21 @@ def _gost_key(raw: Any, sh: int, attrs: Mapping[Any, Any]) -> int:
     rv = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key))
     expect_rv(rv, CKR_OK)
     return key.value
+
+
+def _import_gost28147_key(raw: Any, sh: int, value: bytes, attrs: Mapping[Any, Any]) -> int:
+    """Import a GOST 28147-89 key with the TC26 param-Z OID."""
+    return import_secret_key(
+        raw,
+        sh,
+        CKK_GOST28147,
+        value,
+        attrs={
+            CKA_TOKEN: False,
+            CKA_GOST28147_PARAMS: _GOST28147_TC26_PARAM_Z_OID_DER,
+            **attrs,
+        },
+    )
 
 
 def _gost_keypair(raw: Any, sh: int) -> tuple[int, int]:
@@ -290,6 +328,65 @@ class TestGOST28147MAC:
             _try_or_xfail(_do, "CKM_GOST28147_MAC not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
+
+
+class TestGOST28147KeyWrap:
+    """CKM_GOST28147_KEY_WRAP - GOST 28147-89 key wrapping."""
+
+    def test_key_wrap_rfc7836_tc26_z_vector(self, p11_raw_session: Any) -> None:
+        """Wrap the RFC 7836 TC26 param-Z example key material."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("GOST28147_KEY_WRAP"):
+            pytest.skip("CKM_GOST28147_KEY_WRAP not supported")
+
+        wrapping_key = 0
+        target_key = 0
+        try:
+
+            def _setup() -> tuple[int, int]:
+                return (
+                    _import_gost28147_key(
+                        rs.raw,
+                        rs.sh,
+                        _GOST28147_RFC7836_DERIVED_KEK,
+                        {
+                            CKA_WRAP: True,
+                            CKA_SENSITIVE: False,
+                            CKA_EXTRACTABLE: True,
+                        },
+                    ),
+                    _import_gost28147_key(
+                        rs.raw,
+                        rs.sh,
+                        _GOST28147_RFC7836_CONTENT_KEY,
+                        {
+                            CKA_SENSITIVE: False,
+                            CKA_EXTRACTABLE: True,
+                        },
+                    ),
+                )
+
+            wrapping_key, target_key = _try_or_xfail(
+                _setup,
+                "CKM_GOST28147_KEY_WRAP RFC 7836 key import not operational",
+            )
+
+            def _do() -> bytes:
+                return wrap_key(
+                    rs.raw,
+                    rs.sh,
+                    wrapping_key,
+                    target_key,
+                    CKM_GOST28147_KEY_WRAP,
+                    mech_param=mech_bytes(CKM_GOST28147_KEY_WRAP, _GOST28147_RFC7836_SEED),
+                    output_size_hint=len(_GOST28147_RFC7836_WRAPPED_KEY),
+                )
+
+            wrapped = _try_or_xfail(_do, "CKM_GOST28147_KEY_WRAP RFC 7836 KAT not operational")
+            assert wrapped == _GOST28147_RFC7836_WRAPPED_KEY
+        finally:
+            destroy_quietly(rs.raw, rs.sh, target_key)
+            destroy_quietly(rs.raw, rs.sh, wrapping_key)
 
 
 class TestGOSTR3410Signature:
