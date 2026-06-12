@@ -1094,6 +1094,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="twofish_cbc_pad.json",
         notes="Twofish-CBC with PKCS#7 padding: any-length plaintext, requires 16-byte IV",
     )
 

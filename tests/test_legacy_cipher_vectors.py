@@ -58,6 +58,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SEED_MAC_GENERAL,
     CKM_SKIPJACK_ECB64,
     CKM_TWOFISH_CBC,
+    CKM_TWOFISH_CBC_PAD,
 )
 from pkcs11_check.testcases.mechanism_helpers import build_params_from_vector, build_test_params
 from pkcs11_check.testcases.mechanism_registry import MECHANISM_REGISTRY
@@ -322,6 +323,7 @@ def test_legacy_cbc_pad_vector_params_replay_iv_and_effective_bits() -> None:
         int(CKM_IDEA_CBC_PAD): "idea_cbc_pad.json",
         int(CKM_BLOWFISH_CBC_PAD): "blowfish_cbc_pad.json",
         int(CKM_RC5_CBC_PAD): "rc5_cbc_pad.json",
+        int(CKM_TWOFISH_CBC_PAD): "twofish_cbc_pad.json",
     }
 
     for mech_id, vector_file in expected.items():
@@ -881,6 +883,30 @@ def test_twofish_cbc_encrypt_mechanism_has_schneier_kat_vector() -> None:
             "Bruce Schneier Twofish ECB intermediate value test, "
             "replayed as single-block CBC with zero IV"
         )
+
+
+def test_twofish_cbc_pad_mechanism_has_reference_generated_kat_vector() -> None:
+    config = MECHANISM_REGISTRY[int(CKM_TWOFISH_CBC_PAD)]
+    assert config.vector_file == "twofish_cbc_pad.json"
+
+    vectors = load_positive_vectors("twofish_cbc_pad.json")
+    assert vectors, "twofish_cbc_pad.json must contain positive vectors"
+    for vec in vectors:
+        plaintext = bytes.fromhex(vec["plaintext_hex"])
+        ciphertext = bytes.fromhex(vec["ciphertext_hex"])
+        assert vec["type"] == "positive"
+        assert vec["mechanism_name"] == "CKM_TWOFISH_CBC_PAD"
+        assert vec["key_bits"] == 128
+        assert vec["key_hex"] == "00000000000000000000000000000000"
+        assert plaintext == bytes(16)
+        assert len(ciphertext) == 32
+        assert vec["ciphertext_hex"] == (
+            "9f589f5cf6122c32b6bfec2f2ae8c35a"
+            "a645c0dafebc6d6dcf4fc0fa33e78ac5"
+        )
+        assert vec["params"]["iv_hex"] == "00000000000000000000000000000000"
+        assert "Bruce Schneier Twofish reference C implementation" in vec["params"]["source"]
+        assert "PKCS#7 padded" in vec["params"]["source"]
 
 
 def test_gost28147_registry_replays_oasis_iv_parameter_shape() -> None:

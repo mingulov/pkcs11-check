@@ -333,7 +333,7 @@ smoke behavior, or covered only by one narrow variation.
 8. Legacy cipher coverage is now mixed rather than mostly generic: RC2, RC4,
    RC5, CAST/CAST3/CAST128/CAST5, IDEA, Blowfish, and Twofish have KAT-backed
    encrypt coverage where the PKCS#11 mechanism shape is reliable. RC2, RC5,
-   CAST/CAST3/CAST128/CAST5, IDEA, and Blowfish also have CBC_PAD exact-output
+   CAST/CAST3/CAST128/CAST5, IDEA, Blowfish, and Twofish also have CBC_PAD exact-output
    vectors for padding behavior, with non-block-aligned plaintext covered where
    a reliable source exists. CKM_GOST28147 IV-parameter registry coverage
    now lets generic mechanism tests build the OASIS 8-byte IV parameter for
@@ -341,7 +341,7 @@ smoke behavior, or covered only by one narrow variation.
    SKIPJACK ECB64 exact-output KATs are covered from NIST SP 800-17.
    Remaining shallow areas are
    SKIPJACK non-ECB64 variants, CDMF, BATON/JUNIPER, GOST28147 exact-output
-   KATs, Twofish CBC_PAD output, and the
+   KATs, and the
    fixed-output MAC/MAC_GENERAL KATs where a block-vector source and output
    length mapping are still missing. GOST28147 exact-output KATs remain source-first
    until the vector source and parameter-set mapping are unambiguous.
@@ -571,7 +571,6 @@ Legacy/deprecated coverage addendum for the active goal:
   | BATON | `CKM_BATON_ECB128`, `CKM_BATON_ECB96`, `CKM_BATON_CBC128`, `CKM_BATON_COUNTER`, `CKM_BATON_SHUFFLE`, `CKM_BATON_WRAP` |
   | JUNIPER | `CKM_JUNIPER_ECB128`, `CKM_JUNIPER_CBC128`, `CKM_JUNIPER_COUNTER`, `CKM_JUNIPER_SHUFFLE`, `CKM_JUNIPER_WRAP` |
   | GOST28147 | `CKM_GOST28147_ECB`, `CKM_GOST28147`, `CKM_GOST28147_MAC`, `CKM_GOST28147_KEY_WRAP` |
-  | Twofish | `CKM_TWOFISH_CBC_PAD` |
 
   Key-generation-only entries are already exercised by generic keygen paths;
   the table is limited to encrypt, MAC, wrap, and stream/counter operations
@@ -602,14 +601,17 @@ Legacy/deprecated coverage addendum for the active goal:
   rather than only CBC roundtrip behavior.
 - Added: `CKM_RC5_CBC_PAD` now has an RFC 2040 section 9.3 exact-output
   `RC5_CBC_Pad` vector, including non-block-aligned plaintext and vector-param
-  replay for word size, rounds, and IV. `CKM_TWOFISH_CBC_PAD` remains pending
-  until a reliable padded-vector generator/source is available.
+  replay for word size, rounds, and IV. `CKM_TWOFISH_CBC_PAD` now has a
+  source-backed exact-output vector generated with Bruce Schneier's Twofish
+  reference C implementation, cross-checked against the published zero-key
+  ECB KAT, and replayed as zero-IV CBC with PKCS#7 padding.
 - Added: DES, 3DES, Camellia, ARIA, and SEED CBC_PAD now have
   non-block-aligned exact-output KAT vectors plus registry `vector_file` links.
   These cover the block-cipher padding families where existing CBC vector
   generation already had a reliable local cipher implementation. Twofish
-  CBC_PAD remains pending because the current local OpenSSL/cryptography setup
-  does not expose Twofish, so a stronger source or generator is still needed.
+  CBC_PAD is covered separately from the official Schneier reference
+  implementation because the current local OpenSSL/cryptography setup does not
+  expose Twofish.
 - Added: DES, 3DES, Camellia, ARIA, and SEED MAC_GENERAL now have full-block
   exact-output KAT vectors plus registry `vector_file` links. The 16-byte block
   families use vector-level `mac_len=16`, and generic `mac_general` vector

@@ -505,6 +505,18 @@ def test_gap_analysis_keeps_skipjack_non_ecb64_variants_source_first() -> None:
     assert "SKIPJACK stream/wrap variants" not in doc
 
 
+def test_gap_analysis_marks_twofish_cbc_pad_vector_as_added() -> None:
+    """Twofish CBC_PAD has a source-backed exact-output KAT vector link."""
+    legacy_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_legacy.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "twofish_cbc_pad.json" in legacy_registry
+    vector_file = _read("src/pkcs11_check/testcases/data/mechanism_vectors/twofish_cbc_pad.json")
+    assert "Bruce Schneier Twofish reference C implementation" in vector_file
+    assert "`CKM_TWOFISH_CBC_PAD` now has" in doc
+    assert "| Twofish |" not in doc
+
+
 def test_gap_analysis_inventories_remaining_legacy_source_first_operations() -> None:
     """Remaining legacy/deprecated operation gaps are explicit and source-first."""
     doc = GAP_DOC.read_text(encoding="utf-8")
@@ -540,7 +552,6 @@ def test_gap_analysis_inventories_remaining_legacy_source_first_operations() -> 
         "CKM_GOST28147",
         "CKM_GOST28147_MAC",
         "CKM_GOST28147_KEY_WRAP",
-        "CKM_TWOFISH_CBC_PAD",
     ):
         assert token in doc
 
