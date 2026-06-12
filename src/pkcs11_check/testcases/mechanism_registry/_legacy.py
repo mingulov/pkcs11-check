@@ -438,6 +438,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=True,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="cast_ecb.json",
         notes="CAST-ECB: 8-byte block, no padding, deterministic",
     )
 
@@ -452,6 +453,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="cast_cbc.json",
         notes="CAST-CBC: 8-byte block, requires 8-byte IV param",
     )
 
@@ -513,6 +515,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=True,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="cast3_ecb.json",
         notes="CAST3-ECB: 8-byte block, no padding, deterministic",
     )
 
@@ -527,6 +530,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="cast3_cbc.json",
         notes="CAST3-CBC: 8-byte block, requires 8-byte IV param",
     )
 

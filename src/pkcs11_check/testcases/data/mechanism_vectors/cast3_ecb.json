@@ -1,0 +1,21 @@
+{
+  "mechanism": "CKM_CAST3_ECB",
+  "family": "cast3_ecb",
+  "key_type": "CKK_CAST3",
+  "source": "RFC 2144 appendix B.1 80-bit CAST-128 vector",
+  "vectors": [
+    {
+      "id": "cast3_ecb_rfc2144_80",
+      "type": "positive",
+      "mechanism_name": "CKM_CAST3_ECB",
+      "key_type": "symmetric",
+      "key_bits": 80,
+      "key_hex": "01234567123456782345",
+      "params": {
+        "source": "RFC 2144 appendix B.1 80-bit CAST-128 vector"
+      },
+      "plaintext_hex": "0123456789abcdef",
+      "ciphertext_hex": "eb6a711a2c02271b"
+    }
+  ]
+}

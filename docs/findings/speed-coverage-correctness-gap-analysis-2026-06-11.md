@@ -269,12 +269,12 @@ smoke behavior, or covered only by one narrow variation.
 7. SHAKE/XOF and ML-DSA ExternalMu are registry/smoke only until raw XOF
    function signatures and KAT-backed tests exist.
 8. Legacy cipher coverage is now mixed rather than mostly generic: RC2, RC4,
-   RC5, CAST128/CAST5, IDEA, Blowfish, and Twofish have KAT-backed encrypt
-   coverage where the PKCS#11 mechanism shape is reliable. RC2, RC5,
+   RC5, CAST/CAST3/CAST128/CAST5, IDEA, Blowfish, and Twofish have KAT-backed
+   encrypt coverage where the PKCS#11 mechanism shape is reliable. RC2, RC5,
    CAST128/CAST5, IDEA, and Blowfish also have CBC_PAD exact-output vectors for
    padding behavior, with non-block-aligned plaintext covered where a reliable
    source exists. Remaining shallow areas are SKIPJACK, CDMF, CAST/CAST3
-   variants, BATON/JUNIPER, GOST28147, Twofish CBC_PAD output, and the
+   CBC_PAD variants, BATON/JUNIPER, GOST28147, Twofish CBC_PAD output, and the
    fixed-output MAC/MAC_GENERAL KATs where a block-vector source and output
    length mapping are still missing.
    Older PBE variants now have semantic `C_GenerateKey` coverage for key type
@@ -448,8 +448,8 @@ After that, do the first coverage expansion round:
 5. Registry-driven wrong-key/permission negatives.
 6. Legacy/deprecated mechanisms not yet covered by reliable KATs or semantic
    probes: SKIPJACK only if a trustworthy vector source is found, KEA only with
-   defensible domain-parameter/derive semantics, plus CDMF, CAST/CAST3,
-   BATON/JUNIPER, GOST28147, remaining CBC_PAD outputs such as Twofish, and
+   defensible domain-parameter/derive semantics, plus CDMF, CAST/CAST3
+   CBC_PAD, BATON/JUNIPER, GOST28147, remaining CBC_PAD outputs such as Twofish, and
    remaining MAC_GENERAL or fixed-output vectors where reliable sources exist.
 
 Legacy/deprecated coverage addendum for the active goal:
@@ -483,6 +483,10 @@ Legacy/deprecated coverage addendum for the active goal:
 - Added: `CKM_RC2_MAC_GENERAL` now has a full-block expected-MAC vector derived
   from the existing OpenSSL legacy RC2 one-block ECB vector, plus vector-param
   replay for effective key bits and requested MAC length.
+- Added: CAST/CAST3 ECB/CBC now have RFC 2144 exact-output KAT vectors plus
+  registry `vector_file` links. The CBC rows use a zero IV and one full block,
+  so their expected ciphertext is the same sourced block output as the ECB
+  row, with vector-param replay for the IV.
 - Added: `CKM_RC2_CBC_PAD`, `CKM_CAST128_CBC_PAD`, `CKM_IDEA_CBC_PAD`, and
   `CKM_BLOWFISH_CBC_PAD` now have non-block-aligned exact-output KAT vectors
   and registry `vector_file` links, so providers that advertise those historical

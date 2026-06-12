@@ -13,6 +13,8 @@ from pkcs11_check.raw.types_std import (
     CKM_CAMELLIA_CBC_PAD,
     CKM_CAMELLIA_MAC,
     CKM_CAMELLIA_MAC_GENERAL,
+    CKM_CAST3_CBC,
+    CKM_CAST3_ECB,
     CKM_CAST3_MAC,
     CKM_CAST3_MAC_GENERAL,
     CKM_CAST128_CBC,
@@ -20,6 +22,8 @@ from pkcs11_check.raw.types_std import (
     CKM_CAST128_ECB,
     CKM_CAST128_MAC,
     CKM_CAST128_MAC_GENERAL,
+    CKM_CAST_CBC,
+    CKM_CAST_ECB,
     CKM_CAST_MAC,
     CKM_CAST_MAC_GENERAL,
     CKM_DES3_CBC_PAD,
@@ -73,6 +77,72 @@ def test_cast128_encrypt_mechanisms_have_kat_vectors() -> None:
             assert vec["key_hex"]
             assert vec["plaintext_hex"]
             assert vec["ciphertext_hex"]
+
+
+def test_cast_encrypt_mechanisms_have_rfc2144_kat_vectors() -> None:
+    expected = {
+        int(CKM_CAST_ECB): (
+            "cast_ecb.json",
+            "CKM_CAST_ECB",
+            "0123456712",
+            "7ac816d16e9b302e",
+            None,
+        ),
+        int(CKM_CAST3_ECB): (
+            "cast3_ecb.json",
+            "CKM_CAST3_ECB",
+            "01234567123456782345",
+            "eb6a711a2c02271b",
+            None,
+        ),
+        int(CKM_CAST_CBC): (
+            "cast_cbc.json",
+            "CKM_CAST_CBC",
+            "0123456712",
+            "7ac816d16e9b302e",
+            "0000000000000000",
+        ),
+        int(CKM_CAST3_CBC): (
+            "cast3_cbc.json",
+            "CKM_CAST3_CBC",
+            "01234567123456782345",
+            "eb6a711a2c02271b",
+            "0000000000000000",
+        ),
+    }
+
+    for mech_id, (vector_file, mechanism_name, key_hex, ciphertext_hex, iv_hex) in expected.items():
+        config = MECHANISM_REGISTRY[mech_id]
+        assert config.vector_file == vector_file
+
+        vectors = load_positive_vectors(vector_file)
+        assert vectors, f"{vector_file} must contain positive vectors"
+        for vec in vectors:
+            assert vec["type"] == "positive"
+            assert vec["mechanism_name"] == mechanism_name
+            assert vec["key_hex"] == key_hex
+            assert vec["plaintext_hex"] == "0123456789abcdef"
+            assert vec["ciphertext_hex"] == ciphertext_hex
+            assert vec["params"]["source"].startswith("RFC 2144 appendix B.1")
+            if iv_hex is None:
+                assert "iv_hex" not in vec["params"]
+            else:
+                assert vec["params"]["iv_hex"] == iv_hex
+
+
+def test_cast_cbc_vector_params_replay_iv() -> None:
+    for mech_id, vector_file in {
+        int(CKM_CAST_CBC): "cast_cbc.json",
+        int(CKM_CAST3_CBC): "cast3_cbc.json",
+    }.items():
+        config = MECHANISM_REGISTRY[mech_id]
+        vec = load_positive_vectors(vector_file)[0]
+
+        params = build_params_from_vector(mech_id, config.param_recipe, vec)
+
+        assert ctypes.string_at(params.ck.pParameter, params.ck.ulParameterLen) == bytes.fromhex(
+            vec["params"]["iv_hex"]
+        )
 
 
 def test_rc2_encrypt_mechanisms_have_kat_vectors() -> None:
