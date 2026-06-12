@@ -14,12 +14,14 @@ from pkcs11_check.raw.types_std import (
     CKM_CAMELLIA_MAC,
     CKM_CAMELLIA_MAC_GENERAL,
     CKM_CAST3_MAC,
+    CKM_CAST3_MAC_GENERAL,
     CKM_CAST128_CBC,
     CKM_CAST128_CBC_PAD,
     CKM_CAST128_ECB,
     CKM_CAST128_MAC,
     CKM_CAST128_MAC_GENERAL,
     CKM_CAST_MAC,
+    CKM_CAST_MAC_GENERAL,
     CKM_DES3_CBC_PAD,
     CKM_DES3_CMAC,
     CKM_DES3_CMAC_GENERAL,
@@ -455,6 +457,38 @@ def test_cast128_mac_general_mechanism_has_rfc2144_kat_vector() -> None:
             "RFC 2144 appendix B.1; one-block CBC-MAC with zero IV equals CAST-128 ECB"
         )
         assert vec["params"]["mac_len"] == 8
+
+
+def test_cast_mac_general_mechanisms_have_rfc2144_kat_vectors() -> None:
+    expected = {
+        int(CKM_CAST_MAC_GENERAL): (
+            "cast_mac_general.json",
+            "CKM_CAST_MAC_GENERAL",
+            "0123456712",
+            "7ac816d16e9b302e",
+        ),
+        int(CKM_CAST3_MAC_GENERAL): (
+            "cast3_mac_general.json",
+            "CKM_CAST3_MAC_GENERAL",
+            "01234567123456782345",
+            "eb6a711a2c02271b",
+        ),
+    }
+
+    for mech_id, (vector_file, mechanism_name, key_hex, expected_mac) in expected.items():
+        config = MECHANISM_REGISTRY[mech_id]
+        assert config.vector_file == vector_file
+
+        vectors = load_positive_vectors(vector_file)
+        assert vectors, f"{vector_file} must contain positive vectors"
+        for vec in vectors:
+            assert vec["type"] == "positive"
+            assert vec["mechanism_name"] == mechanism_name
+            assert vec["key_hex"] == key_hex
+            assert vec["input_hex"] == "0123456789abcdef"
+            assert vec["mac_hex"] == expected_mac
+            assert vec["params"]["source"].startswith("RFC 2144 appendix B.1")
+            assert vec["params"]["mac_len"] == 8
 
 
 def test_block_cipher_mac_general_mechanisms_have_kat_vectors() -> None:

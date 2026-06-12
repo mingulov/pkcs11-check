@@ -280,8 +280,9 @@ smoke behavior, or covered only by one narrow variation.
    Older PBE variants now have semantic `C_GenerateKey` coverage for key type
    and IV writeback where `CK_PBE_PARAMS` applies, but not independent
    fixed-output KAT vectors. MAC_GENERAL mechanisms now assert the returned MAC
-   length matches the requested parameter length, and RC2/RC5/CAST128/IDEA plus
-   DES, 3DES, Camellia, ARIA, and SEED have expected-MAC vectors. DES, 3DES,
+   length matches the requested parameter length, and RC2, RC5, CAST, CAST3,
+   CAST128, IDEA, DES, 3DES, Camellia, ARIA, and SEED have expected-MAC
+   vectors. DES, 3DES,
    Camellia, ARIA, and SEED fixed-output MAC KATs now cover the spec-defined
    half-block special case. RC2, RC5, CAST/CAST3/CAST128/CAST5, and IDEA
    fixed-output MAC KATs now do the same for the legacy 8-byte-block families
@@ -449,7 +450,7 @@ After that, do the first coverage expansion round:
    probes: SKIPJACK only if a trustworthy vector source is found, KEA only with
    defensible domain-parameter/derive semantics, plus CDMF, CAST/CAST3,
    BATON/JUNIPER, GOST28147, remaining CBC_PAD outputs such as Twofish, and
-   RC2/RC5/CAST/IDEA MAC_GENERAL fixed-output vectors.
+   remaining MAC_GENERAL or fixed-output vectors where reliable sources exist.
 
 Legacy/deprecated coverage addendum for the active goal:
 
@@ -473,11 +474,12 @@ Legacy/deprecated coverage addendum for the active goal:
   output, plus vector-param replay for word size, rounds, and MAC length.
   Fixed-length `CKM_RC5_MAC` still needs a clearer source for its mandated
   truncation length before adding an expected-output KAT.
-- Added: `CKM_IDEA_MAC_GENERAL` and `CKM_CAST128_MAC_GENERAL` now have
-  full-block expected-MAC vectors derived from the existing IDEA NESSIE and
-  CAST-128 RFC 2144 one-block ECB KATs under the same zero-IV CBC-MAC
-  equivalence. Remaining MAC_GENERAL gaps should continue family by family
-  only where the block KAT source and PKCS#11 parameter mapping are clear.
+- Added: `CKM_IDEA_MAC_GENERAL`, CAST/CAST3 MAC_GENERAL, and
+  `CKM_CAST128_MAC_GENERAL` now have full-block expected-MAC vectors derived
+  from the existing IDEA NESSIE and CAST RFC 2144 one-block ECB KATs under the
+  same zero-IV CBC-MAC equivalence. Remaining MAC_GENERAL gaps should continue
+  family by family only where the block KAT source and PKCS#11 parameter
+  mapping are clear.
 - Added: `CKM_RC2_MAC_GENERAL` now has a full-block expected-MAC vector derived
   from the existing OpenSSL legacy RC2 one-block ECB vector, plus vector-param
   replay for effective key bits and requested MAC length.
