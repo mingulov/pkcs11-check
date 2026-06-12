@@ -79,6 +79,25 @@ def test_gap_analysis_marks_dsa_dh_domain_parameter_coverage_as_dedicated() -> N
     assert "Dedicated DSA/DH/X9.42 domain-parameter coverage exists" in doc
 
 
+def test_gap_analysis_marks_dsa_parameter_variants_as_covered() -> None:
+    """DSA FIPS 186-4 parameter-generation variants have product coverage."""
+    dsa = _read("src/pkcs11_check/testcases/test_dsa_complete.py")
+    remaining_gaps = _read("src/pkcs11_check/testcases/test_remaining_gaps.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "CK_DSA_PARAMETER_GEN_PARAM" in dsa
+    assert "CKM_DSA_PROBABILISTIC_PARAMETER_GEN" in dsa
+    assert "CKM_DSA_SHAWE_TAYLOR_PARAMETER_GEN" in dsa
+    assert "CKM_DSA_FIPS_G_GEN" in dsa
+    assert "test_probabilistic_parameter_gen_returns_pq" in dsa
+    assert "test_shawe_taylor_parameter_gen_returns_pq" in dsa
+    assert "test_fips_g_gen_uses_generated_seed_and_pq" in dsa
+
+    assert "test_dsa_probabilistic_parameter_gen_availability" not in remaining_gaps
+    assert "DSA parameter-generation variants not covered by `test_dsa_complete.py`" not in doc
+    assert "DSA probabilistic/Shawe-Taylor/FIPS-G parameter variants" in doc
+
+
 def test_gap_analysis_marks_block_cbc_pad_vectors_as_added() -> None:
     """DES-family, Camellia, ARIA, and SEED CBC_PAD now have KAT vector links."""
     des_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_des.py")

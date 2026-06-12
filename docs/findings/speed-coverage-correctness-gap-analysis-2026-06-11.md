@@ -248,8 +248,9 @@ smoke behavior, or covered only by one narrow variation.
    The generic registry-driven keygen path still skips `dsa` and `dh` recipe
    styles because their parameter objects are mechanism-specific, but this is
    not the same as missing product coverage. Remaining work is broader
-   exact-vector, negative, and provider-artifact evidence, plus any untested DSA
-   parameter-generation variants.
+   exact-vector, negative, and provider-artifact evidence. DSA probabilistic/Shawe-Taylor/FIPS-G parameter variants
+   are now covered in `test_dsa_complete.py` for the
+   OASIS-defined p/q and g-generation outputs.
 4. Message API coverage is representative, not registry-driven. Scenario
    selection does not yet cover `CKF_MESSAGE_*` flags generically.
 5. Hybrid and AEAD wrap coverage has explicit holes: RSA-AES key wrap,
@@ -294,8 +295,7 @@ smoke behavior, or covered only by one narrow variation.
 ### Recommended coverage order
 
 1. Expand DSA/DH/X9.42 coverage beyond the existing dedicated generated-parameter
-   tests: exact-vector checks where practical, richer negative cases, and DSA
-   parameter-generation variants not covered by `test_dsa_complete.py`.
+   tests: exact-vector checks where practical and richer negative cases.
 2. Protocol KDF expansion beyond the already-covered priority set
    (`CKM_SP800_108_COUNTER_KDF`, `CKM_TLS12_KDF`, and `CKM_PKCS5_PBKD2`):
    add exact external vectors and tamper/negative checks for SSL3, WTLS, IKE,

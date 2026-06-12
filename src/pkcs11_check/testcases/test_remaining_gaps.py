@@ -26,7 +26,6 @@ Phase G remaining:
 
 Tier 1 stragglers:
 - CKM_AES_CMAC_GENERAL
-- CKM_DSA_PROBABILISTIC_PARAMETER_GEN
 - CKM_EC_KEY_PAIR_GEN_W_EXTRA_BITS
 
 Most modules do not support these - tests skip cleanly.
@@ -1110,11 +1109,6 @@ class TestTier1Stragglers:
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
-
-    def test_dsa_probabilistic_parameter_gen_availability(self, p11_raw_session: Any) -> None:
-        """CKM_DSA_PROBABILISTIC_PARAMETER_GEN."""
-        if not p11_raw_session.has_mechanism("DSA_PROBABILISTIC_PARAMETER_GEN"):
-            pytest.skip("CKM_DSA_PROBABILISTIC_PARAMETER_GEN not supported")
 
     def test_ec_key_pair_gen_w_extra_bits_availability(self, p11_raw_session: Any) -> None:
         """CKM_EC_KEY_PAIR_GEN_W_EXTRA_BITS."""

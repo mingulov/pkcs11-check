@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import ctypes
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR
+from pkcs11_check.raw.types_std import (
+    CK_DSA_PARAMETER_GEN_PARAM,
+    CKM_DSA_PROBABILISTIC_PARAMETER_GEN,
+    CKM_SHA256,
+    CKR_GENERAL_ERROR,
+)
 from pkcs11_check.testcases import test_dsa_complete
 
 
@@ -35,15 +41,31 @@ def test_dsa_parameter_gen_runtime_reject_is_xfail(
         raise CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
 
     rs = _session_with_mechanisms("DSA_PARAMETER_GEN")
+    module = cast(Any, test_dsa_complete)
     monkeypatch.setattr(test_dsa_complete, "_generate_dsa_params", _param_gen_reject)
     monkeypatch.setattr(
-        test_dsa_complete.pytest,
+        module.pytest,
         "skip",
         lambda message: pytest.fail(f"unexpected skip: {message}"),
     )
 
     with pytest.raises(pytest.xfail.Exception, match="DSA_PARAMETER_GEN advertised"):
         test_dsa_complete.TestDSAParameterGen().test_parameter_gen(rs)
+
+
+def test_dsa_parameter_gen_param_mech_owns_seed_buffer() -> None:
+    packed = test_dsa_complete._dsa_parameter_gen_param_mech(
+        CKM_DSA_PROBABILISTIC_PARAMETER_GEN,
+        seed_len=32,
+    )
+
+    assert packed.ck.mechanism == CKM_DSA_PROBABILISTIC_PARAMETER_GEN
+    assert packed.ck.ulParameterLen == ctypes.sizeof(CK_DSA_PARAMETER_GEN_PARAM)
+    assert isinstance(packed.params, CK_DSA_PARAMETER_GEN_PARAM)
+    assert packed.params.hash == CKM_SHA256
+    assert packed.params.pSeed is not None
+    assert packed.params.ulSeedLen == 32
+    assert packed.buffer_bytes("seed") == b"\x00" * 32
 
 
 def test_dsa_keypair_from_generated_params_runtime_reject_is_xfail(
@@ -53,11 +75,12 @@ def test_dsa_keypair_from_generated_params_runtime_reject_is_xfail(
         raise CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
 
     rs = _session_with_mechanisms("DSA_PARAMETER_GEN", "DSA_KEY_PAIR_GEN")
+    module = cast(Any, test_dsa_complete)
     monkeypatch.setattr(test_dsa_complete, "_generate_dsa_params", lambda *_args: 10)
     monkeypatch.setattr(test_dsa_complete, "_gen_dsa_keypair_from_params", _keypair_reject)
     monkeypatch.setattr(test_dsa_complete, "destroy_quietly", lambda *_args: None)
     monkeypatch.setattr(
-        test_dsa_complete.pytest,
+        module.pytest,
         "skip",
         lambda message: pytest.fail(f"unexpected skip: {message}"),
     )

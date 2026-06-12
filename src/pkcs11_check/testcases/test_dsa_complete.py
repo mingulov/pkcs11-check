@@ -19,6 +19,8 @@ from typing import Any, NoReturn
 import pytest
 
 from pkcs11_check.raw.pack import (
+    PackedMechanism,
+    _mech_struct,
     attr_bool,
     attr_bytes,
     attr_ulong,
@@ -33,17 +35,22 @@ from pkcs11_check.raw.recipes import (
 )
 from pkcs11_check.raw.rv import ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
+    CK_BYTE,
+    CK_DSA_PARAMETER_GEN_PARAM,
     CK_OBJECT_HANDLE,
     CKA_BASE,
     CKA_PRIME,
     CKA_PRIME_BITS,
     CKA_SIGN,
     CKA_SUBPRIME,
+    CKA_SUBPRIME_BITS,
     CKA_TOKEN,
     CKA_VERIFY,
     CKM_DSA,
+    CKM_DSA_FIPS_G_GEN,
     CKM_DSA_KEY_PAIR_GEN,
     CKM_DSA_PARAMETER_GEN,
+    CKM_DSA_PROBABILISTIC_PARAMETER_GEN,
     CKM_DSA_SHA1,
     CKM_DSA_SHA3_224,
     CKM_DSA_SHA3_256,
@@ -52,8 +59,11 @@ from pkcs11_check.raw.types_std import (
     CKM_DSA_SHA256,
     CKM_DSA_SHA384,
     CKM_DSA_SHA512,
+    CKM_DSA_SHAWE_TAYLOR_PARAMETER_GEN,
+    CKM_SHA256,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_BUFFER_TOO_SMALL,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
@@ -92,6 +102,7 @@ _DSA_PARAMETER_RUNTIME_REJECT_RVS = (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_BUFFER_TOO_SMALL,
 )
 
 # DSA parameter/key generation is heavy on several providers (10-32s per case
@@ -124,6 +135,35 @@ _DSA_HASH_MECHS = [
 ]
 
 
+def _dsa_parameter_gen_param_mech(
+    mechanism: int,
+    *,
+    seed_len: int = 64,
+    seed: bytes | None = None,
+    index: int = 1,
+    hash_mech: int = CKM_SHA256,
+) -> PackedMechanism:
+    """Pack CK_DSA_PARAMETER_GEN_PARAM with an owned mutable seed buffer."""
+    if seed_len < 0:
+        raise ValueError("seed_len must be non-negative")
+    if seed is not None and len(seed) > seed_len:
+        raise ValueError("seed does not fit in seed_len")
+
+    seed_buf = (CK_BYTE * seed_len)()
+    if seed:
+        ctypes.memmove(seed_buf, seed, len(seed))
+
+    params = CK_DSA_PARAMETER_GEN_PARAM()
+    params.hash = hash_mech
+    params.pSeed = ctypes.cast(seed_buf, ctypes.c_void_p)
+    params.ulSeedLen = seed_len
+    params.ulIndex = index
+
+    packed = _mech_struct(mechanism, params, "dsa_parameter_gen_param")
+    packed.add_buffer("seed", seed_buf, seed_len)
+    return packed
+
+
 def _generate_dsa_params(raw: Any, sh: int) -> int:
     """Generate DSA domain parameters using CKM_DSA_PARAMETER_GEN.
 
@@ -138,6 +178,80 @@ def _generate_dsa_params(raw: Any, sh: int) -> int:
     rv = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(dp_handle))
     expect_rv(rv, CKR_OK)
     return dp_handle.value
+
+
+def _generate_dsa_pq_params(raw: Any, sh: int, mechanism: int) -> tuple[int, PackedMechanism]:
+    """Generate DSA p/q domain parameters using a FIPS 186-4 variant mechanism."""
+    tmpl = template(
+        attr_ulong(CKA_PRIME_BITS, 2048),
+        attr_ulong(CKA_SUBPRIME_BITS, 256),
+        attr_bool(CKA_TOKEN, False),
+    )
+    dp_handle = CK_OBJECT_HANDLE(0)
+    mech = _dsa_parameter_gen_param_mech(mechanism)
+    rv = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(dp_handle))
+    expect_rv(rv, CKR_OK)
+    return dp_handle.value, mech
+
+
+def _assert_generated_dsa_pq_attrs(raw: Any, sh: int, dp_handle: int) -> tuple[bytes, bytes]:
+    """Assert a FIPS 186-4 p/q-generation result contains the expected attributes."""
+    attrs = read_attributes(
+        raw,
+        sh,
+        dp_handle,
+        [CKA_PRIME, CKA_SUBPRIME, CKA_PRIME_BITS, CKA_SUBPRIME_BITS],
+    )
+    prime = attrs[CKA_PRIME]
+    subprime = attrs[CKA_SUBPRIME]
+    prime_bits = attrs[CKA_PRIME_BITS]
+    subprime_bits = attrs[CKA_SUBPRIME_BITS]
+
+    assert isinstance(prime, bytes)
+    assert isinstance(subprime, bytes)
+    assert isinstance(prime_bits, int)
+    assert isinstance(subprime_bits, int)
+    assert prime_bits == 2048
+    assert subprime_bits == 256
+    assert len(prime) > 0
+    assert len(subprime) > 0
+    return prime, subprime
+
+
+def _dsa_returned_seed(mech: PackedMechanism) -> bytes:
+    """Return the provider-written seed from a DSA p/q-generation mechanism."""
+    assert isinstance(mech.params, CK_DSA_PARAMETER_GEN_PARAM)
+    storage, capacity = mech.buffer_storage("seed")
+    seed_len = int(mech.params.ulSeedLen)
+    assert 0 < seed_len <= capacity
+    return bytes(storage[:seed_len])
+
+
+def _generate_dsa_base_from_pq(
+    raw: Any,
+    sh: int,
+    *,
+    prime: bytes,
+    subprime: bytes,
+    seed: bytes,
+    index: int,
+) -> int:
+    """Generate DSA base g from p/q plus the seed returned by a p/q variant."""
+    tmpl = template(
+        attr_bytes(CKA_PRIME, prime),
+        attr_bytes(CKA_SUBPRIME, subprime),
+        attr_bool(CKA_TOKEN, False),
+    )
+    base_handle = CK_OBJECT_HANDLE(0)
+    mech = _dsa_parameter_gen_param_mech(
+        CKM_DSA_FIPS_G_GEN,
+        seed_len=len(seed),
+        seed=seed,
+        index=index,
+    )
+    rv = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(base_handle))
+    expect_rv(rv, CKR_OK)
+    return base_handle.value
 
 
 def _skip_or_xfail_dsa_param_gen_reject(exc: AssertionError) -> NoReturn:
@@ -485,7 +599,7 @@ class TestDSAPrehash:
 
 
 class TestDSAParameterGen:
-    """Tests for CKM_DSA_PARAMETER_GEN."""
+    """Tests for DSA domain-parameter generation mechanisms."""
 
     def test_parameter_gen(self, p11_module_session: Any) -> None:
         """Generate DSA domain parameters using CKM_DSA_PARAMETER_GEN."""
@@ -500,6 +614,90 @@ class TestDSAParameterGen:
 
         try:
             assert dp != 0
+        finally:
+            destroy_quietly(rs.raw, rs.sh, dp)
+
+    def test_probabilistic_parameter_gen_returns_pq(self, p11_module_session: Any) -> None:
+        """CKM_DSA_PROBABILISTIC_PARAMETER_GEN generates p/q and returns a seed."""
+        rs = p11_module_session
+        if not rs.has_mechanism("DSA_PROBABILISTIC_PARAMETER_GEN"):
+            pytest.skip("CKM_DSA_PROBABILISTIC_PARAMETER_GEN not supported")
+
+        try:
+            dp, mech = _generate_dsa_pq_params(
+                rs.raw,
+                rs.sh,
+                CKM_DSA_PROBABILISTIC_PARAMETER_GEN,
+            )
+        except AssertionError as e:
+            _skip_or_xfail_dsa_param_gen_reject(e)
+
+        try:
+            _assert_generated_dsa_pq_attrs(rs.raw, rs.sh, dp)
+            assert len(_dsa_returned_seed(mech)) > 0
+        finally:
+            destroy_quietly(rs.raw, rs.sh, dp)
+
+    def test_shawe_taylor_parameter_gen_returns_pq(self, p11_module_session: Any) -> None:
+        """CKM_DSA_SHAWE_TAYLOR_PARAMETER_GEN generates p/q and returns a seed."""
+        rs = p11_module_session
+        if not rs.has_mechanism("DSA_SHAWE_TAYLOR_PARAMETER_GEN"):
+            pytest.skip("CKM_DSA_SHAWE_TAYLOR_PARAMETER_GEN not supported")
+
+        try:
+            dp, mech = _generate_dsa_pq_params(
+                rs.raw,
+                rs.sh,
+                CKM_DSA_SHAWE_TAYLOR_PARAMETER_GEN,
+            )
+        except AssertionError as e:
+            _skip_or_xfail_dsa_param_gen_reject(e)
+
+        try:
+            _assert_generated_dsa_pq_attrs(rs.raw, rs.sh, dp)
+            assert len(_dsa_returned_seed(mech)) > 0
+        finally:
+            destroy_quietly(rs.raw, rs.sh, dp)
+
+    def test_fips_g_gen_uses_generated_seed_and_pq(self, p11_module_session: Any) -> None:
+        """CKM_DSA_FIPS_G_GEN generates g from generated p/q plus returned seed."""
+        rs = p11_module_session
+        if not rs.has_mechanism("DSA_FIPS_G_GEN"):
+            pytest.skip("CKM_DSA_FIPS_G_GEN not supported")
+        if not rs.has_mechanism("DSA_PROBABILISTIC_PARAMETER_GEN"):
+            pytest.skip("CKM_DSA_PROBABILISTIC_PARAMETER_GEN not supported for setup")
+
+        try:
+            dp, mech = _generate_dsa_pq_params(
+                rs.raw,
+                rs.sh,
+                CKM_DSA_PROBABILISTIC_PARAMETER_GEN,
+            )
+        except AssertionError as e:
+            _skip_or_xfail_dsa_param_gen_reject(e)
+
+        try:
+            prime, subprime = _assert_generated_dsa_pq_attrs(rs.raw, rs.sh, dp)
+            seed = _dsa_returned_seed(mech)
+            try:
+                base_dp = _generate_dsa_base_from_pq(
+                    rs.raw,
+                    rs.sh,
+                    prime=prime,
+                    subprime=subprime,
+                    seed=seed,
+                    index=1,
+                )
+            except AssertionError as e:
+                _skip_or_xfail_dsa_param_gen_reject(e)
+
+            try:
+                attrs = read_attributes(rs.raw, rs.sh, base_dp, [CKA_BASE])
+                base = attrs[CKA_BASE]
+                assert isinstance(base, bytes)
+                assert len(base) > 0
+            finally:
+                destroy_quietly(rs.raw, rs.sh, base_dp)
         finally:
             destroy_quietly(rs.raw, rs.sh, dp)
 
