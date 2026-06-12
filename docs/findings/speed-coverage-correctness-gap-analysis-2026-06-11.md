@@ -467,7 +467,9 @@ smoke behavior, or covered only by one narrow variation.
     length-range rejects as spec-correct. Registry-driven unwrap empty-blob
     coverage exists for the same advertised unwrap mechanisms and verifies that
     `C_UnwrapKey` rejects a zero-length wrapped-key input instead of accepting
-    a forged secret key object.
+    a forged secret key object. Registry-driven unwrap one-byte-blob coverage
+    exists for the same path and verifies that a one-byte wrapped-key input is
+    also rejected as malformed.
 
 ### Recommended coverage order
 
@@ -486,7 +488,8 @@ smoke behavior, or covered only by one narrow variation.
    invariants,
    malformed parameter cases beyond current classic/message init and simple derive
    coverage, deeper derive custom-parameter cases, and additional unwrap
-   tamper/shape variants beyond the current empty/truncated-blob coverage.
+   tamper/shape variants beyond the current empty/one-byte/truncated-blob
+   coverage.
 
 ## Correctness and Reporting Findings
 

@@ -817,12 +817,13 @@ class TestBadParameters:
 class TestMalformedWrappedBlob:
     """C_UnwrapKey must reject malformed wrapped-key bytes."""
 
-    def test_registry_unwrap_rejects_empty_blob(
-        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+    def _registry_unwrap_rejects_literal_blob(
+        self,
+        rs: RawSession,
+        entry: MechEntry,
+        wrapped_blob: bytes,
+        label_suffix: str,
     ) -> None:
-        """Registry-driven empty wrapped-blob check for advertised unwrap mechanisms."""
-        rs = p11_module_session
-        entry = mech_wrap_entry
         _skip_if_not_secret_key_registry_case(entry)
         config = entry.config
         assert config is not None
@@ -834,7 +835,7 @@ class TestMalformedWrappedBlob:
             extra_attrs={CKA_WRAP: True, CKA_UNWRAP: True, CKA_TOKEN: False},
         )
         unwrapped_key = 0
-        label = f"{entry.mech_name} C_UnwrapKey with empty wrapped blob"
+        label = f"{entry.mech_name} C_UnwrapKey with {label_suffix} wrapped blob"
         try:
             mech_param = make_mech_param_or_skip(entry)
             unwrap_exc: AssertionError | None = None
@@ -843,7 +844,7 @@ class TestMalformedWrappedBlob:
                     rs.raw,
                     rs.sh,
                     wrapping_key,
-                    b"",
+                    wrapped_blob,
                     entry.mech_id,
                     attrs={
                         CKA_CLASS: CKO_SECRET_KEY,
@@ -866,6 +867,28 @@ class TestMalformedWrappedBlob:
             if unwrapped_key != 0:
                 destroy_quietly(rs.raw, rs.sh, unwrapped_key)
             destroy_quietly(rs.raw, rs.sh, wrapping_key)
+
+    def test_registry_unwrap_rejects_empty_blob(
+        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+    ) -> None:
+        """Registry-driven empty wrapped-blob check for advertised unwrap mechanisms."""
+        self._registry_unwrap_rejects_literal_blob(
+            p11_module_session,
+            mech_wrap_entry,
+            b"",
+            "empty",
+        )
+
+    def test_registry_unwrap_rejects_one_byte_blob(
+        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+    ) -> None:
+        """Registry-driven one-byte wrapped-blob check for advertised unwrap mechanisms."""
+        self._registry_unwrap_rejects_literal_blob(
+            p11_module_session,
+            mech_wrap_entry,
+            b"\x00",
+            "one-byte",
+        )
 
     def test_registry_unwrap_rejects_truncated_blob(
         self, p11_module_session: RawSession, mech_wrap_entry: MechEntry

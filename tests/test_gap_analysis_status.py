@@ -364,14 +364,17 @@ def test_gap_analysis_marks_unwrap_shape_negative_as_added() -> None:
 
     assert "test_registry_unwrap_rejects_truncated_blob" in negative
     assert "test_registry_unwrap_rejects_empty_blob" in negative
+    assert "test_registry_unwrap_rejects_one_byte_blob" in negative
     assert "_MALFORMED_WRAPPED_BLOB_RVS" in negative
     assert "CKR_WRAPPED_KEY_LEN_RANGE" in negative
     assert "CKR_WRAPPED_KEY_INVALID" in negative
     assert "test_unwrap_shape_negatives_are_registry_driven" in guard
     assert "test_registry_unwrap_rejects_empty_blob" in guard
+    assert "test_registry_unwrap_rejects_one_byte_blob" in guard
 
     assert "Registry-driven unwrap malformed-blob coverage exists" in doc_flat
     assert "Registry-driven unwrap empty-blob coverage exists" in doc_flat
+    assert "Registry-driven unwrap one-byte-blob coverage exists" in doc_flat
     assert "deeper unwrap shape/error cases" not in doc_flat
 
 
