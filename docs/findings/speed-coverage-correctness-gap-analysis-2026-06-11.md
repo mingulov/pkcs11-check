@@ -286,7 +286,9 @@ smoke behavior, or covered only by one narrow variation.
    now uses a shared wrapper for positive `CKM_DH_PKCS_DERIVE` operations:
    advertised clean derive refusals are provider-general xfail deviations,
    while successful derives still verify exact shared-secret and
-   encryption/readback effects.
+   encryption/readback effects. Classic DH missing-peer-public negative
+   coverage now verifies `CKM_DH_PKCS_DERIVE` rejects a missing peer public
+   mechanism parameter through the shared negative classifier.
 4. Message API coverage is representative, not registry-driven. Scenario
    selection does not yet cover `CKF_MESSAGE_*` flags generically.
 5. Hybrid wrap parameter coverage exists for RSA-AES and ECDH-AES:

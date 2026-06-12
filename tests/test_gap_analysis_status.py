@@ -181,6 +181,19 @@ def test_gap_analysis_marks_classic_dh_runtime_rejects_as_classified() -> None:
     assert "Classic DH derive runtime-reject classification" in doc
 
 
+def test_gap_analysis_marks_dh_missing_peer_public_negative_as_added() -> None:
+    """Classic DH derive has a negative test for missing peer public data."""
+    dh = _read("src/pkcs11_check/testcases/test_dh_key_agreement.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
+
+    assert "test_dh_derive_rejects_missing_peer_public_value" in dh
+    assert "CKM_DH_PKCS_DERIVE missing peer public value" in dh
+    assert "classify_negative_rv(" in dh
+
+    assert "Classic DH missing-peer-public negative coverage" in doc_flat
+
+
 def test_gap_analysis_marks_regional_cipher_encrypt_data_dispatch_as_added() -> None:
     """Camellia/ARIA/SEED encrypt-data derive dispatch is no longer a gap."""
     derive = _read("src/pkcs11_check/testcases/test_mech_derive.py")
