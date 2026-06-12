@@ -147,6 +147,18 @@ def test_gap_analysis_marks_dsa_sha224_prehash_matrix_as_added() -> None:
     assert "DSA_SHA224 now participates" in doc
 
 
+def test_gap_analysis_marks_classic_dh_runtime_rejects_as_classified() -> None:
+    """Classic DH positive derive runtime rejects use provider-general xfail logic."""
+    dh = _read("src/pkcs11_check/testcases/test_dh_key_agreement.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "_dh_derive_or_xfail" in dh
+    assert "_DH_DERIVE_RUNTIME_REJECT_RVS" in dh
+    assert "xfail_if_known_ckr" in dh
+
+    assert "Classic DH derive runtime-reject classification" in doc
+
+
 def test_gap_analysis_marks_block_cbc_pad_vectors_as_added() -> None:
     """DES-family, Camellia, ARIA, and SEED CBC_PAD now have KAT vector links."""
     des_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_des.py")

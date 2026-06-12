@@ -8,6 +8,7 @@ Uses RFC 3526 Group 14 (2048-bit MODP) for known-good parameters.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from ctypes import byref
 from typing import Any
 
@@ -163,6 +164,31 @@ def _gen_dh_keypair(
     return pub_h.value, priv_h.value
 
 
+def _dh_derive_or_xfail(
+    rs: Any,
+    private_key: int,
+    peer_public_value: bytes,
+    attrs: Mapping[Any, Any],
+    label: str,
+) -> int:
+    try:
+        return derive_key(
+            rs.raw,
+            rs.sh,
+            private_key,
+            CKM_DH_PKCS_DERIVE,
+            attrs=attrs,
+            mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, peer_public_value),
+        )
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _DH_DERIVE_RUNTIME_REJECT_RVS,
+            f"{label}: DH derive advertised but not operational",
+        )
+        raise
+
+
 class TestDHKeyAgreement:
     """Test DH key pair generation and key derivation."""
 
@@ -201,11 +227,10 @@ class TestDHKeyAgreement:
             assert alice_value != bob_value  # Different public keys
 
             # Each derives an AES-128 key using the other's public value
-            alice_shared = derive_key(
-                rs.raw,
-                rs.sh,
+            alice_shared = _dh_derive_or_xfail(
+                rs,
                 alice_priv,
-                CKM_DH_PKCS_DERIVE,
+                bob_value,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
@@ -214,13 +239,12 @@ class TestDHKeyAgreement:
                     CKA_EXTRACTABLE: True,
                     CKA_TOKEN: False,
                 },
-                mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, bob_value),
+                label="alice shared-secret derive",
             )
-            bob_shared = derive_key(
-                rs.raw,
-                rs.sh,
+            bob_shared = _dh_derive_or_xfail(
+                rs,
                 bob_priv,
-                CKM_DH_PKCS_DERIVE,
+                alice_value,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
@@ -229,7 +253,7 @@ class TestDHKeyAgreement:
                     CKA_EXTRACTABLE: True,
                     CKA_TOKEN: False,
                 },
-                mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, alice_value),
+                label="bob shared-secret derive",
             )
             try:
                 # Both should derive the same key material
@@ -257,11 +281,10 @@ class TestDHKeyAgreement:
             alice_attrs = read_attributes(rs.raw, rs.sh, alice_pub, [CKA_VALUE])
 
             # Alice derives shared key, encrypts
-            shared_key = derive_key(
-                rs.raw,
-                rs.sh,
+            shared_key = _dh_derive_or_xfail(
+                rs,
                 alice_priv,
-                CKM_DH_PKCS_DERIVE,
+                bob_attrs[CKA_VALUE],
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
@@ -270,7 +293,7 @@ class TestDHKeyAgreement:
                     CKA_DECRYPT: True,
                     CKA_TOKEN: False,
                 },
-                mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, bob_attrs[CKA_VALUE]),
+                label="alice AES derive",
             )
             try:
                 plaintext = b"DH key agreement!" + b"\x00" * 15  # pad to 32 bytes
@@ -279,11 +302,10 @@ class TestDHKeyAgreement:
                 assert ct != plaintext
 
                 # Bob derives the same shared key, decrypts
-                bob_key = derive_key(
-                    rs.raw,
-                    rs.sh,
+                bob_key = _dh_derive_or_xfail(
+                    rs,
                     bob_priv,
-                    CKM_DH_PKCS_DERIVE,
+                    alice_attrs[CKA_VALUE],
                     attrs={
                         CKA_CLASS: CKO_SECRET_KEY,
                         CKA_KEY_TYPE: CKK_AES,
@@ -292,7 +314,7 @@ class TestDHKeyAgreement:
                         CKA_DECRYPT: True,
                         CKA_TOKEN: False,
                     },
-                    mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, alice_attrs[CKA_VALUE]),
+                    label="bob AES derive",
                 )
                 try:
                     pt = decrypt_single(rs.raw, rs.sh, bob_key, CKM_AES_ECB, ct)
@@ -323,29 +345,20 @@ class TestDHKeyAgreement:
             derived_values: dict[int, bytes] = {}
 
             for requested_len in (32, 16):
-                try:
-                    key = derive_key(
-                        rs.raw,
-                        rs.sh,
-                        alice_priv,
-                        CKM_DH_PKCS_DERIVE,
-                        attrs={
-                            CKA_CLASS: CKO_SECRET_KEY,
-                            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-                            CKA_VALUE_LEN: requested_len,
-                            CKA_SENSITIVE: False,
-                            CKA_EXTRACTABLE: True,
-                            CKA_TOKEN: False,
-                        },
-                        mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, bob_value),
-                    )
-                except AssertionError as exc:
-                    xfail_if_known_ckr(
-                        exc,
-                        _DH_DERIVE_RUNTIME_REJECT_RVS,
-                        f"DH derive advertised but not operational for {requested_len} bytes",
-                    )
-                    raise  # unreachable
+                key = _dh_derive_or_xfail(
+                    rs,
+                    alice_priv,
+                    bob_value,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_VALUE_LEN: requested_len,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
+                    },
+                    label=f"DH derive CKA_VALUE_LEN={requested_len}",
+                )
                 derived_keys.append(key)
                 value = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
                 assert len(value) == requested_len, (
@@ -376,11 +389,10 @@ class TestDHKeyAgreement:
         _pub1, priv1 = _gen_dh_keypair(rs.raw, rs.sh)
         pub2, _priv2 = _gen_dh_keypair(rs.raw, rs.sh)
         pub2_val = read_attributes(rs.raw, rs.sh, pub2, [CKA_VALUE])[CKA_VALUE]
-        key1 = derive_key(
-            rs.raw,
-            rs.sh,
+        key1 = _dh_derive_or_xfail(
+            rs,
             priv1,
-            CKM_DH_PKCS_DERIVE,
+            pub2_val,
             attrs={
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_AES,
@@ -389,18 +401,17 @@ class TestDHKeyAgreement:
                 CKA_EXTRACTABLE: True,
                 CKA_TOKEN: False,
             },
-            mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, pub2_val),
+            label="first exchange derive",
         )
 
         # Exchange 2 (fresh keypairs)
         _pub3, priv3 = _gen_dh_keypair(rs.raw, rs.sh)
         pub4, _priv4 = _gen_dh_keypair(rs.raw, rs.sh)
         pub4_val = read_attributes(rs.raw, rs.sh, pub4, [CKA_VALUE])[CKA_VALUE]
-        key2 = derive_key(
-            rs.raw,
-            rs.sh,
+        key2 = _dh_derive_or_xfail(
+            rs,
             priv3,
-            CKM_DH_PKCS_DERIVE,
+            pub4_val,
             attrs={
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_AES,
@@ -409,7 +420,7 @@ class TestDHKeyAgreement:
                 CKA_EXTRACTABLE: True,
                 CKA_TOKEN: False,
             },
-            mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, pub4_val),
+            label="second exchange derive",
         )
 
         try:
@@ -512,11 +523,10 @@ class TestDHParameterGeneration:
                 pub_b_val = read_attributes(rs.raw, rs.sh, pub_b, [CKA_VALUE])[CKA_VALUE]
                 pub_a_val = read_attributes(rs.raw, rs.sh, pub_a, [CKA_VALUE])[CKA_VALUE]
 
-                key_a = derive_key(
-                    rs.raw,
-                    rs.sh,
+                key_a = _dh_derive_or_xfail(
+                    rs,
                     priv_a,
-                    CKM_DH_PKCS_DERIVE,
+                    pub_b_val,
                     attrs={
                         CKA_CLASS: CKO_SECRET_KEY,
                         CKA_KEY_TYPE: CKK_AES,
@@ -525,13 +535,12 @@ class TestDHParameterGeneration:
                         CKA_EXTRACTABLE: True,
                         CKA_TOKEN: False,
                     },
-                    mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, pub_b_val),
+                    label="generated-params A derive",
                 )
-                key_b = derive_key(
-                    rs.raw,
-                    rs.sh,
+                key_b = _dh_derive_or_xfail(
+                    rs,
                     priv_b,
-                    CKM_DH_PKCS_DERIVE,
+                    pub_a_val,
                     attrs={
                         CKA_CLASS: CKO_SECRET_KEY,
                         CKA_KEY_TYPE: CKK_AES,
@@ -540,7 +549,7 @@ class TestDHParameterGeneration:
                         CKA_EXTRACTABLE: True,
                         CKA_TOKEN: False,
                     },
-                    mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, pub_a_val),
+                    label="generated-params B derive",
                 )
                 try:
                     va = read_attributes(rs.raw, rs.sh, key_a, [CKA_VALUE])[CKA_VALUE]
