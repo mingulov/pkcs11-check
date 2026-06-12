@@ -289,11 +289,11 @@ class CK_KEY_WRAP_SET_OAEP_PARAMS(ctypes.Structure):
     pass
 
 
-class CK_KMAC_PARAMS(ctypes.Structure):
+class CK_KIP_PARAMS(ctypes.Structure):
     pass
 
 
-class CK_KIP_PARAMS(ctypes.Structure):
+class CK_KMAC_PARAMS(ctypes.Structure):
     pass
 
 
@@ -650,10 +650,10 @@ CK_KEY_TYPE = CK_ULONG
 CK_KEY_TYPE_PTR = ctypes.POINTER(CK_KEY_TYPE)
 CK_KEY_WRAP_SET_OAEP_PARAMS_PTR = ctypes.POINTER(CK_KEY_WRAP_SET_OAEP_PARAMS)
 CK_KEY_WRAP_SET_OAEP_PARAMS_PTR_PTR = ctypes.POINTER(ctypes.POINTER(CK_KEY_WRAP_SET_OAEP_PARAMS))
-CK_KMAC_PARAMS_PTR = ctypes.POINTER(CK_KMAC_PARAMS)
-CK_KMAC_PARAMS_PTR_PTR = ctypes.POINTER(ctypes.POINTER(CK_KMAC_PARAMS))
 CK_KIP_PARAMS_PTR = ctypes.POINTER(CK_KIP_PARAMS)
 CK_KIP_PARAMS_PTR_PTR = ctypes.POINTER(ctypes.POINTER(CK_KIP_PARAMS))
+CK_KMAC_PARAMS_PTR = ctypes.POINTER(CK_KMAC_PARAMS)
+CK_KMAC_PARAMS_PTR_PTR = ctypes.POINTER(ctypes.POINTER(CK_KMAC_PARAMS))
 CK_LMOTS_TYPE = CK_ULONG
 CK_LMOTS_TYPE_PTR = ctypes.POINTER(CK_LMOTS_TYPE)
 CK_LMS_TYPE = CK_ULONG
@@ -1577,13 +1577,6 @@ CK_KEY_WRAP_SET_OAEP_PARAMS._fields_ = [
     ("ulXLen", CK_ULONG),
 ]
 
-CK_KMAC_PARAMS._fields_ = [
-    ("hKey", CK_OBJECT_HANDLE),
-    ("ulMacLength", CK_ULONG),
-    ("pCustomizationString", ctypes.c_void_p),
-    ("ulCustomizationStringLen", CK_ULONG),
-]
-
 CK_KIP_PARAMS._fields_ = [
     ("pMechanism", ctypes.c_void_p),
     ("hKey", CK_OBJECT_HANDLE),
@@ -1855,13 +1848,13 @@ CK_X9_42_DH2_DERIVE_PARAMS._fields_ = [
 CK_X9_42_MQV_DERIVE_PARAMS._fields_ = [
     ("kdf", CK_X9_42_DH_KDF_TYPE),
     ("ulOtherInfoLen", CK_ULONG),
-    ("OtherInfo", ctypes.c_void_p),
+    ("pOtherInfo", ctypes.c_void_p),
     ("ulPublicDataLen", CK_ULONG),
-    ("PublicData", ctypes.c_void_p),
+    ("pPublicData", ctypes.c_void_p),
     ("ulPrivateDataLen", CK_ULONG),
     ("hPrivateData", CK_OBJECT_HANDLE),
     ("ulPublicDataLen2", CK_ULONG),
-    ("PublicData2", ctypes.c_void_p),
+    ("pPublicData2", ctypes.c_void_p),
     ("publicKey", CK_OBJECT_HANDLE),
 ]
 
@@ -2253,6 +2246,13 @@ CK_FUNCTION_LIST._fields_ = [
     ("C_GetFunctionStatus", CK_C_GetFunctionStatus),
     ("C_CancelFunction", CK_C_CancelFunction),
     ("C_WaitForSlotEvent", CK_C_WaitForSlotEvent),
+]
+
+CK_KMAC_PARAMS._fields_ = [
+    ("hKey", CK_OBJECT_HANDLE),
+    ("ulMacLength", CK_ULONG),
+    ("pCustomizationString", CK_BYTE_PTR),
+    ("ulCustomizationStringLen", CK_ULONG),
 ]
 
 _CK_ULONG_MAX = (1 << (ctypes.sizeof(ctypes.c_ulong) * 8)) - 1

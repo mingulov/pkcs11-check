@@ -1984,13 +1984,13 @@ struct CK_X9_42_DH2_DERIVE_PARAMS {
 struct CK_X9_42_MQV_DERIVE_PARAMS {
     CK_X9_42_DH_KDF_TYPE kdf;
     CK_ULONG ulOtherInfoLen;
-    CK_BYTE * OtherInfo;
+    CK_BYTE * pOtherInfo;
     CK_ULONG ulPublicDataLen;
-    CK_BYTE * PublicData;
+    CK_BYTE * pPublicData;
     CK_ULONG ulPrivateDataLen;
     CK_OBJECT_HANDLE hPrivateData;
     CK_ULONG ulPublicDataLen2;
-    CK_BYTE * PublicData2;
+    CK_BYTE * pPublicData2;
     CK_OBJECT_HANDLE publicKey;
 };
 

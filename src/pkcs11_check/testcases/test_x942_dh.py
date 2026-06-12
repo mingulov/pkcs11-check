@@ -45,6 +45,8 @@ from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_VOID_PTR,
     CK_X9_42_DH1_DERIVE_PARAMS,
+    CK_X9_42_DH2_DERIVE_PARAMS,
+    CK_X9_42_MQV_DERIVE_PARAMS,
     CKA_BASE,
     CKA_CLASS,
     CKA_DECRYPT,
@@ -67,9 +69,12 @@ from pkcs11_check.raw.types_std import (
     CKK_X9_42_DH,
     CKM_AES_ECB,
     CKM_X9_42_DH_DERIVE,
+    CKM_X9_42_DH_HYBRID_DERIVE,
     CKM_X9_42_DH_KEY_PAIR_GEN,
     CKM_X9_42_DH_PARAMETER_GEN,
+    CKM_X9_42_MQV_DERIVE,
     CKO_PRIVATE_KEY,
+    CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -146,6 +151,10 @@ _X942_RFC5114_EXPECTED_SECRET_32 = bytes.fromhex(
     "7c242567d649f58f68fd9650fe96a6e1"
     "8a70f17920dbdca3dd51101239b18788"
 )
+_X942_EXTENDED_ALICE_PRIVATE_2 = bytes(range(0x21, 0x41))
+_X942_EXTENDED_BOB_PRIVATE_1 = bytes(range(0x41, 0x61))
+_X942_EXTENDED_BOB_PRIVATE_2 = bytes(range(0x61, 0x81))
+_X942_EXTENDED_SECRET_LEN = 32
 
 _X942_PARAM_PRIME_BITS = 2048
 _X942_PARAM_SUBPRIME_BITS = 256
@@ -422,14 +431,86 @@ def _import_x942_private_key(
     )
 
 
-def _x942_setup_or_xfail(fn: Callable[[], int], label: str) -> int:
+def _x942_public_from_private(private_value: bytes) -> bytes:
+    prime = int.from_bytes(X942_PRIME_2048, "big")
+    generator = int.from_bytes(X942_GEN, "big")
+    exponent = int.from_bytes(private_value, "big")
+    return pow(generator, exponent, prime).to_bytes(len(X942_PRIME_2048), "big")
+
+
+def _import_x942_public_key(
+    raw: Any,
+    sh: int,
+    public_value: bytes,
+) -> int:
+    """Import an X9.42 DH public key corresponding to deterministic test material."""
+    return create_object(
+        raw,
+        sh,
+        {
+            CKA_CLASS: CKO_PUBLIC_KEY,
+            CKA_KEY_TYPE: CKK_X9_42_DH,
+            CKA_PRIME: X942_PRIME_2048,
+            CKA_BASE: X942_GEN,
+            CKA_SUBPRIME: X942_SUBPRIME,
+            CKA_VALUE: public_value,
+            CKA_TOKEN: False,
+        },
+    )
+
+
+def _import_x942_private_public_pair(
+    rs: Any,
+    private_value: bytes,
+) -> tuple[int, int, bytes]:
+    public_value = _x942_public_from_private(private_value)
+    handles: list[int] = []
+    try:
+        pub = _import_x942_public_key(rs.raw, rs.sh, public_value)
+        handles.append(pub)
+        priv = _import_x942_private_key(rs.raw, rs.sh, private_value)
+        handles.append(priv)
+    except AssertionError:
+        for handle in handles:
+            destroy_quietly(rs.raw, rs.sh, handle)
+        raise
+    return pub, priv, public_value
+
+
+def _import_x942_party_keys(
+    rs: Any,
+    first_private: bytes,
+    second_private: bytes,
+) -> tuple[int, int, int, int, bytes, bytes]:
+    first_pub = 0
+    first_priv = 0
+    second_pub = 0
+    second_priv = 0
+    try:
+        first_pub, first_priv, first_public_value = _import_x942_private_public_pair(
+            rs,
+            first_private,
+        )
+        second_pub, second_priv, second_public_value = _import_x942_private_public_pair(
+            rs,
+            second_private,
+        )
+    except AssertionError:
+        for handle in (first_pub, first_priv, second_pub, second_priv):
+            if handle:
+                destroy_quietly(rs.raw, rs.sh, handle)
+        raise
+    return first_pub, first_priv, second_pub, second_priv, first_public_value, second_public_value
+
+
+def _x942_setup_or_xfail[T](fn: Callable[[], T], label: str) -> T:
     try:
         return fn()
     except AssertionError as exc:
         xfail_if_known_ckr(
             exc,
             _X942_DERIVE_RUNTIME_REJECT_RVS,
-            f"{label}: X9.42 DH exact-vector setup is not operational",
+            f"{label}: X9.42 DH deterministic setup is not operational",
         )
         raise
 
@@ -483,6 +564,127 @@ def _build_x942_derive_mech(
     )
     pm._keepalive.extend(keepalive)
     return pm
+
+
+def _x942_byte_ptr(data: bytes, keepalive: list[Any]) -> CK_VOID_PTR:
+    arr = (ctypes.c_ubyte * len(data))(*data)
+    keepalive.append(arr)
+    return ctypes.cast(arr, CK_VOID_PTR)
+
+
+def _set_x942_other_info(
+    params: CK_X9_42_DH2_DERIVE_PARAMS | CK_X9_42_MQV_DERIVE_PARAMS,
+    other_info: bytes | None,
+    keepalive: list[Any],
+) -> None:
+    if other_info is None:
+        params.ulOtherInfoLen = 0
+        params.pOtherInfo = None
+        return
+
+    params.ulOtherInfoLen = len(other_info)
+    params.pOtherInfo = _x942_byte_ptr(other_info, keepalive)
+
+
+def _build_x942_dh2_derive_mech(
+    public_data: bytes,
+    second_private: int,
+    second_private_len: int,
+    second_public_data: bytes,
+    kdf: int = CKD_NULL,
+    *,
+    other_info: bytes | None = None,
+) -> PackedMechanism:
+    """Build CKM_X9_42_DH_HYBRID_DERIVE with CK_X9_42_DH2_DERIVE_PARAMS."""
+    keepalive: list[Any] = []
+
+    params = CK_X9_42_DH2_DERIVE_PARAMS()
+    params.kdf = kdf
+    _set_x942_other_info(params, other_info, keepalive)
+    params.ulPublicDataLen = len(public_data)
+    params.pPublicData = _x942_byte_ptr(public_data, keepalive)
+    params.ulPrivateDataLen = second_private_len
+    params.hPrivateData = second_private
+    params.ulPublicDataLen2 = len(second_public_data)
+    params.pPublicData2 = _x942_byte_ptr(second_public_data, keepalive)
+    keepalive.append(params)
+
+    pointer_arg = PointerArg.to_storage(params, origin="x942_dh2_derive")
+    length_arg = LengthArg.native(ctypes.sizeof(params))
+    pm = PackedMechanism(
+        CK_MECHANISM(CKM_X9_42_DH_HYBRID_DERIVE, pointer_arg.pointer, length_arg.value),
+        storage=params,
+        pointer_arg=pointer_arg,
+        length_arg=length_arg,
+        params=params,
+    )
+    pm._keepalive.extend(keepalive)
+    return pm
+
+
+def _build_x942_mqv_derive_mech(
+    public_data: bytes,
+    second_private: int,
+    second_private_len: int,
+    second_public_data: bytes,
+    own_second_public: int,
+    kdf: int = CKD_NULL,
+    *,
+    other_info: bytes | None = None,
+) -> PackedMechanism:
+    """Build CKM_X9_42_MQV_DERIVE with CK_X9_42_MQV_DERIVE_PARAMS."""
+    keepalive: list[Any] = []
+
+    params = CK_X9_42_MQV_DERIVE_PARAMS()
+    params.kdf = kdf
+    _set_x942_other_info(params, other_info, keepalive)
+    params.ulPublicDataLen = len(public_data)
+    params.pPublicData = _x942_byte_ptr(public_data, keepalive)
+    params.ulPrivateDataLen = second_private_len
+    params.hPrivateData = second_private
+    params.ulPublicDataLen2 = len(second_public_data)
+    params.pPublicData2 = _x942_byte_ptr(second_public_data, keepalive)
+    params.publicKey = own_second_public
+    keepalive.append(params)
+
+    pointer_arg = PointerArg.to_storage(params, origin="x942_mqv_derive")
+    length_arg = LengthArg.native(ctypes.sizeof(params))
+    pm = PackedMechanism(
+        CK_MECHANISM(CKM_X9_42_MQV_DERIVE, pointer_arg.pointer, length_arg.value),
+        storage=params,
+        pointer_arg=pointer_arg,
+        length_arg=length_arg,
+        params=params,
+    )
+    pm._keepalive.extend(keepalive)
+    return pm
+
+
+def _x942_derive_generic_secret(
+    rs: Any,
+    base_private: int,
+    mechanism: int,
+    mech_param: PackedMechanism,
+    label: str,
+) -> int:
+    return _x942_derive_or_xfail(
+        lambda: derive_key(
+            rs.raw,
+            rs.sh,
+            base_private,
+            mechanism,
+            attrs={
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_VALUE_LEN: _X942_EXTENDED_SECRET_LEN,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
+            },
+            mech_param=mech_param,
+        ),
+        label,
+    )
 
 
 def _x942_derive_aes(
@@ -1047,6 +1249,80 @@ class TestX942DHHybridDerive:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
+    def test_hybrid_derive_matches_between_parties(self, p11_raw_session: Any) -> None:
+        """CKM_X9_42_DH_HYBRID_DERIVE derives matching two-party secrets."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("X9_42_DH_HYBRID_DERIVE"):
+            pytest.skip("CKM_X9_42_DH_HYBRID_DERIVE not supported")
+
+        alice = (0, 0, 0, 0, b"", b"")
+        bob = (0, 0, 0, 0, b"", b"")
+        alice_secret = 0
+        bob_secret = 0
+        try:
+            alice = _x942_setup_or_xfail(
+                lambda: _import_x942_party_keys(
+                    rs,
+                    _X942_RFC5114_ALICE_PRIVATE,
+                    _X942_EXTENDED_ALICE_PRIVATE_2,
+                ),
+                "CKM_X9_42_DH_HYBRID_DERIVE deterministic key import",
+            )
+            bob = _x942_setup_or_xfail(
+                lambda: _import_x942_party_keys(
+                    rs,
+                    _X942_EXTENDED_BOB_PRIVATE_1,
+                    _X942_EXTENDED_BOB_PRIVATE_2,
+                ),
+                "CKM_X9_42_DH_HYBRID_DERIVE deterministic key import",
+            )
+            (
+                _alice_pub1,
+                alice_priv1,
+                _alice_pub2,
+                alice_priv2,
+                alice_pub1_value,
+                alice_pub2_value,
+            ) = alice
+            _bob_pub1, bob_priv1, _bob_pub2, bob_priv2, bob_pub1_value, bob_pub2_value = bob
+
+            alice_secret = _x942_derive_generic_secret(
+                rs,
+                alice_priv1,
+                CKM_X9_42_DH_HYBRID_DERIVE,
+                _build_x942_dh2_derive_mech(
+                    bob_pub1_value,
+                    alice_priv2,
+                    len(_X942_EXTENDED_ALICE_PRIVATE_2),
+                    bob_pub2_value,
+                ),
+                "CKM_X9_42_DH_HYBRID_DERIVE Alice side",
+            )
+            bob_secret = _x942_derive_generic_secret(
+                rs,
+                bob_priv1,
+                CKM_X9_42_DH_HYBRID_DERIVE,
+                _build_x942_dh2_derive_mech(
+                    alice_pub1_value,
+                    bob_priv2,
+                    len(_X942_EXTENDED_BOB_PRIVATE_2),
+                    alice_pub2_value,
+                ),
+                "CKM_X9_42_DH_HYBRID_DERIVE Bob side",
+            )
+
+            alice_value = read_attributes(rs.raw, rs.sh, alice_secret, [CKA_VALUE])[CKA_VALUE]
+            bob_value = read_attributes(rs.raw, rs.sh, bob_secret, [CKA_VALUE])[CKA_VALUE]
+            assert isinstance(alice_value, bytes)
+            assert isinstance(bob_value, bytes)
+            assert len(alice_value) == _X942_EXTENDED_SECRET_LEN
+            assert alice_value == bob_value
+            assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
+        finally:
+            for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
+                if handle:
+                    destroy_quietly(rs.raw, rs.sh, handle)
+
 
 class TestX942MQVDerive:
     """Test CKM_X9_42_MQV_DERIVE."""
@@ -1063,3 +1339,79 @@ class TestX942MQVDerive:
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_mqv_derive_matches_between_parties(self, p11_raw_session: Any) -> None:
+        """CKM_X9_42_MQV_DERIVE derives matching two-party secrets."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("X9_42_MQV_DERIVE"):
+            pytest.skip("CKM_X9_42_MQV_DERIVE not supported")
+
+        alice = (0, 0, 0, 0, b"", b"")
+        bob = (0, 0, 0, 0, b"", b"")
+        alice_secret = 0
+        bob_secret = 0
+        try:
+            alice = _x942_setup_or_xfail(
+                lambda: _import_x942_party_keys(
+                    rs,
+                    _X942_RFC5114_ALICE_PRIVATE,
+                    _X942_EXTENDED_ALICE_PRIVATE_2,
+                ),
+                "CKM_X9_42_MQV_DERIVE deterministic key import",
+            )
+            bob = _x942_setup_or_xfail(
+                lambda: _import_x942_party_keys(
+                    rs,
+                    _X942_EXTENDED_BOB_PRIVATE_1,
+                    _X942_EXTENDED_BOB_PRIVATE_2,
+                ),
+                "CKM_X9_42_MQV_DERIVE deterministic key import",
+            )
+            (
+                _alice_pub1,
+                alice_priv1,
+                alice_pub2,
+                alice_priv2,
+                alice_pub1_value,
+                alice_pub2_value,
+            ) = alice
+            _bob_pub1, bob_priv1, bob_pub2, bob_priv2, bob_pub1_value, bob_pub2_value = bob
+
+            alice_secret = _x942_derive_generic_secret(
+                rs,
+                alice_priv1,
+                CKM_X9_42_MQV_DERIVE,
+                _build_x942_mqv_derive_mech(
+                    bob_pub1_value,
+                    alice_priv2,
+                    len(_X942_EXTENDED_ALICE_PRIVATE_2),
+                    bob_pub2_value,
+                    alice_pub2,
+                ),
+                "CKM_X9_42_MQV_DERIVE Alice side",
+            )
+            bob_secret = _x942_derive_generic_secret(
+                rs,
+                bob_priv1,
+                CKM_X9_42_MQV_DERIVE,
+                _build_x942_mqv_derive_mech(
+                    alice_pub1_value,
+                    bob_priv2,
+                    len(_X942_EXTENDED_BOB_PRIVATE_2),
+                    alice_pub2_value,
+                    bob_pub2,
+                ),
+                "CKM_X9_42_MQV_DERIVE Bob side",
+            )
+
+            alice_value = read_attributes(rs.raw, rs.sh, alice_secret, [CKA_VALUE])[CKA_VALUE]
+            bob_value = read_attributes(rs.raw, rs.sh, bob_secret, [CKA_VALUE])[CKA_VALUE]
+            assert isinstance(alice_value, bytes)
+            assert isinstance(bob_value, bytes)
+            assert len(alice_value) == _X942_EXTENDED_SECRET_LEN
+            assert alice_value == bob_value
+            assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
+        finally:
+            for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
+                if handle:
+                    destroy_quietly(rs.raw, rs.sh, handle)

@@ -333,7 +333,11 @@ smoke behavior, or covered only by one narrow variation.
    `pOtherInfo`. X9.42 DH requested-value-length truncation coverage now
    verifies the OASIS leading-byte truncation rule by deriving the RFC 5114
    vector at 32 bytes and 16 bytes and checking that the shorter output keeps
-   the rightmost bytes.
+   the rightmost bytes. X9.42 hybrid/MQV typed derive coverage now exercises
+   `CKM_X9_42_DH_HYBRID_DERIVE` through `CK_X9_42_DH2_DERIVE_PARAMS` and
+   `CKM_X9_42_MQV_DERIVE` through `CK_X9_42_MQV_DERIVE_PARAMS`; each probe
+   imports deterministic X9.42 key material, runs both parties through
+   `C_DeriveKey`, and verifies the extracted generic-secret values match.
 4. Message API registry-driven init coverage exists for advertised
    `CKF_MESSAGE_*` flags through `TestRegistryMessageInit` and pytest plugin
    fixtures for message encrypt, decrypt, sign, and verify entries. Richer

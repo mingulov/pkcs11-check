@@ -693,6 +693,21 @@ def test_gap_analysis_marks_x942_value_len_truncation_as_added() -> None:
     assert "X9.42 DH requested-value-length truncation coverage" in doc_flat
 
 
+def test_gap_analysis_marks_x942_hybrid_mqv_derive_as_exercised() -> None:
+    """X9.42 hybrid/MQV derive coverage reaches typed C_DeriveKey calls."""
+    x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "CK_X9_42_DH2_DERIVE_PARAMS" in x942
+    assert "CK_X9_42_MQV_DERIVE_PARAMS" in x942
+    assert "test_hybrid_derive_matches_between_parties" in x942
+    assert "test_mqv_derive_matches_between_parties" in x942
+    assert "_build_x942_dh2_derive_mech" in x942
+    assert "_build_x942_mqv_derive_mech" in x942
+
+    assert "X9.42 hybrid/MQV typed derive coverage" in doc_flat
+
+
 def test_gap_analysis_marks_regional_cipher_encrypt_data_dispatch_as_added() -> None:
     """Camellia/ARIA/SEED encrypt-data derive dispatch is no longer a gap."""
     derive = _read("src/pkcs11_check/testcases/test_mech_derive.py")

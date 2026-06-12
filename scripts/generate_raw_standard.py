@@ -82,6 +82,14 @@ OPTIONAL_EXPORTED_FUNCTIONS = [
     ("C_DigestXofFinal", ["CK_SESSION_HANDLE", "CK_BYTE_PTR", "CK_ULONG"]),
     ("C_DigestXofKeyValue", ["CK_SESSION_HANDLE", "CK_OBJECT_HANDLE"]),
 ]
+EXTRA_STRUCTS = {
+    "CK_KMAC_PARAMS": [
+        ("hKey", "CK_OBJECT_HANDLE"),
+        ("ulMacLength", "CK_ULONG"),
+        ("pCustomizationString", "CK_BYTE_PTR"),
+        ("ulCustomizationStringLen", "CK_ULONG"),
+    ],
+}
 
 
 def _resolve_constant_type(name: str) -> str:
@@ -282,7 +290,7 @@ def _parse_structs(text: str) -> dict[str, list[tuple[str, str]]]:
     structs: dict[str, list[tuple[str, str]]] = {}
     for match in STRUCT_PATTERN.finditer(text):
         name = match.group(3)
-        fields: list[tuple[str, str]] = []
+        typedef_fields: list[tuple[str, str]] = []
         body = _strip_comments(match.group("body"))
         for raw_field in body.split(";"):
             field = _normalize_spaces(raw_field)
@@ -294,11 +302,11 @@ def _parse_structs(text: str) -> dict[str, list[tuple[str, str]]]:
             field_type, field_name, array_suffix = field_match.groups()
             if array_suffix is not None:
                 field_type = f"{field_type}{array_suffix}"
-            fields.append((field_name, field_type))
-        structs[name] = fields
+            typedef_fields.append((field_name, field_type))
+        structs[name] = typedef_fields
     for match in PLAIN_STRUCT_PATTERN.finditer(text):
         name = match.group(1)
-        fields: list[tuple[str, str]] = []
+        plain_fields: list[tuple[str, str]] = []
         body = _strip_comments(match.group("body"))
         for raw_field in body.split(";"):
             field = _normalize_spaces(raw_field)
@@ -310,8 +318,8 @@ def _parse_structs(text: str) -> dict[str, list[tuple[str, str]]]:
             field_type, field_name, array_suffix = field_match.groups()
             if array_suffix is not None:
                 field_type = f"{field_type}{array_suffix}"
-            fields.append((field_name, field_type))
-        structs[name] = fields
+            plain_fields.append((field_name, field_type))
+        structs[name] = plain_fields
     return structs
 
 
@@ -753,6 +761,8 @@ def generate_raw_standard(*, header: Path, out_types: Path, out_metadata: Path) 
     opaque_structs = _parse_opaque_structs(types_text)
     callbacks = _parse_callbacks(types_text)
     structs = _parse_structs(types_text)
+    for name, fields in EXTRA_STRUCTS.items():
+        structs.setdefault(name, fields)
     _generate_struct_ptr_aliases(opaque_structs, structs, aliases)
     functions = _parse_functions(functions_text)
     optional_functions = OPTIONAL_EXPORTED_FUNCTIONS if functions else []
