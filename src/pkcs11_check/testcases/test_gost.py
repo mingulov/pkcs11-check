@@ -103,6 +103,12 @@ _GOST28147_RFC7836_WRAPPED_KEY = bytes.fromhex(
     "ecc071bba6e72f3fec6f620f56834c5a"
     "be33f052"
 )
+_GOST28147_RFC8891_MAGMA_KEY = bytes.fromhex(
+    "ffeeddccbbaa99887766554433221100"
+    "f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"
+)
+_GOST28147_RFC8891_MAGMA_PLAINTEXT = bytes.fromhex("fedcba9876543210")
+_GOST28147_RFC8891_MAGMA_CIPHERTEXT = bytes.fromhex("4ee901e5c2d8ca3d")
 
 
 def _gost_key(raw: Any, sh: int, attrs: Mapping[Any, Any]) -> int:
@@ -198,6 +204,56 @@ class TestGOST28147KeyGen:
 
 class TestGOST28147Encryption:
     """CKM_GOST28147_ECB and CKM_GOST28147 - GOST 28147-89 encrypt/decrypt."""
+
+    def test_ecb_rfc8891_magma_tc26_z_vector(self, p11_raw_session: Any) -> None:
+        """Encrypt and decrypt the RFC 8891 Magma TC26 param-Z ECB vector."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("GOST28147_ECB"):
+            pytest.skip("CKM_GOST28147_ECB not supported")
+
+        key = 0
+        try:
+
+            def _setup() -> int:
+                return _import_gost28147_key(
+                    rs.raw,
+                    rs.sh,
+                    _GOST28147_RFC8891_MAGMA_KEY,
+                    {
+                        CKA_ENCRYPT: True,
+                        CKA_DECRYPT: True,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                )
+
+            key = _try_or_xfail(_setup, "CKM_GOST28147_ECB RFC 8891 key import not operational")
+
+            def _do() -> tuple[bytes, bytes]:
+                ct = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_GOST28147_ECB,
+                    _GOST28147_RFC8891_MAGMA_PLAINTEXT,
+                )
+                pt = decrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_GOST28147_ECB,
+                    _GOST28147_RFC8891_MAGMA_CIPHERTEXT,
+                )
+                return ct, pt
+
+            ciphertext, plaintext = _try_or_xfail(
+                _do,
+                "CKM_GOST28147_ECB RFC 8891 KAT not operational",
+            )
+            assert ciphertext == _GOST28147_RFC8891_MAGMA_CIPHERTEXT
+            assert plaintext == _GOST28147_RFC8891_MAGMA_PLAINTEXT
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
     def test_ecb_roundtrip(self, p11_raw_session: Any) -> None:
         """Encrypt and decrypt two blocks with CKM_GOST28147_ECB."""
