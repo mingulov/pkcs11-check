@@ -612,6 +612,17 @@ Legacy/deprecated coverage addendum for the active goal:
   deterministic PKCS#11 encrypt parameters would create false failures on
   conforming providers. Keep these modes source-first until the PKCS#11
   IV/wrap mapping is reconciled.
+- Legacy vector source refresh (2026-06-12): the latest web/local
+  primary-source pass found no safe immediate KAT to wire for the remaining
+  classified historical mechanisms. BATON and JUNIPER remain source-first:
+  the local OASIS historical PKCS#11 text describes operation shapes, but
+  public exact-output algorithm vectors were not found. KEA remains
+  source-first: RFC 2876 and RFC 2773 describe KEA/SKIPJACK protocol use, not
+  PKCS#11 `CKM_KEA_DERIVE` or `CKM_KEA_KEY_DERIVE` exact-vector material.
+  `CKM_KEY_WRAP_LYNKS`, `CKM_KEY_WRAP_SET_OAEP`, and `CKM_FASTHASH` likewise
+  need operation-specific sources before exact-output tests. NIST SP 800-135
+  and ACVP component-test material make protocol KDFs a better next
+  exact-vector target than the remaining classified legacy ciphers.
 - Added: `CKM_RC5_MAC_GENERAL` has a KAT-backed expected-MAC vector using the
   existing RFC 2040 RC5 block result as the one-block zero-IV CBC-MAC output,
   plus vector-param replay for word size, rounds, and MAC length. Fixed-length
@@ -681,6 +692,7 @@ Legacy/deprecated coverage addendum for the active goal:
   `MAC_GENERAL` and the fixed half-block `MAC` special case.
   The remaining less-sourced classified/obsolete families remain pending.
 
-Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks
-should follow once the harness can reuse provider-local history and prove
-coverage did not silently drop.
+Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks now
+has provider-local evidence above. Further provider-speed work should begin
+with a fresh current-artifact bottleneck audit rather than treating those two
+paths as pending.

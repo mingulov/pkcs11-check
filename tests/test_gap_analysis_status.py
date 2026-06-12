@@ -734,6 +734,27 @@ def test_gap_analysis_inventories_remaining_legacy_source_first_operations() -> 
     )
 
 
+def test_gap_analysis_records_legacy_vector_source_refresh() -> None:
+    """The legacy-vector plan records the latest source search conclusions."""
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "Legacy vector source refresh" in doc_flat
+    assert "BATON and JUNIPER remain source-first" in doc_flat
+    assert "public exact-output algorithm vectors were not found" in doc_flat
+    assert "KEA remains source-first" in doc_flat
+    assert "RFC 2876 and RFC 2773 describe KEA/SKIPJACK protocol use" in doc_flat
+    assert "NIST SP 800-135 and ACVP component-test material make protocol KDFs" in doc_flat
+    assert (
+        "better next exact-vector target than the remaining classified legacy ciphers"
+        in doc_flat
+    )
+    assert (
+        "Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks "
+        "should follow"
+        not in doc_flat
+    )
+
+
 def test_gap_analysis_marks_mixed_fail_crash_reporting_as_fixed() -> None:
     """Mixed fail+crash units now surface crash status instead of only failed status."""
     runner = _read("src/pkcs11_check/core/file_runner.py")
