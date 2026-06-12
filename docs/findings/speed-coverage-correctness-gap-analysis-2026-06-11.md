@@ -368,7 +368,10 @@ smoke behavior, or covered only by one narrow variation.
    `pOtherInfo` must be NULL and `ulOtherInfoLen` must be zero when the KDF is
    `CKD_NULL`. X9.42 DH CKD_SHA1_KDF_ASN1 missing-OtherInfo coverage now
    verifies the matching OASIS rule that ASN.1 KDF derives must supply
-   `pOtherInfo`. X9.42 DH CKD_SHA1_KDF_CONCATENATE OtherInfo coverage now
+   `pOtherInfo`. X9.42 DH CKD_SHA1_KDF_ASN1 DER OtherInfo coverage now
+   verifies the supplied `pOtherInfo` path with a minimal DER OCTET STRING and
+   derived AES encrypt/decrypt effect. X9.42 DH
+   CKD_SHA1_KDF_CONCATENATE OtherInfo coverage now
    verifies the optional `pOtherInfo` path by deriving an AES key through typed
    DH1 parameters and checking an encrypt/decrypt effect. X9.42 DH
    requested-value-length truncation coverage now

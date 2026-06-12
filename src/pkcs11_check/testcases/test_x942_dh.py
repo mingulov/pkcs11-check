@@ -1190,6 +1190,58 @@ class TestX942DHDerive:
             if priv:
                 destroy_quietly(rs.raw, rs.sh, priv)
 
+    def test_x942_dh_derive_asn1_other_info(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_X9_42_DH_DERIVE CKD_SHA1_KDF_ASN1 with DER OtherInfo derives AES."""
+        rs = p11_raw_session
+        _skip_no_x942_derive(rs)
+
+        priv = 0
+        derived = 0
+        try:
+            priv = _x942_setup_or_xfail(
+                lambda: _import_x942_private_key(
+                    rs.raw,
+                    rs.sh,
+                    _X942_RFC5114_ALICE_PRIVATE,
+                ),
+                "CKM_X9_42_DH_DERIVE CKD_SHA1_KDF_ASN1 setup",
+            )
+            derived = _x942_derive_or_xfail(
+                lambda: derive_key(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_X9_42_DH_DERIVE,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_VALUE_LEN: 16,
+                        CKA_ENCRYPT: True,
+                        CKA_DECRYPT: True,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
+                    },
+                    mech_param=_build_x942_derive_mech(
+                        _X942_RFC5114_BOB_PUBLIC,
+                        CKD_SHA1_KDF_ASN1,
+                        other_info=b"\x04\x03der",
+                    ),
+                ),
+                "CKM_X9_42_DH_DERIVE CKD_SHA1_KDF_ASN1 with DER OtherInfo",
+            )
+            plaintext = b"x9.42 asn1 kdf.."
+            ciphertext = encrypt_single(rs.raw, rs.sh, derived, CKM_AES_ECB, plaintext)
+            assert decrypt_single(rs.raw, rs.sh, derived, CKM_AES_ECB, ciphertext) == plaintext
+        finally:
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+
     def test_different_exchanges_produce_different_secrets(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         _skip_no_x942_keygen(rs)
