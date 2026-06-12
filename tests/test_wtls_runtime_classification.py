@@ -8,7 +8,16 @@ from types import SimpleNamespace
 import pytest
 
 from pkcs11_check.raw.pack import mech_wtls_prf
-from pkcs11_check.raw.types_std import CK_ULONG, CKA_VALUE, CKM_SHA256, CKM_WTLS_PRF, CKR_OK
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import (
+    CK_ULONG,
+    CKA_VALUE,
+    CKM_SHA256,
+    CKM_VENDOR_DEFINED,
+    CKM_WTLS_PRF,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_OK,
+)
 from pkcs11_check.testcases import test_wtls
 
 
@@ -100,6 +109,48 @@ def test_wtls_prf_label_sensitivity_fails_on_same_output(
     rs = _session_with_mechanisms("WTLS_PRF")
     with pytest.raises(AssertionError, match="WTLS PRF label"):
         test_wtls.TestWTLSPRF().test_prf_label_affects_output(rs)
+
+
+def test_wtls_prf_invalid_digest_uses_negative_classifier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_wtls, "_create_generic_secret", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_wtls, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    digest_mechanisms: list[int] = []
+    classifier_calls: list[tuple[BaseException | None, tuple[int, ...], str]] = []
+
+    def _derive_prf_output(
+        *_args: object,
+        digest_mechanism: int = int(CKM_SHA256),
+        **_kwargs: object,
+    ) -> bytes:
+        digest_mechanisms.append(int(digest_mechanism))
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID",
+            int(CKR_MECHANISM_PARAM_INVALID),
+        )
+
+    def _reject_or_classify(
+        exc: BaseException | None,
+        expected_rvs: tuple[int, ...],
+        *,
+        label: str,
+    ) -> None:
+        classifier_calls.append((exc, expected_rvs, label))
+
+    monkeypatch.setattr(test_wtls, "_derive_wtls_prf_output", _derive_prf_output)
+    monkeypatch.setattr(test_wtls, "reject_or_classify", _reject_or_classify)
+
+    test_wtls.TestWTLSPRF().test_prf_rejects_invalid_digest_mechanism(
+        _session_with_mechanisms("WTLS_PRF")
+    )
+
+    assert digest_mechanisms == [int(CKM_VENDOR_DEFINED)]
+    assert len(classifier_calls) == 1
+    assert isinstance(classifier_calls[0][0], CkrAssertionError)
+    assert int(CKR_MECHANISM_PARAM_INVALID) in classifier_calls[0][1]
+    assert classifier_calls[0][2] == "WTLS PRF invalid digest mechanism"
 
 
 class _FakeWTLSKeyMatMechanism:

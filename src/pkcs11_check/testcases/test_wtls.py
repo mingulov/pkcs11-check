@@ -49,6 +49,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKK_GENERIC_SECRET,
     CKM_SHA256,
+    CKM_VENDOR_DEFINED,
     CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE,
     CKM_WTLS_MASTER_KEY_DERIVE,
     CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC,
@@ -62,7 +63,11 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
 )
-from pkcs11_check.testcases.conftest import destroy_returned_handles, is_known_error
+from pkcs11_check.testcases.conftest import (
+    destroy_returned_handles,
+    is_known_error,
+    reject_or_classify,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -73,6 +78,8 @@ _WTLS_ERROR_RVS = {
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
 }
+
+_WTLS_INVALID_DIGEST_REJECT_RVS = (CKR_MECHANISM_PARAM_INVALID,)
 
 # WTLS client/server random values (16 bytes each)
 _CLIENT_RANDOM = bytes(range(16))
@@ -124,11 +131,12 @@ def _derive_wtls_prf_output(
     seed: bytes,
     label: bytes = b"key expansion",
     output_len: int = 16,
+    digest_mechanism: int = int(CKM_SHA256),
 ) -> bytes:
     """Run CKM_WTLS_PRF and return the bytes written to CK_WTLS_PRF_PARAMS.pOutput."""
     mech = mech_wtls_prf(
         CKM_WTLS_PRF,
-        digest_mechanism=CKM_SHA256,
+        digest_mechanism=digest_mechanism,
         seed=seed,
         label=label,
         output_len=output_len,
@@ -601,6 +609,34 @@ class TestWTLSPRF:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
                 raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, secret)
+
+    def test_prf_rejects_invalid_digest_mechanism(self, p11_raw_session: Any) -> None:
+        """CKM_WTLS_PRF must reject a DigestMechanism outside the WTLS digest set."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("WTLS_PRF"):
+            pytest.skip("CKM_WTLS_PRF not supported")
+
+        secret = _create_generic_secret(rs, 20)
+        try:
+            exc: AssertionError | None = None
+            try:
+                _derive_wtls_prf_output(
+                    rs,
+                    secret,
+                    seed=bytes(range(32)),
+                    label=b"key expansion",
+                    output_len=16,
+                    digest_mechanism=int(CKM_VENDOR_DEFINED),
+                )
+            except AssertionError as caught:
+                exc = caught
+            reject_or_classify(
+                exc,
+                _WTLS_INVALID_DIGEST_REJECT_RVS,
+                label="WTLS PRF invalid digest mechanism",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, secret)
 

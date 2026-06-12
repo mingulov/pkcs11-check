@@ -263,9 +263,12 @@ smoke behavior, or covered only by one narrow variation.
    `CK_WTLS_PRF_PARAMS.pLabel`. WTLS PRF raw output-buffer coverage now uses
    the OASIS `CKM_WTLS_PRF` convention: `C_DeriveKey` is called with a NULL
    template and NULL `phKey`, and the test reads the bytes returned through
-   `CK_WTLS_PRF_PARAMS.pOutput`. WTLS key-and-MAC NULL phKey coverage now
-   follows the OASIS convention that server/client key-material derives return
-   their handles through `CK_WTLS_KEY_MAT_OUT`. IKE2 PRF+ base-key sensitivity coverage now
+   `CK_WTLS_PRF_PARAMS.pOutput`. WTLS PRF invalid-digest negative coverage now
+   verifies `CK_WTLS_PRF_PARAMS.DigestMechanism` rejects an invalid nested
+   digest mechanism selector through the shared provider-general negative
+   classifier. WTLS key-and-MAC NULL phKey coverage now follows the OASIS
+   convention that server/client key-material derives return their handles
+   through `CK_WTLS_KEY_MAT_OUT`. IKE2 PRF+ base-key sensitivity coverage now
    verifies that changing the shared-secret input changes the derived output.
    IKE2 PRF+ HMAC-SHA256 exact-vector coverage now uses typed
    `CK_IKE2_PRF_PLUS_DERIVE_PARAMS` and checks the OASIS `prf+(baseKey,

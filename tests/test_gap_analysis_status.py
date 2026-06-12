@@ -101,6 +101,20 @@ def test_gap_analysis_marks_wtls_key_material_null_phkey_as_added() -> None:
     assert "WTLS key-and-MAC NULL phKey coverage" in doc_flat
 
 
+def test_gap_analysis_marks_wtls_prf_invalid_digest_negative_as_added() -> None:
+    """CKM_WTLS_PRF rejects an invalid nested digest mechanism selector."""
+    wtls = _read("src/pkcs11_check/testcases/test_wtls.py")
+    guard = _read("tests/test_wtls_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_prf_rejects_invalid_digest_mechanism" in wtls
+    assert "_WTLS_INVALID_DIGEST_REJECT_RVS" in wtls
+    assert "CKM_VENDOR_DEFINED" in wtls
+    assert "test_wtls_prf_invalid_digest_uses_negative_classifier" in guard
+
+    assert "WTLS PRF invalid-digest negative coverage" in doc_flat
+
+
 def test_gap_analysis_marks_ike_prf_base_key_sensitivity_as_added() -> None:
     """CKM_IKE_PRF_DERIVE changes output when only the base key changes."""
     ike = _read("src/pkcs11_check/testcases/test_ike.py")
