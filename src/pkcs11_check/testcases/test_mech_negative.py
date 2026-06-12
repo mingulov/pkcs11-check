@@ -260,6 +260,14 @@ def _skip_if_not_required_param_registry_case(entry: MechEntry) -> None:
         pytest.skip(f"{entry.mech_name}: mechanism params are not required")
 
 
+def _finish_digest_after_unexpected_ok(rs: RawSession) -> None:
+    out_len = CK_ULONG(0)
+    rv = rs.raw.C_DigestFinal(rs.sh, None, byref(out_len))
+    if rv == CKR_OK and out_len.value > 0:
+        out_buf = (ctypes.c_ubyte * out_len.value)()
+        rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
+
+
 def _gen_claimed_false_secret_key(
     rs: RawSession,
     entry: MechEntry,
@@ -722,6 +730,36 @@ class TestBadParameters:
             destroy_quietly(rs.raw, rs.sh, sign_key)
             if verify_key is not None and verify_key != sign_key:
                 destroy_quietly(rs.raw, rs.sh, verify_key)
+
+    def test_registry_digest_missing_required_param(
+        self, p11_module_session: RawSession, mech_digest_entry: MechEntry
+    ) -> None:
+        """Registry-driven missing-required-param check for advertised digest mechanisms."""
+        rs = p11_module_session
+        entry = mech_digest_entry
+        _skip_if_not_required_param_registry_case(entry)
+
+        label = f"{entry.mech_name} C_DigestInit with missing required params"
+        mech = mech_simple(entry.mech_id)
+        rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
+        if rv == CKR_OK:
+            _finish_digest_after_unexpected_ok(rs)
+        classify_negative_rv(rv, _MISSING_REQUIRED_PARAM_RVS, label=label)
+
+    def test_registry_digest_malformed_required_param(
+        self, p11_module_session: RawSession, mech_digest_entry: MechEntry
+    ) -> None:
+        """Registry-driven malformed-param check for advertised digest mechanisms."""
+        rs = p11_module_session
+        entry = mech_digest_entry
+        _skip_if_not_required_param_registry_case(entry)
+
+        label = f"{entry.mech_name} C_DigestInit with malformed non-NULL params"
+        mech = mech_bytes(entry.mech_id, b"\x00")
+        rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
+        if rv == CKR_OK:
+            _finish_digest_after_unexpected_ok(rs)
+        classify_negative_rv(rv, _MALFORMED_REQUIRED_PARAM_RVS, label=label)
 
     def test_registry_derive_malformed_required_param(
         self, p11_module_session: RawSession, mech_derive_entry: MechEntry

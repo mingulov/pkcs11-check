@@ -31,6 +31,7 @@ def test_negative_tests_use_registry_operation_fixtures() -> None:
     for fixture in (
         "mech_encrypt_entry",
         "mech_sign_entry",
+        "mech_digest_entry",
         "mech_wrap_entry",
         "mech_derive_entry",
     ):
@@ -91,4 +92,6 @@ def test_bad_param_negatives_are_registry_driven() -> None:
     assert "test_registry_sign_malformed_required_param" in source
     assert "test_registry_verify_missing_required_param" in source
     assert "test_registry_verify_malformed_required_param" in source
+    assert "test_registry_digest_missing_required_param" in source
+    assert "test_registry_digest_malformed_required_param" in source
     assert "test_registry_derive_malformed_required_param" in source
