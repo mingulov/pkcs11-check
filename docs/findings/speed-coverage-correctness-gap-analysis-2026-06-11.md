@@ -260,7 +260,10 @@ smoke behavior, or covered only by one narrow variation.
    mechanisms. WTLS PRF seed-sensitivity coverage now verifies that changing
    the explicit `CK_WTLS_PRF_PARAMS.pSeed` input changes the derived output.
    WTLS PRF label-sensitivity coverage now verifies the same for
-   `CK_WTLS_PRF_PARAMS.pLabel`. IKE2 PRF+ base-key sensitivity coverage now
+   `CK_WTLS_PRF_PARAMS.pLabel`. WTLS PRF raw output-buffer coverage now uses
+   the OASIS `CKM_WTLS_PRF` convention: `C_DeriveKey` is called with a NULL
+   template and NULL `phKey`, and the test reads the bytes returned through
+   `CK_WTLS_PRF_PARAMS.pOutput`. IKE2 PRF+ base-key sensitivity coverage now
    verifies that changing the shared-secret input changes the derived output.
    IKE2 PRF+ HMAC-SHA256 exact-vector coverage now uses typed
    `CK_IKE2_PRF_PLUS_DERIVE_PARAMS` and checks the OASIS `prf+(baseKey,

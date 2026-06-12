@@ -71,6 +71,9 @@ def test_gap_analysis_marks_protocol_kdf_semantics_as_dedicated_coverage() -> No
     assert "assert value == expected" in tls12
     assert "test_prf_seed_affects_output" in wtls
     assert "test_prf_label_affects_output" in wtls
+    assert "_derive_wtls_prf_output" in wtls
+    assert "None, 0, None" in wtls
+    assert 'buffer_bytes("output")' in wtls
     assert "test_base_key_affects_output" in ike
     assert 'REQUIRED_MECHANISMS = ["PKCS5_PBKD2"]' in pbkdf2
     assert "assert dk_actual == dk_expected" in pbkdf2
@@ -79,6 +82,7 @@ def test_gap_analysis_marks_protocol_kdf_semantics_as_dedicated_coverage() -> No
     assert "Dedicated protocol KDF semantic coverage exists" in doc
     assert "WTLS PRF seed-sensitivity coverage" in doc
     assert "WTLS PRF label-sensitivity coverage" in doc
+    assert "WTLS PRF raw output-buffer coverage" in doc
     assert "IKE2 PRF+ base-key sensitivity coverage" in doc
 
 

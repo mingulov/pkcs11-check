@@ -14,6 +14,7 @@ OASIS spec: wtls.md
 
 from __future__ import annotations
 
+import ctypes
 from typing import Any
 
 import pytest
@@ -32,7 +33,9 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     read_attributes,
 )
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
+    CK_ULONG,
     CKA_CLASS,
     CKA_DERIVE,
     CKA_EXTRACTABLE,
@@ -54,6 +57,7 @@ from pkcs11_check.raw.types_std import (
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OK,
 )
 from pkcs11_check.testcases.conftest import destroy_returned_handles, is_known_error
 
@@ -89,6 +93,33 @@ def _create_generic_secret(rs: Any, size: int = 48) -> int:
             CKA_EXTRACTABLE: True,
         },
     )
+
+
+def _derive_wtls_prf_output(
+    rs: Any,
+    secret: int,
+    *,
+    seed: bytes,
+    label: bytes = b"key expansion",
+    output_len: int = 16,
+) -> bytes:
+    """Run CKM_WTLS_PRF and return the bytes written to CK_WTLS_PRF_PARAMS.pOutput."""
+    mech = mech_wtls_prf(
+        CKM_WTLS_PRF,
+        digest_mechanism=CKM_SHA256,
+        seed=seed,
+        label=label,
+        output_len=output_len,
+    )
+    rv = rs.raw.C_DeriveKey(rs.sh, mech.byref(), secret, None, 0, None)
+    expect_rv(rv, CKR_OK)
+    out_len = ctypes.cast(mech.params.pulOutputLen, ctypes.POINTER(CK_ULONG))[0]
+    actual_len = int(out_len)
+    if actual_len > output_len:
+        pytest.fail(
+            f"CKM_WTLS_PRF reported {actual_len} output bytes for a {output_len}-byte buffer"
+        )
+    return mech.buffer_bytes("output")[:actual_len]
 
 
 class TestWTLSPreMasterKeyGen:
@@ -521,33 +552,16 @@ class TestWTLSPRF:
         *,
         seed: bytes,
         label: bytes = b"key expansion",
-    ) -> tuple[int, bytes]:
-        mech = mech_wtls_prf(
-            CKM_WTLS_PRF,
-            digest_mechanism=CKM_SHA256,
+    ) -> bytes:
+        value = _derive_wtls_prf_output(
+            rs,
+            secret,
             seed=seed,
             label=label,
             output_len=16,
         )
-        derived = derive_key(
-            rs.raw,
-            rs.sh,
-            secret,
-            CKM_WTLS_PRF,
-            attrs={
-                CKA_CLASS: CKO_SECRET_KEY,
-                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-                CKA_VALUE_LEN: 16,
-                CKA_SENSITIVE: False,
-                CKA_EXTRACTABLE: True,
-                CKA_TOKEN: False,
-            },
-            mech_param=mech,
-        )
-        value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-        assert isinstance(value, bytes)
         assert len(value) == 16, f"Expected 16 bytes, got {len(value)}"
-        return derived, value
+        return value
 
     def test_mechanism_availability(self, p11_raw_session: Any) -> None:
         """Probe whether CKM_WTLS_PRF is advertised."""
@@ -562,36 +576,15 @@ class TestWTLSPRF:
 
         secret = _create_generic_secret(rs, 20)
         try:
-            mech = mech_wtls_prf(
-                CKM_WTLS_PRF,
-                digest_mechanism=CKM_SHA256,
-                seed=bytes(range(32)),
-                label=b"key expansion",
-                output_len=16,
-            )
             try:
-                derived = derive_key(
-                    rs.raw,
-                    rs.sh,
+                value = _derive_wtls_prf_output(
+                    rs,
                     secret,
-                    CKM_WTLS_PRF,
-                    attrs={
-                        CKA_CLASS: CKO_SECRET_KEY,
-                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-                        CKA_VALUE_LEN: 16,
-                        CKA_SENSITIVE: False,
-                        CKA_EXTRACTABLE: True,
-                        CKA_TOKEN: False,
-                    },
-                    mech_param=mech,
+                    seed=bytes(range(32)),
+                    label=b"key expansion",
+                    output_len=16,
                 )
-                try:
-                    assert derived != 0
-                    value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-                    assert isinstance(value, bytes)
-                    assert len(value) == 16, f"Expected 16 bytes, got {len(value)}"
-                finally:
-                    destroy_quietly(rs.raw, rs.sh, derived)
+                assert len(value) == 16, f"Expected 16 bytes, got {len(value)}"
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
@@ -607,15 +600,13 @@ class TestWTLSPRF:
 
         secret = _create_generic_secret(rs, 20)
         try:
-            derived1 = 0
-            derived2 = 0
             try:
-                derived1, val1 = self._derive_prf_value(
+                val1 = self._derive_prf_value(
                     rs,
                     secret,
                     seed=bytes(range(32)),
                 )
-                derived2, val2 = self._derive_prf_value(
+                val2 = self._derive_prf_value(
                     rs,
                     secret,
                     seed=bytes(range(1, 33)),
@@ -625,11 +616,6 @@ class TestWTLSPRF:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
                 raise
-            finally:
-                if derived2:
-                    destroy_quietly(rs.raw, rs.sh, derived2)
-                if derived1:
-                    destroy_quietly(rs.raw, rs.sh, derived1)
         finally:
             destroy_quietly(rs.raw, rs.sh, secret)
 
@@ -641,16 +627,14 @@ class TestWTLSPRF:
 
         secret = _create_generic_secret(rs, 20)
         try:
-            derived1 = 0
-            derived2 = 0
             try:
-                derived1, val1 = self._derive_prf_value(
+                val1 = self._derive_prf_value(
                     rs,
                     secret,
                     seed=bytes(range(32)),
                     label=b"key expansion",
                 )
-                derived2, val2 = self._derive_prf_value(
+                val2 = self._derive_prf_value(
                     rs,
                     secret,
                     seed=bytes(range(32)),
@@ -661,11 +645,6 @@ class TestWTLSPRF:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
                 raise
-            finally:
-                if derived2:
-                    destroy_quietly(rs.raw, rs.sh, derived2)
-                if derived1:
-                    destroy_quietly(rs.raw, rs.sh, derived1)
         finally:
             destroy_quietly(rs.raw, rs.sh, secret)
 
@@ -677,64 +656,25 @@ class TestWTLSPRF:
 
         secret = _create_generic_secret(rs, 20)
         try:
-            derived1 = 0
-            derived2 = 0
             try:
-                mech1 = mech_wtls_prf(
-                    CKM_WTLS_PRF,
-                    digest_mechanism=CKM_SHA256,
+                val1 = _derive_wtls_prf_output(
+                    rs,
+                    secret,
                     seed=bytes(range(32)),
                     label=b"key expansion",
                     output_len=16,
                 )
-                derived1 = derive_key(
-                    rs.raw,
-                    rs.sh,
+                val2 = _derive_wtls_prf_output(
+                    rs,
                     secret,
-                    CKM_WTLS_PRF,
-                    attrs={
-                        CKA_CLASS: CKO_SECRET_KEY,
-                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-                        CKA_VALUE_LEN: 16,
-                        CKA_SENSITIVE: False,
-                        CKA_EXTRACTABLE: True,
-                        CKA_TOKEN: False,
-                    },
-                    mech_param=mech1,
-                )
-                mech2 = mech_wtls_prf(
-                    CKM_WTLS_PRF,
-                    digest_mechanism=CKM_SHA256,
                     seed=bytes(range(32)),
                     label=b"key expansion",
                     output_len=16,
                 )
-                derived2 = derive_key(
-                    rs.raw,
-                    rs.sh,
-                    secret,
-                    CKM_WTLS_PRF,
-                    attrs={
-                        CKA_CLASS: CKO_SECRET_KEY,
-                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-                        CKA_VALUE_LEN: 16,
-                        CKA_SENSITIVE: False,
-                        CKA_EXTRACTABLE: True,
-                        CKA_TOKEN: False,
-                    },
-                    mech_param=mech2,
-                )
-                val1 = read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE])[CKA_VALUE]
-                val2 = read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE])[CKA_VALUE]
                 assert val1 == val2, "CKM_WTLS_PRF must be deterministic for identical inputs"
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
                 raise
-            finally:
-                if derived2:
-                    destroy_quietly(rs.raw, rs.sh, derived2)
-                if derived1:
-                    destroy_quietly(rs.raw, rs.sh, derived1)
         finally:
             destroy_quietly(rs.raw, rs.sh, secret)
