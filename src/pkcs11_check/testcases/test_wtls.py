@@ -514,6 +514,34 @@ class TestWTLSKeyAndMacDerive:
 class TestWTLSPRF:
     """CKM_WTLS_PRF - WTLS pseudo-random function for key material expansion."""
 
+    def _derive_prf_value(self, rs: Any, secret: int, *, seed: bytes) -> tuple[int, bytes]:
+        mech = mech_wtls_prf(
+            CKM_WTLS_PRF,
+            digest_mechanism=CKM_SHA256,
+            seed=seed,
+            label=b"key expansion",
+            output_len=16,
+        )
+        derived = derive_key(
+            rs.raw,
+            rs.sh,
+            secret,
+            CKM_WTLS_PRF,
+            attrs={
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_VALUE_LEN: 16,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
+            },
+            mech_param=mech,
+        )
+        value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+        assert isinstance(value, bytes)
+        assert len(value) == 16, f"Expected 16 bytes, got {len(value)}"
+        return derived, value
+
     def test_mechanism_availability(self, p11_raw_session: Any) -> None:
         """Probe whether CKM_WTLS_PRF is advertised."""
         if not p11_raw_session.has_mechanism("WTLS_PRF"):
@@ -561,6 +589,40 @@ class TestWTLSPRF:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
                 raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, secret)
+
+    def test_prf_seed_affects_output(self, p11_raw_session: Any) -> None:
+        """Changing only the WTLS PRF seed must change the derived output."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("WTLS_PRF"):
+            pytest.skip("CKM_WTLS_PRF not supported")
+
+        secret = _create_generic_secret(rs, 20)
+        try:
+            derived1 = 0
+            derived2 = 0
+            try:
+                derived1, val1 = self._derive_prf_value(
+                    rs,
+                    secret,
+                    seed=bytes(range(32)),
+                )
+                derived2, val2 = self._derive_prf_value(
+                    rs,
+                    secret,
+                    seed=bytes(range(1, 33)),
+                )
+                assert val1 != val2, "WTLS PRF seed change did not affect derived output"
+            except AssertionError as exc:
+                if is_known_error(exc, _WTLS_ERROR_RVS):
+                    pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
+                raise
+            finally:
+                if derived2:
+                    destroy_quietly(rs.raw, rs.sh, derived2)
+                if derived1:
+                    destroy_quietly(rs.raw, rs.sh, derived1)
         finally:
             destroy_quietly(rs.raw, rs.sh, secret)
 

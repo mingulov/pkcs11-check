@@ -17,6 +17,7 @@ def test_gap_analysis_marks_protocol_kdf_semantics_as_dedicated_coverage() -> No
     """SP800-108, TLS12 KDF, and PBKDF2 have dedicated semantic tests."""
     sp800 = _read("src/pkcs11_check/testcases/test_sp800_108_kdf.py")
     tls12 = _read("src/pkcs11_check/testcases/test_tls12.py")
+    wtls = _read("src/pkcs11_check/testcases/test_wtls.py")
     pbkdf2 = _read("src/pkcs11_check/testcases/wycheproof/test_wycheproof_pbkdf2.py")
     doc = GAP_DOC.read_text(encoding="utf-8")
 
@@ -24,11 +25,13 @@ def test_gap_analysis_marks_protocol_kdf_semantics_as_dedicated_coverage() -> No
     assert "assert val == expected" in sp800
     assert "_tls12_prf_sha256" in tls12
     assert "assert value == expected" in tls12
+    assert "test_prf_seed_affects_output" in wtls
     assert 'REQUIRED_MECHANISMS = ["PKCS5_PBKD2"]' in pbkdf2
     assert "assert dk_actual == dk_expected" in pbkdf2
 
     assert "Protocol KDFs are intentionally skipped" not in doc
     assert "Dedicated protocol KDF semantic coverage exists" in doc
+    assert "WTLS PRF seed-sensitivity coverage" in doc
 
 
 def test_gap_analysis_marks_blake2b_keyed_semantics_as_covered() -> None:

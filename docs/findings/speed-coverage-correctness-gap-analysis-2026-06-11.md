@@ -239,7 +239,8 @@ smoke behavior, or covered only by one narrow variation.
    dedicated operational probes. Remaining shallow protocol-KDF work is
    exact-vector expansion and richer negative/tamper coverage for those
    dedicated files, not basic runtime dispatch for the already-covered priority
-   mechanisms.
+   mechanisms. WTLS PRF seed-sensitivity coverage now verifies that changing
+   the explicit `CK_WTLS_PRF_PARAMS.pSeed` input changes the derived output.
 2. Many derive mechanisms still lack runtime dispatch: Camellia/ARIA/SEED
    encrypt-data and any remaining protocol KDF variants not covered by
    dedicated files.
