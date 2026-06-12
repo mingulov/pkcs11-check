@@ -39,7 +39,9 @@ def _session() -> SimpleNamespace:
 def _reader(values: dict[int, object]):  # type: ignore[no-untyped-def]
     """read_attributes stub returning only the requested+present attributes."""
 
-    def _read(_raw: object, _sh: object, _handle: object, attr_list: list[int]) -> dict:
+    def _read(
+        _raw: object, _sh: object, _handle: object, attr_list: list[int]
+    ) -> dict[int, object]:
         return {a: values[a] for a in attr_list if a in values}
 
     return _read

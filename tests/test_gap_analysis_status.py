@@ -283,6 +283,28 @@ def test_gap_analysis_marks_registry_negative_roundtrip_halves_as_added() -> Non
     assert "Registry-driven missing-required-parameter coverage exists" in doc_flat
 
 
+def test_gap_analysis_marks_derived_linked_attribute_invariants_as_added() -> None:
+    """Derived linked-attribute invariant contradictions have Type-D coverage."""
+    invariants = _read("src/pkcs11_check/testcases/test_attribute_invariants.py")
+    guard = _read("tests/test_attribute_invariants_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "TestDerivedAttributeInvariants" in invariants
+    assert "test_never_extractable_when_created_non_extractable" in invariants
+    assert "test_always_sensitive_when_created_sensitive" in invariants
+    assert "CKA_NEVER_EXTRACTABLE on a key created EXTRACTABLE=False" in invariants
+    assert "CKA_ALWAYS_SENSITIVE on a key created SENSITIVE=True" in invariants
+    assert "self-contradiction" in invariants
+
+    assert "test_never_extractable_contradiction_fails" in guard
+    assert "test_always_sensitive_contradiction_fails" in guard
+    assert "test_never_extractable_absent_xfails" in guard
+    assert "test_always_sensitive_absent_xfails" in guard
+
+    assert "Derived linked-attribute invariant coverage exists" in doc_flat
+    assert "Remaining work is linked-attribute self-contradiction expansion" not in doc_flat
+
+
 def test_coverage_plan_does_not_count_ecmqv_as_kea_coverage() -> None:
     """ECMQV and KEA are different mechanisms; ECMQV tests do not cover KEA."""
     ecdh_extended = _read("src/pkcs11_check/testcases/test_ecdh_extended.py")

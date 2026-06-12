@@ -420,10 +420,14 @@ smoke behavior, or covered only by one narrow variation.
     simple key-object derivation shapes: SHA key derivation, concatenate/XOR/
     extract, concatenate-key, and AES-ECB encrypt-data. Registry-driven
     missing-required-parameter coverage exists for advertised encrypt/sign
-    mechanisms whose registry config requires a mechanism parameter. Remaining
-    work is linked-attribute self-contradiction expansion, malformed non-NULL
-    parameter coverage, and deeper derive/wrap/digest/message negative
-    coverage for protocol/asymmetric/custom-parameter families.
+    mechanisms whose registry config requires a mechanism parameter. Derived
+    linked-attribute invariant coverage exists for
+    `CKA_NEVER_EXTRACTABLE`/`CKA_EXTRACTABLE` and
+    `CKA_ALWAYS_SENSITIVE`/`CKA_SENSITIVE` on suite-generated, never-modified
+    keys, with Type-D self-contradictions classified as failures and honest
+    non-support as xfail. Remaining work is broader linked-attribute families,
+    malformed non-NULL parameter coverage, and deeper derive/wrap/digest/message
+    negative coverage for protocol/asymmetric/custom-parameter families.
 
 ### Recommended coverage order
 
@@ -437,9 +441,10 @@ smoke behavior, or covered only by one narrow variation.
    KEY_GEN, and KEY_DERIVE positive semantics are covered.
 4. No remaining generic AEAD wrap parameter gap: ChaCha20-Poly1305 stays
    source-first for wrap/unwrap unless a spec-backed `C_WrapKey` mapping appears.
-5. Continue registry-driven negative tests for linked-attribute invariant
-   families, malformed non-NULL parameter cases, deeper derive custom-parameter
-   cases, and deeper unwrap shape/error cases.
+5. Continue registry-driven negative tests for broader linked-attribute families
+   beyond the current `NEVER_EXTRACTABLE`/`ALWAYS_SENSITIVE` derived invariants,
+   malformed non-NULL parameter cases, deeper derive custom-parameter cases, and
+   deeper unwrap shape/error cases.
 
 ## Correctness and Reporting Findings
 
