@@ -392,6 +392,9 @@ smoke behavior, or covered only by one narrow variation.
    derive mechanisms reject `CKD_NULL` with supplied `pOtherInfo` and
    `CKD_SHA1_KDF_ASN1` without supplied `pOtherInfo` through the shared
    provider-general negative classifier.
+   X9.42 hybrid/MQV malformed-peer-public negative coverage now verifies both
+   extended derive mechanisms reject a one-byte primary peer public value
+   through the same domain/mechanism-parameter classifier.
    X9.42 hybrid/MQV requested-value-length truncation coverage now verifies
    both extended derive mechanisms keep the rightmost bytes when `CKA_VALUE_LEN`
    requests a shorter generic secret.

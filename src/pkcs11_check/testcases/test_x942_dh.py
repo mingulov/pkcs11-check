@@ -707,11 +707,12 @@ def _x942_derive_generic_secret_len(
     )
 
 
-def _x942_extended_other_info_negative(
+def _x942_extended_derive_negative(
     rs: Any,
     *,
     mechanism_name: str,
     build_mech: Callable[[_X942PartyKeys, _X942PartyKeys], PackedMechanism],
+    expected_rvs: tuple[Any, ...],
     label: str,
 ) -> None:
     if not rs.has_mechanism(mechanism_name):
@@ -754,7 +755,7 @@ def _x942_extended_other_info_negative(
             attrs.count,
             byref(derived),
         )
-        classify_negative_rv(rv, _X942_INVALID_OTHER_INFO_RVS, label=label)
+        classify_negative_rv(rv, expected_rvs, label=label)
     finally:
         if derived.value:
             destroy_quietly(rs.raw, rs.sh, derived.value)
@@ -1727,7 +1728,7 @@ class TestX942DHHybridDerive:
 
     def test_hybrid_derive_rejects_ckd_null_other_info(self, p11_raw_session: Any) -> None:
         """CKM_X9_42_DH_HYBRID_DERIVE rejects CKD_NULL with OtherInfo."""
-        _x942_extended_other_info_negative(
+        _x942_extended_derive_negative(
             p11_raw_session,
             mechanism_name="X9_42_DH_HYBRID_DERIVE",
             build_mech=lambda alice, bob: _build_x942_dh2_derive_mech(
@@ -1738,6 +1739,7 @@ class TestX942DHHybridDerive:
                 CKD_NULL,
                 other_info=b"not allowed with CKD_NULL",
             ),
+            expected_rvs=_X942_INVALID_OTHER_INFO_RVS,
             label="CKM_X9_42_DH_HYBRID_DERIVE CKD_NULL with OtherInfo",
         )
 
@@ -1746,7 +1748,7 @@ class TestX942DHHybridDerive:
         p11_raw_session: Any,
     ) -> None:
         """CKM_X9_42_DH_HYBRID_DERIVE rejects ASN.1 KDF without OtherInfo."""
-        _x942_extended_other_info_negative(
+        _x942_extended_derive_negative(
             p11_raw_session,
             mechanism_name="X9_42_DH_HYBRID_DERIVE",
             build_mech=lambda alice, bob: _build_x942_dh2_derive_mech(
@@ -1756,7 +1758,26 @@ class TestX942DHHybridDerive:
                 bob[5],
                 CKD_SHA1_KDF_ASN1,
             ),
+            expected_rvs=_X942_INVALID_OTHER_INFO_RVS,
             label="CKM_X9_42_DH_HYBRID_DERIVE CKD_SHA1_KDF_ASN1 missing OtherInfo",
+        )
+
+    def test_hybrid_derive_rejects_malformed_peer_public_value(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_X9_42_DH_HYBRID_DERIVE rejects malformed peer public data."""
+        _x942_extended_derive_negative(
+            p11_raw_session,
+            mechanism_name="X9_42_DH_HYBRID_DERIVE",
+            build_mech=lambda alice, bob: _build_x942_dh2_derive_mech(
+                b"\x01",
+                alice[3],
+                len(_X942_EXTENDED_ALICE_PRIVATE_2),
+                bob[5],
+            ),
+            expected_rvs=_X942_INVALID_PEER_PUBLIC_RVS,
+            label="CKM_X9_42_DH_HYBRID_DERIVE malformed peer public value",
         )
 
 
@@ -2081,7 +2102,7 @@ class TestX942MQVDerive:
 
     def test_mqv_derive_rejects_ckd_null_other_info(self, p11_raw_session: Any) -> None:
         """CKM_X9_42_MQV_DERIVE rejects CKD_NULL with OtherInfo."""
-        _x942_extended_other_info_negative(
+        _x942_extended_derive_negative(
             p11_raw_session,
             mechanism_name="X9_42_MQV_DERIVE",
             build_mech=lambda alice, bob: _build_x942_mqv_derive_mech(
@@ -2093,6 +2114,7 @@ class TestX942MQVDerive:
                 CKD_NULL,
                 other_info=b"not allowed with CKD_NULL",
             ),
+            expected_rvs=_X942_INVALID_OTHER_INFO_RVS,
             label="CKM_X9_42_MQV_DERIVE CKD_NULL with OtherInfo",
         )
 
@@ -2101,7 +2123,7 @@ class TestX942MQVDerive:
         p11_raw_session: Any,
     ) -> None:
         """CKM_X9_42_MQV_DERIVE rejects ASN.1 KDF without OtherInfo."""
-        _x942_extended_other_info_negative(
+        _x942_extended_derive_negative(
             p11_raw_session,
             mechanism_name="X9_42_MQV_DERIVE",
             build_mech=lambda alice, bob: _build_x942_mqv_derive_mech(
@@ -2112,5 +2134,25 @@ class TestX942MQVDerive:
                 alice[2],
                 CKD_SHA1_KDF_ASN1,
             ),
+            expected_rvs=_X942_INVALID_OTHER_INFO_RVS,
             label="CKM_X9_42_MQV_DERIVE CKD_SHA1_KDF_ASN1 missing OtherInfo",
+        )
+
+    def test_mqv_derive_rejects_malformed_peer_public_value(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_X9_42_MQV_DERIVE rejects malformed peer public data."""
+        _x942_extended_derive_negative(
+            p11_raw_session,
+            mechanism_name="X9_42_MQV_DERIVE",
+            build_mech=lambda alice, bob: _build_x942_mqv_derive_mech(
+                b"\x01",
+                alice[3],
+                len(_X942_EXTENDED_ALICE_PRIVATE_2),
+                bob[5],
+                alice[2],
+            ),
+            expected_rvs=_X942_INVALID_PEER_PUBLIC_RVS,
+            label="CKM_X9_42_MQV_DERIVE malformed peer public value",
         )

@@ -1025,6 +1025,19 @@ def test_gap_analysis_marks_x942_hybrid_mqv_other_info_negative_rules_as_added()
     assert "X9.42 hybrid/MQV OtherInfo negative coverage" in doc_flat
 
 
+def test_gap_analysis_marks_x942_hybrid_mqv_malformed_peer_negative_as_added() -> None:
+    """X9.42 hybrid/MQV derive rejects malformed peer public values."""
+    x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")
+    guard = _read("tests/test_x942_dh_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_hybrid_derive_rejects_malformed_peer_public_value" in x942
+    assert "test_mqv_derive_rejects_malformed_peer_public_value" in x942
+    assert "test_x942_extended_malformed_peer_public_negative_uses_typed_params" in guard
+
+    assert "X9.42 hybrid/MQV malformed-peer-public negative coverage" in doc_flat
+
+
 def test_gap_analysis_marks_regional_cipher_encrypt_data_dispatch_as_added() -> None:
     """Camellia/ARIA/SEED encrypt-data derive dispatch is no longer a gap."""
     derive = _read("src/pkcs11_check/testcases/test_mech_derive.py")
