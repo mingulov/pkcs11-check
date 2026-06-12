@@ -15,6 +15,7 @@ OASIS spec: wtls.md
 from __future__ import annotations
 
 import ctypes
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -26,11 +27,13 @@ from pkcs11_check.raw.pack import (
     mech_wtls_master_key_derive,
     mech_wtls_prf,
     template,
+    template_ptr_count,
 )
 from pkcs11_check.raw.recipes import (
     create_object,
     derive_key,
     destroy_quietly,
+    pack_attrs,
     read_attributes,
 )
 from pkcs11_check.raw.rv import expect_rv
@@ -93,6 +96,25 @@ def _create_generic_secret(rs: Any, size: int = 48) -> int:
             CKA_EXTRACTABLE: True,
         },
     )
+
+
+def _derive_key_material_to_params(
+    rs: Any,
+    base_key: int,
+    attrs: Mapping[Any, Any],
+    mech: Any,
+) -> None:
+    """Run WTLS key-material derive, whose output handles live in mechanism params."""
+    packed = pack_attrs(attrs)
+    tmpl = template(*packed)
+    rv = rs.raw.C_DeriveKey(
+        rs.sh,
+        mech.byref(),
+        base_key,
+        *template_ptr_count(tmpl),
+        None,
+    )
+    expect_rv(rv, CKR_OK)
 
 
 def _derive_wtls_prf_output(
@@ -395,29 +417,25 @@ class TestWTLSKeyAndMacDerive:
                 iv_size_bits=64,
             )
             try:
-                derived = derive_key(
-                    rs.raw,
-                    rs.sh,
+                _derive_key_material_to_params(
+                    rs,
                     master,
-                    CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE,
-                    attrs={
+                    {
                         CKA_CLASS: CKO_SECRET_KEY,
                         CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                         CKA_SENSITIVE: False,
                         CKA_EXTRACTABLE: True,
                         CKA_TOKEN: False,
                     },
-                    mech_param=mech,
+                    mech,
                 )
                 try:
                     out = mech.key_mat_out
                     assert out.hKey != 0
                     assert any(mech.buffer_bytes("iv"))
-                    assert derived != 0
                 finally:
                     out = mech.key_mat_out
                     destroy_returned_handles(rs, out.hMacSecret, out.hKey)
-                    destroy_quietly(rs.raw, rs.sh, derived)
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE not operational: {exc}")
@@ -441,29 +459,25 @@ class TestWTLSKeyAndMacDerive:
                 iv_size_bits=64,
             )
             try:
-                derived = derive_key(
-                    rs.raw,
-                    rs.sh,
+                _derive_key_material_to_params(
+                    rs,
                     master,
-                    CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE,
-                    attrs={
+                    {
                         CKA_CLASS: CKO_SECRET_KEY,
                         CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                         CKA_SENSITIVE: False,
                         CKA_EXTRACTABLE: True,
                         CKA_TOKEN: False,
                     },
-                    mech_param=mech,
+                    mech,
                 )
                 try:
                     out = mech.key_mat_out
                     assert out.hKey != 0
                     assert any(mech.buffer_bytes("iv"))
-                    assert derived != 0
                 finally:
                     out = mech.key_mat_out
                     destroy_returned_handles(rs, out.hMacSecret, out.hKey)
-                    destroy_quietly(rs.raw, rs.sh, derived)
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE not operational: {exc}")
@@ -481,8 +495,8 @@ class TestWTLSKeyAndMacDerive:
 
         master = _create_generic_secret(rs, 20)
         try:
-            server_derived = 0
-            client_derived = 0
+            srv_out: Any | None = None
+            cli_out: Any | None = None
             try:
                 srv_mech = mech_wtls_key_mat(
                     CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE,
@@ -490,42 +504,40 @@ class TestWTLSKeyAndMacDerive:
                     client_random=_CLIENT_RANDOM,
                     server_random=_SERVER_RANDOM,
                 )
-                server_derived = derive_key(
-                    rs.raw,
-                    rs.sh,
+                _derive_key_material_to_params(
+                    rs,
                     master,
-                    CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE,
-                    attrs={
+                    {
                         CKA_CLASS: CKO_SECRET_KEY,
                         CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                         CKA_SENSITIVE: False,
                         CKA_EXTRACTABLE: True,
                         CKA_TOKEN: False,
                     },
-                    mech_param=srv_mech,
+                    srv_mech,
                 )
+                srv_out = srv_mech.key_mat_out
                 cli_mech = mech_wtls_key_mat(
                     CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE,
                     digest_mechanism=CKM_SHA256,
                     client_random=_CLIENT_RANDOM,
                     server_random=_SERVER_RANDOM,
                 )
-                client_derived = derive_key(
-                    rs.raw,
-                    rs.sh,
+                _derive_key_material_to_params(
+                    rs,
                     master,
-                    CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE,
-                    attrs={
+                    {
                         CKA_CLASS: CKO_SECRET_KEY,
                         CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                         CKA_SENSITIVE: False,
                         CKA_EXTRACTABLE: True,
                         CKA_TOKEN: False,
                     },
-                    mech_param=cli_mech,
+                    cli_mech,
                 )
-                srv_val = read_attributes(rs.raw, rs.sh, server_derived, [CKA_VALUE])[CKA_VALUE]
-                cli_val = read_attributes(rs.raw, rs.sh, client_derived, [CKA_VALUE])[CKA_VALUE]
+                cli_out = cli_mech.key_mat_out
+                srv_val = read_attributes(rs.raw, rs.sh, srv_out.hKey, [CKA_VALUE])[CKA_VALUE]
+                cli_val = read_attributes(rs.raw, rs.sh, cli_out.hKey, [CKA_VALUE])[CKA_VALUE]
                 assert srv_val != cli_val, (
                     "Server and client key derivation must produce different keys"
                 )
@@ -534,10 +546,10 @@ class TestWTLSKeyAndMacDerive:
                     pytest.xfail(f"WTLS key-and-MAC derivation not operational: {exc}")
                 raise
             finally:
-                if client_derived:
-                    destroy_quietly(rs.raw, rs.sh, client_derived)
-                if server_derived:
-                    destroy_quietly(rs.raw, rs.sh, server_derived)
+                if cli_out is not None:
+                    destroy_returned_handles(rs, cli_out.hMacSecret, cli_out.hKey)
+                if srv_out is not None:
+                    destroy_returned_handles(rs, srv_out.hMacSecret, srv_out.hKey)
         finally:
             destroy_quietly(rs.raw, rs.sh, master)
 
