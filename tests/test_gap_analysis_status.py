@@ -111,6 +111,18 @@ def test_gap_analysis_marks_dsa_parameter_variants_as_covered() -> None:
     assert "DSA probabilistic/Shawe-Taylor/FIPS-G parameter variants" in doc
 
 
+def test_gap_analysis_marks_raw_dsa_wrong_length_negative_as_hard_fail() -> None:
+    """Raw CKM_DSA wrong-length digest acceptance is a hard failure."""
+    dsa = _read("src/pkcs11_check/testcases/test_dsa_complete.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "CKM_DSA wrong-length digest" in dsa
+    assert "classify_negative_rv(" in dsa
+    assert "accepted wrong-length digest for CKM_DSA" not in dsa
+
+    assert "Raw CKM_DSA wrong-length digest acceptance" in doc
+
+
 def test_gap_analysis_marks_block_cbc_pad_vectors_as_added() -> None:
     """DES-family, Camellia, ARIA, and SEED CBC_PAD now have KAT vector links."""
     des_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_des.py")

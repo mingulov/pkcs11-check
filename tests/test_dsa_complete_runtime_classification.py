@@ -14,6 +14,7 @@ from pkcs11_check.raw.types_std import (
     CKM_DSA_PROBABILISTIC_PARAMETER_GEN,
     CKM_SHA256,
     CKR_GENERAL_ERROR,
+    CKR_OK,
 )
 from pkcs11_check.testcases import test_dsa_complete
 
@@ -87,3 +88,29 @@ def test_dsa_keypair_from_generated_params_runtime_reject_is_xfail(
 
     with pytest.raises(pytest.xfail.Exception, match="DSA_KEY_PAIR_GEN advertised"):
         test_dsa_complete.TestDSAParameterGen().test_parameter_gen_and_keypair(rs)
+
+
+def test_raw_dsa_wrong_length_digest_acceptance_is_hard_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _sign_init(*_args: Any) -> int:
+        return int(CKR_OK)
+
+    def _sign(*_args: Any) -> int:
+        out_len = _args[4]
+        out_len._obj.value = 40
+        return int(CKR_OK)
+
+    rs = SimpleNamespace(
+        raw=SimpleNamespace(C_SignInit=_sign_init, C_Sign=_sign),
+        sh=1,
+        has_mechanism=lambda name: name == "DSA",
+    )
+    monkeypatch.setattr(test_dsa_complete, "_generate_dsa_keypair", lambda _rs: (10, 11, 12))
+    monkeypatch.setattr(test_dsa_complete, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(BaseException) as excinfo:
+        test_dsa_complete.TestDSARaw().test_raw_dsa_wrong_length_digest(rs)
+
+    assert type(excinfo.value) is pytest.fail.Exception
+    assert "CKM_DSA wrong-length digest: accepted invalid" in str(excinfo.value)

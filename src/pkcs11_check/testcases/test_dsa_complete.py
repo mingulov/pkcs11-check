@@ -33,7 +33,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
-from pkcs11_check.raw.rv import ckr_name, expect_rv
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CK_BYTE,
     CK_DSA_PARAMETER_GEN_PARAM,
@@ -78,7 +78,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 
 # Verification failure return values
 _VERIFY_FAIL_RVS = {
@@ -444,21 +448,11 @@ class TestDSARaw:
                     byref(out_len),
                 )
 
-            rv_int = rv
-            if rv_int == CKR_OK:
-                # Module accepted wrong-length digest - non-standard
-                pytest.xfail(
-                    "Module accepted wrong-length digest for CKM_DSA - "
-                    "spec requires CKR_DATA_LEN_RANGE"
-                )
-            # Any rejection is acceptable
-            assert rv_int in {
-                CKR_DATA_LEN_RANGE,
-                CKR_MECHANISM_INVALID,
-                CKR_FUNCTION_FAILED,
-                CKR_ARGUMENTS_BAD,
-                CKR_GENERAL_ERROR,
-            }, f"Unexpected CKR: {ckr_name(rv_int)}"
+            classify_negative_rv(
+                rv,
+                (CKR_DATA_LEN_RANGE,),
+                label="CKM_DSA wrong-length digest",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

@@ -265,7 +265,10 @@ smoke behavior, or covered only by one narrow variation.
    not the same as missing product coverage. Remaining work is broader
    exact-vector, negative, and provider-artifact evidence. DSA probabilistic/Shawe-Taylor/FIPS-G parameter variants
    are now covered in `test_dsa_complete.py` for the
-   OASIS-defined p/q and g-generation outputs.
+   OASIS-defined p/q and g-generation outputs. Raw CKM_DSA wrong-length digest acceptance
+   is now a hard failure via the shared negative classifier; the spec-correct
+   rejection remains `CKR_DATA_LEN_RANGE`, and other clean rejects are recorded
+   as xfail deviations.
 4. Message API coverage is representative, not registry-driven. Scenario
    selection does not yet cover `CKF_MESSAGE_*` flags generically.
 5. Hybrid and AEAD wrap coverage has explicit holes: RSA-AES key wrap,
