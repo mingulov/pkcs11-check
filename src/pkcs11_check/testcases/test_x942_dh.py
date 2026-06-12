@@ -64,6 +64,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKD_NULL,
     CKD_SHA1_KDF_ASN1,
+    CKD_SHA1_KDF_CONCATENATE,
     CKK_AES,
     CKK_GENERIC_SECRET,
     CKK_X9_42_DH,
@@ -1133,6 +1134,58 @@ class TestX942DHDerive:
             )
         finally:
             for derived in derived_keys:
+                destroy_quietly(rs.raw, rs.sh, derived)
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_x942_dh_derive_concatenate_other_info(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_X9_42_DH_DERIVE CKD_SHA1_KDF_CONCATENATE with OtherInfo derives AES."""
+        rs = p11_raw_session
+        _skip_no_x942_derive(rs)
+
+        priv = 0
+        derived = 0
+        try:
+            priv = _x942_setup_or_xfail(
+                lambda: _import_x942_private_key(
+                    rs.raw,
+                    rs.sh,
+                    _X942_RFC5114_ALICE_PRIVATE,
+                ),
+                "CKM_X9_42_DH_DERIVE CKD_SHA1_KDF_CONCATENATE setup",
+            )
+            derived = _x942_derive_or_xfail(
+                lambda: derive_key(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_X9_42_DH_DERIVE,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_VALUE_LEN: 16,
+                        CKA_ENCRYPT: True,
+                        CKA_DECRYPT: True,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
+                    },
+                    mech_param=_build_x942_derive_mech(
+                        _X942_RFC5114_BOB_PUBLIC,
+                        CKD_SHA1_KDF_CONCATENATE,
+                        other_info=b"pkcs11-check x9.42 other info",
+                    ),
+                ),
+                "CKM_X9_42_DH_DERIVE CKD_SHA1_KDF_CONCATENATE with OtherInfo",
+            )
+            plaintext = b"x9.42 concat kdf"
+            ciphertext = encrypt_single(rs.raw, rs.sh, derived, CKM_AES_ECB, plaintext)
+            assert decrypt_single(rs.raw, rs.sh, derived, CKM_AES_ECB, ciphertext) == plaintext
+        finally:
+            if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
             if priv:
                 destroy_quietly(rs.raw, rs.sh, priv)

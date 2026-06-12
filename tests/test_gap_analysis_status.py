@@ -921,6 +921,20 @@ def test_gap_analysis_marks_x942_value_len_truncation_as_added() -> None:
     assert "X9.42 DH requested-value-length truncation coverage" in doc_flat
 
 
+def test_gap_analysis_marks_x942_concatenate_other_info_as_added() -> None:
+    """X9.42 DH CKD_SHA1_KDF_CONCATENATE carries optional OtherInfo."""
+    x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")
+    guard = _read("tests/test_x942_dh_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "CKD_SHA1_KDF_CONCATENATE" in x942
+    assert "test_x942_dh_derive_concatenate_other_info" in x942
+    assert "CKM_X9_42_DH_DERIVE CKD_SHA1_KDF_CONCATENATE with OtherInfo" in x942
+    assert "test_x942_concatenate_kdf_other_info_uses_typed_params" in guard
+
+    assert "X9.42 DH CKD_SHA1_KDF_CONCATENATE OtherInfo coverage" in doc_flat
+
+
 def test_gap_analysis_marks_x942_hybrid_mqv_derive_as_exercised() -> None:
     """X9.42 hybrid/MQV derive coverage reaches typed C_DeriveKey calls."""
     x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")

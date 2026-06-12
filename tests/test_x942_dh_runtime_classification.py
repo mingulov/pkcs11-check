@@ -9,15 +9,20 @@ import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CK_X9_42_DH1_DERIVE_PARAMS,
     CK_X9_42_DH2_DERIVE_PARAMS,
     CK_X9_42_MQV_DERIVE_PARAMS,
     CKA_BASE,
+    CKA_KEY_TYPE,
     CKA_PRIME,
     CKA_PRIME_BITS,
     CKA_SUBPRIME,
     CKA_SUBPRIME_BITS,
     CKA_VALUE,
     CKA_VALUE_LEN,
+    CKD_SHA1_KDF_CONCATENATE,
+    CKK_AES,
+    CKM_X9_42_DH_DERIVE,
     CKM_X9_42_DH_HYBRID_DERIVE,
     CKM_X9_42_MQV_DERIVE,
     CKR_GENERAL_ERROR,
@@ -114,6 +119,48 @@ def test_x942_rfc5114_exact_vector_constant_matches_modexp() -> None:
         "big",
     )
     assert full_secret[-32:] == test_x942_dh._X942_RFC5114_EXPECTED_SECRET_32
+
+
+def test_x942_concatenate_kdf_other_info_uses_typed_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    derive_calls: list[dict[str, Any]] = []
+    encrypted: list[bytes] = []
+
+    def _derive_key(
+        _raw: Any,
+        _sh: int,
+        _base_key: int,
+        mechanism: int,
+        *,
+        attrs: dict[int, Any],
+        mech_param: Any,
+    ) -> int:
+        assert mechanism == CKM_X9_42_DH_DERIVE
+        assert attrs[CKA_KEY_TYPE] == CKK_AES
+        assert isinstance(mech_param.params, CK_X9_42_DH1_DERIVE_PARAMS)
+        params = mech_param.params
+        assert params.kdf == CKD_SHA1_KDF_CONCATENATE
+        assert params.ulOtherInfoLen > 0
+        assert params.pOtherInfo is not None
+        derive_calls.append({"value_len": attrs[CKA_VALUE_LEN]})
+        return 77
+
+    def _encrypt(_raw: Any, _sh: int, _key: int, _mechanism: int, plaintext: bytes) -> bytes:
+        encrypted.append(plaintext)
+        return b"ciphertext"
+
+    rs = _session_with_mechanisms("X9_42_DH_DERIVE")
+    monkeypatch.setattr(test_x942_dh, "_import_x942_private_key", lambda *_args: 55)
+    monkeypatch.setattr(test_x942_dh, "derive_key", _derive_key)
+    monkeypatch.setattr(test_x942_dh, "encrypt_single", _encrypt)
+    monkeypatch.setattr(test_x942_dh, "decrypt_single", lambda *_args: encrypted[-1])
+    monkeypatch.setattr(test_x942_dh, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(pytest, "skip", lambda message: pytest.fail(f"unexpected skip: {message}"))
+
+    test_x942_dh.TestX942DHDerive().test_x942_dh_derive_concatenate_other_info(rs)
+
+    assert derive_calls == [{"value_len": 16}]
 
 
 @pytest.mark.parametrize(
