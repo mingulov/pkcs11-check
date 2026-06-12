@@ -117,6 +117,19 @@ def test_gap_analysis_marks_block_mac_general_vectors_as_added() -> None:
     assert "DES, 3DES, Camellia, ARIA, and SEED MAC_GENERAL" in doc
 
 
+def test_gap_analysis_marks_des_family_fixed_mac_vectors_as_added() -> None:
+    """DES and 3DES fixed-output MACs now have half-block KAT vector links."""
+    des_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_des.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    for vector_file in ("des_mac.json", "des3_mac.json"):
+        assert vector_file in des_registry
+        assert _read(f"src/pkcs11_check/testcases/data/mechanism_vectors/{vector_file}")
+
+    assert "DES and 3DES fixed-output MAC" in doc
+    assert "DES/DES3 fixed-output MAC, RC2/RC5/CAST/CAST3/IDEA fixed-output MAC" not in doc
+
+
 def test_gap_analysis_marks_half_block_fixed_mac_vectors_as_added() -> None:
     """Camellia, ARIA, and SEED fixed-output MACs now have half-block KAT vectors."""
     cipher_registry = _read("src/pkcs11_check/testcases/mechanism_registry/_ciphers.py")

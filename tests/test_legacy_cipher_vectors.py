@@ -20,8 +20,10 @@ from pkcs11_check.raw.types_std import (
     CKM_DES3_CBC_PAD,
     CKM_DES3_CMAC,
     CKM_DES3_CMAC_GENERAL,
+    CKM_DES3_MAC,
     CKM_DES3_MAC_GENERAL,
     CKM_DES_CBC_PAD,
+    CKM_DES_MAC,
     CKM_DES_MAC_GENERAL,
     CKM_IDEA_CBC,
     CKM_IDEA_CBC_PAD,
@@ -497,6 +499,49 @@ def test_block_cipher_mac_general_mechanisms_have_kat_vectors() -> None:
             assert vec["mac_hex"] == expected_mac
             assert vec["params"]["mac_len"] == mac_len
             assert "one-block CBC-MAC with zero IV equals" in vec["params"]["source"]
+
+
+def test_des_family_fixed_mac_mechanisms_have_half_block_kat_vectors() -> None:
+    expected = {
+        int(CKM_DES_MAC): (
+            "des_mac.json",
+            "CKM_DES_MAC",
+            "ae7a5bff9a66ccd4",
+            "6614a40c7202bad0",
+            "795b284f",
+        ),
+        int(CKM_DES3_MAC): (
+            "des3_mac.json",
+            "CKM_DES3_MAC",
+            "96dea09d832e4609742ccd800a8958caecdb70730c27d8b1",
+            "0cb1c9965ea202b0",
+            "2bc46d1d",
+        ),
+    }
+
+    for mech_id, (
+        vector_file,
+        mechanism_name,
+        key_hex,
+        input_hex,
+        expected_mac,
+    ) in expected.items():
+        config = MECHANISM_REGISTRY[mech_id]
+        assert config.vector_file == vector_file
+
+        vectors = load_positive_vectors(vector_file)
+        assert vectors, f"{vector_file} must contain positive vectors"
+        for vec in vectors:
+            assert vec["type"] == "positive"
+            assert vec["mechanism_name"] == mechanism_name
+            assert vec["key_hex"] == key_hex
+            assert vec["input_hex"] == input_hex
+            assert vec["mac_hex"] == expected_mac
+            assert len(bytes.fromhex(vec["mac_hex"])) == 4
+            assert "FIPS PUB 113" in vec["params"]["source"]
+            assert "special case" in vec["params"]["source"]
+            assert "half the block size" in vec["params"]["source"]
+            assert "mac_len" not in vec["params"]
 
 
 def test_half_block_cipher_mac_mechanisms_have_kat_vectors() -> None:

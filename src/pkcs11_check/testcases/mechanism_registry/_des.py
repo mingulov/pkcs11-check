@@ -117,6 +117,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(64,),
         keygen_recipe=_fixed,
         expected_flags=_DES_SIG,
+        vector_file="des_mac.json",
         notes="DES-MAC: CBC-MAC with fixed output length",
     )
 
@@ -282,6 +283,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_DES3_SIZES,
         keygen_recipe=_fixed,
         expected_flags=_DES_SIG,
+        vector_file="des3_mac.json",
         notes="3DES-MAC: CBC-MAC with fixed output length",
     )
 
