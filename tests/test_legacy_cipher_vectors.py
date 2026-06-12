@@ -61,7 +61,10 @@ from pkcs11_check.raw.types_std import (
     CKM_SEED_CBC_PAD,
     CKM_SEED_MAC,
     CKM_SEED_MAC_GENERAL,
+    CKM_SKIPJACK_CBC64,
+    CKM_SKIPJACK_CFB64,
     CKM_SKIPJACK_ECB64,
+    CKM_SKIPJACK_OFB64,
     CKM_TWOFISH_CBC,
     CKM_TWOFISH_CBC_PAD,
 )
@@ -591,6 +594,54 @@ def test_skipjack_ecb64_mechanism_has_sp800_17_kat_vectors() -> None:
             "https://nvlpubs.nist.gov/nistpubs/Legacy/SP/"
             "nistspecialpublication800-17.pdf"
         )
+
+
+def test_skipjack_iv_modes_have_sp800_17_kat_vectors() -> None:
+    expected = {
+        int(CKM_SKIPJACK_CBC64): (
+            "skipjack_cbc64.json",
+            "CKM_SKIPJACK_CBC64",
+            "0000000000000000",
+            "4000000000000000",
+        ),
+        int(CKM_SKIPJACK_OFB64): (
+            "skipjack_ofb64.json",
+            "CKM_SKIPJACK_OFB64",
+            "4000000000000000",
+            "0000000000000000",
+        ),
+        int(CKM_SKIPJACK_CFB64): (
+            "skipjack_cfb64.json",
+            "CKM_SKIPJACK_CFB64",
+            "4000000000000000",
+            "0000000000000000",
+        ),
+    }
+
+    for mech_id, (vector_file, mechanism_name, iv_hex, plaintext_hex) in expected.items():
+        config = MECHANISM_REGISTRY[mech_id]
+        assert config.vector_file == vector_file
+
+        vectors = load_positive_vectors(vector_file)
+        assert vectors, f"{vector_file} must contain positive vectors"
+        for vec in vectors:
+            assert vec["type"] == "positive"
+            assert vec["mechanism_name"] == mechanism_name
+            assert vec["key_type"] == "symmetric"
+            assert vec["key_bits"] == 80
+            assert vec["key_hex"] == "00000000000000000000"
+            assert vec["params"]["iv_hex"] == iv_hex
+            assert vec["params"]["source"].startswith("NIST SP 800-17")
+            assert vec["params"]["source_url"] == (
+                "https://nvlpubs.nist.gov/nistpubs/Legacy/SP/"
+                "nistspecialpublication800-17.pdf"
+            )
+            assert vec["plaintext_hex"] == plaintext_hex
+            assert vec["ciphertext_hex"] == "cc6843598c732bbe"
+
+            params = build_params_from_vector(mech_id, config.param_recipe, vec)
+            actual_iv = ctypes.string_at(params.ck.pParameter, params.ck.ulParameterLen)
+            assert actual_iv == bytes.fromhex(iv_hex)
 
 
 def test_blowfish_cbc_encrypt_mechanism_has_schneier_kat_vector() -> None:

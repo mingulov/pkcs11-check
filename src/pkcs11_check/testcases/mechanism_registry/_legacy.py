@@ -765,6 +765,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
+        vector_file="skipjack_cbc64.json",
         notes="Skipjack-CBC64: 8-byte block CBC mode, requires 8-byte IV",
     )
 
@@ -779,6 +780,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
+        vector_file="skipjack_ofb64.json",
         notes="Skipjack-OFB64: 64-bit output feedback stream mode",
     )
 
@@ -793,6 +795,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
+        vector_file="skipjack_cfb64.json",
         notes="Skipjack-CFB64: 64-bit cipher feedback stream mode",
     )
 
