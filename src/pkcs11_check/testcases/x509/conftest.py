@@ -326,6 +326,9 @@ def load_limbo_testcases() -> list[dict[str, Any]]:
     data = load_json_cached(_LIMBO_FILE)
 
     cases: list[dict[str, Any]] = data.get("testcases", [])
+    for tc in cases:
+        tc["_source"] = "x509:limbo.json"
+        tc["_vector_id"] = f"id={tc.get('id')}"
     return cases
 
 
