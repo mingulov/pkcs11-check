@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.types_std import CKR_BUFFER_TOO_SMALL, CKR_OK
 from pkcs11_check.testcases._subprocess_preamble import (
     _P11CHECK_PIN_ENV,
@@ -171,15 +172,32 @@ def classify_undersized_digest_outcome(overwritten: int, ckr_ok: bool) -> None:
             ComplianceLevel.CRITICAL,
             reference="PKCS#11 v3.1 Sec.5.10.2",
         )
-        pytest.fail(
-            f"SECURITY: C_Digest wrote {overwritten} bytes past a declared 1-byte output "
-            f"buffer (out-of-bounds write)"
+        # A real out-of-bounds write past the declared output buffer: the module
+        # ignored the declared size it was given -> self-contradiction.
+        classify(
+            "self_contradiction",
+            kind="policy",
+            label="C_Digest:undersized-output-buffer",
+            operation="C_Digest",
+            spec_ref="PKCS#11 v3.1 Sec.5.10.2",
+            summary=(
+                f"SECURITY: C_Digest wrote {overwritten} bytes past a declared 1-byte output "
+                f"buffer (out-of-bounds write)"
+            ),
         )
     if ckr_ok:
-        pytest.xfail(
-            "C_Digest returned CKR_OK for a 1-byte output buffer without writing past it "
-            "(PKCS#11 §5.10.2 expects CKR_BUFFER_TOO_SMALL; clean return-code deviation, "
-            "no buffer overflow)"
+        # CKR_OK with no overflow: a benign return-code deviation (should have
+        # returned CKR_BUFFER_TOO_SMALL) with no security impact -> xfail.
+        classify(
+            "honest_deviation",
+            label="C_Digest:undersized-output-buffer",
+            operation="C_Digest",
+            spec_ref="PKCS#11 v3.1 Sec.5.10.2",
+            summary=(
+                "C_Digest returned CKR_OK for a 1-byte output buffer without writing past it "
+                "(PKCS#11 §5.10.2 expects CKR_BUFFER_TOO_SMALL; clean return-code deviation, "
+                "no buffer overflow)"
+            ),
         )
 
 
@@ -1038,9 +1056,16 @@ finally:
         if rv == CKR_BUFFER_TOO_SMALL:
             retry_usable = _parse_output_value(out, "RETRY_USABLE:")
             if retry_usable == 0:
-                pytest.xfail(
-                    "C_DecryptUpdate returned CKR_BUFFER_TOO_SMALL but did not report "
-                    "a usable retry length"
+                # Reported CKR_BUFFER_TOO_SMALL but no usable retry length: a clean
+                # sizing-contract deviation, no break -> xfail.
+                classify(
+                    "honest_deviation",
+                    label="C_DecryptUpdate:undersized-output-buffer",
+                    operation="C_DecryptUpdate",
+                    summary=(
+                        "C_DecryptUpdate returned CKR_BUFFER_TOO_SMALL but did not report "
+                        "a usable retry length"
+                    ),
                 )
             retry_rv = _parse_output_value(out, "RETRY_CKR:")
             final_rv = _parse_output_value(out, "FINAL_CKR:")
@@ -1219,9 +1244,16 @@ finally:
         if rv == CKR_BUFFER_TOO_SMALL:
             retry_usable = _parse_output_value(out, "RETRY_USABLE:")
             if retry_usable == 0:
-                pytest.xfail(
-                    "C_EncryptFinal returned CKR_BUFFER_TOO_SMALL but did not report "
-                    "a usable retry length"
+                # Reported CKR_BUFFER_TOO_SMALL but no usable retry length: a clean
+                # sizing-contract deviation, no break -> xfail.
+                classify(
+                    "honest_deviation",
+                    label="C_EncryptFinal:undersized-output-buffer",
+                    operation="C_EncryptFinal",
+                    summary=(
+                        "C_EncryptFinal returned CKR_BUFFER_TOO_SMALL but did not report "
+                        "a usable retry length"
+                    ),
                 )
             retry_rv = _parse_output_value(out, "RETRY_CKR:")
             retry_match = _parse_output_value(out, "RETRY_MATCH:")

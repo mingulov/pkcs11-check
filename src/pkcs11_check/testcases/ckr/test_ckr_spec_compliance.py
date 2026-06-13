@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_bool,
     attr_bytes,
@@ -90,7 +91,14 @@ class TestCKRTemplateCompliance:
         rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, handle.value)
-            pytest.fail("Should have raised for missing CKA_CLASS")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_CreateObject:missing-class",
+                operation="C_CreateObject",
+                actual=rv,
+                summary="Should have raised for missing CKA_CLASS",
+            )
         _check_ckr("C_CreateObject(missing CLASS)", CKR_TEMPLATE_INCOMPLETE, rv)
 
     def test_invalid_class_returns_attribute_value_invalid(self, p11_raw_session: Any) -> None:
@@ -104,7 +112,14 @@ class TestCKRTemplateCompliance:
         rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, handle.value)
-            pytest.fail("Should have raised for invalid CLASS")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_CreateObject:invalid-class-value",
+                operation="C_CreateObject",
+                actual=rv,
+                summary="Should have raised for invalid CLASS",
+            )
         _check_ckr("C_CreateObject(bad CLASS)", CKR_ATTRIBUTE_VALUE_INVALID, rv)
 
     def test_rsa_zero_size_returns_attribute_value_invalid(self, p11_raw_session: Any) -> None:
@@ -128,7 +143,15 @@ class TestCKRTemplateCompliance:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, pub.value)
             destroy_quietly(rs.raw, rs.sh, priv.value)
-            pytest.fail("Should have raised for RSA size 0")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_GenerateKeyPair:RSA-size-zero",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                actual=rv,
+                summary="Should have raised for RSA size 0",
+            )
         _check_ckr("C_GenerateKeyPair(RSA, 0)", CKR_ATTRIBUTE_VALUE_INVALID, rv)
 
 
@@ -143,7 +166,14 @@ class TestCKRMechanismCompliance:
             mech = mech_simple(CKM_SHA256)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             if rv == CKR_OK:
-                pytest.fail("SHA-256 encrypt should fail")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_EncryptInit:digest-mechanism",
+                    operation="C_EncryptInit",
+                    actual=rv,
+                    summary="SHA-256 encrypt should fail",
+                )
             _check_ckr("C_EncryptInit(SHA256)", CKR_MECHANISM_INVALID, rv)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -162,7 +192,15 @@ class TestCKRMechanismCompliance:
             out_buf = (ctypes.c_ubyte * 32)()
             rv = rs.raw.C_Encrypt(rs.sh, data, 15, out_buf, byref(out_len))
             if rv == CKR_OK:
-                pytest.fail("Non-aligned ECB should fail")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="C_Encrypt:AES-ECB-unaligned-data",
+                    operation="C_Encrypt",
+                    mechanism="CKM_AES_ECB",
+                    actual=rv,
+                    summary="Non-aligned ECB should fail",
+                )
             _check_ckr("C_Encrypt(AES_ECB, 15 bytes)", CKR_DATA_LEN_RANGE, rv)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -252,7 +290,15 @@ class TestCKRVerifyCompliance:
             # CKR_DEVICE_ERROR is a clean non-spec reject -> classified as a noted
             # deviation (xfail) by _check_ckr; no provider-specific pre-guard.
             if rv == CKR_OK:
-                pytest.fail("Tampered signature verified as valid!")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="C_Verify:tampered-signature",
+                    operation="C_Verify",
+                    mechanism="CKM_SHA256_RSA_PKCS",
+                    actual=rv,
+                    summary="Tampered signature verified as valid!",
+                )
             _check_ckr("C_Verify(tampered)", CKR_SIGNATURE_INVALID, rv)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

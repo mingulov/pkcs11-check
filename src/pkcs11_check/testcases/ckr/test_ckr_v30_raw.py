@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as
 from pkcs11_check.testcases._subprocess_trace import record_subprocess_rv_trace
 from pkcs11_check.testcases.ckr._subprocess import ckr_subprocess_cleanup_setup
 
@@ -127,11 +128,19 @@ def _check(rc: int, out: str, err: str, func: str) -> None:
     if "SKIP:" in out:
         pytest.skip(out.split("SKIP:")[1])
     if rc < 0:
-        pytest.fail(f"{func}: subprocess crashed with signal {-rc}; stderr: {err[-300:]}")
+        fail_as(
+            "crash",
+            label=func,
+            summary=f"{func}: subprocess crashed with signal {-rc}; stderr: {err[-300:]}",
+        )
     if rc != 0:
-        pytest.fail(
-            f"{func}: subprocess failed with exit code {rc}; "
-            f"stdout: {out[-300:]}; stderr: {err[-300:]}"
+        fail_as(
+            "crash",
+            label=func,
+            summary=(
+                f"{func}: subprocess failed with exit code {rc}; "
+                f"stdout: {out[-300:]}; stderr: {err[-300:]}"
+            ),
         )
     assert "OK" in out, f"{func}: {out} | {err[-200:]}"
 

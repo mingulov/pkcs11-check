@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
 from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key, import_secret_key
@@ -155,7 +156,14 @@ class TestWrapKeyErrors:
                 byref(wrapped_len),
             )
             if rv == CKR_OK:
-                pytest.fail("Should have rejected SHA256 as wrap mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_WrapKey:digest-mechanism",
+                    operation="C_WrapKey",
+                    actual=rv,
+                    summary="Should have rejected SHA256 as wrap mechanism",
+                )
             assert_ckr(CKR_WRAP["wrap_mechanism_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_key)
@@ -205,9 +213,19 @@ class TestWrapKeyErrors:
                     ComplianceLevel.CRITICAL,
                     reference="PKCS#11 v3.1 Sec.5.14.3",
                 )
-                pytest.fail(
-                    "Module accepted a stale wrap-key handle "
-                    "(expected CKR_WRAPPING_KEY_HANDLE_INVALID)"
+                # Use-after-destroy: the wrap key was destroyed yet C_WrapKey used
+                # it and exported key material -> self-contradiction.
+                fail_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label="C_WrapKey:stale-wrap-key-handle",
+                    operation="C_WrapKey",
+                    mechanism="CKM_AES_KEY_WRAP",
+                    spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+                    summary=(
+                        "Module accepted a stale wrap-key handle "
+                        "(expected CKR_WRAPPING_KEY_HANDLE_INVALID)"
+                    ),
                 )
             accepted = (
                 CKR_WRAPPING_KEY_HANDLE_INVALID,
@@ -272,9 +290,17 @@ class TestWrapKeyErrors:
                     ComplianceLevel.CRITICAL,
                     reference="PKCS#11 v3.1 Sec.5.14.3",
                 )
-                pytest.fail(
-                    "Module accepted a generic-secret key for AES wrap "
-                    "(expected CKR_WRAPPING_KEY_TYPE_INCONSISTENT)"
+                fail_as(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_WrapKey:wrapping-key-type-inconsistent",
+                    operation="C_WrapKey",
+                    mechanism="CKM_AES_KEY_WRAP",
+                    spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+                    summary=(
+                        "Module accepted a generic-secret key for AES wrap "
+                        "(expected CKR_WRAPPING_KEY_TYPE_INCONSISTENT)"
+                    ),
                 )
             accepted = (
                 CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
@@ -346,9 +372,18 @@ class TestWrapKeyErrors:
                     ComplianceLevel.CRITICAL,
                     reference="PKCS#11 v3.1 Sec.5.14.3",
                 )
-                pytest.fail(
-                    "Module accepted a 64-bit AES wrap key for CKM_AES_KEY_WRAP "
-                    "(expected CKR_WRAPPING_KEY_SIZE_RANGE)"
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="C_WrapKey:wrapping-key-size-range",
+                    operation="C_WrapKey",
+                    mechanism="CKM_AES_KEY_WRAP",
+                    actual=rv,
+                    spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+                    summary=(
+                        "Module accepted a 64-bit AES wrap key for CKM_AES_KEY_WRAP "
+                        "(expected CKR_WRAPPING_KEY_SIZE_RANGE)"
+                    ),
                 )
             # Code-conformance: the spec mandates CKR_WRAPPING_KEY_SIZE_RANGE for a
             # too-small wrapping key. Classify the reject three ways (assert_ckr):
@@ -401,7 +436,15 @@ class TestUnwrapKeyErrors:
             )
             if rv == CKR_OK:
                 destroy_quietly(rs.raw, rs.sh, new_key.value)
-                pytest.fail("Should have rejected garbage wrapped key data")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="C_UnwrapKey:garbage-wrapped-data",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_AES_KEY_WRAP",
+                    actual=rv,
+                    summary="Should have rejected garbage wrapped key data",
+                )
             # CKR_WRAPPED_KEY_INVALID or CKR_WRAPPED_KEY_LEN_RANGE
         finally:
             destroy_quietly(rs.raw, rs.sh, unwrap_key)
@@ -437,7 +480,14 @@ class TestUnwrapKeyErrors:
                 byref(wrapped_len),
             )
             if rv != CKR_OK:
-                pytest.xfail(f"CKM_AES_KEY_WRAP wrap not operational: {ckr_name(rv)}")
+                xfail_as(
+                    "not_operational",
+                    label="C_WrapKey:AES-key-wrap",
+                    operation="C_WrapKey",
+                    mechanism="CKM_AES_KEY_WRAP",
+                    actual=rv,
+                    summary=f"CKM_AES_KEY_WRAP wrap not operational: {ckr_name(rv)}",
+                )
             assert wrapped_len.value > 0, "CKM_AES_KEY_WRAP returned an empty wrapped blob"
 
             tmpl = template(

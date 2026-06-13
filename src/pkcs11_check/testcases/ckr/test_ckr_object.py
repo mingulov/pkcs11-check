@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.raw.pack import (
     attr_array,
     attr_bool,
@@ -78,7 +79,14 @@ class TestCreateObjectErrors:
         rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, handle.value)
-            pytest.fail("Should have rejected template without CKA_CLASS")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_CreateObject:missing-class",
+                operation="C_CreateObject",
+                actual=rv,
+                summary="Should have rejected template without CKA_CLASS",
+            )
         assert rv in TEMPLATE_ERRORS, f"Unexpected CKR {ckr_name(rv)}"
 
     def test_invalid_class_value(self, p11_raw_session: Any) -> None:
@@ -92,7 +100,14 @@ class TestCreateObjectErrors:
         rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, handle.value)
-            pytest.fail("Should have rejected invalid CKA_CLASS value")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_CreateObject:invalid-class-value",
+                operation="C_CreateObject",
+                actual=rv,
+                summary="Should have rejected invalid CKA_CLASS value",
+            )
         assert rv in TEMPLATE_ERRORS, f"Unexpected CKR {ckr_name(rv)}"
 
     def test_conflicting_class_keytype(self, p11_raw_session: Any) -> None:
@@ -355,14 +370,30 @@ class TestSetAttributeErrors:
                 return  # Rejected a write to a read-only attribute -- correct.
             class_attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_CLASS])
             if class_attrs.get(CKA_CLASS) == CKO_SECRET_KEY:
-                pytest.fail(
-                    "C_SetAttributeValue claimed success and the read-only CKA_CLASS "
-                    "actually changed (self-contradiction) "
-                    "[PKCS#11 v3.1 Sec.5.7.6: CKA_CLASS is read-only]"
+                # Type-B: claimed read-only protection on CKA_CLASS yet the write
+                # took effect -> self-contradiction.
+                fail_as(
+                    "self_contradiction",
+                    kind="policy",
+                    label="C_SetAttributeValue:read-only-class",
+                    operation="C_SetAttributeValue",
+                    spec_ref="PKCS#11 v3.1 Sec.5.7.6",
+                    summary=(
+                        "C_SetAttributeValue claimed success and the read-only CKA_CLASS "
+                        "actually changed (self-contradiction) "
+                        "[PKCS#11 v3.1 Sec.5.7.6: CKA_CLASS is read-only]"
+                    ),
                 )
-            pytest.xfail(
-                "C_SetAttributeValue returned CKR_OK for a read-only CKA_CLASS write "
-                "but the value was unchanged (no-op; spec prefers CKR_ATTRIBUTE_READ_ONLY)"
+            # CKR_OK no-op: wrong code with no harm (value unchanged) -> xfail.
+            xfail_as(
+                "honest_deviation",
+                label="C_SetAttributeValue:read-only-class",
+                operation="C_SetAttributeValue",
+                spec_ref="PKCS#11 v3.1 Sec.5.7.6",
+                summary=(
+                    "C_SetAttributeValue returned CKR_OK for a read-only CKA_CLASS write "
+                    "but the value was unchanged (no-op; spec prefers CKR_ATTRIBUTE_READ_ONLY)"
+                ),
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
@@ -469,9 +500,15 @@ class TestFindObjectsErrors:
         try:
             rv = rs.raw.C_FindObjectsInit(rs.sh, None, 0)
             if rv != CKR_OK:
-                pytest.xfail(
-                    "C_FindObjectsInit(NULL_PTR, 0) rejected a valid match-all search: "
-                    f"{ckr_name(rv)}"
+                xfail_as(
+                    "not_operational",
+                    label="C_FindObjectsInit:null-template-match-all",
+                    operation="C_FindObjectsInit",
+                    actual=rv,
+                    summary=(
+                        "C_FindObjectsInit(NULL_PTR, 0) rejected a valid match-all search: "
+                        f"{ckr_name(rv)}"
+                    ),
                 )
             search_started = True
 
@@ -481,9 +518,15 @@ class TestFindObjectsErrors:
                 count = CK_ULONG(0)
                 rv = rs.raw.C_FindObjects(rs.sh, handles, len(handles), byref(count))
                 if rv != CKR_OK:
-                    pytest.xfail(
-                        "C_FindObjects after C_FindObjectsInit(NULL_PTR, 0) rejected "
-                        f"a valid search: {ckr_name(rv)}"
+                    xfail_as(
+                        "not_operational",
+                        label="C_FindObjects:null-template-match-all",
+                        operation="C_FindObjects",
+                        actual=rv,
+                        summary=(
+                            "C_FindObjects after C_FindObjectsInit(NULL_PTR, 0) rejected "
+                            f"a valid search: {ckr_name(rv)}"
+                        ),
                     )
                 assert count.value <= len(handles), (
                     "C_FindObjects returned more handles than the caller's ulMaxObjectCount"
@@ -492,14 +535,27 @@ class TestFindObjectsErrors:
                 if count.value == 0:
                     break
             else:
-                pytest.fail("C_FindObjects(NULL_PTR, 0) did not finish within 2048 handles")
+                # The match-all search never reported the terminating empty page
+                # within a sane bound: a non-terminating operation -> fail.
+                fail_as(
+                    "crash",
+                    label="C_FindObjects:null-template-match-all",
+                    operation="C_FindObjects",
+                    summary="C_FindObjects(NULL_PTR, 0) did not finish within 2048 handles",
+                )
 
             rv = rs.raw.C_FindObjectsFinal(rs.sh)
             search_started = False
             if rv != CKR_OK:
-                pytest.xfail(
-                    "C_FindObjectsFinal after C_FindObjectsInit(NULL_PTR, 0) rejected "
-                    f"a valid search: {ckr_name(rv)}"
+                xfail_as(
+                    "not_operational",
+                    label="C_FindObjectsFinal:null-template-match-all",
+                    operation="C_FindObjectsFinal",
+                    actual=rv,
+                    summary=(
+                        "C_FindObjectsFinal after C_FindObjectsInit(NULL_PTR, 0) rejected "
+                        f"a valid search: {ckr_name(rv)}"
+                    ),
                 )
 
             assert handle in found, (
