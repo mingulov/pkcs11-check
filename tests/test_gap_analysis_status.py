@@ -597,10 +597,20 @@ def test_gap_analysis_marks_blake2b_key_derive_length_only_overlong_as_added() -
     doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
 
     assert "test_blake2b_key_derive_rejects_length_only_overlong" in blake2
-    assert "BLAKE2B_160_KEY_DERIVE length-only overlong output" in blake2
+    assert (
+        "def test_blake2b_key_derive_rejects_length_only_overlong(\n"
+        "        self,\n"
+        "        p11_raw_session: Any,\n"
+        "        case: _Blake2bKeyedCase,"
+        in blake2
+    )
+    assert "BLAKE2B_*_KEY_DERIVE length-only overlong outputs are rejected" in blake2
     assert "test_blake2b_key_derive_length_only_overlong_is_expected_reject" in guard
 
-    assert "BLAKE2B KEY_DERIVE length-only overlong negative coverage" in doc_flat
+    assert (
+        "BLAKE2B KEY_DERIVE length-only overlong negative coverage now verifies every"
+        in doc_flat
+    )
 
 
 def test_gap_analysis_marks_shake_xof_and_external_mu_as_dedicated_coverage() -> None:

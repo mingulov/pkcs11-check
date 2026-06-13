@@ -489,9 +489,9 @@ smoke behavior, or covered only by one narrow variation.
    digest output length. BLAKE2B KEY_DERIVE variable-key-type negative
    coverage now verifies that an AES-key derive without `CKA_VALUE_LEN` is
    rejected because AES has no single well-defined length in that template.
-   BLAKE2B KEY_DERIVE length-only overlong negative coverage now verifies that
-   a no-key-type generic-secret template rejects `CKA_VALUE_LEN` values larger
-   than the digest output length.
+   BLAKE2B KEY_DERIVE length-only overlong negative coverage now verifies every
+   keyed output size rejects no-key-type generic-secret templates with
+   `CKA_VALUE_LEN` values larger than the digest output length.
    Remaining BLAKE2B work is broader negative parameter/regression expansion
    and provider-artifact evidence, not basic keyed semantic coverage.
 7. SHAKE/XOF dedicated coverage exists: raw `C_DigestXof*` function

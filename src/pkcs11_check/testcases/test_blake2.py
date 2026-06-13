@@ -1156,12 +1156,18 @@ class TestBlake2bKeyed:
             _BLAKE2B_KEYED_CASE_BY_BITS[256],
         )
 
+    @pytest.mark.parametrize(
+        "case",
+        _BLAKE2B_KEYED_CASES,
+        ids=[case.id for case in _BLAKE2B_KEYED_CASES],
+    )
     def test_blake2b_key_derive_rejects_length_only_overlong(
         self,
         p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
     ) -> None:
-        """BLAKE2B_160_KEY_DERIVE length-only overlong output is rejected."""
+        """BLAKE2B_*_KEY_DERIVE length-only overlong outputs are rejected."""
         self._key_derive_rejects_length_only_overlong(
             p11_raw_session,
-            _BLAKE2B_KEYED_CASE_BY_BITS[160],
+            case,
         )
