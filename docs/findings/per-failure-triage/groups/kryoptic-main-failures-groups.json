@@ -1,0 +1,2064 @@
+{
+  "provider": "kryoptic-main",
+  "bucket": "failures",
+  "group_count": 134,
+  "total_records": 158,
+  "groups": [
+    {
+      "size": 5,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestSp800108NullDataParams::test_sp800_108_null_data_params",
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestSp800108NestedCountBoundary::test_sp800_108_data_param_count_boundary[isize_max]",
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestSp800108NestedCountBoundary::test_sp800_108_data_param_count_boundary[isize_max_plus_1]",
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestSp800108NestedCountBoundary::test_sp800_108_additional_derived_key_count_boundary[isize_max]",
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestSp800108NestedCountBoundary::test_sp800_108_additional_derived_key_count_boundary[isize_max_plus_1]"
+      ],
+      "messages_sample": [
+        "Failed: C_DeriveKey(SP800_108_COUNTER_KDF, data-param count=0x7fffffffffffffff): module crashed with signal 6\nstdout: \nstderr: thread '<unnamed>' (303) panicked at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/alloc/src/raw_vec/mod.rs:28:5:\ncapacity overflow\nnote: run with `RUST_BACKTRACE=",
+        "Failed: C_DeriveKey(SP800_108_COUNTER_KDF, data-param count=0x8000000000000000): module crashed with signal 6\nstdout: \nstderr: thread '<unnamed>' (304) panicked at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/alloc/src/raw_vec/mod.rs:28:5:\ncapacity overflow\nnote: run with `RUST_BACKTRACE=",
+        "Failed: C_DeriveKey(SP800_108_COUNTER_KDF, pDataParams=NULL, ulNumberOfDataParams=1): module crashed with signal 11\nstdout: \nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:00858e1806430cc4",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestSp800108NullDataParams::test_sp800_108_null_data_params"
+    },
+    {
+      "size": 3,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestTemplateCountOverflow::test_template_count_overflow[find_objects_init-ulong_max]",
+        "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestTemplateCountOverflow::test_template_count_overflow[find_objects_init-sizeof_attr_overflow]",
+        "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestTemplateCountOverflow::test_template_count_overflow[find_objects_init-0x100000000]"
+      ],
+      "messages_sample": [
+        "Failed: C_FindObjectsInit(template_count=0x100000000): module crashed with signal 6\nstdout: \nstderr: memory allocation of 274877906944 bytes failed\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "Failed: C_FindObjectsInit(template_count=0xaaaaaaaaaaaaaab): module crashed with signal 6\nstdout: \nstderr: thread '<unnamed>' (183) panicked at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/alloc/src/raw_vec/mod.rs:28:5:\ncapacity overflow\nnote: run with `RUST_BACKTRACE=1` environment varia",
+        "Failed: C_FindObjectsInit(template_count=0xffffffffffffffff): module crashed with signal 6\nstdout: \nstderr: thread '<unnamed>' (182) panicked at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/alloc/src/raw_vec/mod.rs:28:5:\ncapacity overflow\nnote: run with `RUST_BACKTRACE=1` environment vari"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:e97a982a29583f85",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestTemplateCountOverflow::test_template_count_overflow[find_objects_init-ulong_max]"
+    },
+    {
+      "size": 3,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestTemplateCountOverflowValidHandles::test_template_count_overflow_with_valid_object_handle[get_attribute_value-ulong_max]",
+        "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestTemplateCountOverflowValidHandles::test_template_count_overflow_with_valid_object_handle[get_attribute_value-sizeof_attr_overflow]",
+        "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestTemplateCountOverflowValidHandles::test_template_count_overflow_with_valid_object_handle[get_attribute_value-0x100000000]"
+      ],
+      "messages_sample": [
+        "Failed: C_GetAttributeValue(valid object, template_count=0x100000000): module crashed with signal 11\nstdout: \nstderr:",
+        "Failed: C_GetAttributeValue(valid object, template_count=0xaaaaaaaaaaaaaab): module crashed with signal 11\nstdout: \nstderr:",
+        "Failed: C_GetAttributeValue(valid object, template_count=0xffffffffffffffff): module crashed with signal 11\nstdout: \nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:995b640e80e1884d",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestTemplateCountOverflowValidHandles::test_template_count_overflow_with_valid_object_handle[get_attribute_value-ulong_max]"
+    },
+    {
+      "size": 3,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestKemTemplateCountOverflow::test_kem_output_template_count_overflow[decapsulate_key-ulong_max]",
+        "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestKemTemplateCountOverflow::test_kem_output_template_count_overflow[decapsulate_key-sizeof_attr_overflow]",
+        "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestKemTemplateCountOverflow::test_kem_output_template_count_overflow[decapsulate_key-0x100000000]"
+      ],
+      "messages_sample": [
+        "Failed: C_DecapsulateKey(ML-KEM output template_count=0x100000000): module crashed with signal 11\nstdout: \nstderr:",
+        "Failed: C_DecapsulateKey(ML-KEM output template_count=0xaaaaaaaaaaaaaab): module crashed with signal 11\nstdout: \nstderr:",
+        "Failed: C_DecapsulateKey(ML-KEM output template_count=0xffffffffffffffff): module crashed with signal 11\nstdout: \nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:3aead6261498d83d",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestKemTemplateCountOverflow::test_kem_output_template_count_overflow[decapsulate_key-ulong_max]"
+    },
+    {
+      "size": 2,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_sp800_108_kdf.py::TestSP800108CounterKDF::test_derive_aes128",
+        "src/pkcs11_check/testcases/test_sp800_108_kdf.py::TestSP800108CounterKDF::test_derive_aes256"
+      ],
+      "messages_sample": [
+        "AssertionError: CKM_SP800_108_COUNTER_KDF AES-128 output mismatch: got 4466e5d45b01b34f06293859334f97a8, expected caff7a6a35ca9b35afcc64fa658d8bc2\nassert b'Df\\xe5\\xd4[...)8Y3O\\x97\\xa8' == b'\\xca\\xffzj5...e\\x8d\\x8b\\xc2'\n  \n  At index 0 diff: b'D' != b'\\xca'\n  Use -v to get more diff",
+        "AssertionError: CKM_SP800_108_COUNTER_KDF AES-256 output mismatch: got 145f797403fc959f4a6f18a0afa308a8648f912b8239a421086012e75ea42469, expected b88f2b0575ec7271d57a76d5dc05355edbb56652e0a19e1788661f2b473e35a3\nassert b'\\x14_yt\\x03...12\\xe7^\\xa4$i' == b'\\xb8\\x8f+\\x...f\\x1f+G>5\\xa3'\n  \n  At index 0 d"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_sp800_108_kdf.py",
+      "direction": "WRONG_OUTPUT",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:425ead980697b227",
+      "example_nodeid": "src/pkcs11_check/testcases/test_sp800_108_kdf.py::TestSP800108CounterKDF::test_derive_aes128"
+    },
+    {
+      "size": 2,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_sp800_108_kdf.py::TestSP800108FeedbackKDF::test_derive_aes128",
+        "src/pkcs11_check/testcases/test_sp800_108_kdf.py::TestSP800108FeedbackKDF::test_derive_with_iv"
+      ],
+      "messages_sample": [
+        "AssertionError: CKM_SP800_108_FEEDBACK_KDF AES-128 output mismatch: got c001b502468dcb6f86f05c869ab5986d, expected 0eb73e600b11c4474e6fb84c226c8b1a\nassert b'\\xc0\\x01\\xb...\\x9a\\xb5\\x98m' == b'\\x0e\\xb7>`\\...b8L\"l\\x8b\\x1a'\n  \n  At index 0 diff: b'\\xc0' != b'\\x0e'\n  Use -v to get more diff",
+        "AssertionError: CKM_SP800_108_FEEDBACK_KDF with IV AES-128 output mismatch: got 4a72c7a48f9ddb2294a9eff5f105d8f0, expected 77de8c278069851d3fd9e9171ab2b9d0\nassert b'Jr\\xc7\\xa4\\...1\\x05\\xd8\\xf0' == b\"w\\xde\\x8c'\\...a\\xb2\\xb9\\xd0\"\n  \n  At index 0 diff: b'J' != b'w'\n  Use -v to get more diff"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_sp800_108_kdf.py",
+      "direction": "WRONG_OUTPUT",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:a2194647ac713ec4",
+      "example_nodeid": "src/pkcs11_check/testcases/test_sp800_108_kdf.py::TestSP800108FeedbackKDF::test_derive_aes128"
+    },
+    {
+      "size": 2,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestKemTemplateCountOverflow::test_kem_output_template_count_overflow[encapsulate_key-sizeof_attr_overflow]",
+        "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestKemTemplateCountOverflow::test_kem_output_template_count_overflow[encapsulate_key-0x100000000]"
+      ],
+      "messages_sample": [
+        "Failed: C_EncapsulateKey(ML-KEM output template_count=0x100000000): module crashed with signal 11\nstdout: \nstderr:",
+        "Failed: C_EncapsulateKey(ML-KEM output template_count=0xaaaaaaaaaaaaaab): module crashed with signal 11\nstdout: \nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:d26d23e287371427",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestKemTemplateCountOverflow::test_kem_output_template_count_overflow[encapsulate_key-sizeof_attr_overflow]"
+    },
+    {
+      "size": 2,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxDataLength::test_sign_isize_boundary[isize_max]",
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxDataLength::test_sign_isize_boundary[isize_max_plus_1]"
+      ],
+      "messages_sample": [
+        "Failed: C_Sign(HMAC_SHA256, ulDataLen=0x7fffffffffffffff): module crashed with signal 11\nstdout: \nstderr:",
+        "Failed: C_Sign(HMAC_SHA256, ulDataLen=0x8000000000000000): module crashed with signal 11\nstdout: \nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:5ef81d82920c85af",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxDataLength::test_sign_isize_boundary[isize_max]"
+    },
+    {
+      "size": 2,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxDataLength::test_verify_isize_data_len[isize_max]",
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxDataLength::test_verify_isize_data_len[isize_max_plus_1]"
+      ],
+      "messages_sample": [
+        "Failed: C_Verify(HMAC_SHA256, ulDataLen=0x7fffffffffffffff): module crashed with signal 11\nstdout: \nstderr:",
+        "Failed: C_Verify(HMAC_SHA256, ulDataLen=0x8000000000000000): module crashed with signal 11\nstdout: \nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:e70b939db0850388",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxDataLength::test_verify_isize_data_len[isize_max]"
+    },
+    {
+      "size": 2,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestPbkdf2NestedLengthBoundary::test_pbkdf2_nested_length_boundary[password-isize_max]",
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestPbkdf2NestedLengthBoundary::test_pbkdf2_nested_length_boundary[password-isize_max_plus_1]"
+      ],
+      "messages_sample": [
+        "Failed: C_GenerateKey(PBKDF2, password length=0x7fffffffffffffff): module crashed with signal 6\nstdout: \nstderr: memory allocation of 9223372036854775807 bytes failed\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "Failed: C_GenerateKey(PBKDF2, password length=0x8000000000000000): module crashed with signal 6\nstdout: \nstderr: thread '<unnamed>' (292) panicked at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/alloc/src/raw_vec/mod.rs:28:5:\ncapacity overflow\nnote: run with `RUST_BACKTRACE=1` environment"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:cde5ac5100780897",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestPbkdf2NestedLengthBoundary::test_pbkdf2_nested_length_boundary[password-isize_max]"
+    },
+    {
+      "size": 2,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestPbkdf2NestedLengthBoundary::test_pbkdf2_nested_length_boundary[salt-isize_max]",
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestPbkdf2NestedLengthBoundary::test_pbkdf2_nested_length_boundary[salt-isize_max_plus_1]"
+      ],
+      "messages_sample": [
+        "Failed: C_GenerateKey(PBKDF2, salt length=0x7fffffffffffffff): module crashed with signal 6\nstdout: \nstderr: memory allocation of 9223372036854775807 bytes failed\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "Failed: C_GenerateKey(PBKDF2, salt length=0x8000000000000000): module crashed with signal 6\nstdout: \nstderr: thread '<unnamed>' (294) panicked at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/alloc/src/raw_vec/mod.rs:28:5:\ncapacity overflow\nnote: run with `RUST_BACKTRACE=1` environment var"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:73779bd55b37c95e",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestPbkdf2NestedLengthBoundary::test_pbkdf2_nested_length_boundary[salt-isize_max]"
+    },
+    {
+      "size": 2,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestTlsKdfRandomLengthBoundary::test_tls_kdf_random_length_boundary[client_random-isize_max]",
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestTlsKdfRandomLengthBoundary::test_tls_kdf_random_length_boundary[client_random-isize_max_plus_1]"
+      ],
+      "messages_sample": [
+        "Failed: C_DeriveKey(TLS_KDF, client random length=0x7fffffffffffffff): module crashed with signal 6\nstdout: \nstderr: memory allocation of 9223372036854775807 bytes failed\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "Failed: C_DeriveKey(TLS_KDF, client random length=0x8000000000000000): module crashed with signal 6\nstdout: \nstderr: thread '<unnamed>' (299) panicked at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/alloc/src/raw_vec/mod.rs:28:5:\ncapacity overflow\nnote: run with `RUST_BACKTRACE=1` environ"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:824bfc8d32e98f92",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestTlsKdfRandomLengthBoundary::test_tls_kdf_random_length_boundary[client_random-isize_max]"
+    },
+    {
+      "size": 2,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestTlsKdfRandomLengthBoundary::test_tls_kdf_random_length_boundary[server_random-isize_max]",
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestTlsKdfRandomLengthBoundary::test_tls_kdf_random_length_boundary[server_random-isize_max_plus_1]"
+      ],
+      "messages_sample": [
+        "Failed: C_DeriveKey(TLS_KDF, server random length=0x7fffffffffffffff): module crashed with signal 6\nstdout: \nstderr: memory allocation of 9223372036854775807 bytes failed\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "Failed: C_DeriveKey(TLS_KDF, server random length=0x8000000000000000): module crashed with signal 6\nstdout: \nstderr: thread '<unnamed>' (301) panicked at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/alloc/src/raw_vec/mod.rs:28:5:\ncapacity overflow\nnote: run with `RUST_BACKTRACE=1` environ"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:1495e4286bd51aca",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestTlsKdfRandomLengthBoundary::test_tls_kdf_random_length_boundary[server_random-isize_max]"
+    },
+    {
+      "size": 2,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_message.py::TestRegistryMessageBadParameters::test_registry_message_encrypt_missing_required_param[AES_CCM]",
+        "src/pkcs11_check/testcases/test_mech_message.py::TestRegistryMessageBadParameters::test_registry_message_encrypt_malformed_required_param[AES_CCM]"
+      ],
+      "messages_sample": [
+        "Failed: AES_CCM C_MessageEncryptInit with malformed non-NULL params: accepted invalid (CKR_OK) -- must reject",
+        "Failed: AES_CCM C_MessageEncryptInit with missing required params: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_message.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:af865658a5991a1b",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_message.py::TestRegistryMessageBadParameters::test_registry_message_encrypt_missing_required_param[AES_CCM]"
+    },
+    {
+      "size": 2,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_message.py::TestRegistryMessageBadParameters::test_registry_message_encrypt_missing_required_param[AES_GCM]",
+        "src/pkcs11_check/testcases/test_mech_message.py::TestRegistryMessageBadParameters::test_registry_message_encrypt_malformed_required_param[AES_GCM]"
+      ],
+      "messages_sample": [
+        "Failed: AES_GCM C_MessageEncryptInit with malformed non-NULL params: accepted invalid (CKR_OK) -- must reject",
+        "Failed: AES_GCM C_MessageEncryptInit with missing required params: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_message.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:8966d946bb7ea968",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_message.py::TestRegistryMessageBadParameters::test_registry_message_encrypt_missing_required_param[AES_GCM]"
+    },
+    {
+      "size": 2,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_message.py::TestRegistryMessageBadParameters::test_registry_message_decrypt_missing_required_param[AES_CCM]",
+        "src/pkcs11_check/testcases/test_mech_message.py::TestRegistryMessageBadParameters::test_registry_message_decrypt_malformed_required_param[AES_CCM]"
+      ],
+      "messages_sample": [
+        "Failed: AES_CCM C_MessageDecryptInit with malformed non-NULL params: accepted invalid (CKR_OK) -- must reject",
+        "Failed: AES_CCM C_MessageDecryptInit with missing required params: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_message.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:1c77e0048f6852a4",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_message.py::TestRegistryMessageBadParameters::test_registry_message_decrypt_missing_required_param[AES_CCM]"
+    },
+    {
+      "size": 2,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_message.py::TestRegistryMessageBadParameters::test_registry_message_decrypt_missing_required_param[AES_GCM]",
+        "src/pkcs11_check/testcases/test_mech_message.py::TestRegistryMessageBadParameters::test_registry_message_decrypt_malformed_required_param[AES_GCM]"
+      ],
+      "messages_sample": [
+        "Failed: AES_GCM C_MessageDecryptInit with malformed non-NULL params: accepted invalid (CKR_OK) -- must reject",
+        "Failed: AES_GCM C_MessageDecryptInit with missing required params: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_message.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:1edeec3ad53a4e2a",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_message.py::TestRegistryMessageBadParameters::test_registry_message_decrypt_missing_required_param[AES_GCM]"
+    },
+    {
+      "size": 2,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_message.py::TestMessageEncrypt::test_message_encrypt_aes_gcm_generated_iv_writeback",
+        "src/pkcs11_check/testcases/test_mech_message.py::TestMessageEncrypt::test_message_encrypt_aes_ccm_generated_nonce_writeback"
+      ],
+      "messages_sample": [
+        "AssertionError: C_EncryptMessage did not write generated IV to pIv\nassert False\n +  where False = any(b'\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00')",
+        "AssertionError: C_EncryptMessage did not write generated nonce\nassert False\n +  where False = any(b'\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00')"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_message.py",
+      "direction": "OTHER",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:7bed6bf851c2019f",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_message.py::TestMessageEncrypt::test_message_encrypt_aes_gcm_generated_iv_writeback"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/acvp/test_acvp_eddsa.py::TestEdDsaKeyVer::test_eddsa_keyver[EDDSA-KeyVer-ED-25519-tc1]"
+      ],
+      "messages_sample": [
+        "Failed: EDDSA-KeyVer-ED-25519-tc1: Module ACCEPTED an INVALID EdDSA key"
+      ],
+      "test_file": "src/pkcs11_check/testcases/acvp/test_acvp_eddsa.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:639d61e9d2099297",
+      "example_nodeid": "src/pkcs11_check/testcases/acvp/test_acvp_eddsa.py::TestEdDsaKeyVer::test_eddsa_keyver[EDDSA-KeyVer-ED-25519-tc1]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/acvp/test_acvp_eddsa.py::TestEdDsaKeyVer::test_eddsa_keyver[EDDSA-KeyVer-ED-25519-tc4]"
+      ],
+      "messages_sample": [
+        "Failed: EDDSA-KeyVer-ED-25519-tc4: Module ACCEPTED an INVALID EdDSA key"
+      ],
+      "test_file": "src/pkcs11_check/testcases/acvp/test_acvp_eddsa.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:50774b3e64f572b0",
+      "example_nodeid": "src/pkcs11_check/testcases/acvp/test_acvp_eddsa.py::TestEdDsaKeyVer::test_eddsa_keyver[EDDSA-KeyVer-ED-25519-tc4]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/acvp/test_acvp_eddsa.py::TestEdDsaKeyVer::test_eddsa_keyver[EDDSA-KeyVer-ED-448-tc6]"
+      ],
+      "messages_sample": [
+        "Failed: EDDSA-KeyVer-ED-448-tc6: Module ACCEPTED an INVALID EdDSA key"
+      ],
+      "test_file": "src/pkcs11_check/testcases/acvp/test_acvp_eddsa.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:3fb97c09e74d3483",
+      "example_nodeid": "src/pkcs11_check/testcases/acvp/test_acvp_eddsa.py::TestEdDsaKeyVer::test_eddsa_keyver[EDDSA-KeyVer-ED-448-tc6]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/acvp/test_acvp_eddsa.py::TestEdDsaKeyVer::test_eddsa_keyver[EDDSA-KeyVer-ED-448-tc8]"
+      ],
+      "messages_sample": [
+        "Failed: EDDSA-KeyVer-ED-448-tc8: Module ACCEPTED an INVALID EdDSA key"
+      ],
+      "test_file": "src/pkcs11_check/testcases/acvp/test_acvp_eddsa.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:13f7784e7491e54d",
+      "example_nodeid": "src/pkcs11_check/testcases/acvp/test_acvp_eddsa.py::TestEdDsaKeyVer::test_eddsa_keyver[EDDSA-KeyVer-ED-448-tc8]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/ckr/test_ckr_object.py::TestCreateObjectErrors::test_allowed_mechanisms_null_pointer_nonzero_length"
+      ],
+      "messages_sample": [
+        "Failed: C_CreateObject with CKA_ALLOWED_MECHANISMS NULL_PTR and nonzero ulValueLen: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/ckr/test_ckr_object.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:3a5d850ff6112b01",
+      "example_nodeid": "src/pkcs11_check/testcases/ckr/test_ckr_object.py::TestCreateObjectErrors::test_allowed_mechanisms_null_pointer_nonzero_length"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/ckr/test_ckr_object.py::TestSetAttributeErrors::test_set_readonly_class"
+      ],
+      "messages_sample": [
+        "pkcs11_check.raw.rv.CkrAssertionError: Unexpected CK_RV CKR_GENERAL_ERROR; expected one of: CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID"
+      ],
+      "test_file": "src/pkcs11_check/testcases/ckr/test_ckr_object.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:dc4ef445fa0d38fd",
+      "example_nodeid": "src/pkcs11_check/testcases/ckr/test_ckr_object.py::TestSetAttributeErrors::test_set_readonly_class"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_null_pointer.py::TestNullRandomBuffer::test_generate_random_null_buffer"
+      ],
+      "messages_sample": [
+        "Failed: C_GenerateRandom(buf=NULL, buf_len=32): module crashed with signal 11\nstdout: \nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_null_pointer.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:b2ed1595109a0f66",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_null_pointer.py::TestNullRandomBuffer::test_generate_random_null_buffer"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_null_pointer.py::TestNullOperationState::test_set_operation_state_null_buffer"
+      ],
+      "messages_sample": [
+        "Failed: C_SetOperationState(state=NULL, state_len=32): module crashed with signal 11\nstdout: \nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_null_pointer.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:a300b263485f5a97",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_null_pointer.py::TestNullOperationState::test_set_operation_state_null_buffer"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_null_pointer.py::TestHmacGeneralNullParam::test_hmac_general_null_parameter"
+      ],
+      "messages_sample": [
+        "Failed: C_SignInit(CKM_SHA256_HMAC_GENERAL, pParameter=NULL, ulParameterLen=8): module crashed with signal 11\nstdout: \nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_null_pointer.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:1f48de11c63e0623",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_null_pointer.py::TestHmacGeneralNullParam::test_hmac_general_null_parameter"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_aes_kdf.py::TestAESCBCEncryptData::test_derive_different_iv"
+      ],
+      "messages_sample": [
+        "AssertionError: assert b'\\x9aH\\xa4L\\x84.\\x9f~\\\\<(\\xc2\\xd0\\xaf\\xb9G' != b'\\x9aH\\xa4L\\x84.\\x9f~\\\\<(\\xc2\\xd0\\xaf\\xb9G'"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_aes_kdf.py",
+      "direction": "OTHER",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:bbe36dcd8a03c859",
+      "example_nodeid": "src/pkcs11_check/testcases/test_aes_kdf.py::TestAESCBCEncryptData::test_derive_different_iv"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_buffers.py::TestOutputBufferEdgeCases::test_sign_final_buffer_too_small_then_correct"
+      ],
+      "messages_sample": [
+        "AssertionError: After CKR_BUFFER_TOO_SMALL, pulSize must be 256 (RSA-2048); got 16\nassert 16 == 256\n +  where 16 = c_ulong(16).value"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_buffers.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:0f0f879139c47fd3",
+      "example_nodeid": "src/pkcs11_check/testcases/test_buffers.py::TestOutputBufferEdgeCases::test_sign_final_buffer_too_small_then_correct"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_kem.py::TestMLKEMNegative::test_decapsulate_with_invalid_attributes_in_template"
+      ],
+      "messages_sample": [
+        "Failed: inject CKA_VALUE into ML-KEM decapsulation template: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_kem.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:17214ecc22aaf06d",
+      "example_nodeid": "src/pkcs11_check/testcases/test_kem.py::TestMLKEMNegative::test_decapsulate_with_invalid_attributes_in_template"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_misc_kdf.py::TestExtractKeyFromKey::test_extract_from_offset_zero"
+      ],
+      "messages_sample": [
+        "AssertionError: Expected 000102030405060708090a0b0c0d0e0f, got 010303070507070f090b0b0f0d0f0f1f111313171517171f191b1b1f1d1f1f1f\nassert b'\\x01\\x03\\x0...d\\x1f\\x1f\\x1f' == b'\\x00\\x01\\x0...x0c\\r\\x0e\\x0f'\n  \n  At index 0 diff: b'\\x01' != b'\\x00'\n  Use -v to get more diff"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_misc_kdf.py",
+      "direction": "WRONG_OUTPUT",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:1ffad442544cdfd3",
+      "example_nodeid": "src/pkcs11_check/testcases/test_misc_kdf.py::TestExtractKeyFromKey::test_extract_from_offset_zero"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_misc_kdf.py::TestExtractKeyFromKey::test_extract_at_byte_boundary_offset"
+      ],
+      "messages_sample": [
+        "AssertionError: Expected 101112131415161718191a1b1c1d1e1f, got 111313171517171f191b1b1f1d1f1f1f010303070507070f090b0b0f0d0f0f1f\nassert b'\\x11\\x13\\x1...r\\x0f\\x0f\\x1f' == b'\\x10\\x11\\x1...c\\x1d\\x1e\\x1f'\n  \n  At index 0 diff: b'\\x11' != b'\\x10'\n  Use -v to get more diff"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_misc_kdf.py",
+      "direction": "WRONG_OUTPUT",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:7615c2e7aa87d32e",
+      "example_nodeid": "src/pkcs11_check/testcases/test_misc_kdf.py::TestExtractKeyFromKey::test_extract_at_byte_boundary_offset"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_set_attribute.py::TestSetAttributeAtomicity::test_set_attribute_mixed_template_is_atomic"
+      ],
+      "messages_sample": [
+        "Failed: C_SetAttributeValue mixed mutable/read-only template: attribute(s) could not be read back after the write (Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID; expected one of: CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID) -- the object was left in an inconsistent state"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_set_attribute.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:7de735f304368f99",
+      "example_nodeid": "src/pkcs11_check/testcases/test_set_attribute.py::TestSetAttributeAtomicity::test_set_attribute_mixed_template_is_atomic"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_set_attribute.py::TestSetAttributeNegative::test_cannot_change_class"
+      ],
+      "messages_sample": [
+        "Failed: write read-only CKA_CLASS (PKCS#11 Base v3.0 Table 15): attribute(s) could not be read back after the write (Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID; expected one of: CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID) -- the object was left in an inconsistent state"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_set_attribute.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:33f58e21cebe13cf",
+      "example_nodeid": "src/pkcs11_check/testcases/test_set_attribute.py::TestSetAttributeNegative::test_cannot_change_class"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_set_attribute.py::TestSetAttributeNegative::test_cannot_change_key_type"
+      ],
+      "messages_sample": [
+        "Failed: write read-only CKA_KEY_TYPE (PKCS#11 Base v3.0 Table 15): attribute(s) could not be read back after the write (Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID; expected one of: CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID) -- the object was left in an inconsistent state"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_set_attribute.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:3084d1d72871f1c4",
+      "example_nodeid": "src/pkcs11_check/testcases/test_set_attribute.py::TestSetAttributeNegative::test_cannot_change_key_type"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_tls12.py::TestTLS12KDF::test_tls12_kdf_context_data_exact_vector"
+      ],
+      "messages_sample": [
+        "AssertionError: CKM_TLS12_KDF context-data output mismatch: got 41518e9244518c692fc807176be3de3b18a61781f49babe5dcea19dbfa71fc54, expected 5c0125c5f281488f681349499f252df0d29934469aabc15136b0a6a78a4b39d7\nassert b'AQ\\x8e\\x92D...xdb\\xfaq\\xfcT' == b'\\\\\\x01%\\xc5...xa7\\x8aK9\\xd7'\n  \n  At index 0 diff: b'"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_tls12.py",
+      "direction": "WRONG_OUTPUT",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:f98e714feabb1580",
+      "example_nodeid": "src/pkcs11_check/testcases/test_tls12.py::TestTLS12KDF::test_tls12_kdf_context_data_exact_vector"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc14-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc14-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:062ada4a42d7a109",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc14-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc15-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc15-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:5d509a10c36f9735",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc15-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc16-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc16-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:5f758fbb82ac7bf9",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc16-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc17-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc17-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:1bf49cb6e7185396",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc17-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc18-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc18-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:613f8f90e11b0613",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc18-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc19-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc19-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:acfff51b3a8a0f34",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc19-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc20-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc20-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:b32a8bebee9d9f5f",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc20-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc21-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc21-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:edd1bc844ffedd4b",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc21-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc22-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc22-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:fe35f2c4ce2eebd3",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc22-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc56-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc56-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:afaa2f6c6dcaadcb",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc56-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc57-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc57-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:f94d3a806c9722e3",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc57-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc58-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc58-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:a8e13618666db1bd",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc58-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc59-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc59-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:7225ead2c99247be",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc59-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc60-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc60-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:69d0220909ff0471",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc60-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc61-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc61-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:2c9c7cf250e087ab",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc61-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc62-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc62-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:21180d6ef5dd1c33",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc62-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc63-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc63-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:e9c4dee10a5db568",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc63-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc64-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc64-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:863e0de780120b63",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc64-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc111-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc111-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:05438c0871e57e5b",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc111-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc112-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc112-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:a94e89fe074bb070",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc112-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc113-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc113-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:bb705b19499e6da5",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc113-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc114-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc114-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:b9c74059b43b370b",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc114-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc115-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc115-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:1e1bb5113864a9b6",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc115-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc116-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc116-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:edf40035d7d5f08a",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc116-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc117-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc117-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:65e86593df4ea5c4",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc117-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc118-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc118-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:b82e47ecb4ff0369",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc118-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc119-invalid]"
+      ],
+      "messages_sample": [
+        "Failed: AES-KW unwrap tc119-invalid: accepted invalid wrapped key (forged blob unwrapped)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:cd0af8f1128043ca",
+      "example_nodeid": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py::test_aes_key_wrap[tc119-invalid]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_parameter_validation.py::TestGcmTagSize::test_gcm_weak_tag_size[tag-8-bits]"
+      ],
+      "messages_sample": [
+        "Failed: AES-GCM with 8-bit tag (below NIST 96-bit minimum): accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_parameter_validation.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:588eb038d466851b",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_parameter_validation.py::TestGcmTagSize::test_gcm_weak_tag_size[tag-8-bits]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_parameter_validation.py::TestGcmTagSize::test_gcm_weak_tag_size[tag-32-bits]"
+      ],
+      "messages_sample": [
+        "Failed: AES-GCM with 32-bit tag (below NIST 96-bit minimum): accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_parameter_validation.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:1a854976b3c090da",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_parameter_validation.py::TestGcmTagSize::test_gcm_weak_tag_size[tag-32-bits]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_parameter_validation.py::TestGcmTagSize::test_gcm_weak_tag_size[tag-64-bits]"
+      ],
+      "messages_sample": [
+        "Failed: AES-GCM with 64-bit tag (below NIST 96-bit minimum): accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_parameter_validation.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:57bc41ccbc4e2859",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_parameter_validation.py::TestGcmTagSize::test_gcm_weak_tag_size[tag-64-bits]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_parameter_validation.py::TestGcmIvWeakness::test_gcm_weak_iv[single-zero-byte-iv]"
+      ],
+      "messages_sample": [
+        "Failed: AES-GCM with 1-byte IV (below NIST 96-bit recommendation): accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_parameter_validation.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:9e48fe3db4f3bcd5",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_parameter_validation.py::TestGcmIvWeakness::test_gcm_weak_iv[single-zero-byte-iv]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_parameter_validation.py::TestGcmIvWeakness::test_gcm_weak_iv[4-zero-bytes-iv]"
+      ],
+      "messages_sample": [
+        "Failed: AES-GCM with 4-byte IV (below NIST 96-bit recommendation): accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_parameter_validation.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:9c5066effd9daa4f",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_parameter_validation.py::TestGcmIvWeakness::test_gcm_weak_iv[4-zero-bytes-iv]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_parameter_validation.py::TestGcmIvReuse::test_gcm_iv_reuse_same_key"
+      ],
+      "messages_sample": [
+        "Failed: AES-GCM IV reuse with the same key (NIST SP 800-38D requires unique IVs): accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_parameter_validation.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:76b159dabe9f56f3",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_parameter_validation.py::TestGcmIvReuse::test_gcm_iv_reuse_same_key"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/ckr/test_ckr_decrypt.py::TestDecryptDataErrors::test_rsa_ciphertext_wrong_length"
+      ],
+      "messages_sample": [
+        "Failed: C_Decrypt(RSA_ciphertext_wrong_length): accepted (CKR_OK) but must reject [PKCS#11 v3.1 Sec.5.9.2]"
+      ],
+      "test_file": "src/pkcs11_check/testcases/ckr/test_ckr_decrypt.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:06d6e9e0d43eec23",
+      "example_nodeid": "src/pkcs11_check/testcases/ckr/test_ckr_decrypt.py::TestDecryptDataErrors::test_rsa_ciphertext_wrong_length"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/ckr/test_ckr_raw_buffer.py::TestListBufferTooSmallGuards::test_get_mechanism_list_buffer_too_small_preserves_guard"
+      ],
+      "messages_sample": [
+        "Failed: C_GetMechanismList undersized list buffer guard: subprocess failed with exit code 1\nstdout: CKR:0x00000150\nLEN:1\nOVERWRITTEN:0\nP11_RV_TRACE_JSON:[{\"i\":0,\"fn\":\"C_Initialize\",\"mech\":null,\"rv\":0,\"rv_name\":\"CKR_OK\"},{\"i\":1,\"fn\":\"C_GetSlotList\",\"mech\":null,\"rv\":0,\"rv_name\":\"CKR_OK\"},{\"i\":2,\"fn\":\""
+      ],
+      "test_file": "src/pkcs11_check/testcases/ckr/test_ckr_raw_buffer.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:69cbece15d07e786",
+      "example_nodeid": "src/pkcs11_check/testcases/ckr/test_ckr_raw_buffer.py::TestListBufferTooSmallGuards::test_get_mechanism_list_buffer_too_small_preserves_guard"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/ckr/test_ckr_raw_buffer.py::TestListBufferTooSmallGuards::test_get_interface_list_buffer_too_small_preserves_guard"
+      ],
+      "messages_sample": [
+        "Failed: C_GetInterfaceList undersized list buffer guard: subprocess failed with exit code 1\nstdout: CKR:0x00000150\nLEN:1\nOVERWRITTEN:0\nP11_RV_TRACE_JSON:[{\"i\":0,\"fn\":\"C_Initialize\",\"mech\":null,\"rv\":0,\"rv_name\":\"CKR_OK\"},{\"i\":1,\"fn\":\"C_GetSlotList\",\"mech\":null,\"rv\":0,\"rv_name\":\"CKR_OK\"},{\"i\":2,\"fn\":\""
+      ],
+      "test_file": "src/pkcs11_check/testcases/ckr/test_ckr_raw_buffer.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:3c6e7a7e8d228bda",
+      "example_nodeid": "src/pkcs11_check/testcases/ckr/test_ckr_raw_buffer.py::TestListBufferTooSmallGuards::test_get_interface_list_buffer_too_small_preserves_guard"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/ckr/test_ckr_raw_buffer.py::TestDecryptBufferTooSmallGuards::test_aes_cbc_pad_decrypt_buffer_too_small_preserves_guard_and_retries"
+      ],
+      "messages_sample": [
+        "Failed: C_Decrypt AES-CBC-PAD undersized output buffer guard: subprocess failed with exit code 1\nstdout: CKR:0x00000150\nLEN:1\nOVERWRITTEN:0\nP11_RV_TRACE_JSON:[{\"i\":0,\"fn\":\"C_Initialize\",\"mech\":null,\"rv\":0,\"rv_name\":\"CKR_OK\"},{\"i\":1,\"fn\":\"C_GetSlotList\",\"mech\":null,\"rv\":0,\"rv_name\":\"CKR_OK\"},{\"i\":2,\""
+      ],
+      "test_file": "src/pkcs11_check/testcases/ckr/test_ckr_raw_buffer.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:8ac8b1be5f5c17a2",
+      "example_nodeid": "src/pkcs11_check/testcases/ckr/test_ckr_raw_buffer.py::TestDecryptBufferTooSmallGuards::test_aes_cbc_pad_decrypt_buffer_too_small_preserves_guard_and_retries"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/ckr/test_ckr_raw_buffer.py::TestByteOutputBufferTooSmallGuards::test_wrap_key_buffer_too_small_preserves_guard"
+      ],
+      "messages_sample": [
+        "AssertionError: C_WrapKey reported required length 1, expected 24\nassert 1 == 24"
+      ],
+      "test_file": "src/pkcs11_check/testcases/ckr/test_ckr_raw_buffer.py",
+      "direction": "OTHER",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:e5c974f7f0de6bc1",
+      "example_nodeid": "src/pkcs11_check/testcases/ckr/test_ckr_raw_buffer.py::TestByteOutputBufferTooSmallGuards::test_wrap_key_buffer_too_small_preserves_guard"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/ckr/test_ckr_wrap.py::TestWrapKeyErrors::test_wrapping_key_type_inconsistent"
+      ],
+      "messages_sample": [
+        "Failed: Module accepted a generic-secret key for AES wrap (expected CKR_WRAPPING_KEY_TYPE_INCONSISTENT)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/ckr/test_ckr_wrap.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:7c0eefe65ea0b29d",
+      "example_nodeid": "src/pkcs11_check/testcases/ckr/test_ckr_wrap.py::TestWrapKeyErrors::test_wrapping_key_type_inconsistent"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_api_boundary.py::TestGenerateAesExtremeKeySize::test_generate_aes_extreme_key_size"
+      ],
+      "messages_sample": [
+        "Failed: C_GenerateKey(CKA_VALUE_LEN=0xffffffffffffffff): module crashed with signal 6\nstdout: \nstderr: thread '<unnamed>' (157) panicked at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/alloc/src/raw_vec/mod.rs:28:5:\ncapacity overflow\nnote: run with `RUST_BACKTRACE=1` environment variable "
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_api_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:9a3c6d14f595b1d2",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_api_boundary.py::TestGenerateAesExtremeKeySize::test_generate_aes_extreme_key_size"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestDeriveTemplateCountOverflowValidBase::test_derive_key_template_count_overflow_with_valid_base_key[ulong_max]"
+      ],
+      "messages_sample": [
+        "Failed: C_DeriveKey(valid base, template_count=0xffffffffffffffff): module crashed with signal 11\nstdout: \nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:63576b0cc24da7be",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestDeriveTemplateCountOverflowValidBase::test_derive_key_template_count_overflow_with_valid_base_key[ulong_max]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestKeyValueLenOverflow::test_key_value_len_overflow[aes]"
+      ],
+      "messages_sample": [
+        "Failed: C_GenerateKey(CKM_AES_KEY_GEN, CKA_VALUE_LEN=0xffffffffffffffff): module crashed with signal 6\nstdout: \nstderr: thread '<unnamed>' (209) panicked at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/alloc/src/raw_vec/mod.rs:28:5:\ncapacity overflow\nnote: run with `RUST_BACKTRACE=1` envi"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:5ddfe5a6dcf10957",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_arithmetic_overflow.py::TestKeyValueLenOverflow::test_key_value_len_overflow[aes]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_cve_regression.py::TestTookanUnwrapAttrs::test_unwrapped_key_cannot_unset_sensitive"
+      ],
+      "messages_sample": [
+        "Failed: SECURITY: Tookan \u00a73.3 \u2014 unwrap with CKA_SENSITIVE=False produced a non-sensitive copy of a SENSITIVE=True key. Sensitive-key boundary breached on unwrap."
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_cve_regression.py",
+      "direction": "OTHER",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:0a36af7a249c5680",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_cve_regression.py::TestTookanUnwrapAttrs::test_unwrapped_key_cannot_unset_sensitive"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxDataLength::test_digest_isize_boundary[isize_max]"
+      ],
+      "messages_sample": [
+        "Failed: C_Digest(SHA256, ulDataLen=0x7fffffffffffffff): module crashed with signal 11\nstdout: \nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:9baf1078c35a6c43",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxDataLength::test_digest_isize_boundary[isize_max]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxDataLength::test_digest_isize_boundary[isize_max_plus_1]"
+      ],
+      "messages_sample": [
+        "Failed: C_Digest(SHA256, ulDataLen=0x8000000000000000): module crashed with signal 11\nstdout: \nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:7950c7ef570d1d54",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxDataLength::test_digest_isize_boundary[isize_max_plus_1]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxUpdateLength::test_update_isize_data_len[sign_update-isize_max]"
+      ],
+      "messages_sample": [
+        "Failed: C_SignUpdate(ulDataLen=0x7fffffffffffffff): module crashed with signal 11\nstdout: TARGET:C_SignUpdate\nLEN:9223372036854775807\nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:3c8fd0956d111ab1",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxUpdateLength::test_update_isize_data_len[sign_update-isize_max]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxUpdateLength::test_update_isize_data_len[sign_update-isize_max_plus_1]"
+      ],
+      "messages_sample": [
+        "Failed: C_SignUpdate(ulDataLen=0x8000000000000000): module crashed with signal 11\nstdout: TARGET:C_SignUpdate\nLEN:9223372036854775808\nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:8cb1795bdc1b506a",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxUpdateLength::test_update_isize_data_len[sign_update-isize_max_plus_1]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxUpdateLength::test_update_isize_data_len[verify_update-isize_max]"
+      ],
+      "messages_sample": [
+        "Failed: C_VerifyUpdate(ulDataLen=0x7fffffffffffffff): module crashed with signal 11\nstdout: TARGET:C_VerifyUpdate\nLEN:9223372036854775807\nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:a3b3d8f2fbd31016",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxUpdateLength::test_update_isize_data_len[verify_update-isize_max]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxUpdateLength::test_update_isize_data_len[verify_update-isize_max_plus_1]"
+      ],
+      "messages_sample": [
+        "Failed: C_VerifyUpdate(ulDataLen=0x8000000000000000): module crashed with signal 11\nstdout: TARGET:C_VerifyUpdate\nLEN:9223372036854775808\nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:3f7f3b714eb15a6f",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxUpdateLength::test_update_isize_data_len[verify_update-isize_max_plus_1]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxUpdateLength::test_update_isize_data_len[digest_update-isize_max]"
+      ],
+      "messages_sample": [
+        "Failed: C_DigestUpdate(ulDataLen=0x7fffffffffffffff): module crashed with signal 11\nstdout: TARGET:C_DigestUpdate\nLEN:9223372036854775807\nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:fc440db7e066633c",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxUpdateLength::test_update_isize_data_len[digest_update-isize_max]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxUpdateLength::test_update_isize_data_len[digest_update-isize_max_plus_1]"
+      ],
+      "messages_sample": [
+        "Failed: C_DigestUpdate(ulDataLen=0x8000000000000000): module crashed with signal 11\nstdout: TARGET:C_DigestUpdate\nLEN:9223372036854775808\nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:34ca86f6d3ed90c7",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestIsizeMaxUpdateLength::test_update_isize_data_len[digest_update-isize_max_plus_1]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestRandomIsizeLength::test_generate_random_isize_length_preserves_guard[isize_max]"
+      ],
+      "messages_sample": [
+        "Failed: C_GenerateRandom(ulRandomLen=0x7fffffffffffffff): module crashed with signal 11\nstdout: TARGET:C_GenerateRandom\nLEN:9223372036854775807\nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:19be38ee61095876",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestRandomIsizeLength::test_generate_random_isize_length_preserves_guard[isize_max]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestRandomIsizeLength::test_generate_random_isize_length_preserves_guard[isize_max_plus_1]"
+      ],
+      "messages_sample": [
+        "Failed: C_GenerateRandom(ulRandomLen=0x8000000000000000): module crashed with signal 11\nstdout: TARGET:C_GenerateRandom\nLEN:9223372036854775808\nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:16c5624bd64767da",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestRandomIsizeLength::test_generate_random_isize_length_preserves_guard[isize_max_plus_1]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestAllocationGuard::test_generate_key_oom_value_len"
+      ],
+      "messages_sample": [
+        "subprocess.TimeoutExpired: Command '['/app/.venv/bin/python', '-c', 'import atexit as _atexit\\nimport json as _json\\nimport os as _os\\nfrom pkcs11_check.raw.api import RawPKCS11\\nfrom pkcs11_check.raw.bootstrap import (\\n    close_session_quietly, get_slot_ids, login_user, open_session,\\n)\\nfrom pkc"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:427ff0ae9ca9c38c",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestAllocationGuard::test_generate_key_oom_value_len"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestAesCbcEncryptDataMalformedParams::test_aes_cbc_encrypt_data_malformed_params[tiny_data_huge_length]"
+      ],
+      "messages_sample": [
+        "Failed: C_DeriveKey(AES_CBC_ENCRYPT_DATA, pData=tiny,length=isize_max_plus_1): module crashed with signal 6\nstdout: TARGET_CALL:C_DeriveKey(AES_CBC_ENCRYPT_DATA,pData=tiny,length=isize_max_plus_1)\nstderr: thread '<unnamed>' (284) panicked at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/al"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:40f79d7545c723b2",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestAesCbcEncryptDataMalformedParams::test_aes_cbc_encrypt_data_malformed_params[tiny_data_huge_length]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestTlsKdfNullParams::test_tls_kdf_null_label"
+      ],
+      "messages_sample": [
+        "Failed: C_DeriveKey(TLS_KDF, pLabel=NULL, ulLabelLength=16): module crashed with signal 11\nstdout: \nstderr:"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:3449fe1ba16b808b",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::TestTlsKdfNullParams::test_tls_kdf_null_label"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_padding_oracle.py::TestAESPaddingOracle::test_cbc_pad_all_last_block_positions"
+      ],
+      "messages_sample": [
+        "Failed: SECURITY: AES-CBC-PAD padding oracle (Vaudenay 2002) \u2014 distinct outcomes {'CKR_ENCRYPTED_DATA_INVALID': 318, 'CKR_OK_DIFFERENT': 2} across 320 corruption probes. An attacker with chosen-ciphertext access can recover plaintext byte-by-byte via ~256 oracle queries per byte. Mitigation is appli"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_padding_oracle.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:e1b626bb466df975",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_padding_oracle.py::TestAESPaddingOracle::test_cbc_pad_all_last_block_positions"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_secret_key_value_len.py::TestExistingSecretKeyValueLen::test_copy_secret_key_with_oversized_value_len_does_not_crash"
+      ],
+      "messages_sample": [
+        "Failed: C_CopyObject(secret key, CKA_VALUE_LEN=0xffffffffffffffff): subprocess failed with exit code 1\nstdout: TARGET_RV:0x00000000\nVALUE_LEN_RV:0x00000000\nVALUE_LEN_VALUE:18446744073709551615\nP11_RV_TRACE_JSON:[{\"i\":0,\"fn\":\"C_Initialize\",\"mech\":null,\"rv\":0,\"rv_name\":\"CKR_OK\"},{\"i\":1,\"fn\":\"C_GetSlot"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_secret_key_value_len.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:41c0c144697f7ac5",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_secret_key_value_len.py::TestExistingSecretKeyValueLen::test_copy_secret_key_with_oversized_value_len_does_not_crash"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_secret_key_value_len.py::TestExistingSecretKeyValueLen::test_set_secret_key_oversized_value_len_does_not_crash"
+      ],
+      "messages_sample": [
+        "Failed: C_SetAttributeValue(secret key, CKA_VALUE_LEN=0xffffffffffffffff): subprocess failed with exit code 1\nstdout: TARGET_RV:0x00000000\nVALUE_LEN_RV:0x00000000\nVALUE_LEN_VALUE:18446744073709551615\nP11_RV_TRACE_JSON:[{\"i\":0,\"fn\":\"C_Initialize\",\"mech\":null,\"rv\":0,\"rv_name\":\"CKR_OK\"},{\"i\":1,\"fn\":\"C_"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_secret_key_value_len.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:7035aa92bbdbd0bc",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_secret_key_value_len.py::TestExistingSecretKeyValueLen::test_set_secret_key_oversized_value_len_does_not_crash"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/security/test_secret_key_value_len.py::TestGenerateKeySecretKeyValueLen::test_generic_secret_generate_key_oversized_value_len_rejects_cleanly"
+      ],
+      "messages_sample": [
+        "Failed: C_GenerateKey(GENERIC_SECRET, CKA_VALUE_LEN=0xffffffffffffffff): module crashed with signal 6\nstdout: CONTROL_BEGIN:32\nCONTROL_RV:0x00000000\nCONTROL_RV_NAME:CKR_OK\nCONTROL_VALUE_LEN_RV:0x00000000\nCONTROL_VALUE_LEN:32\nTARGET_BEGIN:18446744073709551615\nstderr: thread '<unnamed>' (317) panicked"
+      ],
+      "test_file": "src/pkcs11_check/testcases/security/test_secret_key_value_len.py",
+      "direction": "CRASH",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:e2b8c55d1c25d917",
+      "example_nodeid": "src/pkcs11_check/testcases/security/test_secret_key_value_len.py::TestGenerateKeySecretKeyValueLen::test_generic_secret_generate_key_oversized_value_len_rejects_cleanly"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_access_levels.py::TestTrustedAttribute::test_user_cannot_set_trusted"
+      ],
+      "messages_sample": [
+        "Failed: SECURITY: USER session created and was granted CKA_TRUSTED=True on a freshly-generated key \u2014 trust boundary breached"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_access_levels.py",
+      "direction": "OTHER",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:37c7c2cf68ce340e",
+      "example_nodeid": "src/pkcs11_check/testcases/test_access_levels.py::TestTrustedAttribute::test_user_cannot_set_trusted"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_access_levels.py::TestPublicSessionRestrictions::test_public_create_private_session_object_rejected"
+      ],
+      "messages_sample": [
+        "Failed: public (unauthenticated) session created a CKA_PRIVATE=True session object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN): claimed the protection then violated it (self-contradiction)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_access_levels.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:c406a8eaf0c54026",
+      "example_nodeid": "src/pkcs11_check/testcases/test_access_levels.py::TestPublicSessionRestrictions::test_public_create_private_session_object_rejected"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_wrap_wrong_key_type[AES_CBC]"
+      ],
+      "messages_sample": [
+        "Failed: AES_CBC wrap with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:914afaa0c0f6e211",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_wrap_wrong_key_type[AES_CBC]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_wrap_wrong_key_type[AES_CBC_PAD]"
+      ],
+      "messages_sample": [
+        "Failed: AES_CBC_PAD wrap with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:f6cc2f7cac6666fe",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_wrap_wrong_key_type[AES_CBC_PAD]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_wrap_wrong_key_type[AES_CTR]"
+      ],
+      "messages_sample": [
+        "Failed: AES_CTR wrap with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:52f1a0e1a8ce21ad",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_wrap_wrong_key_type[AES_CTR]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_wrap_wrong_key_type[AES_CTS]"
+      ],
+      "messages_sample": [
+        "Failed: AES_CTS wrap with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:85babaeb2c555604",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_wrap_wrong_key_type[AES_CTS]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_wrap_wrong_key_type[AES_ECB]"
+      ],
+      "messages_sample": [
+        "Failed: AES_ECB wrap with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:0dbd27d4c7ceb1fc",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_wrap_wrong_key_type[AES_ECB]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_wrap_wrong_key_type[AES_GCM]"
+      ],
+      "messages_sample": [
+        "Failed: AES_GCM wrap with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:ba15bfaaf7b11a7e",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_wrap_wrong_key_type[AES_GCM]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_wrap_wrong_key_type[AES_KEY_WRAP]"
+      ],
+      "messages_sample": [
+        "Failed: AES_KEY_WRAP wrap with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:608af939a5ea3725",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_wrap_wrong_key_type[AES_KEY_WRAP]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_wrap_wrong_key_type[AES_KEY_WRAP_KWP]"
+      ],
+      "messages_sample": [
+        "Failed: AES_KEY_WRAP_KWP wrap with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:9b4d3df551688c4b",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_wrap_wrong_key_type[AES_KEY_WRAP_KWP]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[CONCATENATE_BASE_AND_DATA]"
+      ],
+      "messages_sample": [
+        "Failed: CONCATENATE_BASE_AND_DATA derive with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:991b5f5b3b771508",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[CONCATENATE_BASE_AND_DATA]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[CONCATENATE_DATA_AND_BASE]"
+      ],
+      "messages_sample": [
+        "Failed: CONCATENATE_DATA_AND_BASE derive with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:9ab6c3e9c7c272e6",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[CONCATENATE_DATA_AND_BASE]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[EXTRACT_KEY_FROM_KEY]"
+      ],
+      "messages_sample": [
+        "Failed: EXTRACT_KEY_FROM_KEY derive with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:eeb16190781b1d84",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[EXTRACT_KEY_FROM_KEY]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA1_KEY_DERIVATION]"
+      ],
+      "messages_sample": [
+        "Failed: SHA1_KEY_DERIVATION derive with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:8ab4f6723753a050",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA1_KEY_DERIVATION]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA224_KEY_DERIVATION]"
+      ],
+      "messages_sample": [
+        "Failed: SHA224_KEY_DERIVATION derive with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:eac694851a31c51c",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA224_KEY_DERIVATION]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA256_KEY_DERIVATION]"
+      ],
+      "messages_sample": [
+        "Failed: SHA256_KEY_DERIVATION derive with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:09a17d5db135f0f0",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA256_KEY_DERIVATION]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA384_KEY_DERIVATION]"
+      ],
+      "messages_sample": [
+        "Failed: SHA384_KEY_DERIVATION derive with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:a2c9cabcccda4809",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA384_KEY_DERIVATION]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA3_224_KEY_DERIVE]"
+      ],
+      "messages_sample": [
+        "Failed: SHA3_224_KEY_DERIVE derive with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:91b15e90fb17bccf",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA3_224_KEY_DERIVE]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA3_256_KEY_DERIVE]"
+      ],
+      "messages_sample": [
+        "Failed: SHA3_256_KEY_DERIVE derive with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:6700bbad324adec4",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA3_256_KEY_DERIVE]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA3_384_KEY_DERIVE]"
+      ],
+      "messages_sample": [
+        "Failed: SHA3_384_KEY_DERIVE derive with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:ae759824f75ae975",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA3_384_KEY_DERIVE]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA3_512_KEY_DERIVE]"
+      ],
+      "messages_sample": [
+        "Failed: SHA3_512_KEY_DERIVE derive with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:f4a142629aeacfe6",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA3_512_KEY_DERIVE]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA512_224_KEY_DERIVATION]"
+      ],
+      "messages_sample": [
+        "Failed: SHA512_224_KEY_DERIVATION derive with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:4259b60e498f3cdd",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA512_224_KEY_DERIVATION]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA512_256_KEY_DERIVATION]"
+      ],
+      "messages_sample": [
+        "Failed: SHA512_256_KEY_DERIVATION derive with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:da171ff8201d0486",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA512_256_KEY_DERIVATION]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA512_KEY_DERIVATION]"
+      ],
+      "messages_sample": [
+        "Failed: SHA512_KEY_DERIVATION derive with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:dceddc0444a0f779",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[SHA512_KEY_DERIVATION]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[XOR_BASE_AND_DATA]"
+      ],
+      "messages_sample": [
+        "Failed: XOR_BASE_AND_DATA derive with wrong key type: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:234660e425d253f3",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestWrongKeyType::test_registry_derive_wrong_key_type[XOR_BASE_AND_DATA]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestBadParameters::test_registry_sign_missing_required_param[EDDSA]"
+      ],
+      "messages_sample": [
+        "Failed: EDDSA C_SignInit with missing required params: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:529835ddb48913b6",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestBadParameters::test_registry_sign_missing_required_param[EDDSA]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_mech_negative.py::TestBadParameters::test_registry_verify_missing_required_param[EDDSA]"
+      ],
+      "messages_sample": [
+        "Failed: EDDSA C_VerifyInit with missing required params: accepted invalid (CKR_OK) -- must reject"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_mech_negative.py",
+      "direction": "ACCEPT_INVALID",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:bc28bf2a6c265984",
+      "example_nodeid": "src/pkcs11_check/testcases/test_mech_negative.py::TestBadParameters::test_registry_verify_missing_required_param[EDDSA]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_operation_termination.py::test_c_verify_terminates_after_rejected_rsa_signature"
+      ],
+      "messages_sample": [
+        "Failed: RSA: C_Verify(too-short) returned CKR_SIGNATURE_LEN_RANGE but left the verify operation active (next C_VerifyInit -> CKR_OPERATION_ACTIVE) -- the spec requires C_Verify to ALWAYS terminate the active verification operation: success claimed then contradicted (self-contradiction)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_operation_termination.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:cac6cc20fd9eb4f6",
+      "example_nodeid": "src/pkcs11_check/testcases/test_operation_termination.py::test_c_verify_terminates_after_rejected_rsa_signature"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_operation_termination.py::test_c_verify_terminates_after_rejected_ecdsa_signature"
+      ],
+      "messages_sample": [
+        "Failed: ECDSA: C_Verify(too-short) returned CKR_SIGNATURE_LEN_RANGE but left the verify operation active (next C_VerifyInit -> CKR_OPERATION_ACTIVE) -- the spec requires C_Verify to ALWAYS terminate the active verification operation: success claimed then contradicted (self-contradiction)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_operation_termination.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:96c3f286f48e3734",
+      "example_nodeid": "src/pkcs11_check/testcases/test_operation_termination.py::test_c_verify_terminates_after_rejected_ecdsa_signature"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_operation_termination.py::test_c_verify_final_terminates_after_rejected_signature"
+      ],
+      "messages_sample": [
+        "Failed: RSA: C_VerifyFinal(too-short) returned CKR_SIGNATURE_LEN_RANGE but left the verify operation active (next C_VerifyInit -> CKR_OPERATION_ACTIVE) -- the spec requires C_VerifyFinal to ALWAYS terminate the active verification operation: success claimed then contradicted (self-contradiction)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_operation_termination.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:8c8ff5580d5bf69e",
+      "example_nodeid": "src/pkcs11_check/testcases/test_operation_termination.py::test_c_verify_final_terminates_after_rejected_signature"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-input]"
+      ],
+      "messages_sample": [
+        "Failed: C_Encrypt with NULL input pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_operation_termination.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:0694006e303c2696",
+      "example_nodeid": "src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-input]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-length]"
+      ],
+      "messages_sample": [
+        "Failed: C_Encrypt with NULL length pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_operation_termination.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:c8b3a59e5156f0b0",
+      "example_nodeid": "src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-length]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-update-input]"
+      ],
+      "messages_sample": [
+        "Failed: C_EncryptUpdate with NULL input pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_operation_termination.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:d1d7a1ce3771bd1a",
+      "example_nodeid": "src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-update-input]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-update-length]"
+      ],
+      "messages_sample": [
+        "Failed: C_EncryptUpdate with NULL length pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_operation_termination.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:2b8fd0ae8d585cfd",
+      "example_nodeid": "src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-update-length]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[decrypt-input]"
+      ],
+      "messages_sample": [
+        "Failed: C_Decrypt with NULL input pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_operation_termination.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:7f83ae8d23f73e01",
+      "example_nodeid": "src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[decrypt-input]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[decrypt-length]"
+      ],
+      "messages_sample": [
+        "Failed: C_Decrypt with NULL length pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_operation_termination.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:dedf25e2a49baf74",
+      "example_nodeid": "src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[decrypt-length]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[decrypt-update-input]"
+      ],
+      "messages_sample": [
+        "Failed: C_DecryptUpdate with NULL input pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_operation_termination.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:7bcb31816002f619",
+      "example_nodeid": "src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[decrypt-update-input]"
+    },
+    {
+      "size": 1,
+      "nodeids": [
+        "src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[decrypt-update-length]"
+      ],
+      "messages_sample": [
+        "Failed: C_DecryptUpdate with NULL length pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)"
+      ],
+      "test_file": "src/pkcs11_check/testcases/test_operation_termination.py",
+      "direction": "CLEAN_ERROR",
+      "provider": "kryoptic-main",
+      "bucket": "failures",
+      "signature": "sha1:f56d2a08ace19b07",
+      "example_nodeid": "src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[decrypt-update-length]"
+    }
+  ]
+}
