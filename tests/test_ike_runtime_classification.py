@@ -14,6 +14,7 @@ from pkcs11_check.raw.types_std import (
     CKM_IKE1_PRF_DERIVE,
     CKM_IKE2_PRF_PLUS_DERIVE,
     CKM_IKE_PRF_DERIVE,
+    CKR_ARGUMENTS_BAD,
     CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases import test_ike
@@ -121,6 +122,57 @@ def test_ike_invalid_prf_mechanism_uses_negative_classifier(
     ]
     assert all(isinstance(call[0], CkrAssertionError) for call in classifier_calls)
     assert all(int(CKR_MECHANISM_PARAM_INVALID) in call[1] for call in classifier_calls)
+
+
+def test_ike_prf_rejects_data_as_key_rekey_combination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_keys = iter((1, 2))
+    derive_calls: list[tuple[int, int, int, int, int]] = []
+    classifier_calls: list[tuple[BaseException | None, tuple[int, ...], str]] = []
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        base_key: int,
+        mechanism: int,
+        *_args: object,
+        **kwargs: object,
+    ) -> int:
+        mech_param = kwargs["mech_param"]
+        derive_calls.append(
+            (
+                int(base_key),
+                int(mechanism),
+                int(mech_param.params.bDataAsKey),
+                int(mech_param.params.bRekey),
+                int(mech_param.params.hNewKey),
+            )
+        )
+        raise CkrAssertionError("Unexpected CK_RV CKR_ARGUMENTS_BAD", int(CKR_ARGUMENTS_BAD))
+
+    def _reject_or_classify(
+        exc: BaseException | None,
+        expected_rvs: tuple[int, ...],
+        *,
+        label: str,
+    ) -> None:
+        classifier_calls.append((exc, tuple(int(rv) for rv in expected_rvs), label))
+
+    monkeypatch.setattr(test_ike, "_create_base_key", lambda *_args, **_kwargs: next(base_keys))
+    monkeypatch.setattr(test_ike, "derive_key", _derive_key)
+    monkeypatch.setattr(test_ike, "destroy_quietly", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(test_ike, "reject_or_classify", _reject_or_classify, raising=False)
+
+    rs = _session_with_mechanisms("IKE_PRF_DERIVE")
+    test_ike.TestIKEPRFDerive().test_rejects_data_as_key_rekey_combination(rs)
+
+    assert derive_calls == [(1, int(CKM_IKE_PRF_DERIVE), 1, 1, 2)]
+    assert len(classifier_calls) == 1
+    exc, expected_rvs, label = classifier_calls[0]
+    assert isinstance(exc, CkrAssertionError)
+    assert expected_rvs == (int(CKR_ARGUMENTS_BAD),)
+    assert label == "IKE PRF data-as-key rekey combination"
 
 
 def test_ike1_prf_exact_vector_uses_typed_helper_and_fails_on_wrong_output(

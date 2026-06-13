@@ -75,6 +75,7 @@ _DERIVE_ERROR_CKRS = (
 )
 _INVALID_PRF_REJECT_RVS = (CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID)
 _INVALID_PRF_MECHANISM = int(CKM_AES_ECB)
+_IKE_PRF_REKEY_DATA_AS_KEY_REJECT_RVS = (CKR_ARGUMENTS_BAD,)
 
 # 32-byte base key material (shared secret / SKEYSEED)
 _BASE_KEY_BYTES = bytes(range(32))
@@ -771,6 +772,62 @@ class TestIKEPRFDerive:
                 "CKM_IKE_PRF_DERIVE invalid PRF setup not operational",
             )
         finally:
+            if base_key:
+                destroy_quietly(rs.raw, rs.sh, base_key)
+
+    def test_rejects_data_as_key_rekey_combination(self, p11_raw_session: Any) -> None:
+        """CKM_IKE_PRF_DERIVE rejects the disallowed bDataAsKey+bRekey pair."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("IKE_PRF_DERIVE"):
+            pytest.skip("CKM_IKE_PRF_DERIVE not supported")
+        base_key = 0
+        rekey_key = 0
+        derived = 0
+        try:
+            base_key = _create_base_key(rs)
+            rekey_key = _create_base_key(rs, bytes(reversed(_BASE_KEY_BYTES)))
+            attrs: dict[int, Any] = {
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_VALUE_LEN: 32,
+                **_DERIVE_ATTRS,
+            }
+            exc: AssertionError | None = None
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base_key,
+                    CKM_IKE_PRF_DERIVE,
+                    attrs=attrs,
+                    mech_param=mech_ike_prf_derive(
+                        CKM_IKE_PRF_DERIVE,
+                        prf_mechanism=CKM_SHA256_HMAC,
+                        initiator_nonce=_NONCE_I,
+                        responder_nonce=_NONCE_R,
+                        data_as_key=True,
+                        rekey=True,
+                        new_key_handle=rekey_key,
+                    ),
+                )
+            except AssertionError as caught:
+                exc = caught
+            reject_or_classify(
+                exc,
+                _IKE_PRF_REKEY_DATA_AS_KEY_REJECT_RVS,
+                label="IKE PRF data-as-key rekey combination",
+            )
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _DERIVE_ERROR_CKRS,
+                "CKM_IKE_PRF_DERIVE data-as-key rekey setup not operational",
+            )
+        finally:
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)
+            if rekey_key:
+                destroy_quietly(rs.raw, rs.sh, rekey_key)
             if base_key:
                 destroy_quietly(rs.raw, rs.sh, base_key)
 

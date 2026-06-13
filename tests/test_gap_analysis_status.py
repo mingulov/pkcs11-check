@@ -307,6 +307,22 @@ def test_gap_analysis_marks_ike_invalid_prf_negative_as_added() -> None:
     assert "IKE invalid-PRF negative coverage" in doc_flat
 
 
+def test_gap_analysis_marks_ike_prf_data_as_key_rekey_negative_as_added() -> None:
+    """CKM_IKE_PRF_DERIVE rejects the disallowed data-as-key plus rekey pair."""
+    ike = _read("src/pkcs11_check/testcases/test_ike.py")
+    guard = _read("tests/test_ike_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "_IKE_PRF_REKEY_DATA_AS_KEY_REJECT_RVS" in ike
+    assert "test_rejects_data_as_key_rekey_combination" in ike
+    assert "data_as_key=True" in ike
+    assert "rekey=True" in ike
+    assert "IKE PRF data-as-key rekey combination" in ike
+    assert "test_ike_prf_rejects_data_as_key_rekey_combination" in guard
+
+    assert "IKE PRF data-as-key/rekey negative coverage" in doc_flat
+
+
 def test_gap_analysis_marks_tls_kdf_tls10_exact_vector_as_added() -> None:
     """CKM_TLS_KDF has an RFC 2246 TLS1.0/1.1 PRF exact vector."""
     tls = _read("src/pkcs11_check/testcases/test_tls12.py")

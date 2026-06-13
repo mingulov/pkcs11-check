@@ -326,7 +326,12 @@ smoke behavior, or covered only by one narrow variation.
    exercise the second recurrence output block. IKE invalid-PRF negative
    coverage now verifies all four typed IKE derive parameter structs reject a
    nested `prfMechanism` set to standard non-MAC `CKM_AES_ECB` through the
-   shared provider-general negative classifier. SSL3 master-secret exact-vector coverage
+   shared provider-general negative classifier. IKE PRF
+   data-as-key/rekey negative coverage now verifies `CKM_IKE_PRF_DERIVE`
+   rejects the OASIS-disallowed `bDataAsKey=TRUE` plus `bRekey=TRUE`
+   parameter combination through the same provider-general negative
+   classifier, with `CKR_ARGUMENTS_BAD` as the spec-correct rejection.
+   SSL3 master-secret exact-vector coverage
    now checks `CKM_SSL3_MASTER_KEY_DERIVE` output against the RFC 6101 SSL3
    MD5/SHA master-secret computation. SSL3 master-secret DH exact-vector
    coverage now applies the same computation to `CKM_SSL3_MASTER_KEY_DERIVE_DH`
