@@ -52,7 +52,6 @@ ALLOWLIST = {
     "src/pkcs11_check/testcases/test_threading.py",
     "src/pkcs11_check/testcases/test_tls12.py",
     "src/pkcs11_check/testcases/test_token_flags.py",
-    "src/pkcs11_check/testcases/test_v30_session.py",
     "src/pkcs11_check/testcases/test_validation_objects.py",
     "src/pkcs11_check/testcases/test_verify_signature.py",
     "src/pkcs11_check/testcases/test_wtls.py",

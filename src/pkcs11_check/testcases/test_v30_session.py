@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
     login_user_with_name,
@@ -147,13 +148,26 @@ class TestCLoginUser:
         if rv == CKR_USER_ALREADY_LOGGED_IN:
             pass  # Acceptable: we are already logged in as USER.
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
-            pytest.xfail(
-                "Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED"
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser",
+                operation="C_LoginUser",
+                actual=rv,
+                summary=(
+                    "Module exposes v3.0 interface but C_LoginUser returns "
+                    "CKR_FUNCTION_NOT_SUPPORTED"
+                ),
             )
         elif rv == CKR_OK:
             pass  # Accepted.
         else:
-            pytest.xfail(f"C_LoginUser returned an unexpected clean CKR: {ckr_name(rv)}")
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser",
+                operation="C_LoginUser",
+                actual=rv,
+                summary=f"C_LoginUser returned an unexpected clean CKR: {ckr_name(rv)}",
+            )
 
     def test_c_login_user_not_available_on_v240(
         self,
@@ -198,13 +212,26 @@ class TestCLoginUser:
         if rv == CKR_OK or rv == CKR_USER_ALREADY_LOGGED_IN:
             pass  # Accepted or already logged in.
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
-            pytest.xfail(
-                "Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED"
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser",
+                operation="C_LoginUser",
+                actual=rv,
+                summary=(
+                    "Module exposes v3.0 interface but C_LoginUser returns "
+                    "CKR_FUNCTION_NOT_SUPPORTED"
+                ),
             )
         elif rv in _LOGIN_REJECT:
             pass  # Module does not support named users - acceptable.
         else:
-            pytest.xfail(f"C_LoginUser returned an unexpected clean CKR: {ckr_name(rv)}")
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser",
+                operation="C_LoginUser",
+                actual=rv,
+                summary=f"C_LoginUser returned an unexpected clean CKR: {ckr_name(rv)}",
+            )
 
     @pytest.mark.needs_function("C_LoginUser")
     def test_c_login_user_utf8_multibyte_username(
@@ -231,15 +258,28 @@ class TestCLoginUser:
         if rv == CKR_OK or rv == CKR_USER_ALREADY_LOGGED_IN:
             pass  # Module accepted the multi-byte username.
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
-            pytest.xfail(
-                "Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED"
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser",
+                operation="C_LoginUser",
+                actual=rv,
+                summary=(
+                    "Module exposes v3.0 interface but C_LoginUser returns "
+                    "CKR_FUNCTION_NOT_SUPPORTED"
+                ),
             )
         elif rv in _LOGIN_REJECT:
             pass  # Reject is OK; named-users not implemented.
         else:
-            pytest.xfail(
-                f"C_LoginUser with a UTF-8 multi-byte username returned an "
-                f"unexpected clean CKR: {ckr_name(rv)}"
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser:utf8-username",
+                operation="C_LoginUser",
+                actual=rv,
+                summary=(
+                    f"C_LoginUser with a UTF-8 multi-byte username returned an "
+                    f"unexpected clean CKR: {ckr_name(rv)}"
+                ),
             )
 
     @pytest.mark.needs_function("C_LoginUser")
@@ -268,15 +308,28 @@ class TestCLoginUser:
         if rv == CKR_OK or rv == CKR_USER_ALREADY_LOGGED_IN:
             pass
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
-            pytest.xfail(
-                "Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED"
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser",
+                operation="C_LoginUser",
+                actual=rv,
+                summary=(
+                    "Module exposes v3.0 interface but C_LoginUser returns "
+                    "CKR_FUNCTION_NOT_SUPPORTED"
+                ),
             )
         elif rv in _LOGIN_REJECT or rv == CKR_ARGUMENTS_BAD:
             pass
         else:
-            pytest.xfail(
-                f"C_LoginUser with a 1024-byte username returned an "
-                f"unexpected clean CKR: {ckr_name(rv)}"
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser:long-username",
+                operation="C_LoginUser",
+                actual=rv,
+                summary=(
+                    f"C_LoginUser with a 1024-byte username returned an "
+                    f"unexpected clean CKR: {ckr_name(rv)}"
+                ),
             )
 
     @pytest.mark.needs_function("C_LoginUser")
@@ -304,15 +357,28 @@ class TestCLoginUser:
         if rv == CKR_OK or rv == CKR_USER_ALREADY_LOGGED_IN:
             pass
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
-            pytest.xfail(
-                "Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED"
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser",
+                operation="C_LoginUser",
+                actual=rv,
+                summary=(
+                    "Module exposes v3.0 interface but C_LoginUser returns "
+                    "CKR_FUNCTION_NOT_SUPPORTED"
+                ),
             )
         elif rv in _LOGIN_REJECT or rv == CKR_ARGUMENTS_BAD:
             pass
         else:
-            pytest.xfail(
-                f"C_LoginUser with an embedded-NUL username returned an "
-                f"unexpected clean CKR: {ckr_name(rv)}"
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser:embedded-nul-username",
+                operation="C_LoginUser",
+                actual=rv,
+                summary=(
+                    f"C_LoginUser with an embedded-NUL username returned an "
+                    f"unexpected clean CKR: {ckr_name(rv)}"
+                ),
             )
 
 
@@ -357,21 +423,41 @@ class TestContextSpecificLogin:
         # p11_raw_session is already logged in as CKU_USER.
         rv = _raw_login(rs.raw, rs.sh, CKU_CONTEXT_SPECIFIC, pin)
         if rv == CKR_OK:
-            pytest.xfail(
-                "Module accepted CKU_CONTEXT_SPECIFIC login without an active "
-                "operation - spec requires CKR_OPERATION_NOT_INITIALIZED"
+            xfail_as(
+                "honest_deviation",
+                kind="lifecycle",
+                label="CKU_CONTEXT_SPECIFIC:no-active-op",
+                operation="C_Login",
+                actual=rv,
+                summary=(
+                    "Module accepted CKU_CONTEXT_SPECIFIC login without an active "
+                    "operation - spec requires CKR_OPERATION_NOT_INITIALIZED"
+                ),
             )
         elif rv == CKR_OPERATION_NOT_INITIALIZED:
             pass  # Correct per spec.
         elif rv == CKR_USER_NOT_LOGGED_IN:
             pass  # Acceptable: module checks login state before operation state.
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
-            pytest.xfail(
-                "Module does not support CKU_CONTEXT_SPECIFIC login (CKR_FUNCTION_NOT_SUPPORTED)"
+            xfail_as(
+                "not_operational",
+                label="CKU_CONTEXT_SPECIFIC",
+                operation="C_Login",
+                actual=rv,
+                summary=(
+                    "Module does not support CKU_CONTEXT_SPECIFIC login "
+                    "(CKR_FUNCTION_NOT_SUPPORTED)"
+                ),
             )
         else:
-            pytest.xfail(
-                f"C_Login(CONTEXT_SPECIFIC) returned an unexpected clean CKR: {ckr_name(rv)}"
+            xfail_as(
+                "not_operational",
+                label="CKU_CONTEXT_SPECIFIC",
+                operation="C_Login",
+                actual=rv,
+                summary=(
+                    f"C_Login(CONTEXT_SPECIFIC) returned an unexpected clean CKR: {ckr_name(rv)}"
+                ),
             )
 
     def test_context_specific_login_uses_c_login(
@@ -391,7 +477,14 @@ class TestContextSpecificLogin:
 
         rv = _raw_login(rs.raw, rs.sh, CKU_CONTEXT_SPECIFIC, pin)
         if rv == CKR_OK:
-            pytest.xfail("Module accepted CKU_CONTEXT_SPECIFIC without active operation")
+            xfail_as(
+                "honest_deviation",
+                kind="lifecycle",
+                label="CKU_CONTEXT_SPECIFIC:no-active-op",
+                operation="C_Login",
+                actual=rv,
+                summary="Module accepted CKU_CONTEXT_SPECIFIC without active operation",
+            )
         elif rv == CKR_OPERATION_NOT_INITIALIZED:
             pass  # Correct.
         elif rv == CKR_USER_NOT_LOGGED_IN:
@@ -399,7 +492,15 @@ class TestContextSpecificLogin:
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.skip("Module does not implement CKU_CONTEXT_SPECIFIC login")
         else:
-            pytest.xfail(f"context-specific login returned an unexpected clean CKR: {ckr_name(rv)}")
+            xfail_as(
+                "not_operational",
+                label="CKU_CONTEXT_SPECIFIC",
+                operation="C_Login",
+                actual=rv,
+                summary=(
+                    f"context-specific login returned an unexpected clean CKR: {ckr_name(rv)}"
+                ),
+            )
 
     @pytest.mark.needs_function("C_LoginUser")
     def test_context_specific_via_c_login_user(
@@ -419,9 +520,14 @@ class TestContextSpecificLogin:
             pytest.skip("No PIN configured")
 
         if "C_LoginUser" not in rs.raw.available_function_names():
-            pytest.xfail(
-                "Module does not expose v3.0 function list for C_LoginUser "
-                "(unexpected on a v3.0+ negotiated interface)"
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser:absent-on-v3",
+                operation="C_LoginUser",
+                summary=(
+                    "Module does not expose v3.0 function list for C_LoginUser "
+                    "(unexpected on a v3.0+ negotiated interface)"
+                ),
             )
 
         rv = _raw_login_user(
@@ -432,9 +538,16 @@ class TestContextSpecificLogin:
             b"",
         )
         if rv == CKR_OK:
-            pytest.xfail(
-                "Module accepted CKU_CONTEXT_SPECIFIC via C_LoginUser without "
-                "an active operation - spec requires CKR_OPERATION_NOT_INITIALIZED"
+            xfail_as(
+                "honest_deviation",
+                kind="lifecycle",
+                label="CKU_CONTEXT_SPECIFIC:no-active-op-via-loginuser",
+                operation="C_LoginUser",
+                actual=rv,
+                summary=(
+                    "Module accepted CKU_CONTEXT_SPECIFIC via C_LoginUser without "
+                    "an active operation - spec requires CKR_OPERATION_NOT_INITIALIZED"
+                ),
             )
         elif rv == CKR_OPERATION_NOT_INITIALIZED:
             pass  # Correct per spec.
@@ -443,7 +556,15 @@ class TestContextSpecificLogin:
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.skip("Module does not implement C_LoginUser")
         else:
-            pytest.xfail(f"context-specific login returned an unexpected clean CKR: {ckr_name(rv)}")
+            xfail_as(
+                "not_operational",
+                label="CKU_CONTEXT_SPECIFIC",
+                operation="C_Login",
+                actual=rv,
+                summary=(
+                    f"context-specific login returned an unexpected clean CKR: {ckr_name(rv)}"
+                ),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -508,8 +629,15 @@ class TestLoginLogoutCycle:
             elif rv == CKR_FUNCTION_NOT_SUPPORTED:
                 pytest.skip("Module does not implement C_LoginUser (CKR_FUNCTION_NOT_SUPPORTED)")
             else:
-                pytest.xfail(
-                    f"C_LoginUser (positive login) returned an unexpected clean CKR: {ckr_name(rv)}"
+                xfail_as(
+                    "not_operational",
+                    label="C_LoginUser:positive-login",
+                    operation="C_LoginUser",
+                    actual=rv,
+                    summary=(
+                        f"C_LoginUser (positive login) returned an unexpected clean CKR: "
+                        f"{ckr_name(rv)}"
+                    ),
                 )
 
             if logged_in:
@@ -549,16 +677,29 @@ class TestLoginLogoutCycle:
             if rv2 == CKR_USER_ALREADY_LOGGED_IN:
                 pass  # Correct per spec.
             elif rv2 == CKR_OK:
-                pytest.xfail(
-                    "Module accepted a second C_LoginUser login without "
-                    "intervening logout - spec requires "
-                    "CKR_USER_ALREADY_LOGGED_IN"
+                xfail_as(
+                    "honest_deviation",
+                    kind="lifecycle",
+                    label="C_LoginUser:double-login",
+                    operation="C_LoginUser",
+                    actual=rv2,
+                    summary=(
+                        "Module accepted a second C_LoginUser login without "
+                        "intervening logout - spec requires "
+                        "CKR_USER_ALREADY_LOGGED_IN"
+                    ),
                 )
             elif rv2 == CKR_FUNCTION_NOT_SUPPORTED:
                 pytest.skip("Module does not implement C_LoginUser (CKR_FUNCTION_NOT_SUPPORTED)")
             else:
-                pytest.xfail(
-                    f"second C_LoginUser returned an unexpected clean CKR: {ckr_name(rv2)}"
+                xfail_as(
+                    "not_operational",
+                    label="C_LoginUser:double-login",
+                    operation="C_LoginUser",
+                    actual=rv2,
+                    summary=(
+                        f"second C_LoginUser returned an unexpected clean CKR: {ckr_name(rv2)}"
+                    ),
                 )
         finally:
             _raw_logout(rs.raw, sh2)
@@ -597,9 +738,15 @@ class TestSessionCancel:
             )
         rv = rs.raw.C_SessionCancel(rs.sh, 0)
         if rv == CKR_FUNCTION_NOT_SUPPORTED:
-            pytest.xfail(
-                "Module exposes v3.0 interface but C_SessionCancel returns "
-                "CKR_FUNCTION_NOT_SUPPORTED"
+            xfail_as(
+                "not_operational",
+                label="C_SessionCancel",
+                operation="C_SessionCancel",
+                actual=rv,
+                summary=(
+                    "Module exposes v3.0 interface but C_SessionCancel returns "
+                    "CKR_FUNCTION_NOT_SUPPORTED"
+                ),
             )
         # CKR_OK means success.
 
@@ -616,9 +763,15 @@ class TestSessionCancel:
             )
         rv = rs.raw.C_SessionCancel(rs.sh, 0)
         if rv == CKR_FUNCTION_NOT_SUPPORTED:
-            pytest.xfail(
-                "Module exposes v3.0 interface but C_SessionCancel returns "
-                "CKR_FUNCTION_NOT_SUPPORTED"
+            xfail_as(
+                "not_operational",
+                label="C_SessionCancel",
+                operation="C_SessionCancel",
+                actual=rv,
+                summary=(
+                    "Module exposes v3.0 interface but C_SessionCancel returns "
+                    "CKR_FUNCTION_NOT_SUPPORTED"
+                ),
             )
 
         # Session must still be usable: perform a SHA-256 digest.
@@ -639,9 +792,15 @@ class TestSessionCancel:
             )
         rv = rs.raw.C_SessionCancel(rs.sh, 0)
         if rv == CKR_FUNCTION_NOT_SUPPORTED:
-            pytest.xfail(
-                "Module exposes v3.0 interface but C_SessionCancel returns "
-                "CKR_FUNCTION_NOT_SUPPORTED"
+            xfail_as(
+                "not_operational",
+                label="C_SessionCancel",
+                operation="C_SessionCancel",
+                actual=rv,
+                summary=(
+                    "Module exposes v3.0 interface but C_SessionCancel returns "
+                    "CKR_FUNCTION_NOT_SUPPORTED"
+                ),
             )
 
     def test_cancel_after_digest_init_subprocess(
@@ -784,9 +943,14 @@ class TestSessionCancel:
             )
 
         if "CANCEL:NOT_SUPPORTED" in stdout:
-            pytest.xfail(
-                "Module exposes v3.0 interface but C_SessionCancel returns "
-                "CKR_FUNCTION_NOT_SUPPORTED"
+            xfail_as(
+                "not_operational",
+                label="C_SessionCancel",
+                operation="C_SessionCancel",
+                summary=(
+                    "Module exposes v3.0 interface but C_SessionCancel returns "
+                    "CKR_FUNCTION_NOT_SUPPORTED"
+                ),
             )
 
         # OASIS PKCS#11 v3.0 spec C_SessionCancel: with flags=0 the spec says
@@ -800,10 +964,15 @@ class TestSessionCancel:
             cancel_part = next(
                 (part for part in stdout.split() if part.startswith("CANCEL:0x")), stdout
             )
-            pytest.xfail(
-                f"Module returns non-conformant CKR for C_SessionCancel(flags=0): "
-                f"{cancel_part} -- spec requires CKR_OK when no flags are set "
-                f"(OASIS PKCS#11 v3.0 C_SessionCancel section)"
+            xfail_as(
+                "not_operational",
+                label="C_SessionCancel:flags-0",
+                operation="C_SessionCancel",
+                summary=(
+                    f"Module returns non-conformant CKR for C_SessionCancel(flags=0): "
+                    f"{cancel_part} -- spec requires CKR_OK when no flags are set "
+                    f"(OASIS PKCS#11 v3.0 C_SessionCancel section)"
+                ),
             )
 
         assert "CANCEL:OK" in stdout, (
