@@ -15,9 +15,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import pytest
-
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check import classification as C
+from pkcs11_check.raw.rv import ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKR_ACTION_PROHIBITED,
     CKR_ARGUMENTS_BAD,
@@ -208,6 +207,70 @@ class CkrExpectation:
 # ---------------------------------------------------------------------------
 
 
+def _ckr_summary_prefix(expectation: CkrExpectation) -> str:
+    """Build the summary prefix string: ``function(condition)``."""
+    return f"{expectation.function}({expectation.condition})"
+
+
+def _classify_outside_acceptable_set(
+    expectation: CkrExpectation,
+    actual: int,
+    spec_codes: tuple[int, ...],
+    full: tuple[int, ...],
+) -> None:
+    """Emit a Classification (always fail) for a code outside the full acceptable set.
+
+    Mirrors the ``_classify_unexpected_clean_rv`` logic in testcases/conftest.py:
+    - vendor-defined CK_RV      -> self_contradiction (fail) to preserve pre-refactor
+                                   pytest.fail outcome [flagged for review].
+    - undefined (not standard)  -> self_contradiction(kind="metadata") -> fail/HIGH.
+    - defined standard code     -> self_contradiction(kind=expectation.kind) -> fail;
+                                   NOTE: flagged for design review — see assert_ckr docstring.
+
+    All branches here currently produce ``fail`` outcomes (this function is only reached
+    when the existing code called ``pytest.fail``).  The nonspec_reject reason maps to
+    xfail, which would change the outcome; hence vendor-defined codes here also use
+    self_contradiction so the fail outcome is preserved.
+    """
+    prefix = _ckr_summary_prefix(expectation)
+    accepted = list(dict.fromkeys(ckr_name(c) for c in full))
+    summary = (
+        f"{prefix}: got {ckr_name(actual)}, "
+        f"not in acceptable set {accepted} "
+        f"[{expectation.spec_ref}]"
+    )
+    if not is_standard_ckr(actual) and not is_vendor_defined_ckr(actual):
+        # Completely undefined CK_RV: return-value-contract violation.
+        C.classify(
+            "self_contradiction",
+            kind="metadata",
+            label=expectation.condition,
+            operation=expectation.function,
+            actual=actual,
+            expected=spec_codes,
+            spec_ref=expectation.spec_ref,
+            summary=f"{prefix}: rejected with undefined CK_RV {ckr_name(actual)}, "
+            f"not in acceptable set {accepted} [{expectation.spec_ref}]",
+        )
+        return
+    # Vendor-defined or standard-but-outside-set: both are outside the gate, so both
+    # produce fail here (consistent with the pre-refactor pytest.fail call).
+    # REVIEW NOTE: a vendor-defined code might arguably be nonspec_reject (xfail) in a
+    # future design iteration; a standard-but-outside-set code might also be nonspec_reject
+    # if the acceptable-set definition is widened.  For now both stay as fail (outcome
+    # preserved from pre-refactor) via self_contradiction(kind=expectation.kind).
+    C.classify(
+        "self_contradiction",
+        kind=expectation.kind,
+        label=expectation.condition,
+        operation=expectation.function,
+        actual=actual,
+        expected=spec_codes,
+        spec_ref=expectation.spec_ref,
+        summary=summary,
+    )
+
+
 def assert_ckr(
     expectation: CkrExpectation,
     actual: int,
@@ -227,10 +290,25 @@ def assert_ckr(
         * rv in full_compat but
           not in spec_codes       -> xfail (clean but non-spec rejection;
                                      a noted deviation to investigate later).
+
+    Each decision point emits a structured :class:`~pkcs11_check.classification.Classification`
+    record via :func:`~pkcs11_check.classification.classify` (emit-only refactor: outcomes
+    are unchanged from pre-refactor behavior).
+
+    Design note — branches flagged for review:
+    - Compat "not in acceptable set" with a vendor-defined OR a defined-standard-but-outside-set
+      code: both remain ``fail`` (via ``self_contradiction``) to preserve the pre-refactor
+      ``pytest.fail`` outcome.  A future revision might treat vendor-defined or
+      standard-but-outside-set codes as ``nonspec_reject`` (xfail) if the acceptable-set
+      definition is widened.
+    - Strict "not in spec_codes" with a non-CKR_OK code: also ``fail`` (via
+      ``self_contradiction(kind="metadata")``) to preserve the strict-mode fail outcome
+      for compat-acceptable deviations.
     """
     spec_codes = (
         expectation.spec_ckr if isinstance(expectation.spec_ckr, tuple) else (expectation.spec_ckr,)
     )
+    prefix = _ckr_summary_prefix(expectation)
 
     if strict:
         # A permissive op (allow_success) returning CKR_OK is a pass in both modes;
@@ -239,35 +317,69 @@ def assert_ckr(
         if actual == CKR_OK and expectation.allow_success:
             return
         if actual not in spec_codes:
-            pytest.fail(
-                f"{expectation.function}({expectation.condition}): "
-                f"spec requires {[ckr_name(c) for c in spec_codes]}, "
-                f"got {ckr_name(actual)} [{expectation.spec_ref}]"
-            )
+            if actual == CKR_OK:
+                # Accepted when it must reject (strict mode, no allow_success).
+                C.classify(
+                    "accepted_invalid",
+                    kind=expectation.kind,
+                    label=expectation.condition,
+                    operation=expectation.function,
+                    actual=actual,
+                    expected=spec_codes,
+                    spec_ref=expectation.spec_ref,
+                    summary=f"{prefix}: accepted (CKR_OK) but must reject [{expectation.spec_ref}]",
+                )
+            else:
+                # Non-CKR_OK deviation from spec in strict mode: preserve fail outcome.
+                # REVIEW NOTE: compat-acceptable codes (e.g. CKR_FUNCTION_FAILED) that are
+                # not spec-mandated land here in strict mode and stay as fail/self_contradiction
+                # rather than xfail/nonspec_reject — consistent with pre-refactor behavior.
+                C.classify(
+                    "self_contradiction",
+                    kind="metadata",
+                    label=expectation.condition,
+                    operation=expectation.function,
+                    actual=actual,
+                    expected=spec_codes,
+                    spec_ref=expectation.spec_ref,
+                    summary=(
+                        f"{prefix}: spec requires {[ckr_name(c) for c in spec_codes]}, "
+                        f"got {ckr_name(actual)} [{expectation.spec_ref}]"
+                    ),
+                )
     else:
         if actual == CKR_OK:
             if expectation.allow_success:
                 return
-            pytest.fail(
-                f"{expectation.function}({expectation.condition}): accepted (CKR_OK) "
-                f"but must reject [{expectation.spec_ref}]"
+            C.classify(
+                "accepted_invalid",
+                kind=expectation.kind,
+                label=expectation.condition,
+                operation=expectation.function,
+                actual=actual,
+                expected=spec_codes,
+                spec_ref=expectation.spec_ref,
+                summary=f"{prefix}: accepted (CKR_OK) but must reject [{expectation.spec_ref}]",
             )
+            return
         full = full_compat(expectation.compat_tuple)
         if actual not in full:
-            # List the FULL accepted set (base + universals), deduped while
-            # preserving order, so the message matches the gate actually used
-            # above -- not just compat_tuple (audit M-CLASS-4).
-            accepted = list(dict.fromkeys(ckr_name(c) for c in full))
-            pytest.fail(
-                f"{expectation.function}({expectation.condition}): got {ckr_name(actual)}, "
-                f"not in acceptable set {accepted} "
-                f"[{expectation.spec_ref}]"
-            )
+            _classify_outside_acceptable_set(expectation, actual, spec_codes, full)
+            return
         if actual not in spec_codes:
-            pytest.xfail(
-                f"{expectation.function}({expectation.condition}): rejected with "
-                f"{ckr_name(actual)}, spec prefers {[ckr_name(c) for c in spec_codes]} "
-                f"[{expectation.spec_ref}]"
+            C.classify(
+                "nonspec_reject",
+                kind=expectation.kind,
+                label=expectation.condition,
+                operation=expectation.function,
+                actual=actual,
+                expected=spec_codes,
+                spec_ref=expectation.spec_ref,
+                summary=(
+                    f"{prefix}: rejected with {ckr_name(actual)}, "
+                    f"spec prefers {[ckr_name(c) for c in spec_codes]} "
+                    f"[{expectation.spec_ref}]"
+                ),
             )
 
 
