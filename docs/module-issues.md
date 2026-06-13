@@ -12,7 +12,7 @@ provider package versions where the finding was first recorded.
 
 ## SoftHSM2 2.7.0 (v2.40)
 
-**Status: 22,622 passed, 0 failed, 6,287 skipped, 658 xfailed**
+**Status: 44,957 passed, 70 failed, 60,854 skipped, 6,194 xfailed (112,075 total)**
 
 ### xfail breakdown (658 total)
 | Count | File | Reason |
@@ -158,9 +158,9 @@ provider package versions where the finding was first recorded.
 
 ---
 
-## Kryoptic 1.5.0 (v3.2)
+## Kryoptic 1.5.1 (v3.2)
 
-**Status: 21,503 passed, 0 failed, 7,687 skipped, 377 xfailed**
+**Status: 58,685 passed, 157 failed, 30,480 skipped, 24,579 xfailed (113,901 total)**
 
 ### xfail breakdown
 - Primarily RSA-OAEP with non-SHA1 hash/MGF and AES edge cases
@@ -206,9 +206,9 @@ provider package versions where the finding was first recorded.
 
 ---
 
-## NSS 3.120.1 (v3.0)
+## NSS 3.123.1 (v3.0)
 
-**Status: 20,723 passed, 362 failed, 8,147 skipped, 335 xfailed**
+**Status: 38,384 passed, 141 failed, 71,581 skipped, 2,199 xfailed, 9 crashed (112,314 total)**
 
 ### Known bugs (2026-06-09)
 - **Output-buffer overrun: ignores the caller-declared `*pulCount`/`*pulBufLen`**: with a
@@ -1026,9 +1026,9 @@ All skips are legitimate capability-based skips; none hide broken behavior.
 
 ---
 
-## BouncyHSM 2.0.1 (v3.2)
+## BouncyHSM 2.1.1 (v3.2)
 
-**Status: Segfault on stale-handle attribute read (BouncyHSM PKCS#11 shim bug)**
+**Status: 54,328 passed, 2,122 failed, 42,060 skipped, 16,436 xfailed, 5 crashed (114,951 total)**
 
 ### Known bugs
 - **AES-CCM decrypt does not authenticate (tag-auth bypass, Type A)**: fresh 2026-06-09
@@ -1067,6 +1067,8 @@ All skips are legitimate capability-based skips; none hide broken behavior.
 ---
 
 ## tpm2-pkcs11 1.10.0 (source Docker target, swtpm)
+
+**Status: 18,134 passed, 49 failed, 67,337 skipped, 25,562 xfailed (111,082 total)**
 
 ### Wycheproof RSA-PSS semantic failures
 
@@ -1202,22 +1204,9 @@ The remaining hard rows are:
 
 ---
 
-## OpenCryptoki 3.26 (v3.0)
+## OpenCryptoki 3.27.0 (v3.2)
 
-### Known bugs (fresh 2026-06-09, triage H5)
-- **CKM_AES_CTR accepts out-of-range ulCounterBits**: `C_EncryptInit` returns `CKR_OK`
-  for `ulCounterBits=0` and `ulCounterBits=129` (OASIS spec range: 1-128). Detected by:
-  `test_aes_modes.py::TestAESCTR::test_aes_ctr_counter_bits_{zero,129}_rejected`
-  (3-way `classify_negative_rv`: acceptance of invalid -> fail).
-- **CKM_AES_CTR rejects spec-valid payloads with `CKR_DATA_LEN_RANGE`** (32B and 17B
-  inputs; CTR is a stream cipher per NIST SP 800-38A) and **CKM_AES_CTS is advertised but
-  `C_EncryptInit` returns `CKR_MECHANISM_INVALID`** -- both clean deviations, xfailed via
-  `CIPHER_OP_RUNTIME_REJECT_RVS`.
-- **RSA-OAEP SHA-512/224|256 + MGF1-SHA1 not operational**: valid Wycheproof vectors
-  rejected with `CKR_ENCRYPTED_DATA_INVALID`; the RFC 8017 canonical probe for those
-  combos is also cleanly rejected -> advertised-but-not-operational xfail (26 vectors).
-
-**Status: 468 passed, 24 failed, 312 skipped, 1 xfailed, 28,762 errors**
+**Status: 64,557 passed, 215 failed, 46,463 skipped, 2,861 xfailed (114,096 total)**
 
 ### Root cause of 28K errors
 `pkcsslotd` daemon dies during the full test run, causing `FunctionFailed` for all subsequent tests. When run individually with the daemon alive, tests pass. This is a daemon stability issue under sustained load — needs investigation in task 2.4.
@@ -1917,6 +1906,8 @@ real cause is the policy attributes.) OpenCryptoki does not implement AES-GCM au
 wrap (`CKR_FUNCTION_NOT_SUPPORTED`), so those forgery tests xfail on a genuine capability gap.
 
 ## corePKCS11 3.6.4 (FreeRTOS, mbedTLS port, docker target with generic in-memory PAL)
+
+**Status: 11,088 passed, 683 failed, 88,862 skipped, 9,818 xfailed, 3 errors (110,454 total)**
 
 Minimal embedded implementation; storage-oriented object model. Root-caused 2026-06-09
 (triage H6) by in-container probing + v3.6.4 source reading (`core_pkcs11_mbedtls.c`).

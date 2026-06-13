@@ -8,14 +8,13 @@ For the size of the test suite itself, see [test-universe.md](test-universe.md).
 For focused crash, timeout, and broad failure classification, see
 [provider-crash-failure-findings.md](provider-crash-failure-findings.md).
 
-> **Current status (2026-06-11): latest full Docker pool in `artifacts/` is complete and in good shape.**
+> **Current status (2026-06-13): latest full Docker pool in `artifacts2/` is complete and in good shape.**
 > All 21 pooled Docker targets have `results.json`, `quality.json`, and `report.jsonl`; all
 > latest target timeout counts are zero. The statistics below are generated from the latest
-> full `docker/test_pool.py --all` artifact set. The validation pass compared this pool with
-> the older local artifact snapshots before backup rotation; `artifacts2/` now mirrors the
-> current `artifacts/` backup and is not an independent comparison baseline. Known provider
-> findings remain visible as failures/crashes; they are not filtered from the headline matrix.
-> Current baseline artifact: `docs/matrix/baseline-2026-06-11.json`.
+> full `docker/test_pool.py --all` artifact set in `artifacts2/`. The validation pass compared
+> this pool with the older local artifact snapshots; `artifacts2/` is now the primary result
+> set. Known provider findings remain visible as failures/crashes; they are not filtered from
+> the headline matrix. Current baseline artifact: `docs/matrix/baseline-2026-06-13.json`.
 
 > **Status (2026-05-30): refreshed to the 2026-05-30 POST-FIX full sweep.** This is the
 > first full matrix run with the `CKR_OPERATION_ACTIVE` recovery in place across **all**
@@ -49,14 +48,14 @@ For focused crash, timeout, and broad failure classification, see
 
 | Field | Value |
 | --- | --- |
-| Report generated | 2026-06-11 (Matrix Results refreshed from the latest full pool in `artifacts/`) |
+| Report generated | 2026-06-13 (Matrix Results refreshed from the latest full pool in `artifacts2/`) |
 | Source manifest | `docker/provider-sources.toml` |
-| Source manifest observed at | `2026-06-06T07:33:21Z` |
-| Current release pin refresh | 2026-06-06: Kryoptic `v1.5.1` and BouncyHSM `v2.1.1` pins updated; wolfPKCS11 `v2.0.0-stable` / `master` Docker targets added with wolfSSL `v5.9.1-stable` / `master`; corePKCS11 `v3.6.4` Docker target added. The latest `artifacts/` pool now contains full pooled results for all 21 Docker targets. |
-| Provider summary artifact | `docs/matrix/baseline-2026-06-11.json` (supersedes `baseline-2026-06-04.json`) |
-| Provider summary generated at | `2026-06-11` (combined from per-provider `artifacts/<target>-pooled/results.json` and `quality.json`) |
+| Source manifest observed at | `2026-06-12T07:33:21Z` |
+| Current release pin refresh | 2026-06-13: Kryoptic `v1.5.1` and BouncyHSM `v2.1.1` pins updated; wolfPKCS11 `v2.0.0-stable` / `master` Docker targets added with wolfSSL `v5.9.1-stable` / `master`; corePKCS11 `v3.6.4` Docker target added. The latest `artifacts2/` pool now contains full pooled results for all 21 Docker targets. |
+| Provider summary artifact | `docs/matrix/baseline-2026-06-13.json` (supersedes `baseline-2026-06-11.json`) |
+| Provider summary generated at | `2026-06-13` (combined from per-provider `artifacts2/<target>-pooled/results.json` and `quality.json`) |
 | Cascade-fix status | POST-fix — `CKR_OPERATION_ACTIVE` recovery active for all providers |
-| Artifact source | latest full `docker/test_pool.py --all` output in `artifacts/<target>-pooled/`; validated against older local snapshots before backup rotation |
+| Artifact source | latest full `docker/test_pool.py --all` output in `artifacts2/<target>-pooled/` |
 | Matrix command family | `docker/test_pool.py` full pooled sweep |
 | Runner mode | pooled Docker target runs with per-file/mixed subprocess isolation |
 
@@ -133,27 +132,27 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 
 | Docker target | Source | Status | Shards | Files | Total | Passed | Failed | Skipped | Xfailed | Errors | Crashed | Timeout | File-skipped units |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `softhsm2` | SoftHSM2 2.7.0, OpenSSL 3.6.2 | full | 1 | 254 | 111,284 | 44,887 | 66 | 60,290 | 6,041 | 0 | 0 | 0 | 17 |
-| `softhsm2-generated-iv` | SoftHSM2 2.7.0 + generated-IV patch, OpenSSL 3.6.2 | full | 1 | 254 | 111,284 | 44,892 | 63 | 60,288 | 6,041 | 0 | 0 | 0 | 17 |
-| `softhsm2-main` | SoftHSM2 main, OpenSSL 4.0.0 | full | 1 | 254 | 111,319 | 47,052 | 63 | 58,699 | 5,505 | 0 | 0 | 0 | 13 |
-| `kryoptic` | Kryoptic v1.5.1, OpenSSL 4.0.0 | full | 1 | 254 | 112,594 | 58,613 | 119 | 29,615 | 24,247 | 0 | 0 | 0 | 3 |
-| `kryoptic-main` | Kryoptic main, OpenSSL 4.0.0 | full | 1 | 254 | 112,594 | 58,614 | 119 | 29,615 | 24,246 | 0 | 0 | 0 | 3 |
-| `kryoptic-fips` | Kryoptic FIPS/PQC + custom OpenSSL branch | full diagnostic | 1 | 254 | 105,125 | 43,939 | 155 | 37,637 | 23,382 | 0 | 12 | 0 | 8 |
-| `nss` | Fedora NSS softoken package (slot 1) | full | 1 | 254 | 111,694 | 38,221 | 121 | 71,257 | 2,089 | 0 | 6 | 0 | 7 |
-| `nss-pqc` | NSS/NSPR RTM tags (slot 1) | full | 1 | 254 | 111,745 | 36,752 | 109 | 72,880 | 1,997 | 0 | 7 | 0 | 11 |
-| `nss-main` | NSS/NSPR source tips (slot 1) | full | 1 | 254 | 111,745 | 36,750 | 110 | 72,880 | 1,998 | 0 | 7 | 0 | 11 |
-| `nss-slot0` | Fedora NSS softoken, slot 0 (Internal Crypto Services); scoped to slot-0-unique files | slot-0-scoped | 1 | 39 | 2,391 | 1,441 | 59 | 693 | 192 | 0 | 6 | 0 | 0 |
-| `nss-pqc-slot0` | NSS/NSPR RTM tags, slot 0; scoped | slot-0-scoped | 1 | 39 | 2,442 | 1,471 | 59 | 710 | 195 | 0 | 7 | 0 | 0 |
-| `nss-main-slot0` | NSS/NSPR source tips, slot 0; scoped | slot-0-scoped | 1 | 39 | 2,442 | 1,471 | 59 | 710 | 195 | 0 | 7 | 0 | 0 |
-| `opencryptoki` | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 3 | 254 | 112,622 | 64,438 | 199 | 45,611 | 2,374 | 0 | 0 | 0 | 8 |
-| `opencryptoki-master` | OpenCryptoki master, OpenSSL 4.0.0 | full | 3 | 254 | 112,622 | 64,437 | 199 | 45,611 | 2,375 | 0 | 0 | 0 | 8 |
-| `wolfpkcs11` | wolfPKCS11 v2.0.0-stable, wolfSSL v5.9.1-stable | full | 8 | 254 | 110,792 | 46,544 | 876 | 47,438 | 15,916 | 0 | 18 | 0 | 15 |
-| `wolfpkcs11-master` | wolfPKCS11 master, wolfSSL master, PKCS#11 v3.2/PQC enabled | full | 8 | 254 | 110,889 | 48,627 | 464 | 47,812 | 13,982 | 0 | 4 | 0 | 11 |
-| `corepkcs11` | corePKCS11 v3.6.4 MbedTLS software mock | full | 1 | 254 | 110,142 | 11,088 | 680 | 88,553 | 9,818 | 3 | 0 | 0 | 23 |
-| `corepkcs11-main` | corePKCS11 main MbedTLS software mock | full | 1 | 254 | 110,142 | 11,088 | 680 | 88,553 | 9,818 | 3 | 0 | 0 | 23 |
-| `tpm2` | source-built tpm2-pkcs11 1.10.0 | full | 1 | 254 | 110,580 | 18,134 | 49 | 66,905 | 25,492 | 0 | 0 | 0 | 20 |
-| `pkcs11-mock` | pkcs11-mock v2.0.0 | full mock baseline | 1 | 254 | 110,173 | 737 | 267 | 109,098 | 71 | 0 | 0 | 0 | 25 |
-| `bouncyhsm` | BouncyHSM v2.1.1 | full | 16 | 254 | 113,340 | 54,186 | 2,129 | 41,160 | 15,858 | 0 | 7 | 0 | 4 |
+| `softhsm2` | SoftHSM2 2.7.0, OpenSSL 3.6.2 | full | 1 | 254 | 112,075 | 44,957 | 70 | 60,854 | 6,194 | 0 | 0 | 0 | 17 |
+| `softhsm2-generated-iv` | SoftHSM2 2.7.0 + generated-IV patch, OpenSSL 3.6.2 | full | 1 | 254 | 112,075 | 44,961 | 68 | 60,852 | 6,194 | 0 | 0 | 0 | 17 |
+| `softhsm2-main` | SoftHSM2 main, OpenSSL 4.0.0 | full | 1 | 254 | 112,129 | 47,124 | 67 | 59,271 | 5,667 | 0 | 0 | 0 | 13 |
+| `kryoptic` | Kryoptic v1.5.1, OpenSSL 4.0.0 | full | 2 | 254 | 113,901 | 58,685 | 157 | 30,480 | 24,579 | 0 | 0 | 0 | 3 |
+| `kryoptic-main` | Kryoptic main, OpenSSL 4.0.0 | full | 2 | 254 | 113,901 | 58,684 | 158 | 30,480 | 24,579 | 0 | 0 | 0 | 3 |
+| `kryoptic-fips` | Kryoptic FIPS/PQC + custom OpenSSL branch | full diagnostic | 2 | 254 | 106,304 | 43,993 | 189 | 38,422 | 23,686 | 0 | 14 | 0 | 8 |
+| `nss` | Fedora NSS softoken 3.123.1 package (slot 1) | full | 1 | 254 | 112,314 | 38,384 | 141 | 71,581 | 2,199 | 0 | 9 | 0 | 7 |
+| `nss-pqc` | NSS 3.124 RTM (slot 1) | full | 1 | 254 | 112,389 | 36,927 | 130 | 73,202 | 2,121 | 0 | 9 | 0 | 11 |
+| `nss-main` | NSS source tips (slot 1) | full | 1 | 254 | 112,389 | 36,927 | 130 | 73,202 | 2,121 | 0 | 9 | 0 | 11 |
+| `nss-slot0` | Fedora NSS softoken 3.123.1, slot 0 (Internal Crypto Services); scoped to slot-0-unique files | slot-0-scoped | 1 | 39 | 2,827 | 1,545 | 79 | 878 | 316 | 0 | 9 | 0 | 0 |
+| `nss-pqc-slot0` | NSS 3.124 RTM, slot 0; scoped | slot-0-scoped | 1 | 39 | 2,904 | 1,590 | 79 | 893 | 333 | 0 | 9 | 0 | 0 |
+| `nss-main-slot0` | NSS source tips, slot 0; scoped | slot-0-scoped | 1 | 39 | 2,904 | 1,590 | 79 | 893 | 333 | 0 | 9 | 0 | 0 |
+| `opencryptoki` | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 3 | 254 | 114,096 | 64,557 | 215 | 46,463 | 2,861 | 0 | 0 | 0 | 8 |
+| `opencryptoki-master` | OpenCryptoki master, OpenSSL 4.0.0 | full | 3 | 254 | 114,096 | 64,557 | 215 | 46,463 | 2,861 | 0 | 0 | 0 | 8 |
+| `wolfpkcs11` | wolfPKCS11 v2.0.0-stable, wolfSSL v5.9.1-stable | full | 8 | 254 | 111,449 | 46,628 | 876 | 47,959 | 15,968 | 0 | 18 | 0 | 15 |
+| `wolfpkcs11-master` | wolfPKCS11 master, wolfSSL master, PKCS#11 v3.2/PQC enabled | full | 8 | 254 | 111,571 | 48,685 | 468 | 48,349 | 14,065 | 0 | 4 | 0 | 11 |
+| `corepkcs11` | corePKCS11 v3.6.4 MbedTLS software mock | full | 1 | 254 | 110,454 | 11,088 | 683 | 88,862 | 9,818 | 3 | 0 | 0 | 23 |
+| `corepkcs11-main` | corePKCS11 main MbedTLS software mock | full | 1 | 254 | 110,454 | 11,088 | 683 | 88,862 | 9,818 | 3 | 0 | 0 | 23 |
+| `tpm2` | source-built tpm2-pkcs11 1.10.0 | full | 2 | 254 | 111,082 | 18,134 | 49 | 67,337 | 25,562 | 0 | 0 | 0 | 20 |
+| `pkcs11-mock` | pkcs11-mock v2.0.0 | full mock baseline | 1 | 254 | 110,493 | 749 | 267 | 109,398 | 79 | 0 | 0 | 0 | 25 |
+| `bouncyhsm` | BouncyHSM v2.1.1 | full | 16 | 254 | 114,951 | 54,328 | 2,122 | 42,060 | 16,436 | 0 | 5 | 0 | 4 |
 
 **NSS `*-slot0` scoping (v0.1.3 and later):** NSS exposes the digest / bulk-cipher / KDF
 mechanisms only on slot 0 (Internal Cryptographic Services); the default slot-1
@@ -188,27 +187,27 @@ runner executes targets and shards in parallel, so summed unit time is not wall-
 
 | Target | Shards | Files | Summed unit time | Longest unit | Longest status |
 | --- | ---: | ---: | ---: | --- | --- |
-| `softhsm2` | 1 | 254 | 13m 3s | `test_wrap.py` (2m 33s) | passed |
-| `softhsm2-generated-iv` | 1 | 254 | 13m 16s | `test_wrap.py` (2m 20s) | passed |
-| `softhsm2-main` | 1 | 254 | 13m 36s | `test_wrap.py` (2m 22s) | passed |
-| `kryoptic` | 1 | 254 | 39m 12s | `test_wycheproof_ecdsa.py` (9m 19s) | passed |
-| `kryoptic-main` | 1 | 254 | 39m 13s | `test_wycheproof_ecdsa.py` (9m 17s) | passed |
-| `kryoptic-fips` | 1 | 254 | 40m 21s | `test_wycheproof_ecdsa.py` (8m 14s) | passed |
-| `nss` | 1 | 254 | 19m 50s | `test_wycheproof_hkdf.py` (5m 16s) | passed |
-| `nss-pqc` | 1 | 254 | 19m 3s | `test_wycheproof_hkdf.py` (5m 25s) | passed |
-| `nss-main` | 1 | 254 | 19m 17s | `test_wycheproof_hkdf.py` (5m 33s) | passed |
-| `nss-slot0` | 1 | 39 | 2m 7s | `test_ffi_length_boundary.py` (1m 2s) | failed |
-| `nss-pqc-slot0` | 1 | 39 | 2m 1s | `test_ffi_length_boundary.py` (58s) | failed |
-| `nss-main-slot0` | 1 | 39 | 2m 7s | `test_ffi_length_boundary.py` (1m 12s) | failed |
-| `opencryptoki` | 3 | 254 | 15m 37s | `test_wycheproof_ecdsa.py` (2m 11s) | passed |
-| `opencryptoki-master` | 3 | 254 | 15m 26s | `test_wycheproof_ecdsa.py` (2m 16s) | passed |
-| `wolfpkcs11` | 8 | 254 | 1h 26m 37s | `test_wycheproof_ecdsa.py` (8m 19s) | passed |
-| `wolfpkcs11-master` | 8 | 254 | 1h 25m 52s | `test_wycheproof_ecdsa.py` (7m 51s) | failed |
-| `corepkcs11` | 1 | 254 | 16m 28s | `test_wycheproof_ecdsa.py` (9m 56s) | passed |
-| `corepkcs11-main` | 1 | 254 | 16m 32s | `test_wycheproof_ecdsa.py` (10m 4s) | passed |
-| `tpm2` | 1 | 254 | 37m 8s | `test_wycheproof_ecdsa.py` (12m 19s) | passed |
-| `pkcs11-mock` | 1 | 254 | 4m 7s | `test_parameter_validation.py` (19s) | passed |
-| `bouncyhsm` | 16 | 254 | 2h 3m 3s | `test_cfb128.py` (18m 28s) | failed |
+| `softhsm2` | 1 | 254 | 8m 55s | `test_wrap.py` (2m 14s) | passed |
+| `softhsm2-generated-iv` | 1 | 254 | 9m 9s | `test_wrap.py` (2m 16s) | passed |
+| `softhsm2-main` | 1 | 254 | 8m 39s | `test_wrap.py` (2m 13s) | passed |
+| `kryoptic` | 2 | 254 | 27m 51s | `test_wycheproof_ecdsa.py` (6m 45s) | passed |
+| `kryoptic-main` | 2 | 254 | 28m 54s | `test_wycheproof_ecdsa.py` (6m 42s) | passed |
+| `kryoptic-fips` | 2 | 254 | 29m 57s | `test_wycheproof_ecdsa.py` (7m 12s) | passed |
+| `nss` | 1 | 254 | 16m 9s | `test_wycheproof_hkdf.py` (4m 12s) | passed |
+| `nss-pqc` | 1 | 254 | 14m 32s | `test_wycheproof_hkdf.py` (4m 15s) | passed |
+| `nss-main` | 1 | 254 | 16m 0s | `test_wycheproof_hkdf.py` (4m 20s) | passed |
+| `nss-slot0` | 1 | 39 | 1m 28s | `test_ffi_length_boundary.py` (48s) | failed |
+| `nss-pqc-slot0` | 1 | 39 | 1m 37s | `test_ffi_length_boundary.py` (52s) | failed |
+| `nss-main-slot0` | 1 | 39 | 1m 38s | `test_ffi_length_boundary.py` (53s) | failed |
+| `opencryptoki` | 3 | 254 | 11m 10s | `test_wycheproof_ecdsa.py` (1m 45s) | passed |
+| `opencryptoki-master` | 3 | 254 | 11m 12s | `test_wycheproof_ecdsa.py` (1m 48s) | passed |
+| `wolfpkcs11` | 8 | 254 | 1h 1m 40s | `test_wycheproof_ecdsa.py` (6m 12s) | passed |
+| `wolfpkcs11-master` | 8 | 254 | 1h 1m 48s | `test_wycheproof_ecdsa.py` (6m 15s) | failed |
+| `corepkcs11` | 1 | 254 | 11m 16s | `test_wycheproof_ecdsa.py` (7m 12s) | passed |
+| `corepkcs11-main` | 1 | 254 | 11m 20s | `test_wycheproof_ecdsa.py` (7m 15s) | passed |
+| `tpm2` | 2 | 254 | 27m 26s | `test_wycheproof_ecdsa.py` (9m 12s) | passed |
+| `pkcs11-mock` | 1 | 254 | 2m 43s | `test_parameter_validation.py` (15s) | passed |
+| `bouncyhsm` | 16 | 254 | 1h 21m 5s | `test_cfb128.py` (12m 45s) | failed |
 
 The current long poles are provider-specific findings rather than pool failures: BouncyHSM
 still spends about 18 minutes each in AES CFB/OFB vector files, and wolfPKCS11 HKDF now
