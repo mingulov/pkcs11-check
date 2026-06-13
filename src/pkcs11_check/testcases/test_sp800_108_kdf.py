@@ -108,6 +108,46 @@ def _sp800_108_counter_hmac_sha256_reference(
     return output[:wanted]
 
 
+def _sp800_108_feedback_hmac_sha256_reference(
+    base_key: bytes,
+    label: bytes,
+    context: bytes,
+    key_bits: int,
+    *,
+    iv: bytes = b"",
+) -> bytes:
+    """Compute SP800-108 feedback-mode HMAC-SHA256 for the test parameter order."""
+    if key_bits <= 0 or key_bits % 8 != 0:
+        raise ValueError("key_bits must be a positive multiple of 8")
+    wanted = key_bits // 8
+    fixed_input_suffix = label + b"\x00" + context + key_bits.to_bytes(4, "big")
+    output = b""
+    previous = iv
+    while len(output) < wanted:
+        previous = hmac.new(base_key, previous + fixed_input_suffix, hashlib.sha256).digest()
+        output += previous
+    return output[:wanted]
+
+
+def _sp800_108_double_pipeline_hmac_sha256_reference(
+    base_key: bytes,
+    label: bytes,
+    context: bytes,
+    key_bits: int,
+) -> bytes:
+    """Compute SP800-108 double-pipeline HMAC-SHA256 for the test parameter order."""
+    if key_bits <= 0 or key_bits % 8 != 0:
+        raise ValueError("key_bits must be a positive multiple of 8")
+    wanted = key_bits // 8
+    fixed_input = label + b"\x00" + context + key_bits.to_bytes(4, "big")
+    output = b""
+    previous_a = fixed_input
+    while len(output) < wanted:
+        previous_a = hmac.new(base_key, previous_a, hashlib.sha256).digest()
+        output += hmac.new(base_key, previous_a + fixed_input, hashlib.sha256).digest()
+    return output[:wanted]
+
+
 def _create_base_key(rs: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> int:
     """Create a GENERIC_SECRET base key suitable for derivation."""
     return import_secret_key(
@@ -586,7 +626,13 @@ class TestSP800108FeedbackKDF:
                 _build_feedback_kdf_mech(),
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert len(val) == 16
+            expected = _sp800_108_feedback_hmac_sha256_reference(
+                _BASE_KEY_BYTES, _LABEL, _CONTEXT, 128
+            )
+            assert val == expected, (
+                "CKM_SP800_108_FEEDBACK_KDF AES-128 output mismatch: "
+                f"got {val.hex()}, expected {expected.hex()}"
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF not operational")
         finally:
@@ -610,7 +656,13 @@ class TestSP800108FeedbackKDF:
                 _build_feedback_kdf_mech(iv=iv),
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert len(val) == 16
+            expected = _sp800_108_feedback_hmac_sha256_reference(
+                _BASE_KEY_BYTES, _LABEL, _CONTEXT, 128, iv=iv
+            )
+            assert val == expected, (
+                "CKM_SP800_108_FEEDBACK_KDF with IV AES-128 output mismatch: "
+                f"got {val.hex()}, expected {expected.hex()}"
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF with IV not operational"
@@ -711,7 +763,13 @@ class TestSP800108DoublePipelineKDF:
                 _build_double_pipeline_kdf_mech(),
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert len(val) == 16
+            expected = _sp800_108_double_pipeline_hmac_sha256_reference(
+                _BASE_KEY_BYTES, _LABEL, _CONTEXT, 128
+            )
+            assert val == expected, (
+                "CKM_SP800_108_DOUBLE_PIPELINE_KDF AES-128 output mismatch: "
+                f"got {val.hex()}, expected {expected.hex()}"
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_DOUBLE_PIPELINE_KDF not operational"
@@ -736,7 +794,13 @@ class TestSP800108DoublePipelineKDF:
                 _build_double_pipeline_kdf_mech(),
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert len(val) == 32
+            expected = _sp800_108_double_pipeline_hmac_sha256_reference(
+                _BASE_KEY_BYTES, _LABEL, _CONTEXT, 256
+            )
+            assert val == expected, (
+                "CKM_SP800_108_DOUBLE_PIPELINE_KDF AES-256 output mismatch: "
+                f"got {val.hex()}, expected {expected.hex()}"
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_DOUBLE_PIPELINE_KDF 256 not operational"

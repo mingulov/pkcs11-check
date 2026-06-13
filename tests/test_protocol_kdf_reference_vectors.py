@@ -26,6 +26,49 @@ def test_sp800_108_counter_reference_vector() -> None:
     )
 
 
+def test_sp800_108_feedback_reference_vector() -> None:
+    assert (
+        test_sp800_108_kdf._sp800_108_feedback_hmac_sha256_reference(
+            test_sp800_108_kdf._BASE_KEY_BYTES,
+            test_sp800_108_kdf._LABEL,
+            test_sp800_108_kdf._CONTEXT,
+            128,
+        ).hex()
+        == "0eb73e600b11c4474e6fb84c226c8b1a"
+    )
+    assert (
+        test_sp800_108_kdf._sp800_108_feedback_hmac_sha256_reference(
+            test_sp800_108_kdf._BASE_KEY_BYTES,
+            test_sp800_108_kdf._LABEL,
+            test_sp800_108_kdf._CONTEXT,
+            128,
+            iv=bytes(range(32)),
+        ).hex()
+        == "77de8c278069851d3fd9e9171ab2b9d0"
+    )
+
+
+def test_sp800_108_double_pipeline_reference_vector() -> None:
+    assert (
+        test_sp800_108_kdf._sp800_108_double_pipeline_hmac_sha256_reference(
+            test_sp800_108_kdf._BASE_KEY_BYTES,
+            test_sp800_108_kdf._LABEL,
+            test_sp800_108_kdf._CONTEXT,
+            128,
+        ).hex()
+        == "12a1627e163bbff00bf9d3daf7eddf92"
+    )
+    assert (
+        test_sp800_108_kdf._sp800_108_double_pipeline_hmac_sha256_reference(
+            test_sp800_108_kdf._BASE_KEY_BYTES,
+            test_sp800_108_kdf._LABEL,
+            test_sp800_108_kdf._CONTEXT,
+            256,
+        ).hex()
+        == "865126a55ca1386cd245a4b2ba4c29ec21a7d46d4b74c26e899fcc5a39f68b65"
+    )
+
+
 def test_tls12_prf_sha256_reference_vector() -> None:
     assert (
         test_tls12._tls12_prf_sha256(

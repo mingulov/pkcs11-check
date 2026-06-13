@@ -269,9 +269,13 @@ smoke behavior, or covered only by one narrow variation.
    X2RATCHET also have dedicated operational probes. Remaining shallow
    protocol-KDF work is exact-vector expansion and richer negative/tamper
    coverage for those dedicated files, not basic runtime dispatch for the
-   already-covered priority mechanisms. WTLS PRF seed-sensitivity coverage now
-   verifies that changing the explicit `CK_WTLS_PRF_PARAMS.pSeed` input changes
-   the derived output.
+   already-covered priority mechanisms. SP800-108 feedback exact-vector
+   coverage now checks the `K(i-1) || Label || 0x00 || Context || [L]`
+   HMAC-SHA256 recurrence, including the explicit IV path. SP800-108
+   double-pipeline exact-vector coverage now checks the `A(i)` HMAC-SHA256
+   recurrence for both 128-bit and 256-bit derived outputs.
+   WTLS PRF seed-sensitivity coverage now verifies that changing the explicit
+   `CK_WTLS_PRF_PARAMS.pSeed` input changes the derived output.
    WTLS PRF label-sensitivity coverage now verifies the same for
    `CK_WTLS_PRF_PARAMS.pLabel`. WTLS PRF raw output-buffer coverage now uses
    the OASIS `CKM_WTLS_PRF` convention: `C_DeriveKey` is called with a NULL
@@ -842,7 +846,8 @@ After that, do the first coverage expansion round:
 1. DSA/DH/X9.42 exact-vector, negative, and parameter-variant expansion beyond
    the existing dedicated generated-parameter coverage.
 2. Protocol KDF exact-vector expansion beyond already-covered SP800-108
-   counter KDF, TLS 1.2 KDF, PBKDF2, SSL3, and IKE/IKEv1 paths.
+   counter/feedback/double-pipeline KDF, TLS 1.2 KDF, PBKDF2, SSL3, and
+   IKE/IKEv1 paths.
 3. BLAKE2B keyed negative/parameter edge cases.
 4. ChaCha20-Poly1305 wrap/unwrap only if a spec-backed `C_WrapKey` mapping is
    identified; otherwise keep it source-first and limited to encrypt/decrypt

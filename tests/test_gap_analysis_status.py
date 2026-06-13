@@ -154,6 +154,22 @@ def test_gap_analysis_marks_sp800_108_feedback_double_param_shape_as_fixed() -> 
     assert "iteration-variable NULL-shape coverage" in doc
 
 
+def test_gap_analysis_marks_sp800_108_feedback_double_exact_vectors_as_added() -> None:
+    """SP800-108 feedback and double-pipeline are no longer length-only probes."""
+    sp800 = _read("src/pkcs11_check/testcases/test_sp800_108_kdf.py")
+    reference_tests = _read("tests/test_protocol_kdf_reference_vectors.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "_sp800_108_feedback_hmac_sha256_reference" in sp800
+    assert "_sp800_108_double_pipeline_hmac_sha256_reference" in sp800
+    assert "test_sp800_108_feedback_reference_vector" in reference_tests
+    assert "test_sp800_108_double_pipeline_reference_vector" in reference_tests
+
+    assert "SP800-108 feedback exact-vector" in doc
+    assert "double-pipeline exact-vector" in doc
+    assert "HMAC-SHA256 recurrence" in doc
+
+
 def test_gap_analysis_marks_pbkdf2_invalid_prf_negative_as_added() -> None:
     """CKM_PKCS5_PBKD2 rejects PRF selectors outside the CKP_* table."""
     pbkdf2 = _read("src/pkcs11_check/testcases/wycheproof/test_wycheproof_pbkdf2.py")
