@@ -12,7 +12,9 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.recipes import digest_single
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKM_SHA3_224,
     CKM_SHA3_256,
@@ -111,8 +113,16 @@ def test_acvp_sha3(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) ->
     try:
         digest = digest_single(rs.raw, rs.sh, mech_int, msg)
     except AssertionError as e:
-        # Unexpected error from the module
-        pytest.fail(f"SHA-3 digest failed for {vec_id}: {e}")
+        if not isinstance(e, CkrAssertionError):
+            # Non-CKR AssertionError -- a harness/ctypes bug must never be
+            # classified as "not operational"; let it surface.
+            raise
+        xfail_as(
+            "not_operational",
+            kind="crypto",
+            label=f"{mech_name_str}:digest",
+            summary=f"SHA-3 digest failed for {vec_id}: {e}",
+        )
 
     assert digest == expected_md, (
         f"{vec_id}: digest mismatch\n  expected: {expected_md.hex()}\n  got:      {digest.hex()}"

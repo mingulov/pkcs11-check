@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.raw.pack import attr_bytes
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -178,11 +179,16 @@ def _select_eddsa_public_key_encoding_for_vector(rs: Any, vec: dict[str, Any]) -
             # operational" -> xfail per the classification model (not skip).
             # May include curve-capability rejects expressed as generic CKRs --
             # recorded as xfail, not hidden.
-            pytest.xfail(
-                not_operational_reason(
+            classify(
+                "not_operational",
+                kind="crypto",
+                label="EDDSA:key-import",
+                summary=not_operational_reason(
                     "EDDSA:key-import",
                     f"{vec['curve']}: {ckr_name(exc.rv)}",
-                )
+                ),
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
         _xfail_if_eddsa_runtime_reject(
             exc,
@@ -281,16 +287,36 @@ class TestEdDsaKeyVer:
                 if is_known_error(exc, SIGNATURE_REJECT_RVS):
                     key_usable = True
                 elif is_known_error(exc, NON_CLEAN_SIGNATURE_REJECT_RVS):
-                    pytest.xfail(f"{vec_id}: invalid signature rejected with non-clean CKR")
+                    xfail_as(
+                        "nonspec_reject",
+                        label=f"{vec_id}:EDDSA:verify",
+                        summary=f"{vec_id}: invalid signature rejected with non-clean CKR",
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
+                    )
                 elif is_known_error(exc, _UNUSABLE_KEY_RVS):
                     key_usable = False
                 else:
                     key_usable = True
 
             if not vec["expected_pass"] and key_usable:
-                pytest.fail(f"{vec_id}: Module ACCEPTED an INVALID EdDSA key")
+                fail_as(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label=f"{vec_id}:EDDSA:keyver",
+                    summary=f"{vec_id}: Module ACCEPTED an INVALID EdDSA key",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             if vec["expected_pass"] and not key_usable:
-                pytest.fail(f"{vec_id}: Module rejected a VALID EdDSA key")
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label=f"{vec_id}:EDDSA:keyver",
+                    summary=f"{vec_id}: Module rejected a VALID EdDSA key",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
         finally:
             if pub_key:
                 destroy_quietly(rs.raw, rs.sh, pub_key)
@@ -326,11 +352,16 @@ def test_acvp_eddsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, 
                 # -> xfail per the classification model (not skip).
                 # May include curve-capability rejects expressed as generic CKRs --
                 # recorded as xfail, not hidden.
-                pytest.xfail(
-                    not_operational_reason(
+                xfail_as(
+                    "not_operational",
+                    kind="crypto",
+                    label="EDDSA:key-import",
+                    summary=not_operational_reason(
                         "EDDSA:key-import",
                         f"{vec['curve']}: {ckr_name(exc.rv)}",
-                    )
+                    ),
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
                 )
             xfail_if_known_ckr(
                 exc,
@@ -350,13 +381,34 @@ def test_acvp_eddsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, 
             )
         except AssertionError as exc:
             if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
-                pytest.xfail(f"{vec_id}: {_EDDSA_PARAM_XFAIL_MSG} for {vec['curve']}")
+                xfail_as(
+                    "not_operational",
+                    kind="crypto",
+                    label="EDDSA:verify",
+                    summary=f"{vec_id}: {_EDDSA_PARAM_XFAIL_MSG} for {vec['curve']}",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             verified = signature_rejected_or_xfail(exc, vec_id)
 
         if not vec["expected_pass"] and verified:
-            pytest.fail(f"{vec_id}: module ACCEPTED an INVALID EdDSA signature")
+            fail_as(
+                "accepted_invalid",
+                kind="crypto",
+                label="EDDSA:verify",
+                summary=f"{vec_id}: module ACCEPTED an INVALID EdDSA signature",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         if vec["expected_pass"] and not verified:
-            pytest.fail(f"{vec_id}: module rejected a VALID EdDSA signature")
+            fail_as(
+                "wrong_result",
+                kind="crypto",
+                label="EDDSA:verify",
+                summary=f"{vec_id}: module rejected a VALID EdDSA signature",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
     finally:
         if pub_key:
             destroy_quietly(rs.raw, rs.sh, pub_key)
@@ -391,7 +443,14 @@ def test_acvp_eddsa_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, 
             _xfail_if_eddsa_runtime_reject(exc, vec_id)
 
         if sig != vec["expected_sig"]:
-            pytest.fail(f"{vec_id}: EdDSA signature mismatch")
+            fail_as(
+                "wrong_result",
+                kind="crypto",
+                label="EDDSA:sign",
+                summary=f"{vec_id}: EdDSA signature mismatch",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
     finally:
         if priv_key:
             destroy_quietly(rs.raw, rs.sh, priv_key)
