@@ -22,13 +22,13 @@
 | 1 | wolfpkcs11-master | 468 | 14065 | 4 | `artifacts_base/wolfpkcs11-master-pooled/` |
 | 2 | opencryptoki-master | 215 | 2861 | 0 | `artifacts_base/opencryptoki-master-pooled/` |
 | 3 | corepkcs11-main | 683 | 9818 | 0 | `artifacts_base/corepkcs11-main-pooled/` |
-| 4 | kryptic-main | 158 | 24579 | 0 | `artifacts_base/kryptic-main-pooled/` |
+| 4 | kryoptic-main | 158 | 24579 | 0 | `artifacts_base/kryoptic-main-pooled/` |
 | 5 | nss-main | 130 | 2121 | 9 | `artifacts_base/nss-main-pooled/` |
 | 6 | softhsm2-main | 67 | 5667 | 0 | `artifacts_base/softhsm2-main-pooled/` |
 | 7 | tpm2 | 49 | 25562 | 0 | `artifacts_base/tpm2-pooled/` |
-| **Total** | | **1770** | **94673** | **13** | |
+| **Total** | | **1770** | **94673** | **5 files / 13 tests** | |
 
-**Excluded per user:** bouncyhsm (dev-only, drop), kryptic-fips (= kryptic FIPS mode, covered by kryptic-main), pkcs11-mock (canned mock), wolfpkcs11 release (superseded by master), other release/main duplicates.
+**Excluded per user:** bouncyhsm (dev-only, drop), kryoptic-fips (= kryoptic FIPS mode, covered by kryoptic-main), pkcs11-mock (canned mock), wolfpkcs11 release (superseded by master), other release/main duplicates.
 
 **Outputs (created by this plan):**
 
@@ -194,7 +194,7 @@ PROVIDERS = [
     "wolfpkcs11-master",
     "opencryptoki-master",
     "corepkcs11-main",
-    "kryptic-main",
+    "kryoptic-main",
     "nss-main",
     "softhsm2-main",
     "tpm2",
@@ -331,7 +331,7 @@ Expected: prints 7 provider blocks. `found` and `expected` match for all (drift 
 - [ ] **Step 3: Verify file sizes match counts**
 
 ```bash
-for p in wolfpkcs11-master opencryptoki-master corepkcs11-main kryptic-main nss-main softhsm2-main tpm2; do
+for p in wolfpkcs11-master opencryptoki-master corepkcs11-main kryoptic-main nss-main softhsm2-main tpm2; do
   echo "$p:"
   wc -l /home/user/src/m/pkcs11-check/docs/findings/per-failure-triage/workqueue/${p}-*.jsonl
 done
@@ -362,9 +362,9 @@ Expected: 3 well-formed JSON records per bucket. The xfail records have an `xfai
 
 ---
 
-## Phase 1: Crash Deep-Dive (13 items — full manual attention)
+## Phase 1: Crash Deep-Dive (5 crashed files covering 13 per-test crashes — full manual attention)
 
-Smallest bucket, highest signal. Each crash gets its own verdict record.
+Smallest bucket, highest signal. Each crashed FILE gets its own verdict record. The per-test crash count inside the file is captured via `counts.crashed`.
 
 ### Task 1.1: Build crash dossiers
 
@@ -423,7 +423,7 @@ print(f"Wrote {len(crashes)} dossiers to {OUT}")
 EOF
 ```
 
-Expected: 13 dossiers (4 wolf-master + 9 nss-main). Each contains the crashing attempt's stdout tail showing where the subprocess died.
+Expected: 5 dossiers (2 wolf-master: wycheproof_hkdf.py + x509/test_identity.py; 3 nss-main: test_mech_flags.py + test_mech_negative.py + test_operation_termination.py). Each dossier's `counts.crashed` shows per-test impact (total 13 across the 5 files).
 
 - [ ] **Step 2: List the dossiers**
 
@@ -435,7 +435,7 @@ Expected: 13 `.md` files.
 
 ### Task 1.2: Classify each crash
 
-For each of the 13 crash dossiers, decide: was the crash triggered by (a) valid PKCS#11 input the module must handle → `PROVIDER_BUG`, (b) provably-UB input the test should not have sent → `HARNESS_BUG`, (c) a test-script-side assertion/abort → `FALSE_POSITIVE`.
+For each of the 5 crash dossiers, decide: was the crash triggered by (a) valid PKCS#11 input the module must handle → `PROVIDER_BUG`, (b) provably-UB input the test should not have sent → `HARNESS_BUG`, (c) a test-script-side assertion/abort → `FALSE_POSITIVE`.
 
 **Decision rules:**
 
@@ -519,13 +519,13 @@ EOF
 wc -l docs/findings/per-failure-triage/verdicts.jsonl
 ```
 
-Expected: ≥13 lines (one per dossier). If the WARN branch fired, fill missing entries manually before continuing.
+Expected: ≥5 lines (one per crashed file). If the WARN branch fired, fill missing entries manually before continuing.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add docs/findings/per-failure-triage/verdicts.jsonl
-git commit -m "docs(triage): classify all 13 crashes (wolf-master + nss-main)"
+git commit -m "docs(triage): classify all 5 crashed files (wolf-master + nss-main)"
 ```
 
 ---
@@ -551,7 +551,7 @@ For each of the 7 providers, eyeball 5 random FAIL records to confirm `message` 
 - [ ] **Step 1: For each provider, print 5 random failures**
 
 ```bash
-for p in wolfpkcs11-master opencryptoki-master corepkcs11-main kryptic-main nss-main softhsm2-main tpm2; do
+for p in wolfpkcs11-master opencryptoki-master corepkcs11-main kryoptic-main nss-main softhsm2-main tpm2; do
   echo "=== $p ==="
   shuf -n 5 docs/findings/per-failure-triage/workqueue/${p}-failures.jsonl | python3 -c "
 import json, sys
@@ -770,7 +770,7 @@ def main() -> int:
     args = ap.parse_args()
     providers = args.providers or [
         "wolfpkcs11-master", "opencryptoki-master", "corepkcs11-main",
-        "kryptic-main", "nss-main", "softhsm2-main", "tpm2",
+        "kryoptic-main", "nss-main", "softhsm2-main", "tpm2",
     ]
 
     OUTDIR.mkdir(parents=True, exist_ok=True)
@@ -810,7 +810,7 @@ Expected: prints per-(provider,bucket) line counts; grand total ≈ 1770 failure
 - [ ] **Step 3: Inspect top-10 groups per provider-bucket to verify grouping quality**
 
 ```bash
-for p in wolfpkcs11-master opencryptoki-master corepkcs11-main kryptic-main nss-main softhsm2-main tpm2; do
+for p in wolfpkcs11-master opencryptoki-master corepkcs11-main kryoptic-main nss-main softhsm2-main tpm2; do
   echo "=== $p FAILURES top groups ==="
   python3 -c "
 import json
@@ -1004,7 +1004,7 @@ tail -20 docs/findings/per-failure-triage/verdicts.jsonl | python3 -m json.tool 
 - [ ] **Step 3: Run for all 7 providers × 3 buckets**
 
 ```bash
-for p in wolfpkcs11-master opencryptoki-master corepkcs11-main kryptic-main nss-main softhsm2-main tpm2; do
+for p in wolfpkcs11-master opencryptoki-master corepkcs11-main kryoptic-main nss-main softhsm2-main tpm2; do
   for b in failures xfails xpassed; do
     python3 docs/findings/per-failure-triage/scripts/classify.py --provider $p --bucket $b
   done
@@ -1084,7 +1084,7 @@ def parse_module_issues() -> list[dict]:
             current_section = line.lstrip("# ").strip()
             current_providers = []
             # detect "provider: foo" or known provider names in title
-            for p in ["softhsm2", "kryptic", "nss", "opencryptoki", "tpm2", "wolfpkcs11", "corepkcs11", "bouncyhsm"]:
+            for p in ["softhsm2", "kryoptic", "nss", "opencryptoki", "tpm2", "wolfpkcs11", "corepkcs11", "bouncyhsm"]:
                 if p in current_section.lower():
                     current_providers.append(p)
         elif line.startswith("### ") or line.startswith("- "):
@@ -1396,7 +1396,7 @@ python3 docs/findings/per-failure-triage/scripts/correlate.py
 head -60 docs/findings/per-failure-triage/reports/_universal.md
 ```
 
-Expected: top universal files match prior analysis (`security/test_ffi_length_boundary.py` ~7 providers since we dropped 14, `test_buffers.py`, `test_set_attribute.py`, etc.). Unique-to-one-provider section has bouncyhsm NOT present (correctly excluded); wolfpkcs11-master / kryptic-main / corepkcs11-main / nss-main / opencryptoki-master / softhsm2-main / tpm2 should each have entries.
+Expected: top universal files match prior analysis (`security/test_ffi_length_boundary.py` ~7 providers since we dropped 14, `test_buffers.py`, `test_set_attribute.py`, etc.). Unique-to-one-provider section has bouncyhsm NOT present (correctly excluded); wolfpkcs11-master / kryoptic-main / corepkcs11-main / nss-main / opencryptoki-master / softhsm2-main / tpm2 should each have entries.
 
 - [ ] **Step 4: For each universal test_file (≥5 providers), re-tag affected verdicts**
 
@@ -1441,7 +1441,7 @@ REPORTS = Path("/home/user/src/m/pkcs11-check/docs/findings/per-failure-triage/r
 
 PROVIDERS = [
     "wolfpkcs11-master", "opencryptoki-master", "corepkcs11-main",
-    "kryptic-main", "nss-main", "softhsm2-main", "tpm2",
+    "kryoptic-main", "nss-main", "softhsm2-main", "tpm2",
 ]
 
 SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
@@ -1797,12 +1797,12 @@ Exhaustive analysis of every `failed`, `xfailed`, `xpassed`, and `crashed` test 
 | wolfpkcs11-master | `artifacts_base/wolfpkcs11-master-pooled/` |
 | opencryptoki-master | `artifacts_base/opencryptoki-master-pooled/` |
 | corepkcs11-main | `artifacts_base/corepkcs11-main-pooled/` |
-| kryptic-main | `artifacts_base/kryptic-main-pooled/` |
+| kryoptic-main | `artifacts_base/kryoptic-main-pooled/` |
 | nss-main | `artifacts_base/nss-main-pooled/` |
 | softhsm2-main | `artifacts_base/softhsm2-main-pooled/` |
 | tpm2 | `artifacts_base/tpm2-pooled/` |
 
-**Excluded:** bouncyhsm (dev-only), kryptic-fips (= kryptic FIPS mode), pkcs11-mock (canned mock), other release/main duplicates.
+**Excluded:** bouncyhsm (dev-only), kryoptic-fips (= kryoptic FIPS mode), pkcs11-mock (canned mock), other release/main duplicates.
 
 ## Reading order
 
@@ -1830,7 +1830,7 @@ python3 scripts/extract.py
 python3 scripts/group.py
 
 # Apply automated classifier
-for p in wolfpkcs11-master opencryptoki-master corepkcs11-main kryptic-main nss-main softhsm2-main tpm2; do
+for p in wolfpkcs11-master opencryptoki-master corepkcs11-main kryoptic-main nss-main softhsm2-main tpm2; do
   for b in failures xfails xpassed; do
     python3 scripts/classify.py --provider $p --bucket $b
   done
@@ -1863,7 +1863,7 @@ git commit -m "docs(triage): add index README for per-failure-triage"
 - [ ] All 7 providers have a `-failures.jsonl`, `-xfails.jsonl`, and `-xpassed.jsonl` (if applicable).
 - [ ] `verdicts.jsonl` has zero records with `category=UNKNOWN` (or they are escalated to user).
 - [ ] `verdicts.jsonl` has zero records with `evidence` < 30 chars or containing `UNREVIEWED` (after Phase 6 + Phase 9).
-- [ ] Every crash has a verdict (13 crashes = ≥13 verdicts at file level).
+- [ ] Every crashed file has a verdict (5 files = ≥5 verdicts at file level, covering all 13 per-test crashes).
 - [ ] Every xfail GROUP has a verdict (individual xfails inherit via group).
 - [ ] `reports/_summary.md` shows `exhausted: true`.
 - [ ] No git uncommitted changes.
