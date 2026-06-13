@@ -124,6 +124,21 @@ def test_wtls_prf_label_sensitivity_fails_on_same_output(
         test_wtls.TestWTLSPRF().test_prf_label_affects_output(rs)
 
 
+def test_wtls_prf_exact_vector_fails_on_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_wtls, "_create_generic_secret", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_wtls, "destroy_quietly", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        test_wtls,
+        "_derive_wtls_prf_output",
+        lambda *_args, **_kwargs: b"\x00" * 16,
+    )
+
+    with pytest.raises(AssertionError, match="CKM_WTLS_PRF output mismatch"):
+        test_wtls.TestWTLSPRF().test_prf_derive(_session_with_mechanisms("WTLS_PRF"))
+
+
 def test_wtls_prf_output_length_probe_requests_prefix_extension(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -137,7 +152,12 @@ def test_wtls_prf_output_length_probe_requests_prefix_extension(
         **_kwargs: object,
     ) -> bytes:
         output_lengths.append(output_len)
-        return b"a" * 16 if output_len == 16 else (b"a" * 16) + (b"b" * 16)
+        return test_wtls._wtls_prf_sha256_reference(
+            test_wtls._WTLS_PRF_SECRET,
+            test_wtls._WTLS_PRF_LABEL,
+            test_wtls._WTLS_PRF_SEED,
+            output_len,
+        )
 
     monkeypatch.setattr(test_wtls, "_derive_wtls_prf_output", _derive_wtls_prf_output)
 

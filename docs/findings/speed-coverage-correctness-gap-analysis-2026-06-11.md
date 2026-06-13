@@ -326,7 +326,10 @@ smoke behavior, or covered only by one narrow variation.
    conflict with the base-key inherited protection attributes. TLS 1.2
    key-safe IV-suppression coverage now verifies
    `CKM_TLS12_KEY_SAFE_DERIVE` ignores requested IV output length and does not
-   write IV material through `CK_SSL3_KEY_MAT_OUT`.
+   write IV material through `CK_SSL3_KEY_MAT_OUT`. WTLS PRF SHA-256
+   exact-vector coverage now checks `CKM_WTLS_PRF` output against the WAP WTLS
+   P_hash recurrence for both 16-byte and 32-byte requests returned through
+   `CK_WTLS_PRF_PARAMS`.
    IKE PRF base-key sensitivity coverage now verifies the same for
    `CKM_IKE_PRF_DERIVE`. IKE PRF data-as-key HMAC-SHA256 exact-vector coverage
    now uses typed `CK_IKE_PRF_DERIVE_PARAMS` and checks the OASIS case-1
@@ -688,9 +691,9 @@ smoke behavior, or covered only by one narrow variation.
 2. Protocol KDF expansion beyond the already-covered priority set
    (`CKM_SP800_108_COUNTER_KDF`, `CKM_TLS12_KDF`, and `CKM_PKCS5_PBKD2`):
    continue exact-vector and tamper/negative checks for the remaining shallow
-   SSL3, WTLS, X3DH, and X2RATCHET paths where the mechanism semantics allow
-   it; IKE/IKEv1 now have typed HMAC-SHA256 exact-vector and invalid-PRF
-   negative coverage.
+   SSL3, X3DH, and X2RATCHET paths where the mechanism semantics allow it;
+   WTLS PRF now has WAP P_hash exact-vector coverage, and IKE/IKEv1 now have
+   typed HMAC-SHA256 exact-vector and invalid-PRF negative coverage.
 3. Continue BLAKE2B keyed negative/parameter edge cases beyond the existing
    wrong-length MAC, invalid HMAC_GENERAL length, KEY_DERIVE length/key-type,
    and CKA_VALUE-injection checks.
@@ -846,7 +849,7 @@ After that, do the first coverage expansion round:
 1. DSA/DH/X9.42 exact-vector, negative, and parameter-variant expansion beyond
    the existing dedicated generated-parameter coverage.
 2. Protocol KDF exact-vector expansion beyond already-covered SP800-108
-   counter/feedback/double-pipeline KDF, TLS 1.2 KDF, PBKDF2, SSL3, and
+   counter/feedback/double-pipeline KDF, TLS 1.2 KDF, PBKDF2, SSL3, WTLS, and
    IKE/IKEv1 paths.
 3. BLAKE2B keyed negative/parameter edge cases.
 4. ChaCha20-Poly1305 wrap/unwrap only if a spec-backed `C_WrapKey` mapping is

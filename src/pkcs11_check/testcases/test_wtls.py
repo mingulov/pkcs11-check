@@ -15,6 +15,8 @@ OASIS spec: wtls.md
 from __future__ import annotations
 
 import ctypes
+import hashlib
+import hmac
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -90,6 +92,27 @@ _WTLS_TEMPLATE_CONFLICT_REJECT_RVS = (
 # WTLS client/server random values (16 bytes each)
 _CLIENT_RANDOM = bytes(range(16))
 _SERVER_RANDOM = bytes(range(16, 32))
+_WTLS_PRF_SECRET = bytes(range(20))
+_WTLS_PRF_LABEL = b"key expansion"
+_WTLS_PRF_SEED = bytes(range(32))
+
+
+def _wtls_prf_sha256_reference(
+    secret: bytes,
+    label: bytes,
+    seed: bytes,
+    output_len: int,
+) -> bytes:
+    """Compute the WAP WTLS P_hash PRF using SHA-256 as the selected digest."""
+    if output_len <= 0:
+        raise ValueError("output_len must be positive")
+    seed_data = label + seed
+    output = b""
+    a_value = seed_data
+    while len(output) < output_len:
+        a_value = hmac.new(secret, a_value, hashlib.sha256).digest()
+        output += hmac.new(secret, a_value + seed_data, hashlib.sha256).digest()
+    return output[:output_len]
 
 
 def _create_generic_secret(rs: Any, size: int = 48) -> int:
@@ -832,17 +855,27 @@ class TestWTLSPRF:
         if not rs.has_mechanism("WTLS_PRF"):
             pytest.skip("CKM_WTLS_PRF not supported")
 
-        secret = _create_generic_secret(rs, 20)
+        secret = _create_generic_secret(rs, len(_WTLS_PRF_SECRET))
         try:
             try:
                 value = _derive_wtls_prf_output(
                     rs,
                     secret,
-                    seed=bytes(range(32)),
-                    label=b"key expansion",
+                    seed=_WTLS_PRF_SEED,
+                    label=_WTLS_PRF_LABEL,
                     output_len=16,
                 )
                 assert len(value) == 16, f"Expected 16 bytes, got {len(value)}"
+                expected = _wtls_prf_sha256_reference(
+                    _WTLS_PRF_SECRET,
+                    _WTLS_PRF_LABEL,
+                    _WTLS_PRF_SEED,
+                    16,
+                )
+                assert value == expected, (
+                    "CKM_WTLS_PRF output mismatch: "
+                    f"got {value.hex()}, expected {expected.hex()}"
+                )
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
@@ -940,27 +973,37 @@ class TestWTLSPRF:
         if not rs.has_mechanism("WTLS_PRF"):
             pytest.skip("CKM_WTLS_PRF not supported")
 
-        secret = _create_generic_secret(rs, 20)
+        secret = _create_generic_secret(rs, len(_WTLS_PRF_SECRET))
         try:
             try:
                 short = _derive_wtls_prf_output(
                     rs,
                     secret,
-                    seed=bytes(range(32)),
-                    label=b"key expansion",
+                    seed=_WTLS_PRF_SEED,
+                    label=_WTLS_PRF_LABEL,
                     output_len=16,
                 )
                 long = _derive_wtls_prf_output(
                     rs,
                     secret,
-                    seed=bytes(range(32)),
-                    label=b"key expansion",
+                    seed=_WTLS_PRF_SEED,
+                    label=_WTLS_PRF_LABEL,
                     output_len=32,
                 )
                 assert len(short) == 16, f"Expected 16 bytes, got {len(short)}"
                 assert len(long) == 32, f"Expected 32 bytes, got {len(long)}"
                 assert long[: len(short)] == short, (
                     "WTLS PRF longer output did not preserve the shorter prefix"
+                )
+                expected = _wtls_prf_sha256_reference(
+                    _WTLS_PRF_SECRET,
+                    _WTLS_PRF_LABEL,
+                    _WTLS_PRF_SEED,
+                    32,
+                )
+                assert long == expected, (
+                    "CKM_WTLS_PRF 32-byte output mismatch: "
+                    f"got {long.hex()}, expected {expected.hex()}"
                 )
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):

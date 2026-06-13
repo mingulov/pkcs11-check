@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pkcs11_check.testcases import test_ike, test_sp800_108_kdf, test_tls12
+from pkcs11_check.testcases import test_ike, test_sp800_108_kdf, test_tls12, test_wtls
 
 
 def test_sp800_108_counter_reference_vector() -> None:
@@ -170,4 +170,25 @@ def test_ike1_extended_hmac_sha256_multiblock_reference_vector() -> None:
             "9672b961d4f0556b9bbfdf40707ff9494c6b95f1c916653575420a7b657d863d"
             "8b6f2a6cff747131c53605cae7e9cbc6"
         )
+    )
+
+
+def test_wtls_prf_sha256_reference_vector() -> None:
+    assert (
+        test_wtls._wtls_prf_sha256_reference(
+            bytes(range(20)),
+            b"key expansion",
+            bytes(range(32)),
+            16,
+        ).hex()
+        == "5e088b137f1b0b637682f8ecc89c5ff1"
+    )
+    assert (
+        test_wtls._wtls_prf_sha256_reference(
+            bytes(range(20)),
+            b"key expansion",
+            bytes(range(32)),
+            32,
+        ).hex()
+        == "5e088b137f1b0b637682f8ecc89c5ff1f8f048fa6ff648d808fb697b6a35b182"
     )

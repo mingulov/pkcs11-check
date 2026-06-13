@@ -200,6 +200,20 @@ def test_gap_analysis_marks_wtls_prf_output_length_as_added() -> None:
     assert "WTLS PRF output-length coverage" in doc_flat
 
 
+def test_gap_analysis_marks_wtls_prf_exact_vector_as_added() -> None:
+    """CKM_WTLS_PRF has byte-exact SHA-256 PRF coverage."""
+    wtls = _read("src/pkcs11_check/testcases/test_wtls.py")
+    reference_tests = _read("tests/test_protocol_kdf_reference_vectors.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "_wtls_prf_sha256_reference" in wtls
+    assert "expected = _wtls_prf_sha256_reference" in wtls
+    assert "test_wtls_prf_sha256_reference_vector" in reference_tests
+
+    assert "WTLS PRF SHA-256 exact-vector coverage" in doc_flat
+    assert "WAP WTLS P_hash recurrence" in doc_flat
+
+
 def test_gap_analysis_marks_wtls_key_material_null_phkey_as_added() -> None:
     """WTLS key-and-MAC derives follow the OASIS NULL phKey convention."""
     wtls = _read("src/pkcs11_check/testcases/test_wtls.py")
