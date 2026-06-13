@@ -289,6 +289,24 @@ def test_gap_analysis_marks_ike1_exact_vectors_as_added() -> None:
     assert "IKE1 Extended Derive HMAC-SHA256 multiblock exact-vector coverage" in doc_flat
 
 
+def test_gap_analysis_marks_ike_invalid_prf_negative_as_added() -> None:
+    """IKE derives reject a nested prfMechanism that is not a MAC mechanism."""
+    ike = _read("src/pkcs11_check/testcases/test_ike.py")
+    guard = _read("tests/test_ike_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "_INVALID_PRF_REJECT_RVS" in ike
+    assert "_INVALID_PRF_MECHANISM = int(CKM_AES_ECB)" in ike
+    assert "test_rejects_invalid_prf_mechanism" in ike
+    assert "IKE2 PRF+ invalid PRF mechanism" in ike
+    assert "IKE PRF invalid PRF mechanism" in ike
+    assert "IKE1 PRF invalid PRF mechanism" in ike
+    assert "IKE1 extended invalid PRF mechanism" in ike
+    assert "test_ike_invalid_prf_mechanism_uses_negative_classifier" in guard
+
+    assert "IKE invalid-PRF negative coverage" in doc_flat
+
+
 def test_gap_analysis_marks_tls_kdf_tls10_exact_vector_as_added() -> None:
     """CKM_TLS_KDF has an RFC 2246 TLS1.0/1.1 PRF exact vector."""
     tls = _read("src/pkcs11_check/testcases/test_tls12.py")

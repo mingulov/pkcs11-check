@@ -43,6 +43,7 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKK_GENERIC_SECRET,
     CKK_SHA256_HMAC,
+    CKM_AES_ECB,
     CKM_IKE1_EXTENDED_DERIVE,
     CKM_IKE1_PRF_DERIVE,
     CKM_IKE2_PRF_PLUS_DERIVE,
@@ -58,7 +59,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import reject_or_classify, xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
 
@@ -72,6 +73,8 @@ _DERIVE_ERROR_CKRS = (
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_ARGUMENTS_BAD,
 )
+_INVALID_PRF_REJECT_RVS = (CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID)
+_INVALID_PRF_MECHANISM = int(CKM_AES_ECB)
 
 # 32-byte base key material (shared secret / SKEYSEED)
 _BASE_KEY_BYTES = bytes(range(32))
@@ -182,6 +185,42 @@ def _derive_aes128(rs: Any, base_key: int, mech: int, param: bytes) -> int:
         attrs=attrs,
         mech_param=_ike_mech_param(mech, param),
     )
+
+
+def _classify_invalid_prf_derive(
+    rs: Any,
+    base_key: int,
+    mech: int,
+    mech_param: Any,
+    *,
+    label: str,
+    value_len: int = 32,
+    key_type: int = CKK_GENERIC_SECRET,
+) -> None:
+    attrs: dict[int, Any] = {
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: key_type,
+        CKA_VALUE_LEN: value_len,
+        **_DERIVE_ATTRS,
+    }
+    derived = 0
+    try:
+        exc: AssertionError | None = None
+        try:
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                base_key,
+                mech,
+                attrs=attrs,
+                mech_param=mech_param,
+            )
+        except AssertionError as caught:
+            exc = caught
+        reject_or_classify(exc, _INVALID_PRF_REJECT_RVS, label=label)
+    finally:
+        if derived:
+            destroy_quietly(rs.raw, rs.sh, derived)
 
 
 def _derive_ike1_prf(
@@ -532,6 +571,35 @@ class TestIKE2PRFPlusDerive:
                 destroy_quietly(rs.raw, rs.sh, base_key_b)
             destroy_quietly(rs.raw, rs.sh, base_key_a)
 
+    def test_rejects_invalid_prf_mechanism(self, p11_raw_session: Any) -> None:
+        """CKM_IKE2_PRF_PLUS_DERIVE rejects a non-MAC nested prfMechanism."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("IKE2_PRF_PLUS_DERIVE"):
+            pytest.skip("CKM_IKE2_PRF_PLUS_DERIVE not supported")
+        base_key = 0
+        try:
+            base_key = _create_sha256_hmac_derive_key(rs)
+            _classify_invalid_prf_derive(
+                rs,
+                base_key,
+                CKM_IKE2_PRF_PLUS_DERIVE,
+                mech_ike2_prf_plus_derive(
+                    CKM_IKE2_PRF_PLUS_DERIVE,
+                    prf_mechanism=_INVALID_PRF_MECHANISM,
+                    seed_data=_NONCE_I + _NONCE_R,
+                ),
+                label="IKE2 PRF+ invalid PRF mechanism",
+            )
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _DERIVE_ERROR_CKRS,
+                "CKM_IKE2_PRF_PLUS_DERIVE invalid PRF setup not operational",
+            )
+        finally:
+            if base_key:
+                destroy_quietly(rs.raw, rs.sh, base_key)
+
     def test_derive_deterministic(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("IKE2_PRF_PLUS_DERIVE"):
@@ -675,6 +743,37 @@ class TestIKEPRFDerive:
                 destroy_quietly(rs.raw, rs.sh, base_key_b)
             destroy_quietly(rs.raw, rs.sh, base_key_a)
 
+    def test_rejects_invalid_prf_mechanism(self, p11_raw_session: Any) -> None:
+        """CKM_IKE_PRF_DERIVE rejects a non-MAC nested prfMechanism."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("IKE_PRF_DERIVE"):
+            pytest.skip("CKM_IKE_PRF_DERIVE not supported")
+        base_key = 0
+        try:
+            base_key = _create_base_key(rs)
+            _classify_invalid_prf_derive(
+                rs,
+                base_key,
+                CKM_IKE_PRF_DERIVE,
+                mech_ike_prf_derive(
+                    CKM_IKE_PRF_DERIVE,
+                    prf_mechanism=_INVALID_PRF_MECHANISM,
+                    initiator_nonce=_NONCE_I,
+                    responder_nonce=_NONCE_R,
+                    data_as_key=True,
+                ),
+                label="IKE PRF invalid PRF mechanism",
+            )
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _DERIVE_ERROR_CKRS,
+                "CKM_IKE_PRF_DERIVE invalid PRF setup not operational",
+            )
+        finally:
+            if base_key:
+                destroy_quietly(rs.raw, rs.sh, base_key)
+
     def test_derive_deterministic(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("IKE_PRF_DERIVE"):
@@ -800,6 +899,42 @@ class TestIKE1PRFDerive:
         finally:
             destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)
+
+    def test_rejects_invalid_prf_mechanism(self, p11_raw_session: Any) -> None:
+        """CKM_IKE1_PRF_DERIVE rejects a non-MAC nested prfMechanism."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("IKE1_PRF_DERIVE"):
+            pytest.skip("CKM_IKE1_PRF_DERIVE not supported")
+        base_key = 0
+        keygxy_key = 0
+        try:
+            base_key = _create_sha256_hmac_derive_key(rs)
+            keygxy_key = _create_ike1_keygxy_key(rs)
+            _classify_invalid_prf_derive(
+                rs,
+                base_key,
+                CKM_IKE1_PRF_DERIVE,
+                mech_ike1_prf_derive(
+                    CKM_IKE1_PRF_DERIVE,
+                    prf_mechanism=_INVALID_PRF_MECHANISM,
+                    keygxy_handle=keygxy_key,
+                    initiator_cookie=_NONCE_I,
+                    responder_cookie=_NONCE_R,
+                    key_number=0,
+                ),
+                label="IKE1 PRF invalid PRF mechanism",
+            )
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _DERIVE_ERROR_CKRS,
+                "CKM_IKE1_PRF_DERIVE invalid PRF setup not operational",
+            )
+        finally:
+            if keygxy_key:
+                destroy_quietly(rs.raw, rs.sh, keygxy_key)
+            if base_key:
+                destroy_quietly(rs.raw, rs.sh, base_key)
 
     def test_derive_deterministic(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -971,6 +1106,40 @@ class TestIKE1ExtendedDerive:
         finally:
             destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)
+
+    def test_rejects_invalid_prf_mechanism(self, p11_raw_session: Any) -> None:
+        """CKM_IKE1_EXTENDED_DERIVE rejects a non-MAC nested prfMechanism."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("IKE1_EXTENDED_DERIVE"):
+            pytest.skip("CKM_IKE1_EXTENDED_DERIVE not supported")
+        base_key = 0
+        keygxy_key = 0
+        try:
+            base_key = _create_sha256_hmac_derive_key(rs)
+            keygxy_key = _create_ike1_keygxy_key(rs)
+            _classify_invalid_prf_derive(
+                rs,
+                base_key,
+                CKM_IKE1_EXTENDED_DERIVE,
+                mech_ike1_extended_derive(
+                    CKM_IKE1_EXTENDED_DERIVE,
+                    prf_mechanism=_INVALID_PRF_MECHANISM,
+                    keygxy_handle=keygxy_key,
+                    extra_data=_NONCE_I + _NONCE_R + _SPI_I + _SPI_R,
+                ),
+                label="IKE1 extended invalid PRF mechanism",
+            )
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _DERIVE_ERROR_CKRS,
+                "CKM_IKE1_EXTENDED_DERIVE invalid PRF setup not operational",
+            )
+        finally:
+            if keygxy_key:
+                destroy_quietly(rs.raw, rs.sh, keygxy_key)
+            if base_key:
+                destroy_quietly(rs.raw, rs.sh, base_key)
 
     def test_derive_deterministic(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session

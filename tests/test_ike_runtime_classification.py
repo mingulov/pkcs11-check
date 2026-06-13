@@ -7,6 +7,15 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import (
+    CKM_AES_ECB,
+    CKM_IKE1_EXTENDED_DERIVE,
+    CKM_IKE1_PRF_DERIVE,
+    CKM_IKE2_PRF_PLUS_DERIVE,
+    CKM_IKE_PRF_DERIVE,
+    CKR_MECHANISM_PARAM_INVALID,
+)
 from pkcs11_check.testcases import test_ike
 
 
@@ -33,6 +42,85 @@ def test_ike2_prf_plus_base_key_sensitivity_fails_on_same_output(
     rs = _session_with_mechanisms("IKE2_PRF_PLUS_DERIVE")
     with pytest.raises(AssertionError, match="IKE2 PRF\\+ base key"):
         test_ike.TestIKE2PRFPlusDerive().test_base_key_affects_output(rs)
+
+
+def test_ike_invalid_prf_mechanism_uses_negative_classifier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_keys = iter((1, 2, 3, 4))
+    keygxy_keys = iter((10, 11))
+    derive_calls: list[tuple[int, int, int]] = []
+    classifier_calls: list[tuple[BaseException | None, tuple[int, ...], str]] = []
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        base_key: int,
+        mechanism: int,
+        *_args: object,
+        **kwargs: object,
+    ) -> int:
+        mech_param = kwargs["mech_param"]
+        derive_calls.append(
+            (
+                int(base_key),
+                int(mechanism),
+                int(mech_param.params.prfMechanism),
+            )
+        )
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID",
+            int(CKR_MECHANISM_PARAM_INVALID),
+        )
+
+    def _reject_or_classify(
+        exc: BaseException | None,
+        expected_rvs: tuple[int, ...],
+        *,
+        label: str,
+    ) -> None:
+        classifier_calls.append((exc, tuple(int(rv) for rv in expected_rvs), label))
+
+    monkeypatch.setattr(test_ike, "_create_base_key", lambda *_args, **_kwargs: next(base_keys))
+    monkeypatch.setattr(
+        test_ike,
+        "_create_sha256_hmac_derive_key",
+        lambda *_args, **_kwargs: next(base_keys),
+    )
+    monkeypatch.setattr(
+        test_ike,
+        "_create_ike1_keygxy_key",
+        lambda *_args, **_kwargs: next(keygxy_keys),
+    )
+    monkeypatch.setattr(test_ike, "derive_key", _derive_key)
+    monkeypatch.setattr(test_ike, "destroy_quietly", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(test_ike, "reject_or_classify", _reject_or_classify, raising=False)
+
+    rs = _session_with_mechanisms(
+        "IKE2_PRF_PLUS_DERIVE",
+        "IKE_PRF_DERIVE",
+        "IKE1_PRF_DERIVE",
+        "IKE1_EXTENDED_DERIVE",
+    )
+    test_ike.TestIKE2PRFPlusDerive().test_rejects_invalid_prf_mechanism(rs)
+    test_ike.TestIKEPRFDerive().test_rejects_invalid_prf_mechanism(rs)
+    test_ike.TestIKE1PRFDerive().test_rejects_invalid_prf_mechanism(rs)
+    test_ike.TestIKE1ExtendedDerive().test_rejects_invalid_prf_mechanism(rs)
+
+    assert derive_calls == [
+        (1, int(CKM_IKE2_PRF_PLUS_DERIVE), int(CKM_AES_ECB)),
+        (2, int(CKM_IKE_PRF_DERIVE), int(CKM_AES_ECB)),
+        (3, int(CKM_IKE1_PRF_DERIVE), int(CKM_AES_ECB)),
+        (4, int(CKM_IKE1_EXTENDED_DERIVE), int(CKM_AES_ECB)),
+    ]
+    assert [call[2] for call in classifier_calls] == [
+        "IKE2 PRF+ invalid PRF mechanism",
+        "IKE PRF invalid PRF mechanism",
+        "IKE1 PRF invalid PRF mechanism",
+        "IKE1 extended invalid PRF mechanism",
+    ]
+    assert all(isinstance(call[0], CkrAssertionError) for call in classifier_calls)
+    assert all(int(CKR_MECHANISM_PARAM_INVALID) in call[1] for call in classifier_calls)
 
 
 def test_ike1_prf_exact_vector_uses_typed_helper_and_fails_on_wrong_output(

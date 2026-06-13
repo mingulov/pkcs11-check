@@ -323,7 +323,10 @@ smoke behavior, or covered only by one narrow variation.
    `prf(SKEYID, g^xy|CKYi|CKYr|key_number)` output. IKE1 Extended Derive HMAC-SHA256 exact-vector coverage now uses typed `CK_IKE1_EXTENDED_DERIVE_PARAMS` and checks
    the OASIS `prf(SKEYID, g^xy|extraData)` output. IKE1 Extended Derive
    HMAC-SHA256 multiblock exact-vector coverage now requests 48 bytes to
-   exercise the second recurrence output block. SSL3 master-secret exact-vector coverage
+   exercise the second recurrence output block. IKE invalid-PRF negative
+   coverage now verifies all four typed IKE derive parameter structs reject a
+   nested `prfMechanism` set to standard non-MAC `CKM_AES_ECB` through the
+   shared provider-general negative classifier. SSL3 master-secret exact-vector coverage
    now checks `CKM_SSL3_MASTER_KEY_DERIVE` output against the RFC 6101 SSL3
    MD5/SHA master-secret computation. SSL3 master-secret DH exact-vector
    coverage now applies the same computation to `CKM_SSL3_MASTER_KEY_DERIVE_DH`
@@ -655,7 +658,8 @@ smoke behavior, or covered only by one narrow variation.
    (`CKM_SP800_108_COUNTER_KDF`, `CKM_TLS12_KDF`, and `CKM_PKCS5_PBKD2`):
    continue exact-vector and tamper/negative checks for the remaining shallow
    SSL3, WTLS, X3DH, and X2RATCHET paths where the mechanism semantics allow
-   it; IKE/IKEv1 now have typed HMAC-SHA256 exact-vector coverage.
+   it; IKE/IKEv1 now have typed HMAC-SHA256 exact-vector and invalid-PRF
+   negative coverage.
 3. BLAKE2B keyed negative/parameter edge cases, now that HMAC, HMAC_GENERAL,
    KEY_GEN, and KEY_DERIVE positive semantics are covered.
 4. No remaining generic AEAD wrap parameter gap: ChaCha20-Poly1305 stays
