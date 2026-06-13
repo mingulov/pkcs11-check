@@ -42,7 +42,6 @@ ALLOWLIST = {
     "src/pkcs11_check/testcases/ckr/test_ckr_wrap.py",
     "src/pkcs11_check/testcases/mechanism_helpers.py",
     "src/pkcs11_check/testcases/security/test_api_security.py",
-    "src/pkcs11_check/testcases/security/test_cve_regression.py",
     "src/pkcs11_check/testcases/security/test_parameter_validation.py",
     "src/pkcs11_check/testcases/test_access_control.py",
     "src/pkcs11_check/testcases/test_access_levels.py",

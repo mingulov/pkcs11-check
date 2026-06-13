@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.bootstrap import (
     login_user,
 )
@@ -262,7 +263,15 @@ class TestCKADeriveOnEC:
             if "CKR_ATTRIBUTE_VALUE_INVALID" in err_str:
                 # Some modules reject CKA_DERIVE on EC keys (e.g. tpm2-pkcs11 #656);
                 # a clean non-spec rejection -> noted deviation, not a finding.
-                pytest.xfail("Module rejects CKA_DERIVE on EC (clean non-spec rejection)")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="EC keygen with CKA_DERIVE",
+                    operation="C_GenerateKeyPair",
+                    mechanism="CKM_EC_KEY_PAIR_GEN",
+                    expected=CKR_ATTRIBUTE_VALUE_INVALID,
+                    summary="Module rejects CKA_DERIVE on EC (clean non-spec rejection)",
+                )
             else:
                 raise
 
@@ -430,10 +439,16 @@ class TestTookanUnwrapAttrs:
                         ComplianceLevel.CRITICAL,
                         reference="Tookan paper §3.3 / PKCS#11 v3.1 Sec.4.7",
                     )
-                    pytest.fail(
-                        "SECURITY: Tookan §3.3 — unwrap with CKA_SENSITIVE=False "
+                    classify(
+                        "self_contradiction",
+                        kind="policy",
+                        label="Tookan unwrap sensitive downgrade",
+                        operation="C_UnwrapKey",
+                        mechanism="CKM_AES_KEY_WRAP",
+                        spec_ref="Tookan paper §3.3 / PKCS#11 v3.1 Sec.4.7",
+                        summary="SECURITY: Tookan §3.3 — unwrap with CKA_SENSITIVE=False "
                         "produced a non-sensitive copy of a SENSITIVE=True key. "
-                        "Sensitive-key boundary breached on unwrap."
+                        "Sensitive-key boundary breached on unwrap.",
                     )
                 # SENSITIVE preserved: correct behaviour (template ignored
                 # for security-downgrade).
@@ -609,9 +624,15 @@ class TestECDSATimingBasic:
                     "sample CV is environment-sensitive (OS scheduling jitter "
                     "alone can push CV past 1.0 on shared runners).",
                 )
-                pytest.xfail(
-                    f"ECDSA timing CV={cv:.3f} -- informational, needs deeper "
-                    "Minerva analysis to confirm leak"
+                classify(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="ECDSA timing variance (Minerva sanity)",
+                    operation="C_Sign",
+                    mechanism="CKM_ECDSA",
+                    summary=f"ECDSA timing CV={cv:.3f} -- informational, needs deeper "
+                    "Minerva analysis to confirm leak",
+                    detail={"channel": "timing", "cv": round(cv, 3), "samples": 100},
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -650,8 +671,16 @@ class TestBoundaryLengthCrypto:
                         pass  # Correct rejection via expect_rv
                     else:
                         if size > 0:
-                            pytest.fail(
-                                f"AES-ECB accepted non-block-aligned plaintext length {size}"
+                            classify(
+                                "accepted_invalid",
+                                kind="crypto",
+                                label="AES-ECB non-block-aligned plaintext",
+                                operation="C_Encrypt",
+                                mechanism="CKM_AES_ECB",
+                                actual="CKR_OK",
+                                expected=_DATA_ERROR_RVS,
+                                summary="AES-ECB accepted non-block-aligned plaintext "
+                                f"length {size}",
                             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
