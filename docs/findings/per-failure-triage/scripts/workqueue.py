@@ -60,14 +60,26 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--min-size", type=int, default=1)
     ap.add_argument("--limit", type=int, default=0, help="0 = no limit")
+    ap.add_argument("--priority-min", type=int, default=0, help="only priority >= this")
+    ap.add_argument("--priority-max", type=int, default=99, help="only priority <= this")
     args = ap.parse_args()
 
-    # Group UNKNOWN records by (provider, test_file)
+    # First pass: collect all signatures that have been superseded
+    superseded: set[str] = set()
+    with VERDICTS.open() as f:
+        for line in f:
+            v = json.loads(line)
+            if "supersedes" in v:
+                superseded.add(v["supersedes"])
+
+    # Group UNKNOWN records by (provider, test_file), skipping superseded ones
     buckets: dict[tuple[str, str], list[dict]] = defaultdict(list)
     with VERDICTS.open() as f:
         for line in f:
             v = json.loads(line)
             if v.get("category") != "UNKNOWN":
+                continue
+            if v["signature"] in superseded:
                 continue
             key = (v["provider"], v["test_file"])
             buckets[key].append(v)
@@ -98,6 +110,7 @@ def main() -> int:
 
     if args.min_size > 1:
         items = [b for b in items if b["record_count"] >= args.min_size]
+    items = [b for b in items if args.priority_min <= b["priority"] <= args.priority_max]
     if args.limit > 0:
         items = items[: args.limit]
 
