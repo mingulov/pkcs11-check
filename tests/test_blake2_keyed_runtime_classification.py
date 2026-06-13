@@ -22,6 +22,7 @@ from pkcs11_check.raw.types_std import (
     CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
     CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases import test_blake2
 
@@ -492,3 +493,125 @@ def test_blake2b_key_derive_length_only_zero_is_expected_reject(
         }
     ]
     assert CKA_KEY_TYPE not in derive_attrs[0]
+
+
+def test_blake2b_key_derive_value_injection_is_expected_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = test_blake2._BLAKE2B_KEYED_CASE_BY_BITS[256]
+    derive_attrs: list[dict[int, Any]] = []
+
+    def _derive_reject(
+        _raw: object,
+        _sh: int,
+        _base_key: int,
+        _mechanism: int,
+        attrs: dict[int, Any],
+    ) -> int:
+        derive_attrs.append(attrs)
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_TEMPLATE_INCONSISTENT",
+            int(CKR_TEMPLATE_INCONSISTENT),
+        )
+
+    rs = _session_with_mechanisms("BLAKE2B_256_KEY_DERIVE")
+    monkeypatch.setattr(test_blake2, "_import_blake2b_setup_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_blake2, "derive_key", _derive_reject)
+    monkeypatch.setattr(test_blake2, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    test_blake2.TestBlake2bKeyed()._key_derive_rejects_value_injection(
+        rs,
+        case,
+    )
+
+    assert derive_attrs == [
+        {
+            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+            CKA_VALUE_LEN: case.digest_len,
+            CKA_VALUE: b"\xa5" * case.digest_len,
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: True,
+        }
+    ]
+
+
+def test_blake2b_key_derive_value_injection_accepts_injected_value_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = test_blake2._BLAKE2B_KEYED_CASE_BY_BITS[256]
+    injected = b"\xa5" * case.digest_len
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        _base_key: int,
+        _mechanism: int,
+        attrs: dict[int, Any],
+    ) -> int:
+        assert CKA_VALUE in attrs
+        return 79
+
+    def _read_attributes(
+        _raw: object,
+        _sh: int,
+        handle: int,
+        attrs: list[int],
+    ) -> dict[int, Any]:
+        assert handle == 79
+        assert attrs == [CKA_VALUE]
+        return {CKA_VALUE: injected}
+
+    rs = _session_with_mechanisms("BLAKE2B_256_KEY_DERIVE")
+    monkeypatch.setattr(test_blake2, "_import_blake2b_setup_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_blake2, "derive_key", _derive_key)
+    monkeypatch.setattr(test_blake2, "read_attributes", _read_attributes)
+    monkeypatch.setattr(test_blake2, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(AssertionError, match="accepted caller-supplied CKA_VALUE"):
+        test_blake2.TestBlake2bKeyed()._key_derive_rejects_value_injection(
+            rs,
+            case,
+        )
+
+
+def test_blake2b_key_derive_value_injection_accepts_but_ignores_value_xfails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = test_blake2._BLAKE2B_KEYED_CASE_BY_BITS[256]
+    expected = hashlib.blake2b(
+        test_blake2._BLAKE2B_TEST_KEY,
+        digest_size=case.digest_len,
+    ).digest()
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        _base_key: int,
+        _mechanism: int,
+        attrs: dict[int, Any],
+    ) -> int:
+        assert CKA_VALUE in attrs
+        return 80
+
+    def _read_attributes(
+        _raw: object,
+        _sh: int,
+        handle: int,
+        attrs: list[int],
+    ) -> dict[int, Any]:
+        assert handle == 80
+        assert attrs == [CKA_VALUE]
+        return {CKA_VALUE: expected}
+
+    rs = _session_with_mechanisms("BLAKE2B_256_KEY_DERIVE")
+    monkeypatch.setattr(test_blake2, "_import_blake2b_setup_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_blake2, "derive_key", _derive_key)
+    monkeypatch.setattr(test_blake2, "read_attributes", _read_attributes)
+    monkeypatch.setattr(test_blake2, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(pytest.xfail.Exception, match="ignored caller-supplied CKA_VALUE"):
+        test_blake2.TestBlake2bKeyed()._key_derive_rejects_value_injection(
+            rs,
+            case,
+        )

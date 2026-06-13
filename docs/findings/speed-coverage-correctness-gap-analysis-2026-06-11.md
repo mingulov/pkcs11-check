@@ -516,7 +516,10 @@ smoke behavior, or covered only by one narrow variation.
    `CKA_VALUE_LEN` values larger than the digest output length. BLAKE2B
    KEY_DERIVE length-only zero-length negative coverage now verifies every
    keyed output size rejects no-key-type generic-secret templates with
-   `CKA_VALUE_LEN=0`.
+   `CKA_VALUE_LEN=0`. BLAKE2B KEY_DERIVE CKA_VALUE-injection negative coverage
+   now verifies every keyed output size rejects caller-supplied derived-key
+   bytes in the template; a provider that accepts and uses those bytes fails,
+   while accepting but ignoring the bytes is recorded as an xfail deviation.
    Remaining BLAKE2B work is broader negative parameter/regression expansion
    and provider-artifact evidence, not basic keyed semantic coverage.
 7. SHAKE/XOF dedicated coverage exists: raw `C_DigestXof*` function
@@ -660,8 +663,9 @@ smoke behavior, or covered only by one narrow variation.
    SSL3, WTLS, X3DH, and X2RATCHET paths where the mechanism semantics allow
    it; IKE/IKEv1 now have typed HMAC-SHA256 exact-vector and invalid-PRF
    negative coverage.
-3. BLAKE2B keyed negative/parameter edge cases, now that HMAC, HMAC_GENERAL,
-   KEY_GEN, and KEY_DERIVE positive semantics are covered.
+3. Continue BLAKE2B keyed negative/parameter edge cases beyond the existing
+   wrong-length MAC, invalid HMAC_GENERAL length, KEY_DERIVE length/key-type,
+   and CKA_VALUE-injection checks.
 4. No remaining generic AEAD wrap parameter gap: ChaCha20-Poly1305 stays
    source-first for wrap/unwrap unless a spec-backed `C_WrapKey` mapping appears.
 5. Continue registry-driven negative tests for broader linked-attribute families

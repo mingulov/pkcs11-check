@@ -65,6 +65,8 @@ from pkcs11_check.raw.types_std import (
     CKM_BLAKE2B_512_KEY_DERIVE,
     CKM_BLAKE2B_512_KEY_GEN,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
@@ -109,6 +111,12 @@ _BLAKE2B_RUNTIME_REJECT_RVS = (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+)
+_BLAKE2B_VALUE_INJECTION_REJECT_RVS = (
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_READ_ONLY,
 )
 
 
@@ -1141,6 +1149,63 @@ class TestBlake2bKeyed:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
 
+    def _key_derive_rejects_value_injection(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism(case.key_derive_name):
+            pytest.skip(f"CKM_{case.key_derive_name} not supported")
+
+        injected = b"\xa5" * case.digest_len
+        base = _import_blake2b_setup_key(rs, derive=True)
+        derived = 0
+        try:
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base,
+                    case.key_derive_mech,
+                    attrs={
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_VALUE_LEN: case.digest_len,
+                        CKA_VALUE: injected,
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                )
+            except AssertionError as e:
+                reject_or_classify(
+                    e,
+                    _BLAKE2B_VALUE_INJECTION_REJECT_RVS,
+                    label=f"{case.key_derive_name} CKA_VALUE injection",
+                )
+                return
+
+            value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+            expected = hashlib.blake2b(_BLAKE2B_TEST_KEY, digest_size=case.digest_len).digest()
+            if value == injected:
+                raise AssertionError(
+                    f"{case.key_derive_name} accepted caller-supplied CKA_VALUE in a derive "
+                    "template instead of deriving the secret bytes"
+                )
+            if value == expected:
+                pytest.xfail(
+                    f"{case.key_derive_name} accepted and ignored caller-supplied CKA_VALUE "
+                    "in a derive template"
+                )
+            raise AssertionError(
+                f"{case.key_derive_name} accepted caller-supplied CKA_VALUE in a derive "
+                "template and produced an unexpected derived value"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, base)
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)
+
     @pytest.mark.parametrize(
         "case",
         _BLAKE2B_KEYED_CASES,
@@ -1225,6 +1290,22 @@ class TestBlake2bKeyed:
     ) -> None:
         """BLAKE2B_*_KEY_DERIVE length-only zero-length outputs are rejected."""
         self._key_derive_rejects_length_only_zero(
+            p11_raw_session,
+            case,
+        )
+
+    @pytest.mark.parametrize(
+        "case",
+        _BLAKE2B_KEYED_CASES,
+        ids=[case.id for case in _BLAKE2B_KEYED_CASES],
+    )
+    def test_blake2b_key_derive_rejects_value_injection(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        """BLAKE2B_*_KEY_DERIVE rejects caller-supplied derived-key bytes."""
+        self._key_derive_rejects_value_injection(
             p11_raw_session,
             case,
         )
