@@ -139,6 +139,22 @@ def test_gap_analysis_marks_protocol_kdf_semantics_as_dedicated_coverage() -> No
     assert "IKE2 PRF+ base-key sensitivity coverage" in doc
 
 
+def test_gap_analysis_marks_pbkdf2_invalid_prf_negative_as_added() -> None:
+    """CKM_PKCS5_PBKD2 rejects PRF selectors outside the CKP_* table."""
+    pbkdf2 = _read("src/pkcs11_check/testcases/wycheproof/test_wycheproof_pbkdf2.py")
+    guard = _read("tests/test_wycheproof_pbkdf2_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "_PBKDF2_INVALID_PRF_REJECT_CKRS" in pbkdf2
+    assert "test_pbkdf2_rejects_invalid_prf" in pbkdf2
+    assert "PKCS5_PBKD2 invalid PRF selector" in pbkdf2
+    assert "prf=0" in pbkdf2
+    assert "test_pbkdf2_invalid_prf_uses_negative_classifier" in guard
+    assert "test_pbkdf2_invalid_prf_acceptance_fails" in guard
+
+    assert "PBKDF2 invalid-PRF negative coverage" in doc_flat
+
+
 def test_gap_analysis_marks_wtls_prf_output_length_as_added() -> None:
     """CKM_WTLS_PRF output length controls the returned raw PRF bytes."""
     wtls = _read("src/pkcs11_check/testcases/test_wtls.py")

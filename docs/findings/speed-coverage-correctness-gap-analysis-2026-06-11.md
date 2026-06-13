@@ -258,7 +258,10 @@ smoke behavior, or covered only by one narrow variation.
    still skips protocol KDFs because their parameter structures are
    mechanism-specific, but SP800-108 counter KDF has exact HMAC-SHA256 output
    checks, TLS 1.2 KDF has exact PRF output checks, and PBKDF2 has Wycheproof
-   exact-output coverage. SSL3, WTLS, IKE, X3DH, and X2RATCHET also have
+   exact-output coverage. PBKDF2 invalid-PRF negative coverage now verifies
+   `CKM_PKCS5_PBKD2` rejects a `CK_PKCS5_PBKD2_PARAMS2.prf` selector outside
+   the local PKCS#11 `CKP_PKCS5_PBKD2_HMAC_*` table through the shared
+   provider-general negative classifier. SSL3, WTLS, IKE, X3DH, and X2RATCHET also have
    dedicated operational probes. Remaining shallow protocol-KDF work is
    exact-vector expansion and richer negative/tamper coverage for those
    dedicated files, not basic runtime dispatch for the already-covered priority
