@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     generate_random,
@@ -209,11 +210,12 @@ def test_rsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, Any
     key_bits = len(modulus) * 8
 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
-        pytest.xfail(
-            not_operational_reason(
+        classify(
+            "not_operational",
+            summary=not_operational_reason(
                 f"{mech_display}:key-import",
                 f"RSA {key_bits}-bit key import refused (cached)",
-            )
+            ),
         )
 
     try:
@@ -229,24 +231,45 @@ def test_rsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, Any
         # Only cache permanent key-size rejections, not transient errors.
         if is_known_error(exc, _RSA_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
             _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
-        pytest.xfail(
-            not_operational_reason(
+        classify(
+            "not_operational",
+            summary=not_operational_reason(
                 f"{mech_display}:key-import",
                 f"RSA {key_bits}-bit: {ckr_name(exc.rv)}",
-            )
+            ),
         )
 
     try:
         verified = verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig)
         if result == "invalid":
             if verified:
-                pytest.fail(f"Invalid RSA sig {vec_id} accepted by module")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label=vec_id,
+                    summary=f"Invalid RSA sig {vec_id} accepted by module",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             return
         if result == "valid" and not verified:
-            pytest.fail(f"Valid RSA sig {vec_id} rejected by module")
+            classify(
+                "wrong_result",
+                kind="crypto",
+                label=vec_id,
+                summary=f"Valid RSA sig {vec_id} rejected by module",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
     except AssertionError as exc:
         if result == "valid":
-            pytest.fail(f"Valid RSA sig {vec_id} rejected: {exc}")
+            classify(
+                "not_operational",
+                label=vec_id,
+                summary=f"Valid RSA sig {vec_id} rejected: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         signature_rejected_or_xfail(exc, vec_id)
         return
     finally:

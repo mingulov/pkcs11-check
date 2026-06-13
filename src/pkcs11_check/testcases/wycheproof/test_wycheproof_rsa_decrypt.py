@@ -10,6 +10,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -108,13 +109,14 @@ def _skip_or_xfail_rsa_pkcs1_private_import_reject(exc: AssertionError, key_bits
     """
     if is_known_error(exc, _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
         _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
-        pytest.xfail(
-            not_operational_reason(
+        classify(
+            "not_operational",
+            summary=not_operational_reason(
                 "RSA_PKCS:key-import",
                 f"{key_bits}-bit private key: {ckr_name(exc.rv)}"
                 if isinstance(exc, CkrAssertionError)
                 else f"{key_bits}-bit private key: {exc}",
-            )
+            ),
         )
     xfail_if_known_ckr(
         exc,
@@ -167,11 +169,12 @@ def test_rsa_pkcs1_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
         # Cached broad import-reject: same advertised-but-not-operational signal
         # the first failure recorded (import-skip audit A12) -> xfail, not skip.
-        pytest.xfail(
-            not_operational_reason(
+        classify(
+            "not_operational",
+            summary=not_operational_reason(
                 "RSA_PKCS:key-import",
                 f"{key_bits}-bit private key import not operational (cached)",
-            )
+            ),
         )
 
     try:
@@ -196,7 +199,13 @@ def test_rsa_pkcs1_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, 
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_rsa_pkcs1_decrypt_runtime_reject(exc, vec_id)
-            pytest.fail(f"Valid RSA PKCS#1 ciphertext {vec_id} failed to decrypt: {exc}")
+            classify(
+                "not_operational",
+                label=vec_id,
+                summary=f"Valid RSA PKCS#1 ciphertext {vec_id} failed to decrypt: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable/invalid: reject is fine (padding oracle resistance)
         return
     finally:
@@ -214,7 +223,14 @@ def test_rsa_pkcs1_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, 
         # is recovering the actual target message -- that means the padding check
         # was bypassed. So a non-target plaintext is secure, not a finding.
         if plaintext == msg_expected:
-            pytest.fail(
-                f"RSA PKCS#1 decrypt {vec_id} recovered the target message from an "
-                f"invalid-padding ciphertext (padding-check bypass, Bleichenbacher-class break)"
+            classify(
+                "accepted_invalid",
+                kind="crypto",
+                label=vec_id,
+                summary=(
+                    f"RSA PKCS#1 decrypt {vec_id} recovered the target message from an "
+                    f"invalid-padding ciphertext (padding-check bypass, Bleichenbacher-class break)"
+                ),
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
