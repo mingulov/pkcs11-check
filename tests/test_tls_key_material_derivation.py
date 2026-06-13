@@ -310,6 +310,37 @@ def test_tls_key_material_rejects_template_protection_conflict(
     assert all(int(CKR_TEMPLATE_INCONSISTENT) in call[1] for call in classifier_calls)
 
 
+def test_tls12_key_safe_derive_fails_if_iv_buffer_is_written(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_tls12, "_create_tls_pms", lambda _rs: 101)
+    monkeypatch.setattr(test_tls12, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(test_tls12, "destroy_returned_handles", lambda *_args: None)
+
+    def _derive_and_write_iv(
+        _rs: object,
+        _base_key: int,
+        attrs: dict[int, Any],
+        mech: Any,
+    ) -> None:
+        assert attrs[CKA_KEY_TYPE] == CKK_GENERIC_SECRET
+        mech.key_mat_out.hClientKey = 11
+        mech.key_mat_out.hServerKey = 12
+        iv_client, client_len = mech.buffer_storage("iv_client")
+        iv_server, server_len = mech.buffer_storage("iv_server")
+        assert client_len == 16
+        assert server_len == 16
+        iv_client[0] = 0xAA
+        iv_server[0] = 0xBB
+
+    monkeypatch.setattr(test_tls12, "_derive_key_material_to_params", _derive_and_write_iv)
+
+    with pytest.raises(AssertionError, match="KEY_SAFE_DERIVE wrote IV material"):
+        test_tls12.TestTLS12KeyAndMacDerive().test_key_safe_derive_ignores_iv_size_request(
+            _session(_FakeRaw())
+        )
+
+
 def test_tls10_prf_reference_matches_rfc2246_split_secret_vector() -> None:
     value = test_tls12._tls_prf_legacy_md5_sha1(
         bytes(range(48)),

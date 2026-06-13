@@ -311,7 +311,10 @@ smoke behavior, or covered only by one narrow variation.
    key-material template-protection negative coverage now verifies
    `CKM_TLS_KEY_AND_MAC_DERIVE`, `CKM_TLS12_KEY_AND_MAC_DERIVE`, and
    `CKM_TLS12_KEY_SAFE_DERIVE` reject `CKA_SENSITIVE` template values that
-   conflict with the base-key inherited protection attributes.
+   conflict with the base-key inherited protection attributes. TLS 1.2
+   key-safe IV-suppression coverage now verifies
+   `CKM_TLS12_KEY_SAFE_DERIVE` ignores requested IV output length and does not
+   write IV material through `CK_SSL3_KEY_MAT_OUT`.
    IKE PRF base-key sensitivity coverage now verifies the same for
    `CKM_IKE_PRF_DERIVE`. IKE PRF data-as-key HMAC-SHA256 exact-vector coverage
    now uses typed `CK_IKE_PRF_DERIVE_PARAMS` and checks the OASIS case-1

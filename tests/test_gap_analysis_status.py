@@ -372,6 +372,19 @@ def test_gap_analysis_marks_tls_key_material_template_conflict_as_added() -> Non
     assert "Legacy TLS/TLS 1.2 key-material template-protection negative coverage" in doc_flat
 
 
+def test_gap_analysis_marks_tls12_key_safe_iv_suppression_as_added() -> None:
+    """CKM_TLS12_KEY_SAFE_DERIVE ignores IV-size requests and returns no IV material."""
+    tls = _read("src/pkcs11_check/testcases/test_tls12.py")
+    guard = _read("tests/test_tls_key_material_derivation.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_key_safe_derive_ignores_iv_size_request" in tls
+    assert "CKM_TLS12_KEY_SAFE_DERIVE wrote IV material" in tls
+    assert "test_tls12_key_safe_derive_fails_if_iv_buffer_is_written" in guard
+
+    assert "TLS 1.2 key-safe IV-suppression coverage" in doc_flat
+
+
 def test_gap_analysis_marks_tls12_extended_master_secret_exact_vector_as_added() -> None:
     """TLS 1.2 extended master secret mechanisms have RFC 7627 PRF exact vectors."""
     tls = _read("src/pkcs11_check/testcases/test_tls12.py")

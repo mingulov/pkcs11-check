@@ -823,6 +823,70 @@ class TestTLS12KeyAndMacDerive:
         finally:
             destroy_quietly(rs.raw, rs.sh, master_secret)
 
+    def test_key_safe_derive_ignores_iv_size_request(self, p11_raw_session: Any) -> None:
+        """CKM_TLS12_KEY_SAFE_DERIVE must not return IV material."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("TLS12_KEY_SAFE_DERIVE"):
+            pytest.skip("CKM_TLS12_KEY_SAFE_DERIVE not supported")
+
+        master_secret = _create_tls_pms(rs)
+        try:
+            mech = mech_tls12_key_mat(
+                CKM_TLS12_KEY_SAFE_DERIVE,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                hash_mech=CKM_SHA256,
+                key_size_bits=128,
+                iv_size_bits=128,
+            )
+            client_sentinel = bytes([0xA5]) * 16
+            server_sentinel = bytes([0x5A]) * 16
+            client_storage, client_len = mech.buffer_storage("iv_client")
+            server_storage, server_len = mech.buffer_storage("iv_server")
+            assert client_len == len(client_sentinel)
+            assert server_len == len(server_sentinel)
+            for idx, value in enumerate(client_sentinel):
+                client_storage[idx] = value
+            for idx, value in enumerate(server_sentinel):
+                server_storage[idx] = value
+
+            try:
+                _derive_key_material_to_params(
+                    rs,
+                    master_secret,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_DERIVE: True,
+                        CKA_TOKEN: False,
+                    },
+                    mech=mech,
+                )
+                out = mech.key_mat_out
+                assert out.hClientKey != 0
+                assert out.hServerKey != 0
+                assert (
+                    mech.buffer_bytes("iv_client") == client_sentinel
+                    and mech.buffer_bytes("iv_server") == server_sentinel
+                ), "CKM_TLS12_KEY_SAFE_DERIVE wrote IV material despite key-safe semantics"
+            finally:
+                out = mech.key_mat_out
+                destroy_returned_handles(
+                    rs,
+                    out.hClientMacSecret,
+                    out.hServerMacSecret,
+                    out.hClientKey,
+                    out.hServerKey,
+                )
+        except AssertionError as exc:
+            if is_known_error(exc, _TLS_ERROR_RVS):
+                pytest.xfail(f"CKM_TLS12_KEY_SAFE_DERIVE not operational: {exc}")
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master_secret)
+
     def test_key_safe_rejects_template_protection_conflict(
         self,
         p11_raw_session: Any,
