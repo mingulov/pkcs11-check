@@ -13,6 +13,7 @@ from typing import Any, NoReturn
 import pytest
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -355,7 +356,11 @@ def test_ecdsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
     except (ValueError, OverflowError) as exc:
         if result == "invalid":
             return
-        pytest.fail(f"Cannot decode valid DER sig for {vec_id}: {exc}")
+        classify(
+            "not_operational",
+            label="ECDSA:DER-decode",
+            summary=f"Cannot decode valid DER sig for {vec_id}: {exc}",
+        )
 
     digest = hash_fn(msg).digest()
 
@@ -381,7 +386,13 @@ def test_ecdsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
             # -> xfail per the classification model (not skip).
             # May include curve-capability rejects expressed as generic CKRs --
             # recorded as xfail, not hidden.
-            pytest.xfail(not_operational_reason("ECDSA:key-import", f"{curve}: {ckr_name(exc.rv)}"))
+            classify(
+                "not_operational",
+                label="ECDSA:key-import",
+                summary=not_operational_reason(
+                    "ECDSA:key-import", f"{curve}: {ckr_name(exc.rv)}"
+                ),
+            )
         raise
 
     if curve not in _CURVE_BINDING_DEFECTS:
@@ -394,14 +405,28 @@ def test_ecdsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
         verified = verify_single(rs.raw, rs.sh, pub_key, CKM_ECDSA, digest, raw_sig)
         if result == "invalid":
             if verified:
-                pytest.fail(f"Invalid ECDSA sig {vec_id} accepted by module")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="ECDSA",
+                    summary=f"Invalid ECDSA sig {vec_id} accepted by module",
+                )
             return
         if result == "valid" and not verified:
-            pytest.fail(f"Valid ECDSA sig {vec_id} rejected by module")
+            classify(
+                "wrong_result",
+                kind="crypto",
+                label="ECDSA",
+                summary=f"Valid ECDSA sig {vec_id} rejected by module",
+            )
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_ecdsa_runtime_reject(exc, vec_id)
-            pytest.fail(f"Valid ECDSA sig {vec_id} rejected: {exc}")
+            classify(
+                "not_operational",
+                label="ECDSA",
+                summary=f"Valid ECDSA sig {vec_id} rejected: {exc}",
+            )
         signature_rejected_or_xfail(exc, vec_id)
         return
     finally:

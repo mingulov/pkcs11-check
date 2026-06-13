@@ -337,9 +337,14 @@ def test_ecdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             # this for those vectors).
             if _point_on_base_curve(public_point, curve) is True:
                 return
-            pytest.fail(
-                f"ECDH derived a secret for {vec_id} from a peer point that is not on the "
-                f"base curve {curve} (invalid-curve attack: module skipped point validation)"
+            classify(
+                "accepted_invalid",
+                kind="crypto",
+                label="ECDH",
+                summary=(
+                    f"ECDH derived a secret for {vec_id} from a peer point that is not on the "
+                    f"base curve {curve} (invalid-curve attack: module skipped point validation)"
+                ),
             )
         destroy_quietly(rs.raw, rs.sh, derived_key)
     except AssertionError as exc:
@@ -348,7 +353,11 @@ def test_ecdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             raise
         if result == "valid":
             _xfail_if_ecdh_runtime_reject(exc, label)
-            pytest.fail(f"Valid ECDH derive failed for {label}: {exc_msg}")
+            classify(
+                "not_operational",
+                label="ECDH",
+                summary=f"Valid ECDH derive failed for {label}: {exc_msg}",
+            )
         # acceptable: reject is fine
         return
     except (TypeError, NotImplementedError):

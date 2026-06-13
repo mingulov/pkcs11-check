@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
 )
@@ -119,11 +120,13 @@ def _select_eddsa_public_key_encoding_for_wycheproof(
             # operational" -> xfail per the classification model (not skip).
             # May include curve-capability rejects expressed as generic CKRs --
             # recorded as xfail, not hidden.
-            pytest.xfail(
-                not_operational_reason(
+            classify(
+                "not_operational",
+                label="EDDSA:key-import",
+                summary=not_operational_reason(
                     "EDDSA:key-import",
                     f"{_OID_LABELS.get(oid, oid.hex())}: {ckr_name(exc.rv)}",
-                )
+                ),
             )
         signature_rejected_or_xfail(exc, "EdDSA public-key encoding probe")
 
@@ -182,7 +185,13 @@ def test_ed25519_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str,
             # -> xfail per the classification model (not skip).
             # May include curve-capability rejects expressed as generic CKRs --
             # recorded as xfail, not hidden.
-            pytest.xfail(not_operational_reason("EDDSA:key-import", f"Ed25519: {ckr_name(exc.rv)}"))
+            classify(
+                "not_operational",
+                label="EDDSA:key-import",
+                summary=not_operational_reason(
+                    "EDDSA:key-import", f"Ed25519: {ckr_name(exc.rv)}"
+                ),
+            )
         raise
 
     try:
@@ -196,13 +205,27 @@ def test_ed25519_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str,
         )
         if result == "invalid":
             if verified:
-                pytest.fail(f"Invalid Ed25519 sig {vec_id} accepted by module")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="EDDSA-Ed25519",
+                    summary=f"Invalid Ed25519 sig {vec_id} accepted by module",
+                )
             return
         if result == "valid" and not verified:
-            pytest.fail(f"Valid Ed25519 sig {vec_id} rejected by module")
+            classify(
+                "wrong_result",
+                kind="crypto",
+                label="EDDSA-Ed25519",
+                summary=f"Valid Ed25519 sig {vec_id} rejected by module",
+            )
     except AssertionError as exc:
         if result == "valid":
-            pytest.fail(f"Valid Ed25519 sig {vec_id} rejected: {exc}")
+            classify(
+                "not_operational",
+                label="EDDSA-Ed25519",
+                summary=f"Valid Ed25519 sig {vec_id} rejected: {exc}",
+            )
         signature_rejected_or_xfail(exc, vec_id)
         return
     finally:
@@ -284,7 +307,13 @@ def test_ed448_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
             # -> xfail per the classification model (not skip).
             # May include curve-capability rejects expressed as generic CKRs --
             # recorded as xfail, not hidden.
-            pytest.xfail(not_operational_reason("EDDSA:key-import", f"Ed448: {ckr_name(exc.rv)}"))
+            classify(
+                "not_operational",
+                label="EDDSA:key-import",
+                summary=not_operational_reason(
+                    "EDDSA:key-import", f"Ed448: {ckr_name(exc.rv)}"
+                ),
+            )
         raise
 
     try:
@@ -298,13 +327,27 @@ def test_ed448_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
         )
         if result == "invalid":
             if verified:
-                pytest.fail(f"Invalid Ed448 sig {vec_id} accepted by module")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="EDDSA-Ed448",
+                    summary=f"Invalid Ed448 sig {vec_id} accepted by module",
+                )
             return
         if result == "valid" and not verified:
-            pytest.fail(f"Valid Ed448 sig {vec_id} rejected by module")
+            classify(
+                "wrong_result",
+                kind="crypto",
+                label="EDDSA-Ed448",
+                summary=f"Valid Ed448 sig {vec_id} rejected by module",
+            )
     except AssertionError as exc:
         if result == "valid":
-            pytest.fail(f"Valid Ed448 sig {vec_id} rejected: {exc}")
+            classify(
+                "not_operational",
+                label="EDDSA-Ed448",
+                summary=f"Valid Ed448 sig {vec_id} rejected: {exc}",
+            )
         signature_rejected_or_xfail(exc, vec_id)
         return
     finally:
