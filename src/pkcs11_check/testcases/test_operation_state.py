@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 from pkcs11_check.testcases._raw_subprocess import run_raw_script
 from pkcs11_check.testcases.conftest import classify_negative_rv
@@ -375,7 +376,13 @@ class TestDigestStateRoundTrip:
         if returncode != 0:
             fatals = [ln for ln in stdout.splitlines() if ln.startswith("FATAL:")]
             detail = fatals[0] if fatals else f"stdout={stdout!r} stderr={stderr!r}"
-            pytest.fail(f"Subprocess failed: {detail}")
+            fail_as(
+                "crash",
+                label="digest-state-roundtrip",
+                operation="C_GetOperationState",
+                summary=f"Subprocess failed: {detail}",
+                detail={"returncode": returncode},
+            )
 
         assert "REFERENCE" in lines_map, f"Missing REFERENCE in output: {stdout!r}"
         assert "RESTORED" in lines_map, f"Missing RESTORED in output: {stdout!r}"
@@ -471,7 +478,13 @@ class TestDigestStateRoundTrip:
         if returncode != 0:
             fatals = [ln for ln in stdout.splitlines() if ln.startswith("FATAL:")]
             detail = fatals[0] if fatals else f"stdout={stdout!r} stderr={stderr!r}"
-            pytest.fail(f"Subprocess failed: {detail}")
+            fail_as(
+                "crash",
+                label="cross-session-state",
+                operation="C_SetOperationState",
+                summary=f"Subprocess failed: {detail}",
+                detail={"returncode": returncode},
+            )
 
         assert "CROSS_SESSION_ACCEPTED" in lines_map or "CROSS_SESSION_REJECTED" in lines_map, (
             f"Expected CROSS_SESSION_ACCEPTED or CROSS_SESSION_REJECTED; stdout={stdout!r}"
@@ -710,11 +723,22 @@ class TestEncryptStateRoundTrip:
                 "OPERATION_NOT_INITIALIZED",
             )
             if any(code in detail for code in _state_codes):
-                pytest.xfail(
-                    f"Module does not support saving encrypt operation state: {detail} "
-                    f"(PKCS#11 spec Sec.5.6.5 CKR_STATE_UNSAVEABLE is allowed)"
+                xfail_as(
+                    "not_operational",
+                    label="encrypt-state-save",
+                    operation="C_GetOperationState",
+                    summary=(
+                        f"Module does not support saving encrypt operation state: {detail} "
+                        f"(PKCS#11 spec Sec.5.6.5 CKR_STATE_UNSAVEABLE is allowed)"
+                    ),
                 )
-            pytest.fail(f"Subprocess failed: {detail}")
+            fail_as(
+                "crash",
+                label="encrypt-state-roundtrip",
+                operation="C_GetOperationState",
+                summary=f"Subprocess failed: {detail}",
+                detail={"returncode": returncode},
+            )
 
         assert "REFERENCE" in lines_map, f"Missing REFERENCE in output: {stdout!r}"
         assert "RESTORED" in lines_map, f"Missing RESTORED in output: {stdout!r}"

@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
 )
@@ -139,7 +140,13 @@ def _skip_unless_mechanism(rs: Any, name: str) -> None:
 
 def _xfail_if_aes_keygen_rv(rv: int, context: str) -> None:
     if rv in AES_KEYGEN_RUNTIME_REJECT_RVS:
-        pytest.xfail(f"{context}: {ckr_name(rv)}")
+        classify(
+            "not_operational",
+            label=context,
+            operation="C_GenerateKey",
+            actual=rv,
+            summary=f"{context}: {ckr_name(rv)}",
+        )
 
 
 def _gen_ro_setup_aes_key(
@@ -360,9 +367,14 @@ def _xfail_if_session_object_rejected_readonly(exc: AssertionError) -> None:
     sessions; session-scoped objects are legal there (bouncyhsm rejects them
     anyway, triage H4). The module still refused cleanly -> recorded xfail."""
     if is_known_error(exc, (CKR_SESSION_READ_ONLY,)):
-        pytest.xfail(
-            f"session object rejected in RO session (deviation; "
-            f"CKR_SESSION_READ_ONLY is specified for token objects): {exc}"
+        classify(
+            "not_operational",
+            label="RO-session:create-session-object",
+            operation="C_CreateObject",
+            summary=(
+                f"session object rejected in RO session (deviation; "
+                f"CKR_SESSION_READ_ONLY is specified for token objects): {exc}"
+            ),
         )
 
 
@@ -922,7 +934,12 @@ class TestROWrapUnwrapRestrictions:
                         "creation via C_UnwrapKey in RO sessions",
                         ComplianceLevel.NOT_RECOMMENDED,
                     )
-                    pytest.xfail(f"Module overly restricts RO session unwrap ({exc})")
+                    xfail_as(
+                        "not_operational",
+                        label="RO-session:unwrap-session-object",
+                        operation="C_UnwrapKey",
+                        summary=f"Module overly restricts RO session unwrap ({exc})",
+                    )
             finally:
                 close_session_quietly(rs.raw, ro_sh)
         finally:

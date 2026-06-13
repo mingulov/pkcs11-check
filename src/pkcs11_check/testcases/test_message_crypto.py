@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -104,8 +105,18 @@ def _handle_message_rv(rv: int, context: str) -> None:
     if rv in _MESSAGE_UNSUPPORTED_RVS:
         pytest.skip(f"{context} not supported: {ckr_name(rv)}")
     if rv in _MESSAGE_ADVERTISED_REJECT_RVS:
-        pytest.xfail(f"{context} rejected advertised message operation: {ckr_name(rv)}")
-    pytest.fail(f"{context} returned unexpected CKR: {ckr_name(rv)}")
+        xfail_as(
+            "not_operational",
+            label=context,
+            actual=rv,
+            summary=f"{context} rejected advertised message operation: {ckr_name(rv)}",
+        )
+    fail_as(
+        "unclassified",
+        label=context,
+        actual=rv,
+        summary=f"{context} returned unexpected CKR: {ckr_name(rv)}",
+    )
 
 
 def _message_sign(
@@ -161,8 +172,14 @@ def _message_verify(
         return True
     if not expect_valid:
         if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
-            pytest.xfail(
-                f"C_VerifyMessage rejected wrong signature with non-clean CKR: {ckr_name(rv)}"
+            xfail_as(
+                "nonspec_reject",
+                label="C_VerifyMessage:wrong-signature",
+                operation="C_VerifyMessage",
+                actual=rv,
+                summary=(
+                    f"C_VerifyMessage rejected wrong signature with non-clean CKR: {ckr_name(rv)}"
+                ),
             )
         return rv not in SIGNATURE_REJECT_RVS
     return False
