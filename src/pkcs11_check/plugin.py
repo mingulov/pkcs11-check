@@ -776,6 +776,21 @@ def _attach_compliance_notes_to_report(item: pytest.Item, report: Any) -> None:
     _append_missing_compliance_notes(user_properties, notes)
 
 
+def _attach_classification_to_report(item: pytest.Item, report: Any) -> None:
+    """Attach structured classifications before report-log serializes them."""
+    if getattr(report, "when", None) != "call":
+        return
+    from pkcs11_check.classification import get_records, serialize
+
+    records = serialize(get_records())
+    if not records:
+        return
+    props = list(getattr(report, "user_properties", []) or [])
+    props = [(k, v) for (k, v) in props if k != "pkcs11_classification"]
+    props.append(("pkcs11_classification", records))
+    report.user_properties = props
+
+
 def _convert_missing_function_to_skip(report: Any, call: pytest.CallInfo[Any]) -> None:
     """A PKCS#11 function absent from the module's function list is a capability
     gap, not a test error.
@@ -831,6 +846,7 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> 
     _remember_module_session_call_outcome(item, report)
     _attach_rv_trace_to_report(item, report)
     _attach_compliance_notes_to_report(item, report)
+    _attach_classification_to_report(item, report)
 
 
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
@@ -840,9 +856,11 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
 
     _drain_rv_trace(item)
 
+    from pkcs11_check.classification import clear as clear_classifications
     from pkcs11_check.compliance import clear_notes
 
     clear_notes()
+    clear_classifications()
 
     session = getattr(item, "session", None)
     if session is None:
