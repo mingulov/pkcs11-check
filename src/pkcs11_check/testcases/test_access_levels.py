@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
     login_user,
@@ -855,10 +856,16 @@ class TestTrustedAttribute:
                     return  # Module doesn't expose CKA_TRUSTED
                 raise
             if attrs.get(CKA_TRUSTED) is True:
-                pytest.fail(
-                    "SECURITY: USER session created and was granted "
-                    "CKA_TRUSTED=True on a freshly-generated key — "
-                    "trust boundary breached"
+                fail_as(
+                    "self_contradiction",
+                    kind="policy",
+                    label="USER:create-CKA_TRUSTED",
+                    operation="C_GenerateKey",
+                    summary=(
+                        "SECURITY: USER session created and was granted "
+                        "CKA_TRUSTED=True on a freshly-generated key — "
+                        "trust boundary breached"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
@@ -912,10 +919,16 @@ class TestTrustedAttribute:
                     ComplianceLevel.CRITICAL,
                     reference="PKCS#11 v3.1 Sec.4.7: CKA_TRUSTED set by SO only",
                 )
-                pytest.fail(
-                    "SECURITY: USER session escalated a key's CKA_TRUSTED "
-                    "from False to True via C_SetAttributeValue — trust "
-                    "boundary breached, opens CKA_WRAP_WITH_TRUSTED bypass"
+                fail_as(
+                    "self_contradiction",
+                    kind="policy",
+                    label="USER:setattr-CKA_TRUSTED",
+                    operation="C_SetAttributeValue",
+                    summary=(
+                        "SECURITY: USER session escalated a key's CKA_TRUSTED "
+                        "from False to True via C_SetAttributeValue — trust "
+                        "boundary breached, opens CKA_WRAP_WITH_TRUSTED bypass"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
@@ -955,13 +968,25 @@ class TestTrustedAttribute:
 
             after = read_attributes(rs.raw, rs.sh, target_h, [CKA_WRAP_WITH_TRUSTED])
             if after.get(CKA_WRAP_WITH_TRUSTED) is False:
-                pytest.fail(
-                    "SECURITY: CKA_WRAP_WITH_TRUSTED downgraded from True to False "
-                    "via C_SetAttributeValue"
+                fail_as(
+                    "self_contradiction",
+                    kind="policy",
+                    label="CKA_WRAP_WITH_TRUSTED:downgrade",
+                    operation="C_SetAttributeValue",
+                    summary=(
+                        "SECURITY: CKA_WRAP_WITH_TRUSTED downgraded from True to False "
+                        "via C_SetAttributeValue"
+                    ),
                 )
-            pytest.fail(
-                "C_SetAttributeValue returned CKR_OK for CKA_WRAP_WITH_TRUSTED "
-                "True->False but left the stricter value unchanged"
+            xfail_as(
+                "honest_deviation",
+                kind="lifecycle",
+                label="CKA_WRAP_WITH_TRUSTED:setattr-noop",
+                operation="C_SetAttributeValue",
+                summary=(
+                    "C_SetAttributeValue returned CKR_OK for CKA_WRAP_WITH_TRUSTED "
+                    "True->False but left the stricter value unchanged"
+                ),
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, target_h)

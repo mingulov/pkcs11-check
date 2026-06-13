@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.pack import attr_bytes, attr_ulong, template
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -62,9 +63,15 @@ def _read_back_or_fail(rs: Any, handle: int, attrs: list[int], *, label: str) ->
     try:
         return read_attributes(rs.raw, rs.sh, handle, attrs)
     except AssertionError as exc:
-        pytest.fail(
-            f"{label}: attribute(s) could not be read back after the write ({exc}) "
-            "-- the object was left in an inconsistent state"
+        fail_as(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation="C_GetAttributeValue",
+            summary=(
+                f"{label}: attribute(s) could not be read back after the write ({exc}) "
+                "-- the object was left in an inconsistent state"
+            ),
         )
 
 
@@ -89,10 +96,22 @@ def _classify_readonly_write(
         return  # Rejected the read-only write -- correct.
     after = _read_back_or_fail(rs, handle, [attr], label=label)
     if after.get(attr) == new_value:
-        pytest.fail(f"{label}: claimed success and the read-only value actually changed")
-    pytest.xfail(
-        f"{label}: returned CKR_OK but the value was unchanged (no-op; "
-        "spec prefers CKR_ATTRIBUTE_READ_ONLY)"
+        fail_as(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation="C_SetAttributeValue",
+            summary=f"{label}: claimed success and the read-only value actually changed",
+        )
+    xfail_as(
+        "honest_deviation",
+        kind="lifecycle",
+        label=label,
+        operation="C_SetAttributeValue",
+        summary=(
+            f"{label}: returned CKR_OK but the value was unchanged (no-op; "
+            "spec prefers CKR_ATTRIBUTE_READ_ONLY)"
+        ),
     )
 
 
@@ -201,16 +220,35 @@ class TestSetAttributeAtomicity:
             class_after = attrs.get(CKA_CLASS)
 
             if label_after == target:
-                pytest.fail(
-                    "C_SetAttributeValue partially applied CKA_LABEL before rejecting "
-                    "a later read-only CKA_CLASS row"
+                fail_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label="C_SetAttributeValue:partial-apply",
+                    operation="C_SetAttributeValue",
+                    summary=(
+                        "C_SetAttributeValue partially applied CKA_LABEL before rejecting "
+                        "a later read-only CKA_CLASS row"
+                    ),
                 )
             if class_after == CKO_PUBLIC_KEY:
-                pytest.fail("C_SetAttributeValue changed read-only CKA_CLASS on an AES key")
+                fail_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label="C_SetAttributeValue:read-only-CKA_CLASS",
+                    operation="C_SetAttributeValue",
+                    summary="C_SetAttributeValue changed read-only CKA_CLASS on an AES key",
+                )
             if rv == CKR_OK:
-                pytest.xfail(
-                    "C_SetAttributeValue returned CKR_OK for a mixed template containing "
-                    "read-only CKA_CLASS, but left the object unchanged"
+                xfail_as(
+                    "honest_deviation",
+                    kind="lifecycle",
+                    label="C_SetAttributeValue:mixed-template-noop",
+                    operation="C_SetAttributeValue",
+                    actual=rv,
+                    summary=(
+                        "C_SetAttributeValue returned CKR_OK for a mixed template containing "
+                        "read-only CKA_CLASS, but left the object unchanged"
+                    ),
                 )
             classify_negative_rv(
                 rv,

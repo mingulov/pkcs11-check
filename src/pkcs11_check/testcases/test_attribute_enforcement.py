@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
@@ -107,8 +108,15 @@ class TestCopyableOneWay:
             # If it succeeded, check if the value actually changed
             attrs2 = read_attributes(rs.raw, rs.sh, key, [CKA_COPYABLE])
             if attrs2[CKA_COPYABLE] is True:
-                pytest.xfail(
-                    "SECURITY: CKA_COPYABLE escalated from False to True - one-way rule violated"
+                fail_as(
+                    "self_contradiction",
+                    kind="policy",
+                    label="CKA_COPYABLE:one-way-escalation",
+                    operation="C_SetAttributeValue",
+                    summary=(
+                        "SECURITY: CKA_COPYABLE escalated from False to True - "
+                        "one-way rule violated"
+                    ),
                 )
         except AssertionError as e:
             if _is_set_attr_error(e):
@@ -214,10 +222,16 @@ class TestDestroyable:
                 ComplianceLevel.CRITICAL,
                 reference="PKCS#11 v3.1 Sec.4.1.2",
             )
-            pytest.fail(
-                "SECURITY: module silently ignored CKA_DESTROYABLE=False "
-                "at create time. Lying-module pattern hides the destroy "
-                "enforcement test."
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label="CKA_DESTROYABLE:silent-ignore-at-create",
+                operation="C_CreateObject",
+                summary=(
+                    "SECURITY: module silently ignored CKA_DESTROYABLE=False "
+                    "at create time. Lying-module pattern hides the destroy "
+                    "enforcement test."
+                ),
             )
 
         rv = rs.raw.C_DestroyObject(rs.sh, key)
@@ -233,10 +247,18 @@ class TestDestroyable:
                 ComplianceLevel.CRITICAL,
                 reference="PKCS#11 v3.1 Sec.4.1.2: CKA_DESTROYABLE=False must prevent destroy",
             )
-            pytest.fail(
-                "SECURITY: C_DestroyObject succeeded on CKA_DESTROYABLE=False "
-                "key — DESTROYABLE access control silently ignored "
-                "(expected CKR_ACTION_PROHIBITED)."
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label="CKA_DESTROYABLE:destroy-succeeded",
+                operation="C_DestroyObject",
+                actual=rv,
+                expected=[CKR_ACTION_PROHIBITED],
+                summary=(
+                    "SECURITY: C_DestroyObject succeeded on CKA_DESTROYABLE=False "
+                    "key — DESTROYABLE access control silently ignored "
+                    "(expected CKR_ACTION_PROHIBITED)."
+                ),
             )
         assert rv != CKR_OK, (
             "C_DestroyObject succeeded on CKA_DESTROYABLE=False key "
@@ -361,11 +383,17 @@ class TestTokenAttributePromotion:
                     ComplianceLevel.CRITICAL,
                     reference="PKCS#11 v3.1 Sec.4.7 CKA_TOKEN R/W semantics",
                 )
-                pytest.fail(
-                    "SECURITY: module silently ignored "
-                    "C_SetAttributeValue(CKA_TOKEN=True) — half-promoted "
-                    "state. Lying-module pattern at the persistence "
-                    "boundary."
+                fail_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label="CKA_TOKEN:setattr-half-promoted",
+                    operation="C_SetAttributeValue",
+                    summary=(
+                        "SECURITY: module silently ignored "
+                        "C_SetAttributeValue(CKA_TOKEN=True) — half-promoted "
+                        "state. Lying-module pattern at the persistence "
+                        "boundary."
+                    ),
                 )
             # CKR_OK + readback shows True: spec-conformant promotion.
             # Persistence verification (open new session, find object)
@@ -483,7 +511,13 @@ class TestKeyGenMechanism:
                     key,
                     {CKA_KEY_GEN_MECHANISM: CKM_AES_KEY_GEN},
                 )
-                pytest.fail("Module accepted C_SetAttributeValue on CKA_KEY_GEN_MECHANISM")
+                fail_as(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="CKA_KEY_GEN_MECHANISM:read-only-write",
+                    operation="C_SetAttributeValue",
+                    summary="Module accepted C_SetAttributeValue on CKA_KEY_GEN_MECHANISM",
+                )
             except AssertionError:
                 pass  # Expected: module rejected the write
         finally:
