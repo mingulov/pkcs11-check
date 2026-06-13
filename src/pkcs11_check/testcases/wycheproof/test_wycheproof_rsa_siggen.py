@@ -19,6 +19,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from cryptography.hazmat.primitives.serialization import load_der_private_key
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     sign_single,
@@ -152,13 +153,14 @@ def _skip_or_xfail_rsa_private_import_reject(
     xfails; non-CKR AssertionErrors propagate as harness/coding-bug findings.
     """
     if is_known_error(exc, _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
-        pytest.xfail(
-            not_operational_reason(
+        classify(
+            "not_operational",
+            summary=not_operational_reason(
                 f"{mech_display}:key-import",
                 f"{key_size}-bit {sha}: {ckr_name(exc.rv)}"
                 if isinstance(exc, CkrAssertionError)
                 else f"{key_size}-bit {sha}: {exc}",
-            )
+            ),
         )
     xfail_if_known_ckr(
         exc,

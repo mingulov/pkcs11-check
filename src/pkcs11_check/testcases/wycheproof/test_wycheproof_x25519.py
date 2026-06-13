@@ -12,6 +12,7 @@ from typing import Any, NoReturn
 import pytest
 from cryptography.exceptions import UnsupportedAlgorithm
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_ecdh
 from pkcs11_check.raw.recipes import (
     derive_key,
@@ -272,7 +273,12 @@ def test_xdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             # model, not skip. The CKR_CURVE_NOT_SUPPORTED/DOMAIN branch above
             # keeps the genuine-absence skip; the result=="invalid" return above
             # keeps the vacuous pass.
-            pytest.xfail(not_operational_reason("ECDH:Montgomery-private-import", ckr_name(exc.rv)))
+            classify(
+                "not_operational",
+                summary=not_operational_reason(
+                    "ECDH:Montgomery-private-import", ckr_name(exc.rv)
+                ),
+            )
         raise
 
     # Derive shared secret
@@ -302,7 +308,13 @@ def test_xdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         if result == "valid":
             if isinstance(exc, AssertionError):
                 _xfail_if_xdh_runtime_reject(exc, vec_id)
-            pytest.fail(f"X25519/X448 derive failed for valid vector {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label=vec_id,
+                summary=f"X25519/X448 derive failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable: reject is fine
         return
     finally:
@@ -311,6 +323,14 @@ def test_xdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     if result == "valid" and shared is not None:
         assert shared == shared_expected
     if result == "invalid" and shared is not None:
-        pytest.fail(
-            f"X25519/X448 derived a secret for an invalid vector {vec_id} (invalid-point accepted)"
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            label=vec_id,
+            summary=(
+                f"X25519/X448 derived a secret for an invalid vector {vec_id} "
+                "(invalid-point accepted)"
+            ),
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )

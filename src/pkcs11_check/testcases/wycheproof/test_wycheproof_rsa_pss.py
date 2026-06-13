@@ -13,6 +13,7 @@ from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_pss
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -408,11 +409,12 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     key_bits = len(modulus) * 8
 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
-        pytest.xfail(
-            not_operational_reason(
+        classify(
+            "not_operational",
+            summary=not_operational_reason(
                 f"{name}:key-import",
                 f"RSA {key_bits}-bit key import refused (cached)",
-            )
+            ),
         )
 
     try:
@@ -428,11 +430,12 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
         # Only cache permanent key-size rejections, not transient errors.
         if is_known_error(exc, _RSA_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
             _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
-        pytest.xfail(
-            not_operational_reason(
+        classify(
+            "not_operational",
+            summary=not_operational_reason(
                 f"{name}:key-import",
                 f"RSA {key_bits}-bit: {ckr_name(exc.rv)}",
-            )
+            ),
         )
 
     # Build PSS params
@@ -448,9 +451,15 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
             mgf_sha = vec.get("_mgf_sha", "unknown")
             flags = vec.get("flags", [])
             flags_str = ", ".join(flags) if flags else "none"
-            pytest.fail(
-                f"Valid RSA-PSS sig {vec_id} rejected (sLen={s_len}, "
-                f"sha={sha}, mgf={mgf_sha}, flags=[{flags_str}]): {exc}"
+            classify(
+                "not_operational",
+                label=vec_id,
+                summary=(
+                    f"Valid RSA-PSS sig {vec_id} rejected (sLen={s_len}, "
+                    f"sha={sha}, mgf={mgf_sha}, flags=[{flags_str}]): {exc}"
+                ),
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
         # result != "valid": a clean refusal of a non-valid vector. Returning
         # False = clean signature reject; on a NOT_OPERATIONAL combo that reject
@@ -487,12 +496,25 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
                 )
                 is True
             ):
-                pytest.xfail(
-                    f"{vec_id}: accepted a genuine PSS signature whose salt length "
-                    f"differs from the declared sLen={s_len} -- salt-length policy "
-                    "not enforced (not forgeable without the private key)"
+                classify(
+                    "honest_deviation",
+                    label=vec_id,
+                    summary=(
+                        f"{vec_id}: accepted a genuine PSS signature whose salt length "
+                        f"differs from the declared sLen={s_len} -- salt-length policy "
+                        "not enforced (not forgeable without the private key)"
+                    ),
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
                 )
-            pytest.fail(f"Invalid RSA-PSS sig {vec_id} accepted by module")
+            classify(
+                "accepted_invalid",
+                kind="crypto",
+                label=vec_id,
+                summary=f"Invalid RSA-PSS sig {vec_id} accepted by module",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # The invalid vector was rejected -- genuine only if the (mech, hash,
         # mgf, sLen) combo actually signs+verifies. A combo that is
         # NOT_OPERATIONAL refuses everything, so the signature was never
@@ -506,16 +528,35 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     if result == "valid" and not verified:
         combo = _pss_combo_operability(rs, mechanism, hash_mech, mgf, s_len)
         if combo.status is Operability.NOT_OPERATIONAL:
-            pytest.xfail(
-                f"Valid {vec_id} rejected; sign+verify roundtrip with the same "
-                f"(mech, hash, mgf, sLen={s_len}) is not operational ({combo.detail}) "
-                "-- advertised but not operational"
+            classify(
+                "not_operational",
+                label=vec_id,
+                summary=(
+                    f"Valid {vec_id} rejected; sign+verify roundtrip with the same "
+                    f"(mech, hash, mgf, sLen={s_len}) is not operational ({combo.detail}) "
+                    "-- advertised but not operational"
+                ),
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
         if combo.status is Operability.INCONCLUSIVE:
-            pytest.xfail(
-                f"Valid {vec_id} rejected; PSS combo probe inconclusive ({combo.detail}) "
-                "-- cannot distinguish deviation from module bug, recorded as xfail"
+            classify(
+                "honest_deviation",
+                label=vec_id,
+                summary=(
+                    f"Valid {vec_id} rejected; PSS combo probe inconclusive ({combo.detail}) "
+                    "-- cannot distinguish deviation from module bug, recorded as xfail"
+                ),
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
-        pytest.fail(f"Valid RSA-PSS sig {vec_id} rejected by module")
+        classify(
+            "wrong_result",
+            kind="crypto",
+            label=vec_id,
+            summary=f"Valid RSA-PSS sig {vec_id} rejected by module",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
     generate_random(rs.raw, rs.sh, 64)

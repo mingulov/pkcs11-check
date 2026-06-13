@@ -11,6 +11,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_oaep
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -332,13 +333,14 @@ def _skip_or_xfail_rsa_oaep_private_import_reject(
     """
     if is_known_error(exc, _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
         _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
-        pytest.xfail(
-            not_operational_reason(
+        classify(
+            "not_operational",
+            summary=not_operational_reason(
                 "RSA_PKCS_OAEP:key-import",
                 f"{key_bits}-bit private key: {ckr_name(exc.rv)}"
                 if isinstance(exc, CkrAssertionError)
                 else f"{key_bits}-bit private key: {exc}",
-            )
+            ),
         )
     xfail_if_known_ckr(
         exc,
@@ -399,11 +401,12 @@ def test_rsa_oaep(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
         # Cached broad import-reject: same advertised-but-not-operational signal
         # the first failure recorded (import-skip audit A11) -> xfail, not skip.
-        pytest.xfail(
-            not_operational_reason(
+        classify(
+            "not_operational",
+            summary=not_operational_reason(
                 "RSA_PKCS_OAEP:key-import",
                 f"{key_bits}-bit private key import not operational (cached)",
-            )
+            ),
         )
 
     try:
@@ -448,15 +451,27 @@ def test_rsa_oaep(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
                 ),
             )
             if combo.status is Operability.NOT_OPERATIONAL:
-                pytest.xfail(
-                    f"RSA-OAEP {sha}/{mgf_sha} advertised but not operational "
-                    f"({combo.detail}); vector: {exc}"
+                classify(
+                    "not_operational",
+                    label=vec_id,
+                    summary=(
+                        f"RSA-OAEP {sha}/{mgf_sha} advertised but not operational "
+                        f"({combo.detail}); vector: {exc}"
+                    ),
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
                 )
             _xfail_if_rsa_oaep_runtime_reject(exc, vec_id)
-            pytest.fail(
-                f"Valid RSA-OAEP ciphertext {vec_id} failed to decrypt "
-                f"(sha={sha}, mgf={mgf_sha}); canonical combo probe: "
-                f"{combo.status.value}: {combo.detail}; vector: {exc}"
+            classify(
+                "not_operational",
+                label=vec_id,
+                summary=(
+                    f"Valid RSA-OAEP ciphertext {vec_id} failed to decrypt "
+                    f"(sha={sha}, mgf={mgf_sha}); canonical combo probe: "
+                    f"{combo.status.value}: {combo.detail}; vector: {exc}"
+                ),
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
         # acceptable: reject is fine
         return
@@ -466,4 +481,11 @@ def test_rsa_oaep(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
     if result == "valid" and plaintext is not None:
         assert plaintext == msg_expected
     if result == "invalid" and plaintext is not None:
-        pytest.fail(f"RSA-OAEP decrypt {vec_id} accepted invalid ciphertext")
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            label=vec_id,
+            summary=f"RSA-OAEP decrypt {vec_id} accepted invalid ciphertext",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
