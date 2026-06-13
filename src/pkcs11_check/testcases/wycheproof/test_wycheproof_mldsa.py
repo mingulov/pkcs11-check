@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack_mechanisms import mech_sign_context
 from pkcs11_check.raw.recipes import (
     create_object,
@@ -140,7 +141,13 @@ def test_mldsa_verify(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
         if is_known_error(exc, _MLDSA_PUBLIC_IMPORT_REJECT_CKRS):
             if result == "invalid" and _has_flag(vec, _MLDSA_INVALID_PUBLIC_KEY_FLAGS):
                 return  # Module correctly rejected invalid key - pass
-            pytest.xfail(f"ML_DSA advertised but public-key import is not operational: {exc_msg}")
+            classify(
+                "not_operational",
+                label="ML_DSA:key-import",
+                summary=f"ML_DSA advertised but public-key import is not operational: {exc_msg}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         raise
 
     try:
@@ -156,13 +163,31 @@ def test_mldsa_verify(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
         )
         if result == "invalid":
             if verified:
-                pytest.fail(f"Invalid ML-DSA sig {vec_id} accepted by module")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    summary=f"Invalid ML-DSA sig {vec_id} accepted by module",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             return
         if result == "valid" and not verified:
-            pytest.fail(f"Valid ML-DSA sig {vec_id} rejected by module")
+            classify(
+                "wrong_result",
+                kind="crypto",
+                summary=f"Valid ML-DSA sig {vec_id} rejected by module",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
     except AssertionError as exc:
         if result == "valid":
-            pytest.fail(f"Valid ML-DSA sig {vec_id} rejected: {exc}")
+            classify(
+                "not_operational",
+                label=f"ML_DSA:{vec_id}",
+                summary=f"Valid ML-DSA sig {vec_id} rejected: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         signature_rejected_or_xfail(exc, vec_id)
         return
     finally:

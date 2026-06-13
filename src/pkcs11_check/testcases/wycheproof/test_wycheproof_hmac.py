@@ -6,6 +6,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_secret_key,
@@ -241,14 +242,26 @@ def test_hmac_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, An
             _UNSUPPORTED_HMAC_KEYS.add(cache_key)
         if result == "invalid":
             return
-        pytest.fail(f"Cannot import {len(key_bytes)}-byte HMAC key: {last_exc_msg}")
+        classify(
+            "not_operational",
+            label="HMAC:key-import",
+            summary=f"Cannot import {len(key_bytes)}-byte HMAC key: {last_exc_msg}",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
     try:
         verified = verify_single(rs.raw, rs.sh, key, mechanism, msg, tag_expected)
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_hmac_runtime_reject(exc, vec_id)
-            pytest.fail(f"HMAC failed for {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label=f"HMAC:{vec_id}",
+                summary=f"HMAC failed for {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable: module rejected an invalid vector
         return
     finally:
@@ -257,6 +270,17 @@ def test_hmac_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, An
     if result == "valid" and not verified:
         # The module declined to verify a valid MAC -- e.g. an unsupported
         # truncated tag length. Honest, provider-dependent deviation -> xfail.
-        pytest.xfail(f"{vec_id}: module did not verify a valid HMAC tag")
+        classify(
+            "honest_deviation",
+            summary=f"{vec_id}: module did not verify a valid HMAC tag",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     if result == "invalid" and verified:
-        pytest.fail(f"HMAC {vec_id}: accepted invalid tag (forged tag verified)")
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            summary=f"HMAC {vec_id}: accepted invalid tag (forged tag verified)",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )

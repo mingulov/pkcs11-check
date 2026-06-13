@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_hkdf
 from pkcs11_check.raw.recipes import (
     derive_key,
@@ -121,7 +122,12 @@ def test_hkdf(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
         # HKDF_DERIVE was advertised (has_mechanism gate passed above); a
         # negotiation-exhausted IKM import refusal is "advertised but not
         # operational" -> xfail per the classification model, never skip.
-        pytest.xfail(not_operational_reason("HKDF_DERIVE:key-import", ckr_name(exc.rv)))
+        classify(
+            "not_operational",
+            summary=not_operational_reason("HKDF_DERIVE:key-import", ckr_name(exc.rv)),
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
     # CK_HKDF_PARAMS: (hash_mechanism, salt, info)
     # Uses extract+expand mode (standard HKDF)
@@ -155,7 +161,13 @@ def test_hkdf(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
         destroy_quietly(rs.raw, rs.sh, derived)
     except (AssertionError, TypeError, NotImplementedError) as exc:
         if result == "valid":
-            pytest.fail(f"HKDF derive failed for valid vector {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label=f"HKDF:{vec_id}",
+                summary=f"HKDF derive failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable: reject is fine
         return
     finally:
@@ -164,4 +176,10 @@ def test_hkdf(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
     if result == "valid" and okm is not None:
         assert okm == okm_expected
     if result == "invalid" and okm is not None:
-        pytest.fail(f"Invalid HKDF vector {vec_id} derived successfully")
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            summary=f"Invalid HKDF vector {vec_id} derived successfully",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )

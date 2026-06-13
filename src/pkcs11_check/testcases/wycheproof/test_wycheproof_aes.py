@@ -7,6 +7,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_ccm
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -193,16 +194,36 @@ def test_aes_cmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_aes_runtime_reject(exc, f"AES-CMAC {vec_id}")
-            pytest.fail(f"AES-CMAC failed for valid vector {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label="AES-CMAC",
+                summary=f"AES-CMAC failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable: reject of an invalid vector is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
 
     if result == "valid" and not verified:
-        pytest.fail(f"AES-CMAC rejected a valid CMAC vector {vec_id}")
+        classify(
+            "wrong_result",
+            kind="crypto",
+            label="AES-CMAC",
+            summary=f"AES-CMAC rejected a valid CMAC vector {vec_id}",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     if result == "invalid" and verified:
-        pytest.fail(f"AES-CMAC {vec_id}: accepted invalid tag (forged tag verified)")
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            label="AES-CMAC",
+            summary=f"AES-CMAC {vec_id}: accepted invalid tag (forged tag verified)",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
     generate_random(rs.raw, rs.sh, 64)
 
@@ -250,11 +271,13 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
         # Mechanism was advertised (has_mechanism gate passed above); a
         # negotiation-exhausted import refusal is "advertised but not
         # operational" -> xfail per the classification model.
-        pytest.xfail(
-            not_operational_reason(
+        classify(
+            "not_operational",
+            label="AES_KEY_WRAP:key-import",
+            summary=not_operational_reason(
                 "AES_KEY_WRAP:key-import",
                 ckr_name(exc.rv),
-            )
+            ),
         )
 
     # Unwrap the supplied blob and verify the recovered key material
@@ -289,7 +312,13 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
                 _AES_RUNTIME_REJECT_CKRS + _AES_KW_VALID_VECTOR_CLEAN_REJECTS,
                 f"AES-KW {vec_id}: unwrap into a generic secret not operational",
             )
-            pytest.fail(f"AES-KW unwrap failed for valid vector {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label="AES-KW",
+                summary=f"AES-KW unwrap failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable: reject of an invalid wrapped blob is fine
         return
     finally:
@@ -297,7 +326,14 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
 
     if result == "invalid":
         destroy_quietly(rs.raw, rs.sh, unwrapped)
-        pytest.fail(f"AES-KW unwrap {vec_id}: accepted invalid wrapped key (forged blob unwrapped)")
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            label="AES-KW",
+            summary=f"AES-KW unwrap {vec_id}: accepted invalid wrapped key (forged blob unwrapped)",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
     # valid: recovered key material must match the original
     try:
