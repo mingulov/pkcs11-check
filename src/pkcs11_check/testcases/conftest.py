@@ -755,7 +755,16 @@ def xfail_if_known_ckr(
     """
     matched = _matched_ckr_name(exc, known_ckrs)
     if matched is not None:
-        pytest.xfail(f"{msg}: {matched}")
+        from pkcs11_check import classification as C
+
+        rv = getattr(exc, "rv", None)
+        C.classify(
+            "not_operational",
+            label=msg,
+            actual=rv if rv is not None else matched,
+            summary=f"{msg}: {matched}",
+        )
+        return  # classify() raises XFailed; defensive
     raise  # Not a known CKR -- propagate as real failure
 
 
@@ -1001,12 +1010,26 @@ def classify_discrimination(*, valid_accepted: bool, invalid_outcome: Any, label
         invalid_rejected = False
 
     if not valid_accepted:
-        pytest.fail(
-            f"{label}: the valid/un-tampered operation did not verify -- cannot "
-            "distinguish 'detected tampering' from 'cannot do the operation'"
+        from pkcs11_check import classification as C
+
+        C.classify(
+            "accepted_invalid",
+            kind="crypto",
+            label=label,
+            summary=(
+                f"{label}: the valid/un-tampered operation did not verify -- cannot "
+                "distinguish 'detected tampering' from 'cannot do the operation'"
+            ),
         )
     if not invalid_rejected:
-        pytest.fail(f"{label}: accepted the tampered/forged/confused input (security break)")
+        from pkcs11_check import classification as C
+
+        C.classify(
+            "accepted_invalid",
+            kind="crypto",
+            label=label,
+            summary=f"{label}: accepted the tampered/forged/confused input (security break)",
+        )
 
 
 def destroy_returned_handles(rs: Any, *handles: int) -> None:
