@@ -770,8 +770,8 @@ After that, do the first coverage expansion round:
    probes: remaining SKIPJACK short-segment CFB and wrap variants only with
    trustworthy operation-specific vectors and reconciled PKCS#11 parameters,
    KEA only with defensible domain-parameter/derive semantics, plus
-   BATON/JUNIPER and GOST28147 exact-output KATs, and remaining MAC_GENERAL or
-   fixed-output vectors where reliable sources exist.
+   BATON/JUNIPER and GOST28147 non-ECB exact-output KATs, and remaining
+   MAC_GENERAL or fixed-output vectors where reliable sources exist.
 
 Legacy/deprecated coverage addendum for the active goal:
 

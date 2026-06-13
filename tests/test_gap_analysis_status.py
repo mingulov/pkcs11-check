@@ -1401,6 +1401,7 @@ def test_gap_analysis_marks_gost28147_iv_param_registry_coverage() -> None:
     assert "param_recipe=_iv8" in legacy_registry
     assert "CKM_GOST28147 IV-parameter registry coverage" in doc
     assert "GOST28147 non-ECB exact-output KATs remain source-first" in doc_flat
+    assert "BATON/JUNIPER and GOST28147 exact-output KATs" not in doc_flat
 
 
 def test_gap_analysis_marks_gost28147_key_wrap_kat_as_added() -> None:
