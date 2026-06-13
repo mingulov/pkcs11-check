@@ -13,6 +13,7 @@ from typing import Any, cast
 
 import pytest
 
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
@@ -452,8 +453,12 @@ class TestEcdhKeyAgreement:
             try:
                 bob_point_raw = decode_ec_point(bob_ec_point)
             except ValueError as exc:
-                pytest.xfail(
-                    f"Curve {curve} generated public key has malformed CKA_EC_POINT: {exc}"
+                xfail_as(
+                    "honest_deviation",
+                    label=f"ECDH1_DERIVE:{curve}",
+                    summary=(
+                        f"Curve {curve} generated public key has malformed CKA_EC_POINT: {exc}"
+                    ),
                 )
 
             # Derive shared secrets

@@ -13,6 +13,7 @@ from typing import Any, cast
 
 import pytest
 
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -288,11 +289,16 @@ def test_acvp_ecdsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, 
                 # -> xfail per the classification model (not skip).
                 # May include curve-capability rejects expressed as generic CKRs --
                 # recorded as xfail, not hidden.
-                pytest.xfail(
-                    not_operational_reason(
+                xfail_as(
+                    "not_operational",
+                    kind="crypto",
+                    label=f"{mech_name}:key-import",
+                    summary=not_operational_reason(
                         f"{mech_name}:key-import",
                         f"{vec['curve']}: {ckr_name(exc.rv)}",
-                    )
+                    ),
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
                 )
             raise
         try:
@@ -300,9 +306,23 @@ def test_acvp_ecdsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, 
         except AssertionError as exc:
             verified = signature_rejected_or_xfail(exc, vec_id)
         if not vec["expected_pass"] and verified:
-            pytest.fail(f"{vec_id}: Module accepted invalid signature")
+            fail_as(
+                "accepted_invalid",
+                kind="crypto",
+                label=f"{mech_name}:verify",
+                summary=f"{vec_id}: Module accepted invalid signature",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         if vec["expected_pass"] and not verified:
-            pytest.fail(f"{vec_id}: Module rejected valid signature")
+            fail_as(
+                "wrong_result",
+                kind="crypto",
+                label=f"{mech_name}:verify",
+                summary=f"{vec_id}: Module rejected valid signature",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
     finally:
         if pub_key:
             destroy_quietly(rs.raw, rs.sh, pub_key)
