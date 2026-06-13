@@ -824,9 +824,14 @@ def _classify_unexpected_clean_rv(
         )
         return
     if not is_standard_ckr(rv):
+        # An undefined CK_RV is a return-value-contract violation: the module returned
+        # a value outside the defined PKCS#11 CK_RV enum (metadata-class
+        # self-inconsistency).  Force kind="metadata" so the verdict is fail/HIGH
+        # (not escalated to CRITICAL by a crypto kind), and never emit "unclassified"
+        # which is reserved for the plugin's runtime migration-backlog gate.
         C.classify(
-            "unclassified",
-            kind=kind,
+            "self_contradiction",
+            kind="metadata",
             label=label,
             actual=rv,
             expected=tuple(expected_rvs),
