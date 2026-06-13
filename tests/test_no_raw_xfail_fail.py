@@ -33,3 +33,17 @@ def test_no_raw_sites_outside_allowlist() -> None:
 def test_allowlist_has_no_stale_entries() -> None:
     stale = set(ALLOWLIST) - _files_with_raw_sites()
     assert not stale, f"migrated files still in allowlist — remove them: {sorted(stale)}"
+
+
+def test_no_test_site_emits_reserved_unclassified_reason() -> None:
+    """``unclassified`` is the plugin's synthetic migration-backlog marker; no test or
+    helper under ``testcases/`` may emit it, or it would corrupt the backlog metric."""
+    out = subprocess.run(
+        ["grep", "-rn", "unclassified", ROOT, "--include=*.py"],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert not out, (
+        "'unclassified' is reserved for the plugin runtime gate; "
+        f"remove from testcases/:\n{out}"
+    )

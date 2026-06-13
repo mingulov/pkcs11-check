@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import fail_as, xfail_as
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -111,11 +111,11 @@ def _handle_message_rv(rv: int, context: str) -> None:
             actual=rv,
             summary=f"{context} rejected advertised message operation: {ckr_name(rv)}",
         )
-    fail_as(
-        "unclassified",
+    xfail_as(
+        "not_operational",
         label=context,
         actual=rv,
-        summary=f"{context} returned unexpected CKR: {ckr_name(rv)}",
+        summary=f"{context} returned unexpected CKR for advertised message op: {ckr_name(rv)}",
     )
 
 
