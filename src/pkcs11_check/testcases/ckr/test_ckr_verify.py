@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -39,7 +40,14 @@ class TestVerifyInitErrors:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub)
             if rv == CKR_OK:
-                pytest.fail("Should have rejected AES_ECB as verify mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_VerifyInit:AES-mechanism",
+                    operation="C_VerifyInit",
+                    actual=rv,
+                    summary="Should have rejected AES_ECB as verify mechanism",
+                )
             assert_ckr(CKR_VERIFY["init_mechanism_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -113,7 +121,15 @@ class TestVerifyErrors:
             # deviation (xfail) by assert_ckr via _TOKEN_UNIVERSAL; no provider-
             # specific pre-guard (it would leak provider identity into the report).
             if rv == CKR_OK:
-                pytest.fail("Tampered signature verified as valid!")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="C_Verify:tampered-signature",
+                    operation="C_Verify",
+                    mechanism="CKM_SHA256_RSA_PKCS",
+                    actual=rv,
+                    summary="Tampered signature verified as valid!",
+                )
             assert_ckr(CKR_VERIFY["signature_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

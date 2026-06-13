@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_bool,
     attr_ulong,
@@ -65,7 +66,14 @@ class TestDeriveKeyErrors:
         )
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, derived.value)
-            pytest.fail("C_DeriveKey accepted hBaseKey=0")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_DeriveKey:null-base-key",
+                operation="C_DeriveKey",
+                actual=rv,
+                summary="C_DeriveKey accepted hBaseKey=0",
+            )
         assert_ckr(CKR_DERIVE["key_handle_invalid"], rv, ckr_strict)
 
     def test_mechanism_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
@@ -90,7 +98,14 @@ class TestDeriveKeyErrors:
             )
             if rv == CKR_OK:
                 destroy_quietly(rs.raw, rs.sh, derived.value)
-                pytest.fail("Should have rejected SHA256 as derive mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_DeriveKey:digest-mechanism",
+                    operation="C_DeriveKey",
+                    actual=rv,
+                    summary="Should have rejected SHA256 as derive mechanism",
+                )
             assert_ckr(CKR_DERIVE["mechanism_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -121,7 +136,15 @@ class TestDeriveKeyErrors:
             )
             if rv == CKR_OK:
                 destroy_quietly(rs.raw, rs.sh, derived.value)
-                pytest.fail("Should have rejected RSA key with ECDH derive")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_DeriveKey:key-type-inconsistent",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_ECDH1_DERIVE",
+                    actual=rv,
+                    summary="Should have rejected RSA key with ECDH derive",
+                )
             assert_ckr(CKR_DERIVE["key_type_inconsistent"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, _pub)

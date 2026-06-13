@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair
 from pkcs11_check.raw.types_std import (
@@ -38,7 +39,14 @@ class TestSignInitErrors:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
             if rv == CKR_OK:
-                pytest.fail("Should have rejected AES_ECB as signing mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_SignInit:AES-mechanism",
+                    operation="C_SignInit",
+                    actual=rv,
+                    summary="Should have rejected AES_ECB as signing mechanism",
+                )
             assert_ckr(CKR_SIGN["init_mechanism_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -69,7 +77,15 @@ class TestSignInitErrors:
             mech = mech_bytes(CKM_SHA256_RSA_PKCS_PSS, b"\x00" * 3)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
             if rv == CKR_OK:
-                pytest.fail("Should have rejected garbage PSS params")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_SignInit:PSS-params",
+                    operation="C_SignInit",
+                    mechanism="CKM_SHA256_RSA_PKCS_PSS",
+                    actual=rv,
+                    summary="Should have rejected garbage PSS params",
+                )
             assert_ckr(CKR_SIGN["init_mechanism_param_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -115,7 +131,15 @@ class TestSignDataErrors:
             sig_buf = (ctypes.c_ubyte * 256)()
             rv = rs.raw.C_Sign(rs.sh, data, 246, sig_buf, byref(sig_len))
             if rv == CKR_OK:
-                pytest.fail("Should have rejected 246-byte data for raw RSA-PKCS sign")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="C_Sign:RSA-PKCS-data-too-long",
+                    operation="C_Sign",
+                    mechanism="CKM_RSA_PKCS",
+                    actual=rv,
+                    summary="Should have rejected 246-byte data for raw RSA-PKCS sign",
+                )
             assert_ckr(CKR_SIGN["data_len_range"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, priv)
