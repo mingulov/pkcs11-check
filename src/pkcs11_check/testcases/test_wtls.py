@@ -853,6 +853,41 @@ class TestWTLSPRF:
         finally:
             destroy_quietly(rs.raw, rs.sh, secret)
 
+    def test_prf_output_len_extends_output(self, p11_raw_session: Any) -> None:
+        """A longer WTLS PRF request must preserve the shorter output as a prefix."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("WTLS_PRF"):
+            pytest.skip("CKM_WTLS_PRF not supported")
+
+        secret = _create_generic_secret(rs, 20)
+        try:
+            try:
+                short = _derive_wtls_prf_output(
+                    rs,
+                    secret,
+                    seed=bytes(range(32)),
+                    label=b"key expansion",
+                    output_len=16,
+                )
+                long = _derive_wtls_prf_output(
+                    rs,
+                    secret,
+                    seed=bytes(range(32)),
+                    label=b"key expansion",
+                    output_len=32,
+                )
+                assert len(short) == 16, f"Expected 16 bytes, got {len(short)}"
+                assert len(long) == 32, f"Expected 32 bytes, got {len(long)}"
+                assert long[: len(short)] == short, (
+                    "WTLS PRF longer output did not preserve the shorter prefix"
+                )
+            except AssertionError as exc:
+                if is_known_error(exc, _WTLS_ERROR_RVS):
+                    pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
+                raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, secret)
+
     def test_prf_deterministic(self, p11_raw_session: Any) -> None:
         """Same WTLS PRF inputs must produce the same output."""
         rs = p11_raw_session

@@ -274,7 +274,10 @@ smoke behavior, or covered only by one narrow variation.
    `CK_WTLS_MASTER_KEY_DERIVE_PARAMS.DigestMechanism` and
    `CK_WTLS_KEY_MAT_PARAMS.DigestMechanism` reject the same invalid nested
    digest selector across master, DH/ECC master, server key-material, and
-   client key-material derives. WTLS key-and-MAC NULL phKey coverage now
+   client key-material derives. WTLS PRF output-length coverage now verifies
+   that 16-byte and 32-byte `CKM_WTLS_PRF` raw output-buffer requests return
+   the requested lengths and preserve the shorter output as the longer output
+   prefix. WTLS key-and-MAC NULL phKey coverage now
    follows the OASIS convention that server/client key-material derives return
    their handles through `CK_WTLS_KEY_MAT_OUT`. IKE2 PRF+ base-key sensitivity coverage now
    verifies that changing the shared-secret input changes the derived output.

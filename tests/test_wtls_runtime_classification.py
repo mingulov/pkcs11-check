@@ -116,6 +116,51 @@ def test_wtls_prf_label_sensitivity_fails_on_same_output(
         test_wtls.TestWTLSPRF().test_prf_label_affects_output(rs)
 
 
+def test_wtls_prf_output_length_probe_requests_prefix_extension(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_wtls, "_create_generic_secret", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_wtls, "destroy_quietly", lambda *_args, **_kwargs: None)
+    output_lengths: list[int] = []
+
+    def _derive_wtls_prf_output(
+        *_args: object,
+        output_len: int = 16,
+        **_kwargs: object,
+    ) -> bytes:
+        output_lengths.append(output_len)
+        return b"a" * 16 if output_len == 16 else (b"a" * 16) + (b"b" * 16)
+
+    monkeypatch.setattr(test_wtls, "_derive_wtls_prf_output", _derive_wtls_prf_output)
+
+    test_wtls.TestWTLSPRF().test_prf_output_len_extends_output(
+        _session_with_mechanisms("WTLS_PRF")
+    )
+
+    assert output_lengths == [16, 32]
+
+
+def test_wtls_prf_output_length_fails_on_prefix_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_wtls, "_create_generic_secret", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_wtls, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    def _derive_wtls_prf_output(
+        *_args: object,
+        output_len: int = 16,
+        **_kwargs: object,
+    ) -> bytes:
+        return b"a" * 16 if output_len == 16 else b"b" * 32
+
+    monkeypatch.setattr(test_wtls, "_derive_wtls_prf_output", _derive_wtls_prf_output)
+
+    with pytest.raises(AssertionError, match="longer output"):
+        test_wtls.TestWTLSPRF().test_prf_output_len_extends_output(
+            _session_with_mechanisms("WTLS_PRF")
+        )
+
+
 def test_wtls_prf_invalid_digest_uses_negative_classifier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
