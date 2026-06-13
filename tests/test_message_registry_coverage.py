@@ -54,6 +54,21 @@ def test_mech_message_has_registry_permission_negatives() -> None:
     assert "classify_negative_rv(" in source
 
 
+def test_mech_message_has_registry_wrong_key_negatives() -> None:
+    source = MECH_MESSAGE.read_text()
+
+    for test_name in (
+        "test_registry_message_encrypt_wrong_key_type",
+        "test_registry_message_decrypt_wrong_key_type",
+        "test_registry_message_sign_wrong_key_type",
+        "test_registry_message_verify_wrong_key_type",
+    ):
+        assert test_name in source
+
+    assert "_message_wrong_key_init_must_reject" in source
+    assert "CKR_KEY_TYPE_INCONSISTENT" in source
+
+
 def test_mech_message_has_registry_required_param_negatives() -> None:
     source = MECH_MESSAGE.read_text()
 

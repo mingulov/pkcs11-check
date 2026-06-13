@@ -415,6 +415,10 @@ smoke behavior, or covered only by one narrow variation.
    full-message semantic coverage is still representative for selected
    AES-GCM, AES-CCM, and AES-GMAC paths rather than exhaustive across every
    mechanism that advertises a message flag. Registry-driven message API
+   wrong-key-type coverage exists for `C_MessageEncryptInit`,
+   `C_MessageDecryptInit`, `C_MessageSignInit`, and `C_MessageVerifyInit` on
+   secret-key mechanisms that advertise the corresponding message flags.
+   Registry-driven message API
    permission negative coverage exists for `C_MessageEncryptInit`,
    `C_MessageDecryptInit`, `C_MessageSignInit`, and `C_MessageVerifyInit` on
    secret-key mechanisms that advertise the corresponding message flags.
