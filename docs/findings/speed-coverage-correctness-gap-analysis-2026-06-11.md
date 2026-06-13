@@ -580,10 +580,11 @@ smoke behavior, or covered only by one narrow variation.
     encrypt/decrypt, sign/verify, and digest mechanisms whose registry config
     requires a mechanism parameter, using a valid non-NULL pointer with an
     invalid one-byte parameter length. Registry-driven derive
-    malformed-parameter coverage exists for the simple key-object derivation
-    shapes already supported by the generic negative helper, using the same
-    invalid one-byte mechanism parameter shape. Remaining work is further
-    linked-attribute
+    required-parameter coverage exists for the simple key-object derivation
+    shapes already supported by the generic negative helper, including missing
+    required parameters. Registry-driven derive malformed-parameter coverage
+    exists for those same shapes, using the invalid one-byte mechanism
+    parameter shape. Remaining work is further linked-attribute
     families beyond derived protection and generated/imported-key origin,
     malformed parameter expansion beyond current classic/message init and simple
     derive coverage, and deeper derive/wrap/digest/message semantic negative

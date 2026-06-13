@@ -99,4 +99,5 @@ def test_bad_param_negatives_are_registry_driven() -> None:
     assert "test_registry_verify_malformed_required_param" in source
     assert "test_registry_digest_missing_required_param" in source
     assert "test_registry_digest_malformed_required_param" in source
+    assert "test_registry_derive_missing_required_param" in source
     assert "test_registry_derive_malformed_required_param" in source

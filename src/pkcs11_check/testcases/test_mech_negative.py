@@ -918,6 +918,57 @@ class TestBadParameters:
             _finish_digest_after_unexpected_ok(rs)
         classify_negative_rv(rv, _MALFORMED_REQUIRED_PARAM_RVS, label=label)
 
+    def test_registry_derive_missing_required_param(
+        self, p11_module_session: RawSession, mech_derive_entry: MechEntry
+    ) -> None:
+        """Registry-driven missing-required-param check for simple advertised derive mechanisms."""
+        rs = p11_module_session
+        entry = mech_derive_entry
+        _skip_if_not_required_param_registry_case(entry)
+        _skip_if_not_secret_key_registry_case(entry)
+        config = entry.config
+        assert config is not None
+
+        base_key = 0
+        derived_key = 0
+        param_handles: list[int] = []
+        label = f"{entry.mech_name} C_DeriveKey with missing required params"
+        try:
+            _valid_param, param_handles = _derive_negative_param_or_skip(rs, entry)
+            base_key = gen_symmetric_key(
+                rs,
+                entry,
+                config,
+                extra_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+            )
+
+            derive_exc: AssertionError | None = None
+            try:
+                derived_key = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base_key,
+                    entry.mech_id,
+                    attrs=_DERIVED_GENERIC_SECRET_ATTRS,
+                )
+            except AssertionError as caught:
+                derive_exc = caught
+            if derive_exc is None and derived_key != 0:
+                destroy_quietly(rs.raw, rs.sh, derived_key)
+                derived_key = 0
+            reject_or_classify(
+                derive_exc,
+                _MISSING_REQUIRED_PARAM_RVS,
+                label=label,
+            )
+        finally:
+            if derived_key != 0:
+                destroy_quietly(rs.raw, rs.sh, derived_key)
+            if base_key != 0:
+                destroy_quietly(rs.raw, rs.sh, base_key)
+            for handle in param_handles:
+                destroy_quietly(rs.raw, rs.sh, handle)
+
     def test_registry_derive_malformed_required_param(
         self, p11_module_session: RawSession, mech_derive_entry: MechEntry
     ) -> None:
