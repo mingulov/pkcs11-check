@@ -894,10 +894,24 @@ def classify_policy_enforcement(*, claimed: bool, violated: bool, label: str) ->
       then violated it -- a self-contradiction, broken for any provider).
     - ``claimed`` and not ``violated`` -> ``pass``.
     """
+    from pkcs11_check import classification as C
+
+    if claimed and not violated:
+        return
     if not claimed:
-        pytest.xfail(f"{label}: module does not claim the protection (honest non-support)")
-    if violated:
-        pytest.fail(f"{label}: claimed the protection then violated it (self-contradiction)")
+        C.classify(
+            "honest_deviation",
+            kind="policy",
+            label=label,
+            summary=f"{label}: module does not claim the protection (honest non-support)",
+        )
+        return
+    C.classify(
+        "self_contradiction",
+        kind="policy",
+        label=label,
+        summary=f"{label}: claimed the protection then violated it (self-contradiction)",
+    )
 
 
 def classify_lifecycle_effect(*, claimed_success: bool, effect_observed: bool, label: str) -> None:
