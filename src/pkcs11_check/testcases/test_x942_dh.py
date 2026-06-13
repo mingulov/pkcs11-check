@@ -93,7 +93,12 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import classify_negative_rv, is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    is_known_error,
+    reject_or_classify,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -1239,6 +1244,56 @@ class TestX942DHDerive:
             )
         finally:
             for derived in derived_keys:
+                destroy_quietly(rs.raw, rs.sh, derived)
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_x942_dh_derive_rfc5114_rejects_zero_value_len(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_X9_42_DH_DERIVE rejects a zero-length requested generic secret."""
+        rs = p11_raw_session
+        _skip_no_x942_derive(rs)
+
+        priv = 0
+        derived = 0
+        try:
+            priv = _x942_setup_or_xfail(
+                lambda: _import_x942_private_key(
+                    rs.raw,
+                    rs.sh,
+                    _X942_RFC5114_ALICE_PRIVATE,
+                ),
+                "CKM_X9_42_DH_DERIVE RFC 5114 zero-length vector",
+            )
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_X9_42_DH_DERIVE,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_VALUE_LEN: 0,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
+                    },
+                    mech_param=_build_x942_derive_mech(_X942_RFC5114_BOB_PUBLIC),
+                )
+            except AssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (CKR_KEY_SIZE_RANGE, CKR_ATTRIBUTE_VALUE_INVALID),
+                    label="CKM_X9_42_DH_DERIVE RFC 5114 CKA_VALUE_LEN=0",
+                )
+                return
+
+            raise AssertionError("accepted CKM_X9_42_DH_DERIVE RFC 5114 CKA_VALUE_LEN=0")
+        finally:
+            if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
             if priv:
                 destroy_quietly(rs.raw, rs.sh, priv)

@@ -14,21 +14,28 @@ from pkcs11_check.raw.types_std import (
     CK_X9_42_DH2_DERIVE_PARAMS,
     CK_X9_42_MQV_DERIVE_PARAMS,
     CKA_BASE,
+    CKA_CLASS,
+    CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_PRIME,
     CKA_PRIME_BITS,
+    CKA_SENSITIVE,
     CKA_SUBPRIME,
     CKA_SUBPRIME_BITS,
+    CKA_TOKEN,
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKD_NULL,
     CKD_SHA1_KDF_ASN1,
     CKD_SHA1_KDF_CONCATENATE,
     CKK_AES,
+    CKK_GENERIC_SECRET,
     CKM_X9_42_DH_DERIVE,
     CKM_X9_42_DH_HYBRID_DERIVE,
     CKM_X9_42_MQV_DERIVE,
+    CKO_SECRET_KEY,
     CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases import test_x942_dh
@@ -123,6 +130,55 @@ def test_x942_rfc5114_exact_vector_constant_matches_modexp() -> None:
         "big",
     )
     assert full_secret[-32:] == test_x942_dh._X942_RFC5114_EXPECTED_SECRET_32
+
+
+def test_x942_rfc5114_zero_value_len_is_expected_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    derive_calls: list[dict[str, Any]] = []
+
+    def _derive_reject(
+        _raw: object,
+        _sh: int,
+        _base_key: int,
+        mechanism: int,
+        *,
+        attrs: dict[int, Any],
+        mech_param: Any,
+    ) -> int:
+        assert mechanism == CKM_X9_42_DH_DERIVE
+        assert isinstance(mech_param.params, CK_X9_42_DH1_DERIVE_PARAMS)
+        params = mech_param.params
+        assert params.kdf == CKD_NULL
+        assert params.ulOtherInfoLen == 0
+        assert params.pOtherInfo is None
+        assert params.ulPublicDataLen == len(test_x942_dh._X942_RFC5114_BOB_PUBLIC)
+        assert params.pPublicData is not None
+        derive_calls.append({"attrs": attrs})
+        raise CkrAssertionError("Unexpected CK_RV CKR_KEY_SIZE_RANGE", int(CKR_KEY_SIZE_RANGE))
+
+    rs = _session_with_mechanisms("X9_42_DH_DERIVE")
+    monkeypatch.setattr(test_x942_dh, "_import_x942_private_key", lambda *_args: 501)
+    monkeypatch.setattr(test_x942_dh, "derive_key", _derive_reject)
+    monkeypatch.setattr(test_x942_dh, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(pytest, "skip", lambda message: pytest.fail(f"unexpected skip: {message}"))
+
+    test_x942_dh.TestX942DHDerive().test_x942_dh_derive_rfc5114_rejects_zero_value_len(
+        rs
+    )
+
+    assert derive_calls == [
+        {
+            "attrs": {
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_VALUE_LEN: 0,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
+            }
+        }
+    ]
 
 
 def test_x942_concatenate_kdf_other_info_uses_typed_params(

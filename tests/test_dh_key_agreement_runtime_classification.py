@@ -9,10 +9,18 @@ import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
     CKA_VALUE,
     CKA_VALUE_LEN,
+    CKK_GENERIC_SECRET,
     CKM_DH_PKCS_DERIVE,
+    CKO_SECRET_KEY,
     CKR_DEVICE_ERROR,
+    CKR_KEY_SIZE_RANGE,
 )
 from pkcs11_check.testcases import test_dh_key_agreement as dh
 
@@ -106,3 +114,40 @@ def test_dh_rfc3526_group14_value_len_truncation_uses_rightmost_bytes(
     assert [call["attrs"][CKA_VALUE_LEN] for call in derive_calls] == [32, 16]
     assert {call["private_key"] for call in derive_calls} == {301}
     assert {call["mechanism"] for call in derive_calls} == {int(CKM_DH_PKCS_DERIVE)}
+
+
+def test_dh_rfc3526_group14_zero_value_len_is_expected_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    derive_attrs: list[dict[int, Any]] = []
+
+    def _derive_reject(
+        _raw: object,
+        _sh: int,
+        _private_key: int,
+        _mechanism: int,
+        attrs: dict[int, Any],
+        *,
+        mech_param: Any,
+    ) -> int:
+        derive_attrs.append(attrs)
+        raise CkrAssertionError("Unexpected CK_RV CKR_KEY_SIZE_RANGE", int(CKR_KEY_SIZE_RANGE))
+
+    monkeypatch.setattr(dh, "_import_dh_private_key", lambda *_args: 301)
+    monkeypatch.setattr(dh, "derive_key", _derive_reject)
+    monkeypatch.setattr(dh, "destroy_quietly", lambda *_args: None)
+
+    dh.TestDHKeyAgreement().test_dh_pkcs_derive_rfc3526_group14_rejects_zero_value_len(
+        _session()
+    )
+
+    assert derive_attrs == [
+        {
+            CKA_CLASS: CKO_SECRET_KEY,
+            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+            CKA_VALUE_LEN: 0,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: True,
+            CKA_TOKEN: False,
+        }
+    ]

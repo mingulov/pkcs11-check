@@ -56,6 +56,7 @@ from pkcs11_check.raw.types_std import (
     CKO_PRIVATE_KEY,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_FAILED,
@@ -70,7 +71,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import classify_negative_rv, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    reject_or_classify,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -491,6 +496,59 @@ class TestDHKeyAgreement:
             )
         finally:
             for derived in derived_keys:
+                destroy_quietly(rs.raw, rs.sh, derived)
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_dh_pkcs_derive_rfc3526_group14_rejects_zero_value_len(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_DH_PKCS_DERIVE rejects a zero-length requested generic secret."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("DH_PKCS_DERIVE"):
+            pytest.skip("CKM_DH_PKCS_DERIVE not supported")
+
+        priv = 0
+        derived = 0
+        try:
+            priv = _dh_setup_or_xfail(
+                lambda: _import_dh_private_key(
+                    rs.raw,
+                    rs.sh,
+                    _DH_RFC3526_GROUP14_ALICE_PRIVATE,
+                ),
+                "CKM_DH_PKCS_DERIVE RFC 3526 Group 14 zero-length vector",
+            )
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_DH_PKCS_DERIVE,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_VALUE_LEN: 0,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
+                    },
+                    mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, _DH_RFC3526_GROUP14_BOB_PUBLIC),
+                )
+            except AssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (CKR_KEY_SIZE_RANGE, CKR_ATTRIBUTE_VALUE_INVALID),
+                    label="CKM_DH_PKCS_DERIVE RFC 3526 Group 14 CKA_VALUE_LEN=0",
+                )
+                return
+
+            raise AssertionError(
+                "accepted CKM_DH_PKCS_DERIVE RFC 3526 Group 14 CKA_VALUE_LEN=0"
+            )
+        finally:
+            if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
             if priv:
                 destroy_quietly(rs.raw, rs.sh, priv)

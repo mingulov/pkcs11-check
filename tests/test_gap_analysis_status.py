@@ -1068,6 +1068,25 @@ def test_gap_analysis_marks_classic_dh_exact_vector_as_added() -> None:
     assert "Classic DH RFC 3526 Group 14 requested-value-length truncation" in doc_flat
 
 
+def test_gap_analysis_marks_dh_x942_zero_value_len_negatives_as_added() -> None:
+    """DH and X9.42 exact-vector derives reject zero requested output length."""
+    dh = _read("src/pkcs11_check/testcases/test_dh_key_agreement.py")
+    x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")
+    dh_guard = _read("tests/test_dh_key_agreement_runtime_classification.py")
+    x942_guard = _read("tests/test_x942_dh_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_dh_pkcs_derive_rfc3526_group14_rejects_zero_value_len" in dh
+    assert "test_dh_rfc3526_group14_zero_value_len_is_expected_reject" in dh_guard
+    assert "test_x942_dh_derive_rfc5114_rejects_zero_value_len" in x942
+    assert "test_x942_rfc5114_zero_value_len_is_expected_reject" in x942_guard
+    assert "CKA_VALUE_LEN: 0" in dh_guard
+    assert "CKA_VALUE_LEN: 0" in x942_guard
+
+    assert "Classic DH RFC 3526 Group 14 zero-length request coverage" in doc_flat
+    assert "X9.42 DH RFC 5114 zero-length request coverage" in doc_flat
+
+
 def test_gap_analysis_marks_x942_missing_peer_public_negative_as_added() -> None:
     """X9.42 DH derive has a negative test for missing peer public data."""
     x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")

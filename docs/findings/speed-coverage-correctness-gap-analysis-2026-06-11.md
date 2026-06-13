@@ -372,8 +372,10 @@ smoke behavior, or covered only by one narrow variation.
    derives with a fixed peer public value, and checks the exact derived
    generic-secret bytes. Classic DH RFC 3526 Group 14
    requested-value-length truncation now verifies the OASIS leading-byte
-   truncation rule against the deterministic shared secret. Classic DH derive
-   runtime-reject classification now
+   truncation rule against the deterministic shared secret. Classic DH RFC
+   3526 Group 14 zero-length request coverage now verifies `CKA_VALUE_LEN=0`
+   is rejected instead of creating an empty derived generic-secret object.
+   Classic DH derive runtime-reject classification now
    uses a shared wrapper for positive
    `CKM_DH_PKCS_DERIVE` operations:
    advertised clean derive refusals are provider-general xfail deviations,
@@ -406,7 +408,10 @@ smoke behavior, or covered only by one narrow variation.
    requested-value-length truncation coverage now
    verifies the OASIS leading-byte truncation rule by deriving the RFC 5114
    vector at 32 bytes and 16 bytes and checking that the shorter output keeps
-   the rightmost bytes. X9.42 hybrid/MQV typed derive coverage now exercises
+   the rightmost bytes. X9.42 DH RFC 5114 zero-length request coverage now
+   verifies `CKA_VALUE_LEN=0` is rejected through typed DH1 parameters instead
+   of creating an empty derived generic-secret object. X9.42 hybrid/MQV typed
+   derive coverage now exercises
    `CKM_X9_42_DH_HYBRID_DERIVE` through `CK_X9_42_DH2_DERIVE_PARAMS` and
    `CKM_X9_42_MQV_DERIVE` through `CK_X9_42_MQV_DERIVE_PARAMS`; each probe
    imports deterministic X9.42 key material, runs both parties through
