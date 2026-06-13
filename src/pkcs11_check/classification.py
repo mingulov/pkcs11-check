@@ -21,8 +21,13 @@ Usage in tests::
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
+
+import pytest
+
+from pkcs11_check.raw.rv import ckr_name
 
 Outcome = Literal["pass", "xfail", "fail"]
 Severity = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
@@ -108,3 +113,93 @@ def clear() -> None:
 def serialize(records: list[Classification]) -> list[dict[str, Any]]:
     """Serialize classification records into JSON-safe artifact dicts."""
     return [asdict(r) for r in records]
+
+
+def _ckr_names(codes: object) -> list[str] | None:
+    if codes is None:
+        return None
+    if isinstance(codes, int):
+        return [ckr_name(codes)]
+    items = cast("Iterable[object]", codes)
+    return [ckr_name(c) if isinstance(c, int) else str(c) for c in items]
+
+
+def _ckr_name(code: object) -> str | None:
+    if code is None:
+        return None
+    return ckr_name(code) if isinstance(code, int) else str(code)
+
+
+def _template_summary(
+    label: str, expected: list[str] | None, actual: str | None, reason: str
+) -> str:
+    head = label or reason
+    if actual and expected:
+        return f"{head}: expected {expected}, got {actual}"
+    if actual:
+        return f"{head}: got {actual}"
+    return f"{head}: {reason}"
+
+
+def classify(
+    reason: str,
+    *,
+    kind: str | None = None,
+    label: str = "",
+    operation: str | None = None,
+    mechanism: str | None = None,
+    expected: object = None,
+    actual: object = None,
+    spec_ref: str | None = None,
+    source: str | None = None,
+    vector_id: str | None = None,
+    summary: str | None = None,
+    detail: dict[str, Any] | None = None,
+) -> None:
+    """Emit a classification: record it, then raise the matching pytest outcome.
+
+    ``actual``/``expected`` may be ints (real CKR codes, resolved via ``ckr_name``)
+    or strings (passed through unchanged).  A ``fail`` raises ``pytest.fail`` and an
+    ``xfail`` raises ``pytest.xfail``; ``pass`` returns normally.
+    """
+    outcome, severity = derive_verdict(reason, kind)
+    expected_names = _ckr_names(expected)
+    actual_name = _ckr_name(actual)
+    if summary is None:
+        summary = _template_summary(label, expected_names, actual_name, reason)
+    if spec_ref is None:
+        from pkcs11_check.spec_refs import lookup
+
+        spec_ref = lookup(operation, mechanism, expected)
+    record(
+        Classification(
+            reason=reason,
+            outcome=outcome,
+            severity=severity,
+            kind=kind,
+            label=label,
+            summary=summary,
+            operation=operation,
+            mechanism=mechanism,
+            expected_ckr=expected_names,
+            actual_ckr=actual_name,
+            spec_ref=spec_ref or "",
+            source=source,
+            vector_id=vector_id,
+            detail=detail,
+        )
+    )
+    if outcome == "fail":
+        pytest.fail(summary)
+    if outcome == "xfail":
+        pytest.xfail(summary)
+
+
+def fail_as(reason: str, **kw: Any) -> None:
+    """Emit a ``fail`` classification (thin alias for :func:`classify`)."""
+    classify(reason, **kw)
+
+
+def xfail_as(reason: str, **kw: Any) -> None:
+    """Emit an ``xfail`` classification (thin alias for :func:`classify`)."""
+    classify(reason, **kw)
