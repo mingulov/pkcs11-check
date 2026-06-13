@@ -280,10 +280,7 @@ def validate_subprocess_per_test_expansion(
     missing_nodeids = sorted(file_key for file_key in marked_files if file_key not in nodeid_units)
     if bad_files or missing_nodeids:
         affected = sorted(set(bad_files) | set(missing_nodeids))
-        msg = (
-            "subprocess_per_test file was not expanded to per-test units: "
-            + ", ".join(affected)
-        )
+        msg = "subprocess_per_test file was not expanded to per-test units: " + ", ".join(affected)
         raise ValueError(msg)
 
 
@@ -1642,9 +1639,7 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             all_bootstrap_counts.update(fc.get("bootstrap_counts", {}))
             module_session_health = fc.get("module_session_health", {})
             if isinstance(module_session_health, dict):
-                all_module_session_health_checks += int(
-                    module_session_health.get("checks", 0) or 0
-                )
+                all_module_session_health_checks += int(module_session_health.get("checks", 0) or 0)
                 all_module_session_health_duration_s += float(
                     module_session_health.get("duration_s", 0.0) or 0.0
                 )
@@ -1652,9 +1647,7 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             all_available_mechs.update(mc.get("available_names", []))
             all_invoked.update(mc.get("invoked_names", []))
             all_not_invoked.update(mc.get("not_invoked_names", []))
-            all_advertised_mechs.update(
-                mc.get("advertised_names", mc.get("available_names", []))
-            )
+            all_advertised_mechs.update(mc.get("advertised_names", mc.get("available_names", [])))
             all_selected_mechs.update(mc.get("selected_names", []))
             all_selection_rejected_mechs.update(mc.get("selection_rejected_names", []))
             all_attempted_mechs.update(mc.get("attempted_names", mc.get("invoked_names", [])))
@@ -2092,6 +2085,51 @@ def _status_from_returncode(returncode: int) -> str:
     if returncode < 0:
         return "crashed"
     return "failed"
+
+
+_CRASH_SIGNALS: dict[int, str] = {
+    -11: "SIGSEGV",
+    -6: "SIGABRT",
+    -5: "SIGTRAP",
+    -4: "SIGILL",
+    -8: "SIGFPE",
+    -7: "SIGBUS",
+}
+
+
+def crash_classification(
+    *,
+    returncode: int | None,
+    target: str,
+    timed_out: bool = False,
+) -> dict[str, object]:
+    """Build a Classification-shaped dict for a crashed/hung test unit (process is dead, so
+    this is produced runner/report-side, not via classify())."""
+    if timed_out:
+        detail: dict[str, object] = {"mode": "timeout"}
+    else:
+        signal = _CRASH_SIGNALS.get(
+            returncode,  # type: ignore[arg-type]
+            (f"signal{abs(returncode)}" if returncode else "unknown"),
+        )
+        detail = {"signal": signal, "returncode": returncode}
+    return {
+        "schema": 1,
+        "reason": "crash",
+        "outcome": "fail",
+        "severity": "HIGH",
+        "kind": None,
+        "label": target,
+        "summary": f"{target}: process crashed",
+        "operation": None,
+        "mechanism": None,
+        "expected_ckr": None,
+        "actual_ckr": None,
+        "spec_ref": "",
+        "source": None,
+        "vector_id": None,
+        "detail": detail,
+    }
 
 
 def _maybe_set_crash_journal(run_env: dict[str, str], unit: str) -> None:
