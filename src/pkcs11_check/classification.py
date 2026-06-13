@@ -57,6 +57,7 @@ def _severity(reason: str, kind: str | None) -> Severity:
         return "LOW"
     if reason == "sanctioned_refusal":
         return "INFO"
+    # guards a reason present in _REASON_OUTCOME but missing a severity rule here
     raise ValueError(f"unknown reason: {reason!r}")
 
 
@@ -138,6 +139,8 @@ def _template_summary(
         return f"{head}: expected {expected}, got {actual}"
     if actual:
         return f"{head}: got {actual}"
+    if expected:
+        return f"{head}: expected {expected}"
     return f"{head}: {reason}"
 
 
@@ -196,10 +199,17 @@ def classify(
 
 
 def fail_as(reason: str, **kw: Any) -> None:
-    """Emit a ``fail`` classification (thin alias for :func:`classify`)."""
+    """Emit a ``fail`` classification; raises ``ValueError`` if *reason* is not a fail reason."""
+    if derive_verdict(reason, kw.get("kind"))[0] != "fail":
+        raise ValueError(f"fail_as requires a fail reason, got {reason!r}")
     classify(reason, **kw)
 
 
 def xfail_as(reason: str, **kw: Any) -> None:
-    """Emit an ``xfail`` classification (thin alias for :func:`classify`)."""
+    """Emit an ``xfail`` classification.
+
+    Raises ``ValueError`` if *reason* does not map to an xfail outcome.
+    """
+    if derive_verdict(reason, kw.get("kind"))[0] != "xfail":
+        raise ValueError(f"xfail_as requires an xfail reason, got {reason!r}")
     classify(reason, **kw)

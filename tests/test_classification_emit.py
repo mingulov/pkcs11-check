@@ -38,3 +38,20 @@ def test_explicit_summary_overrides_template():
     with pytest.raises(Failed):
         C.classify("wrong_result", kind="crypto", label="x", summary="custom phrase")
     assert C.get_records()[-1].summary == "custom phrase"
+
+
+def test_classify_resolves_int_ckr_codes_to_names():
+    from pkcs11_check.raw.types_std import CKR_OK, CKR_SIGNATURE_INVALID
+
+    C.clear()
+    with pytest.raises(Failed):
+        C.classify(
+            "accepted_invalid",
+            kind="crypto",
+            label="verify",
+            expected=(CKR_SIGNATURE_INVALID,),
+            actual=CKR_OK,
+        )
+    rec = C.get_records()[-1]
+    assert rec.expected_ckr == ["CKR_SIGNATURE_INVALID"]
+    assert rec.actual_ckr == "CKR_OK"
