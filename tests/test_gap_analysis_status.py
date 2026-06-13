@@ -1332,6 +1332,25 @@ def test_gap_analysis_marks_dh_x942_zero_value_len_negatives_as_added() -> None:
     assert "X9.42 DH RFC 5114 zero-length request coverage" in doc_flat
 
 
+def test_gap_analysis_marks_domain_parameter_template_negatives_as_added() -> None:
+    """DH/DSA/X9.42 parameter generation rejects missing required template attrs."""
+    dh = _read("src/pkcs11_check/testcases/test_dh_key_agreement.py")
+    dsa = _read("src/pkcs11_check/testcases/test_dsa_complete.py")
+    x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")
+    guard = _read("tests/test_domain_parameter_gen_negative_runtime.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_parameter_gen_rejects_missing_prime_bits" in dh
+    assert "CKM_DH_PKCS_PARAMETER_GEN missing CKA_PRIME_BITS" in dh
+    assert "test_parameter_gen_rejects_missing_prime_bits" in dsa
+    assert "CKM_DSA_PARAMETER_GEN missing CKA_PRIME_BITS" in dsa
+    assert "test_parameter_gen_rejects_missing_subprime_bits" in x942
+    assert "CKM_X9_42_DH_PARAMETER_GEN missing CKA_SUBPRIME_BITS" in x942
+    assert "test_x942_parameter_gen_missing_subprime_bits_is_expected_reject" in guard
+
+    assert "Domain-parameter template negative coverage" in doc_flat
+
+
 def test_gap_analysis_marks_x942_missing_peer_public_negative_as_added() -> None:
     """X9.42 DH derive has a negative test for missing peer public data."""
     x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")

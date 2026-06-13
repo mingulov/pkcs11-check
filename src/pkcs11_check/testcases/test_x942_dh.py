@@ -235,6 +235,8 @@ _X942_INVALID_KDF_RVS = (
     CKR_MECHANISM_PARAM_INVALID,
 )
 
+_X942_PARAMETER_TEMPLATE_REJECT_RVS = (CKR_TEMPLATE_INCOMPLETE,)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1435,6 +1437,35 @@ class TestX942DHDerive:
 @pytest.mark.slow
 class TestX942DHParameterGen:
     """Test CKM_X9_42_DH_PARAMETER_GEN - on-token X9.42 DH parameter generation."""
+
+    def test_parameter_gen_rejects_missing_subprime_bits(self, p11_raw_session: Any) -> None:
+        """CKM_X9_42_DH_PARAMETER_GEN requires CKA_SUBPRIME_BITS in the template."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("X9_42_DH_PARAMETER_GEN"):
+            pytest.skip("CKM_X9_42_DH_PARAMETER_GEN not supported")
+
+        tmpl = template(
+            attr_ulong(CKA_PRIME_BITS, _X942_PARAM_PRIME_BITS),
+            attr_bool(CKA_TOKEN, False),
+        )
+        dp_handle = CK_OBJECT_HANDLE(0)
+        mech = mech_simple(CKM_X9_42_DH_PARAMETER_GEN)
+        try:
+            rv = rs.raw.C_GenerateKey(
+                rs.sh,
+                mech.byref(),
+                tmpl.ptr,
+                tmpl.count,
+                byref(dp_handle),
+            )
+            classify_negative_rv(
+                rv,
+                _X942_PARAMETER_TEMPLATE_REJECT_RVS,
+                label="CKM_X9_42_DH_PARAMETER_GEN missing CKA_SUBPRIME_BITS",
+            )
+        finally:
+            if dp_handle.value:
+                destroy_quietly(rs.raw, rs.sh, dp_handle.value)
 
     def test_generate_parameters(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session

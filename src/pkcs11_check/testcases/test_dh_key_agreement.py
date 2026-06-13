@@ -138,6 +138,8 @@ _DH_INVALID_PEER_PUBLIC_RVS = (
     CKR_MECHANISM_PARAM_INVALID,
 )
 
+_DH_PARAMETER_TEMPLATE_REJECT_RVS = (CKR_TEMPLATE_INCOMPLETE,)
+
 
 def _skip_no_dh(p11_raw_session: Any) -> None:
     """Skip if DH mechanisms are not available."""
@@ -746,6 +748,32 @@ class TestDHKeyAgreement:
 @pytest.mark.slow
 class TestDHParameterGeneration:
     """Test CKM_DH_PKCS_PARAMETER_GEN (on-token DH parameter generation)."""
+
+    def test_parameter_gen_rejects_missing_prime_bits(self, p11_raw_session: Any) -> None:
+        """CKM_DH_PKCS_PARAMETER_GEN requires CKA_PRIME_BITS in the template."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("DH_PKCS_PARAMETER_GEN"):
+            pytest.skip("CKM_DH_PKCS_PARAMETER_GEN not supported")
+
+        tmpl = template(attr_bool(CKA_TOKEN, False))
+        dp_handle = CK_OBJECT_HANDLE(0)
+        mech = mech_simple(CKM_DH_PKCS_PARAMETER_GEN)
+        try:
+            rv = rs.raw.C_GenerateKey(
+                rs.sh,
+                mech.byref(),
+                tmpl.ptr,
+                tmpl.count,
+                byref(dp_handle),
+            )
+            classify_negative_rv(
+                rv,
+                _DH_PARAMETER_TEMPLATE_REJECT_RVS,
+                label="CKM_DH_PKCS_PARAMETER_GEN missing CKA_PRIME_BITS",
+            )
+        finally:
+            if dp_handle.value:
+                destroy_quietly(rs.raw, rs.sh, dp_handle.value)
 
     def test_generate_dh_parameters(self, p11_raw_session: Any) -> None:
         """Generate DH domain parameters on the token."""

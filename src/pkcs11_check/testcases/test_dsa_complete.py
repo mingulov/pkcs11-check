@@ -133,6 +133,8 @@ _DSA_KEYPAIR_RUNTIME_REJECT_RVS = (
     CKR_TEMPLATE_INCONSISTENT,
 )
 
+_DSA_PARAMETER_TEMPLATE_REJECT_RVS = (CKR_TEMPLATE_INCOMPLETE,)
+
 # Prehash DSA variants.
 _DSA_HASH_MECHS = [
     pytest.param("DSA_SHA1", CKM_DSA_SHA1, id="SHA1"),
@@ -870,6 +872,32 @@ class TestDSAPrehash:
 
 class TestDSAParameterGen:
     """Tests for DSA domain-parameter generation mechanisms."""
+
+    def test_parameter_gen_rejects_missing_prime_bits(self, p11_module_session: Any) -> None:
+        """CKM_DSA_PARAMETER_GEN requires CKA_PRIME_BITS in the template."""
+        rs = p11_module_session
+        if not rs.has_mechanism("DSA_PARAMETER_GEN"):
+            pytest.skip("CKM_DSA_PARAMETER_GEN not supported")
+
+        tmpl = template(attr_bool(CKA_TOKEN, False))
+        dp_handle = CK_OBJECT_HANDLE(0)
+        mech = mech_simple(CKM_DSA_PARAMETER_GEN)
+        try:
+            rv = rs.raw.C_GenerateKey(
+                rs.sh,
+                mech.byref(),
+                tmpl.ptr,
+                tmpl.count,
+                byref(dp_handle),
+            )
+            classify_negative_rv(
+                rv,
+                _DSA_PARAMETER_TEMPLATE_REJECT_RVS,
+                label="CKM_DSA_PARAMETER_GEN missing CKA_PRIME_BITS",
+            )
+        finally:
+            if dp_handle.value:
+                destroy_quietly(rs.raw, rs.sh, dp_handle.value)
 
     def test_parameter_gen(self, p11_module_session: Any) -> None:
         """Generate DSA domain parameters using CKM_DSA_PARAMETER_GEN."""

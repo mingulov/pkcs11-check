@@ -478,6 +478,11 @@ smoke behavior, or covered only by one narrow variation.
    X9.42 hybrid/MQV requested-value-length truncation coverage now verifies
    both extended derive mechanisms keep the rightmost bytes when `CKA_VALUE_LEN`
    requests a shorter generic secret.
+   Domain-parameter template negative coverage now verifies
+   `CKM_DH_PKCS_PARAMETER_GEN` and `CKM_DSA_PARAMETER_GEN` reject templates
+   missing `CKA_PRIME_BITS`, and `CKM_X9_42_DH_PARAMETER_GEN` rejects a
+   template missing `CKA_SUBPRIME_BITS`, with `CKR_TEMPLATE_INCOMPLETE` as
+   the spec-correct outcome.
 4. Message API registry-driven init coverage exists for advertised
    `CKF_MESSAGE_*` flags through `TestRegistryMessageInit` and pytest plugin
    fixtures for message encrypt, decrypt, sign, and verify entries. Richer
