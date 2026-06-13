@@ -99,3 +99,18 @@ def test_ike1_extended_hmac_sha256_reference_vector() -> None:
         ).hex()
         == "9672b961d4f0556b9bbfdf40707ff9494c6b95f1c916653575420a7b657d863d"
     )
+
+
+def test_ike1_extended_hmac_sha256_multiblock_reference_vector() -> None:
+    assert (
+        test_ike._ike1_extended_hmac_sha256_reference(
+            test_ike._BASE_KEY_BYTES,
+            test_ike._IKE1_KEYGXY_BYTES,
+            test_ike._NONCE_I + test_ike._NONCE_R + test_ike._SPI_I + test_ike._SPI_R,
+            48,
+        ).hex()
+        == (
+            "9672b961d4f0556b9bbfdf40707ff9494c6b95f1c916653575420a7b657d863d"
+            "8b6f2a6cff747131c53605cae7e9cbc6"
+        )
+    )

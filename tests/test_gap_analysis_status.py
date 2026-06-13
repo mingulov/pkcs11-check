@@ -251,7 +251,9 @@ def test_gap_analysis_marks_ike1_exact_vectors_as_added() -> None:
     ike = _read("src/pkcs11_check/testcases/test_ike.py")
     pack = _read("src/pkcs11_check/raw/pack_mechanisms.py")
     raw_pack_tests = _read("tests/test_raw_pack.py")
+    ref_tests = _read("tests/test_protocol_kdf_reference_vectors.py")
     doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
 
     assert "mech_ike1_prf_derive" in pack
     assert "CK_IKE1_PRF_DERIVE_PARAMS" in pack
@@ -262,10 +264,14 @@ def test_gap_analysis_marks_ike1_exact_vectors_as_added() -> None:
     assert "test_prf_hmac_sha256_exact_vector" in ike
     assert "_ike1_prf_hmac_sha256_reference" in ike
     assert "test_extended_hmac_sha256_exact_vector" in ike
+    assert "test_extended_hmac_sha256_multiblock_exact_vector" in ike
+    assert "value_len=48" in ike
     assert "_ike1_extended_hmac_sha256_reference" in ike
+    assert "test_ike1_extended_hmac_sha256_multiblock_reference_vector" in ref_tests
 
     assert "IKE1 PRF HMAC-SHA256 exact-vector coverage" in doc
     assert "IKE1 Extended Derive HMAC-SHA256 exact-vector coverage" in doc
+    assert "IKE1 Extended Derive HMAC-SHA256 multiblock exact-vector coverage" in doc_flat
 
 
 def test_gap_analysis_marks_tls_kdf_tls10_exact_vector_as_added() -> None:

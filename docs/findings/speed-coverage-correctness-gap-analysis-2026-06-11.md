@@ -308,7 +308,9 @@ smoke behavior, or covered only by one narrow variation.
    `prf(Ni|Nr, baseKey)` output. IKE1 PRF HMAC-SHA256 exact-vector coverage
    now uses typed `CK_IKE1_PRF_DERIVE_PARAMS` and checks the OASIS
    `prf(SKEYID, g^xy|CKYi|CKYr|key_number)` output. IKE1 Extended Derive HMAC-SHA256 exact-vector coverage now uses typed `CK_IKE1_EXTENDED_DERIVE_PARAMS` and checks
-   the OASIS `prf(SKEYID, g^xy|extraData)` output. SSL3 master-secret exact-vector coverage
+   the OASIS `prf(SKEYID, g^xy|extraData)` output. IKE1 Extended Derive
+   HMAC-SHA256 multiblock exact-vector coverage now requests 48 bytes to
+   exercise the second recurrence output block. SSL3 master-secret exact-vector coverage
    now checks `CKM_SSL3_MASTER_KEY_DERIVE` output against the RFC 6101 SSL3
    MD5/SHA master-secret computation. SSL3 master-secret DH exact-vector
    coverage now applies the same computation to `CKM_SSL3_MASTER_KEY_DERIVE_DH`

@@ -883,6 +883,45 @@ class TestIKE1ExtendedDerive:
             destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)
 
+    def test_extended_hmac_sha256_multiblock_exact_vector(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_IKE1_EXTENDED_DERIVE follows OASIS recurrence across HMAC blocks."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("IKE1_EXTENDED_DERIVE"):
+            pytest.skip("CKM_IKE1_EXTENDED_DERIVE not supported")
+        base_key = _create_sha256_hmac_derive_key(rs)
+        keygxy_key = _create_ike1_keygxy_key(rs)
+        extra_data = _NONCE_I + _NONCE_R + _SPI_I + _SPI_R
+        expected = _ike1_extended_hmac_sha256_reference(
+            _BASE_KEY_BYTES,
+            _IKE1_KEYGXY_BYTES,
+            extra_data,
+            48,
+        )
+        try:
+            derived = _derive_ike1_extended(
+                rs,
+                base_key,
+                keygxy_key=keygxy_key,
+                extra_data=extra_data,
+                value_len=48,
+            )
+            try:
+                assert _get_value(rs, derived) == expected
+            finally:
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _DERIVE_ERROR_CKRS,
+                "CKM_IKE1_EXTENDED_DERIVE HMAC-SHA256 multiblock exact vector not operational",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, keygxy_key)
+            destroy_quietly(rs.raw, rs.sh, base_key)
+
     def test_derive_aes128(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("IKE1_EXTENDED_DERIVE"):
