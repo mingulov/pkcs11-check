@@ -66,10 +66,10 @@ SHARD_MAP: dict[str, int] = {
     "opencryptoki-master": 3,
     "wolfpkcs11": 8,
     "wolfpkcs11-master": 8,
-    "tpm2" : 2,
-    "kryoptic" : 2,
-    "kryoptic-main" : 2,
-    "kryoptic-fips" : 2,
+    "tpm2": 2,
+    "kryoptic": 2,
+    "kryoptic-main": 2,
+    "kryoptic-fips": 2,
 }
 DEFAULT_PROVIDERS = [
     "softhsm2",
@@ -117,7 +117,7 @@ ALL_PROVIDERS = DEFAULT_PROVIDERS + ADDITIONAL_PROVIDERS + VARIANT_PROVIDERS
 TESTCASES = "src/pkcs11_check/testcases"
 COMPOSE = ["docker", "compose", "-f", "docker/docker-compose.test.yml"]
 VECTOR_DATA_DIRS = ("wycheproof", "acvp", "cctv", "x509-limbo")
-DEFAULT_CONCURRENCY = 4
+DEFAULT_CONCURRENCY = 6
 WorkItem = tuple[str, int, list[str], float]
 NODE_SPLIT_MIN_DURATION_S = 300.0
 NODE_SPLIT_BASENAMES: tuple[str, ...] = (
@@ -133,6 +133,7 @@ class RunResult(NamedTuple):
     idx: int
     returncode: int
     elapsed_s: float
+
 
 # NSS exposes the digest / bulk-cipher / KDF mechanisms only on slot 0 (Internal
 # Cryptographic Services); the default slot-1 (cert/key DB) pass skips them. The
@@ -794,12 +795,9 @@ def main() -> int:
             if expanded_files
             else f"{batched} files"
         )
-        node_split = (
-            f", node-split {len(expanded_files)} file(s)" if expanded_files else ""
-        )
+        node_split = f", node-split {len(expanded_files)} file(s)" if expanded_files else ""
         print_pool_event(
-            f"  {p}: {n} batch(es), {unit_count} "
-            f"({scope}, {balance}{node_split}, partition ok)"
+            f"  {p}: {n} batch(es), {unit_count} ({scope}, {balance}{node_split}, partition ok)"
         )
 
     # Longest estimated batches first so the long poles start early.

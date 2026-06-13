@@ -105,7 +105,7 @@ def _wrap_entry() -> SimpleNamespace:
         config=SimpleNamespace(
             key_type=int(CKK_AES),
             key_sizes=None,
-            param_recipe=SimpleNamespace(style="none"),
+            param_recipe=SimpleNamespace(style="none", defaults={}),
             param_required=False,
             input_constraint=None,
         ),
