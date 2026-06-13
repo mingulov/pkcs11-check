@@ -555,10 +555,15 @@ smoke behavior, or covered only by one narrow variation.
     simple key-object derivation shapes: SHA key derivation, concatenate/XOR/
     extract, concatenate-key, and AES-ECB encrypt-data. Registry-driven
     missing-required-parameter coverage exists for advertised encrypt/decrypt,
-    sign/verify, and digest mechanisms whose registry config requires a
-    mechanism parameter. Registry-driven decrypt/verify required-parameter
+    sign/verify, wrap/unwrap, and digest mechanisms whose registry config
+    requires a mechanism parameter. Registry-driven decrypt/verify required-parameter
     coverage exists for the second half of those operation pairs, using the
     same provider-general missing and malformed parameter classifiers.
+    Registry-driven wrap/unwrap required-parameter coverage exists for
+    advertised secret-key wrap mechanisms whose registry config requires a
+    mechanism parameter. Registry-driven wrap/unwrap malformed-parameter
+    coverage exists for those same mechanisms, using the invalid one-byte
+    parameter shape.
     Registry-driven digest required-parameter coverage exists for
     `C_DigestInit`, including both missing and malformed non-NULL parameter
     shapes. Derived
@@ -586,9 +591,10 @@ smoke behavior, or covered only by one narrow variation.
     exists for those same shapes, using the invalid one-byte mechanism
     parameter shape. Remaining work is further linked-attribute
     families beyond derived protection and generated/imported-key origin,
-    malformed parameter expansion beyond current classic/message init and simple
-    derive coverage, and deeper derive/wrap/digest/message semantic negative
-    coverage for protocol/asymmetric/custom-parameter families.
+    malformed parameter expansion beyond current classic/message init,
+    wrap/unwrap, and simple derive coverage, and deeper derive/wrap/digest/
+    message semantic negative coverage for protocol/asymmetric/custom-parameter
+    families.
     Registry-driven unwrap malformed-blob coverage exists for advertised
     secret-key wrap mechanisms: the test wraps a key, truncates the resulting
     wrapped-key bytes, and classifies wrapped/encrypted-data invalid or

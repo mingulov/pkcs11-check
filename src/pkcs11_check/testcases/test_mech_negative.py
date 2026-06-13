@@ -888,6 +888,171 @@ class TestBadParameters:
             if verify_key is not None and verify_key != sign_key:
                 destroy_quietly(rs.raw, rs.sh, verify_key)
 
+    def _wrap_required_param_must_reject(
+        self,
+        rs: RawSession,
+        entry: MechEntry,
+        *,
+        mech_param: Any,
+        expected_rvs: tuple[int, ...],
+        label_suffix: str,
+    ) -> None:
+        _skip_if_not_required_param_registry_case(entry)
+        _skip_if_not_secret_key_registry_case(entry)
+        config = entry.config
+        assert config is not None
+
+        wrapping_key = gen_symmetric_key(
+            rs,
+            entry,
+            config,
+            extra_attrs={CKA_WRAP: True, CKA_UNWRAP: True, CKA_TOKEN: False},
+        )
+        target_key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False, CKA_TOKEN: False},
+            purpose="registry wrap required-param target setup",
+        )
+        label = f"{entry.mech_name} C_WrapKey with {label_suffix}"
+        try:
+            out_len = CK_ULONG(0)
+            rv = rs.raw.C_WrapKey(
+                rs.sh,
+                mech_param.byref(),
+                wrapping_key,
+                target_key,
+                None,
+                byref(out_len),
+            )
+            classify_negative_rv(rv, expected_rvs, label=label)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, wrapping_key)
+            destroy_quietly(rs.raw, rs.sh, target_key)
+
+    def test_registry_wrap_missing_required_param(
+        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+    ) -> None:
+        """Registry-driven missing-required-param check for advertised wrap mechanisms."""
+        self._wrap_required_param_must_reject(
+            p11_module_session,
+            mech_wrap_entry,
+            mech_param=mech_simple(mech_wrap_entry.mech_id),
+            expected_rvs=_MISSING_REQUIRED_PARAM_RVS,
+            label_suffix="missing required params",
+        )
+
+    def test_registry_wrap_malformed_required_param(
+        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+    ) -> None:
+        """Registry-driven malformed-param check for advertised wrap mechanisms."""
+        self._wrap_required_param_must_reject(
+            p11_module_session,
+            mech_wrap_entry,
+            mech_param=mech_bytes(mech_wrap_entry.mech_id, b"\x00"),
+            expected_rvs=_MALFORMED_REQUIRED_PARAM_RVS,
+            label_suffix="malformed non-NULL params",
+        )
+
+    def _unwrap_required_param_must_reject(
+        self,
+        rs: RawSession,
+        entry: MechEntry,
+        *,
+        mech_param: Any,
+        expected_rvs: tuple[int, ...],
+        label_suffix: str,
+    ) -> None:
+        _skip_if_not_required_param_registry_case(entry)
+        _skip_if_not_secret_key_registry_case(entry)
+        config = entry.config
+        assert config is not None
+
+        wrapping_key = gen_symmetric_key(
+            rs,
+            entry,
+            config,
+            extra_attrs={CKA_WRAP: True, CKA_UNWRAP: True, CKA_TOKEN: False},
+        )
+        target_key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False, CKA_TOKEN: False},
+            purpose="registry unwrap required-param target setup",
+        )
+        unwrapped_key = 0
+        label = f"{entry.mech_name} C_UnwrapKey with {label_suffix}"
+        try:
+            valid_param = make_mech_param_or_skip(entry)
+            try:
+                wrapped = wrap_key(
+                    rs.raw,
+                    rs.sh,
+                    wrapping_key,
+                    target_key,
+                    entry.mech_id,
+                    mech_param=valid_param,
+                    output_size_hint=_wrap_output_size_hint(entry),
+                )
+            except AssertionError as setup_exc:
+                xfail_if_known_ckr(
+                    setup_exc,
+                    _WRAP_SETUP_REJECT_RVS,
+                    f"{entry.mech_name} unwrap required-param setup not operational",
+                )
+                raise
+
+            unwrap_exc: AssertionError | None = None
+            try:
+                unwrapped_key = unwrap_key(
+                    rs.raw,
+                    rs.sh,
+                    wrapping_key,
+                    wrapped,
+                    entry.mech_id,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_TOKEN: False,
+                    },
+                    mech_param=mech_param,
+                )
+            except AssertionError as caught:
+                unwrap_exc = caught
+            if unwrap_exc is None and unwrapped_key != 0:
+                destroy_quietly(rs.raw, rs.sh, unwrapped_key)
+                unwrapped_key = 0
+            reject_or_classify(unwrap_exc, expected_rvs, label=label)
+        finally:
+            if unwrapped_key != 0:
+                destroy_quietly(rs.raw, rs.sh, unwrapped_key)
+            destroy_quietly(rs.raw, rs.sh, wrapping_key)
+            destroy_quietly(rs.raw, rs.sh, target_key)
+
+    def test_registry_unwrap_missing_required_param(
+        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+    ) -> None:
+        """Registry-driven missing-required-param check for advertised unwrap mechanisms."""
+        self._unwrap_required_param_must_reject(
+            p11_module_session,
+            mech_wrap_entry,
+            mech_param=mech_simple(mech_wrap_entry.mech_id),
+            expected_rvs=_MISSING_REQUIRED_PARAM_RVS,
+            label_suffix="missing required params",
+        )
+
+    def test_registry_unwrap_malformed_required_param(
+        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+    ) -> None:
+        """Registry-driven malformed-param check for advertised unwrap mechanisms."""
+        self._unwrap_required_param_must_reject(
+            p11_module_session,
+            mech_wrap_entry,
+            mech_param=mech_bytes(mech_wrap_entry.mech_id, b"\x00"),
+            expected_rvs=_MALFORMED_REQUIRED_PARAM_RVS,
+            label_suffix="malformed non-NULL params",
+        )
+
     def test_registry_digest_missing_required_param(
         self, p11_module_session: RawSession, mech_digest_entry: MechEntry
     ) -> None:

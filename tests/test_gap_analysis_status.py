@@ -741,6 +741,10 @@ def test_gap_analysis_marks_malformed_param_negatives_as_added() -> None:
     assert "test_registry_sign_malformed_required_param" in negative
     assert "test_registry_verify_missing_required_param" in negative
     assert "test_registry_verify_malformed_required_param" in negative
+    assert "test_registry_wrap_missing_required_param" in negative
+    assert "test_registry_wrap_malformed_required_param" in negative
+    assert "test_registry_unwrap_missing_required_param" in negative
+    assert "test_registry_unwrap_malformed_required_param" in negative
     assert "test_registry_digest_missing_required_param" in negative
     assert "test_registry_digest_malformed_required_param" in negative
     assert "test_registry_derive_missing_required_param" in negative
@@ -754,12 +758,18 @@ def test_gap_analysis_marks_malformed_param_negatives_as_added() -> None:
     assert "test_registry_decrypt_malformed_required_param" in guard
     assert "test_registry_sign_malformed_required_param" in guard
     assert "test_registry_verify_malformed_required_param" in guard
+    assert "test_registry_wrap_missing_required_param" in guard
+    assert "test_registry_wrap_malformed_required_param" in guard
+    assert "test_registry_unwrap_missing_required_param" in guard
+    assert "test_registry_unwrap_malformed_required_param" in guard
     assert "test_registry_digest_malformed_required_param" in guard
     assert "test_registry_derive_missing_required_param" in guard
     assert "test_registry_derive_malformed_required_param" in guard
 
     assert "Registry-driven malformed non-NULL parameter coverage exists" in doc_flat
     assert "Registry-driven decrypt/verify required-parameter coverage exists" in doc_flat
+    assert "Registry-driven wrap/unwrap required-parameter coverage exists" in doc_flat
+    assert "Registry-driven wrap/unwrap malformed-parameter coverage exists" in doc_flat
     assert "Registry-driven digest required-parameter coverage exists" in doc_flat
     assert "Registry-driven derive required-parameter coverage exists" in doc_flat
     assert "Registry-driven derive malformed-parameter coverage exists" in doc_flat
