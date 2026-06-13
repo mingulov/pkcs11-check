@@ -7,8 +7,6 @@ ALLOWLIST = {
     "src/pkcs11_check/testcases/_operability.py",
     "src/pkcs11_check/testcases/_rsa_export.py",
     "src/pkcs11_check/testcases/_subprocess_result.py",
-    "src/pkcs11_check/testcases/ckr/test_ckr_kem.py",
-    "src/pkcs11_check/testcases/ckr/test_ckr_keygen.py",
     "src/pkcs11_check/testcases/ckr/test_ckr_object.py",
     "src/pkcs11_check/testcases/ckr/test_ckr_raw_buffer.py",
     "src/pkcs11_check/testcases/ckr/test_ckr_spec_compliance.py",

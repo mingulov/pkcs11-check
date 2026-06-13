@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_bool,
     attr_ulong,
@@ -103,7 +104,14 @@ class TestEncapsulateKeyErrors:
             )
             if rv == CKR_OK:
                 destroy_quietly(rs.raw, rs.sh, secret.value)
-                pytest.fail("Should have rejected AES_ECB as encapsulate mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_EncapsulateKey:AES-mechanism",
+                    operation="C_EncapsulateKey",
+                    actual=rv,
+                    summary="Should have rejected AES_ECB as encapsulate mechanism",
+                )
             assert_ckr(CKR_KEM["encap_mechanism_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -134,7 +142,15 @@ class TestEncapsulateKeyErrors:
             )
             if rv == CKR_OK:
                 destroy_quietly(rs.raw, rs.sh, secret.value)
-                pytest.fail("Should have rejected RSA key with ML-KEM mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_EncapsulateKey:key-type-inconsistent",
+                    operation="C_EncapsulateKey",
+                    mechanism="CKM_ML_KEM",
+                    actual=rv,
+                    summary="Should have rejected RSA key with ML-KEM mechanism",
+                )
             assert_ckr(CKR_KEM["encap_key_type_inconsistent"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -168,7 +184,14 @@ class TestDecapsulateKeyErrors:
             )
             if rv == CKR_OK:
                 destroy_quietly(rs.raw, rs.sh, secret.value)
-                pytest.fail("Should have rejected AES_ECB as decapsulate mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_DecapsulateKey:AES-mechanism",
+                    operation="C_DecapsulateKey",
+                    actual=rv,
+                    summary="Should have rejected AES_ECB as decapsulate mechanism",
+                )
             assert_ckr(CKR_KEM["decap_mechanism_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, _pub)
@@ -201,7 +224,15 @@ class TestDecapsulateKeyErrors:
                 destroy_quietly(rs.raw, rs.sh, secret.value)
                 # ML-KEM implicit rejection: may produce a key (spec allows this)
                 if not exp.allow_success:
-                    pytest.fail("Should have rejected garbage ciphertext")
+                    classify(
+                        "accepted_invalid",
+                        kind="crypto",
+                        label="C_DecapsulateKey:garbage-ciphertext",
+                        operation="C_DecapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                        actual=rv,
+                        summary="Should have rejected garbage ciphertext",
+                    )
             else:
                 assert_ckr(exp, rv, ckr_strict)
         finally:

@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import (
     attr_bool,
@@ -99,11 +100,29 @@ class TestGenerateKeyErrors:
         key = CK_OBJECT_HANDLE(0)
         rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), None, 0, byref(key))
         if rv != CKR_OK:
-            pytest.xfail(f"{name} advertised but C_GenerateKey(NULL, 0) returned {ckr_name(rv)}")
+            # Advertised fixed-length keygen cleanly errored on the spec-permitted
+            # NULL/empty template -> advertised but not operational -> xfail.
+            xfail_as(
+                "not_operational",
+                label=f"{name}:generate-key-null-template",
+                operation="C_GenerateKey",
+                mechanism=f"CKM_{name}",
+                actual=rv,
+                summary=f"{name} advertised but C_GenerateKey(NULL, 0) returned {ckr_name(rv)}",
+            )
 
         try:
             if not key.value:
-                pytest.fail("C_GenerateKey(NULL, 0) returned CKR_OK without a key handle")
+                # C_GenerateKey claimed CKR_OK yet returned no key handle:
+                # claimed success not honored -> Type-C lifecycle contradiction.
+                fail_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label=f"{name}:generate-key-null-template",
+                    operation="C_GenerateKey",
+                    actual=rv,
+                    summary="C_GenerateKey(NULL, 0) returned CKR_OK without a key handle",
+                )
             attrs = read_attributes(rs.raw, rs.sh, key.value, [CKA_CLASS, CKA_KEY_TYPE])
             assert attrs[CKA_CLASS] == CKO_SECRET_KEY
             assert attrs[CKA_KEY_TYPE] == expected_key_type
@@ -125,7 +144,14 @@ class TestGenerateKeyErrors:
         )
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, key.value)
-            pytest.fail("Should have rejected SHA256 as key generation mechanism")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_GenerateKey:digest-mechanism",
+                operation="C_GenerateKey",
+                actual=rv,
+                summary="Should have rejected SHA256 as key generation mechanism",
+            )
         assert_ckr(CKR_KEYGEN["genkey_mechanism_invalid"], rv, ckr_strict)
 
     def test_bad_key_size_zero(self, p11_raw_session: Any, ckr_strict: bool) -> None:
@@ -145,7 +171,15 @@ class TestGenerateKeyErrors:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, key.value)
             if not exp.allow_success:
-                pytest.fail("Should have rejected AES key size 0")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_GenerateKey:AES-size-zero",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_AES_KEY_GEN",
+                    actual=rv,
+                    summary="Should have rejected AES key size 0",
+                )
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
@@ -174,7 +208,15 @@ class TestGenerateKeyErrors:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, key.value)
             if not exp.allow_success:
-                pytest.fail("Should have rejected AES key size 13 bytes (non-standard)")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_GenerateKey:AES-size-non-standard",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_AES_KEY_GEN",
+                    actual=rv,
+                    summary="Should have rejected AES key size 13 bytes (non-standard)",
+                )
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
@@ -311,7 +353,15 @@ class TestGenerateKeyPairErrors:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, pub.value)
             destroy_quietly(rs.raw, rs.sh, priv.value)
-            pytest.fail("Should have rejected RSA key size 0")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_GenerateKeyPair:RSA-size-zero",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                actual=rv,
+                summary="Should have rejected RSA key size 0",
+            )
         assert_ckr(CKR_KEYGEN["genkeypair_bad_size"], rv, ckr_strict)
 
     def test_bad_rsa_size_tiny(self, p11_raw_session: Any, ckr_strict: bool) -> None:
@@ -335,7 +385,15 @@ class TestGenerateKeyPairErrors:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, pub.value)
             destroy_quietly(rs.raw, rs.sh, priv.value)
-            pytest.fail("Should have rejected RSA key size 64")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_GenerateKeyPair:RSA-size-tiny",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                actual=rv,
+                summary="Should have rejected RSA key size 64",
+            )
         assert_ckr(CKR_KEYGEN["genkeypair_bad_size"], rv, ckr_strict)
 
     def test_mechanism_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
@@ -359,7 +417,14 @@ class TestGenerateKeyPairErrors:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, pub.value)
             destroy_quietly(rs.raw, rs.sh, priv.value)
-            pytest.fail("Should have rejected AES_ECB for RSA keypair generation")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_GenerateKeyPair:AES-mechanism",
+                operation="C_GenerateKeyPair",
+                actual=rv,
+                summary="Should have rejected AES_ECB for RSA keypair generation",
+            )
         assert_ckr(CKR_KEYGEN["genkeypair_mechanism_invalid"], rv, ckr_strict)
 
     def test_ec_curve_not_supported(self, p11_raw_session: Any, ckr_strict: bool) -> None:
@@ -387,7 +452,15 @@ class TestGenerateKeyPairErrors:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, pub.value)
             destroy_quietly(rs.raw, rs.sh, priv.value)
-            pytest.fail("Should have rejected bogus EC curve OID")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_GenerateKeyPair:bogus-EC-curve",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_EC_KEY_PAIR_GEN",
+                actual=rv,
+                summary="Should have rejected bogus EC curve OID",
+            )
         assert_ckr(CKR_KEYGEN["genkeypair_curve_not_supported"], rv, ckr_strict)
 
     def test_attribute_type_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
@@ -410,7 +483,14 @@ class TestGenerateKeyPairErrors:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, key.value)
             if not exp.allow_success:
-                pytest.fail("Should have rejected bogus attribute type")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_GenerateKey:bogus-attribute-type",
+                    operation="C_GenerateKey",
+                    actual=rv,
+                    summary="Should have rejected bogus attribute type",
+                )
         else:
             assert_ckr(exp, rv, ckr_strict)
 
@@ -439,7 +519,15 @@ class TestGenerateKeyPairErrors:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, pub.value)
             destroy_quietly(rs.raw, rs.sh, priv.value)
-            pytest.fail("Should have rejected malformed EC params")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_GenerateKeyPair:malformed-EC-params",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_EC_KEY_PAIR_GEN",
+                actual=rv,
+                summary="Should have rejected malformed EC params",
+            )
         assert_ckr(CKR_KEYGEN["genkeypair_domain_params_invalid"], rv, ckr_strict)
 
     def test_public_token_bool_overlong_length(self, p11_raw_session: Any) -> None:
@@ -555,7 +643,14 @@ class TestGenerateKeyPairErrors:
             byref(control_priv),
         )
         if rv != CKR_OK:
-            pytest.xfail(f"EC P-256 keypair generation is not operational: {ckr_name(rv)}")
+            xfail_as(
+                "not_operational",
+                label="EC_KEY_PAIR_GEN:P-256-control",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_EC_KEY_PAIR_GEN",
+                actual=rv,
+                summary=f"EC P-256 keypair generation is not operational: {ckr_name(rv)}",
+            )
         destroy_quietly(rs.raw, rs.sh, control_pub.value)
         destroy_quietly(rs.raw, rs.sh, control_priv.value)
 
@@ -649,7 +744,14 @@ class TestGenerateKeyPairErrors:
             byref(control_priv),
         )
         if rv != CKR_OK:
-            pytest.xfail(f"ML-KEM-768 keypair generation is not operational: {ckr_name(rv)}")
+            xfail_as(
+                "not_operational",
+                label="ML_KEM_KEY_PAIR_GEN:768-control",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                actual=rv,
+                summary=f"ML-KEM-768 keypair generation is not operational: {ckr_name(rv)}",
+            )
         destroy_quietly(rs.raw, rs.sh, control_pub.value)
         destroy_quietly(rs.raw, rs.sh, control_priv.value)
 
@@ -742,7 +844,14 @@ class TestGenerateKeyPairErrors:
             byref(control_priv),
         )
         if rv != CKR_OK:
-            pytest.xfail(f"ML-DSA-65 keypair generation is not operational: {ckr_name(rv)}")
+            xfail_as(
+                "not_operational",
+                label="ML_DSA_KEY_PAIR_GEN:65-control",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_ML_DSA_KEY_PAIR_GEN",
+                actual=rv,
+                summary=f"ML-DSA-65 keypair generation is not operational: {ckr_name(rv)}",
+            )
         destroy_quietly(rs.raw, rs.sh, control_pub.value)
         destroy_quietly(rs.raw, rs.sh, control_priv.value)
 
