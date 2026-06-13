@@ -765,6 +765,7 @@ def classify_negative_rv(
     *,
     label: str,
     allow_ok: bool = False,
+    kind: str | None = None,
 ) -> None:
     """Raw-rv negative classifier (provider-general 3-way).
 
@@ -782,13 +783,28 @@ def classify_negative_rv(
     ``xfail``. This helper decides direction by the model, never to silence a
     finding.
     """
+    from pkcs11_check import classification as C
+
     if rv == CKR_OK:
         if allow_ok:
             return
-        pytest.fail(f"{label}: accepted invalid (CKR_OK) -- must reject")
+        C.classify(
+            "accepted_invalid",
+            kind=kind,
+            label=label,
+            actual=rv,
+            expected=tuple(expected_rvs),
+        )
+        return
     if rv in expected_rvs:
         return
-    _xfail_or_fail_unexpected_clean_rv(rv, expected_rvs, label=label)
+    C.classify(
+        "nonspec_reject",
+        kind=kind,
+        label=label,
+        actual=rv,
+        expected=tuple(expected_rvs),
+    )
 
 
 def _xfail_or_fail_unexpected_clean_rv(
