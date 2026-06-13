@@ -37,6 +37,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
@@ -157,7 +158,13 @@ def test_mldsa_context(vec_id: str, vec: dict[str, Any], p11_module_session: Any
     try:
         priv, pub = _import_keys(rs, vec)
     except CkrAssertionError as import_exc:
-        pytest.xfail(f"ML-DSA private/public key import not operational: {import_exc}")
+        classify(
+            "not_operational",
+            label="ML_DSA:key-import",
+            summary=f"ML-DSA private/public key import not operational: {import_exc}",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     if priv is None or pub is None:
         pytest.skip("vector lacks an importable private+public key")
 
@@ -179,7 +186,13 @@ def test_mldsa_context(vec_id: str, vec: dict[str, Any], p11_module_session: Any
 
         # Positive vectors: only meaningful if the module can do context signing.
         if not _context_signing_operational(rs, priv, pub, msg):
-            pytest.xfail(f"ML-DSA context signing advertised but not operational [{vec_id}]")
+            classify(
+                "not_operational",
+                label=f"ML_DSA:context-sign:{vec_id}",
+                summary=f"ML-DSA context signing advertised but not operational [{vec_id}]",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
 
         sig = bytes.fromhex(vec.get("sig", ""))
         if not sig:

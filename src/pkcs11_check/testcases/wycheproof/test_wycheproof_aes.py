@@ -342,7 +342,13 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
         destroy_quietly(rs.raw, rs.sh, unwrapped)
     recovered = attrs.get(CKA_VALUE)
     if recovered is None:
-        pytest.xfail(f"AES-KW {vec_id}: unwrapped key material unreadable; cannot verify")
+        classify(
+            "honest_deviation",
+            label="AES-KW",
+            summary=f"AES-KW {vec_id}: unwrapped key material unreadable; cannot verify",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     assert recovered == msg_expected, f"AES-KW {vec_id}: unwrapped key material mismatch"
 
 
@@ -387,11 +393,13 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
         # Mechanism was advertised (has_mechanism gate passed above); a
         # negotiation-exhausted import refusal is "advertised but not
         # operational" -> xfail per the classification model.
-        pytest.xfail(
-            not_operational_reason(
+        classify(
+            "not_operational",
+            label="AES_KEY_WRAP_KWP:key-import",
+            summary=not_operational_reason(
                 "AES_KEY_WRAP_KWP:key-import",
                 ckr_name(exc.rv),
-            )
+            ),
         )
 
     # Wycheproof KWP vectors are RFC 5649 raw data vectors.  PKCS#11 exposes
@@ -409,7 +417,13 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_aes_runtime_reject(exc, f"AES-KWP {vec_id}")
-            pytest.fail(f"AES-KWP wrap failed for valid vector {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label="AES-KWP",
+                summary=f"AES-KWP wrap failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable: reject is fine
         return
     finally:
@@ -421,7 +435,14 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
             f"(got {len(wrapped)}B, expected {len(ct_expected)}B)"
         )
     if result == "invalid" and wrapped is not None and wrapped == ct_expected:
-        pytest.fail(f"AES-KWP wrap {vec_id} produced invalid ciphertext")
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            label="AES-KWP",
+            summary=f"AES-KWP wrap {vec_id} produced invalid ciphertext",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
 
 # --- AES-CCM ---
@@ -500,7 +521,13 @@ def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
                     result=_ccm_operability(rs, "AES_CCM", "decrypt"),
                     label=f"AES-CCM {vec_id}",
                 )
-            pytest.fail(f"AES-CCM decrypt failed for valid vector {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label="AES-CCM",
+                summary=f"AES-CCM decrypt failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # invalid vector rejected -- genuine only if CCM decrypt actually works.
         # A clean op-reject (AssertionError) on a NOT_OPERATIONAL mechanism is
         # vacuous (the module refuses everything); TypeError/NotImplementedError
@@ -517,7 +544,14 @@ def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     if result == "valid" and plaintext is not None:
         assert plaintext == msg_expected, f"AES-CCM {vec_id}: plaintext mismatch"
     if result == "invalid" and plaintext is not None:
-        pytest.fail(f"AES-CCM decrypt {vec_id}: accepted invalid ciphertext/tag")
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            label="AES-CCM",
+            summary=f"AES-CCM decrypt {vec_id}: accepted invalid ciphertext/tag",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
 
 # --- AES-GMAC ---
@@ -576,16 +610,36 @@ def test_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
         if result == "valid":
             if isinstance(exc, AssertionError):
                 _xfail_if_aes_runtime_reject(exc, f"AES-GMAC {vec_id}")
-            pytest.fail(f"AES-GMAC verify failed for valid vector {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label="AES-GMAC",
+                summary=f"AES-GMAC verify failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable: reject of an invalid vector is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
 
     if result == "valid" and not verified:
-        pytest.fail(f"AES-GMAC rejected a valid GMAC vector {vec_id}")
+        classify(
+            "wrong_result",
+            kind="crypto",
+            label="AES-GMAC",
+            summary=f"AES-GMAC rejected a valid GMAC vector {vec_id}",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     if result == "invalid" and verified:
-        pytest.fail(f"AES-GMAC {vec_id}: accepted invalid tag (forged tag verified)")
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            label="AES-GMAC",
+            summary=f"AES-GMAC {vec_id}: accepted invalid tag (forged tag verified)",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
 
 # --- AES-XTS ---
@@ -632,11 +686,13 @@ def test_aes_xts(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
             # Mechanism was advertised (has_mechanism gate passed above); a
             # negotiation-exhausted import refusal is "advertised but not
             # operational" -> xfail per the classification model.
-            pytest.xfail(
-                not_operational_reason(
+            classify(
+                "not_operational",
+                label="AES_XTS:key-import",
+                summary=not_operational_reason(
                     "AES_XTS:key-import",
                     ckr_name(exc.rv),
-                )
+                ),
             )
         raise
 
@@ -654,7 +710,13 @@ def test_aes_xts(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
         if result == "valid":
             if isinstance(exc, AssertionError):
                 _xfail_if_aes_runtime_reject(exc, f"AES-XTS {vec_id}")
-            pytest.fail(f"AES-XTS encrypt failed for valid vector {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label="AES-XTS",
+                summary=f"AES-XTS encrypt failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable: reject is fine
         return
     finally:

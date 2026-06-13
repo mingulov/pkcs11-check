@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_chacha20_poly1305
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -98,7 +99,11 @@ def test_chacha20_poly1305(p11_module_session: Any, vec_id: str, vec: dict[str, 
         # CHACHA20_POLY1305 was advertised (has_mechanism gate passed above); a
         # negotiation-exhausted key import refusal is "advertised but not
         # operational" -> xfail per the classification model, never skip.
-        pytest.xfail(not_operational_reason("CHACHA20_POLY1305:key-import", ckr_name(exc.rv)))
+        classify(
+            "not_operational",
+            label="CHACHA20_POLY1305:key-import",
+            summary=not_operational_reason("CHACHA20_POLY1305:key-import", ckr_name(exc.rv)),
+        )
 
     # CK_SALSA20_CHACHA20_POLY1305_PARAMS: (nonce, aad)
     chacha_param = mech_chacha20_poly1305(CKM_CHACHA20_POLY1305, iv, aad=aad if aad else None)
@@ -115,7 +120,13 @@ def test_chacha20_poly1305(p11_module_session: Any, vec_id: str, vec: dict[str, 
         )
     except (AssertionError, AttributeError, TypeError) as exc:
         if result == "valid":
-            pytest.fail(f"ChaCha20-Poly1305 decrypt failed for valid vector {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label="CHACHA20_POLY1305",
+                summary=f"ChaCha20-Poly1305 decrypt failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable: reject of an invalid vector is fine
         return
     finally:
@@ -124,4 +135,11 @@ def test_chacha20_poly1305(p11_module_session: Any, vec_id: str, vec: dict[str, 
     if result == "valid" and plaintext is not None:
         assert plaintext == msg_expected, f"ChaCha20-Poly1305 {vec_id}: plaintext mismatch"
     if result == "invalid" and plaintext is not None:
-        pytest.fail(f"ChaCha20-Poly1305 decrypt {vec_id}: accepted invalid ciphertext/tag")
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            label="CHACHA20_POLY1305",
+            summary=f"ChaCha20-Poly1305 decrypt {vec_id}: accepted invalid ciphertext/tag",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )

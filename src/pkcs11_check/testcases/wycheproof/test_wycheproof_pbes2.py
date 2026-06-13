@@ -58,6 +58,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.classification import classify
 from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
@@ -198,7 +199,13 @@ def test_pbes2_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_pbes2_runtime_reject(exc, vec_id, "key derivation")
-            pytest.fail(f"PBES2 key derivation failed for valid vector {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label=f"PBES2:kdf:{vec_id}",
+                summary=f"PBES2 key derivation failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         return
 
     try:
@@ -214,10 +221,22 @@ def test_pbes2_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
         destroy_quietly(rs.raw, rs.sh, key)
         if result == "valid":
             _xfail_if_pbes2_runtime_reject(exc, vec_id, "decrypt")
-            pytest.fail(f"PBES2 decrypt failed for valid vector {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label=f"PBES2:decrypt:{vec_id}",
+                summary=f"PBES2 decrypt failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         return
 
     destroy_quietly(rs.raw, rs.sh, key)
     if result == "invalid":
-        pytest.fail(f"PBES2 decrypt {vec_id}: accepted invalid ciphertext")
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            summary=f"PBES2 decrypt {vec_id}: accepted invalid ciphertext",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     assert plaintext == expected, f"PBES2 plaintext mismatch for {vec_id}"

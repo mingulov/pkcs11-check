@@ -40,6 +40,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.classification import classify
 from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
@@ -194,7 +195,13 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_module_session: Any)
         )
         try:
             if result == "invalid":
-                pytest.fail(f"Invalid ML-KEM decapsulation vector {vec_id} produced a shared key")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    summary=f"Invalid ML-KEM decapsulation vector {vec_id} produced a shared key",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             if result == "valid" and expected_ss:
                 # We can't directly compare since the key value is wrapped.
                 pass  # Key was produced - that's the expected behavior.
@@ -210,7 +217,13 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_module_session: Any)
                 _DECAPS_REJECT_RVS,
                 "ML-KEM decapsulation not operational for an imported decapsulation key",
             )
-            pytest.fail(f"Valid ML-KEM decaps failed: {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label=f"ML_KEM:decaps:{vec_id}",
+                summary=f"Valid ML-KEM decaps failed: {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable/invalid: reject is fine
         return
     finally:

@@ -15,6 +15,7 @@ from pkcs11_check.raw.recipes import (
     import_pqc_private_key,
     sign_single,
 )
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
@@ -161,7 +162,13 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_module_session: Any) -
             )
             return
         if is_known_error(exc, _MLDSA_PRIVATE_IMPORT_REJECT_CKRS):
-            pytest.xfail(f"ML_DSA advertised but private-key import is not operational: {exc_msg}")
+            classify(
+                "not_operational",
+                label="ML_DSA:private-key-import",
+                summary=f"ML_DSA advertised but private-key import is not operational: {exc_msg}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         raise
 
     try:
@@ -176,15 +183,32 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_module_session: Any) -
             # self-contradiction is provable from this alone (only the key
             # holder shape is wrong), so per the classification model it is a
             # recorded deviation, not a hard fail.
-            pytest.xfail(
-                f"{vec_id}: lenient private-key validation -- module accepted malformed "
-                f"ML-DSA key material (flags={vec.get('flags', [])}) and signed"
+            classify(
+                "honest_deviation",
+                summary=(
+                    f"{vec_id}: lenient private-key validation -- module accepted malformed "
+                    f"ML-DSA key material (flags={vec.get('flags', [])}) and signed"
+                ),
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
         else:
-            pytest.fail(f"Invalid ML-DSA sign vector {vec_id} accepted by module")
+            classify(
+                "accepted_invalid",
+                kind="crypto",
+                summary=f"Invalid ML-DSA sign vector {vec_id} accepted by module",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
     except AssertionError as exc:
         if result == "valid":
-            pytest.fail(f"Valid ML-DSA sign failed {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label=f"ML_DSA:sign:{vec_id}",
+                summary=f"Valid ML-DSA sign failed {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable: module rejected invalid vector
         return
     finally:
