@@ -875,6 +875,19 @@ def test_gap_analysis_marks_kmac_tampered_message_negative_as_added() -> None:
     assert "KMAC tampered-message negative coverage" in doc_flat
 
 
+def test_gap_analysis_marks_kmac_variable_mac_length_as_added() -> None:
+    """KMAC signing exercises more than one nonzero ulMacLength."""
+    extended = _read("src/pkcs11_check/testcases/test_extended_mechanisms.py")
+    guard = _read("tests/test_kmac_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_kmac_128_short_output_roundtrip" in extended
+    assert "test_kmac_256_short_output_roundtrip" in extended
+    assert "test_kmac_product_tests_cover_variable_mac_lengths" in guard
+
+    assert "KMAC variable-output-length coverage" in doc_flat
+
+
 def test_gap_analysis_marks_message_api_registry_init_coverage_as_added() -> None:
     """Message API init coverage is driven from advertised CKF_MESSAGE_* flags."""
     message = _read("src/pkcs11_check/testcases/test_mech_message.py")

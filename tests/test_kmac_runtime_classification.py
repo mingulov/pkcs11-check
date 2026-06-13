@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from pkcs11_check.raw.types_std import CKM
 from pkcs11_check.testcases import test_extended_mechanisms as tem
+
+
+def test_kmac_product_tests_cover_variable_mac_lengths() -> None:
+    text = Path(tem.__file__).read_text(encoding="utf-8")
+
+    assert "test_kmac_128_short_output_roundtrip" in text
+    assert "test_kmac_256_short_output_roundtrip" in text
+    assert "self._run_roundtrip(rs, \"KMAC_128\", 16)" in text
+    assert "self._run_roundtrip(rs, \"KMAC_256\", 32)" in text
 
 
 def test_kmac_roundtrip_rejects_tampered_message(

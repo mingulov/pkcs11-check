@@ -593,6 +593,14 @@ class TestKMAC:
         rs = p11_raw_session
         self._run_roundtrip(rs, "KMAC_256", 64)
 
+    def test_kmac_128_short_output_roundtrip(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        self._run_roundtrip(rs, "KMAC_128", 16)
+
+    def test_kmac_256_short_output_roundtrip(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        self._run_roundtrip(rs, "KMAC_256", 32)
+
 
 _EXTERNAL_MU_SAMPLE = bytes(range(64))
 
