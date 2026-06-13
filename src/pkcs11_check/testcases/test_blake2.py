@@ -81,7 +81,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import reject_or_classify, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    reject_or_classify,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.full
 
@@ -861,6 +865,48 @@ class TestBlake2bKeyed:
         case: _Blake2bKeyedCase,
     ) -> None:
         self._key_gen_signs_reference(p11_raw_session, case)
+
+    def _key_gen_rejects_missing_value_len(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism(case.key_gen_name):
+            pytest.skip(f"CKM_{case.key_gen_name} not supported")
+
+        tmpl = template(
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, True),
+            attr_bool(CKA_SIGN, True),
+            attr_bool(CKA_VERIFY, True),
+        )
+        handle = CK_OBJECT_HANDLE(0)
+        mech = mech_simple(case.key_gen_mech)
+        rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
+        try:
+            classify_negative_rv(
+                rv,
+                (CKR_TEMPLATE_INCOMPLETE,),
+                label=f"{case.key_gen_name} missing CKA_VALUE_LEN",
+            )
+        finally:
+            if rv == CKR_OK and handle.value:
+                destroy_quietly(rs.raw, rs.sh, handle.value)
+
+    @pytest.mark.parametrize(
+        "case",
+        _BLAKE2B_KEYED_CASES,
+        ids=[case.id for case in _BLAKE2B_KEYED_CASES],
+    )
+    def test_blake2b_key_gen_rejects_missing_value_len(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        """BLAKE2B_*_KEY_GEN missing CKA_VALUE_LEN is rejected."""
+        self._key_gen_rejects_missing_value_len(p11_raw_session, case)
 
     def _key_derive_value(self, p11_raw_session: Any, case: _Blake2bKeyedCase) -> None:
         rs = p11_raw_session

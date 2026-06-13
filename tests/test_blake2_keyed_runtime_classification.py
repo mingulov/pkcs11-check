@@ -14,13 +14,16 @@ from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_SENSITIVE,
+    CKA_SIGN,
     CKA_TOKEN,
     CKA_VALUE,
     CKA_VALUE_LEN,
+    CKA_VERIFY,
     CKK_AES,
     CKK_GENERIC_SECRET,
     CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
+    CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
@@ -615,3 +618,54 @@ def test_blake2b_key_derive_value_injection_accepts_but_ignores_value_xfails(
             rs,
             case,
         )
+
+
+def test_blake2b_key_gen_missing_value_len_is_expected_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = test_blake2._BLAKE2B_KEYED_CASE_BY_BITS[256]
+    attr_types: list[int] = []
+
+    def _template(*attrs: Any) -> SimpleNamespace:
+        attr_types.extend(int(attr.attribute.type) for attr in attrs)
+        return SimpleNamespace(ptr=object(), count=len(attrs))
+
+    class _Raw:
+        def C_GenerateKey(self, *_args: Any) -> int:  # noqa: N802
+            return int(CKR_TEMPLATE_INCOMPLETE)
+
+    rs = SimpleNamespace(
+        raw=_Raw(),
+        sh=1,
+        has_mechanism=lambda name: name == "BLAKE2B_256_KEY_GEN",
+    )
+    monkeypatch.setattr(test_blake2, "template", _template)
+
+    test_blake2.TestBlake2bKeyed()._key_gen_rejects_missing_value_len(rs, case)
+
+    assert CKA_VALUE_LEN not in attr_types
+    assert CKA_TOKEN in attr_types
+    assert CKA_SENSITIVE in attr_types
+    assert CKA_EXTRACTABLE in attr_types
+    assert CKA_SIGN in attr_types
+    assert CKA_VERIFY in attr_types
+
+
+def test_blake2b_key_gen_missing_value_len_acceptance_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = test_blake2._BLAKE2B_KEYED_CASE_BY_BITS[256]
+
+    class _Raw:
+        def C_GenerateKey(self, *_args: Any) -> int:  # noqa: N802
+            return int(CKR_OK)
+
+    rs = SimpleNamespace(
+        raw=_Raw(),
+        sh=1,
+        has_mechanism=lambda name: name == "BLAKE2B_256_KEY_GEN",
+    )
+    monkeypatch.setattr(test_blake2, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(pytest.fail.Exception, match="accepted invalid"):
+        test_blake2.TestBlake2bKeyed()._key_gen_rejects_missing_value_len(rs, case)

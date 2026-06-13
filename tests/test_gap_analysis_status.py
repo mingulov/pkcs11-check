@@ -723,6 +723,22 @@ def test_gap_analysis_marks_blake2b_key_derive_value_injection_as_added() -> Non
     assert "BLAKE2B KEY_DERIVE CKA_VALUE-injection negative coverage" in doc_flat
 
 
+def test_gap_analysis_marks_blake2b_key_gen_missing_value_len_as_added() -> None:
+    """BLAKE2B KEY_GEN rejects templates that omit CKA_VALUE_LEN."""
+    blake2 = _read("src/pkcs11_check/testcases/test_blake2.py")
+    guard = _read("tests/test_blake2_keyed_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_blake2b_key_gen_rejects_missing_value_len" in blake2
+    assert "_key_gen_rejects_missing_value_len" in blake2
+    assert "classify_negative_rv(" in blake2
+    assert "BLAKE2B_*_KEY_GEN missing CKA_VALUE_LEN is rejected" in blake2
+    assert "test_blake2b_key_gen_missing_value_len_is_expected_reject" in guard
+    assert "test_blake2b_key_gen_missing_value_len_acceptance_fails" in guard
+
+    assert "BLAKE2B KEY_GEN missing-value-length negative coverage" in doc_flat
+
+
 def test_gap_analysis_marks_shake_xof_and_external_mu_as_dedicated_coverage() -> None:
     """SHAKE/XOF and ML-DSA ExternalMu are no longer registry/smoke only."""
     extended = _read("src/pkcs11_check/testcases/test_extended_mechanisms.py")

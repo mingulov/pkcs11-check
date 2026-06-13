@@ -507,6 +507,10 @@ smoke behavior, or covered only by one narrow variation.
    BLAKE2B fixed-length HMAC wrong-length MAC coverage now verifies the same
    extended/truncated rejection behavior for the fixed-output
    `CKM_BLAKE2B_*_HMAC` mechanisms.
+   BLAKE2B KEY_GEN missing-value-length negative coverage now verifies every
+   keyed output size rejects key generation templates that omit the required
+   `CKA_VALUE_LEN` selector through the shared provider-general negative
+   classifier.
    BLAKE2B KEY_DERIVE default-template coverage now verifies the OASIS
    no-key-type/no-length rule by omitting `CKA_KEY_TYPE` and `CKA_VALUE_LEN`
    and checking for generic-secret, digest-length output. BLAKE2B KEY_DERIVE
