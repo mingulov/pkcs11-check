@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
 from pkcs11_check.raw.types_std import (
     CKA_CERTIFICATE_TYPE,
@@ -86,7 +87,11 @@ class TestCertificateAttributes:
             if tc["expected_result"] == "SUCCESS":
                 # Phase 5 P1a: a clean reject of a Limbo-valid cert is provider-
                 # incompleteness -> xfail, not a hard fail.
-                pytest.xfail(f"module cleanly rejected a cert Limbo considers valid: {tc['id']}")
+                classify(
+                    "not_operational",
+                    kind="metadata",
+                    summary=f"module cleanly rejected a cert Limbo considers valid: {tc['id']}",
+                )
             pytest.skip(f"Module rejected certificate {tc['id']} as expected")
             return
 

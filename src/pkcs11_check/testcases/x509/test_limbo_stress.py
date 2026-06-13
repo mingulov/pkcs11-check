@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     create_object,
     destroy_quietly,
@@ -89,9 +90,13 @@ def test_exhaustive_cert_import_no_crash(
             attrs = {}  # CKR error reading VALUE is acceptable
         stored = attrs.get(CKA_VALUE, b"")
         if isinstance(stored, bytes) and stored and stored != der_bytes:
-            pytest.fail(
-                f"{tc_id}: CKA_VALUE round-trip mismatch "
-                f"(stored {len(stored)}B vs original {len(der_bytes)}B)"
+            classify(
+                "self_contradiction",
+                kind="metadata",
+                summary=(
+                    f"{tc_id}: CKA_VALUE round-trip mismatch "
+                    f"(stored {len(stored)}B vs original {len(der_bytes)}B)"
+                ),
             )
 
         # Force the module to parse the DER by reading computed attributes.
@@ -150,9 +155,13 @@ def test_exhaustive_crl_import_no_crash(
             attrs = {}  # CKR error reading VALUE is acceptable
         stored = attrs.get(CKA_VALUE, b"")
         if isinstance(stored, bytes) and stored and stored != der_bytes:
-            pytest.fail(
-                f"{tc_id}: CRL CKA_VALUE round-trip mismatch "
-                f"(stored {len(stored)}B vs original {len(der_bytes)}B)"
+            classify(
+                "self_contradiction",
+                kind="metadata",
+                summary=(
+                    f"{tc_id}: CRL CKA_VALUE round-trip mismatch "
+                    f"(stored {len(stored)}B vs original {len(der_bytes)}B)"
+                ),
             )
 
         try:

@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import destroy_quietly
 from pkcs11_check.raw.types_std import CKA_LABEL, CKA_TOKEN
 from pkcs11_check.testcases.x509.conftest import (
@@ -86,6 +87,14 @@ def test_limbo_attribute_parity(
             continue
 
     if mismatches:
-        pytest.fail("\n".join(mismatches + missing_mandatory))
+        classify(
+            "self_contradiction",
+            kind="metadata",
+            summary="\n".join(mismatches + missing_mandatory),
+        )
     if missing_mandatory:
-        pytest.xfail("\n".join(missing_mandatory))
+        classify(
+            "not_operational",
+            kind="metadata",
+            summary="\n".join(missing_mandatory),
+        )

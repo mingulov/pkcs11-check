@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
 from pkcs11_check.raw.types_std import (
@@ -175,8 +176,13 @@ class TestLimboCertImport:
                     # Phase 5 P1a: a clean CKR rejection of a Limbo-valid cert is
                     # provider-incompleteness (stricter than required for storage)
                     # -> xfail, not a hard fail. Non-CKR errors re-raise below.
-                    pytest.xfail(
-                        f"module cleanly rejected a Limbo-valid cert {tc['id']} on raw import: {e}"
+                    classify(
+                        "not_operational",
+                        kind="metadata",
+                        summary=(
+                            f"module cleanly rejected a Limbo-valid cert"
+                            f" {tc['id']} on raw import: {e}"
+                        ),
                     )
             else:
                 raise
@@ -290,10 +296,14 @@ def test_import_limbo_failure_cert_raw(
         attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
         stored_value = attrs[CKA_VALUE]
         if stored_value != der:
-            pytest.fail(
-                f"{tc['id']}: module stored modified cert bytes - "
-                f"CKA_VALUE mismatch ({len(stored_value)}B stored "
-                f"vs {len(der)}B sent)"
+            classify(
+                "self_contradiction",
+                kind="metadata",
+                summary=(
+                    f"{tc['id']}: module stored modified cert bytes - "
+                    f"CKA_VALUE mismatch ({len(stored_value)}B stored "
+                    f"vs {len(der)}B sent)"
+                ),
             )
 
     except AssertionError as e:

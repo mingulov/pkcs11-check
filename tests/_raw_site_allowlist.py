@@ -73,12 +73,4 @@ ALLOWLIST = {
     "src/pkcs11_check/testcases/test_verify_signature.py",
     "src/pkcs11_check/testcases/test_wtls.py",
     "src/pkcs11_check/testcases/test_x3dh.py",
-    "src/pkcs11_check/testcases/x509/test_attribute_parity.py",
-    "src/pkcs11_check/testcases/x509/test_attributes.py",
-    "src/pkcs11_check/testcases/x509/test_core_ops.py",
-    "src/pkcs11_check/testcases/x509/test_identity.py",
-    "src/pkcs11_check/testcases/x509/test_lifecycle.py",
-    "src/pkcs11_check/testcases/x509/test_limbo_import.py",
-    "src/pkcs11_check/testcases/x509/test_limbo_stress.py",
-    "src/pkcs11_check/testcases/x509/test_search.py",
 }

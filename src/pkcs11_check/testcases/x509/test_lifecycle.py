@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     read_attributes,
@@ -120,7 +121,11 @@ class TestCertificateLifecycle:
                 # If it succeeded, verify it actually CHANGED
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_LABEL])
                 if attrs[CKA_LABEL] == label_new:
-                    pytest.fail("Successfully modified label on non-modifiable cert")
+                    classify(
+                        "self_contradiction",
+                        kind="policy",
+                        summary="Successfully modified label on non-modifiable cert",
+                    )
             except AssertionError:
                 pass  # Expected
         finally:

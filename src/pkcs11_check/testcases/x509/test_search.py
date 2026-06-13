@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.pack import attr_bytes, attr_ulong, template
 from pkcs11_check.raw.recipes import destroy_quietly, find_objects, read_attributes
 from pkcs11_check.raw.types_std import (
@@ -35,7 +36,11 @@ def _xfail_if_search_miss(found: list[int], h: int, *, by: str) -> None:
     miss is a noted deviation (``xfail``), not a hard ``fail``.
     """
     if h not in found:
-        pytest.xfail(f"module extracted {by} but search-by-{by} did not return the cert")
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            summary=f"module extracted {by} but search-by-{by} did not return the cert",
+        )
 
 
 def _get_searchable_testcases() -> list[dict[str, Any]]:
