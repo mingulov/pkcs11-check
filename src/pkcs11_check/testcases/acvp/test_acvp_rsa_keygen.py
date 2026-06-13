@@ -36,6 +36,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_rsa_keypair,
@@ -123,7 +124,14 @@ class TestRsaKeyGen:
             if is_known_error(exc, _RSA_KEYGEN_CAPABILITY_CKRS):
                 pytest.skip(f"RSA {modulo}-bit key generation not supported: {exc}")
             if is_known_error(exc, {CKR_MECHANISM_INVALID}):
-                pytest.xfail(f"CKM_RSA_PKCS_KEY_PAIR_GEN advertised but keygen failed: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_KEY_PAIR_GEN:keygen",
+                    summary=f"CKM_RSA_PKCS_KEY_PAIR_GEN advertised but keygen failed: {exc}",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
@@ -185,7 +193,14 @@ class TestRsaKeyGen:
             if is_known_error(exc, _RSA_KEYGEN_CAPABILITY_CKRS):
                 pytest.skip(f"RSA {modulo}-bit key attribute query failed: {exc}")
             if is_known_error(exc, {CKR_MECHANISM_INVALID}):
-                pytest.xfail(f"CKM_RSA_PKCS_KEY_PAIR_GEN advertised but keygen failed: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_KEY_PAIR_GEN:keygen",
+                    summary=f"CKM_RSA_PKCS_KEY_PAIR_GEN advertised but keygen failed: {exc}",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
@@ -239,7 +254,12 @@ class TestRsaKeyGenBySize:
             if is_known_error(exc, _RSA_KEYGEN_CAPABILITY_CKRS):
                 pytest.skip(f"RSA {bits}-bit not supported by this module")
             if is_known_error(exc, {CKR_MECHANISM_INVALID}):
-                pytest.xfail(f"CKM_RSA_PKCS_KEY_PAIR_GEN advertised but keygen failed: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_KEY_PAIR_GEN:keygen",
+                    summary=f"CKM_RSA_PKCS_KEY_PAIR_GEN advertised but keygen failed: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
