@@ -832,6 +832,7 @@ def reject_or_classify(
     expected_rvs: tuple[Any, ...] | set[Any] | frozenset[Any],
     *,
     label: str,
+    kind: str | None = None,
 ) -> None:
     """Recipe-site negative classifier (exception-shaped, provider-general 3-way).
 
@@ -847,16 +848,35 @@ def reject_or_classify(
     Mirrors ``classify_negative_rv`` for the exception path, reusing
     ``is_known_error`` for the match.
     """
+    from pkcs11_check import classification as C
+
     if exc is None:
-        pytest.fail(f"{label}: accepted invalid (CKR_OK) -- must reject")
+        C.classify(
+            "accepted_invalid",
+            kind=kind,
+            label=label,
+            actual="CKR_OK",
+            expected=tuple(expected_rvs),
+        )
+        return
     if is_known_error(exc, expected_rvs):
         return
     rv = getattr(exc, "rv", None)
-    if isinstance(rv, int):
-        _xfail_or_fail_unexpected_clean_rv(rv, expected_rvs, label=label)
+    if rv is not None:
+        C.classify(
+            "nonspec_reject",
+            kind=kind,
+            label=label,
+            actual=rv,
+            expected=tuple(expected_rvs),
+        )
         return
-    name = ckr_name(rv) if rv is not None else str(exc)
-    pytest.xfail(f"{label}: rejected with {name}, expected {[ckr_name(c) for c in expected_rvs]}")
+    C.classify(
+        "nonspec_reject",
+        kind=kind,
+        label=label,
+        summary=f"{label}: rejected with {type(exc).__name__}, expected {list(expected_rvs)}",
+    )
 
 
 def classify_policy_enforcement(*, claimed: bool, violated: bool, label: str) -> None:
