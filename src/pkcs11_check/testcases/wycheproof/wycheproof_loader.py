@@ -39,6 +39,8 @@ def load_vectors(filename: str) -> list[dict[str, Any]]:
         group_meta = {k: v for k, v in group.items() if k != "tests"}
         for test in group.get("tests", []):
             test["_group"] = group_meta
+            test["_source"] = f"wycheproof:{filename}"
+            test["_vector_id"] = f"tcId={test.get('tcId')}"
             vectors.append(test)
     return vectors
 
