@@ -29,7 +29,6 @@ ALLOWLIST = {
     "src/pkcs11_check/testcases/test_hw_features.py",
     "src/pkcs11_check/testcases/test_initialize_args.py",
     "src/pkcs11_check/testcases/test_kem.py",
-    "src/pkcs11_check/testcases/test_key_flags.py",
     "src/pkcs11_check/testcases/test_mech_attribute.py",
     "src/pkcs11_check/testcases/test_mech_keygen.py",
     "src/pkcs11_check/testcases/test_mech_message.py",

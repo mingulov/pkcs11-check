@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.raw.pack import mech_bytes
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -145,16 +146,27 @@ class TestNeverExtractable:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 spec Table 18",
                 )
-                pytest.xfail(
-                    "Module generates AES keys with CKA_EXTRACTABLE=True by default "
-                    "(spec Table 18 requires CKA_EXTRACTABLE to default to False)"
+                classify(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_EXTRACTABLE:default",
+                    operation="C_GenerateKey",
+                    summary=(
+                        "Module generates AES keys with CKA_EXTRACTABLE=True by default "
+                        "(spec Table 18 requires CKA_EXTRACTABLE to default to False)"
+                    ),
                 )
             assert attrs_d[CKA_EXTRACTABLE] is False
             never_ext_default = _read_bool_attr_safe(rs, key_default, CKA_NEVER_EXTRACTABLE)
             if never_ext_default is None:
-                pytest.xfail(
-                    "Module does not implement CKA_NEVER_EXTRACTABLE tracking "
-                    "(PKCS#11 spec Table 18 requires this attribute)"
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_NEVER_EXTRACTABLE:not-implemented",
+                    summary=(
+                        "Module does not implement CKA_NEVER_EXTRACTABLE tracking "
+                        "(PKCS#11 spec Table 18 requires this attribute)"
+                    ),
                 )
             if never_ext_default is not True:
                 from pkcs11_check.compliance import ComplianceLevel, note
@@ -165,9 +177,14 @@ class TestNeverExtractable:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 spec Table 18",
                 )
-                pytest.xfail(
-                    "Module does not set CKA_NEVER_EXTRACTABLE=True on non-extractable "
-                    "generated keys (PKCS#11 spec Table 18 invariant violation)"
+                fail_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label="CKA_NEVER_EXTRACTABLE:invariant",
+                    summary=(
+                        "Module does not set CKA_NEVER_EXTRACTABLE=True on non-extractable "
+                        "generated keys (PKCS#11 spec Table 18 invariant violation)"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_default)
@@ -183,14 +200,24 @@ class TestNeverExtractable:
             assert attrs_e[CKA_EXTRACTABLE] is True
             never_ext = _read_bool_attr_safe(rs, key_ext, CKA_NEVER_EXTRACTABLE)
             if never_ext is None:
-                pytest.xfail(
-                    "Module does not implement CKA_NEVER_EXTRACTABLE tracking "
-                    "(PKCS#11 spec Table 18 requires this attribute)"
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_NEVER_EXTRACTABLE:not-implemented",
+                    summary=(
+                        "Module does not implement CKA_NEVER_EXTRACTABLE tracking "
+                        "(PKCS#11 spec Table 18 requires this attribute)"
+                    ),
                 )
             if never_ext is not False:
-                pytest.xfail(
-                    "Module sets CKA_NEVER_EXTRACTABLE=True on extractable keys -- "
-                    "violates PKCS#11 spec Table 18 invariant"
+                fail_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label="CKA_NEVER_EXTRACTABLE:invariant",
+                    summary=(
+                        "Module sets CKA_NEVER_EXTRACTABLE=True on extractable keys -- "
+                        "violates PKCS#11 spec Table 18 invariant"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_ext)
@@ -213,9 +240,14 @@ class TestLocalFlag:
         try:
             local_val = _read_bool_attr_safe(rs, key, CKA_LOCAL)
             if local_val is None:
-                pytest.xfail(
-                    "Module does not implement CKA_LOCAL attribute "
-                    "(PKCS#11 spec Table 18 requires it for generated keys)"
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_LOCAL:not-implemented",
+                    summary=(
+                        "Module does not implement CKA_LOCAL attribute "
+                        "(PKCS#11 spec Table 18 requires it for generated keys)"
+                    ),
                 )
             if local_val is not True:
                 from pkcs11_check.compliance import ComplianceLevel, note
@@ -225,9 +257,15 @@ class TestLocalFlag:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 spec Table 18",
                 )
-                pytest.xfail(
-                    "Module does not set CKA_LOCAL=True on generated keys "
-                    "(PKCS#11 spec Table 18 requires CKA_LOCAL=True for C_GenerateKey)"
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_LOCAL:generated-key",
+                    operation="C_GenerateKey",
+                    summary=(
+                        "Module does not set CKA_LOCAL=True on generated keys "
+                        "(PKCS#11 spec Table 18 requires CKA_LOCAL=True for C_GenerateKey)"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -251,9 +289,14 @@ class TestLocalFlag:
         try:
             local_val = _read_bool_attr_safe(rs, key, CKA_LOCAL)
             if local_val is None:
-                pytest.xfail(
-                    "Module does not implement CKA_LOCAL attribute "
-                    "(PKCS#11 spec Table 18 requires it for imported keys)"
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_LOCAL:not-implemented",
+                    summary=(
+                        "Module does not implement CKA_LOCAL attribute "
+                        "(PKCS#11 spec Table 18 requires it for imported keys)"
+                    ),
                 )
             if local_val is not False:
                 from pkcs11_check.compliance import ComplianceLevel, note
@@ -263,9 +306,15 @@ class TestLocalFlag:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 spec Table 18",
                 )
-                pytest.xfail(
-                    "Module sets CKA_LOCAL=True on imported keys "
-                    "(PKCS#11 spec Table 18 requires CKA_LOCAL=False for C_CreateObject)"
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_LOCAL:imported-key",
+                    operation="C_CreateObject",
+                    summary=(
+                        "Module sets CKA_LOCAL=True on imported keys "
+                        "(PKCS#11 spec Table 18 requires CKA_LOCAL=False for C_CreateObject)"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -289,11 +338,15 @@ class TestLocalFlag:
             priv_local = _read_bool_attr_safe(rs, priv, CKA_LOCAL)
 
             if pub_local is None or priv_local is None:
-                pytest.xfail(
-                    "Module does not implement CKA_LOCAL attribute "
-                    "(PKCS#11 spec requires it for generated keys)"
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_LOCAL:not-implemented",
+                    summary=(
+                        "Module does not implement CKA_LOCAL attribute "
+                        "(PKCS#11 spec requires it for generated keys)"
+                    ),
                 )
-                return
 
             if pub_local is not True or priv_local is not True:
                 from pkcs11_check.compliance import ComplianceLevel, note
@@ -305,10 +358,16 @@ class TestLocalFlag:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 spec Table 18",
                 )
-                pytest.xfail(
-                    f"Module does not set CKA_LOCAL=True on generated RSA keypair: "
-                    f"pub={pub_local}, priv={priv_local} "
-                    f"(PKCS#11 spec Table 18 requires CKA_LOCAL=True for C_GenerateKeyPair)"
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_LOCAL:generated-rsa-keypair",
+                    operation="C_GenerateKeyPair",
+                    summary=(
+                        f"Module does not set CKA_LOCAL=True on generated RSA keypair: "
+                        f"pub={pub_local}, priv={priv_local} "
+                        f"(PKCS#11 spec Table 18 requires CKA_LOCAL=True for C_GenerateKeyPair)"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
