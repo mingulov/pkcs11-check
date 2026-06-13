@@ -217,6 +217,7 @@ def test_build_quality_audit_reports_mechanism_coverage_states() -> None:
 def test_compare_mechanism_coverage_states_reports_losses() -> None:
     baseline = {
         "mechanism_coverage": {
+            "advertised_names": ["CKM_AES_CBC", "CKM_AES_GCM", "CKM_SHA256_HMAC"],
             "accepted_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
             "attempted_names": ["CKM_AES_CBC", "CKM_AES_GCM", "CKM_SHA256_HMAC"],
             "rejected_cleanly_names": ["CKM_AES_XTS"],
@@ -225,6 +226,7 @@ def test_compare_mechanism_coverage_states_reports_losses() -> None:
     }
     candidate = {
         "mechanism_coverage": {
+            "advertised_names": ["CKM_AES_CBC", "CKM_SHA256_HMAC"],
             "accepted_names": ["CKM_AES_CBC"],
             "attempted_names": ["CKM_AES_CBC", "CKM_SHA256_HMAC"],
             "rejected_cleanly_names": [],
@@ -236,11 +238,13 @@ def test_compare_mechanism_coverage_states_reports_losses() -> None:
 
     assert comparison["has_loss"] is True
     assert comparison["lost_by_state"] == {
+        "advertised": ["CKM_AES_GCM"],
         "accepted": ["CKM_AES_GCM"],
         "attempted": ["CKM_AES_GCM"],
         "rejected_cleanly": ["CKM_AES_XTS"],
     }
     assert comparison["states_compared"] == [
+        "advertised",
         "accepted",
         "attempted",
         "rejected_cleanly",

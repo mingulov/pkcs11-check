@@ -37,7 +37,8 @@ Notable outcome shifts from `artifacts2` to `artifacts3`:
 
 Interpretation: correctness classification and capability gating improved, but
 the artifacts are still provider-specific and old enough that the just-merged
-HKDF isolation work must be remeasured in a fresh pool.
+HKDF isolation work required a fresh provider-local remeasurement. That
+remeasurement evidence is recorded under Speed Finding 3.
 
 ## Speed Findings
 
@@ -141,7 +142,7 @@ Acceptance checks:
 - bouncyhsm runtime is remeasured provider-locally; the result is not applied
   to other providers.
 
-Current status:
+Status: fixed in the current branch.
 
 - Implemented: provider-local duration-oracle data can split only duration-hot
   MCT files (`test_ofb.py`, `test_cfb8.py`, `test_cfb128.py`) into collected
@@ -183,7 +184,7 @@ Acceptance checks:
 - A targeted wolfPKCS11 X.509/CCTV run shows lower setup time.
 - Tests prove a damaged reusable session still reopens before reuse.
 
-Current status:
+Status: fixed in the current branch.
 
 - Implemented: reusable module-session health checks are timed separately from
   ordinary test-body C_* calls and exported under
@@ -219,7 +220,7 @@ Next task:
 - Mount or prewarm the cache for Docker runs where the cache key is based on
   file identity, mtime, size, and interpreter, never on provider outcomes.
 
-Current status:
+Status: fixed in the current branch.
 
 - Implemented: normal Docker provider containers now mount a shared named
   `pkcs11-check-cache` volume at `/cache`, and `docker/run-pkcs11-check.sh`
@@ -744,17 +745,18 @@ Next task:
 - Use this to detect shallow registry-only coverage and speed-induced coverage
   loss.
 
-Status: improved in the current branch. Coverage reports and JSONL merge now
+Status: fixed in the current branch. Coverage reports and JSONL merge now
 preserve advertised, selected, attempted, accepted, rejected-cleanly,
 skipped-by-capability, crash, and timeout buckets, and `quality.json`
 mechanism findings surface those states instead of collapsing every mechanism
 into old invoked/not-invoked status. The pure
 `compare_mechanism_coverage_states()` helper can compare provider-local
-baseline/candidate coverage buckets and flag lost mechanisms by state, and
-`pkcs11-check compare-coverage ... --fail-on-loss` exposes it as a CI-friendly
-gate. Docker pool runs can now take `--coverage-baseline-artifacts-dir` to
-compare each just-merged `<provider>-pooled` artifact against the same
-provider's baseline and fail the pool on lost mechanism states.
+baseline/candidate coverage buckets including advertised-loss, and flag lost
+mechanisms by state. `pkcs11-check compare-coverage ... --fail-on-loss` exposes
+it as a CI-friendly gate. Docker pool runs can now take
+`--coverage-baseline-artifacts-dir` to compare each just-merged
+`<provider>-pooled` artifact against the same provider's baseline and fail the
+pool on lost mechanism states.
 
 ### 6. Controlled child subprocess crash/timeout stats
 

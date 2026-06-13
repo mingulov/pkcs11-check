@@ -52,6 +52,7 @@ _MECHANISM_STATE_ORDER = (
     "not_invoked",
 )
 _MECHANISM_COMPARISON_STATES = (
+    "advertised",
     "accepted",
     "attempted",
     "rejected_cleanly",

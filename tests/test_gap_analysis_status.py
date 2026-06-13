@@ -985,8 +985,13 @@ def test_gap_analysis_marks_controlled_child_crash_stats_as_added() -> None:
 def test_gap_analysis_marks_wolf_session_fast_evidence_as_recorded() -> None:
     """wolfPKCS11 session-fast speed evidence is recorded, not left pending."""
     doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
 
     assert "Remaining evidence: run targeted wolfPKCS11 X.509/CCTV batches" not in doc
+    assert (
+        "Status: fixed in the current branch. - Implemented: reusable module-session "
+        "health checks"
+    ) in doc_flat
     assert "Focused wolfPKCS11 X.509/CCTV evidence now exists" in doc
     assert "artifacts/_focused/wolfpkcs11-health-current/results.json" in doc
     assert 'module_session_health: {"checks": 0, "duration_s": 0.0}' in doc
@@ -1733,10 +1738,29 @@ def test_gap_analysis_marks_mixed_fail_crash_reporting_as_fixed() -> None:
     assert "Status: fixed in the current branch. `_overall_unit_status()` gives" in doc
 
 
+def test_gap_analysis_marks_mechanism_coverage_telemetry_as_fixed() -> None:
+    """Mechanism coverage telemetry now has provider-local state-loss guards."""
+    audit = _read("src/pkcs11_check/core/quality_audit.py")
+    tests = _read("tests/test_quality_audit.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
+
+    assert '"advertised",' in audit
+    assert '"advertised": ["CKM_AES_GCM"]' in tests
+    assert "### 5. Mechanism coverage telemetry needs more states" in doc
+    assert "Status: fixed in the current branch. Coverage reports and JSONL merge now" in doc
+    assert "including advertised-loss" in doc_flat
+
+
 def test_gap_analysis_records_bouncyhsm_provider_local_remeasurement() -> None:
     """BouncyHSM MCT speed work has provider-local remeasurement evidence."""
-    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+    doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
 
+    assert (
+        "Status: fixed in the current branch. - Implemented: provider-local "
+        "duration-oracle data"
+    ) in doc_flat
     assert "Fresh bouncyhsm provider-local pool evidence exists" in doc_flat
     assert "No mechanism coverage state loss" in doc_flat
     assert (
@@ -1767,11 +1791,16 @@ def test_gap_analysis_marks_retry_report_jsonl_analysis_as_single_pass() -> None
     """Retry/detail report-jsonl analysis no longer materializes parsed record lists."""
     runner = _read("src/pkcs11_check/core/file_runner.py")
     tests = _read("tests/test_single_pass_refactors.py")
-    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+    doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
 
     assert "def _analyze_report_jsonl(" in runner
     assert "_load_report_log_records(to_iter_jsonl)" not in runner
     assert "_load_report_log_records(iter_jsonl_path)" not in runner
     assert "_load_report_log_records(unit_jsonl_path)" not in runner
     assert "test_analyze_report_jsonl_streams_detail_culprit_and_cache" in tests
+    assert (
+        "Status: fixed in the current branch. - Implemented: normal Docker provider "
+        "containers"
+    ) in doc_flat
     assert "retry/detail analysis now streams each unit report JSONL once" in doc_flat

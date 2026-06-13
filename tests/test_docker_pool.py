@@ -829,6 +829,7 @@ def test_pool_returns_nonzero_when_provider_coverage_state_regresses(
         json.dumps(
             {
                 "mechanism_coverage": {
+                    "advertised_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
                     "accepted_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
                     "attempted_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
                 }
@@ -867,6 +868,7 @@ def test_pool_returns_nonzero_when_provider_coverage_state_regresses(
             json.dumps(
                 {
                     "mechanism_coverage": {
+                        "advertised_names": ["CKM_AES_CBC"],
                         "accepted_names": ["CKM_AES_CBC"],
                         "attempted_names": ["CKM_AES_CBC"],
                     }
@@ -896,6 +898,7 @@ def test_pool_returns_nonzero_when_provider_coverage_state_regresses(
 
     out = capsys.readouterr().out
     assert "COVERAGE LOSS optee-pkcs11" in out
+    assert "advertised: CKM_AES_GCM" in out
     assert "accepted: CKM_AES_GCM" in out
     assert "attempted: CKM_AES_GCM" in out
 
