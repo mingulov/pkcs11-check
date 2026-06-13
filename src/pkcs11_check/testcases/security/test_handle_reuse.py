@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -72,7 +73,13 @@ def _assert_read_destroyed_handle_fails(rs: Any, key: int) -> None:
         if is_known_error(exc, HANDLE_ERRORS):
             return
         raise
-    pytest.fail("C_GetAttributeValue succeeded with destroyed handle")
+    classify(
+        "self_contradiction",
+        kind="lifecycle",
+        label="C_GetAttributeValue on a destroyed object handle (use-after-destroy)",
+        operation="C_GetAttributeValue",
+        summary="C_GetAttributeValue succeeded with destroyed handle",
+    )
 
 
 class TestHandleReuseAfterDestroy:

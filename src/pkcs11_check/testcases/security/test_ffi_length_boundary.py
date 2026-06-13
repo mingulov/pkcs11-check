@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.types_std import (
     CKA_DERIVE,
@@ -687,7 +688,11 @@ cleanup()
             context=f"C_EncryptMessage({field}={data_len:#x})",
         )
         if "SETUP_XFAIL:" in stdout:
-            pytest.xfail(stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0])
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -819,7 +824,11 @@ cleanup()
             context=f"C_DecryptMessage({field}={data_len:#x})",
         )
         if "SETUP_XFAIL:" in stdout:
-            pytest.xfail(stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0])
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -975,7 +984,11 @@ cleanup()
             context=f"{op}(ciphertext_len={data_len:#x})",
         )
         if "SETUP_XFAIL:" in stdout:
-            pytest.xfail(stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0])
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1081,7 +1094,11 @@ cleanup()
             context=f"C_SignMessage(data_len={data_len:#x})",
         )
         if "SETUP_XFAIL:" in stdout:
-            pytest.xfail(stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0])
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1209,7 +1226,11 @@ cleanup()
             context=f"C_VerifyMessage({field}_len={data_len:#x})",
         )
         if "SETUP_XFAIL:" in stdout:
-            pytest.xfail(stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0])
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1343,7 +1364,11 @@ cleanup()
             context=f"{op}(data_len={data_len:#x})",
         )
         if "SETUP_XFAIL:" in stdout:
-            pytest.xfail(stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0])
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1490,7 +1515,11 @@ cleanup()
             context=f"C_VerifyMessage multipart {field}={data_len:#x}",
         )
         if "SETUP_XFAIL:" in stdout:
-            pytest.xfail(stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0])
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1646,7 +1675,11 @@ cleanup()
             context=f"{op}(plaintext_len={data_len:#x})",
         )
         if "SETUP_XFAIL:" in stdout:
-            pytest.xfail(stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0])
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -3290,7 +3323,11 @@ cleanup()
             context=f"C_DeriveKey(AES_CBC_ENCRYPT_DATA, {case_label})",
         )
         if "SETUP_XFAIL:" in stdout:
-            pytest.xfail(stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0])
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
@@ -3396,7 +3433,11 @@ cleanup()
             context=f"C_Sign(SHA256_RSA_PKCS_PSS, sLen={salt_len:#x})",
         )
         if "SETUP_XFAIL:" in stdout:
-            pytest.xfail(stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0])
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
@@ -3496,7 +3537,11 @@ cleanup()
             context=f"C_Encrypt(AES_GCM, ulAADLen={aad_len:#x})",
         )
         if "SETUP_XFAIL:" in stdout:
-            pytest.xfail(stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0])
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
@@ -3595,7 +3640,11 @@ cleanup()
             context=f"C_Encrypt(AES_CCM, ulAADLen={aad_len:#x})",
         )
         if "SETUP_XFAIL:" in stdout:
-            pytest.xfail(stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0])
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
