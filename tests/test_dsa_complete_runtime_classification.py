@@ -166,3 +166,55 @@ def test_dsa_prehash_tampered_data_clean_signature_reject_passes(
         "DSA_SHA1",
         CKM_DSA_SHA1,
     )
+
+
+def test_dsa_prehash_wrong_signature_lengths_use_reject_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[int, bytes, bytes, str]] = []
+
+    def _verify_rejects(
+        _rs: Any,
+        _pub: int,
+        mechanism: int,
+        data: bytes,
+        signature: bytes,
+        label: str,
+    ) -> bool:
+        calls.append((mechanism, data, signature, label))
+        return False
+
+    rs = _session_with_mechanisms("DSA_SHA1")
+    monkeypatch.setattr(test_dsa_complete, "_generate_dsa_keypair", lambda _rs: (10, 11, 12))
+    monkeypatch.setattr(test_dsa_complete, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(
+        test_dsa_complete,
+        "_dsa_sign_or_xfail",
+        lambda *_args, **_kwargs: b"s" * 40,
+    )
+    monkeypatch.setattr(
+        test_dsa_complete,
+        "_dsa_invalid_verify_rejected_or_xfail",
+        _verify_rejects,
+    )
+
+    test_dsa_complete.TestDSAPrehash()._wrong_signature_lengths_fail(
+        rs,
+        "DSA_SHA1",
+        CKM_DSA_SHA1,
+    )
+
+    assert calls == [
+        (
+            CKM_DSA_SHA1,
+            b"DSA prehash wrong signature length",
+            b"s" * 39,
+            "CKM_DSA_SHA1 wrong-length signature",
+        ),
+        (
+            CKM_DSA_SHA1,
+            b"DSA prehash wrong signature length",
+            b"s" * 40 + b"\x00",
+            "CKM_DSA_SHA1 overlong signature",
+        ),
+    ]

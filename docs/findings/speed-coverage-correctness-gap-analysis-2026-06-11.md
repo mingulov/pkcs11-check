@@ -383,7 +383,11 @@ smoke behavior, or covered only by one narrow variation.
    wrong-signature-length coverage now verifies verification rejects a
    truncated signature through the shared invalid-signature policy. Raw CKM_DSA
    overlong-signature-length coverage now verifies the same rejection policy
-   for a signature with an extra trailing byte. Classic DH
+   for a signature with an extra trailing byte. DSA prehash
+   wrong-signature-length coverage now verifies every generated-key
+   DSA-with-hash variant rejects truncated signatures through the same policy.
+   DSA prehash overlong-signature-length coverage now verifies those variants
+   also reject signatures with an extra trailing byte. Classic DH
    RFC 3526 Group 14 exact-vector coverage now imports a fixed private value,
    derives with a fixed peer public value, and checks the exact derived
    generic-secret bytes. Classic DH RFC 3526 Group 14

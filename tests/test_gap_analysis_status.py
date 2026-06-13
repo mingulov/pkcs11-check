@@ -1067,6 +1067,24 @@ def test_gap_analysis_marks_raw_dsa_wrong_signature_length_negative_as_added() -
     assert "Raw CKM_DSA overlong-signature-length coverage" in doc_flat
 
 
+def test_gap_analysis_marks_dsa_prehash_wrong_signature_length_negative_as_added() -> None:
+    """DSA-with-hash verification rejects wrong-length signatures."""
+    dsa = _read("src/pkcs11_check/testcases/test_dsa_complete.py")
+    runtime = _read("tests/test_dsa_complete_runtime_classification.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
+
+    assert "test_wrong_signature_lengths_fail" in dsa
+    assert "_wrong_signature_lengths_fail" in dsa
+    assert "CKM_{mech_name_str} wrong-length signature" in dsa
+    assert "CKM_{mech_name_str} overlong signature" in dsa
+    assert "_dsa_invalid_verify_rejected_or_xfail" in dsa
+    assert "test_dsa_prehash_wrong_signature_lengths_use_reject_policy" in runtime
+
+    assert "DSA prehash wrong-signature-length coverage" in doc_flat
+    assert "DSA prehash overlong-signature-length coverage" in doc_flat
+
+
 def test_gap_analysis_marks_dsa_sha224_sha256_prehash_matrix_as_added() -> None:
     """DSA_SHA224 and DSA_SHA256 are in the complete DSA prehash matrix."""
     dsa = _read("src/pkcs11_check/testcases/test_dsa_complete.py")

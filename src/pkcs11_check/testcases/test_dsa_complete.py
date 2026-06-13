@@ -591,6 +591,50 @@ class TestDSARaw:
 class TestDSAPrehash:
     """Tests for prehash DSA variants (SHA-1, SHA-224, SHA-384, SHA-512, SHA3-*)."""
 
+    def _wrong_signature_lengths_fail(
+        self,
+        p11_module_session: Any,
+        mech_name_str: str,
+        mechanism: int,
+    ) -> None:
+        rs = p11_module_session
+        if not rs.has_mechanism(mech_name_str):
+            pytest.skip(f"CKM_{mech_name_str} not supported")
+
+        dp, pub, priv = _generate_dsa_keypair(rs)
+        try:
+            data = b"DSA prehash wrong signature length"
+            sig = _dsa_sign_or_xfail(rs, priv, mechanism, data, f"CKM_{mech_name_str}")
+            assert len(sig) > 1
+
+            for wrong_sig, label, case_name in (
+                (
+                    sig[:-1],
+                    f"CKM_{mech_name_str} wrong-length signature",
+                    "wrong-length",
+                ),
+                (
+                    sig + b"\x00",
+                    f"CKM_{mech_name_str} overlong signature",
+                    "overlong",
+                ),
+            ):
+                result = _dsa_invalid_verify_rejected_or_xfail(
+                    rs,
+                    pub,
+                    mechanism,
+                    data,
+                    wrong_sig,
+                    label,
+                )
+                if result is True:
+                    pytest.fail(f"CKM_{mech_name_str} accepted {case_name} signature")
+                assert result is False
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, dp)
+
     @pytest.mark.parametrize(("mech_name_str", "mechanism"), _DSA_HASH_MECHS)
     def test_sign_verify_roundtrip(
         self,
@@ -683,6 +727,16 @@ class TestDSAPrehash:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, dp)
+
+    @pytest.mark.parametrize(("mech_name_str", "mechanism"), _DSA_HASH_MECHS)
+    def test_wrong_signature_lengths_fail(
+        self,
+        p11_module_session: Any,
+        mech_name_str: str,
+        mechanism: int,
+    ) -> None:
+        """Prehash DSA verification with wrong-length signatures must fail."""
+        self._wrong_signature_lengths_fail(p11_module_session, mech_name_str, mechanism)
 
     @pytest.mark.parametrize(("mech_name_str", "mechanism"), _DSA_HASH_MECHS)
     def test_empty_data(
