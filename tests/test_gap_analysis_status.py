@@ -433,6 +433,20 @@ def test_gap_analysis_marks_ssl3_key_material_null_phkey_as_added() -> None:
     assert "SSL3 key-and-MAC NULL phKey coverage" in doc_flat
 
 
+def test_gap_analysis_marks_ssl3_key_material_template_conflict_as_added() -> None:
+    """SSL3 key-material derives reject protection attributes that differ from the base key."""
+    ssl3 = _read("src/pkcs11_check/testcases/test_ssl3.py")
+    guard = _read("tests/test_ssl3_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "_derive_ssl3_key_material_template_conflict" in ssl3
+    assert "test_rejects_template_protection_conflict" in ssl3
+    assert "_SSL3_TEMPLATE_CONFLICT_REJECT_RVS" in ssl3
+    assert "test_ssl3_key_material_rejects_template_protection_conflict" in guard
+
+    assert "SSL3 key-material template-protection negative coverage" in doc_flat
+
+
 def test_gap_analysis_marks_ssl3_dh_master_secret_exact_vector_as_added() -> None:
     """CKM_SSL3_MASTER_KEY_DERIVE_DH has an SSL3 master-secret exact vector."""
     ssl3 = _read("src/pkcs11_check/testcases/test_ssl3.py")

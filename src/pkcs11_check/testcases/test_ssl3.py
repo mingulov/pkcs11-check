@@ -75,7 +75,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import destroy_returned_handles, is_known_error
+from pkcs11_check.testcases.conftest import (
+    destroy_returned_handles,
+    is_known_error,
+    reject_or_classify,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -102,6 +106,11 @@ _DERIVE_ERROR_RVS = {
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_OBJECT_HANDLE_INVALID,
 }
+
+_SSL3_TEMPLATE_CONFLICT_REJECT_RVS = (
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+)
 
 # CKR values acceptable for MAC sign/verify operations
 _MAC_ERROR_RVS = {
@@ -169,6 +178,47 @@ def _derive_key_material_to_params(
         None,
     )
     expect_rv(rv, CKR_OK)
+
+
+def _derive_ssl3_key_material_template_conflict(
+    rs: Any,
+    base_key: int,
+    mech: Any,
+    *,
+    label: str,
+) -> None:
+    """Verify SSL3 key material rejects template protection values that differ."""
+    exc: AssertionError | None = None
+    try:
+        _derive_key_material_to_params(
+            rs,
+            base_key,
+            {
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_SENSITIVE: True,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
+            },
+            mech,
+        )
+    except AssertionError as caught:
+        exc = caught
+    finally:
+        out = mech.key_mat_out
+        destroy_returned_handles(
+            rs,
+            out.hClientMacSecret,
+            out.hServerMacSecret,
+            out.hClientKey,
+            out.hServerKey,
+        )
+
+    reject_or_classify(
+        exc,
+        _SSL3_TEMPLATE_CONFLICT_REJECT_RVS,
+        label=label,
+    )
 
 
 class TestSSL3PreMasterKeyGen:
@@ -527,6 +577,31 @@ class TestSSL3KeyAndMacDerive:
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, master_secret)
+
+
+    def test_rejects_template_protection_conflict(self, p11_raw_session: Any) -> None:
+        """CKM_SSL3_KEY_AND_MAC_DERIVE rejects template protection overrides."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("SSL3_KEY_AND_MAC_DERIVE"):
+            pytest.skip("CKM_SSL3_KEY_AND_MAC_DERIVE not supported")
+
+        master_secret = _create_generic_secret(rs, _PRE_MASTER_SECRET)
+        try:
+            mech = mech_ssl3_key_mat(
+                CKM_SSL3_KEY_AND_MAC_DERIVE,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                key_size_bits=128,
+            )
+            _derive_ssl3_key_material_template_conflict(
+                rs,
+                master_secret,
+                mech,
+                label="CKM_SSL3_KEY_AND_MAC_DERIVE template protection conflict",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master_secret)
+
 
 class TestSSL3Mac:
     """CKM_SSL3_MD5_MAC and CKM_SSL3_SHA1_MAC - SSL3 MAC mechanisms.

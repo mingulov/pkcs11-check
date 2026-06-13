@@ -7,12 +7,22 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
     CKA_VALUE,
     CKA_VALUE_LEN,
+    CKK_AES,
+    CKM_SSL3_KEY_AND_MAC_DERIVE,
     CKM_SSL3_MASTER_KEY_DERIVE_DH,
+    CKO_SECRET_KEY,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases import test_ssl3
 
@@ -93,6 +103,61 @@ def test_ssl3_key_and_mac_derive_uses_null_phkey(
     test_ssl3.TestSSL3KeyAndMacDerive().test_derive_key_material(rs)
 
     assert raw.ph_keys == [None]
+
+
+def test_ssl3_key_material_rejects_template_protection_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_ssl3, "_create_generic_secret", lambda *_args: 101)
+    monkeypatch.setattr(test_ssl3, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(test_ssl3, "destroy_returned_handles", lambda *_args: None)
+
+    key_mat_calls: list[tuple[int, dict[int, Any]]] = []
+    classifier_calls: list[tuple[BaseException | None, tuple[int, ...], str]] = []
+
+    def _rejecting_key_material(
+        _rs: object,
+        _base_key: int,
+        attrs: dict[int, Any],
+        mech: Any,
+    ) -> None:
+        key_mat_calls.append((int(mech.ck.mechanism), attrs))
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_TEMPLATE_INCONSISTENT",
+            int(CKR_TEMPLATE_INCONSISTENT),
+        )
+
+    def _reject_or_classify(
+        exc: BaseException | None,
+        expected_rvs: tuple[int, ...],
+        *,
+        label: str,
+    ) -> None:
+        classifier_calls.append((exc, expected_rvs, label))
+
+    monkeypatch.setattr(test_ssl3, "_derive_key_material_to_params", _rejecting_key_material)
+    monkeypatch.setattr(test_ssl3, "reject_or_classify", _reject_or_classify, raising=False)
+
+    rs = SimpleNamespace(
+        raw=object(),
+        sh=1,
+        has_mechanism=lambda name: name == "SSL3_KEY_AND_MAC_DERIVE",
+    )
+    test_ssl3.TestSSL3KeyAndMacDerive().test_rejects_template_protection_conflict(rs)
+
+    expected_attrs = {
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: CKK_AES,
+        CKA_SENSITIVE: True,
+        CKA_EXTRACTABLE: True,
+        CKA_TOKEN: False,
+    }
+    assert key_mat_calls == [(int(CKM_SSL3_KEY_AND_MAC_DERIVE), expected_attrs)]
+    assert [call[2] for call in classifier_calls] == [
+        "CKM_SSL3_KEY_AND_MAC_DERIVE template protection conflict"
+    ]
+    assert all(isinstance(call[0], CkrAssertionError) for call in classifier_calls)
+    assert all(int(CKR_TEMPLATE_INCONSISTENT) in call[1] for call in classifier_calls)
 
 
 def test_ssl3_master_key_derive_dh_fails_on_wrong_exact_output(

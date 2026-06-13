@@ -327,7 +327,10 @@ smoke behavior, or covered only by one narrow variation.
    with the OASIS `pVersion=NULL_PTR` convention. SSL3 key-and-MAC NULL phKey
    coverage now follows the OASIS convention that
    `CKM_SSL3_KEY_AND_MAC_DERIVE` returns its handles through
-   `CK_SSL3_KEY_MAT_OUT`, not through a primary `phKey`.
+   `CK_SSL3_KEY_MAT_OUT`, not through a primary `phKey`. SSL3 key-material
+   template-protection negative coverage now verifies
+   `CKM_SSL3_KEY_AND_MAC_DERIVE` rejects `CKA_SENSITIVE` template values that
+   conflict with the base-key inherited protection attributes.
    X2RATCHET typed-parameter derive coverage
    now drives `CKM_X2RATCHET_INITIALIZE` and `CKM_X2RATCHET_RESPOND` through
    the OASIS `CK_X2RATCHET_*_PARAMS` structures instead of empty mechanism
