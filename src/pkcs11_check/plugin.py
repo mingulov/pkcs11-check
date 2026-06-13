@@ -850,17 +850,22 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> 
 
 
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
-    """Clear compliance notes after each testcase item to prevent leakage."""
+    """Clear per-item state after each test to prevent cross-item leakage."""
+    if _is_testcase_item(item):
+        _drain_rv_trace(item)
+
+        from pkcs11_check.compliance import clear_notes
+
+        clear_notes()
+
+    # Classification records can originate from ANY test (attach is likewise ungated);
+    # clear unconditionally to prevent cross-item leakage.
+    from pkcs11_check.classification import clear as clear_classifications
+
+    clear_classifications()
+
     if not _is_testcase_item(item):
         return
-
-    _drain_rv_trace(item)
-
-    from pkcs11_check.classification import clear as clear_classifications
-    from pkcs11_check.compliance import clear_notes
-
-    clear_notes()
-    clear_classifications()
 
     session = getattr(item, "session", None)
     if session is None:
