@@ -70,6 +70,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT,
     CKR_WRAPPED_KEY_INVALID,
     CKR_WRAPPED_KEY_LEN_RANGE,
     CKR_WRAPPING_KEY_SIZE_RANGE,
@@ -538,6 +539,162 @@ class TestWrongKeyType:
             classify_negative_rv(rv, (CKR_KEY_TYPE_INCONSISTENT,), label=label)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_registry_wrap_wrong_key_type(
+        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+    ) -> None:
+        """Registry-driven wrong-secret-key-type check for advertised wrap mechanisms."""
+        rs = p11_module_session
+        entry = mech_wrap_entry
+        _skip_if_not_secret_key_registry_case(entry)
+
+        wrapping_key = _import_wrong_secret_key_or_xfail(
+            rs,
+            entry,
+            attrs={CKA_TOKEN: False, CKA_WRAP: True, CKA_UNWRAP: True},
+        )
+        target_key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False, CKA_TOKEN: False},
+            purpose="registry wrap wrong-key target setup",
+        )
+        label = f"{entry.mech_name} wrap with wrong key type"
+        try:
+            mech_param = make_mech_param_or_skip(entry)
+            mech = mech_param if mech_param is not None else mech_simple(entry.mech_id)
+            out_len = CK_ULONG(0)
+            rv = rs.raw.C_WrapKey(
+                rs.sh,
+                mech.byref(),
+                wrapping_key,
+                target_key,
+                None,
+                byref(out_len),
+            )
+            classify_negative_rv(rv, (CKR_WRAPPING_KEY_TYPE_INCONSISTENT,), label=label)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, wrapping_key)
+            destroy_quietly(rs.raw, rs.sh, target_key)
+
+    def test_registry_unwrap_wrong_key_type(
+        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+    ) -> None:
+        """Registry-driven wrong-secret-key-type check for advertised unwrap mechanisms."""
+        rs = p11_module_session
+        entry = mech_wrap_entry
+        _skip_if_not_secret_key_registry_case(entry)
+        config = entry.config
+        assert config is not None
+
+        wrapping_key = gen_symmetric_key(
+            rs,
+            entry,
+            config,
+            extra_attrs={CKA_WRAP: True, CKA_UNWRAP: True, CKA_TOKEN: False},
+        )
+        unwrapping_key = _import_wrong_secret_key_or_xfail(
+            rs,
+            entry,
+            attrs={CKA_TOKEN: False, CKA_WRAP: True, CKA_UNWRAP: True},
+        )
+        target_key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False, CKA_TOKEN: False},
+            purpose="registry unwrap wrong-key target setup",
+        )
+        unwrapped_key = 0
+        label = f"{entry.mech_name} unwrap with wrong key type"
+        try:
+            mech_param = make_mech_param_or_skip(entry)
+            try:
+                wrapped = wrap_key(
+                    rs.raw,
+                    rs.sh,
+                    wrapping_key,
+                    target_key,
+                    entry.mech_id,
+                    mech_param=mech_param,
+                    output_size_hint=_wrap_output_size_hint(entry),
+                )
+            except AssertionError as setup_exc:
+                xfail_if_known_ckr(
+                    setup_exc,
+                    _WRAP_SETUP_REJECT_RVS,
+                    f"{entry.mech_name} wrap setup not operational",
+                )
+                raise
+
+            unwrap_exc: AssertionError | None = None
+            try:
+                unwrapped_key = unwrap_key(
+                    rs.raw,
+                    rs.sh,
+                    unwrapping_key,
+                    wrapped,
+                    entry.mech_id,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_TOKEN: False,
+                    },
+                    mech_param=mech_param,
+                )
+            except AssertionError as caught:
+                unwrap_exc = caught
+            reject_or_classify(
+                unwrap_exc,
+                (CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT,),
+                label=label,
+            )
+        finally:
+            if unwrapped_key != 0:
+                destroy_quietly(rs.raw, rs.sh, unwrapped_key)
+            destroy_quietly(rs.raw, rs.sh, wrapping_key)
+            destroy_quietly(rs.raw, rs.sh, unwrapping_key)
+            destroy_quietly(rs.raw, rs.sh, target_key)
+
+    def test_registry_derive_wrong_key_type(
+        self, p11_module_session: RawSession, mech_derive_entry: MechEntry
+    ) -> None:
+        """Registry-driven wrong-secret-key-type check for advertised derive mechanisms."""
+        rs = p11_module_session
+        entry = mech_derive_entry
+        _skip_if_not_secret_key_registry_case(entry)
+
+        base_key = 0
+        derived_key = 0
+        param_handles: list[int] = []
+        label = f"{entry.mech_name} derive with wrong key type"
+        try:
+            mech_param, param_handles = _derive_negative_param_or_skip(rs, entry)
+            base_key = _import_wrong_secret_key_or_xfail(
+                rs,
+                entry,
+                attrs={CKA_TOKEN: False, CKA_DERIVE: True},
+            )
+
+            derive_exc: AssertionError | None = None
+            try:
+                derived_key = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base_key,
+                    entry.mech_id,
+                    attrs=_DERIVED_GENERIC_SECRET_ATTRS,
+                    mech_param=mech_param,
+                )
+            except AssertionError as caught:
+                derive_exc = caught
+            reject_or_classify(derive_exc, (CKR_KEY_TYPE_INCONSISTENT,), label=label)
+        finally:
+            if derived_key != 0:
+                destroy_quietly(rs.raw, rs.sh, derived_key)
+            if base_key != 0:
+                destroy_quietly(rs.raw, rs.sh, base_key)
+            for handle in param_handles:
+                destroy_quietly(rs.raw, rs.sh, handle)
 
 
 class TestBadParameters:

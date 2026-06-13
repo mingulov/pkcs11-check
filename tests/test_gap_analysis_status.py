@@ -673,7 +673,10 @@ def test_gap_analysis_marks_registry_negative_roundtrip_halves_as_added() -> Non
 
     for test_name in (
         "test_registry_decrypt_wrong_key_type",
+        "test_registry_derive_wrong_key_type",
         "test_registry_verify_wrong_key_type",
+        "test_registry_wrap_wrong_key_type",
+        "test_registry_unwrap_wrong_key_type",
         "test_registry_decrypt_without_flag",
         "test_registry_verify_without_flag",
         "test_registry_wrap_without_flag",
@@ -684,6 +687,7 @@ def test_gap_analysis_marks_registry_negative_roundtrip_halves_as_added() -> Non
         assert test_name in guard
 
     assert "Registry-driven decrypt/verify negative coverage exists" in doc_flat
+    assert "Registry-driven wrap/unwrap/derive wrong-key-type coverage exists" in doc_flat
     assert "Registry-driven wrap/unwrap missing-permission coverage exists" in doc_flat
     assert "Registry-driven derive missing-permission coverage exists" in doc_flat
     assert "Registry-driven missing-required-parameter coverage exists" in doc_flat

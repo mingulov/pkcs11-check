@@ -540,6 +540,9 @@ smoke behavior, or covered only by one narrow variation.
 10. Generic negative coverage is improving but still incomplete relative to
     467 registry mechanisms. Registry-driven wrong-key-type coverage now
     includes encrypt, decrypt, sign, and verify operation families.
+    Registry-driven wrap/unwrap/derive wrong-key-type coverage exists for
+    advertised wrap-roundtrip mechanisms and the simple key-object derivation
+    shapes supported by the generic negative helper.
     Registry-driven decrypt/verify negative coverage exists for both
     wrong-key-type and missing-permission cases, alongside the existing
     encrypt/sign permission coverage. Registry-driven wrap/unwrap

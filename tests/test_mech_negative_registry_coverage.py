@@ -54,6 +54,9 @@ def test_wrong_key_negatives_are_registry_driven() -> None:
     assert "test_registry_decrypt_wrong_key_type" in source
     assert "test_registry_sign_wrong_key_type" in source
     assert "test_registry_verify_wrong_key_type" in source
+    assert "test_registry_wrap_wrong_key_type" in source
+    assert "test_registry_unwrap_wrong_key_type" in source
+    assert "test_registry_derive_wrong_key_type" in source
 
 
 def test_permission_negatives_cover_roundtrip_pairs() -> None:
