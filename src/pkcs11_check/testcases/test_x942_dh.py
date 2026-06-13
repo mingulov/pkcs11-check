@@ -224,6 +224,12 @@ _X942_INVALID_OTHER_INFO_RVS = (
     CKR_MECHANISM_PARAM_INVALID,
 )
 
+_X942_INVALID_KDF = 0x7FFFFFFF
+_X942_INVALID_KDF_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1092,6 +1098,47 @@ class TestX942DHDerive:
             destroy_quietly(rs.raw, rs.sh, bob_pub)
             destroy_quietly(rs.raw, rs.sh, bob_priv)
 
+    def test_x942_derive_rejects_invalid_kdf(self, p11_raw_session: Any) -> None:
+        """CKM_X9_42_DH_DERIVE rejects a KDF selector outside the CKD_* table."""
+        rs = p11_raw_session
+        _skip_no_x942_keygen(rs)
+        _skip_no_x942_derive(rs)
+
+        alice_pub, alice_priv = _generate_x942_keypair(rs)
+        bob_pub, bob_priv = _generate_x942_keypair(rs)
+        derived = CK_OBJECT_HANDLE(0)
+        attrs = template(
+            attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
+            attr_ulong(CKA_VALUE_LEN, 16),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, True),
+            attr_bool(CKA_TOKEN, False),
+        )
+        try:
+            bob_value = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])[CKA_VALUE]
+            mech = _build_x942_derive_mech(bob_value, _X942_INVALID_KDF)
+            rv = rs.raw.C_DeriveKey(
+                rs.sh,
+                mech.byref(),
+                alice_priv,
+                attrs.ptr,
+                attrs.count,
+                byref(derived),
+            )
+            classify_negative_rv(
+                rv,
+                _X942_INVALID_KDF_RVS,
+                label="CKM_X9_42_DH_DERIVE invalid KDF",
+            )
+        finally:
+            if derived.value:
+                destroy_quietly(rs.raw, rs.sh, derived.value)
+            destroy_quietly(rs.raw, rs.sh, alice_pub)
+            destroy_quietly(rs.raw, rs.sh, alice_priv)
+            destroy_quietly(rs.raw, rs.sh, bob_pub)
+            destroy_quietly(rs.raw, rs.sh, bob_priv)
+
     def test_x942_dh_derive_rfc5114_exact_vector(self, p11_raw_session: Any) -> None:
         """CKM_X9_42_DH_DERIVE returns the expected RFC 5114 shared secret."""
         rs = p11_raw_session
@@ -1762,6 +1809,22 @@ class TestX942DHHybridDerive:
             label="CKM_X9_42_DH_HYBRID_DERIVE CKD_SHA1_KDF_ASN1 missing OtherInfo",
         )
 
+    def test_hybrid_derive_rejects_invalid_kdf(self, p11_raw_session: Any) -> None:
+        """CKM_X9_42_DH_HYBRID_DERIVE rejects a KDF selector outside the CKD_* table."""
+        _x942_extended_derive_negative(
+            p11_raw_session,
+            mechanism_name="X9_42_DH_HYBRID_DERIVE",
+            build_mech=lambda alice, bob: _build_x942_dh2_derive_mech(
+                bob[4],
+                alice[3],
+                len(_X942_EXTENDED_ALICE_PRIVATE_2),
+                bob[5],
+                _X942_INVALID_KDF,
+            ),
+            expected_rvs=_X942_INVALID_KDF_RVS,
+            label="CKM_X9_42_DH_HYBRID_DERIVE invalid KDF",
+        )
+
     def test_hybrid_derive_rejects_malformed_peer_public_value(
         self,
         p11_raw_session: Any,
@@ -2136,6 +2199,23 @@ class TestX942MQVDerive:
             ),
             expected_rvs=_X942_INVALID_OTHER_INFO_RVS,
             label="CKM_X9_42_MQV_DERIVE CKD_SHA1_KDF_ASN1 missing OtherInfo",
+        )
+
+    def test_mqv_derive_rejects_invalid_kdf(self, p11_raw_session: Any) -> None:
+        """CKM_X9_42_MQV_DERIVE rejects a KDF selector outside the CKD_* table."""
+        _x942_extended_derive_negative(
+            p11_raw_session,
+            mechanism_name="X9_42_MQV_DERIVE",
+            build_mech=lambda alice, bob: _build_x942_mqv_derive_mech(
+                bob[4],
+                alice[3],
+                len(_X942_EXTENDED_ALICE_PRIVATE_2),
+                bob[5],
+                alice[2],
+                _X942_INVALID_KDF,
+            ),
+            expected_rvs=_X942_INVALID_KDF_RVS,
+            label="CKM_X9_42_MQV_DERIVE invalid KDF",
         )
 
     def test_mqv_derive_rejects_malformed_peer_public_value(

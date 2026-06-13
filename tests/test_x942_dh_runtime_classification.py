@@ -449,6 +449,108 @@ def test_x942_extended_other_info_negative_rules_use_typed_params(
     (
         (
             test_x942_dh.TestX942DHHybridDerive,
+            "test_hybrid_derive_rejects_invalid_kdf",
+            CKM_X9_42_DH_HYBRID_DERIVE,
+            CK_X9_42_DH2_DERIVE_PARAMS,
+            "CKM_X9_42_DH_HYBRID_DERIVE invalid KDF",
+        ),
+        (
+            test_x942_dh.TestX942MQVDerive,
+            "test_mqv_derive_rejects_invalid_kdf",
+            CKM_X9_42_MQV_DERIVE,
+            CK_X9_42_MQV_DERIVE_PARAMS,
+            "CKM_X9_42_MQV_DERIVE invalid KDF",
+        ),
+    ),
+)
+def test_x942_extended_invalid_kdf_negative_uses_typed_params(
+    monkeypatch: pytest.MonkeyPatch,
+    case_cls: type,
+    method_name: str,
+    mechanism: int,
+    param_type: type[Any],
+    expected_label: str,
+) -> None:
+    assert hasattr(case_cls, method_name)
+
+    party_calls = 0
+    derive_calls = 0
+    classified_labels: list[str] = []
+
+    class _Raw:
+        def C_DeriveKey(  # noqa: N802
+            self,
+            _sh: int,
+            mech_ref: Any,
+            _base_key: int,
+            _attrs_ptr: Any,
+            _attrs_count: int,
+            _derived: Any,
+        ) -> int:
+            nonlocal derive_calls
+            derive_calls += 1
+            ck_mech = mech_ref._obj
+            assert int(ck_mech.mechanism) == int(mechanism)
+            assert int(ck_mech.ulParameterLen) == ctypes.sizeof(param_type)
+            params = ctypes.cast(ck_mech.pParameter, ctypes.POINTER(param_type)).contents
+            assert isinstance(params, param_type)
+            assert int(params.kdf) == int(test_x942_dh._X942_INVALID_KDF)
+            assert params.ulOtherInfoLen == 0
+            assert params.pOtherInfo is None
+            assert params.ulPublicDataLen > 0
+            assert params.pPublicData is not None
+            assert params.ulPublicDataLen2 > 0
+            assert params.pPublicData2 is not None
+            return int(CKR_MECHANISM_PARAM_INVALID)
+
+    def _import_party_keys(_rs: Any, _first_private: bytes, _second_private: bytes) -> tuple[
+        int,
+        int,
+        int,
+        int,
+        bytes,
+        bytes,
+    ]:
+        nonlocal party_calls
+        party_calls += 1
+        prefix = b"alice" if party_calls == 1 else b"bob"
+        base = 10 * party_calls
+        return (
+            base + 1,
+            base + 2,
+            base + 3,
+            base + 4,
+            prefix + b"-public-1",
+            prefix + b"-public-2",
+        )
+
+    def _classify_negative_rv(rv: int, expected_rvs: tuple[int, ...], *, label: str) -> None:
+        assert int(rv) == int(CKR_MECHANISM_PARAM_INVALID)
+        assert int(CKR_MECHANISM_PARAM_INVALID) in {int(expected) for expected in expected_rvs}
+        classified_labels.append(label)
+
+    monkeypatch.setattr(test_x942_dh, "_import_x942_party_keys", _import_party_keys)
+    monkeypatch.setattr(test_x942_dh, "classify_negative_rv", _classify_negative_rv)
+    monkeypatch.setattr(test_x942_dh, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(pytest, "skip", lambda message: pytest.fail(f"unexpected skip: {message}"))
+
+    rs = SimpleNamespace(
+        raw=_Raw(),
+        sh=1,
+        has_mechanism=lambda name: name in {"X9_42_DH_HYBRID_DERIVE", "X9_42_MQV_DERIVE"},
+    )
+    getattr(case_cls(), method_name)(rs)
+
+    assert party_calls == 2
+    assert derive_calls == 1
+    assert classified_labels == [expected_label]
+
+
+@pytest.mark.parametrize(
+    ("case_cls", "method_name", "mechanism", "param_type", "expected_label"),
+    (
+        (
+            test_x942_dh.TestX942DHHybridDerive,
             "test_hybrid_derive_rejects_malformed_peer_public_value",
             CKM_X9_42_DH_HYBRID_DERIVE,
             CK_X9_42_DH2_DERIVE_PARAMS,

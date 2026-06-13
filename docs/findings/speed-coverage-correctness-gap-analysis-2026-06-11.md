@@ -383,7 +383,9 @@ smoke behavior, or covered only by one narrow variation.
    `pOtherInfo` must be NULL and `ulOtherInfoLen` must be zero when the KDF is
    `CKD_NULL`. X9.42 DH CKD_SHA1_KDF_ASN1 missing-OtherInfo coverage now
    verifies the matching OASIS rule that ASN.1 KDF derives must supply
-   `pOtherInfo`. X9.42 DH CKD_SHA1_KDF_ASN1 DER OtherInfo coverage now
+   `pOtherInfo`. X9.42 DH invalid-KDF negative coverage now verifies
+   `CKM_X9_42_DH_DERIVE` rejects a KDF selector outside the OASIS-defined
+   `CKD_*` table. X9.42 DH CKD_SHA1_KDF_ASN1 DER OtherInfo coverage now
    verifies the supplied `pOtherInfo` path with a minimal DER OCTET STRING and
    derived AES encrypt/decrypt effect. X9.42 DH
    CKD_SHA1_KDF_CONCATENATE OtherInfo coverage now
@@ -407,6 +409,9 @@ smoke behavior, or covered only by one narrow variation.
    derive mechanisms reject `CKD_NULL` with supplied `pOtherInfo` and
    `CKD_SHA1_KDF_ASN1` without supplied `pOtherInfo` through the shared
    provider-general negative classifier.
+   X9.42 hybrid/MQV invalid-KDF negative coverage now verifies both extended
+   derive mechanisms reject the same out-of-table KDF selector through typed
+   parameters and the shared provider-general negative classifier.
    X9.42 hybrid/MQV malformed-peer-public negative coverage now verifies both
    extended derive mechanisms reject a one-byte primary peer public value
    through the same domain/mechanism-parameter classifier.

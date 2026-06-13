@@ -1044,6 +1044,22 @@ def test_gap_analysis_marks_x942_asn1_kdf_missing_other_info_negative_as_added()
     assert "X9.42 DH CKD_SHA1_KDF_ASN1 missing-OtherInfo coverage" in doc_flat
 
 
+def test_gap_analysis_marks_x942_invalid_kdf_negatives_as_added() -> None:
+    """X9.42 DH, hybrid, and MQV derive reject an invalid KDF selector."""
+    x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")
+    guard = _read("tests/test_x942_dh_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "_X942_INVALID_KDF" in x942
+    assert "test_x942_derive_rejects_invalid_kdf" in x942
+    assert "test_hybrid_derive_rejects_invalid_kdf" in x942
+    assert "test_mqv_derive_rejects_invalid_kdf" in x942
+    assert "test_x942_extended_invalid_kdf_negative_uses_typed_params" in guard
+
+    assert "X9.42 DH invalid-KDF negative coverage" in doc_flat
+    assert "X9.42 hybrid/MQV invalid-KDF negative coverage" in doc_flat
+
+
 def test_gap_analysis_marks_x942_exact_vector_as_added() -> None:
     """X9.42 DH derive checks a deterministic RFC 5114 exact vector."""
     x942 = _read("src/pkcs11_check/testcases/test_x942_dh.py")
