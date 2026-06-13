@@ -1032,3 +1032,35 @@ def skip_if_mech_param_unsupported(exc: BaseException, context: str) -> None:
     if is_known_error(exc, MECH_PARAM_UNSUPPORTED_ERRORS):
         pytest.skip(f"{context} not supported: {exc}")
     raise exc
+
+
+def assert_correct(
+    *,
+    actual: object,
+    expected: object,
+    label: str,
+    operation: str | None = None,
+    mechanism: str | None = None,
+    source: str | None = None,
+    vector_id: str | None = None,
+) -> None:
+    """KAT correctness check: equal values pass; a mismatch is wrong_result (crypto).
+
+    On mismatch, emits a ``wrong_result``/``crypto``/``CRITICAL`` classification
+    record and raises ``pytest.fail`` via :func:`pkcs11_check.classification.classify`.
+    On match, returns normally with no side effects.
+    """
+    from pkcs11_check import classification as C
+
+    if actual == expected:
+        return
+    C.classify(
+        "wrong_result",
+        kind="crypto",
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        source=source,
+        vector_id=vector_id,
+        summary=f"{label}: output does not match known answer",
+    )
