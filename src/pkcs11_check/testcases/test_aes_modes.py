@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_ctr
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -721,7 +722,13 @@ class TestAESXCBCMAC:
                 assert verify_single(rs.raw, rs.sh, key, CKM_AES_XCBC_MAC, data, mac)
             except AssertionError as exc:
                 if is_known_error(exc, {CKR_KEY_TYPE_INCONSISTENT}):
-                    pytest.xfail(_XCBC_VERIFY_XFAIL_MSG)
+                    classify(
+                        "not_operational",
+                        label="CKM_AES_XCBC_MAC:verify",
+                        operation="C_Verify",
+                        mechanism="CKM_AES_XCBC_MAC",
+                        summary=_XCBC_VERIFY_XFAIL_MSG,
+                    )
                 raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -749,7 +756,13 @@ class TestAESXCBCMAC:
                 assert verify_single(rs.raw, rs.sh, key, CKM_AES_XCBC_MAC_96, data, mac)
             except AssertionError as exc:
                 if is_known_error(exc, {CKR_KEY_TYPE_INCONSISTENT}):
-                    pytest.xfail(_XCBC_VERIFY_XFAIL_MSG)
+                    classify(
+                        "not_operational",
+                        label="CKM_AES_XCBC_MAC_96:verify",
+                        operation="C_Verify",
+                        mechanism="CKM_AES_XCBC_MAC_96",
+                        summary=_XCBC_VERIFY_XFAIL_MSG,
+                    )
                 raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

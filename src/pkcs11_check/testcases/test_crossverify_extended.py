@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import padding as rsa_padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from pkcs11_check.classification import fail_as
 from pkcs11_check.raw.pack import mech_bytes, mech_gcm, mech_oaep, mech_pss
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -230,8 +231,15 @@ class TestRSAPSSCrossVerify:
                     ),
                     hashes.SHA256(),
                 )
-            except Exception:
-                pytest.fail("cryptography failed to verify PKCS#11 RSA-PSS signature")
+            except Exception as exc:
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="RSA-PSS:cross-verify",
+                    operation="C_Sign",
+                    mechanism="CKM_SHA256_RSA_PKCS_PSS",
+                    summary=f"cryptography failed to verify PKCS#11 RSA-PSS signature: {exc}",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

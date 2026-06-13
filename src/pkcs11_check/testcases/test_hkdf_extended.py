@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.pack import mech_hkdf, mech_simple
 from pkcs11_check.raw.recipes import (
     derive_key,
@@ -250,9 +251,15 @@ class TestHKDFKeyGen:
                     raise
                 rejects.append(str(exc))
         if base_key is None:
-            pytest.xfail(
-                "CKM_HKDF_KEY_GEN advertised but no tested key type is operational: "
-                + "; ".join(rejects)
+            xfail_as(
+                "not_operational",
+                label="CKM_HKDF_KEY_GEN",
+                operation="C_GenerateKey",
+                mechanism="CKM_HKDF_KEY_GEN",
+                summary=(
+                    "CKM_HKDF_KEY_GEN advertised but no tested key type is operational: "
+                    + "; ".join(rejects)
+                ),
             )
 
         derived = 0

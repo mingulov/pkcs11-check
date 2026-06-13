@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
     login_user,
@@ -170,7 +171,15 @@ class TestSoftHSM2IssueRegressions:
             out_len = CK_ULONG(0)
             rv = rs.raw.C_WrapKey(rs.sh, mech.byref(), key, target, None, byref(out_len))
             if rv == CKR_OK:
-                pytest.fail("Wrap with SHA-256 should have failed")
+                fail_as(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_WrapKey:non-wrapping-mechanism",
+                    operation="C_WrapKey",
+                    mechanism="CKM_SHA256",
+                    actual=rv,
+                    summary="Wrap with SHA-256 should have failed",
+                )
             # CKR_MECHANISM_INVALID or CKR_KEY_NOT_WRAPPABLE are correct
             # Other errors are module quirks - document but don't fail
             if rv not in (

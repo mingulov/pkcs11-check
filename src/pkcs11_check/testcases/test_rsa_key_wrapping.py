@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.pack import mech_oaep
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -373,8 +374,12 @@ class TestWrappedKeyUsability:
                 CKA_EXTRACTABLE
             )
             if extractable is not False:
-                pytest.xfail("Module did not honour CKA_EXTRACTABLE=False at key creation")
-                return
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="C_GenerateKey:CKA_EXTRACTABLE",
+                    summary="Module did not honour CKA_EXTRACTABLE=False at key creation",
+                )
 
             try:
                 wrap_key_recipe(

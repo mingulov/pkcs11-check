@@ -13,6 +13,7 @@ import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     read_attributes,
@@ -206,9 +207,14 @@ class TestRSAPrivateKeyImport:
         try:
             attrs = read_attributes(rs.raw, rs.sh, imported, [CKA_LOCAL])
             if CKA_LOCAL not in attrs:
-                pytest.xfail(
-                    "module does not expose CKA_LOCAL for imported keys "
-                    "(PKCS#11 \u00a74.x requires CKA_LOCAL=False on import)"
+                classify(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="imported-key:CKA_LOCAL",
+                    summary=(
+                        "module does not expose CKA_LOCAL for imported keys "
+                        "(PKCS#11 \u00a74.x requires CKA_LOCAL=False on import)"
+                    ),
                 )
             assert attrs[CKA_LOCAL] is False
         finally:

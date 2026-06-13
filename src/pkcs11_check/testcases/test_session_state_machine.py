@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, fail_as
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
 )
@@ -118,7 +119,13 @@ def _create_state_data_object(rs: Any, sh: int, attrs: dict[Any, Any]) -> int:
 def _xfail_if_aes_setup_rv(rv: int, context: str) -> None:
     """Classify key-generation setup rejects returned directly as CK_RV."""
     if rv in AES_KEYGEN_RUNTIME_REJECT_RVS:
-        pytest.xfail(f"{context}: {ckr_name(rv)}")
+        classify(
+            "not_operational",
+            label=context,
+            operation="C_GenerateKey",
+            actual=rv,
+            summary=f"{context}: {ckr_name(rv)}",
+        )
 
 
 def _login_user_raw(raw: Any, sh: int, pin_bytes: bytes | None) -> None:
@@ -992,9 +999,18 @@ class TestSessionContextManager:
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="PKCS#11 spec session_mgmt_functions.md",
             )
-            pytest.xfail(
-                "Module returns CKR_OK on C_GenerateRandom with a stale (closed) session handle "
-                "(spec requires CKR_SESSION_HANDLE_INVALID or CKR_SESSION_CLOSED)"
+            fail_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label="C_GenerateRandom:stale-session-handle",
+                operation="C_GenerateRandom",
+                actual=rv2,
+                expected=[CKR_SESSION_HANDLE_INVALID, CKR_SESSION_CLOSED],
+                summary=(
+                    "Module returns CKR_OK on C_GenerateRandom with a stale (closed) "
+                    "session handle (spec requires CKR_SESSION_HANDLE_INVALID or "
+                    "CKR_SESSION_CLOSED)"
+                ),
             )
         assert rv2 in (
             CKR_SESSION_HANDLE_INVALID,

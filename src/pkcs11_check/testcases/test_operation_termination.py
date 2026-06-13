@@ -38,6 +38,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import (
@@ -516,13 +517,27 @@ def test_null_argument_rejection_terminates_encrypt_decrypt_operation(
                 ),
             )
         if restart_rv != CKR_OK:
-            pytest.fail(
-                f"{label} with NULL {null_arg} pointer returned {ckr_name(rv)}; "
-                f"fresh {operation} init after rejection returned {ckr_name(restart_rv)}"
+            fail_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label=f"{label}:state-after-null-arg-reject",
+                operation=label,
+                actual=restart_rv,
+                summary=(
+                    f"{label} with NULL {null_arg} pointer returned {ckr_name(rv)}; "
+                    f"fresh {operation} init after rejection returned {ckr_name(restart_rv)}"
+                ),
             )
         _cancel_operation(rs.raw, rs.sh, _enc_dec_cancel_flag(operation))
         if rv == CKR_OK:
-            pytest.fail(f"{label} accepted NULL {null_arg} pointer with non-zero length")
+            fail_as(
+                "accepted_invalid",
+                kind="crypto",
+                label=f"{label}:null-pointer-nonzero-length",
+                operation=label,
+                actual=rv,
+                summary=f"{label} accepted NULL {null_arg} pointer with non-zero length",
+            )
         classify_negative_rv(
             rv,
             (CKR_ARGUMENTS_BAD,),
