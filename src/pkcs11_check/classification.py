@@ -21,7 +21,8 @@ Usage in tests::
 
 from __future__ import annotations
 
-from typing import Literal
+from dataclasses import asdict, dataclass
+from typing import Any, Literal
 
 Outcome = Literal["pass", "xfail", "fail"]
 Severity = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
@@ -62,3 +63,48 @@ def derive_verdict(reason: str, kind: str | None) -> tuple[Outcome, Severity]:
     if reason not in _REASON_OUTCOME:
         raise ValueError(f"unknown reason: {reason!r}")
     return _REASON_OUTCOME[reason], _severity(reason, kind)
+
+
+@dataclass
+class Classification:
+    """A single at-source classification record emitted by a test."""
+
+    reason: str
+    outcome: str
+    severity: str
+    kind: str | None = None
+    label: str = ""
+    summary: str = ""
+    operation: str | None = None
+    mechanism: str | None = None
+    expected_ckr: list[str] | None = None
+    actual_ckr: str | None = None
+    spec_ref: str = ""
+    source: str | None = None
+    vector_id: str | None = None
+    detail: dict[str, Any] | None = None
+    schema: int = 1
+
+
+# Global collector for the current test run.
+_records: list[Classification] = []
+
+
+def record(rec: Classification) -> None:
+    """Record a classification for the current test."""
+    _records.append(rec)
+
+
+def get_records() -> list[Classification]:
+    """Return all classification records collected so far."""
+    return list(_records)
+
+
+def clear() -> None:
+    """Clear collected records (call between tests)."""
+    _records.clear()
+
+
+def serialize(records: list[Classification]) -> list[dict[str, Any]]:
+    """Serialize classification records into JSON-safe artifact dicts."""
+    return [asdict(r) for r in records]
