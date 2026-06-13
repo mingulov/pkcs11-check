@@ -1100,6 +1100,47 @@ class TestBlake2bKeyed:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
 
+    def _key_derive_rejects_length_only_zero(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism(case.key_derive_name):
+            pytest.skip(f"CKM_{case.key_derive_name} not supported")
+
+        base = _import_blake2b_setup_key(rs, derive=True)
+        derived = 0
+        try:
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base,
+                    case.key_derive_mech,
+                    attrs={
+                        CKA_VALUE_LEN: 0,
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                )
+            except AssertionError as e:
+                reject_or_classify(
+                    e,
+                    (CKR_KEY_SIZE_RANGE, CKR_ATTRIBUTE_VALUE_INVALID),
+                    label=f"{case.key_derive_name} length-only zero-length output",
+                )
+                return
+
+            raise AssertionError(
+                f"accepted {case.key_derive_name} length-only zero-length output"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, base)
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)
+
     @pytest.mark.parametrize(
         "case",
         _BLAKE2B_KEYED_CASES,
@@ -1168,6 +1209,22 @@ class TestBlake2bKeyed:
     ) -> None:
         """BLAKE2B_*_KEY_DERIVE length-only overlong outputs are rejected."""
         self._key_derive_rejects_length_only_overlong(
+            p11_raw_session,
+            case,
+        )
+
+    @pytest.mark.parametrize(
+        "case",
+        _BLAKE2B_KEYED_CASES,
+        ids=[case.id for case in _BLAKE2B_KEYED_CASES],
+    )
+    def test_blake2b_key_derive_rejects_length_only_zero(
+        self,
+        p11_raw_session: Any,
+        case: _Blake2bKeyedCase,
+    ) -> None:
+        """BLAKE2B_*_KEY_DERIVE length-only zero-length outputs are rejected."""
+        self._key_derive_rejects_length_only_zero(
             p11_raw_session,
             case,
         )
