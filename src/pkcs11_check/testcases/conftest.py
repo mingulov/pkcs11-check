@@ -794,9 +794,45 @@ def classify_negative_rv(
             label=label,
             actual=rv,
             expected=tuple(expected_rvs),
+            summary=f"{label}: accepted invalid (CKR_OK) -- must reject",
         )
         return
     if rv in expected_rvs:
+        return
+    _classify_unexpected_clean_rv(rv, expected_rvs, label=label, kind=kind)
+
+
+def _classify_unexpected_clean_rv(
+    rv: int,
+    expected_rvs: tuple[Any, ...] | set[Any] | frozenset[Any],
+    *,
+    label: str,
+    kind: str | None = None,
+) -> None:
+    from pkcs11_check import classification as C
+
+    expected_names = [ckr_name(c) for c in expected_rvs]
+    if is_vendor_defined_ckr(rv):
+        C.classify(
+            "nonspec_reject",
+            kind=kind,
+            label=label,
+            actual=rv,
+            expected=tuple(expected_rvs),
+            summary=f"{label}: rejected with vendor-defined CK_RV {ckr_name(rv)}, "
+            f"expected {expected_names}",
+        )
+        return
+    if not is_standard_ckr(rv):
+        C.classify(
+            "unclassified",
+            kind=kind,
+            label=label,
+            actual=rv,
+            expected=tuple(expected_rvs),
+            summary=f"{label}: rejected with undefined CK_RV {ckr_name(rv)}, "
+            f"expected {expected_names}",
+        )
         return
     C.classify(
         "nonspec_reject",
@@ -813,18 +849,7 @@ def _xfail_or_fail_unexpected_clean_rv(
     *,
     label: str,
 ) -> None:
-    expected_names = [ckr_name(c) for c in expected_rvs]
-    if is_vendor_defined_ckr(rv):
-        pytest.xfail(
-            f"{label}: rejected with vendor-defined CK_RV {ckr_name(rv)}, "
-            f"expected {expected_names}"
-        )
-    if not is_standard_ckr(rv):
-        pytest.fail(
-            f"{label}: rejected with undefined CK_RV {ckr_name(rv)}, "
-            f"expected {expected_names}"
-        )
-    pytest.xfail(f"{label}: rejected with {ckr_name(rv)}, expected {expected_names}")
+    _classify_unexpected_clean_rv(rv, expected_rvs, label=label)
 
 
 def reject_or_classify(
@@ -857,19 +882,14 @@ def reject_or_classify(
             label=label,
             actual="CKR_OK",
             expected=tuple(expected_rvs),
+            summary=f"{label}: accepted invalid (CKR_OK) -- must reject",
         )
         return
     if is_known_error(exc, expected_rvs):
         return
     rv = getattr(exc, "rv", None)
     if rv is not None:
-        C.classify(
-            "nonspec_reject",
-            kind=kind,
-            label=label,
-            actual=rv,
-            expected=tuple(expected_rvs),
-        )
+        _classify_unexpected_clean_rv(rv, expected_rvs, label=label, kind=kind)
         return
     C.classify(
         "nonspec_reject",
