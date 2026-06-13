@@ -22,9 +22,8 @@ from __future__ import annotations
 import inspect
 from typing import Any, Literal
 
-import pytest
-
 from pkcs11_check import compliance
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.compliance import ComplianceLevel
 from pkcs11_check.raw.pack import attr_ulong, template
 from pkcs11_check.raw.recipes import find_objects
@@ -125,5 +124,19 @@ def claim_refusal_passes(exc: AssertionError, rs: Any, *, probe_key: str) -> Lit
             reference="PKCS#11 v3.2 CKR_OPERATION_NOT_VALIDATED / Sec. 4.15",
             test_id=caller_qualname,
         )
+        classify(
+            "sanctioned_refusal",
+            label=probe_key,
+            actual=exc.rv,
+            summary=(
+                f"{probe_key}: refused via sanctioned CKR_OPERATION_NOT_VALIDATED "
+                f"(validation-policy refusal; CKO_VALIDATION objects present: {presence})"
+            ),
+        )
         return True
-    pytest.xfail(not_operational_reason(probe_key, ckr_name(exc.rv)))
+    xfail_as(
+        "not_operational",
+        label=probe_key,
+        actual=exc.rv,
+        summary=not_operational_reason(probe_key, ckr_name(exc.rv)),
+    )

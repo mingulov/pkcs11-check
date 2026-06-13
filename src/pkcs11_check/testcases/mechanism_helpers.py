@@ -174,9 +174,15 @@ def _skip_if_keygen_mechanism_absent(rs: Any, keygen_mech: int, mech_name: str) 
 def _xfail_if_keygen_runtime_reject(rv: int, mech_name: str) -> None:
     if rv not in _KEYGEN_RUNTIME_REJECT_RVS:
         return
-    import pytest
+    from pkcs11_check.classification import classify
 
-    pytest.xfail(f"{mech_name} keygen rejected at runtime: {ckr_name(rv)}")
+    classify(
+        "not_operational",
+        label=f"{mech_name}:keygen",
+        operation="C_GenerateKey",
+        actual=rv,
+        summary=f"{mech_name} keygen rejected at runtime: {ckr_name(rv)}",
+    )
 
 
 def _pbkdf2_keygen_mechanism() -> Any:
@@ -193,19 +199,29 @@ def _pbkdf2_keygen_mechanism() -> Any:
 
 
 def _xfail_if_keypair_runtime_reject(exc: AssertionError, mech_name: str) -> None:
+    from pkcs11_check.classification import classify
+
     rv = getattr(exc, "rv", None)
     if rv is not None:
         if rv in _KEYPAIR_RUNTIME_REJECT_RVS:
-            import pytest
-
-            pytest.xfail(f"{mech_name} keypair rejected at runtime: {ckr_name(rv)}")
+            classify(
+                "not_operational",
+                label=f"{mech_name}:keypair",
+                operation="C_GenerateKeyPair",
+                actual=rv,
+                summary=f"{mech_name} keypair rejected at runtime: {ckr_name(rv)}",
+            )
         return
     msg = str(exc)
     for candidate in _KEYPAIR_RUNTIME_REJECT_RVS:
         if ckr_name(candidate) in msg:
-            import pytest
-
-            pytest.xfail(f"{mech_name} keypair rejected at runtime: {ckr_name(candidate)}")
+            classify(
+                "not_operational",
+                label=f"{mech_name}:keypair",
+                operation="C_GenerateKeyPair",
+                actual=candidate,
+                summary=f"{mech_name} keypair rejected at runtime: {ckr_name(candidate)}",
+            )
 
 
 def _generate_keypair_or_xfail(

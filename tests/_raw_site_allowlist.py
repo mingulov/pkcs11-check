@@ -3,11 +3,7 @@ as Phase 7 migrates each file to classify(). When empty, the static gate is full
 
 ALLOWLIST = {
     "src/pkcs11_check/testcases/_attribute_values.py",
-    "src/pkcs11_check/testcases/_capability_claims.py",
-    "src/pkcs11_check/testcases/_operability.py",
-    "src/pkcs11_check/testcases/_rsa_export.py",
     "src/pkcs11_check/testcases/_subprocess_result.py",
-    "src/pkcs11_check/testcases/mechanism_helpers.py",
     "src/pkcs11_check/testcases/test_access_control.py",
     "src/pkcs11_check/testcases/test_always_authenticate.py",
     "src/pkcs11_check/testcases/test_attribute_defaults.py",
