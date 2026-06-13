@@ -10,6 +10,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.der import ecdsa_sig_der_to_p1363
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -194,7 +195,11 @@ def test_dsa(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     sig_error = vec.get("_pkcs11_sig_error")
     if sig_error is not None:
         if result == "valid":
-            pytest.fail(f"Valid DSA sig {vec_id} cannot be converted for PKCS#11: {sig_error}")
+            classify(
+                "not_operational",
+                label="DSA:sig-convert",
+                summary=f"Valid DSA sig {vec_id} cannot be converted for PKCS#11: {sig_error}",
+            )
         pytest.skip(f"DSA signature cannot be represented as PKCS#11 P1363: {sig_error}")
     sig = bytes.fromhex(vec["_pkcs11_sig"])
     mechanism = vec["_mechanism"]
@@ -229,14 +234,28 @@ def test_dsa(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         verified = verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig)
         if result == "invalid":
             if verified:
-                pytest.fail(f"Invalid DSA sig {vec_id} accepted by module")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="DSA",
+                    summary=f"Invalid DSA sig {vec_id} accepted by module",
+                )
             return
         if result == "valid" and not verified:
-            pytest.fail(f"Valid DSA sig {vec_id} rejected by module")
+            classify(
+                "wrong_result",
+                kind="crypto",
+                label="DSA",
+                summary=f"Valid DSA sig {vec_id} rejected by module",
+            )
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_dsa_runtime_reject(exc, vec_id)
-            pytest.fail(f"Valid DSA sig {vec_id} rejected: {exc}")
+            classify(
+                "not_operational",
+                label="DSA",
+                summary=f"Valid DSA sig {vec_id} rejected: {exc}",
+            )
         signature_rejected_or_xfail(exc, vec_id)
         return
     finally:

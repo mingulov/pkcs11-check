@@ -29,6 +29,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack_mechanisms import mech_sign_context
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -37,7 +38,6 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
-from pkcs11_check.classification import classify
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,

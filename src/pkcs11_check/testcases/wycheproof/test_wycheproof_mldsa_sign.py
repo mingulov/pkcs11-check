@@ -10,12 +10,12 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_pqc_private_key,
     sign_single,
 )
-from pkcs11_check.classification import classify
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,

@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     decapsulate_key,
     destroy_quietly,
@@ -40,7 +41,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.classification import classify
 from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 

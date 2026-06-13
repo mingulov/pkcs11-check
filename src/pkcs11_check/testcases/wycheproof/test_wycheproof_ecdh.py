@@ -11,6 +11,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_ecdh
 from pkcs11_check.raw.recipes import (
     derive_key,
@@ -294,7 +295,11 @@ def test_ecdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             # operational" -> xfail, not skip. The CKR_CURVE_NOT_SUPPORTED/DOMAIN
             # branch above keeps the genuine-absence skip; the result=="invalid"
             # return above keeps the vacuous pass.
-            pytest.xfail(not_operational_reason("ECDH:EC-private-import", ckr_name(exc.rv)))
+            classify(
+                "not_operational",
+                label="ECDH:EC-private-import",
+                summary=not_operational_reason("ECDH:EC-private-import", ckr_name(exc.rv)),
+            )
         raise
 
     # Derive shared secret
