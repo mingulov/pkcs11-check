@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_DEVICE_MEMORY,
@@ -154,9 +155,15 @@ class TestUniversalRealTriggers:
                 ComplianceLevel.VENDOR,
                 reference="PKCS#11 v3.1 Sec.11.4",
             )
-            pytest.xfail(
-                "Module auto-initializes after C_Finalize, returning CKR_OK "
-                "instead of CKR_CRYPTOKI_NOT_INITIALIZED (PKCS#11 v3.1 Sec.11.4)"
+            classify(
+                "honest_deviation",
+                label="C_GetSlotList:after-finalize",
+                operation="C_GetSlotList",
+                spec_ref="PKCS#11 v3.1 Sec.11.4",
+                summary=(
+                    "Module auto-initializes after C_Finalize, returning CKR_OK "
+                    "instead of CKR_CRYPTOKI_NOT_INITIALIZED (PKCS#11 v3.1 Sec.11.4)"
+                ),
             )
 
     def test_device_removed_via_fault_proxy(self, p11_config: Any) -> None:

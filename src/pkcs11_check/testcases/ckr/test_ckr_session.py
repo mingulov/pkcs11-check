@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.bootstrap import close_session_quietly
 from pkcs11_check.raw.bootstrap import open_session as _raw_open_session
 from pkcs11_check.raw.rv import ckr_name
@@ -86,8 +87,15 @@ class TestLoginErrors:
             rv = rs.raw.C_Login(sh, CKU_USER, pin_buf, len(wrong_pin))
             if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_TYPE_INVALID):
                 # Phase 6 C: token session state (not a missing capability)
-                # prevented exercising the wrong-PIN path -> xfail, not skip.
-                pytest.xfail(f"token login state prevents testing wrong PIN: {ckr_name(rv)}")
+                # prevented exercising the wrong-PIN path. The negative-op probe
+                # never evaluated the wrong PIN -> harmless no-op -> xfail.
+                classify(
+                    "honest_deviation",
+                    label="C_Login:wrong-pin-probe",
+                    operation="C_Login",
+                    actual=rv,
+                    summary=f"token login state prevents testing wrong PIN: {ckr_name(rv)}",
+                )
             # CKR_OK here would mean the module accepted a wrong PIN -> fail;
             # a non-spec reject code -> xfail; CKR_PIN_INCORRECT -> pass.
             classify_negative_rv(rv, (CKR_PIN_INCORRECT,), label="C_Login with a wrong PIN")

@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair
 from pkcs11_check.raw.rv import ckr_name
@@ -79,7 +80,15 @@ class TestErrorPriority:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub)
             if rv == CKR_OK:
-                pytest.fail("Should have rejected RSA key with AES-ECB")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_EncryptInit:RSA-key-AES-ECB",
+                    operation="C_EncryptInit",
+                    mechanism="CKM_AES_ECB",
+                    actual=rv,
+                    summary="Should have rejected RSA key with AES-ECB",
+                )
             assert (
                 rv
                 in (
@@ -104,7 +113,15 @@ class TestErrorPriority:
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             if rv == CKR_OK:
-                pytest.fail("Should have rejected AES key with RSA mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_EncryptInit:AES-key-RSA-mechanism",
+                    operation="C_EncryptInit",
+                    mechanism="CKM_RSA_PKCS",
+                    actual=rv,
+                    summary="Should have rejected AES key with RSA mechanism",
+                )
             assert (
                 rv
                 in (
