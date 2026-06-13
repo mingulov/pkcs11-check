@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import PackedMechanism, _mech_struct, attr_bytes
 from pkcs11_check.raw.recipes import derive_key, destroy_quietly, gen_keypair
@@ -200,9 +201,14 @@ def _create_ec_keypair(rs: Any) -> tuple[int, int]:
             raise  # unreachable
 
     detail = "; ".join(str(exc) for exc in curve_rejects)
-    pytest.xfail(
-        "CKM_EC_MONTGOMERY_KEY_PAIR_GEN advertised but neither X25519 nor X448 "
-        f"keypair generation is available for X3DH setup: {detail}"
+    xfail_as(
+        "not_operational",
+        label="CKM_EC_MONTGOMERY_KEY_PAIR_GEN:X3DH-setup",
+        operation="C_GenerateKeyPair",
+        summary=(
+            "CKM_EC_MONTGOMERY_KEY_PAIR_GEN advertised but neither X25519 nor X448 "
+            f"keypair generation is available for X3DH setup: {detail}"
+        ),
     )
 
 

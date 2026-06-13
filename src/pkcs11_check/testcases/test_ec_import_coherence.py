@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import destroy_quietly
 from pkcs11_check.raw.types_std import CKA_VERIFY
@@ -75,9 +76,15 @@ def test_ec_public_key_import_is_coherent(p11_module_session: Any, curve: str) -
     try:
         defect = ec_public_key_binding_defect(rs, handle, ec_params)
         if defect:
-            pytest.fail(
-                f"{curve}: C_CreateObject returned CKR_OK but the object is not "
-                f"honored (Type-C self-contradiction): {defect}"
+            classify(
+                "self_contradiction",
+                kind="lifecycle",
+                label=f"EC import coherence {curve}",
+                operation="C_CreateObject",
+                summary=(
+                    f"{curve}: C_CreateObject returned CKR_OK but the object is not "
+                    f"honored (Type-C self-contradiction): {defect}"
+                ),
             )
     finally:
         destroy_quietly(rs.raw, rs.sh, handle)

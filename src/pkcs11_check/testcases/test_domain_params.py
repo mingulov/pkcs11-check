@@ -18,6 +18,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import attr_ulong, template
 from pkcs11_check.raw.recipes import (
@@ -225,7 +226,13 @@ class TestDomainParameterEnumeration:
                 key_type = attrs[CKA_KEY_TYPE]
                 assert isinstance(key_type, int), f"Expected int for KEY_TYPE, got {type(key_type)}"
             except AssertionError as e:
-                pytest.xfail(f"Cannot read CKA_KEY_TYPE from domain parameter object: {e}")
+                classify(
+                    "not_operational",
+                    kind="metadata",
+                    label="CKO_DOMAIN_PARAMETERS:CKA_KEY_TYPE",
+                    operation="C_GetAttributeValue",
+                    summary=f"Cannot read CKA_KEY_TYPE from domain parameter object: {e}",
+                )
 
 
 class TestMultipleCurveDomainParams:
