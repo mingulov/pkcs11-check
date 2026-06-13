@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -250,11 +251,25 @@ def test_acvp_aes_kw_unwrap(p11_module_session: Any, vec_id: str, vec: dict[str,
                     return  # module correctly rejected invalid ciphertext
                 result = _wrap_operability(rs, "AES_KEY_WRAP", "decrypt")
                 if result.status is Operability.NOT_OPERATIONAL:
-                    pytest.xfail(
-                        f"AES_KEY_WRAP advertised but C_Decrypt is not operational "
-                        f"({result.detail}); vector: {exc}"
+                    xfail_as(
+                        "not_operational",
+                        kind="crypto",
+                        label="AES_KEY_WRAP:decrypt",
+                        summary=(
+                            f"AES_KEY_WRAP advertised but C_Decrypt is not operational "
+                            f"({result.detail}); vector: {exc}"
+                        ),
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
                     )
-                pytest.fail(f"{vec_id}: valid KW vector rejected: {exc}")
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="AES_KEY_WRAP:decrypt",
+                    summary=f"{vec_id}: valid KW vector rejected: {exc}",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             classify_kat_clean_error(
                 exc,
                 result=_wrap_operability(rs, "AES_KEY_WRAP", "decrypt"),
@@ -268,7 +283,14 @@ def test_acvp_aes_kw_unwrap(p11_module_session: Any, vec_id: str, vec: dict[str,
                 f"  expected: {_hex(vec['pt_expected'])}"
             )
         else:
-            pytest.fail(f"{vec_id}: module accepted KW ciphertext with invalid integrity check")
+            fail_as(
+                "accepted_invalid",
+                kind="crypto",
+                label="AES_KEY_WRAP:decrypt",
+                summary=f"{vec_id}: module accepted KW ciphertext with invalid integrity check",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
     finally:
         if key:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -381,11 +403,25 @@ def test_acvp_aes_kwp_unwrap(p11_module_session: Any, vec_id: str, vec: dict[str
                     return  # module correctly rejected invalid ciphertext
                 result = _wrap_operability(rs, "AES_KEY_WRAP_KWP", "decrypt")
                 if result.status is Operability.NOT_OPERATIONAL:
-                    pytest.xfail(
-                        f"AES_KEY_WRAP_KWP advertised but C_Decrypt is not operational "
-                        f"({result.detail}); vector: {exc}"
+                    xfail_as(
+                        "not_operational",
+                        kind="crypto",
+                        label="AES_KEY_WRAP_KWP:decrypt",
+                        summary=(
+                            f"AES_KEY_WRAP_KWP advertised but C_Decrypt is not operational "
+                            f"({result.detail}); vector: {exc}"
+                        ),
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
                     )
-                pytest.fail(f"{vec_id}: valid KWP vector rejected: {exc}")
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="AES_KEY_WRAP_KWP:decrypt",
+                    summary=f"{vec_id}: valid KWP vector rejected: {exc}",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             classify_kat_clean_error(
                 exc,
                 result=_wrap_operability(rs, "AES_KEY_WRAP_KWP", "decrypt"),
@@ -399,7 +435,14 @@ def test_acvp_aes_kwp_unwrap(p11_module_session: Any, vec_id: str, vec: dict[str
                 f"  expected: {_hex(vec['pt_expected'])}"
             )
         else:
-            pytest.fail(f"{vec_id}: module accepted KWP ciphertext with invalid integrity check")
+            fail_as(
+                "accepted_invalid",
+                kind="crypto",
+                label="AES_KEY_WRAP_KWP:decrypt",
+                summary=f"{vec_id}: module accepted KWP ciphertext with invalid integrity check",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
     finally:
         if key:
             destroy_quietly(rs.raw, rs.sh, key)
