@@ -561,11 +561,13 @@ smoke behavior, or covered only by one narrow variation.
    `C_DigestXof` instead of the old unconditional skip. ML-DSA ExternalMu
    sign/verify coverage exists for a 64-byte `mu` value and rejects tampered
    `mu` input. KMAC parameter packing coverage exists through `CK_KMAC_PARAMS`
-   and `mech_kmac`, and the KMAC sign/verify roundtrip stubs now build
-   parameterized operations instead of skipping because the raw binding is
-   missing. Remaining adjacent work is KMAC parameterized signing against
-   providers with stable mechanism IDs plus deeper ML-DSA ExternalMuGen/PQC
-   provider evidence, not basic SHAKE/XOF raw API coverage.
+   and `mech_kmac`, and the KMAC parameterized signing roundtrip stubs now
+   build parameterized operations instead of skipping because the raw binding is
+   missing. KMAC tampered-message negative coverage now verifies that a valid
+   KMAC signature over the original data does not verify after the data is
+   modified. Remaining adjacent work is deeper KMAC provider evidence and
+   deeper ML-DSA ExternalMuGen/PQC provider evidence, not basic SHAKE/XOF raw
+   API coverage.
 8. Legacy cipher coverage is now mixed rather than mostly generic: RC2, RC4,
    RC5, CAST/CAST3/CAST128/CAST5, IDEA, Blowfish, and Twofish have KAT-backed
    encrypt coverage where the PKCS#11 mechanism shape is reliable. RC2, RC5,

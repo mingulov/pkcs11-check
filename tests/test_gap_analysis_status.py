@@ -863,6 +863,18 @@ def test_gap_analysis_marks_kmac_parameter_packing_as_added() -> None:
     assert "KMAC parameterized signing" in doc_flat
 
 
+def test_gap_analysis_marks_kmac_tampered_message_negative_as_added() -> None:
+    """KMAC verification rejects a valid MAC over modified data."""
+    extended = _read("src/pkcs11_check/testcases/test_extended_mechanisms.py")
+    guard = _read("tests/test_kmac_runtime_classification.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "verified a KMAC signature over tampered data" in extended
+    assert "test_kmac_roundtrip_rejects_tampered_message" in guard
+
+    assert "KMAC tampered-message negative coverage" in doc_flat
+
+
 def test_gap_analysis_marks_message_api_registry_init_coverage_as_added() -> None:
     """Message API init coverage is driven from advertised CKF_MESSAGE_* flags."""
     message = _read("src/pkcs11_check/testcases/test_mech_message.py")

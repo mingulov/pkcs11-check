@@ -550,6 +550,22 @@ class TestKMAC:
                         customization=customization,
                     ),
                 ), f"CKM_{name} verified a tampered KMAC signature"
+
+                tampered_data = data + b"!"
+                assert not verify_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    mechanism,
+                    tampered_data,
+                    signature,
+                    mech_param=mech_kmac(
+                        mechanism,
+                        key_handle=key,
+                        mac_len=mac_len,
+                        customization=customization,
+                    ),
+                ), f"CKM_{name} verified a KMAC signature over tampered data"
             except CkrAssertionError as exc:
                 xfail_if_known_ckr(
                     exc,
