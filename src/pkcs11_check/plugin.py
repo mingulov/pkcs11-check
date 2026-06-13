@@ -776,13 +776,53 @@ def _attach_compliance_notes_to_report(item: pytest.Item, report: Any) -> None:
     _append_missing_compliance_notes(user_properties, notes)
 
 
+def _report_is_fail_or_xfail(report: Any) -> bool:
+    """True when a call report represents a hard fail or an imperative xfail.
+
+    ``pytest.fail()`` yields ``outcome == "failed"``; ``pytest.xfail()`` yields a
+    ``skipped`` report carrying a ``wasxfail`` attribute. Both are the un-migrated
+    raw-site shapes the unclassified gate must cover.
+    """
+    return (
+        getattr(report, "outcome", None) == "failed"
+        or getattr(report, "wasxfail", None) is not None
+    )
+
+
+def _synthetic_unclassified_record(item: pytest.Item, report: Any) -> Any:
+    """Build the synthetic ``unclassified`` record for a raw fail/xfail testcase.
+
+    A testcase that ends as fail/xfail without emitting a :func:`classify` record
+    is part of the un-migrated backlog; injecting one synthetic record keeps the
+    report 100% covered so the live ``unclassified`` count IS the migration backlog.
+    """
+    from pkcs11_check.classification import Classification
+
+    return Classification(
+        reason="unclassified",
+        outcome="fail",
+        severity="HIGH",
+        label=str(getattr(item, "nodeid", "")),
+        summary=_report_text(report) or "raw pytest.fail/xfail with no classification",
+        detail={"raw": True},
+    )
+
+
 def _attach_classification_to_report(item: pytest.Item, report: Any) -> None:
-    """Attach structured classifications before report-log serializes them."""
+    """Attach structured classifications before report-log serializes them.
+
+    Real emitted records always take precedence. When a testcase item ends as a
+    raw fail/xfail with no emitted record, a single synthetic ``unclassified``
+    record is injected so every testcase outcome stays covered (Phase 5.1 gate).
+    """
     if getattr(report, "when", None) != "call":
         return
     from pkcs11_check.classification import get_records, serialize
 
-    records = serialize(get_records())
+    collected = get_records()
+    if not collected and _is_testcase_item(item) and _report_is_fail_or_xfail(report):
+        collected = [_synthetic_unclassified_record(item, report)]
+    records = serialize(collected)
     if not records:
         return
     props = list(getattr(report, "user_properties", []) or [])
