@@ -2171,17 +2171,29 @@ def _identify_crash_culprit_from_records(
     so a caller that also needs the per-test detail can parse the JSONL once
     and feed both this and ``_build_detail_from_report_records``.
     """
-    # Per-nodeid phase tracking, preserving insertion order.
     phases: dict[str, set[str]] = {}
     for rec in records:
-        if rec.get("$report_type", "TestReport") != "TestReport":
-            continue
-        nodeid: str = rec.get("nodeid", "")
-        when: str = rec.get("when", "")
-        if not nodeid or not when:
-            continue
-        phases.setdefault(nodeid, set()).add(when)
+        _record_crash_phase(phases, rec)
 
+    return _crash_culprit_from_phases(phases)
+
+
+def _record_crash_phase(
+    phases: dict[str, set[str]],
+    rec: Mapping[str, Any],
+) -> None:
+    """Track pytest phase progress for crash culprit identification."""
+    if rec.get("$report_type", "TestReport") != "TestReport":
+        return
+    nodeid: str = rec.get("nodeid", "")
+    when: str = rec.get("when", "")
+    if not nodeid or not when:
+        return
+    phases.setdefault(nodeid, set()).add(when)
+
+
+def _crash_culprit_from_phases(phases: Mapping[str, set[str]]) -> tuple[str | None, list[str]]:
+    """Return the unfinished setup node and completed tests from phase state."""
     completed: list[str] = []
     culprit: str | None = None
     for nid, ph in phases.items():
@@ -2209,6 +2221,50 @@ def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
     Returns ``None`` if the file is missing or empty.
     """
     return _build_detail_from_report_records(_iter_report_log_records(jsonl_path))
+
+
+def _analyze_report_jsonl(
+    jsonl_path: Path,
+    *,
+    state_file: Path | None = None,
+    unit: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None, list[str]]:
+    """Stream a report JSONL once to build detail, crash progress, and optional cache."""
+    if (state_file is None) != (unit is None):
+        raise ValueError("state_file and unit must be provided together")
+
+    phases: dict[str, set[str]] = {}
+    cache_path = _report_record_cache_path(state_file, unit) if state_file and unit else None
+    tmp_path = cache_path.with_suffix(".jsonl.tmp") if cache_path is not None else None
+    wrote_cache = False
+
+    def iter_records(cache_fh: Any | None = None) -> Iterable[dict[str, Any]]:
+        nonlocal wrote_cache
+        for record in _iter_report_log_records(jsonl_path):
+            _record_crash_phase(phases, record)
+            if cache_fh is not None:
+                cache_fh.write(json.dumps(record) + "\n")
+                wrote_cache = True
+            yield record
+
+    if cache_path is None or tmp_path is None:
+        detail = _build_detail_from_report_records(iter_records())
+        culprit, completed = _crash_culprit_from_phases(phases)
+        return detail, culprit, completed
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with tmp_path.open("w", encoding="utf-8") as out_fh:
+            detail = _build_detail_from_report_records(iter_records(out_fh))
+        if wrote_cache:
+            tmp_path.replace(cache_path)
+        else:
+            tmp_path.unlink(missing_ok=True)
+            cache_path.unlink(missing_ok=True)
+        culprit, completed = _crash_culprit_from_phases(phases)
+        return detail, culprit, completed
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def _unit_timeout_seconds(
@@ -2837,16 +2893,10 @@ def run_isolated_pytest_units(
 
                         try:
                             while retry_count < _MAX_TIMEOUT_RETRIES:
-                                # -- parse JSONL once for completed + culprit + detail --
+                                # Stream JSONL once for completed + culprit + detail.
                                 if to_iter_jsonl is not None:
-                                    iter_records = _load_report_log_records(to_iter_jsonl)
-                                    culprit, completed = _identify_crash_culprit_from_records(
-                                        iter_records
-                                    )
-                                    iter_detail = (
-                                        _build_detail_from_report_records(iter_records)
-                                        if iter_records
-                                        else None
+                                    iter_detail, culprit, completed = _analyze_report_jsonl(
+                                        to_iter_jsonl
                                     )
                                 else:
                                     culprit, completed = None, []
@@ -3140,15 +3190,14 @@ def run_isolated_pytest_units(
                 crash_jsonl_path: Path | None = unit_jsonl_path
                 detail: dict[str, Any] | None = None
                 if unit_jsonl_path is not None:
-                    unit_records = _load_report_log_records(unit_jsonl_path)
                     if report_config is not None and report_config.jsonl_path is not None:
-                        _write_unit_report_record_cache(state_file, unit, unit_records)
-                    # Reuse the records loaded just above rather than re-reading
-                    # and re-parsing the same JSONL — _read_jsonl_results is
-                    # _build_detail_from_report_records(_load_report_log_records())
-                    # so this is byte-identical but skips a full parse per unit
-                    # (~one per test file, every run). See review finding R7.
-                    detail = _build_detail_from_report_records(unit_records)
+                        detail, _culprit, _completed = _analyze_report_jsonl(
+                            unit_jsonl_path,
+                            state_file=state_file,
+                            unit=unit,
+                        )
+                    else:
+                        detail, _culprit, _completed = _analyze_report_jsonl(unit_jsonl_path)
                     if status not in ("crashed", "timeout"):
                         unit_jsonl_path.unlink(missing_ok=True)
                         crash_jsonl_path = None
@@ -3209,16 +3258,10 @@ def run_isolated_pytest_units(
 
                         try:
                             while True:
-                                # - read JSONL once for completed + culprit + detail --
+                                # Stream JSONL once for completed + culprit + detail.
                                 if iter_jsonl_path is not None:
-                                    iter_records = _load_report_log_records(iter_jsonl_path)
-                                    culprit, completed = _identify_crash_culprit_from_records(
-                                        iter_records
-                                    )
-                                    iter_detail = (
-                                        _build_detail_from_report_records(iter_records)
-                                        if iter_records
-                                        else None
+                                    iter_detail, culprit, completed = _analyze_report_jsonl(
+                                        iter_jsonl_path
                                     )
                                 else:
                                     culprit, completed = None, []

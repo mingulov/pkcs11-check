@@ -128,3 +128,42 @@ def test_postprocess_single_pass_per_file_counts(
     assert units["a.py"]["counts"]["passed"] == 1
     assert units["a.py"]["counts"]["failed"] == 1
     assert units["b.py"]["status"] == "passed"
+
+
+def test_analyze_report_jsonl_streams_detail_culprit_and_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    jsonl = tmp_path / "report.jsonl"
+    records = [
+        _report("f.py::test_a", "setup"),
+        _report("f.py::test_a", "call"),
+        _report("f.py::test_a", "teardown"),
+        _report("f.py::test_b", "call", "failed"),
+        _report("f.py::test_c", "setup"),
+    ]
+    jsonl.write_text("".join(json.dumps(r) + "\n" for r in records))
+
+    def _load_all_forbidden(_path: Path) -> list[dict[str, object]]:
+        pytest.fail("_analyze_report_jsonl must stream records")
+
+    monkeypatch.setattr(file_runner_mod, "_load_report_log_records", _load_all_forbidden)
+
+    analyze = getattr(file_runner_mod, "_analyze_report_jsonl")
+    detail, culprit, completed = analyze(
+        jsonl,
+        state_file=tmp_path / "state.json",
+        unit="f.py",
+    )
+
+    assert culprit == "f.py::test_c"
+    assert completed == ["f.py::test_a"]
+    assert detail is not None
+    assert detail["counts"]["passed"] == 1
+    assert detail["counts"]["failed"] == 1
+    assert detail["tests"] == [
+        {"nodeid": "f.py::test_b", "outcome": "failed", "duration": 0.0}
+    ]
+
+    cache_path = file_runner_mod._report_record_cache_path(tmp_path / "state.json", "f.py")
+    assert [json.loads(line) for line in cache_path.read_text().splitlines()] == records

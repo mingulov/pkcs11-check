@@ -239,6 +239,10 @@ Current status:
 - Implemented: the complete/partial resume fallback now seeds missing per-unit
   report-record cache shards by streaming an existing merged `report.jsonl`,
   instead of splitting the whole merged report into an in-memory per-unit map.
+- Implemented: retry/detail analysis now streams each unit report JSONL once
+  to build per-test detail, crash culprit/completed-test state, and optional
+  report-record cache shards, instead of materializing the parsed record list
+  at timeout/crash retry and normal per-unit detail sites.
 
 ## Coverage Findings
 

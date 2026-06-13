@@ -1691,3 +1691,17 @@ def test_gap_analysis_marks_compliance_note_persistence_as_end_to_end() -> None:
 
     assert "test_run_isolated_pytest_units_preserves_real_subprocess_compliance_notes" in tests
     assert "end-to-end isolated subprocess regression" in " ".join(doc.split())
+
+
+def test_gap_analysis_marks_retry_report_jsonl_analysis_as_single_pass() -> None:
+    """Retry/detail report-jsonl analysis no longer materializes parsed record lists."""
+    runner = _read("src/pkcs11_check/core/file_runner.py")
+    tests = _read("tests/test_single_pass_refactors.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "def _analyze_report_jsonl(" in runner
+    assert "_load_report_log_records(to_iter_jsonl)" not in runner
+    assert "_load_report_log_records(iter_jsonl_path)" not in runner
+    assert "_load_report_log_records(unit_jsonl_path)" not in runner
+    assert "test_analyze_report_jsonl_streams_detail_culprit_and_cache" in tests
+    assert "retry/detail analysis now streams each unit report JSONL once" in doc_flat
