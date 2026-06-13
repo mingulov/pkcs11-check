@@ -68,14 +68,15 @@ def load_acvp_vectors(algorithm: str) -> list[dict[str, Any]]:
             group_meta.update({k: v for k, v in rg.items() if k != "tests" and k not in group_meta})
 
             for pt, rt in zip(p_tests, r_tests):
-                vectors.append(
-                    {
-                        "input": pt,
-                        "expected": rt,
-                        "group": group_meta,
-                        "algorithm": algorithm,
-                    }
-                )
+                merged: dict[str, Any] = {
+                    "input": pt,
+                    "expected": rt,
+                    "group": group_meta,
+                    "algorithm": algorithm,
+                }
+                merged["_source"] = f"acvp:{algorithm}"
+                merged["_vector_id"] = f"tcId={pt.get('tcId')}"
+                vectors.append(merged)
 
     return vectors
 
