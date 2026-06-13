@@ -84,8 +84,9 @@ self-contradiction classes (A=crypto, B=policy, C=lifecycle, D=metadata; see
 mean nothing to a provider maintainer or a fresh agent — but the report renders the legacy
 letter parenthetically for continuity, e.g. `self_contradiction · policy (Type B)`.
 
-`kind` is most load-bearing for `self_contradiction` (which invariant broke) and for
-`wrong_result`/`accepted_invalid` (it sets severity). It is optional for `crash`.
+`kind` is **required** for `wrong_result`, `accepted_invalid`, and `self_contradiction` — it
+selects severity and, for self-contradiction, names the broken invariant — and **optional** for
+`crash` and the three xfail reasons, whose severity is flat.
 
 ### Severity — derived once from `(reason, kind)`
 
@@ -168,7 +169,11 @@ non-fit resolved to a clarification below — **no new reason was required beyon
 - **Non-determinism** (valid-but-non-canonical RFC6979 `k`) → `honest_deviation`. A
   systematically wrong KAT across all providers is a report-layer verification concern, not a
   reason.
-- **Resource/handle leaks** → out of scope; no test drives them (YAGNI).
+- **Resource/handle leaks** → out of scope **by design**, not merely untested. Leak and
+  exhaustion analysis (memory, file descriptors, handle slots) belongs to an *external*
+  observer (valgrind / ASan / `/proc` or RSS monitoring) for which **pkcs11-check is only the
+  workload generator** — it is never a test-outcome `reason`. If such analysis is wanted, it is
+  a separate tool wrapping a pkcs11-check run, not a change to this classifier.
 
 ### Special cases
 
@@ -183,10 +188,12 @@ non-fit resolved to a clarification below — **no new reason was required beyon
   `skip` with `detail={"harness": "<why>"}`. The report lists these in a separate
   "harness-staging skips" line, never as provider findings, and a meta-audit flags
   suspicious volumes. (This honors the model rule that `skip` is only for "cannot test".)
-- **Unexpected pass (`xpassed`).** If a site emits `outcome=xfail` but the operation actually
-  succeeds, pytest records `xpassed`. The report flags these as "module did better than
-  expected — re-check the xfail" by comparing the emitted `Classification.outcome` against the
-  pytest outcome. Not a new reason; a report-layer reconciliation.
+- **`xpassed` effectively disappears.** Imperative classification (`classify()` →
+  `pytest.xfail`) fires only *after* the module's clean error is observed, so the xfail path is
+  never reached when the op succeeds — it simply `pass`es. With the single remaining
+  `@pytest.mark.xfail` decorator removed, there is no declarative-xfail source of `xpassed`, so
+  the old Phase-3 xpassed audit is moot. Detecting "a recorded deviation became operational" is
+  therefore a run-over-run **diff** concern (deferred; see Non-goals), not an outcome.
 
 ## Emission mechanism
 
@@ -199,10 +206,14 @@ Mirror `compliance.py` exactly — the proven path that already reaches `report.
   the model table. Pure, unit-tested.
 - **A single emit API** that all sites funnel through, e.g.
   `classify(reason, *, kind=None, label, operation=None, mechanism=None, expected=None,
-  actual=None, spec_ref=None, source=None, vector_id=None, detail=None)`. It builds the record,
-  calls `derive_verdict`, `record()`s it, then calls the right `pytest.fail/xfail` (or returns
-  for pass). Thin convenience wrappers `xfail_as(reason, …)` / `fail_as(reason, …)` exist for
-  readability but route through the same emit API.
+  actual=None, spec_ref=None, source=None, vector_id=None, summary=None, detail=None)`. It
+  builds the record, calls `derive_verdict`, `record()`s it, then calls the right
+  `pytest.fail/xfail` (or returns for pass). Thin convenience wrappers `xfail_as(reason, …)` /
+  `fail_as(reason, …)` exist for readability but route through the same emit API.
+  `label` matches the existing helpers' argument so their call sites are unchanged. `summary`
+  **defaults to a template** built from `label`/`operation`/`mechanism`/`expected`/`actual`
+  (e.g. `"{label}: expected {expected}, got {actual}"`); a site passes an explicit `summary`
+  only for richer phrasing — so the 608-site migration carries no per-site prose burden.
 - **The four existing helpers stay** (`classify_negative_rv`, `reject_or_classify`,
   `classify_policy_enforcement`, `classify_lifecycle_effect` in `testcases/conftest.py`) and
   become thin adapters: they already compute the branch; they now translate it to a `reason`
@@ -227,7 +238,8 @@ Two gates turn "we migrated everything" into an enforced invariant:
 2. **Runtime gate** (`makereport`): any `fail`/`xfail` reaching the report **without** a
    classification gets a synthetic `reason="unclassified"` record auto-injected → the report is
    always 100% covered, and a meta-test asserts zero `unclassified`. The remaining
-   `unclassified` count *is* the live migration backlog.
+   `unclassified` count *is* the live migration backlog. (It inspects completed call-phase
+   reports; a crashed unit has none and is instead covered by the runner-side crash merge.)
 
 ### Bare `assert`s — option A now, with KAT asserts prioritized
 
