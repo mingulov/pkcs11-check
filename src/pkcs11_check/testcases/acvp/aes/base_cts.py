@@ -6,10 +6,11 @@ shared across test_cts_cs1.py, test_cts_cs2.py, test_cts_cs3.py.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.pack import mech_bytes
 from pkcs11_check.raw.recipes import (
@@ -248,7 +249,12 @@ def skip_unless_cts_variant(rs: Any, expected_cs: str) -> None:
     skip_unless_cts_encrypt_decrypt(rs)
     detected = get_detected_variant(rs)
     if detected is None:
-        pytest.xfail("CKM_AES_CTS advertised but variant detection encrypt is not operational")
+        classify(
+            "not_operational",
+            kind="crypto",
+            label="CKM_AES_CTS:encrypt",
+            summary="CKM_AES_CTS advertised but variant detection encrypt is not operational",
+        )
     if detected != expected_cs:
         pytest.skip(f"Module implements CS{detected}, skipping CS{expected_cs} vectors")
 
@@ -274,7 +280,7 @@ def _cts_operability(rs: Any) -> OperabilityResult:
     return OperabilityResult(Operability.OPERATIONAL, f"CTS variant CS{detected} detected")
 
 
-def _handle_cts_error(rs: Any, exc: AssertionError, vec_id: str, direction: str) -> None:
+def _handle_cts_error(rs: Any, exc: AssertionError, vec_id: str, direction: str) -> NoReturn:
     """Handle CTS encrypt/decrypt errors with appropriate reporting."""
     if is_known_error(exc, {CKR_DEVICE_ERROR}):
         note(
@@ -283,7 +289,12 @@ def _handle_cts_error(rs: Any, exc: AssertionError, vec_id: str, direction: str)
             ComplianceLevel.CRITICAL,
             reference="PKCS#11 v3.1 CKM_AES_CTS",
         )
-        pytest.xfail(f"CKM_AES_CTS advertised but CBC-CS {direction} failed: {exc}")
+        xfail_as(
+            "not_operational",
+            kind="crypto",
+            label=f"CKM_AES_CTS:{direction}",
+            summary=f"CKM_AES_CTS advertised but CBC-CS {direction} failed: {exc}",
+        )
     classify_kat_clean_error(
         exc, result=_cts_operability(rs), label=f"CKM_AES_CTS CBC-CS {direction}"
     )

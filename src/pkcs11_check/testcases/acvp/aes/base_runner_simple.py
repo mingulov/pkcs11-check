@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes
 from pkcs11_check.raw.recipes import (
     _cancel_operation,
@@ -154,7 +155,14 @@ def run_simple_encrypt_test(
             )
         except AssertionError as exc:
             if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
-                pytest.xfail(f"{mech_name} advertised but encrypt is not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label=f"{mech_name}:encrypt",
+                    summary=f"{mech_name} advertised but encrypt is not operational: {exc}",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             raise
 
         expected = vec["ct_expected"]
@@ -214,7 +222,14 @@ def run_simple_decrypt_test(
             )
         except AssertionError as exc:
             if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
-                pytest.xfail(f"{mech_name} advertised but decrypt is not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label=f"{mech_name}:decrypt",
+                    summary=f"{mech_name} advertised but decrypt is not operational: {exc}",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             raise
 
         expected = vec["pt_expected"]
@@ -394,8 +409,7 @@ def run_multiblock_encrypt_test(
         pytest.skip(f"{mech_name} not supported by module")
 
     blocks = vec.get("blocks", [])
-    if not blocks:
-        pytest.fail(f"{vec_id}: No blocks found in multi-block test")
+    assert blocks, f"{vec_id}: No blocks found in multi-block test"
 
     for block in blocks:
         key_handle = 0
@@ -428,8 +442,15 @@ def run_multiblock_encrypt_test(
                     )
                 except AssertionError as exc:
                     if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
-                        pytest.xfail(
-                            f"{mech_name} advertised but MCT encrypt is not operational: {exc}"
+                        classify(
+                            "not_operational",
+                            kind="crypto",
+                            label=f"{mech_name}:encrypt",
+                            summary=(
+                                f"{mech_name} advertised but MCT encrypt is not operational: {exc}"
+                            ),
+                            source=vec.get("_source"),
+                            vector_id=vec.get("_vector_id"),
                         )
                     raise
 
@@ -455,8 +476,16 @@ def run_multiblock_encrypt_test(
                         )
                     except AssertionError as exc:
                         if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
-                            pytest.xfail(
-                                f"{mech_name} advertised but MCT encrypt is not operational: {exc}"
+                            classify(
+                                "not_operational",
+                                kind="crypto",
+                                label=f"{mech_name}:encrypt",
+                                summary=(
+                                    f"{mech_name} advertised but MCT encrypt is not "
+                                    f"operational: {exc}"
+                                ),
+                                source=vec.get("_source"),
+                                vector_id=vec.get("_vector_id"),
                             )
                         raise
                     ct_history.append(ct)
@@ -499,8 +528,7 @@ def run_multiblock_decrypt_test(
         pytest.skip(f"{mech_name} not supported by module")
 
     blocks = vec.get("blocks", [])
-    if not blocks:
-        pytest.fail(f"{vec_id}: No blocks found in multi-block test")
+    assert blocks, f"{vec_id}: No blocks found in multi-block test"
 
     for block in blocks:
         key_handle = 0
@@ -533,8 +561,15 @@ def run_multiblock_decrypt_test(
                     )
                 except AssertionError as exc:
                     if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
-                        pytest.xfail(
-                            f"{mech_name} advertised but MCT decrypt is not operational: {exc}"
+                        classify(
+                            "not_operational",
+                            kind="crypto",
+                            label=f"{mech_name}:decrypt",
+                            summary=(
+                                f"{mech_name} advertised but MCT decrypt is not operational: {exc}"
+                            ),
+                            source=vec.get("_source"),
+                            vector_id=vec.get("_vector_id"),
                         )
                     raise
 
@@ -558,8 +593,16 @@ def run_multiblock_decrypt_test(
                         )
                     except AssertionError as exc:
                         if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
-                            pytest.xfail(
-                                f"{mech_name} advertised but MCT decrypt is not operational: {exc}"
+                            classify(
+                                "not_operational",
+                                kind="crypto",
+                                label=f"{mech_name}:decrypt",
+                                summary=(
+                                    f"{mech_name} advertised but MCT decrypt is not "
+                                    f"operational: {exc}"
+                                ),
+                                source=vec.get("_source"),
+                                vector_id=vec.get("_vector_id"),
                             )
                         raise
                     pt_history.append(pt)

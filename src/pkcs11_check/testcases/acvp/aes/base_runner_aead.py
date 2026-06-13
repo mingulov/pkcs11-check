@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.pack_mechanisms import mech_ccm, mech_gcm
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -188,7 +189,14 @@ def run_gcm_encrypt_test(
     try:
         gcm_param = mech_gcm(CKM_AES_GCM, iv, aad=aad, tag_bits=vec["tag_len_bits"])
     except (AssertionError, ValueError, TypeError):
-        pytest.xfail(f"Binding rejects GCM params iv={len(iv)}B tag={tag_bytes}B")
+        xfail_as(
+            "not_operational",
+            kind="crypto",
+            label="AES_GCM:encrypt",
+            summary=f"Binding rejects GCM params iv={len(iv)}B tag={tag_bytes}B",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
     key = 0
     try:
@@ -211,9 +219,16 @@ def run_gcm_encrypt_test(
             )
 
         if len(result) < tag_bytes:
-            pytest.fail(
-                f"{vec_id}: encrypt output too short: {len(result)}B, "
-                f"expected at least {tag_bytes}B for tag"
+            fail_as(
+                "self_contradiction",
+                kind="crypto",
+                label="AES_GCM:encrypt",
+                summary=(
+                    f"{vec_id}: encrypt output too short: {len(result)}B, "
+                    f"expected at least {tag_bytes}B for tag"
+                ),
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
 
         ct_got = result[: len(result) - tag_bytes]
@@ -255,8 +270,14 @@ def run_gcm_decrypt_test(
     try:
         gcm_param = mech_gcm(CKM_AES_GCM, iv, aad=aad, tag_bits=vec["tag_len_bits"])
     except (AssertionError, ValueError, TypeError):
-        pytest.xfail(f"Binding rejects GCM params iv={len(iv)}B tag={tag_bytes}B")
-        return
+        xfail_as(
+            "not_operational",
+            kind="crypto",
+            label="AES_GCM:decrypt",
+            summary=f"Binding rejects GCM params iv={len(iv)}B tag={tag_bytes}B",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
     ct_with_tag = vec["ct"] + vec["tag"]
 
@@ -282,12 +303,26 @@ def run_gcm_decrypt_test(
                     return
                 result = _aead_operability(rs, "AES_GCM", "decrypt")
                 if result.status is Operability.NOT_OPERATIONAL:
-                    pytest.xfail(
-                        f"AES_GCM advertised but decrypt is not operational "
-                        f"({result.detail}); vector: {exc}"
+                    xfail_as(
+                        "not_operational",
+                        kind="crypto",
+                        label="AES_GCM:decrypt",
+                        summary=(
+                            f"AES_GCM advertised but decrypt is not operational "
+                            f"({result.detail}); vector: {exc}"
+                        ),
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
                     )
-                pytest.fail(
-                    f"{vec_id}: valid-tag GCM vector rejected with tag auth failure ({exc})"
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="AES_GCM:decrypt",
+                    summary=(
+                        f"{vec_id}: valid-tag GCM vector rejected with tag auth failure ({exc})"
+                    ),
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
                 )
             classify_kat_clean_error(
                 exc,
@@ -300,8 +335,15 @@ def run_gcm_decrypt_test(
                 f"{vec_id}: plaintext mismatch: got {pt.hex()}, expected {vec['pt_expected'].hex()}"
             )
         else:
-            pytest.fail(
-                f"{vec_id}: module accepted GCM ciphertext with invalid tag (tag auth bypass)"
+            fail_as(
+                "accepted_invalid",
+                kind="crypto",
+                label="AES_GCM:decrypt",
+                summary=(
+                    f"{vec_id}: module accepted GCM ciphertext with invalid tag (tag auth bypass)"
+                ),
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
     finally:
         if key:
@@ -336,7 +378,14 @@ def run_ccm_encrypt_test(
             mac_len=vec["tag_len"],
         )
     except (AssertionError, ValueError, TypeError) as exc:
-        pytest.xfail(f"Binding rejects CCM params: {exc}")
+        xfail_as(
+            "not_operational",
+            kind="crypto",
+            label="AES_CCM:encrypt",
+            summary=f"Binding rejects CCM params: {exc}",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
     key = 0
     try:
@@ -359,7 +408,14 @@ def run_ccm_encrypt_test(
 
         tag_len = vec["tag_len"]
         if len(result) < tag_len:
-            pytest.fail(f"{vec_id}: encrypt output too short")
+            fail_as(
+                "self_contradiction",
+                kind="crypto",
+                label="AES_CCM:encrypt",
+                summary=f"{vec_id}: encrypt output too short",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
 
         ct_got = result[: len(result) - tag_len]
         tag_got = result[len(result) - tag_len :]
@@ -415,8 +471,14 @@ def run_ccm_decrypt_test(
             mac_len=vec["tag_len"],
         )
     except (AssertionError, ValueError, TypeError) as exc:
-        pytest.xfail(f"Binding rejects CCM params: {exc}")
-        return
+        xfail_as(
+            "not_operational",
+            kind="crypto",
+            label="AES_CCM:decrypt",
+            summary=f"Binding rejects CCM params: {exc}",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
     key = 0
     try:
@@ -440,12 +502,26 @@ def run_ccm_decrypt_test(
                     return  # Expected: module rejected invalid-tag ciphertext
                 result = _aead_operability(rs, "AES_CCM", "decrypt")
                 if result.status is Operability.NOT_OPERATIONAL:
-                    pytest.xfail(
-                        f"AES_CCM advertised but decrypt is not operational "
-                        f"({result.detail}); vector: {exc}"
+                    xfail_as(
+                        "not_operational",
+                        kind="crypto",
+                        label="AES_CCM:decrypt",
+                        summary=(
+                            f"AES_CCM advertised but decrypt is not operational "
+                            f"({result.detail}); vector: {exc}"
+                        ),
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
                     )
-                pytest.fail(
-                    f"{vec_id}: valid-tag CCM vector rejected with tag auth failure ({exc})"
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="AES_CCM:decrypt",
+                    summary=(
+                        f"{vec_id}: valid-tag CCM vector rejected with tag auth failure ({exc})"
+                    ),
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
                 )
             classify_kat_clean_error(
                 exc,
@@ -458,7 +534,14 @@ def run_ccm_decrypt_test(
                 f"{vec_id}: plaintext mismatch: got {pt.hex()}, expected {vec['pt_expected'].hex()}"
             )
         else:
-            pytest.fail(f"{vec_id}: module accepted CCM ciphertext with invalid tag")
+            fail_as(
+                "accepted_invalid",
+                kind="crypto",
+                label="AES_CCM:decrypt",
+                summary=f"{vec_id}: module accepted CCM ciphertext with invalid tag",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
     finally:
         if key:
             destroy_quietly(rs.raw, rs.sh, key)
