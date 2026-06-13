@@ -14,6 +14,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE,
     CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH,
+    CKM_TLS12_KDF,
     CKM_TLS12_MASTER_KEY_DERIVE,
     CKM_TLS12_MASTER_KEY_DERIVE_DH,
     CKM_TLS_KDF,
@@ -25,6 +26,9 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases import test_tls12
 
 _TLS10_KDF_EXPECTED_HEX = "023d49a0cea8ad8071bf64519dc8f45bd302c1db3e33d39d1f21c548d05194aa"
+_TLS12_KDF_CONTEXT_EXPECTED_HEX = (
+    "5c0125c5f281488f681349499f252df0d29934469aabc15136b0a6a78a4b39d7"
+)
 _TLS_MASTER_EXPECTED_HEX = (
     "539391828d1d131678646180c5bda5c9a2eb62382c8cfb9440545cae85c8c205"
     "b93e0d22161e06be1189235aefca7570"
@@ -97,6 +101,14 @@ def _tls_kdf_session() -> SimpleNamespace:
         raw=object(),
         sh=1,
         has_mechanism=lambda name: name == "TLS_KDF",
+    )
+
+
+def _tls12_kdf_session() -> SimpleNamespace:
+    return SimpleNamespace(
+        raw=object(),
+        sh=1,
+        has_mechanism=lambda name: name == "TLS12_KDF",
     )
 
 
@@ -291,6 +303,19 @@ def test_tls12_extended_master_secret_dh_reference_matches_rfc7627_prf_vector() 
     assert value.hex() == _TLS12_EMS_DH_EXPECTED_HEX
 
 
+def test_tls12_kdf_context_data_reference_matches_rfc5705_vector() -> None:
+    value = test_tls12._tls12_prf_sha256(
+        bytes(range(48)),
+        b"key expansion",
+        bytes(range(32)),
+        bytes(range(32, 64)),
+        32,
+        context_data=b"context-info",
+    )
+
+    assert value.hex() == _TLS12_KDF_CONTEXT_EXPECTED_HEX
+
+
 def test_tls_kdf_tls10_exact_vector_uses_tls_prf_mechanism(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -327,6 +352,92 @@ def test_tls_kdf_tls10_exact_vector_uses_tls_prf_mechanism(
     assert derive_calls[0]["base_key"] == 101
     assert derive_calls[0]["mechanism"] == int(CKM_TLS_KDF)
     assert derive_calls[0]["mech_param"].params.prfMechanism == int(CKM_TLS_PRF)
+
+
+def test_tls12_kdf_context_data_exact_vector_uses_context_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = bytes.fromhex(_TLS12_KDF_CONTEXT_EXPECTED_HEX)
+    derive_calls: list[dict[str, Any]] = []
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        base_key: int,
+        mechanism: int,
+        attrs: dict[int, Any],
+        *,
+        mech_param: Any,
+    ) -> int:
+        derive_calls.append(
+            {
+                "base_key": base_key,
+                "mechanism": int(mechanism),
+                "attrs": attrs,
+                "mech_param": mech_param,
+            }
+        )
+        return 205
+
+    monkeypatch.setattr(test_tls12, "_create_tls_pms", lambda _rs: 101)
+    monkeypatch.setattr(test_tls12, "derive_key", _derive_key)
+    monkeypatch.setattr(test_tls12, "read_attributes", lambda *_args: {CKA_VALUE: expected})
+    monkeypatch.setattr(test_tls12, "destroy_quietly", lambda *_args: None)
+
+    test_tls12.TestTLS12KDF().test_tls12_kdf_context_data_exact_vector(_tls12_kdf_session())
+
+    assert len(derive_calls) == 1
+    assert derive_calls[0]["base_key"] == 101
+    assert derive_calls[0]["mechanism"] == int(CKM_TLS12_KDF)
+    assert derive_calls[0]["attrs"][CKA_VALUE_LEN] == 32
+    params = derive_calls[0]["mech_param"].params
+    assert params.prfMechanism == int(CKM_SHA256)
+    assert params.ulContextDataLength == len(b"context-info")
+    assert (
+        ctypes.string_at(params.pContextData, params.ulContextDataLength)
+        == b"context-info"
+    )
+
+
+def test_tls12_kdf_context_data_fails_on_wrong_exact_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wrong = b"\x00" * 32
+    derive_calls: list[dict[str, Any]] = []
+
+    def _derive_key(
+        _raw: object,
+        _sh: int,
+        base_key: int,
+        mechanism: int,
+        attrs: dict[int, Any],
+        *,
+        mech_param: Any,
+    ) -> int:
+        derive_calls.append(
+            {
+                "base_key": base_key,
+                "mechanism": int(mechanism),
+                "attrs": attrs,
+                "mech_param": mech_param,
+            }
+        )
+        return 206
+
+    monkeypatch.setattr(test_tls12, "_create_tls_pms", lambda _rs: 101)
+    monkeypatch.setattr(test_tls12, "derive_key", _derive_key)
+    monkeypatch.setattr(test_tls12, "read_attributes", lambda *_args: {CKA_VALUE: wrong})
+    monkeypatch.setattr(test_tls12, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(AssertionError, match="CKM_TLS12_KDF context-data output mismatch"):
+        test_tls12.TestTLS12KDF().test_tls12_kdf_context_data_exact_vector(
+            _tls12_kdf_session()
+        )
+
+    assert len(derive_calls) == 1
+    assert derive_calls[0]["base_key"] == 101
+    assert derive_calls[0]["mechanism"] == int(CKM_TLS12_KDF)
+    assert derive_calls[0]["attrs"][CKA_VALUE_LEN] == 32
 
 
 def test_tls_master_key_derive_fails_on_wrong_exact_output(

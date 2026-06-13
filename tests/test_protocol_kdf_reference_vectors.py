@@ -39,6 +39,20 @@ def test_tls12_prf_sha256_reference_vector() -> None:
     )
 
 
+def test_tls12_prf_sha256_context_data_reference_vector() -> None:
+    assert (
+        test_tls12._tls12_prf_sha256(
+            test_tls12._PRE_MASTER_SECRET,
+            b"key expansion",
+            test_tls12._CLIENT_RANDOM,
+            test_tls12._SERVER_RANDOM,
+            32,
+            context_data=b"context-info",
+        ).hex()
+        == "5c0125c5f281488f681349499f252df0d29934469aabc15136b0a6a78a4b39d7"
+    )
+
+
 def test_ike_prf_data_as_key_hmac_sha256_reference_vector() -> None:
     assert (
         test_ike._ike_prf_hmac_sha256_reference(

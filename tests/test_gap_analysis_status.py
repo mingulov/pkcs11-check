@@ -289,6 +289,20 @@ def test_gap_analysis_marks_tls_kdf_tls10_exact_vector_as_added() -> None:
     assert "TLS KDF TLS1.0/1.1 exact-vector coverage" in doc
 
 
+def test_gap_analysis_marks_tls12_kdf_context_data_exact_vector_as_added() -> None:
+    """CKM_TLS12_KDF exercises RFC 5705 context data in exact-vector coverage."""
+    tls = _read("src/pkcs11_check/testcases/test_tls12.py")
+    guard = _read("tests/test_tls_key_material_derivation.py")
+    doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
+
+    assert "test_tls12_kdf_context_data_exact_vector" in tls
+    assert "context_data=b\"context-info\"" in tls
+    assert "test_tls12_kdf_context_data_exact_vector_uses_context_data" in guard
+    assert "test_tls12_kdf_context_data_fails_on_wrong_exact_output" in guard
+
+    assert "TLS 1.2 KDF context-data exact-vector coverage" in doc_flat
+
+
 def test_gap_analysis_marks_tls_master_secret_exact_vector_as_added() -> None:
     """CKM_TLS_MASTER_KEY_DERIVE has an RFC 2246 PRF exact vector."""
     tls = _read("src/pkcs11_check/testcases/test_tls12.py")

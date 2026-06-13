@@ -847,6 +847,62 @@ class TestTLS12KDF:
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
+    def test_tls12_kdf_context_data_exact_vector(self, p11_raw_session: Any) -> None:
+        """CKM_TLS12_KDF includes RFC 5705 context data in the TLS 1.2 PRF seed."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("TLS12_KDF"):
+            pytest.skip("CKM_TLS12_KDF not supported")
+
+        base_key = _create_tls_pms(rs)
+        try:
+            mech = mech_tls_kdf(
+                CKM_TLS12_KDF,
+                prf_mechanism=CKM_SHA256,
+                label=b"key expansion",
+                client_random=_CLIENT_RANDOM,
+                server_random=_SERVER_RANDOM,
+                context_data=b"context-info",
+            )
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_TLS12_KDF,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 32,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_DERIVE: True,
+                    CKA_TOKEN: False,
+                },
+                mech_param=mech,
+            )
+            try:
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(value, bytes)
+                expected = _tls12_prf_sha256(
+                    _PRE_MASTER_SECRET,
+                    b"key expansion",
+                    _CLIENT_RANDOM,
+                    _SERVER_RANDOM,
+                    32,
+                    context_data=b"context-info",
+                )
+                assert value == expected, (
+                    "CKM_TLS12_KDF context-data output mismatch: "
+                    f"got {value.hex()}, expected {expected.hex()}"
+                )
+            finally:
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            if is_known_error(exc, _TLS_ERROR_RVS):
+                pytest.xfail(f"CKM_TLS12_KDF context-data exact vector not operational: {exc}")
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, base_key)
+
     def test_tls_kdf_availability(self, p11_raw_session: Any) -> None:
         """Probe whether CKM_TLS_KDF is advertised."""
         if not p11_raw_session.has_mechanism("TLS_KDF"):

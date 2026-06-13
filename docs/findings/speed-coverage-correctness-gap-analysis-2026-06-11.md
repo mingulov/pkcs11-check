@@ -287,7 +287,9 @@ smoke behavior, or covered only by one narrow variation.
    coverage now requests 48 bytes to exercise the second PRF+ HMAC block and
    counter chaining. TLS KDF TLS1.0/1.1 exact-vector coverage now sets
    `CK_TLS_KDF_PARAMS.prfMechanism` to `CKM_TLS_PRF` and checks the RFC 2246
-   MD5/SHA-1 split-secret PRF output. TLS PRF exact-vector coverage now checks
+   MD5/SHA-1 split-secret PRF output. TLS 1.2 KDF context-data exact-vector
+   coverage now checks the RFC 5705 `CK_TLS_KDF_PARAMS.pContextData` seed path.
+   TLS PRF exact-vector coverage now checks
    `CKM_TLS_PRF` output against the same RFC 2246 PRF. TLS 1.0/1.1
    master-secret exact-vector coverage now checks
    `CKM_TLS_MASTER_KEY_DERIVE` against the same RFC 2246 PRF with the "master
