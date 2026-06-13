@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, fail_as
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_pqc_private_key,
@@ -114,7 +115,12 @@ def _xfail_if_import_not_operational(exc: AssertionError, label: str) -> None:
     AssertionError (harness/ctypes bug) propagates.
     """
     if isinstance(exc, CkrAssertionError) and is_known_error(exc, _PQC_IMPORT_NOT_OPERATIONAL_RVS):
-        pytest.xfail(not_operational_reason(f"SLH-DSA:import ({label})", ckr_name(exc.rv)))
+        classify(
+            "not_operational",
+            kind="crypto",
+            label=f"SLH-DSA:import ({label})",
+            summary=not_operational_reason(f"SLH-DSA:import ({label})", ckr_name(exc.rv)),
+        )
     raise exc
 
 
@@ -355,10 +361,24 @@ def test_slhdsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
         expected = vec["expected_pass"]
         if not expected and verified:
             # Module accepted an invalid signature - security concern
-            pytest.fail(f"{vec_id}: accepted INVALID signature (expected rejection)")
+            fail_as(
+                "accepted_invalid",
+                kind="crypto",
+                label="SLH-DSA:verify",
+                summary=f"{vec_id}: accepted INVALID signature (expected rejection)",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         if expected and not verified:
-            # Module rejected a valid signature - module issue, mark as xfail
-            pytest.fail(f"{vec_id}: rejected VALID SLH-DSA signature")
+            # Module rejected a valid signature - crypto-correctness break
+            fail_as(
+                "wrong_result",
+                kind="crypto",
+                label="SLH-DSA:verify",
+                summary=f"{vec_id}: rejected VALID SLH-DSA signature",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
     finally:
         if pub_key:
             destroy_quietly(rs.raw, rs.sh, pub_key)
