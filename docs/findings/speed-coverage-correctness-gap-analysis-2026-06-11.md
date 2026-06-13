@@ -280,7 +280,10 @@ smoke behavior, or covered only by one narrow variation.
    the requested lengths and preserve the shorter output as the longer output
    prefix. WTLS key-and-MAC NULL phKey coverage now
    follows the OASIS convention that server/client key-material derives return
-   their handles through `CK_WTLS_KEY_MAT_OUT`. IKE2 PRF+ base-key sensitivity coverage now
+   their handles through `CK_WTLS_KEY_MAT_OUT`. WTLS key-material
+   template-protection negative coverage now verifies server/client
+   key-and-MAC derives reject `CKA_SENSITIVE` template values that conflict
+   with the base-key inherited protection attributes. IKE2 PRF+ base-key sensitivity coverage now
    verifies that changing the shared-secret input changes the derived output.
    IKE2 PRF+ HMAC-SHA256 exact-vector coverage now uses typed
    `CK_IKE2_PRF_PLUS_DERIVE_PARAMS` and checks the OASIS `prf+(baseKey,

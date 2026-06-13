@@ -12,7 +12,13 @@ from pkcs11_check.raw.pack import mech_wtls_prf
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
+    CKA_CLASS,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
     CKA_VALUE,
+    CKK_GENERIC_SECRET,
     CKM_SHA256,
     CKM_VENDOR_DEFINED,
     CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE,
@@ -20,8 +26,10 @@ from pkcs11_check.raw.types_std import (
     CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC,
     CKM_WTLS_PRF,
     CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE,
+    CKO_SECRET_KEY,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases import test_wtls
 
@@ -401,3 +409,62 @@ def test_wtls_server_client_differ_uses_param_key_handles(
 
     assert raw.ph_keys == [None, None]
     assert read_handles == [12, 22]
+
+
+def test_wtls_key_material_rejects_template_protection_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_wtls, "_create_generic_secret", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_wtls, "destroy_quietly", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(test_wtls, "destroy_returned_handles", lambda *_args, **_kwargs: None)
+
+    key_mat_calls: list[tuple[int, dict[int, Any]]] = []
+    classifier_calls: list[tuple[BaseException | None, tuple[int, ...], str]] = []
+
+    def _rejecting_key_material(
+        _rs: object,
+        _base_key: int,
+        attrs: dict[int, Any],
+        mech: Any,
+    ) -> None:
+        key_mat_calls.append((int(mech.ck.mechanism), attrs))
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_TEMPLATE_INCONSISTENT",
+            int(CKR_TEMPLATE_INCONSISTENT),
+        )
+
+    def _reject_or_classify(
+        exc: BaseException | None,
+        expected_rvs: tuple[int, ...],
+        *,
+        label: str,
+    ) -> None:
+        classifier_calls.append((exc, expected_rvs, label))
+
+    monkeypatch.setattr(test_wtls, "_derive_key_material_to_params", _rejecting_key_material)
+    monkeypatch.setattr(test_wtls, "reject_or_classify", _reject_or_classify)
+
+    rs = _session_with_mechanisms(
+        "WTLS_SERVER_KEY_AND_MAC_DERIVE",
+        "WTLS_CLIENT_KEY_AND_MAC_DERIVE",
+    )
+    test_wtls.TestWTLSKeyAndMacDerive().test_server_rejects_template_protection_conflict(rs)
+    test_wtls.TestWTLSKeyAndMacDerive().test_client_rejects_template_protection_conflict(rs)
+
+    expected_attrs = {
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+        CKA_SENSITIVE: True,
+        CKA_EXTRACTABLE: True,
+        CKA_TOKEN: False,
+    }
+    assert key_mat_calls == [
+        (int(CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE), expected_attrs),
+        (int(CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE), expected_attrs),
+    ]
+    assert [call[2] for call in classifier_calls] == [
+        "WTLS server key-and-MAC derive template protection conflict",
+        "WTLS client key-and-MAC derive template protection conflict",
+    ]
+    assert all(isinstance(call[0], CkrAssertionError) for call in classifier_calls)
+    assert all(int(CKR_TEMPLATE_INCONSISTENT) in call[1] for call in classifier_calls)

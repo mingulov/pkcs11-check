@@ -57,11 +57,13 @@ from pkcs11_check.raw.types_std import (
     CKM_WTLS_PRF,
     CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE,
     CKO_SECRET_KEY,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
     destroy_returned_handles,
@@ -80,6 +82,10 @@ _WTLS_ERROR_RVS = {
 }
 
 _WTLS_INVALID_DIGEST_REJECT_RVS = (CKR_MECHANISM_PARAM_INVALID,)
+_WTLS_TEMPLATE_CONFLICT_REJECT_RVS = (
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+)
 
 # WTLS client/server random values (16 bytes each)
 _CLIENT_RANDOM = bytes(range(16))
@@ -238,6 +244,47 @@ def _derive_wtls_key_material_invalid_digest(
     finally:
         out = mech.key_mat_out
         destroy_returned_handles(rs, out.hMacSecret, out.hKey)
+
+
+def _derive_wtls_key_material_template_conflict(
+    rs: Any,
+    base_key: int,
+    mechanism: int,
+    *,
+    label: str,
+) -> None:
+    """Verify WTLS key material rejects template protection values that differ."""
+    mech = mech_wtls_key_mat(
+        mechanism,
+        digest_mechanism=CKM_SHA256,
+        client_random=_CLIENT_RANDOM,
+        server_random=_SERVER_RANDOM,
+    )
+    exc: AssertionError | None = None
+    try:
+        _derive_key_material_to_params(
+            rs,
+            base_key,
+            {
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_SENSITIVE: True,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
+            },
+            mech,
+        )
+    except AssertionError as caught:
+        exc = caught
+    finally:
+        out = mech.key_mat_out
+        destroy_returned_handles(rs, out.hMacSecret, out.hKey)
+
+    reject_or_classify(
+        exc,
+        _WTLS_TEMPLATE_CONFLICT_REJECT_RVS,
+        label=label,
+    )
 
 
 class TestWTLSPreMasterKeyGen:
@@ -591,6 +638,23 @@ class TestWTLSKeyAndMacDerive:
         finally:
             destroy_quietly(rs.raw, rs.sh, master)
 
+    def test_server_rejects_template_protection_conflict(self, p11_raw_session: Any) -> None:
+        """Server key-material derive rejects template protection overrides."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("WTLS_SERVER_KEY_AND_MAC_DERIVE"):
+            pytest.skip("CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE not supported")
+
+        master = _create_generic_secret(rs, 20)
+        try:
+            _derive_wtls_key_material_template_conflict(
+                rs,
+                master,
+                int(CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE),
+                label="WTLS server key-and-MAC derive template protection conflict",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master)
+
     def test_client_key_and_mac_derive(self, p11_raw_session: Any) -> None:
         """Attempt CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE with proper struct params."""
         rs = p11_raw_session
@@ -646,6 +710,23 @@ class TestWTLSKeyAndMacDerive:
                 master,
                 int(CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE),
                 label="WTLS client key-and-MAC derive invalid digest mechanism",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master)
+
+    def test_client_rejects_template_protection_conflict(self, p11_raw_session: Any) -> None:
+        """Client key-material derive rejects template protection overrides."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("WTLS_CLIENT_KEY_AND_MAC_DERIVE"):
+            pytest.skip("CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE not supported")
+
+        master = _create_generic_secret(rs, 20)
+        try:
+            _derive_wtls_key_material_template_conflict(
+                rs,
+                master,
+                int(CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE),
+                label="WTLS client key-and-MAC derive template protection conflict",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, master)
