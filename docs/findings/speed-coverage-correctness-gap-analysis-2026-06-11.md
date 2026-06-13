@@ -261,12 +261,17 @@ smoke behavior, or covered only by one narrow variation.
    exact-output coverage. PBKDF2 invalid-PRF negative coverage now verifies
    `CKM_PKCS5_PBKD2` rejects a `CK_PKCS5_PBKD2_PARAMS2.prf` selector outside
    the local PKCS#11 `CKP_PKCS5_PBKD2_HMAC_*` table through the shared
-   provider-general negative classifier. SSL3, WTLS, IKE, X3DH, and X2RATCHET also have
-   dedicated operational probes. Remaining shallow protocol-KDF work is
-   exact-vector expansion and richer negative/tamper coverage for those
-   dedicated files, not basic runtime dispatch for the already-covered priority
-   mechanisms. WTLS PRF seed-sensitivity coverage now verifies that changing
-   the explicit `CK_WTLS_PRF_PARAMS.pSeed` input changes the derived output.
+   provider-general negative classifier. SP800-108 feedback/double-pipeline
+   iteration-variable NULL-shape coverage now verifies the non-counter
+   mechanisms use the OASIS-required NULL pointer and zero length for
+   `CK_SP800_108_ITERATION_VARIABLE`, while counter mode retains its
+   `CK_SP800_108_COUNTER_FORMAT` pointer. SSL3, WTLS, IKE, X3DH, and
+   X2RATCHET also have dedicated operational probes. Remaining shallow
+   protocol-KDF work is exact-vector expansion and richer negative/tamper
+   coverage for those dedicated files, not basic runtime dispatch for the
+   already-covered priority mechanisms. WTLS PRF seed-sensitivity coverage now
+   verifies that changing the explicit `CK_WTLS_PRF_PARAMS.pSeed` input changes
+   the derived output.
    WTLS PRF label-sensitivity coverage now verifies the same for
    `CK_WTLS_PRF_PARAMS.pLabel`. WTLS PRF raw output-buffer coverage now uses
    the OASIS `CKM_WTLS_PRF` convention: `C_DeriveKey` is called with a NULL

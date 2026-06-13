@@ -139,6 +139,21 @@ def test_gap_analysis_marks_protocol_kdf_semantics_as_dedicated_coverage() -> No
     assert "IKE2 PRF+ base-key sensitivity coverage" in doc
 
 
+def test_gap_analysis_marks_sp800_108_feedback_double_param_shape_as_fixed() -> None:
+    """SP800-108 non-counter iteration-variable packing follows the OASIS shape rule."""
+    sp800 = _read("src/pkcs11_check/testcases/test_sp800_108_kdf.py")
+    meta = _read("tests/test_sp800_108_kdf_params.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert sp800.count("CK_SP800_108_ITERATION_VARIABLE, struct=cf") == 1
+    assert sp800.count("_make_prf_data_param(CK_SP800_108_ITERATION_VARIABLE)") >= 2
+    assert "test_feedback_iteration_variable_uses_null_value" in meta
+    assert "test_double_pipeline_iteration_variable_uses_null_value" in meta
+
+    assert "SP800-108 feedback/double-pipeline" in doc
+    assert "iteration-variable NULL-shape coverage" in doc
+
+
 def test_gap_analysis_marks_pbkdf2_invalid_prf_negative_as_added() -> None:
     """CKM_PKCS5_PBKD2 rejects PRF selectors outside the CKP_* table."""
     pbkdf2 = _read("src/pkcs11_check/testcases/wycheproof/test_wycheproof_pbkdf2.py")

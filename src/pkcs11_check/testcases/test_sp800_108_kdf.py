@@ -255,8 +255,7 @@ def _build_feedback_kdf_mech(
     """Build CKM_SP800_108_FEEDBACK_KDF mechanism."""
     keepalive: list[Any] = []
 
-    cf = _counter_format()
-    p_iter, ka1 = _make_prf_data_param(CK_SP800_108_ITERATION_VARIABLE, struct=cf)
+    p_iter, ka1 = _make_prf_data_param(CK_SP800_108_ITERATION_VARIABLE)
     keepalive.extend(ka1)
 
     p_label, ka2 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=label)
@@ -313,8 +312,7 @@ def _build_double_pipeline_kdf_mech(
     """Build CKM_SP800_108_DOUBLE_PIPELINE_KDF mechanism."""
     keepalive: list[Any] = []
 
-    cf = _counter_format()
-    p_iter, ka1 = _make_prf_data_param(CK_SP800_108_ITERATION_VARIABLE, struct=cf)
+    p_iter, ka1 = _make_prf_data_param(CK_SP800_108_ITERATION_VARIABLE)
     keepalive.extend(ka1)
 
     p_label, ka2 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=label)
