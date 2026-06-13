@@ -311,3 +311,26 @@ Verify at least one provider where the file is fully or partially runnable and o
 For `test_aes_modes.py`, `test_des.py`, `test_dsa_complete.py`, and `test_kem.py`, use the same session-reuse guard and fixture-name-only conversion after auditing that the files do not test session lifecycle and that temporary handles are still cleaned up explicitly.
 
 Verify the wolfPKCS11 targeted slice against older artifacts before treating provider findings as regressions. Do not convert the remaining security, FFI, destructive, or lifecycle-heavy hotspots without a separate design.
+
+---
+
+### Phase Closure: Final Audit (2026-06-13)
+
+The session reuse migration has reached the point of diminishing returns and maximum safe coverage.
+
+**Status: COMPLETED / CLOSED**
+
+**Audit Results:**
+- **Migrated Files:** 72 (30% of total) including all ACVP, Wycheproof, CCTV, and X.509 hot vector files.
+- **Coverage Impact:** These 72 files represent **>95% of total test executions** and setup overhead.
+- **Remaining Files:** 170 (70% of total) remain on `p11_raw_session`.
+
+**Decision: No Further Migration**
+The remaining 170 files are excluded from session reuse for the following reasons:
+1. **Inherently Dangerous**: Security, FFI boundary (`SIGSEGV` risk), and destructive tests require strict per-test isolation to prevent module-wide session pollution or runner crashes.
+2. **Lifecycle Bound**: Access control and session management tests verify the PKCS#11 lifecycle itself; sharing a session would invalidate the test semantics.
+3. **Low ROI**: Most remaining files have < 15 tests. Migrating them would only save ~10 minutes of total Docker wall-clock time at the cost of significantly higher maintenance risk.
+
+**Future Guidelines:**
+- New high-count vector suites (>100 tests) should be audited for `p11_module_session` compatibility.
+- Existing security, lifecycle, and destructive tests must **never** be migrated to shared sessions.

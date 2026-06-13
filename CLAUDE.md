@@ -122,12 +122,10 @@ Two spec-grounded refinements (design: docs/superpowers/specs/2026-06-10-adverti
   their OWN child to run a controlled crash-expecting sub-script, or to assert on a
   specific crash's `returncode` — not for general survival.
 
-### Test isolation
-- Tests that call `lib.finalize()` or `lib.initialize()` MUST be marked `@destructive`
-- Tests that DELIBERATELY trigger a crash and assert on it run their own child via
-  `subprocess.run([sys.executable, "-c", script])` (general survival is already provided
-  by `--isolation auto`; see the execution model above)
-- Token-locking operations (wrong PIN tests) MUST be marked `@destructive`
+### Fixture usage (performance vs isolation)
+- **`p11_module_session`**: Use for high-count vector-replay or read-only object import tests (e.g. Wycheproof, ACVP, CCTV, X.509 vectors). This fixture reuses one session/login per test file for massive speedup.
+- **`p11_raw_session`**: Use for everything else: security/FFI tests (where a crash must not kill a shared session), lifecycle/login tests, state-machine tests, destructive tests, or small files (< 15 tests) where the ROI is low.
+- **Audit Rule (2026-06-13)**: The migration of existing tests to shared sessions is complete (covering >95% of suite execution). Do not migrate the remaining 170+ files (security, lifecycle, low-count) to shared sessions; they must remain isolated on `p11_raw_session`. See [docs/findings/session-reuse-final-gap-analysis-2026-06-13.md](docs/findings/session-reuse-final-gap-analysis-2026-06-13.md) for the full breakdown.
 
 ### Module-specific behavior
 - Document module quirks in `docs/module-issues.md`, not as silent `pass` in code
