@@ -931,10 +931,24 @@ def classify_lifecycle_effect(*, claimed_success: bool, effect_observed: bool, l
       contradicted -- a self-contradiction).
     - ``claimed_success`` and not ``effect_observed`` -> ``pass``.
     """
+    from pkcs11_check import classification as C
+
+    if claimed_success and not effect_observed:
+        return
     if not claimed_success:
-        pytest.xfail(f"{label}: prior operation did not claim success")
-    if effect_observed:
-        pytest.fail(f"{label}: success claimed then contradicted (self-contradiction)")
+        C.classify(
+            "honest_deviation",
+            kind="lifecycle",
+            label=label,
+            summary=f"{label}: prior operation did not claim success",
+        )
+        return
+    C.classify(
+        "self_contradiction",
+        kind="lifecycle",
+        label=label,
+        summary=f"{label}: success claimed then contradicted (self-contradiction)",
+    )
 
 
 def classify_discrimination(*, valid_accepted: bool, invalid_outcome: Any, label: str) -> None:
