@@ -194,13 +194,6 @@ def test_aes_cmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_aes_runtime_reject(exc, f"AES-CMAC {vec_id}")
-            classify(
-                "not_operational",
-                label="AES-CMAC",
-                summary=f"AES-CMAC failed for valid vector {vec_id}: {exc}",
-                source=vec.get("_source"),
-                vector_id=vec.get("_vector_id"),
-            )
         # acceptable: reject of an invalid vector is fine
         return
     finally:
@@ -417,13 +410,6 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_aes_runtime_reject(exc, f"AES-KWP {vec_id}")
-            classify(
-                "not_operational",
-                label="AES-KWP",
-                summary=f"AES-KWP wrap failed for valid vector {vec_id}: {exc}",
-                source=vec.get("_source"),
-                vector_id=vec.get("_vector_id"),
-            )
         # acceptable: reject is fine
         return
     finally:

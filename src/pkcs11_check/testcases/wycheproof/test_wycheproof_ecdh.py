@@ -353,11 +353,6 @@ def test_ecdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             raise
         if result == "valid":
             _xfail_if_ecdh_runtime_reject(exc, label)
-            classify(
-                "not_operational",
-                label="ECDH",
-                summary=f"Valid ECDH derive failed for {label}: {exc_msg}",
-            )
         # acceptable: reject is fine
         return
     except (TypeError, NotImplementedError):

@@ -199,13 +199,6 @@ def test_rsa_pkcs1_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, 
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_rsa_pkcs1_decrypt_runtime_reject(exc, vec_id)
-            classify(
-                "not_operational",
-                label=vec_id,
-                summary=f"Valid RSA PKCS#1 ciphertext {vec_id} failed to decrypt: {exc}",
-                source=vec.get("_source"),
-                vector_id=vec.get("_vector_id"),
-            )
         # acceptable/invalid: reject is fine (padding oracle resistance)
         return
     finally:

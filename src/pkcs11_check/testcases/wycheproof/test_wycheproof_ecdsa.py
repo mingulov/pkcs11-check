@@ -422,11 +422,6 @@ def test_ecdsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_ecdsa_runtime_reject(exc, vec_id)
-            classify(
-                "not_operational",
-                label="ECDSA",
-                summary=f"Valid ECDSA sig {vec_id} rejected: {exc}",
-            )
         signature_rejected_or_xfail(exc, vec_id)
         return
     finally:

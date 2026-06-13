@@ -462,17 +462,6 @@ def test_rsa_oaep(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
                     vector_id=vec.get("_vector_id"),
                 )
             _xfail_if_rsa_oaep_runtime_reject(exc, vec_id)
-            classify(
-                "not_operational",
-                label=vec_id,
-                summary=(
-                    f"Valid RSA-OAEP ciphertext {vec_id} failed to decrypt "
-                    f"(sha={sha}, mgf={mgf_sha}); canonical combo probe: "
-                    f"{combo.status.value}: {combo.detail}; vector: {exc}"
-                ),
-                source=vec.get("_source"),
-                vector_id=vec.get("_vector_id"),
-            )
         # acceptable: reject is fine
         return
     finally:

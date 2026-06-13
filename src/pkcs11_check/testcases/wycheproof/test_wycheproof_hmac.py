@@ -255,13 +255,6 @@ def test_hmac_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, An
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_hmac_runtime_reject(exc, vec_id)
-            classify(
-                "not_operational",
-                label=f"HMAC:{vec_id}",
-                summary=f"HMAC failed for {vec_id}: {exc}",
-                source=vec.get("_source"),
-                vector_id=vec.get("_vector_id"),
-            )
         # acceptable: module rejected an invalid vector
         return
     finally:

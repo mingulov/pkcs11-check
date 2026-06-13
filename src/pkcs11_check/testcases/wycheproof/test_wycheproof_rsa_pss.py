@@ -447,20 +447,6 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_rsa_pss_runtime_reject(exc, vec_id)
-            sha = vec.get("_sha", "unknown")
-            mgf_sha = vec.get("_mgf_sha", "unknown")
-            flags = vec.get("flags", [])
-            flags_str = ", ".join(flags) if flags else "none"
-            classify(
-                "not_operational",
-                label=vec_id,
-                summary=(
-                    f"Valid RSA-PSS sig {vec_id} rejected (sLen={s_len}, "
-                    f"sha={sha}, mgf={mgf_sha}, flags=[{flags_str}]): {exc}"
-                ),
-                source=vec.get("_source"),
-                vector_id=vec.get("_vector_id"),
-            )
         # result != "valid": a clean refusal of a non-valid vector. Returning
         # False = clean signature reject; on a NOT_OPERATIONAL combo that reject
         # is vacuous only for "invalid" vectors (the signature was never

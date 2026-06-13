@@ -263,10 +263,8 @@ class TestAESGCMWycheproof:
                     vector_id=vec.get("_vector_id"),
                 )
         except AssertionError as exc:
-            exc_msg = str(exc)
             if result == "valid":
                 iv_len = len(iv)
-                tag_len = len(tag_expected)
                 if iv_len > 16:
                     # NIST SP 800-38D: support for non-96-bit IVs is optional.
                     # All tested providers reject oversized IVs -- acceptable.
@@ -282,16 +280,6 @@ class TestAESGCMWycheproof:
                         exc,
                         f"AES-GCM tc{vec['tcId']}",
                         "AES-GCM decrypt",
-                    )
-                    classify(
-                        "not_operational",
-                        label="AES-GCM",
-                        summary=(
-                            f"Valid GCM vector tc{vec['tcId']} rejected: "
-                            f"iv={iv_len}B tag={tag_len}B ({exc_msg})"
-                        ),
-                        source=vec.get("_source"),
-                        vector_id=vec.get("_vector_id"),
                     )
             # invalid/acceptable failing is expected - good!
         finally:
@@ -393,17 +381,6 @@ class TestHMACSHA256Wycheproof:
                     exc,
                     f"HMAC-SHA256 tc{vec['tcId']}",
                     "HMAC-SHA256 sign",
-                )
-                exc_msg = str(exc)
-                classify(
-                    "not_operational",
-                    label="HMAC-SHA256",
-                    summary=(
-                        f"Valid HMAC vector tc{vec['tcId']} failed: "
-                        f"{len(key_bytes)}-byte key ({exc_msg})"
-                    ),
-                    source=vec.get("_source"),
-                    vector_id=vec.get("_vector_id"),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -582,13 +559,6 @@ class TestAESCBCPKCS5Wycheproof:
                     exc,
                     f"AES-CBC-PAD tc{vec['tcId']}",
                     "AES-CBC-PAD decrypt",
-                )
-                classify(
-                    "not_operational",
-                    label="AES-CBC-PAD",
-                    summary=f"Valid AES-CBC vector tc{vec['tcId']} failed",
-                    source=vec.get("_source"),
-                    vector_id=vec.get("_vector_id"),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -780,13 +750,6 @@ class TestRSASigWycheproof:
                     exc,
                     f"RSA PKCS#1 tc{vec['tcId']}",
                     "RSA PKCS#1 verify",
-                )
-                classify(
-                    "not_operational",
-                    label="SHA256_RSA_PKCS",
-                    summary=f"Valid RSA sig tc{vec['tcId']} rejected",
-                    source=vec.get("_source"),
-                    vector_id=vec.get("_vector_id"),
                 )
             signature_rejected_or_xfail(exc, f"tc{vec['tcId']}")
         finally:

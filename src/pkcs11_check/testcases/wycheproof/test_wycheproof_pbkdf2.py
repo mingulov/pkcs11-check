@@ -12,7 +12,6 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     PackedMechanism,
     mech_pbkdf2,
@@ -232,13 +231,6 @@ def test_pbkdf2(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> No
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_pbkdf2_runtime_reject(exc, vec_id)
-            classify(
-                "not_operational",
-                label=vec_id,
-                summary=f"PBKDF2 generate_key failed for valid vector {vec_id}: {exc}",
-                source=vec.get("_source"),
-                vector_id=vec.get("_vector_id"),
-            )
         # acceptable: reject is fine
         return
 
