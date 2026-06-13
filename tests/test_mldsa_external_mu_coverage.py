@@ -17,9 +17,7 @@ def test_external_mu_constants_are_exported() -> None:
     assert metadata_std.MECHANISM_NAMES[int(CKM_ML_DSA_EXTERNAL_MU_GEN)] == (
         "CKM_ML_DSA_EXTERNAL_MU_GEN"
     )
-    assert (
-        metadata_std.MECHANISM_NAMES[int(CKM_ML_DSA_EXTERNAL_MU)] == "CKM_ML_DSA_EXTERNAL_MU"
-    )
+    assert metadata_std.MECHANISM_NAMES[int(CKM_ML_DSA_EXTERNAL_MU)] == "CKM_ML_DSA_EXTERNAL_MU"
 
 
 def test_external_mu_roundtrip_helper_uses_64_byte_mu(

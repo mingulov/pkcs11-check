@@ -22,6 +22,7 @@ Usage:
 Needs: python3, softhsm2-util on PATH, a libsofthsm2.so built --with-eddsa.
 Creates a throwaway token in a temp dir; touches nothing else.
 """
+
 # ruff: noqa: N801, N812  -- CK_* and ctypes-as-C are intentional PKCS#11 binding names
 from __future__ import annotations
 
@@ -88,14 +89,16 @@ def build_template(items: list[tuple[int, int | bool | bytes]]) -> tuple[C.Array
 
 def verify_with_point(lib: C.CDLL, session: CK_ULONG, point: bytes) -> int:
     """Import an Ed25519 public key with the given CKA_EC_POINT, verify SIG."""
-    tmpl, _keep = build_template([
-        (CKA_CLASS, CKO_PUBLIC_KEY),
-        (CKA_KEY_TYPE, CKK_EC_EDWARDS),
-        (CKA_TOKEN, False),
-        (CKA_VERIFY, True),
-        (CKA_EC_PARAMS, EC_PARAMS),
-        (CKA_EC_POINT, point),
-    ])
+    tmpl, _keep = build_template(
+        [
+            (CKA_CLASS, CKO_PUBLIC_KEY),
+            (CKA_KEY_TYPE, CKK_EC_EDWARDS),
+            (CKA_TOKEN, False),
+            (CKA_VERIFY, True),
+            (CKA_EC_PARAMS, EC_PARAMS),
+            (CKA_EC_POINT, point),
+        ]
+    )
     h = CK_ULONG(0)
     rv = lib.C_CreateObject(session, tmpl, len(tmpl), C.byref(h))
     if rv != CKR_OK:
@@ -126,14 +129,33 @@ def main() -> int:
     os.environ["SOFTHSM2_CONF"] = conf
 
     subprocess.run(
-        ["softhsm2-util", "--init-token", "--free", "--label", "eddsa-repro",
-         "--pin", "1234", "--so-pin", "5678"],
-        check=True, stdout=subprocess.DEVNULL,
+        [
+            "softhsm2-util",
+            "--init-token",
+            "--free",
+            "--label",
+            "eddsa-repro",
+            "--pin",
+            "1234",
+            "--so-pin",
+            "5678",
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
     )
 
     lib = C.CDLL(mod)
-    for name in ("C_Initialize", "C_Finalize", "C_GetSlotList", "C_OpenSession",
-                 "C_CloseSession", "C_CreateObject", "C_VerifyInit", "C_Verify", "C_DestroyObject"):
+    for name in (
+        "C_Initialize",
+        "C_Finalize",
+        "C_GetSlotList",
+        "C_OpenSession",
+        "C_CloseSession",
+        "C_CreateObject",
+        "C_VerifyInit",
+        "C_Verify",
+        "C_DestroyObject",
+    ):
         getattr(lib, name).restype = CK_ULONG
 
     assert lib.C_Initialize(None) == CKR_OK
@@ -143,8 +165,12 @@ def main() -> int:
         slots = (CK_ULONG * count.value)()
         assert lib.C_GetSlotList(1, slots, C.byref(count)) == CKR_OK
         session = CK_ULONG(0)
-        assert lib.C_OpenSession(slots[0], CKF_SERIAL_SESSION | CKF_RW_SESSION,
-                                 None, None, C.byref(session)) == CKR_OK
+        assert (
+            lib.C_OpenSession(
+                slots[0], CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, C.byref(session)
+            )
+            == CKR_OK
+        )
 
         raw_rv = verify_with_point(lib, session, RAW_POINT)
         der_rv = verify_with_point(lib, session, DER_POINT)

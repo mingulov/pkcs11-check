@@ -3213,9 +3213,7 @@ def test_run_isolated_pytest_units_preserves_real_subprocess_compliance_notes(
     unit_note = report["units"][0]["compliance_notes"][0]
     for key, value in expected_fields.items():
         assert unit_note[key] == value
-    assert unit_note["nodeid"].endswith(
-        "src/pkcs11_check/testcases/test_note.py::test_emits_note"
-    )
+    assert unit_note["nodeid"].endswith("src/pkcs11_check/testcases/test_note.py::test_emits_note")
     assert report_jsonl.exists()
     report_records = [json.loads(line) for line in report_jsonl.read_text().splitlines()]
     call_report = next(record for record in report_records if record.get("when") == "call")

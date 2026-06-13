@@ -609,7 +609,9 @@ class TestSSL3KeyAndMacDerive:
         if not rs.has_mechanism("SSL3_KEY_AND_MAC_DERIVE"):
             pytest.skip("CKM_SSL3_KEY_AND_MAC_DERIVE not supported")
 
-        master_secret_data = _ssl3_master_secret_reference(_PRE_MASTER_SECRET, _CLIENT_RANDOM, _SERVER_RANDOM)
+        master_secret_data = _ssl3_master_secret_reference(
+            _PRE_MASTER_SECRET, _CLIENT_RANDOM, _SERVER_RANDOM
+        )
         master_secret = _create_generic_secret(rs, master_secret_data)
         try:
             # We request 128-bit keys (16 bytes) and SSL3 MD5/SHA1 MACs (16/20 bytes).
@@ -678,7 +680,6 @@ class TestSSL3KeyAndMacDerive:
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, master_secret)
-
 
     def test_rejects_template_protection_conflict(self, p11_raw_session: Any) -> None:
         """CKM_SSL3_KEY_AND_MAC_DERIVE rejects template protection overrides."""

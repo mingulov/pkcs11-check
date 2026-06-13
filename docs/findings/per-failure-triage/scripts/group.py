@@ -13,6 +13,7 @@ Output: groups/<provider>-<bucket>-groups.json
   { "signature": {"signature":..., "size":N, "test_file":..., "direction":...,
                    "example_nodeid":..., "messages_sample":[...], "nodeids":[...] } }
 """
+
 from __future__ import annotations
 
 import argparse
@@ -26,12 +27,24 @@ WQ = Path("/home/user/src/m/pkcs11-check/docs/findings/per-failure-triage/workqu
 OUTDIR = Path("/home/user/src/m/pkcs11-check/docs/findings/per-failure-triage/groups")
 
 DIR_PATTERNS = [
-    (r"accept(ing|ed)?\s+(an?\s+)?invalid|invalid\s+(ciphertext|signature|tag|key|padding).*CKR_OK|CKR_OK.*invalid|decrypt\s+successfully|encrypt\s+successfully", "ACCEPT_INVALID"),
-    (r"reject(ing|ed)?\s+(a\s+)?valid|valid.*rejected|valid-tag.*rejected|valid\s+sig(nature)?\s+rejected|tc\d+-valid.*Unexpected\s+CK_RV", "REJECT_VALID"),
-    (r"wrong\s+(output|digest|signature|ciphertext)|mismatch|expected\s+\S+\s+got\s+\S+|InvalidSignature|did\s+not\s+match", "WRONG_OUTPUT"),
+    (
+        r"accept(ing|ed)?\s+(an?\s+)?invalid|invalid\s+(ciphertext|signature|tag|key|padding).*CKR_OK|CKR_OK.*invalid|decrypt\s+successfully|encrypt\s+successfully",
+        "ACCEPT_INVALID",
+    ),
+    (
+        r"reject(ing|ed)?\s+(a\s+)?valid|valid.*rejected|valid-tag.*rejected|valid\s+sig(nature)?\s+rejected|tc\d+-valid.*Unexpected\s+CK_RV",
+        "REJECT_VALID",
+    ),
+    (
+        r"wrong\s+(output|digest|signature|ciphertext)|mismatch|expected\s+\S+\s+got\s+\S+|InvalidSignature|did\s+not\s+match",
+        "WRONG_OUTPUT",
+    ),
     (r"crash|SIGSEGV|SIGABRT|signal\s+\d+|returncode", "CRASH"),
     (r"CK_RV\s+CKR_\w+|Unexpected\s+CK_RV|CKR_\w+", "CLEAN_ERROR"),
-    (r"advertised\s+but\s+not\s+operational|not\s+operational|operability\s+probe|mechanism\s+operational\s+but|not\s+advertised|CAPABILITY_GAP|capability\s+absent", "CAPABILITY_GAP"),
+    (
+        r"advertised\s+but\s+not\s+operational|not\s+operational|operability\s+probe|mechanism\s+operational\s+but|not\s+advertised|CAPABILITY_GAP|capability\s+absent",
+        "CAPABILITY_GAP",
+    ),
 ]
 
 
@@ -62,10 +75,18 @@ def group_bucket(provider: str, bucket: str) -> dict:
     path = WQ / f"{provider}-{bucket}.jsonl"
     if not path.exists():
         return {}
-    by_sig: dict[str, dict] = defaultdict(lambda: {
-        "size": 0, "nodeids": [], "messages_sample": set(), "test_file": "", "direction": "",
-        "provider": provider, "bucket": bucket, "signature": "",
-    })
+    by_sig: dict[str, dict] = defaultdict(
+        lambda: {
+            "size": 0,
+            "nodeids": [],
+            "messages_sample": set(),
+            "test_file": "",
+            "direction": "",
+            "provider": provider,
+            "bucket": bucket,
+            "signature": "",
+        }
+    )
     for line in path.read_text().splitlines():
         if not line.strip():
             continue
@@ -97,8 +118,13 @@ def main() -> int:
     ap.add_argument("--buckets", nargs="*", default=["failures", "xfails"])
     args = ap.parse_args()
     providers = args.providers or [
-        "wolfpkcs11-master", "opencryptoki-master", "corepkcs11-main",
-        "kryoptic-main", "nss-main", "softhsm2-main", "tpm2",
+        "wolfpkcs11-master",
+        "opencryptoki-master",
+        "corepkcs11-main",
+        "kryoptic-main",
+        "nss-main",
+        "softhsm2-main",
+        "tpm2",
     ]
 
     OUTDIR.mkdir(parents=True, exist_ok=True)

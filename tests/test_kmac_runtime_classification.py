@@ -16,8 +16,8 @@ def test_kmac_product_tests_cover_variable_mac_lengths() -> None:
 
     assert "test_kmac_128_short_output_roundtrip" in text
     assert "test_kmac_256_short_output_roundtrip" in text
-    assert "self._run_roundtrip(rs, \"KMAC_128\", 16)" in text
-    assert "self._run_roundtrip(rs, \"KMAC_256\", 32)" in text
+    assert 'self._run_roundtrip(rs, "KMAC_128", 16)' in text
+    assert 'self._run_roundtrip(rs, "KMAC_256", 32)' in text
 
 
 def test_kmac_roundtrip_rejects_tampered_message(

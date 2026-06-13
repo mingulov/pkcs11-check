@@ -95,6 +95,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 "tests/test_classification_*.py" = ["N812"]  # classification imported as C is intentional
 "tests/test_helper_*.py" = ["N812"]  # classification imported as C is intentional
 "tests/test_assert_ckr_emits.py" = ["N812"]  # classification imported as C is intentional
+"tests/test_assert_correct.py" = ["N812"]  # classification imported as C is intentional
 "src/pkcs11_check/testcases/conftest.py" = ["N812"]  # classification imported as C is intentional
 "src/pkcs11_check/testcases/ckr/_ckr_spec.py" = ["N812"]  # classification imported as C is intentional
 

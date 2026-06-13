@@ -511,8 +511,7 @@ class TestBlake2bKeyed:
                         "rejected with unexpected CKR",
                     )
                 assert not accepted, (
-                    f"accepted wrong-length {case.hmac_name} BLAKE2B HMAC "
-                    f"({len(bad_mac)} bytes)"
+                    f"accepted wrong-length {case.hmac_name} BLAKE2B HMAC ({len(bad_mac)} bytes)"
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -1187,9 +1186,7 @@ class TestBlake2bKeyed:
                 )
                 return
 
-            raise AssertionError(
-                f"accepted {case.key_derive_name} length-only zero-length output"
-            )
+            raise AssertionError(f"accepted {case.key_derive_name} length-only zero-length output")
         finally:
             destroy_quietly(rs.raw, rs.sh, base)
             if derived:

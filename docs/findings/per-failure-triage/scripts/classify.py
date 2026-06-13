@@ -6,6 +6,7 @@ category=UNKNOWN and routed to Phase 6 manual deep-dive.
 
 Idempotent: skips signatures already present in verdicts.jsonl.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -20,27 +21,55 @@ VERDICTS = Path("/home/user/src/m/pkcs11-check/docs/findings/per-failure-triage/
 
 # Automated direction → category/severity table (per AGENTS.md classification model)
 AUTO_RULES = [
-    (r"security/test_ffi_length_boundary|security/test_arithmetic_overflow|0x7fff{3,}|0xffff{4,}|0x7fffffffffffffff",
-     "SOFT_TOKEN_CAVEAT", "MEDIUM", "DOCS_ONLY",
-     "UB-provoked crash on absurd length. Spec places burden on caller, but robust modules validate. Universal across soft-tokens."),
-    (r"advertised\s+but\s+not\s+operational|mechanism\s+operational\s+but",
-     "PROVIDER_BUG", "LOW", "PROVIDER_REPORT",
-     "Mechanism advertised but not operational — clean refusal. Per severity-direction principle, reject-valid is functional (LOW), not oracle/forgery."),
-    (r"ML-DSA|ML_KEM|MLKEM|SLH-DSA|SLHDSA|ML-DSA-|ML-KEM-|ml_dsa|ml_kem",
-     "UNKNOWN", "MEDIUM", "MANUAL_REVIEW",
-     "PQC mechanism. Possible harness-vector bug PC-2 (see findings-summary-2026-06-10.md). Manual review required."),
-    (r"rsa_pkcs1_decrypt.*accept|PKCS#?1.*accept.*invalid|PKCS1.*Bleichenbauer|PKCS1.* pkcs1.* decrypt",
-     "SOFT_TOKEN_CAVEAT", "HIGH", "DOCS_ONLY",
-     "Bleichenbauer-class: accepts invalid PKCS#1 v1.5 ciphertext. Universal soft-token mitigation matter; severity is HIGH functionally but downgraded to SOFT_TOKEN_CAVEAT (host already has key access)."),
-    (r"AES-CBC.*PAD|CBC.*padding\s+oracle|Vaudenay|tc\d+-invalid.*decrypt\s+successfully",
-     "PROVIDER_BUG", "HIGH", "PROVIDER_REPORT",
-     "Vaudenay padding oracle: AES-CBC-PAD accepts invalid padding. Real provider bug."),
-    (r"OAEP.*Manger|OAEP.*accept.*invalid|Manger",
-     "PROVIDER_BUG", "HIGH", "PROVIDER_REPORT",
-     "Manger oracle: RSA-OAEP non-uniform errors. Real provider bug."),
-    (r"reject.*valid.*tag|valid-tag.*rejected|valid.*CCM.*reject|valid.*GCM.*reject|valid-tag\s+CCM|valid-tag\s+GCM",
-     "PROVIDER_BUG", "LOW", "PROVIDER_REPORT",
-     "Reject-valid on AEAD: false negative (clean CKR error). Per severity-direction principle, LOW severity — functional bug, not oracle."),
+    (
+        r"security/test_ffi_length_boundary|security/test_arithmetic_overflow|0x7fff{3,}|0xffff{4,}|0x7fffffffffffffff",
+        "SOFT_TOKEN_CAVEAT",
+        "MEDIUM",
+        "DOCS_ONLY",
+        "UB-provoked crash on absurd length. Spec places burden on caller, but robust modules validate. Universal across soft-tokens.",
+    ),
+    (
+        r"advertised\s+but\s+not\s+operational|mechanism\s+operational\s+but",
+        "PROVIDER_BUG",
+        "LOW",
+        "PROVIDER_REPORT",
+        "Mechanism advertised but not operational — clean refusal. Per severity-direction principle, reject-valid is functional (LOW), not oracle/forgery.",
+    ),
+    (
+        r"ML-DSA|ML_KEM|MLKEM|SLH-DSA|SLHDSA|ML-DSA-|ML-KEM-|ml_dsa|ml_kem",
+        "UNKNOWN",
+        "MEDIUM",
+        "MANUAL_REVIEW",
+        "PQC mechanism. Possible harness-vector bug PC-2 (see findings-summary-2026-06-10.md). Manual review required.",
+    ),
+    (
+        r"rsa_pkcs1_decrypt.*accept|PKCS#?1.*accept.*invalid|PKCS1.*Bleichenbauer|PKCS1.* pkcs1.* decrypt",
+        "SOFT_TOKEN_CAVEAT",
+        "HIGH",
+        "DOCS_ONLY",
+        "Bleichenbauer-class: accepts invalid PKCS#1 v1.5 ciphertext. Universal soft-token mitigation matter; severity is HIGH functionally but downgraded to SOFT_TOKEN_CAVEAT (host already has key access).",
+    ),
+    (
+        r"AES-CBC.*PAD|CBC.*padding\s+oracle|Vaudenay|tc\d+-invalid.*decrypt\s+successfully",
+        "PROVIDER_BUG",
+        "HIGH",
+        "PROVIDER_REPORT",
+        "Vaudenay padding oracle: AES-CBC-PAD accepts invalid padding. Real provider bug.",
+    ),
+    (
+        r"OAEP.*Manger|OAEP.*accept.*invalid|Manger",
+        "PROVIDER_BUG",
+        "HIGH",
+        "PROVIDER_REPORT",
+        "Manger oracle: RSA-OAEP non-uniform errors. Real provider bug.",
+    ),
+    (
+        r"reject.*valid.*tag|valid-tag.*rejected|valid.*CCM.*reject|valid.*GCM.*reject|valid-tag\s+CCM|valid-tag\s+GCM",
+        "PROVIDER_BUG",
+        "LOW",
+        "PROVIDER_REPORT",
+        "Reject-valid on AEAD: false negative (clean CKR error). Per severity-direction principle, LOW severity — functional bug, not oracle.",
+    ),
 ]
 
 
@@ -134,7 +163,9 @@ def main() -> int:
             for line in out_lines:
                 f.write(line + "\n")
 
-    print(f"{args.provider}/{args.bucket}: new={n_new} unknown={n_unknown} skipped(already-done)={n_skipped}")
+    print(
+        f"{args.provider}/{args.bucket}: new={n_new} unknown={n_unknown} skipped(already-done)={n_skipped}"
+    )
     return 0
 
 

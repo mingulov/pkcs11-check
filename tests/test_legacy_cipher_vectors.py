@@ -207,9 +207,7 @@ def test_cdmf_encrypt_mechanisms_have_ibm_derived_kat_vectors() -> None:
             assert vec["key_hex"] == "0123456789abcdef"
             assert vec["plaintext_hex"] == "0123456789abcdef"
             assert vec["ciphertext_hex"] == "230d53ce98eb0939"
-            assert vec["params"]["source"].startswith(
-                "IBM CDMF key-shortening algorithm"
-            )
+            assert vec["params"]["source"].startswith("IBM CDMF key-shortening algorithm")
             assert vec["params"]["derived_des_key_hex"] == "1fb26b1a81089f12"
 
 
@@ -455,9 +453,7 @@ def test_cdmf_mac_mechanisms_have_ibm_derived_kat_vectors() -> None:
             assert vec["input_hex"] == "0123456789abcdef"
             assert vec["mac_hex"] == mac_hex
             assert vec["params"]["mac_len"] == mac_len
-            assert vec["params"]["source"].startswith(
-                "IBM CDMF key-shortening algorithm"
-            )
+            assert vec["params"]["source"].startswith("IBM CDMF key-shortening algorithm")
 
 
 def test_cdmf_mac_general_vector_params_replay_length() -> None:
@@ -591,8 +587,7 @@ def test_skipjack_ecb64_mechanism_has_sp800_17_kat_vectors() -> None:
         assert vec["ciphertext_hex"] == ciphertext_hex
         assert vec["params"]["source"] == f"NIST SP 800-17 appendix B {table_ref}"
         assert vec["params"]["source_url"] == (
-            "https://nvlpubs.nist.gov/nistpubs/Legacy/SP/"
-            "nistspecialpublication800-17.pdf"
+            "https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-17.pdf"
         )
 
 
@@ -1009,8 +1004,7 @@ def test_twofish_cbc_pad_mechanism_has_reference_generated_kat_vector() -> None:
         assert plaintext == bytes(16)
         assert len(ciphertext) == 32
         assert vec["ciphertext_hex"] == (
-            "9f589f5cf6122c32b6bfec2f2ae8c35a"
-            "a645c0dafebc6d6dcf4fc0fa33e78ac5"
+            "9f589f5cf6122c32b6bfec2f2ae8c35aa645c0dafebc6d6dcf4fc0fa33e78ac5"
         )
         assert vec["params"]["iv_hex"] == "00000000000000000000000000000000"
         assert "Bruce Schneier Twofish reference C implementation" in vec["params"]["source"]

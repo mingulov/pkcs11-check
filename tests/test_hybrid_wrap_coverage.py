@@ -49,4 +49,4 @@ def test_ecdh_aes_key_wrap_advertised_runtime_rejections_are_xfail_not_skip() ->
     cls = _class_source(AUTH_WRAP, "TestEcdhAesKeyWrap")
 
     assert "Module rejected ECDH-AES-KW params" not in cls
-    assert "pytest.skip(f\"Module rejected" not in cls
+    assert 'pytest.skip(f"Module rejected' not in cls

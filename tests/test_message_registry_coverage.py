@@ -17,12 +17,8 @@ MECH_MESSAGE = REPO / "src" / "pkcs11_check" / "testcases" / "test_mech_message.
 
 
 def test_plugin_exposes_message_flag_fixtures() -> None:
-    assert plugin._LEGACY_FLAG_BY_FIXTURE["mech_message_encrypt_entry"] == int(
-        CKF_MESSAGE_ENCRYPT
-    )
-    assert plugin._LEGACY_FLAG_BY_FIXTURE["mech_message_decrypt_entry"] == int(
-        CKF_MESSAGE_DECRYPT
-    )
+    assert plugin._LEGACY_FLAG_BY_FIXTURE["mech_message_encrypt_entry"] == int(CKF_MESSAGE_ENCRYPT)
+    assert plugin._LEGACY_FLAG_BY_FIXTURE["mech_message_decrypt_entry"] == int(CKF_MESSAGE_DECRYPT)
     assert plugin._LEGACY_FLAG_BY_FIXTURE["mech_message_sign_entry"] == int(CKF_MESSAGE_SIGN)
     assert plugin._LEGACY_FLAG_BY_FIXTURE["mech_message_verify_entry"] == int(CKF_MESSAGE_VERIFY)
 

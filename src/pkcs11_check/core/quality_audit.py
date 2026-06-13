@@ -847,9 +847,7 @@ def _mechanism_state_name_sets(
     return {
         "advertised": advertised,
         "selected": set(_string_list(mechanism_coverage.get("selected_names"))),
-        "selection_rejected": set(
-            _string_list(mechanism_coverage.get("selection_rejected_names"))
-        ),
+        "selection_rejected": set(_string_list(mechanism_coverage.get("selection_rejected_names"))),
         "attempted": set(_string_list(mechanism_coverage.get("attempted_names"))),
         "invoked": invoked,
         "accepted": set(_string_list(mechanism_coverage.get("accepted_names"))),

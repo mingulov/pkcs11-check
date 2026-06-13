@@ -84,10 +84,7 @@ def test_pool_dry_run_all_heavy_includes_optee_release_and_master(
 
     out = capsys.readouterr().out
     assert "optee-pkcs11: 1 batch(es), 1 files (full, synthetic-heavy, partition ok)" in out
-    assert (
-        "optee-pkcs11-master: 1 batch(es), 1 files (full, synthetic-heavy, partition ok)"
-        in out
-    )
+    assert "optee-pkcs11-master: 1 batch(es), 1 files (full, synthetic-heavy, partition ok)" in out
 
 
 def test_pool_dry_run_uses_explicit_duration_artifact_root_provider_locally(
@@ -162,13 +159,15 @@ def test_pool_dry_run_reports_duration_hot_node_split(
     monkeypatch.setattr(
         test_pool,
         "collect_pytest_nodeids",
-        lambda targets, pytest_args, env=None: [
-            f"{mct_file}::test_acvp_aes_cfb128_encrypt[AES-enc-tc1]",
-            f"{mct_file}::test_acvp_aes_cfb128_multiblock_encrypt[AES-enc-tc2]",
-            f"{mct_file}::test_acvp_aes_cfb128_multiblock_decrypt[AES-dec-tc3]",
-        ]
-        if targets == [str(mct_file)]
-        else [],
+        lambda targets, pytest_args, env=None: (
+            [
+                f"{mct_file}::test_acvp_aes_cfb128_encrypt[AES-enc-tc1]",
+                f"{mct_file}::test_acvp_aes_cfb128_multiblock_encrypt[AES-enc-tc2]",
+                f"{mct_file}::test_acvp_aes_cfb128_multiblock_decrypt[AES-dec-tc3]",
+            ]
+            if targets == [str(mct_file)]
+            else []
+        ),
     )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
@@ -665,10 +664,7 @@ def test_pool_reports_shard_progress_and_provider_elapsed_time(
     assert test_pool.main() == 0
 
     out = capsys.readouterr().out
-    assert (
-        "[2026-06-11 12:34:56] "
-        "=== running 2 items through 1 workers (mixed) ==="
-    ) in out
+    assert ("[2026-06-11 12:34:56] === running 2 items through 1 workers (mixed) ===") in out
     assert (
         "[2026-06-11 12:34:56] "
         "--- START optee-pkcs11:0 files=1 load~1.0s log=/tmp/pool-optee-pkcs11-0.log ---"
@@ -721,8 +717,7 @@ def test_pool_reports_controlled_child_crashes_and_timeouts_separately(
                                     "nodeid": "test_boundary.py::test_child_signal",
                                     "outcome": "failed",
                                     "longrepr": (
-                                        "Failed: C_GetInfo(NULL): module crashed "
-                                        "with signal 11"
+                                        "Failed: C_GetInfo(NULL): module crashed with signal 11"
                                     ),
                                 },
                                 {

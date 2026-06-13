@@ -8,6 +8,7 @@ Emits three JSONL files per provider:
 
 Reconciles counts against results.json summary; exits non-zero on mismatch.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -56,14 +57,16 @@ def extract_provider(provider: str) -> dict:
     crashes: list[dict] = []
     for unit in rj_data.get("units", []):
         if unit.get("status") == "crashed":
-            crashes.append({
-                "provider": provider,
-                "target": unit["target"],
-                "status": "crashed",
-                "returncode": unit.get("returncode"),
-                "counts": unit.get("counts", {}),
-                "stdout_tail": (unit.get("stdout") or "")[-4000:],
-            })
+            crashes.append(
+                {
+                    "provider": provider,
+                    "target": unit["target"],
+                    "status": "crashed",
+                    "returncode": unit.get("returncode"),
+                    "counts": unit.get("counts", {}),
+                    "stdout_tail": (unit.get("stdout") or "")[-4000:],
+                }
+            )
 
     failures: list[dict] = []
     xfails: list[dict] = []
@@ -90,7 +93,7 @@ def extract_provider(provider: str) -> dict:
             if outcome == "failed":
                 failures.append(rec)
             elif outcome == "skipped" and msg.startswith(XFAIL_PREFIX):
-                rec["xfail_reason"] = msg[len(XFAIL_PREFIX):].strip()
+                rec["xfail_reason"] = msg[len(XFAIL_PREFIX) :].strip()
                 xfails.append(rec)
 
     # `summary.crashed` is per-test (tests lost to file-level subprocess crashes);
@@ -111,7 +114,9 @@ def extract_provider(provider: str) -> dict:
     if found["failed"] != expected["failed"]:
         drift["failed"] = (found["failed"], expected["failed"])
     xfail_diff = abs(found["xfailed"] - expected["xfailed"])
-    if found["xfailed"] != expected["xfailed"] and (expected["xfailed"] == 0 or xfail_diff / expected["xfailed"] > 0.001):
+    if found["xfailed"] != expected["xfailed"] and (
+        expected["xfailed"] == 0 or xfail_diff / expected["xfailed"] > 0.001
+    ):
         drift["xfailed"] = (found["xfailed"], expected["xfailed"])
 
     for bucket, records in (("failures", failures), ("xfails", xfails), ("crashes", crashes)):

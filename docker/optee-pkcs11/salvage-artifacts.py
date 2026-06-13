@@ -180,8 +180,7 @@ def _synthetic_detail_from_result(result: dict[str, Any]) -> dict[str, Any] | No
                 "nodeid": target,
                 "outcome": status,
                 "longrepr": (
-                    "synthetic OP-TEE salvage record: completed state entry had no "
-                    "report-log cache"
+                    "synthetic OP-TEE salvage record: completed state entry had no report-log cache"
                 ),
             }
         ],
@@ -242,9 +241,7 @@ def salvage_artifacts(artifact_dir: Path) -> bool:
 
     raw_results = state.get("results") or []
     results = [
-        normalized
-        for raw in raw_results
-        if (normalized := _normalize_result(raw)) is not None
+        normalized for raw in raw_results if (normalized := _normalize_result(raw)) is not None
     ]
     if not results:
         print(f"OP-TEE artifact salvage: state has no completed units in {artifact_dir}")

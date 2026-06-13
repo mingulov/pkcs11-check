@@ -88,9 +88,7 @@ def test_x942_parameter_gen_missing_subprime_bits_is_expected_reject(
     )
     monkeypatch.setattr(test_x942_dh, "destroy_quietly", lambda *_args: None)
 
-    test_x942_dh.TestX942DHParameterGen().test_parameter_gen_rejects_missing_subprime_bits(
-        rs
-    )
+    test_x942_dh.TestX942DHParameterGen().test_parameter_gen_rejects_missing_subprime_bits(rs)
 
     assert CKA_PRIME_BITS in rs.calls[0]["attr_types"]
     assert CKA_SUBPRIME_BITS not in rs.calls[0]["attr_types"]

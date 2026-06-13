@@ -534,8 +534,7 @@ def test_x2ratchet_invalid_aead_is_expected_reject(
     )
 
     assert [
-        (call["mechanism"], call["mech_param"].params.aeadMechanism)
-        for call in derive_calls
+        (call["mechanism"], call["mech_param"].params.aeadMechanism) for call in derive_calls
     ] == [
         (int(CKM_X2RATCHET_INITIALIZE), int(CKM_VENDOR_DEFINED)),
         (int(CKM_X2RATCHET_RESPOND), int(CKM_VENDOR_DEFINED)),

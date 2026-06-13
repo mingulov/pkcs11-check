@@ -13,6 +13,7 @@ section per provider, but not listed as findings.
 
 Reads verdicts.jsonl; no network; no fresh classification. Idempotent.
 """
+
 from __future__ import annotations
 
 import json
@@ -83,24 +84,26 @@ def load_effective() -> list[Verdict]:
     for v in raw:
         if v["signature"] in superseded:
             continue
-        out.append(Verdict(
-            provider=v["provider"],
-            signature=v["signature"],
-            outcome=v.get("outcome", ""),
-            message=v.get("message", ""),
-            test_file=v.get("test_file", ""),
-            direction=v.get("direction", ""),
-            category=v.get("category", "UNKNOWN"),
-            severity=v.get("severity", "INFO"),
-            evidence=v.get("evidence", ""),
-            routing=v.get("routing", ""),
-            group_id=v.get("group_id", ""),
-            group_size=v.get("group_size", 1),
-            example_nodeid=v.get("example_nodeid", ""),
-            analyzed_at=v.get("analyzed_at", ""),
-            analyzer=v.get("analyzer", ""),
-            raw=v,
-        ))
+        out.append(
+            Verdict(
+                provider=v["provider"],
+                signature=v["signature"],
+                outcome=v.get("outcome", ""),
+                message=v.get("message", ""),
+                test_file=v.get("test_file", ""),
+                direction=v.get("direction", ""),
+                category=v.get("category", "UNKNOWN"),
+                severity=v.get("severity", "INFO"),
+                evidence=v.get("evidence", ""),
+                routing=v.get("routing", ""),
+                group_id=v.get("group_id", ""),
+                group_size=v.get("group_size", 1),
+                example_nodeid=v.get("example_nodeid", ""),
+                analyzed_at=v.get("analyzed_at", ""),
+                analyzer=v.get("analyzer", ""),
+                raw=v,
+            )
+        )
     return out
 
 
@@ -116,17 +119,75 @@ def short_file(test_file: str) -> str:
 # Cross-cutting themes: short regex matchers that identify universal bug classes
 # (so we can group findings across providers even when signatures differ)
 THEMES = [
-    ("CBC-PKCS5 padding oracle (Vaudenay)", re.compile(r"\b(CBC[-_ ]?PKCS5|Vaudenay|padding oracle)\b", re.I)),
-    ("NULL-pointer SIGSEGV family", re.compile(r"\b(NULL[-_ ]?pointer SIGSEGV|NULL[-_ ]?deref|null_data_with_nonzero_length|null_arg)\b", re.I)),
-    ("Op-termination Type-C lifecycle", re.compile(r"\b(op[-_ ]?termination|operation_active|operation_left_active|dangling op|CKR_OPERATION_ACTIVE)\b", re.I)),
-    ("Read-only attribute mutation accepted", re.compile(r"\b(read[-_ ]?only attr|CKA_CLASS read-only|CKA_MODULUS changed|non-atomic|partial[-_ ]?apply)\b", re.I)),
-    ("Trust-boundary attribute escalation", re.compile(r"\b(CKA_TRUSTED|CKA_WRAP_WITH_TRUSTED|CKA_ALWAYS_AUTHENTICATE|CKA_EXTRACTABLE.*ignored|CKA_SENSITIVE.*ignored|sensitivity leak)\b", re.I)),
-    ("Buffer-size protocol deviation", re.compile(r"\b(buffer[-_ ]?too[-_ ]?small|wrong pulSize|buffer_size_protocol|CKR_BUFFER_TOO_SMALL.*pulSize)\b", re.I)),
-    ("Wrong CKR for invalid signatures", re.compile(r"\b(CKR_FUNCTION_FAILED instead of CKR_SIGNATURE_INVALID|wrong CKR.*signature)\b", re.I)),
-    ("Wrap/unwrap policy bypass", re.compile(r"\b(CKA_WRAP_TEMPLATE|CKA_UNWRAP_TEMPLATE|wrap[-_ ]?policy|wrap[-_ ]?with[-_ ]?trusted)\b", re.I)),
-    ("Advertised-but-not-operational mechanism", re.compile(r"\b(advertised but not operational|capability gap|CKM_.*not operational)\b", re.I)),
-    ("RSA-PKCS1 accept-invalid (Bleichenbacher-class)", re.compile(r"\b(accept[-_ ]?invalid.*PKCS|Bleichenbacher|RSA[-_ ]?PKCS1.*accept)\b", re.I)),
-    ("Wrong-output / Type-A crypto-correctness", re.compile(r"\b(wrong output|wrong[-_ ]?output|Type[-_ ]?A|digest.*SHA.256.*empty|ignores IV)\b", re.I)),
+    (
+        "CBC-PKCS5 padding oracle (Vaudenay)",
+        re.compile(r"\b(CBC[-_ ]?PKCS5|Vaudenay|padding oracle)\b", re.I),
+    ),
+    (
+        "NULL-pointer SIGSEGV family",
+        re.compile(
+            r"\b(NULL[-_ ]?pointer SIGSEGV|NULL[-_ ]?deref|null_data_with_nonzero_length|null_arg)\b",
+            re.I,
+        ),
+    ),
+    (
+        "Op-termination Type-C lifecycle",
+        re.compile(
+            r"\b(op[-_ ]?termination|operation_active|operation_left_active|dangling op|CKR_OPERATION_ACTIVE)\b",
+            re.I,
+        ),
+    ),
+    (
+        "Read-only attribute mutation accepted",
+        re.compile(
+            r"\b(read[-_ ]?only attr|CKA_CLASS read-only|CKA_MODULUS changed|non-atomic|partial[-_ ]?apply)\b",
+            re.I,
+        ),
+    ),
+    (
+        "Trust-boundary attribute escalation",
+        re.compile(
+            r"\b(CKA_TRUSTED|CKA_WRAP_WITH_TRUSTED|CKA_ALWAYS_AUTHENTICATE|CKA_EXTRACTABLE.*ignored|CKA_SENSITIVE.*ignored|sensitivity leak)\b",
+            re.I,
+        ),
+    ),
+    (
+        "Buffer-size protocol deviation",
+        re.compile(
+            r"\b(buffer[-_ ]?too[-_ ]?small|wrong pulSize|buffer_size_protocol|CKR_BUFFER_TOO_SMALL.*pulSize)\b",
+            re.I,
+        ),
+    ),
+    (
+        "Wrong CKR for invalid signatures",
+        re.compile(
+            r"\b(CKR_FUNCTION_FAILED instead of CKR_SIGNATURE_INVALID|wrong CKR.*signature)\b", re.I
+        ),
+    ),
+    (
+        "Wrap/unwrap policy bypass",
+        re.compile(
+            r"\b(CKA_WRAP_TEMPLATE|CKA_UNWRAP_TEMPLATE|wrap[-_ ]?policy|wrap[-_ ]?with[-_ ]?trusted)\b",
+            re.I,
+        ),
+    ),
+    (
+        "Advertised-but-not-operational mechanism",
+        re.compile(
+            r"\b(advertised but not operational|capability gap|CKM_.*not operational)\b", re.I
+        ),
+    ),
+    (
+        "RSA-PKCS1 accept-invalid (Bleichenbacher-class)",
+        re.compile(r"\b(accept[-_ ]?invalid.*PKCS|Bleichenbacher|RSA[-_ ]?PKCS1.*accept)\b", re.I),
+    ),
+    (
+        "Wrong-output / Type-A crypto-correctness",
+        re.compile(
+            r"\b(wrong output|wrong[-_ ]?output|Type[-_ ]?A|digest.*SHA.256.*empty|ignores IV)\b",
+            re.I,
+        ),
+    ),
 ]
 
 
@@ -149,17 +210,25 @@ def render_index(verdicts: list[Verdict]) -> str:
     high_user_escalation = [v for v in high if v.routing == "USER_ESCALATION"]
     sections: list[str] = []
     sections.append("# Per-Failure Triage — Executive Summary\n")
-    sections.append("**Source:** `docs/findings/per-failure-triage/verdicts.jsonl` (effective view, superseded records removed)")
+    sections.append(
+        "**Source:** `docs/findings/per-failure-triage/verdicts.jsonl` (effective view, superseded records removed)"
+    )
     sections.append("**Date:** 2026-06-13")
-    sections.append("**Scope:** 7 providers × artifacts_base data (no fresh docker). See parent plan `docs/superpowers/plans/2026-06-13-per-failure-triage.md`.\n")
+    sections.append(
+        "**Scope:** 7 providers × artifacts_base data (no fresh docker). See parent plan `docs/superpowers/plans/2026-06-13-per-failure-triage.md`.\n"
+    )
 
     sections.append("## Headline counts\n")
     sections.append(f"- **{len(crit)} CRITICAL** findings")
-    sections.append(f"- **{len(high)} HIGH** findings (of which **{len(high_user_escalation)}** routed USER_ESCALATION)")
+    sections.append(
+        f"- **{len(high)} HIGH** findings (of which **{len(high_user_escalation)}** routed USER_ESCALATION)"
+    )
     sections.append(f"- **{len(verdicts)}** effective verdict records (superseded ones dropped)\n")
 
     sections.append("## Per-provider table\n")
-    sections.append("| Provider | Total | PROVIDER_BUG | KNOWN_ISSUE | SOFT_TOKEN_CAVEAT | HARNESS_BUG | UNKNOWN | CRITICAL | HIGH |")
+    sections.append(
+        "| Provider | Total | PROVIDER_BUG | KNOWN_ISSUE | SOFT_TOKEN_CAVEAT | HARNESS_BUG | UNKNOWN | CRITICAL | HIGH |"
+    )
     sections.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
     for p in PROVIDERS:
         vs = by_provider.get(p, [])
@@ -175,7 +244,11 @@ def render_index(verdicts: list[Verdict]) -> str:
     # Top-priority findings across all providers
     sections.append("## Top-priority findings across all providers\n")
     top = sorted(
-        [v for v in verdicts if v.severity in ("CRITICAL", "HIGH") and v.category in ("PROVIDER_BUG", "UPSTREAM_BUG")],
+        [
+            v
+            for v in verdicts
+            if v.severity in ("CRITICAL", "HIGH") and v.category in ("PROVIDER_BUG", "UPSTREAM_BUG")
+        ],
         key=lambda v: (SEVERITY_ORDER[v.severity], v.provider),
     )
     sections.append("| Severity | Provider | Test file | Direction | Routing | Signature |")
@@ -186,7 +259,9 @@ def render_index(verdicts: list[Verdict]) -> str:
             f"{ROUTING_ICON.get(v.routing, '')} {v.routing} | `{v.signature[:24]}` |"
         )
     if len(top) > 40:
-        sections.append(f"\n*…and {len(top) - 40} more CRITICAL/HIGH findings in per-provider reports.*\n")
+        sections.append(
+            f"\n*…and {len(top) - 40} more CRITICAL/HIGH findings in per-provider reports.*\n"
+        )
     else:
         sections.append("")
 
@@ -203,8 +278,12 @@ def render_index(verdicts: list[Verdict]) -> str:
                 theme_to_sev[t] = v.severity
     sections.append("| Theme | Worst severity | Providers affected |")
     sections.append("|---|---|---|")
-    for t in sorted(theme_to_provs, key=lambda x: (SEVERITY_ORDER[theme_to_sev[x]], -len(theme_to_provs[x]))):
-        provs = ", ".join(sorted(p.replace("-main", "").replace("-master", "") for p in theme_to_provs[t]))
+    for t in sorted(
+        theme_to_provs, key=lambda x: (SEVERITY_ORDER[theme_to_sev[x]], -len(theme_to_provs[x]))
+    ):
+        provs = ", ".join(
+            sorted(p.replace("-main", "").replace("-master", "") for p in theme_to_provs[t])
+        )
         sections.append(f"| {t} | {theme_to_sev[t]} | {len(theme_to_provs[t])} — {provs} |")
     sections.append("")
 
@@ -213,9 +292,15 @@ def render_index(verdicts: list[Verdict]) -> str:
         sections.append(f"- [{p}]({p}.md)")
     sections.append("")
     sections.append("## Methodology and notes\n")
-    sections.append("- Records appended idempotently to `verdicts.jsonl`; superseded records filtered out here.")
-    sections.append("- `UNKNOWN` records are not classified; they appear in a trailing section per provider for follow-up.")
-    sections.append("- Per user direction (m0213-m0214), classification extension stopped on 2026-06-13; remaining UNKNOWNs will be classified by a different (in-tool) workflow.\n")
+    sections.append(
+        "- Records appended idempotently to `verdicts.jsonl`; superseded records filtered out here."
+    )
+    sections.append(
+        "- `UNKNOWN` records are not classified; they appear in a trailing section per provider for follow-up."
+    )
+    sections.append(
+        "- Per user direction (m0213-m0214), classification extension stopped on 2026-06-13; remaining UNKNOWNs will be classified by a different (in-tool) workflow.\n"
+    )
     return "\n".join(sections)
 
 
@@ -230,11 +315,15 @@ def render_provider(provider: str, vs: list[Verdict]) -> str:
 
     # Findings (excluding UNKNOWN and INFO noise)
     findings = [
-        v for v in vs
-        if v.category in ("PROVIDER_BUG", "UPSTREAM_BUG", "HARNESS_BUG", "SOFT_TOKEN_CAVEAT", "SPEC_AMBIGUITY")
+        v
+        for v in vs
+        if v.category
+        in ("PROVIDER_BUG", "UPSTREAM_BUG", "HARNESS_BUG", "SOFT_TOKEN_CAVEAT", "SPEC_AMBIGUITY")
         and v.severity != "INFO"
     ]
-    findings.sort(key=lambda v: (SEVERITY_ORDER[v.severity], CATEGORY_ORDER[v.category], v.test_file))
+    findings.sort(
+        key=lambda v: (SEVERITY_ORDER[v.severity], CATEGORY_ORDER[v.category], v.test_file)
+    )
 
     sections.append(f"## Findings ({len(findings)})\n")
     sections.append("Ordered by severity then category.\n")
@@ -253,7 +342,9 @@ def render_provider(provider: str, vs: list[Verdict]) -> str:
             icon = ROUTING_ICON.get(v.routing, "")
             sections.append(f"#### F{fid:03d} [{v.severity}/{v.category}] — {icon} {v.routing}")
             sections.append(f"- **Signature:** `{v.signature}`")
-            sections.append(f"- **Direction:** `{v.direction}` · **Outcome:** `{v.outcome}` · **Tests covered:** {v.group_size}")
+            sections.append(
+                f"- **Direction:** `{v.direction}` · **Outcome:** `{v.outcome}` · **Tests covered:** {v.group_size}"
+            )
             sections.append(f"- **Example nodeid:** `{v.example_nodeid}`")
             msg = (v.message or "").strip()
             if msg:
@@ -267,20 +358,28 @@ def render_provider(provider: str, vs: list[Verdict]) -> str:
     # KNOWN_ISSUE summary (counts only, link to module-issues.md)
     known = [v for v in vs if v.category == "KNOWN_ISSUE"]
     if known:
-        sections.append(f"## Already documented in `docs/module-issues.md` ({len(known)} findings)\n")
-        sections.append("These records match an existing module-issues.md entry. Not re-listed here to avoid duplication; see `verdicts.jsonl` for individual pointers.\n")
+        sections.append(
+            f"## Already documented in `docs/module-issues.md` ({len(known)} findings)\n"
+        )
+        sections.append(
+            "These records match an existing module-issues.md entry. Not re-listed here to avoid duplication; see `verdicts.jsonl` for individual pointers.\n"
+        )
 
     # UNKNOWN (deferred)
     unknown = [v for v in vs if v.category == "UNKNOWN"]
     if unknown:
         sections.append(f"## Not yet classified ({len(unknown)} groups, DEFERRED)\n")
-        sections.append("Per user directive m0213-m0214, classification extension stopped. These will be classified by an in-tool workflow.\n")
+        sections.append(
+            "Per user directive m0213-m0214, classification extension stopped. These will be classified by an in-tool workflow.\n"
+        )
         sections.append("Top by size:")
         unknown_sorted = sorted(unknown, key=lambda v: -v.group_size)[:15]
         sections.append("| Group size | Direction | Test file | Signature |")
         sections.append("|---:|---|---|---|")
         for v in unknown_sorted:
-            sections.append(f"| {v.group_size} | {v.direction} | `{short_file(v.test_file)}` | `{v.signature[:24]}` |")
+            sections.append(
+                f"| {v.group_size} | {v.direction} | `{short_file(v.test_file)}` | `{v.signature[:24]}` |"
+            )
         sections.append("")
     return "\n".join(sections)
 
@@ -288,7 +387,9 @@ def render_provider(provider: str, vs: list[Verdict]) -> str:
 def render_universal(verdicts: list[Verdict]) -> str:
     sections: list[str] = []
     sections.append("# Cross-Provider Correlation\n")
-    sections.append("Universal patterns and provider-specific outliers, derived from `verdicts.jsonl`.\n")
+    sections.append(
+        "Universal patterns and provider-specific outliers, derived from `verdicts.jsonl`.\n"
+    )
 
     # Group by theme
     theme_groups: dict[str, list[Verdict]] = defaultdict(list)
@@ -313,7 +414,9 @@ def render_universal(verdicts: list[Verdict]) -> str:
 
     # Provider-specific outliers (HIGH/CRITICAL findings unique to one provider)
     sections.append("## Provider-specific HIGH/CRITICAL outliers\n")
-    sections.append("Findings that appear on exactly one provider — likely real provider-specific bugs worth filing upstream.\n")
+    sections.append(
+        "Findings that appear on exactly one provider — likely real provider-specific bugs worth filing upstream.\n"
+    )
     by_provider_high: dict[str, list[Verdict]] = defaultdict(list)
     for v in verdicts:
         if v.severity in ("CRITICAL", "HIGH") and v.category in ("PROVIDER_BUG", "UPSTREAM_BUG"):
@@ -326,12 +429,16 @@ def render_universal(verdicts: list[Verdict]) -> str:
             sections.append(f"| {p} | 0 | — |")
             continue
         ex = vs[0]
-        sections.append(f"| {p} | {len(vs)} | `{short_file(ex.test_file)}` {ex.direction} — {ex.message[:80]} |")
+        sections.append(
+            f"| {p} | {len(vs)} | `{short_file(ex.test_file)}` {ex.direction} — {ex.message[:80]} |"
+        )
     sections.append("")
 
     # Routing summary
     sections.append("## Routing summary\n")
-    routing = Counter(v.routing for v in verdicts if v.category in ("PROVIDER_BUG", "UPSTREAM_BUG", "HARNESS_BUG"))
+    routing = Counter(
+        v.routing for v in verdicts if v.category in ("PROVIDER_BUG", "UPSTREAM_BUG", "HARNESS_BUG")
+    )
     sections.append("| Routing | Records | What it means |")
     sections.append("|---|---:|---|")
     for r, n in routing.most_common():

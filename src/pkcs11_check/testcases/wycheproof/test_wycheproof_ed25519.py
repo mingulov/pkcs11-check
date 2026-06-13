@@ -188,9 +188,7 @@ def test_ed25519_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str,
             classify(
                 "not_operational",
                 label="EDDSA:key-import",
-                summary=not_operational_reason(
-                    "EDDSA:key-import", f"Ed25519: {ckr_name(exc.rv)}"
-                ),
+                summary=not_operational_reason("EDDSA:key-import", f"Ed25519: {ckr_name(exc.rv)}"),
             )
         raise
 
@@ -310,9 +308,7 @@ def test_ed448_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
             classify(
                 "not_operational",
                 label="EDDSA:key-import",
-                summary=not_operational_reason(
-                    "EDDSA:key-import", f"Ed448: {ckr_name(exc.rv)}"
-                ),
+                summary=not_operational_reason("EDDSA:key-import", f"Ed448: {ckr_name(exc.rv)}"),
             )
         raise
 

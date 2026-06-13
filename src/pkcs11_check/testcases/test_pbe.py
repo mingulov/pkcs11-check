@@ -300,8 +300,7 @@ class TestLegacyPBEVariants:
                 iv = mech.buffer_bytes("init_vector")
                 assert len(iv) == case.iv_len
                 assert iv != b"\x00" * case.iv_len, (
-                    f"{case.mechanism_name} accepted CK_PBE_PARAMS but did not write "
-                    "pInitVector"
+                    f"{case.mechanism_name} accepted CK_PBE_PARAMS but did not write pInitVector"
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)

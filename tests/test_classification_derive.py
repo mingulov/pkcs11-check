@@ -1,4 +1,5 @@
 import pytest
+
 from pkcs11_check.classification import derive_verdict
 
 

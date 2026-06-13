@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal, NoReturn, cast
 
 import pytest
 
@@ -198,14 +198,15 @@ def classify(
         pytest.xfail(summary)
 
 
-def fail_as(reason: str, **kw: Any) -> None:
+def fail_as(reason: str, **kw: Any) -> NoReturn:
     """Emit a ``fail`` classification; raises ``ValueError`` if *reason* is not a fail reason."""
     if derive_verdict(reason, kw.get("kind"))[0] != "fail":
         raise ValueError(f"fail_as requires a fail reason, got {reason!r}")
     classify(reason, **kw)
+    raise AssertionError("unreachable: classify() with a fail reason must raise")
 
 
-def xfail_as(reason: str, **kw: Any) -> None:
+def xfail_as(reason: str, **kw: Any) -> NoReturn:
     """Emit an ``xfail`` classification.
 
     Raises ``ValueError`` if *reason* does not map to an xfail outcome.
@@ -213,3 +214,4 @@ def xfail_as(reason: str, **kw: Any) -> None:
     if derive_verdict(reason, kw.get("kind"))[0] != "xfail":
         raise ValueError(f"xfail_as requires an xfail reason, got {reason!r}")
     classify(reason, **kw)
+    raise AssertionError("unreachable: classify() with an xfail reason must raise")

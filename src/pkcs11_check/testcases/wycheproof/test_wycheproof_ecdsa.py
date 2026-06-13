@@ -389,9 +389,7 @@ def test_ecdsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
             classify(
                 "not_operational",
                 label="ECDSA:key-import",
-                summary=not_operational_reason(
-                    "ECDSA:key-import", f"{curve}: {ckr_name(exc.rv)}"
-                ),
+                summary=not_operational_reason("ECDSA:key-import", f"{curve}: {ckr_name(exc.rv)}"),
             )
         raise
 

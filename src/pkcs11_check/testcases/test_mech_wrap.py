@@ -299,8 +299,7 @@ def _make_wrap_mech_param(entry: MechEntry) -> Any:
             )
         if style == "chacha20_poly1305":
             pytest.skip(
-                f"{entry.mech_name}: ChaCha20-Poly1305 wrap parameter semantics "
-                "not covered here"
+                f"{entry.mech_name}: ChaCha20-Poly1305 wrap parameter semantics not covered here"
             )
 
     if config is not None and config.param_required:

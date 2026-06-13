@@ -298,9 +298,7 @@ def test_ssl3_master_key_derive_dh_fails_on_wrong_exact_output(
     monkeypatch.setattr(test_ssl3, "destroy_quietly", lambda *_args: None)
 
     with pytest.raises(AssertionError, match="SSL3 master secret DH output mismatch"):
-        test_ssl3.TestSSL3MasterKeyDeriveDH().test_derive_master_secret_dh_exact_vector(
-            rs
-        )
+        test_ssl3.TestSSL3MasterKeyDeriveDH().test_derive_master_secret_dh_exact_vector(rs)
 
     assert len(derive_calls) == 1
     assert derive_calls[0]["base_key"] == 101

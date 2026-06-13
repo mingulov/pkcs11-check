@@ -8,6 +8,7 @@ and severity ≤ INFO, pointing at the doc section.
 This does NOT delete the original verdict — it appends a superseding record with
 `supersedes` pointing back. Loop continuation rule: never delete.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,29 +23,113 @@ MODULE_ISSUES = Path("/home/user/src/m/pkcs11-check/docs/module-issues.md")
 
 GENERIC_WORDS = {
     # test category words — appear in many tests, don't discriminate
-    "wycheproof", "acvp", "cctv", "vector", "vectors", "testcase", "tests",
+    "wycheproof",
+    "acvp",
+    "cctv",
+    "vector",
+    "vectors",
+    "testcase",
+    "tests",
     # crypto primitives — every test touches one
-    "encrypt", "decrypt", "sign", "verify", "signature", "digest", "hash",
-    "padding", "module", "mechanism", "session", "slot", "operation",
-    "init", "update", "final", "single", "multi", "multipart", "streaming",
+    "encrypt",
+    "decrypt",
+    "sign",
+    "verify",
+    "signature",
+    "digest",
+    "hash",
+    "padding",
+    "module",
+    "mechanism",
+    "session",
+    "slot",
+    "operation",
+    "init",
+    "update",
+    "final",
+    "single",
+    "multi",
+    "multipart",
+    "streaming",
     # generic verbs/connectives
-    "accepts", "returns", "instead", "supports", "affects", "detected",
-    "calls", "passed", "false", "true", "missing", "broken", "wrong",
-    "fails", "failure", "failures", "crash", "crashes", "crashed",
-    "argument", "arguments", "attribute", "attributes", "template", "value",
-    "input", "inputs", "output", "outputs", "result", "results", "expected",
+    "accepts",
+    "returns",
+    "instead",
+    "supports",
+    "affects",
+    "detected",
+    "calls",
+    "passed",
+    "false",
+    "true",
+    "missing",
+    "broken",
+    "wrong",
+    "fails",
+    "failure",
+    "failures",
+    "crash",
+    "crashes",
+    "crashed",
+    "argument",
+    "arguments",
+    "attribute",
+    "attributes",
+    "template",
+    "value",
+    "input",
+    "inputs",
+    "output",
+    "outputs",
+    "result",
+    "results",
+    "expected",
     # generic spec words
-    "spec", "specification", "compliance", "conformant", "conform",
-    "advertised", "operational", "extractable", "sensitive", "always",
+    "spec",
+    "specification",
+    "compliance",
+    "conformant",
+    "conform",
+    "advertised",
+    "operational",
+    "extractable",
+    "sensitive",
+    "always",
     # RSA family / common — too broad
-    "rsa", "ecdsa", "eddsa", "ecdh", "aes", "hmac", "gcm", "ccm",
-    "cbc", "ctr", "cfb", "ofb", "xts", "key", "keys", "block", "bits",
+    "rsa",
+    "ecdsa",
+    "eddsa",
+    "ecdh",
+    "aes",
+    "hmac",
+    "gcm",
+    "ccm",
+    "cbc",
+    "ctr",
+    "cfb",
+    "ofb",
+    "xts",
+    "key",
+    "keys",
+    "block",
+    "bits",
     # SHA family
-    "sha1", "sha256", "sha384", "sha512", "sha-1", "sha-256", "sha3",
+    "sha1",
+    "sha256",
+    "sha384",
+    "sha512",
+    "sha-1",
+    "sha-256",
+    "sha3",
     # NSS / generic
-    "nss", "softoken",
+    "nss",
+    "softoken",
     # numbers / sizes
-    "size", "length", "len", "count", "bytes",
+    "size",
+    "length",
+    "len",
+    "count",
+    "bytes",
 }
 
 
@@ -63,7 +148,16 @@ def parse_module_issues() -> list[dict]:
         if line.startswith("## "):
             current_section = line.lstrip("# ").strip()
             current_providers = []
-            for p in ["softhsm2", "kryoptic", "nss", "opencryptoki", "tpm2", "wolfpkcs11", "corepkcs11", "bouncyhsm"]:
+            for p in [
+                "softhsm2",
+                "kryoptic",
+                "nss",
+                "opencryptoki",
+                "tpm2",
+                "wolfpkcs11",
+                "corepkcs11",
+                "bouncyhsm",
+            ]:
                 if p in current_section.lower():
                     current_providers.append(p)
         elif line.startswith("### ") or line.startswith("- "):
@@ -72,16 +166,17 @@ def parse_module_issues() -> list[dict]:
             test_files = re.findall(r"test_[a-z0-9_]+\.py", text.lower())
             # Discriminating keywords: long words not in the generic stoplist
             keywords = [
-                w for w in re.split(r"\W+", text.lower())
-                if len(w) >= 6 and w not in GENERIC_WORDS
+                w for w in re.split(r"\W+", text.lower()) if len(w) >= 6 and w not in GENERIC_WORDS
             ][:12]
-            entries.append({
-                "providers": list(current_providers),
-                "section": current_section,
-                "text": text,
-                "test_files": test_files,
-                "keywords": keywords,
-            })
+            entries.append(
+                {
+                    "providers": list(current_providers),
+                    "section": current_section,
+                    "text": text,
+                    "test_files": test_files,
+                    "keywords": keywords,
+                }
+            )
     return entries
 
 

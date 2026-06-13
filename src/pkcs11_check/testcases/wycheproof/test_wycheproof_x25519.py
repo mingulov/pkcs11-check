@@ -275,9 +275,7 @@ def test_xdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             # keeps the vacuous pass.
             classify(
                 "not_operational",
-                summary=not_operational_reason(
-                    "ECDH:Montgomery-private-import", ckr_name(exc.rv)
-                ),
+                summary=not_operational_reason("ECDH:Montgomery-private-import", ckr_name(exc.rv)),
             )
         raise
 

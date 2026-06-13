@@ -94,15 +94,11 @@ def test_duration_oracle_ignores_empty_or_malformed_history(tmp_path: Path) -> N
     malformed_results.write_text("{")
 
     assert (
-        pool.duration_oracle_for_provider(
-            tmp_path, "bouncyhsm", artifacts_root=tmp_path / "empty"
-        )
+        pool.duration_oracle_for_provider(tmp_path, "bouncyhsm", artifacts_root=tmp_path / "empty")
         is None
     )
     assert (
-        pool.duration_oracle_for_provider(
-            tmp_path, "bouncyhsm", artifacts_root=tmp_path / "bad"
-        )
+        pool.duration_oracle_for_provider(tmp_path, "bouncyhsm", artifacts_root=tmp_path / "bad")
         is None
     )
 

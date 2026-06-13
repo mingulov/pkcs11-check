@@ -20,6 +20,7 @@ Priority order (highest first):
 
 Idempotent: emits the same work-queue given the same verdicts.jsonl.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -28,7 +29,9 @@ from collections import defaultdict
 from pathlib import Path
 
 VERDICTS = Path("/home/user/src/m/pkcs11-check/docs/findings/per-failure-triage/verdicts.jsonl")
-OUT = Path("/home/user/src/m/pkcs11-check/docs/findings/per-failure-triage/workqueue/phase6-buckets.json")
+OUT = Path(
+    "/home/user/src/m/pkcs11-check/docs/findings/per-failure-triage/workqueue/phase6-buckets.json"
+)
 
 PRIORITY = {
     # failures (highest priority)
@@ -50,10 +53,7 @@ PRIORITY = {
 
 def bucket_priority(records: list[dict]) -> int:
     """Lowest priority number among records = bucket's priority."""
-    return min(
-        PRIORITY.get((r["outcome"], r["direction"]), 99)
-        for r in records
-    )
+    return min(PRIORITY.get((r["outcome"], r["direction"]), 99) for r in records)
 
 
 def main() -> int:
@@ -120,13 +120,13 @@ def main() -> int:
 
     # Summary
     from collections import Counter
+
     pri_count = Counter(b["priority"] for b in items)
     print("\nBuckets per priority tier:")
     for pri in sorted(pri_count):
         # reverse-lookup label
         label = next(
-            (f"{outcome}/{direction}"
-             for (outcome, direction), p in PRIORITY.items() if p == pri),
+            (f"{outcome}/{direction}" for (outcome, direction), p in PRIORITY.items() if p == pri),
             f"tier-{pri}",
         )
         print(f"  {pri:2d}  {label:25s}: {pri_count[pri]:3d} buckets")

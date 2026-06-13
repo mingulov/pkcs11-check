@@ -550,8 +550,7 @@ class TestTLS10PreMasterKeyGen:
                     48,
                 )
                 assert value == expected, (
-                    "CKM_TLS_PRF output mismatch: "
-                    f"expected {expected.hex()}, got {value.hex()}"
+                    f"CKM_TLS_PRF output mismatch: expected {expected.hex()}, got {value.hex()}"
                 )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -1030,8 +1029,7 @@ class TestTLS12KDF:
                     32,
                 )
                 assert value == expected, (
-                    "CKM_TLS12_KDF output mismatch: "
-                    f"got {value.hex()}, expected {expected.hex()}"
+                    f"CKM_TLS12_KDF output mismatch: got {value.hex()}, expected {expected.hex()}"
                 )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)

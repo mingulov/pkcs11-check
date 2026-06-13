@@ -406,7 +406,7 @@ def test_gap_analysis_marks_tls12_kdf_context_data_exact_vector_as_added() -> No
     doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
 
     assert "test_tls12_kdf_context_data_exact_vector" in tls
-    assert "context_data=b\"context-info\"" in tls
+    assert 'context_data=b"context-info"' in tls
     assert "test_tls12_kdf_context_data_exact_vector_uses_context_data" in guard
     assert "test_tls12_kdf_context_data_fails_on_wrong_exact_output" in guard
 
@@ -754,15 +754,13 @@ def test_gap_analysis_marks_blake2b_key_derive_length_only_overlong_as_added() -
         "def test_blake2b_key_derive_rejects_length_only_overlong(\n"
         "        self,\n"
         "        p11_raw_session: Any,\n"
-        "        case: _Blake2bKeyedCase,"
-        in blake2
+        "        case: _Blake2bKeyedCase," in blake2
     )
     assert "BLAKE2B_*_KEY_DERIVE length-only overlong outputs are rejected" in blake2
     assert "test_blake2b_key_derive_length_only_overlong_is_expected_reject" in guard
 
     assert (
-        "BLAKE2B KEY_DERIVE length-only overlong negative coverage now verifies every"
-        in doc_flat
+        "BLAKE2B KEY_DERIVE length-only overlong negative coverage now verifies every" in doc_flat
     )
 
 
@@ -1251,8 +1249,7 @@ def test_gap_analysis_marks_wolf_session_fast_evidence_as_recorded() -> None:
 
     assert "Remaining evidence: run targeted wolfPKCS11 X.509/CCTV batches" not in doc
     assert (
-        "Status: fixed in the current branch. - Implemented: reusable module-session "
-        "health checks"
+        "Status: fixed in the current branch. - Implemented: reusable module-session health checks"
     ) in doc_flat
     assert "Focused wolfPKCS11 X.509/CCTV evidence now exists" in doc
     assert "artifacts/_focused/wolfpkcs11-health-current/results.json" in doc
@@ -2009,13 +2006,11 @@ def test_gap_analysis_records_legacy_vector_source_refresh() -> None:
     assert "RFC 2876 and RFC 2773 describe KEA/SKIPJACK protocol use" in doc_flat
     assert "NIST SP 800-135 and ACVP component-test material make protocol KDFs" in doc_flat
     assert (
-        "better next exact-vector target than the remaining classified legacy ciphers"
-        in doc_flat
+        "better next exact-vector target than the remaining classified legacy ciphers" in doc_flat
     )
     assert (
         "Provider-speed work for bouncyhsm MCT and wolfPKCS11 session health checks "
-        "should follow"
-        not in doc_flat
+        "should follow" not in doc_flat
     )
 
 
@@ -2079,14 +2074,12 @@ def test_gap_analysis_records_bouncyhsm_provider_local_remeasurement() -> None:
     doc_flat = " ".join(doc.split())
 
     assert (
-        "Status: fixed in the current branch. - Implemented: provider-local "
-        "duration-oracle data"
+        "Status: fixed in the current branch. - Implemented: provider-local duration-oracle data"
     ) in doc_flat
     assert "Fresh bouncyhsm provider-local pool evidence exists" in doc_flat
     assert "No mechanism coverage state loss" in doc_flat
     assert (
-        "13 emitted units each for `test_ofb.py`, `test_cfb8.py`, and `test_cfb128.py`"
-        in doc_flat
+        "13 emitted units each for `test_ofb.py`, `test_cfb8.py`, and `test_cfb128.py`" in doc_flat
     )
 
 
@@ -2121,7 +2114,6 @@ def test_gap_analysis_marks_retry_report_jsonl_analysis_as_single_pass() -> None
     assert "_load_report_log_records(unit_jsonl_path)" not in runner
     assert "test_analyze_report_jsonl_streams_detail_culprit_and_cache" in tests
     assert (
-        "Status: fixed in the current branch. - Implemented: normal Docker provider "
-        "containers"
+        "Status: fixed in the current branch. - Implemented: normal Docker provider containers"
     ) in doc_flat
     assert "retry/detail analysis now streams each unit report JSONL once" in doc_flat

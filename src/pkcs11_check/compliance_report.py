@@ -521,9 +521,10 @@ def _parse_test_results(
                     _count_value(unit_counts.get("total")),
                 )
                 status_outcome = _outcome_from_status(str(unit.get("status", "")))
-                if status_outcome in {"crashed", "timeout", "error"} and _count_value(
-                    unit_counts.get(status_outcome)
-                ) == 0:
+                if (
+                    status_outcome in {"crashed", "timeout", "error"}
+                    and _count_value(unit_counts.get(status_outcome)) == 0
+                ):
                     base_counts[status_outcome] += 1
                     outcome_total += 1
                 base_counts["tests"] += max(outcome_total, explicit_total)

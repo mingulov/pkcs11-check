@@ -6,7 +6,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_secret_key,
@@ -242,7 +242,7 @@ def test_hmac_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, An
             _UNSUPPORTED_HMAC_KEYS.add(cache_key)
         if result == "invalid":
             return
-        classify(
+        xfail_as(
             "not_operational",
             label="HMAC:key-import",
             summary=f"Cannot import {len(key_bytes)}-byte HMAC key: {last_exc_msg}",

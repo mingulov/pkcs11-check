@@ -67,9 +67,7 @@ def test_wtls_prf_helper_uses_output_buffer_and_null_key_output(
         ) -> int:
             calls.append((session, mechanism, base_key, template, attribute_count, new_key))
             ctypes.memmove(packed.params.pOutput, b"abc", 3)
-            output_len = ctypes.cast(
-                packed.params.pulOutputLen, ctypes.POINTER(CK_ULONG)
-            )
+            output_len = ctypes.cast(packed.params.pulOutputLen, ctypes.POINTER(CK_ULONG))
             output_len[0] = 3
             return int(CKR_OK)
 
@@ -161,9 +159,7 @@ def test_wtls_prf_output_length_probe_requests_prefix_extension(
 
     monkeypatch.setattr(test_wtls, "_derive_wtls_prf_output", _derive_wtls_prf_output)
 
-    test_wtls.TestWTLSPRF().test_prf_output_len_extends_output(
-        _session_with_mechanisms("WTLS_PRF")
-    )
+    test_wtls.TestWTLSPRF().test_prf_output_len_extends_output(_session_with_mechanisms("WTLS_PRF"))
 
     assert output_lengths == [16, 32]
 
@@ -422,8 +418,9 @@ def test_wtls_server_client_differ_uses_param_key_handles(
         SimpleNamespace(
             raw=raw,
             sh=1,
-            has_mechanism=lambda name: name
-            in {"WTLS_SERVER_KEY_AND_MAC_DERIVE", "WTLS_CLIENT_KEY_AND_MAC_DERIVE"},
+            has_mechanism=lambda name: (
+                name in {"WTLS_SERVER_KEY_AND_MAC_DERIVE", "WTLS_CLIENT_KEY_AND_MAC_DERIVE"}
+            ),
         )
     )
 

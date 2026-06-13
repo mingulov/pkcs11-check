@@ -12,6 +12,7 @@ then appends a superseding record with category=PROVIDER_BUG (or other).
 Idempotent: if a superseding record with signature "<sig>#phase6" already
 exists, exits without appending.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -26,16 +27,28 @@ VERDICTS = Path("/home/user/src/m/pkcs11-check/docs/findings/per-failure-triage/
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--signature", required=True, help="base signature (UNKNOWN record)")
-    ap.add_argument("--category", required=True,
-                    choices=["PROVIDER_BUG", "UPSTREAM_BUG", "HARNESS_BUG",
-                             "KNOWN_ISSUE", "SPEC_AMBIGUITY", "SOFT_TOKEN_CAVEAT",
-                             "FALSE_POSITIVE"])
-    ap.add_argument("--severity", required=True,
-                    choices=["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"])
+    ap.add_argument(
+        "--category",
+        required=True,
+        choices=[
+            "PROVIDER_BUG",
+            "UPSTREAM_BUG",
+            "HARNESS_BUG",
+            "KNOWN_ISSUE",
+            "SPEC_AMBIGUITY",
+            "SOFT_TOKEN_CAVEAT",
+            "FALSE_POSITIVE",
+        ],
+    )
+    ap.add_argument(
+        "--severity", required=True, choices=["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
+    )
     ap.add_argument("--evidence", required=True)
-    ap.add_argument("--routing", required=True,
-                    choices=["PROVIDER_REPORT", "HARNESS_FIX", "DOCS_ONLY",
-                             "MANUAL_REVIEW", "USER_ESCALATION"])
+    ap.add_argument(
+        "--routing",
+        required=True,
+        choices=["PROVIDER_REPORT", "HARNESS_FIX", "DOCS_ONLY", "MANUAL_REVIEW", "USER_ESCALATION"],
+    )
     ap.add_argument("--analyzer-note", default="")
     args = ap.parse_args()
 
@@ -52,8 +65,7 @@ def main() -> int:
                 base_record = v
 
     if base_record is None:
-        print(f"ERROR: no UNKNOWN record with signature {args.signature!r}",
-              file=sys.stderr)
+        print(f"ERROR: no UNKNOWN record with signature {args.signature!r}", file=sys.stderr)
         return 2
 
     if new_sig in existing_sigs:

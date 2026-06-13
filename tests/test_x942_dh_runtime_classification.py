@@ -163,9 +163,7 @@ def test_x942_rfc5114_zero_value_len_is_expected_reject(
     monkeypatch.setattr(test_x942_dh, "destroy_quietly", lambda *_args: None)
     monkeypatch.setattr(pytest, "skip", lambda message: pytest.fail(f"unexpected skip: {message}"))
 
-    test_x942_dh.TestX942DHDerive().test_x942_dh_derive_rfc5114_rejects_zero_value_len(
-        rs
-    )
+    test_x942_dh.TestX942DHDerive().test_x942_dh_derive_rfc5114_rejects_zero_value_len(rs)
 
     assert derive_calls == [
         {
@@ -296,7 +294,9 @@ def test_x942_extended_derive_tests_reach_c_derive_key_with_typed_params(
     derived_values: dict[int, bytes] = {}
     seen_param_types: list[type] = []
 
-    def _import_party_keys(_rs: Any, _first_private: bytes, _second_private: bytes) -> tuple[
+    def _import_party_keys(
+        _rs: Any, _first_private: bytes, _second_private: bytes
+    ) -> tuple[
         int,
         int,
         int,
@@ -457,7 +457,9 @@ def test_x942_extended_other_info_negative_rules_use_typed_params(
             assert params.ulPublicDataLen2 > 0
             return int(CKR_MECHANISM_PARAM_INVALID)
 
-    def _import_party_keys(_rs: Any, _first_private: bytes, _second_private: bytes) -> tuple[
+    def _import_party_keys(
+        _rs: Any, _first_private: bytes, _second_private: bytes
+    ) -> tuple[
         int,
         int,
         int,
@@ -559,7 +561,9 @@ def test_x942_extended_invalid_kdf_negative_uses_typed_params(
             assert params.pPublicData2 is not None
             return int(CKR_MECHANISM_PARAM_INVALID)
 
-    def _import_party_keys(_rs: Any, _first_private: bytes, _second_private: bytes) -> tuple[
+    def _import_party_keys(
+        _rs: Any, _first_private: bytes, _second_private: bytes
+    ) -> tuple[
         int,
         int,
         int,
@@ -658,7 +662,9 @@ def test_x942_extended_malformed_peer_public_negative_uses_typed_params(
             assert params.pPublicData2 is not None
             return int(CKR_MECHANISM_PARAM_INVALID)
 
-    def _import_party_keys(_rs: Any, _first_private: bytes, _second_private: bytes) -> tuple[
+    def _import_party_keys(
+        _rs: Any, _first_private: bytes, _second_private: bytes
+    ) -> tuple[
         int,
         int,
         int,
@@ -732,7 +738,9 @@ def test_x942_extended_concatenate_kdf_other_info_uses_typed_params(
     derived_values: dict[int, bytes] = {}
     seen_param_types: list[type] = []
 
-    def _import_party_keys(_rs: Any, _first_private: bytes, _second_private: bytes) -> tuple[
+    def _import_party_keys(
+        _rs: Any, _first_private: bytes, _second_private: bytes
+    ) -> tuple[
         int,
         int,
         int,
@@ -832,7 +840,9 @@ def test_x942_extended_asn1_kdf_other_info_uses_typed_params(
     derived_values: dict[int, bytes] = {}
     seen_param_types: list[type] = []
 
-    def _import_party_keys(_rs: Any, _first_private: bytes, _second_private: bytes) -> tuple[
+    def _import_party_keys(
+        _rs: Any, _first_private: bytes, _second_private: bytes
+    ) -> tuple[
         int,
         int,
         int,
@@ -934,7 +944,9 @@ def test_x942_extended_derive_value_len_truncation_uses_rightmost_bytes(
     derived_values: dict[int, bytes] = {}
     derive_calls: list[dict[str, Any]] = []
 
-    def _import_party_keys(_rs: Any, _first_private: bytes, _second_private: bytes) -> tuple[
+    def _import_party_keys(
+        _rs: Any, _first_private: bytes, _second_private: bytes
+    ) -> tuple[
         int,
         int,
         int,

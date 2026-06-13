@@ -139,8 +139,7 @@ X942_GEN = bytes.fromhex(
 X942_SUBPRIME = bytes.fromhex("8CF83642A709A097B447997640129DA299B1A47D1EB3750BA308B0FE64F5FBD3")
 
 _X942_RFC5114_ALICE_PRIVATE = bytes.fromhex(
-    "0102030405060708090a0b0c0d0e0f10"
-    "1112131415161718191a1b1c1d1e1f20"
+    "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 )
 _X942_RFC5114_BOB_PUBLIC = bytes.fromhex(
     "17f5faa191eea8f9f132a9a12177057727fd0222da1944f3779146396a1ba94b"
@@ -154,8 +153,7 @@ _X942_RFC5114_BOB_PUBLIC = bytes.fromhex(
     "7dffe3f64cc5cf566e823a1121b28"
 )
 _X942_RFC5114_EXPECTED_SECRET_32 = bytes.fromhex(
-    "7c242567d649f58f68fd9650fe96a6e1"
-    "8a70f17920dbdca3dd51101239b18788"
+    "7c242567d649f58f68fd9650fe96a6e18a70f17920dbdca3dd51101239b18788"
 )
 _X942_EXTENDED_ALICE_PRIVATE_2 = bytes(range(0x21, 0x41))
 _X942_EXTENDED_BOB_PRIVATE_1 = bytes(range(0x41, 0x61))
@@ -393,10 +391,7 @@ def _generate_x942_params_for_session(rs: Any) -> tuple[int, int, int]:
 
 def _skip_or_xfail_x942_param_gen_reject(exc: AssertionError) -> NoReturn:
     if is_known_error(exc, _X942_PARAMETER_SIZE_REJECT_RVS):
-        pytest.skip(
-            "X9.42 DH 2048/256 parameter generation not supported by this module: "
-            f"{exc}"
-        )
+        pytest.skip(f"X9.42 DH 2048/256 parameter generation not supported by this module: {exc}")
     xfail_if_known_ckr(
         exc,
         _X942_PARAMETER_RUNTIME_REJECT_RVS,
@@ -1209,6 +1204,7 @@ class TestX942DHDerive:
             )
             derived_values: dict[int, bytes] = {}
             for requested_len in (32, 16):
+
                 def derive_requested_len(requested_len: int = requested_len) -> int:
                     return derive_key(
                         rs.raw,

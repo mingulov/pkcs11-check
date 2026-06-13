@@ -94,9 +94,7 @@ def test_read_jsonl_results_streams_without_load_all(
     assert detail is not None
     assert detail["counts"]["passed"] == 1
     assert detail["counts"]["failed"] == 1
-    assert detail["tests"] == [
-        {"nodeid": "a.py::test_bad", "outcome": "failed", "duration": 0.0}
-    ]
+    assert detail["tests"] == [{"nodeid": "a.py::test_bad", "outcome": "failed", "duration": 0.0}]
 
 
 def test_postprocess_single_pass_per_file_counts(
@@ -161,9 +159,7 @@ def test_analyze_report_jsonl_streams_detail_culprit_and_cache(
     assert detail is not None
     assert detail["counts"]["passed"] == 1
     assert detail["counts"]["failed"] == 1
-    assert detail["tests"] == [
-        {"nodeid": "f.py::test_b", "outcome": "failed", "duration": 0.0}
-    ]
+    assert detail["tests"] == [{"nodeid": "f.py::test_b", "outcome": "failed", "duration": 0.0}]
 
     cache_path = file_runner_mod._report_record_cache_path(tmp_path / "state.json", "f.py")
     assert [json.loads(line) for line in cache_path.read_text().splitlines()] == records

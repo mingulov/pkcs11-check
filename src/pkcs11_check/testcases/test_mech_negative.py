@@ -248,9 +248,7 @@ def _skip_if_not_secret_key_registry_case(entry: MechEntry) -> None:
     if config is None:
         pytest.skip(f"{entry.mech_name}: no registry config")
     if config.keygen_recipe.style not in _SECRET_KEY_RECIPE_STYLES:
-        pytest.skip(
-            f"{entry.mech_name}: registry negative permission test needs secret-key keygen"
-        )
+        pytest.skip(f"{entry.mech_name}: registry negative permission test needs secret-key keygen")
 
 
 def _skip_if_not_required_param_registry_case(entry: MechEntry) -> None:

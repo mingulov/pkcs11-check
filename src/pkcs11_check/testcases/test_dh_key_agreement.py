@@ -96,8 +96,7 @@ DH_PRIME_2048 = bytes.fromhex(
 DH_GEN = bytes([0x02])
 
 _DH_RFC3526_GROUP14_ALICE_PRIVATE = bytes.fromhex(
-    "0102030405060708090a0b0c0d0e0f10"
-    "1112131415161718191a1b1c1d1e1f20"
+    "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 )
 _DH_RFC3526_GROUP14_BOB_PUBLIC = bytes.fromhex(
     "f0fee7626bcec4d1c5c1fb11b8058af4061c0e877d02ca7a"
@@ -113,8 +112,7 @@ _DH_RFC3526_GROUP14_BOB_PUBLIC = bytes.fromhex(
     "f8807ae75680ceeb8b1aafca61a1517b42ca7"
 )
 _DH_RFC3526_GROUP14_EXPECTED_SECRET_32 = bytes.fromhex(
-    "b11d9c9a159da66466777ab95e0081fa"
-    "91576855cdbac2286d05d90eef8fd436"
+    "b11d9c9a159da66466777ab95e0081fa91576855cdbac2286d05d90eef8fd436"
 )
 
 _DH_DERIVE_RUNTIME_REJECT_RVS = (
@@ -477,10 +475,7 @@ class TestDHKeyAgreement:
                         CKA_EXTRACTABLE: True,
                         CKA_TOKEN: False,
                     },
-                    label=(
-                        "CKM_DH_PKCS_DERIVE RFC 3526 Group 14 "
-                        f"CKA_VALUE_LEN={requested_len}"
-                    ),
+                    label=(f"CKM_DH_PKCS_DERIVE RFC 3526 Group 14 CKA_VALUE_LEN={requested_len}"),
                 )
                 derived_keys.append(derived)
                 value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
@@ -546,9 +541,7 @@ class TestDHKeyAgreement:
                 )
                 return
 
-            raise AssertionError(
-                "accepted CKM_DH_PKCS_DERIVE RFC 3526 Group 14 CKA_VALUE_LEN=0"
-            )
+            raise AssertionError("accepted CKM_DH_PKCS_DERIVE RFC 3526 Group 14 CKA_VALUE_LEN=0")
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)

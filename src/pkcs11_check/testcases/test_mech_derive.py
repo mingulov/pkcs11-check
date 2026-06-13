@@ -225,6 +225,7 @@ try:
 except ImportError:
     pass
 
+
 # Regional cipher ECB/CBC encrypt-data derive mechanisms.
 class _CipherEncryptDataDeriveCase(NamedTuple):
     keygen_name: str

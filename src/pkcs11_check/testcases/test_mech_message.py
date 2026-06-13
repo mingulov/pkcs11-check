@@ -118,9 +118,7 @@ def _skip_if_not_secret_key_registry_case(entry: MechEntry) -> None:
     if config is None:
         pytest.skip(f"{entry.mech_name}: no registry config")
     if config.keygen_recipe.style not in _SECRET_KEY_RECIPE_STYLES:
-        pytest.skip(
-            f"{entry.mech_name}: registry message permission test needs secret-key keygen"
-        )
+        pytest.skip(f"{entry.mech_name}: registry message permission test needs secret-key keygen")
 
 
 def _skip_if_not_required_param_registry_case(entry: MechEntry) -> None:
@@ -295,9 +293,7 @@ def _message_bad_param_init_must_reject(
     if rv == CKR_OK:
         getattr(rs.raw, final_name)(rs.sh)
     expected = (
-        _MESSAGE_MALFORMED_REQUIRED_PARAM_RVS
-        if malformed
-        else _MESSAGE_MISSING_REQUIRED_PARAM_RVS
+        _MESSAGE_MALFORMED_REQUIRED_PARAM_RVS if malformed else _MESSAGE_MISSING_REQUIRED_PARAM_RVS
     )
     classify_negative_rv(rv, expected, label=label)
 

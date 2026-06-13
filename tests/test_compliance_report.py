@@ -456,8 +456,7 @@ def test_generate_report_includes_compliance_notes_from_result_units(tmp_path: P
                                 "reference": "PKCS#11 v3.2 CKR_OPERATION_NOT_VALIDATED",
                                 "test_id": "test_encrypt",
                                 "nodeid": (
-                                    "src/pkcs11_check/testcases/"
-                                    "test_mech_encrypt.py::test_encrypt"
+                                    "src/pkcs11_check/testcases/test_mech_encrypt.py::test_encrypt"
                                 ),
                             }
                         ],
@@ -521,8 +520,7 @@ def test_generate_report_includes_compliance_notes_from_report_jsonl(tmp_path: P
                                 "reference": "PKCS#11 operation contract",
                                 "test_id": "test_encrypt",
                                 "nodeid": (
-                                    "src/pkcs11_check/testcases/"
-                                    "test_mech_encrypt.py::test_encrypt"
+                                    "src/pkcs11_check/testcases/test_mech_encrypt.py::test_encrypt"
                                 ),
                             }
                         ],

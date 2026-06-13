@@ -13,7 +13,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_bytes, mech_gcm
 from pkcs11_check.raw.recipes import (
@@ -352,7 +352,7 @@ class TestHMACSHA256Wycheproof:
                     f"HMAC-SHA256 tc{vec['tcId']}",
                     "HMAC-SHA256 key import",
                 )
-            classify(
+            xfail_as(
                 "not_operational",
                 label="HMAC-SHA256:key-import",
                 summary=f"Module cannot import {len(key_bytes)}-byte HMAC key",

@@ -107,9 +107,7 @@ def test_dh_rfc3526_group14_value_len_truncation_uses_rightmost_bytes(
     )
     monkeypatch.setattr(dh, "destroy_quietly", lambda *_args: None)
 
-    dh.TestDHKeyAgreement().test_dh_pkcs_derive_rfc3526_group14_value_len_truncation(
-        _session()
-    )
+    dh.TestDHKeyAgreement().test_dh_pkcs_derive_rfc3526_group14_value_len_truncation(_session())
 
     assert [call["attrs"][CKA_VALUE_LEN] for call in derive_calls] == [32, 16]
     assert {call["private_key"] for call in derive_calls} == {301}
@@ -137,9 +135,7 @@ def test_dh_rfc3526_group14_zero_value_len_is_expected_reject(
     monkeypatch.setattr(dh, "derive_key", _derive_reject)
     monkeypatch.setattr(dh, "destroy_quietly", lambda *_args: None)
 
-    dh.TestDHKeyAgreement().test_dh_pkcs_derive_rfc3526_group14_rejects_zero_value_len(
-        _session()
-    )
+    dh.TestDHKeyAgreement().test_dh_pkcs_derive_rfc3526_group14_rejects_zero_value_len(_session())
 
     assert derive_attrs == [
         {

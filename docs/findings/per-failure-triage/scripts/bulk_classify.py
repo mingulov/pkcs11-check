@@ -11,6 +11,7 @@ genuinely ambiguous cases for manual Phase 6 subagent dispatch.
 
 Idempotent: skips records already superseded by a #phase6 verdict.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -40,36 +41,51 @@ RULES: list[tuple[re.Pattern, str, str, str, str, str]] = [
     # Explicit capability gap message from classifier
     (
         re.compile(r"advertised but.*not operational", re.IGNORECASE),
-        "PROVIDER_BUG", "LOW", "PROVIDER_REPORT",
+        "PROVIDER_BUG",
+        "LOW",
+        "PROVIDER_REPORT",
         "Capability gap: {snippet}. Mechanism advertised but not operational — REJECT_VALID direction (functional gap, not a security break).",
         "phase6bulk: advertised-but-not-operational",
     ),
     # Keygen setup rejected
     (
         re.compile(r"advertised but.*keygen.*(?:rejected|not operational)", re.IGNORECASE),
-        "PROVIDER_BUG", "LOW", "PROVIDER_REPORT",
+        "PROVIDER_BUG",
+        "LOW",
+        "PROVIDER_REPORT",
         "Keygen capability gap: {snippet}.",
         "phase6bulk: keygen capability gap",
     ),
     # Vector replay: clean reject of advertised mechanism variant
     (
-        re.compile(r"CKR_(?:MECHANISM_INVALID|KEY_TYPE_INCONSISTENT|MECHANISM_PARAM_INVALID|TEMPLATE_INCONSISTENT|ATTRIBUTE_TYPE_INVALID|FUNCTION_NOT_SUPPORTED)",
-                   re.IGNORECASE),
-        "PROVIDER_BUG", "LOW", "PROVIDER_REPORT",
+        re.compile(
+            r"CKR_(?:MECHANISM_INVALID|KEY_TYPE_INCONSISTENT|MECHANISM_PARAM_INVALID|TEMPLATE_INCONSISTENT|ATTRIBUTE_TYPE_INVALID|FUNCTION_NOT_SUPPORTED)",
+            re.IGNORECASE,
+        ),
+        "PROVIDER_BUG",
+        "LOW",
+        "PROVIDER_REPORT",
         "Clean CKR rejection of advertised-mechanism variant: {snippet}. Direction = reject-valid → functional gap (LOW).",
         "phase6bulk: vector-replay capability gap",
     ),
     # Buffer-too-small / size-protocol clean rejection (test-side xfail)
     (
         re.compile(r"CKR_BUFFER_TOO_SMALL", re.IGNORECASE),
-        "PROVIDER_BUG", "LOW", "PROVIDER_REPORT",
+        "PROVIDER_BUG",
+        "LOW",
+        "PROVIDER_REPORT",
         "Buffer-protocol deviation: {snippet}.",
         "phase6bulk: buffer-protocol deviation",
     ),
     # RSA-OAEP / RSA-PSS hash variants (commonly documented)
     (
-        re.compile(r"(?:OAEP|PSS).*SHA-?(?:224|256|384|512)|SHA-?(?:224|256|384|512).*(?:OAEP|PSS)", re.IGNORECASE),
-        "PROVIDER_BUG", "LOW", "PROVIDER_REPORT",
+        re.compile(
+            r"(?:OAEP|PSS).*SHA-?(?:224|256|384|512)|SHA-?(?:224|256|384|512).*(?:OAEP|PSS)",
+            re.IGNORECASE,
+        ),
+        "PROVIDER_BUG",
+        "LOW",
+        "PROVIDER_REPORT",
         "RSA padding hash-variant gap: {snippet}. Module only supports subset of RFC 8017 hash/MGF combinations.",
         "phase6bulk: RSA-padding hash-variant gap",
     ),

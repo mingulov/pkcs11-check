@@ -873,8 +873,7 @@ class TestWTLSPRF:
                     16,
                 )
                 assert value == expected, (
-                    "CKM_WTLS_PRF output mismatch: "
-                    f"got {value.hex()}, expected {expected.hex()}"
+                    f"CKM_WTLS_PRF output mismatch: got {value.hex()}, expected {expected.hex()}"
                 )
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
