@@ -1204,7 +1204,83 @@ The remaining hard rows are:
 
 ---
 
+## OpenCryptoki 3.27.0 (v3.2)
+
+**Status: 64,557 passed, 215 failed, 46,463 skipped, 2,861 xfailed (114,096 total)**
+
+**Library:** `libopencryptoki.so` (soft token) · **Docker targets:** `test-opencryptoki` (v3.27.0), `test-opencryptoki-master`
+
+### Known bugs (fresh 2026-06-09, triage H5)
+- **CKM_AES_CTR accepts out-of-range ulCounterBits**: `C_EncryptInit` returns `CKR_OK`
+  for `ulCounterBits=0` and `ulCounterBits=129` (OASIS spec range: 1-128). Detected by:
+  `test_aes_modes.py::TestAESCTR::test_aes_ctr_counter_bits_{zero,129}_rejected`
+  (3-way `classify_negative_rv`: acceptance of invalid -> fail).
+- **CKM_AES_CTR rejects spec-valid payloads with `CKR_DATA_LEN_RANGE`** (32B and 17B
+  inputs; CTR is a stream cipher per NIST SP 800-38A) and **CKM_AES_CTS is advertised but
+  `C_EncryptInit` returns `CKR_MECHANISM_INVALID`** -- both clean deviations, xfailed via
+  `CIPHER_OP_RUNTIME_REJECT_RVS`.
+- **RSA-OAEP SHA-512/224|256 + MGF1-SHA1 not operational**: valid Wycheproof vectors
+  rejected with `CKR_ENCRYPTED_DATA_INVALID`; the RFC 8017 canonical probe for those
+  combos is also cleanly rejected -> advertised-but-not-operational xfail (26 vectors).
+
+### ML-KEM output template requires `CKA_VALUE_LEN` (strict-but-conformant)
+
+OpenCryptoki advertises full **standard** PQC since 3.27 (`CKM_ML_DSA`, `CKM_ML_KEM`,
+`CKM_HASH_ML_DSA` family) and its ML-KEM encapsulate/decapsulate are **fully operational**.
+
+`C_EncapsulateKey`/`C_DecapsulateKey` require the output-key template to declare
+**`CKA_VALUE_LEN`**; without it OpenCryptoki returns `CKR_TEMPLATE_INCONSISTENT`. This is a
+defensible strict reading of PKCS#11 v3.2 — for `CKM_ML_KEM` the spec says the mechanism
+contributes `CKA_VALUE` but *"other attributes required by the key type must be specified in
+the template."* Lenient modules (kryoptic, NSS) infer the 32-byte length; OpenCryptoki does not.
+
+This was previously **mis-reported by the harness as "ML-KEM encapsulate not operational"**:
+`testcases/test_kem.py::_encap_attrs` and `wycheproof/test_wycheproof_mlkem.py` omitted
+`CKA_VALUE_LEN`, so every `_encap_attrs`-based op false-xfailed (16 in `test_kem`) and the
+Wycheproof decaps false-failed (3) on OpenCryptoki, while `test_decapsulate_aes_key_sizes`
+(which *does* pass `CKA_VALUE_LEN`) passed. Fixed by always supplying `CKA_VALUE_LEN=32` (the
+ML-KEM shared-secret size, FIPS 203) in the KEM output template; OpenCryptoki now passes
+ML-KEM encaps/decaps cleanly with no module change. The harness fix is locked by
+`tests/test_kem_output_template.py`.
+
+> Provider-general lesson: a KEM/derive output template must declare the length attribute the
+> key type requires; relying on a module to infer it (kryoptic's leniency) masks working PQC on
+> strict-but-conformant modules.
+
+### AES-KEY-WRAP unwrap rejects `CKA_VALUE_LEN` as read-only
+
+In contrast to ML-KEM, OpenCryptoki's `CKM_AES_KEY_WRAP` unwrap *rejects* `CKA_VALUE_LEN`
+(`CKR_ATTRIBUTE_READ_ONLY`) for some key sizes — it derives the recovered length from the
+wrapped blob, like softhsm2 — while NSS *requires* it (see the NSS section). The adaptive
+unwrap in `test_wycheproof_aes.py` tries the minimal template first and only restates the
+length for valid vectors when the module asks; where the module cannot create the
+generic-secret object either way (larger AES-KW payloads here), that valid vector is recorded
+as a clean operational-deviation xfail rather than a failure.
+
+### `C_UnwrapKey` template: rejects policy attributes, requires `CKA_CLASS` (probed 2026-06-09)
+
+A direct template-ladder probe (stable + master, identical) established OpenCryptoki's
+`C_UnwrapKey` template rules for `CKM_AES_KEY_WRAP` into `CKK_AES`:
+
+| template | result |
+|---|---|
+| `{CKA_CLASS, CKA_KEY_TYPE}` (± `CKA_VALUE_LEN`, `CKA_ENCRYPT/DECRYPT`, `CKA_TOKEN`) | **OK** (default key is readable) |
+| drop `CKA_CLASS` | `CKR_TEMPLATE_INCOMPLETE` (CKA_CLASS is required) |
+| add `CKA_EXTRACTABLE` / `CKA_SENSITIVE` | **`CKR_ATTRIBUTE_READ_ONLY`** |
+
+So OpenCryptoki rejects the *policy* attributes (`CKA_EXTRACTABLE`/`CKA_SENSITIVE`) in an
+unwrap template and requires `CKA_CLASS`. softhsm2 is the mirror: it *needs* `CKA_EXTRACTABLE`
+for the unwrapped value to be readable. This is handled provider-generally by
+`unwrap_key_for_mechanism_roundtrip`, which keeps `CKA_CLASS`/`CKA_KEY_TYPE` in every variant
+and, on a clean shape reject, drops only the policy attributes — so OpenCryptoki's
+authenticated-wrap / ECDH-AES-KW forgery detection is actually exercised. (An earlier
+mis-attribution blamed `CKA_CLASS`/`CKA_KEY_TYPE` for this `READ_ONLY`; the probe shows the
+real cause is the policy attributes.) OpenCryptoki does not implement AES-GCM authenticated
+wrap (`CKR_FUNCTION_NOT_SUPPORTED`), so those forgery tests xfail on a genuine capability gap.
+---
+
 ## OpenCryptoki 3.26 (v3.0)
+
 
 **Status: 468 passed, 24 failed, 312 skipped, 1 xfailed, 28,762 errors**
 
@@ -1847,67 +1923,6 @@ exercises the upgraded version, surfacing the long-known leak as a
 hard CI failure. Not a NEW finding — the bug has been public since at
 least the v0.1.0 release report. Reportable upstream as a security
 finding (already in upstream NSS Bugzilla per the v0.1.0 report).
-
-## OpenCryptoki 3.27.0 (v3.2)
-
-**Status: 64,557 passed, 215 failed, 46,463 skipped, 2,861 xfailed (114,096 total)**
-
-**Library:** `libopencryptoki.so` (soft token) · **Docker targets:** `test-opencryptoki` (v3.27.0), `test-opencryptoki-master`
-
-### ML-KEM output template requires `CKA_VALUE_LEN` (strict-but-conformant)
-
-OpenCryptoki advertises full **standard** PQC since 3.27 (`CKM_ML_DSA`, `CKM_ML_KEM`,
-`CKM_HASH_ML_DSA` family) and its ML-KEM encapsulate/decapsulate are **fully operational**.
-
-`C_EncapsulateKey`/`C_DecapsulateKey` require the output-key template to declare
-**`CKA_VALUE_LEN`**; without it OpenCryptoki returns `CKR_TEMPLATE_INCONSISTENT`. This is a
-defensible strict reading of PKCS#11 v3.2 — for `CKM_ML_KEM` the spec says the mechanism
-contributes `CKA_VALUE` but *"other attributes required by the key type must be specified in
-the template."* Lenient modules (kryoptic, NSS) infer the 32-byte length; OpenCryptoki does not.
-
-This was previously **mis-reported by the harness as "ML-KEM encapsulate not operational"**:
-`testcases/test_kem.py::_encap_attrs` and `wycheproof/test_wycheproof_mlkem.py` omitted
-`CKA_VALUE_LEN`, so every `_encap_attrs`-based op false-xfailed (16 in `test_kem`) and the
-Wycheproof decaps false-failed (3) on OpenCryptoki, while `test_decapsulate_aes_key_sizes`
-(which *does* pass `CKA_VALUE_LEN`) passed. Fixed by always supplying `CKA_VALUE_LEN=32` (the
-ML-KEM shared-secret size, FIPS 203) in the KEM output template; OpenCryptoki now passes
-ML-KEM encaps/decaps cleanly with no module change. The harness fix is locked by
-`tests/test_kem_output_template.py`.
-
-> Provider-general lesson: a KEM/derive output template must declare the length attribute the
-> key type requires; relying on a module to infer it (kryoptic's leniency) masks working PQC on
-> strict-but-conformant modules.
-
-### AES-KEY-WRAP unwrap rejects `CKA_VALUE_LEN` as read-only
-
-In contrast to ML-KEM, OpenCryptoki's `CKM_AES_KEY_WRAP` unwrap *rejects* `CKA_VALUE_LEN`
-(`CKR_ATTRIBUTE_READ_ONLY`) for some key sizes — it derives the recovered length from the
-wrapped blob, like softhsm2 — while NSS *requires* it (see the NSS section). The adaptive
-unwrap in `test_wycheproof_aes.py` tries the minimal template first and only restates the
-length for valid vectors when the module asks; where the module cannot create the
-generic-secret object either way (larger AES-KW payloads here), that valid vector is recorded
-as a clean operational-deviation xfail rather than a failure.
-
-### `C_UnwrapKey` template: rejects policy attributes, requires `CKA_CLASS` (probed 2026-06-09)
-
-A direct template-ladder probe (stable + master, identical) established OpenCryptoki's
-`C_UnwrapKey` template rules for `CKM_AES_KEY_WRAP` into `CKK_AES`:
-
-| template | result |
-|---|---|
-| `{CKA_CLASS, CKA_KEY_TYPE}` (± `CKA_VALUE_LEN`, `CKA_ENCRYPT/DECRYPT`, `CKA_TOKEN`) | **OK** (default key is readable) |
-| drop `CKA_CLASS` | `CKR_TEMPLATE_INCOMPLETE` (CKA_CLASS is required) |
-| add `CKA_EXTRACTABLE` / `CKA_SENSITIVE` | **`CKR_ATTRIBUTE_READ_ONLY`** |
-
-So OpenCryptoki rejects the *policy* attributes (`CKA_EXTRACTABLE`/`CKA_SENSITIVE`) in an
-unwrap template and requires `CKA_CLASS`. softhsm2 is the mirror: it *needs* `CKA_EXTRACTABLE`
-for the unwrapped value to be readable. This is handled provider-generally by
-`unwrap_key_for_mechanism_roundtrip`, which keeps `CKA_CLASS`/`CKA_KEY_TYPE` in every variant
-and, on a clean shape reject, drops only the policy attributes — so OpenCryptoki's
-authenticated-wrap / ECDH-AES-KW forgery detection is actually exercised. (An earlier
-mis-attribution blamed `CKA_CLASS`/`CKA_KEY_TYPE` for this `READ_ONLY`; the probe shows the
-real cause is the policy attributes.) OpenCryptoki does not implement AES-GCM authenticated
-wrap (`CKR_FUNCTION_NOT_SUPPORTED`), so those forgery tests xfail on a genuine capability gap.
 
 ## corePKCS11 3.6.4 (FreeRTOS, mbedTLS port, docker target with generic in-memory PAL)
 
