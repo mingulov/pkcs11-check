@@ -307,7 +307,11 @@ smoke behavior, or covered only by one narrow variation.
    exact-vector coverage now checks `CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE`
    output against the RFC 7627 PRF over the session hash. TLS 1.2
    extended-master-secret DH exact-vector coverage now applies the same PRF
-   check to `CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH`.
+   check to `CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH`. Legacy TLS/TLS 1.2
+   key-material template-protection negative coverage now verifies
+   `CKM_TLS_KEY_AND_MAC_DERIVE`, `CKM_TLS12_KEY_AND_MAC_DERIVE`, and
+   `CKM_TLS12_KEY_SAFE_DERIVE` reject `CKA_SENSITIVE` template values that
+   conflict with the base-key inherited protection attributes.
    IKE PRF base-key sensitivity coverage now verifies the same for
    `CKM_IKE_PRF_DERIVE`. IKE PRF data-as-key HMAC-SHA256 exact-vector coverage
    now uses typed `CK_IKE_PRF_DERIVE_PARAMS` and checks the OASIS case-1

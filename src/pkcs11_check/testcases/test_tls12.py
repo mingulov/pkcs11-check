@@ -90,7 +90,11 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import destroy_returned_handles, is_known_error
+from pkcs11_check.testcases.conftest import (
+    destroy_returned_handles,
+    is_known_error,
+    reject_or_classify,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -112,6 +116,11 @@ _TLS_ERROR_RVS = {
     CKR_TEMPLATE_INCONSISTENT,
     CKR_DEVICE_ERROR,
 }
+
+_TLS_TEMPLATE_CONFLICT_REJECT_RVS = (
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+)
 
 
 def _tls12_prf_sha256(
@@ -256,6 +265,47 @@ def _derive_key_material_to_params(
         None,
     )
     expect_rv(rv, CKR_OK)
+
+
+def _derive_tls_key_material_template_conflict(
+    rs: Any,
+    base_key: int,
+    mech: Any,
+    *,
+    label: str,
+) -> None:
+    """Verify TLS key material rejects template protection values that differ."""
+    exc: AssertionError | None = None
+    try:
+        _derive_key_material_to_params(
+            rs,
+            base_key,
+            {
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_SENSITIVE: True,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
+            },
+            mech,
+        )
+    except AssertionError as caught:
+        exc = caught
+    finally:
+        out = mech.key_mat_out
+        destroy_returned_handles(
+            rs,
+            out.hClientMacSecret,
+            out.hServerMacSecret,
+            out.hClientKey,
+            out.hServerKey,
+        )
+
+    reject_or_classify(
+        exc,
+        _TLS_TEMPLATE_CONFLICT_REJECT_RVS,
+        label=label,
+    )
 
 
 class TestTLS10PreMasterKeyGen:
@@ -419,6 +469,32 @@ class TestTLS10PreMasterKeyGen:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 pytest.xfail(f"CKM_TLS_KEY_AND_MAC_DERIVE not operational: {exc}")
             raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master_secret)
+
+    def test_tls_key_and_mac_rejects_template_protection_conflict(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_TLS_KEY_AND_MAC_DERIVE rejects template protection overrides."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("TLS_KEY_AND_MAC_DERIVE"):
+            pytest.skip("CKM_TLS_KEY_AND_MAC_DERIVE not supported")
+
+        master_secret = _create_tls_pms(rs)
+        try:
+            mech = mech_ssl3_key_mat(
+                CKM_TLS_KEY_AND_MAC_DERIVE,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                key_size_bits=128,
+            )
+            _derive_tls_key_material_template_conflict(
+                rs,
+                master_secret,
+                mech,
+                label="CKM_TLS_KEY_AND_MAC_DERIVE template protection conflict",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, master_secret)
 
@@ -666,6 +742,33 @@ class TestTLS12KeyAndMacDerive:
         finally:
             destroy_quietly(rs.raw, rs.sh, master_secret)
 
+    def test_key_and_mac_rejects_template_protection_conflict(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_TLS12_KEY_AND_MAC_DERIVE rejects template protection overrides."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("TLS12_KEY_AND_MAC_DERIVE"):
+            pytest.skip("CKM_TLS12_KEY_AND_MAC_DERIVE not supported")
+
+        master_secret = _create_tls_pms(rs)
+        try:
+            mech = mech_tls12_key_mat(
+                CKM_TLS12_KEY_AND_MAC_DERIVE,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                hash_mech=CKM_SHA256,
+                key_size_bits=128,
+            )
+            _derive_tls_key_material_template_conflict(
+                rs,
+                master_secret,
+                mech,
+                label="CKM_TLS12_KEY_AND_MAC_DERIVE template protection conflict",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master_secret)
+
     def test_key_safe_derive_availability(self, p11_raw_session: Any) -> None:
         """Probe whether CKM_TLS12_KEY_SAFE_DERIVE is advertised."""
         if not p11_raw_session.has_mechanism("TLS12_KEY_SAFE_DERIVE"):
@@ -717,6 +820,34 @@ class TestTLS12KeyAndMacDerive:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 pytest.xfail(f"CKM_TLS12_KEY_SAFE_DERIVE not operational: {exc}")
             raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master_secret)
+
+    def test_key_safe_rejects_template_protection_conflict(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_TLS12_KEY_SAFE_DERIVE rejects template protection overrides."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("TLS12_KEY_SAFE_DERIVE"):
+            pytest.skip("CKM_TLS12_KEY_SAFE_DERIVE not supported")
+
+        master_secret = _create_tls_pms(rs)
+        try:
+            mech = mech_tls12_key_mat(
+                CKM_TLS12_KEY_SAFE_DERIVE,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                hash_mech=CKM_SHA256,
+                key_size_bits=128,
+                iv_size_bits=0,
+            )
+            _derive_tls_key_material_template_conflict(
+                rs,
+                master_secret,
+                mech,
+                label="CKM_TLS12_KEY_SAFE_DERIVE template protection conflict",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, master_secret)
 

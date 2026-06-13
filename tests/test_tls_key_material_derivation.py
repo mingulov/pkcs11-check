@@ -8,20 +8,31 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
     CKA_VALUE,
     CKA_VALUE_LEN,
+    CKK_GENERIC_SECRET,
     CKM_SHA256,
     CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE,
     CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH,
     CKM_TLS12_KDF,
+    CKM_TLS12_KEY_AND_MAC_DERIVE,
+    CKM_TLS12_KEY_SAFE_DERIVE,
     CKM_TLS12_MASTER_KEY_DERIVE,
     CKM_TLS12_MASTER_KEY_DERIVE_DH,
     CKM_TLS_KDF,
     CKM_TLS_KEY_AND_MAC_DERIVE,
     CKM_TLS_MASTER_KEY_DERIVE,
     CKM_TLS_PRF,
+    CKO_SECRET_KEY,
     CKR_OK,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases import test_tls12
 
@@ -233,6 +244,70 @@ def test_tls_key_and_mac_derive_uses_null_phkey(
     )
 
     assert raw.ph_keys == [None]
+
+
+def test_tls_key_material_rejects_template_protection_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_tls12, "_create_tls_pms", lambda _rs: 101)
+    monkeypatch.setattr(test_tls12, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(test_tls12, "destroy_returned_handles", lambda *_args: None)
+
+    key_mat_calls: list[tuple[int, dict[int, Any]]] = []
+    classifier_calls: list[tuple[BaseException | None, tuple[int, ...], str]] = []
+
+    def _rejecting_key_material(
+        _rs: object,
+        _base_key: int,
+        attrs: dict[int, Any],
+        mech: Any,
+    ) -> None:
+        key_mat_calls.append((int(mech.ck.mechanism), attrs))
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_TEMPLATE_INCONSISTENT",
+            int(CKR_TEMPLATE_INCONSISTENT),
+        )
+
+    def _reject_or_classify(
+        exc: BaseException | None,
+        expected_rvs: tuple[int, ...],
+        *,
+        label: str,
+    ) -> None:
+        classifier_calls.append((exc, expected_rvs, label))
+
+    monkeypatch.setattr(test_tls12, "_derive_key_material_to_params", _rejecting_key_material)
+    monkeypatch.setattr(test_tls12, "reject_or_classify", _reject_or_classify, raising=False)
+
+    test_tls12.TestTLS10PreMasterKeyGen().test_tls_key_and_mac_rejects_template_protection_conflict(
+        _tls_key_material_session(_FakeRaw())
+    )
+    test_tls12.TestTLS12KeyAndMacDerive().test_key_and_mac_rejects_template_protection_conflict(
+        _session(_FakeRaw())
+    )
+    test_tls12.TestTLS12KeyAndMacDerive().test_key_safe_rejects_template_protection_conflict(
+        _session(_FakeRaw())
+    )
+
+    expected_attrs = {
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+        CKA_SENSITIVE: True,
+        CKA_EXTRACTABLE: True,
+        CKA_TOKEN: False,
+    }
+    assert key_mat_calls == [
+        (int(CKM_TLS_KEY_AND_MAC_DERIVE), expected_attrs),
+        (int(CKM_TLS12_KEY_AND_MAC_DERIVE), expected_attrs),
+        (int(CKM_TLS12_KEY_SAFE_DERIVE), expected_attrs),
+    ]
+    assert [call[2] for call in classifier_calls] == [
+        "CKM_TLS_KEY_AND_MAC_DERIVE template protection conflict",
+        "CKM_TLS12_KEY_AND_MAC_DERIVE template protection conflict",
+        "CKM_TLS12_KEY_SAFE_DERIVE template protection conflict",
+    ]
+    assert all(isinstance(call[0], CkrAssertionError) for call in classifier_calls)
+    assert all(int(CKR_TEMPLATE_INCONSISTENT) in call[1] for call in classifier_calls)
 
 
 def test_tls10_prf_reference_matches_rfc2246_split_secret_vector() -> None:
