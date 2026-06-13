@@ -1204,9 +1204,9 @@ The remaining hard rows are:
 
 ---
 
-## OpenCryptoki 3.27.0 (v3.2)
+## OpenCryptoki 3.26 (v3.0)
 
-**Status: 64,557 passed, 215 failed, 46,463 skipped, 2,861 xfailed (114,096 total)**
+**Status: 468 passed, 24 failed, 312 skipped, 1 xfailed, 28,762 errors**
 
 ### Root cause of 28K errors
 `pkcsslotd` daemon dies during the full test run, causing `FunctionFailed` for all subsequent tests. When run individually with the daemon alive, tests pass. This is a daemon stability issue under sustained load — needs investigation in task 2.4.
@@ -1667,7 +1667,9 @@ positive leg to xfail. No per-module quirk registry is involved.
 
 ---
 
-## Kryoptic v1.5.0 / main (v3.2)
+## Kryoptic v1.5.1 / main (v3.2)
+
+**Status: 58,684 passed, 158 failed, 30,480 skipped, 24,579 xfailed (113,901 total)**
 
 ### C_SessionCancel crash (kryoptic-main)
 `test_v30_session.py::test_cancel_after_digest_init_subprocess` - the module
@@ -1848,6 +1850,8 @@ finding (already in upstream NSS Bugzilla per the v0.1.0 report).
 
 ## OpenCryptoki 3.27.0 (v3.2)
 
+**Status: 64,557 passed, 215 failed, 46,463 skipped, 2,861 xfailed (114,096 total)**
+
 **Library:** `libopencryptoki.so` (soft token) · **Docker targets:** `test-opencryptoki` (v3.27.0), `test-opencryptoki-master`
 
 ### ML-KEM output template requires `CKA_VALUE_LEN` (strict-but-conformant)
@@ -1972,6 +1976,8 @@ Minimal embedded implementation; storage-oriented object model. Root-caused 2026
   MechanismList/MechanismInfo/Digest; C_CreateObject and C_Verify pass straight through.
 
 ## wolfpkcs11 (wolfSSL in-process C library)
+
+**Status: 46,628 passed, 876 failed, 47,959 skipped, 15,968 xfailed, 18 crashed (111,449 total)**
 
 Pool baseline 3,067. The fix-pass cleared `test_cts` 2,079 (H2 operability probe → xfail) and
 `wycheproof_rsa` 21 → 0. The remaining failures are **genuine wolfpkcs11 findings + flagged UB
