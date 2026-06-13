@@ -1867,6 +1867,27 @@ def test_gap_analysis_marks_mixed_fail_crash_reporting_as_fixed() -> None:
     assert "Status: fixed in the current branch. `_overall_unit_status()` gives" in doc
 
 
+def test_gap_analysis_marks_unknown_ckr_classification_as_fixed() -> None:
+    """Undefined non-vendor CK_RV values fail instead of becoming xfail."""
+    conftest = _read("src/pkcs11_check/testcases/conftest.py")
+    helper_tests = _read("tests/test_classification_helpers.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+
+    assert "_xfail_or_fail_unexpected_clean_rv" in conftest
+    assert "is_standard_ckr(rv)" in conftest
+    assert "is_vendor_defined_ckr(rv)" in conftest
+    assert "undefined CK_RV" in conftest
+    assert "vendor-defined CK_RV" in conftest
+    assert "test_rv_unknown_non_vendor_value_fails" in helper_tests
+    assert "test_exc_unknown_non_vendor_value_fails" in helper_tests
+    assert "test_rv_vendor_defined_value_xfails_distinctly" in helper_tests
+    assert "test_exc_vendor_defined_value_xfails_distinctly" in helper_tests
+
+    assert "Unknown non-CKR values are hard failures" in doc
+    assert "can become xfail" not in doc
+    assert "A direct probe shows both `0x7fffffff` and `0xdeadbeef` become" not in doc
+
+
 def test_gap_analysis_marks_mechanism_coverage_telemetry_as_fixed() -> None:
     """Mechanism coverage telemetry now has provider-local state-loss guards."""
     audit = _read("src/pkcs11_check/core/quality_audit.py")

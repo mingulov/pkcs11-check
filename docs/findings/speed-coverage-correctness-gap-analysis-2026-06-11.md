@@ -678,18 +678,11 @@ smoke behavior, or covered only by one narrow variation.
 
 ## Correctness and Reporting Findings
 
-### 1. Unknown non-CKR values can become xfail
+### 1. Unknown non-CKR values are hard failures
 
-`classify_negative_rv()` and `reject_or_classify()` xfail unexpected clean
-return values. A direct probe shows both `0x7fffffff` and `0xdeadbeef` become
-xfails when `CKR_ARGUMENTS_BAD` was expected.
-
-Next task:
-
-- Add a shared predicate for "known clean CKR" versus undefined values.
-- Treat undefined values below `CKR_VENDOR_DEFINED` as failures.
-- Decide and test vendor-defined CKR handling explicitly, likely as a distinct
-  vendor-defined xfail/note rather than the same bucket as official CKRs.
+`classify_negative_rv()` and `reject_or_classify()` route unexpected return
+values through `_xfail_or_fail_unexpected_clean_rv()`. That helper distinguishes
+standard CKRs, undefined non-vendor values, and vendor-defined values.
 
 Status: fixed in the current branch. The shared raw-RV helpers distinguish
 standard CKRs, undefined non-vendor values, and vendor-defined values.
