@@ -7,6 +7,9 @@ from pathlib import Path
 
 from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
 from pkcs11_check.raw.types_std import (
+    CKF_GENERATE,
+    CKF_GENERATE_KEY_PAIR,
+    CKM_ACTI,
     CKM_BATON_CBC128,
     CKM_BATON_COUNTER,
     CKM_BATON_ECB96,
@@ -14,14 +17,22 @@ from pkcs11_check.raw.types_std import (
     CKM_BATON_SHUFFLE,
     CKM_BATON_WRAP,
     CKM_FASTHASH,
+    CKM_FORTEZZA_TIMESTAMP,
     CKM_GOST28147,
+    CKM_GOST28147_ECB,
+    CKM_GOST28147_KEY_WRAP,
+    CKM_GOST28147_MAC,
+    CKM_HOTP,
     CKM_JUNIPER_CBC128,
     CKM_JUNIPER_COUNTER,
     CKM_JUNIPER_ECB128,
     CKM_JUNIPER_SHUFFLE,
     CKM_JUNIPER_WRAP,
+    CKM_KEA_DERIVE,
+    CKM_KEA_KEY_DERIVE,
     CKM_KEY_WRAP_LYNKS,
     CKM_KEY_WRAP_SET_OAEP,
+    CKM_SECURID,
     CKM_SKIPJACK_CBC64,
     CKM_SKIPJACK_CFB8,
     CKM_SKIPJACK_CFB16,
@@ -54,6 +65,46 @@ def _gap_inventory_rows(doc: str) -> dict[str, set[str]]:
             continue
         rows[family.strip()] = set(re.findall(r"`(CKM_[A-Z0-9_]+)`", mechanisms))
     return rows
+
+
+_LEGACY_SOURCE_FIRST_NAME_TOKENS = (
+    "ACTI",
+    "BATON",
+    "FASTHASH",
+    "FORTEZZA",
+    "GOST28147",
+    "HOTP",
+    "JUNIPER",
+    "KEA",
+    "KEY_WRAP_LYNKS",
+    "KEY_WRAP_SET_OAEP",
+    "SECURID",
+    "SKIPJACK",
+)
+
+_DEDICATED_LEGACY_KAT_IDS = {
+    int(CKM_GOST28147_ECB),
+    int(CKM_GOST28147_KEY_WRAP),
+    int(CKM_GOST28147_MAC),
+}
+
+
+def _source_first_legacy_operation_ids() -> set[int]:
+    keygen_flags = int(CKF_GENERATE) | int(CKF_GENERATE_KEY_PAIR)
+    result: set[int] = set()
+    for mech_id, config in MECHANISM_REGISTRY.items():
+        name = MECHANISM_NAMES.get(mech_id, "")
+        if config.vector_file is not None:
+            continue
+        if mech_id in _DEDICATED_LEGACY_KAT_IDS:
+            continue
+        if not any(token in name for token in _LEGACY_SOURCE_FIRST_NAME_TOKENS):
+            continue
+        flags = int(config.expected_flags)
+        if flags != 0 and flags & ~keygen_flags == 0:
+            continue
+        result.add(mech_id)
+    return result
 
 
 def test_gap_analysis_marks_protocol_kdf_semantics_as_dedicated_coverage() -> None:
@@ -1487,6 +1538,13 @@ def test_gap_analysis_inventories_remaining_legacy_source_first_operations() -> 
             "CKM_JUNIPER_WRAP",
         },
         "GOST28147": {"CKM_GOST28147"},
+        "KEA": {"CKM_KEA_DERIVE", "CKM_KEA_KEY_DERIVE"},
+        "OTP/Fortezza": {
+            "CKM_ACTI",
+            "CKM_FORTEZZA_TIMESTAMP",
+            "CKM_HOTP",
+            "CKM_SECURID",
+        },
         "Other legacy": {
             "CKM_KEY_WRAP_LYNKS",
             "CKM_KEY_WRAP_SET_OAEP",
@@ -1527,6 +1585,12 @@ def test_gap_analysis_inventories_remaining_legacy_source_first_operations() -> 
         int(CKM_JUNIPER_SHUFFLE),
         int(CKM_JUNIPER_WRAP),
         int(CKM_GOST28147),
+        int(CKM_KEA_DERIVE),
+        int(CKM_KEA_KEY_DERIVE),
+        int(CKM_ACTI),
+        int(CKM_FORTEZZA_TIMESTAMP),
+        int(CKM_HOTP),
+        int(CKM_SECURID),
         int(CKM_KEY_WRAP_LYNKS),
         int(CKM_KEY_WRAP_SET_OAEP),
         int(CKM_FASTHASH),
@@ -1534,6 +1598,7 @@ def test_gap_analysis_inventories_remaining_legacy_source_first_operations() -> 
     assert {MECHANISM_NAMES[mech_id] for mech_id in tracked_source_first} == set.union(
         *expected.values()
     )
+    assert tracked_source_first == _source_first_legacy_operation_ids()
 
 
 def test_gap_analysis_records_legacy_vector_source_refresh() -> None:

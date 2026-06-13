@@ -808,10 +808,13 @@ Legacy/deprecated coverage addendum for the active goal:
   | BATON | `CKM_BATON_ECB128`, `CKM_BATON_ECB96`, `CKM_BATON_CBC128`, `CKM_BATON_COUNTER`, `CKM_BATON_SHUFFLE`, `CKM_BATON_WRAP` |
   | JUNIPER | `CKM_JUNIPER_ECB128`, `CKM_JUNIPER_CBC128`, `CKM_JUNIPER_COUNTER`, `CKM_JUNIPER_SHUFFLE`, `CKM_JUNIPER_WRAP` |
   | GOST28147 | `CKM_GOST28147` |
+  | KEA | `CKM_KEA_DERIVE`, `CKM_KEA_KEY_DERIVE` |
+  | OTP/Fortezza | `CKM_SECURID`, `CKM_HOTP`, `CKM_ACTI`, `CKM_FORTEZZA_TIMESTAMP` |
   | Other legacy | `CKM_KEY_WRAP_LYNKS`, `CKM_KEY_WRAP_SET_OAEP`, `CKM_FASTHASH` |
 
   Key-generation-only entries are already exercised by generic keygen paths;
-  the table is limited to encrypt, MAC, wrap, digest, and stream/counter
+  the table is limited to encrypt, MAC, wrap, digest, derive, one-time-password,
+  timestamp, and stream/counter
   operations where exact-output or semantic operation vectors would materially
   improve coverage.
 - Source refresh: `CKM_SKIPJACK_CBC64`, `CKM_SKIPJACK_OFB64`, and
