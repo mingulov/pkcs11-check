@@ -161,6 +161,31 @@ def _ssl3_master_secret_reference(
     return bytes(out)
 
 
+def _ssl3_key_block_reference(
+    master_secret: bytes,
+    client_random: bytes,
+    server_random: bytes,
+    block_length: int,
+) -> bytes:
+    """Compute the SSL3 key_block from RFC 6101 section 6.2.2."""
+    out = bytearray()
+    i = 1
+    while len(out) < block_length:
+        pad = bytes([ord("A") + i - 1]) * i
+        sha = hashlib.sha1(
+            pad + master_secret + server_random + client_random,
+            usedforsecurity=False,
+        ).digest()
+        out.extend(
+            hashlib.md5(
+                master_secret + sha,
+                usedforsecurity=False,
+            ).digest()
+        )
+        i += 1
+    return bytes(out[:block_length])
+
+
 def _derive_key_material_to_params(
     rs: Any,
     base_key: int,
@@ -564,6 +589,82 @@ class TestSSL3KeyAndMacDerive:
                 assert any(mech.buffer_bytes("iv_server"))
             finally:
                 out = mech.key_mat_out
+                destroy_returned_handles(
+                    rs,
+                    out.hClientMacSecret,
+                    out.hServerMacSecret,
+                    out.hClientKey,
+                    out.hServerKey,
+                )
+        except AssertionError as exc:
+            if is_known_error(exc, _DERIVE_ERROR_RVS):
+                pytest.xfail(f"CKM_SSL3_KEY_AND_MAC_DERIVE not operational: {exc}")
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master_secret)
+
+    def test_derive_key_material_exact_vector(self, p11_raw_session: Any) -> None:
+        """Verify CKM_SSL3_KEY_AND_MAC_DERIVE produces exact RFC 6101 vectors."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("SSL3_KEY_AND_MAC_DERIVE"):
+            pytest.skip("CKM_SSL3_KEY_AND_MAC_DERIVE not supported")
+
+        master_secret_data = _ssl3_master_secret_reference(_PRE_MASTER_SECRET, _CLIENT_RANDOM, _SERVER_RANDOM)
+        master_secret = _create_generic_secret(rs, master_secret_data)
+        try:
+            # We request 128-bit keys (16 bytes) and SSL3 MD5/SHA1 MACs (16/20 bytes).
+            # Key block size = 2 * (16 + 16 + 16) = 96 bytes (for AES-128 with 16-byte IVs).
+            key_size_bits = 128
+            mech = mech_ssl3_key_mat(
+                CKM_SSL3_KEY_AND_MAC_DERIVE,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                key_size_bits=key_size_bits,
+            )
+
+            # Expected key block for our fixed inputs
+            expected_block = _ssl3_key_block_reference(
+                master_secret_data,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                96,
+            )
+
+            _derive_key_material_to_params(
+                rs,
+                master_secret,
+                {
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                },
+                mech,
+            )
+
+            out = mech.key_mat_out
+            try:
+                # Client MAC secret (16 bytes), Server MAC secret (16 bytes),
+                # Client Key (16 bytes), Server Key (16 bytes),
+                # Client IV (16 bytes), Server IV (16 bytes).
+                # Total = 96 bytes.
+                c_mac = read_attributes(rs.raw, rs.sh, out.hClientMacSecret, [CKA_VALUE])[CKA_VALUE]
+                s_mac = read_attributes(rs.raw, rs.sh, out.hServerMacSecret, [CKA_VALUE])[CKA_VALUE]
+                c_key = read_attributes(rs.raw, rs.sh, out.hClientKey, [CKA_VALUE])[CKA_VALUE]
+                s_key = read_attributes(rs.raw, rs.sh, out.hServerKey, [CKA_VALUE])[CKA_VALUE]
+                c_iv = mech.buffer_bytes("iv_client")
+                s_iv = mech.buffer_bytes("iv_server")
+
+                actual_block = c_mac + s_mac + c_key + s_key + c_iv + s_iv
+
+                if actual_block != expected_block:
+                    raise AssertionError(
+                        f"SSL3 key material output mismatch.\n"
+                        f"Actual:   {actual_block.hex()}\n"
+                        f"Expected: {expected_block.hex()}"
+                    )
+            finally:
                 destroy_returned_handles(
                     rs,
                     out.hClientMacSecret,
