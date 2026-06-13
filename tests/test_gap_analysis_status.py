@@ -897,10 +897,13 @@ def test_gap_analysis_marks_raw_dsa_wrong_signature_length_negative_as_added() -
     doc_flat = " ".join(doc.split())
 
     assert "test_raw_dsa_wrong_signature_length_fails" in dsa
+    assert "test_raw_dsa_overlong_signature_length_fails" in dsa
     assert "CKM_DSA wrong-length signature" in dsa
+    assert "CKM_DSA overlong signature" in dsa
     assert "_dsa_invalid_verify_rejected_or_xfail" in dsa
 
     assert "Raw CKM_DSA wrong-signature-length coverage" in doc_flat
+    assert "Raw CKM_DSA overlong-signature-length coverage" in doc_flat
 
 
 def test_gap_analysis_marks_dsa_sha224_sha256_prehash_matrix_as_added() -> None:

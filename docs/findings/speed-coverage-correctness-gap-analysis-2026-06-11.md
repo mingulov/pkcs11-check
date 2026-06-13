@@ -355,7 +355,9 @@ smoke behavior, or covered only by one narrow variation.
    the complete generated-key prehash roundtrip, tampered-data,
    tampered-signature, empty-data, and large-data matrix. Raw CKM_DSA
    wrong-signature-length coverage now verifies verification rejects a
-   truncated signature through the shared invalid-signature policy. Classic DH
+   truncated signature through the shared invalid-signature policy. Raw CKM_DSA
+   overlong-signature-length coverage now verifies the same rejection policy
+   for a signature with an extra trailing byte. Classic DH
    RFC 3526 Group 14 exact-vector coverage now imports a fixed private value,
    derives with a fixed peer public value, and checks the exact derived
    generic-secret bytes. Classic DH RFC 3526 Group 14
