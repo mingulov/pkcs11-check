@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
 )
@@ -311,7 +312,13 @@ class TestAttributeEscalation:
         try:
             try:
                 set_attributes(rs.raw, rs.sh, key_h, {CKA_EXTRACTABLE: True})
-                pytest.fail("SECURITY: CKA_EXTRACTABLE escalated from False to True")
+                classify(
+                    "self_contradiction",
+                    kind="policy",
+                    label="CKA_EXTRACTABLE escalation via C_SetAttributeValue",
+                    operation="C_SetAttributeValue",
+                    summary="SECURITY: CKA_EXTRACTABLE escalated from False to True",
+                )
             except AssertionError as exc:
                 _return_if_policy_reject(exc, _ATTR_POLICY_REJECT_RVS)
         finally:
@@ -327,7 +334,13 @@ class TestAttributeEscalation:
         try:
             try:
                 set_attributes(rs.raw, rs.sh, key_h, {CKA_SENSITIVE: False})
-                pytest.fail("SECURITY: CKA_SENSITIVE downgraded from True to False")
+                classify(
+                    "self_contradiction",
+                    kind="policy",
+                    label="CKA_SENSITIVE downgrade via C_SetAttributeValue",
+                    operation="C_SetAttributeValue",
+                    summary="SECURITY: CKA_SENSITIVE downgraded from True to False",
+                )
             except AssertionError as exc:
                 _return_if_policy_reject(exc, _ATTR_POLICY_REJECT_RVS)
         finally:
@@ -386,8 +399,13 @@ class TestAttributeLaunderingViaCopy:
                 try:
                     attrs = read_attributes(rs.raw, rs.sh, copy_h, [CKA_VALUE])
                     if CKA_VALUE in attrs:
-                        pytest.fail(
-                            "SECURITY: Copy downgraded CKA_SENSITIVE, key material readable"
+                        classify(
+                            "self_contradiction",
+                            kind="policy",
+                            label="CKA_SENSITIVE downgrade via C_CopyObject",
+                            operation="C_CopyObject",
+                            summary="SECURITY: Copy downgraded CKA_SENSITIVE, "
+                            "key material readable",
                         )
                 finally:
                     destroy_quietly(rs.raw, rs.sh, copy_h)

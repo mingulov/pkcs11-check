@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
@@ -440,9 +441,14 @@ class TestPssSaltLength:
                 mech_param=pss_verify,
             )
             if not verified:
-                pytest.fail(
-                    f"RSA-PSS sLen={salt_len}: module accepted the deterministic-PSS sign "
-                    f"operation but the produced signature does not verify (invalid signature)"
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label=f"RSA-PSS sLen={salt_len} deterministic signature",
+                    operation="C_Sign",
+                    mechanism="CKM_SHA256_RSA_PKCS_PSS",
+                    summary=f"RSA-PSS sLen={salt_len}: module accepted the deterministic-PSS sign "
+                    f"operation but the produced signature does not verify (invalid signature)",
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
