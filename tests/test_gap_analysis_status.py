@@ -1085,6 +1085,22 @@ def test_gap_analysis_marks_dsa_prehash_wrong_signature_length_negative_as_added
     assert "DSA prehash overlong-signature-length coverage" in doc_flat
 
 
+def test_gap_analysis_marks_dsa_prehash_multipart_roundtrip_as_added() -> None:
+    """DSA-with-hash mechanisms exercise multipart sign and verify."""
+    dsa = _read("src/pkcs11_check/testcases/test_dsa_complete.py")
+    runtime = _read("tests/test_dsa_complete_runtime_classification.py")
+    doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
+
+    assert "test_multipart_sign_verify_roundtrip" in dsa
+    assert "_multipart_sign_verify_roundtrip" in dsa
+    assert "sign_multipart" in dsa
+    assert "verify_multipart" in dsa
+    assert "test_dsa_prehash_multipart_uses_streaming_sign_and_verify" in runtime
+
+    assert "DSA prehash multipart sign/verify coverage" in doc_flat
+
+
 def test_gap_analysis_marks_dsa_sha224_sha256_prehash_matrix_as_added() -> None:
     """DSA_SHA224 and DSA_SHA256 are in the complete DSA prehash matrix."""
     dsa = _read("src/pkcs11_check/testcases/test_dsa_complete.py")

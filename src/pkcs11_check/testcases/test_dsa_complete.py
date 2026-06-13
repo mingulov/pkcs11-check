@@ -29,7 +29,9 @@ from pkcs11_check.raw.pack import (
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     read_attributes,
+    sign_multipart,
     sign_single,
+    verify_multipart,
     verify_single,
 )
 from pkcs11_check.raw.rv import expect_rv
@@ -369,6 +371,19 @@ def _dsa_sign_or_xfail(rs: Any, priv: int, mechanism: int, data: bytes, label: s
         xfail_if_op_not_operational(exc, label)
 
 
+def _dsa_sign_multipart_or_xfail(
+    rs: Any,
+    priv: int,
+    mechanism: int,
+    chunks: tuple[bytes, ...],
+    label: str,
+) -> bytes:
+    try:
+        return sign_multipart(rs.raw, rs.sh, priv, mechanism, chunks)
+    except AssertionError as exc:
+        xfail_if_op_not_operational(exc, label)
+
+
 def _dsa_verify_or_xfail(
     rs: Any,
     pub: int,
@@ -379,6 +394,20 @@ def _dsa_verify_or_xfail(
 ) -> bool:
     try:
         return verify_single(rs.raw, rs.sh, pub, mechanism, data, signature)
+    except AssertionError as exc:
+        xfail_if_op_not_operational(exc, label)
+
+
+def _dsa_verify_multipart_or_xfail(
+    rs: Any,
+    pub: int,
+    mechanism: int,
+    chunks: tuple[bytes, ...],
+    signature: bytes,
+    label: str,
+) -> bool:
+    try:
+        return verify_multipart(rs.raw, rs.sh, pub, mechanism, chunks, signature)
     except AssertionError as exc:
         xfail_if_op_not_operational(exc, label)
 
@@ -591,6 +620,46 @@ class TestDSARaw:
 class TestDSAPrehash:
     """Tests for prehash DSA variants (SHA-1, SHA-224, SHA-384, SHA-512, SHA3-*)."""
 
+    def _multipart_sign_verify_roundtrip(
+        self,
+        p11_module_session: Any,
+        mech_name_str: str,
+        mechanism: int,
+    ) -> None:
+        rs = p11_module_session
+        if not rs.has_mechanism(mech_name_str):
+            pytest.skip(f"CKM_{mech_name_str} not supported")
+
+        dp, pub, priv = _generate_dsa_keypair(rs)
+        try:
+            chunks = (
+                b"DSA prehash multipart ",
+                b"sign/verify ",
+                b"test data",
+            )
+            sig = _dsa_sign_multipart_or_xfail(
+                rs,
+                priv,
+                mechanism,
+                chunks,
+                f"CKM_{mech_name_str} multipart sign",
+            )
+            assert len(sig) > 0
+
+            result = _dsa_verify_multipart_or_xfail(
+                rs,
+                pub,
+                mechanism,
+                chunks,
+                sig,
+                f"CKM_{mech_name_str} multipart verify",
+            )
+            assert result is True
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, dp)
+
     def _wrong_signature_lengths_fail(
         self,
         p11_module_session: Any,
@@ -634,6 +703,16 @@ class TestDSAPrehash:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, dp)
+
+    @pytest.mark.parametrize(("mech_name_str", "mechanism"), _DSA_HASH_MECHS)
+    def test_multipart_sign_verify_roundtrip(
+        self,
+        p11_module_session: Any,
+        mech_name_str: str,
+        mechanism: int,
+    ) -> None:
+        """Prehash DSA multipart sign and verify should roundtrip."""
+        self._multipart_sign_verify_roundtrip(p11_module_session, mech_name_str, mechanism)
 
     @pytest.mark.parametrize(("mech_name_str", "mechanism"), _DSA_HASH_MECHS)
     def test_sign_verify_roundtrip(

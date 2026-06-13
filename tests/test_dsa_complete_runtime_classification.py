@@ -14,6 +14,7 @@ from pkcs11_check.raw.types_std import (
     CKM_DSA_PROBABILISTIC_PARAMETER_GEN,
     CKM_DSA_SHA1,
     CKM_DSA_SHA224,
+    CKM_DSA_SHA256,
     CKM_SHA256,
     CKR_DEVICE_ERROR,
     CKR_GENERAL_ERROR,
@@ -217,4 +218,53 @@ def test_dsa_prehash_wrong_signature_lengths_use_reject_policy(
             b"s" * 40 + b"\x00",
             "CKM_DSA_SHA1 overlong signature",
         ),
+    ]
+
+
+def test_dsa_prehash_multipart_uses_streaming_sign_and_verify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, int, tuple[bytes, ...], bytes | None, str | None]] = []
+
+    def _sign_multipart(
+        _raw: object,
+        _sh: int,
+        key: int,
+        mechanism: int,
+        chunks: tuple[bytes, ...],
+    ) -> bytes:
+        calls.append(("sign", mechanism, chunks, None, f"key={key}"))
+        return b"signature"
+
+    def _verify_multipart(
+        _raw: object,
+        _sh: int,
+        key: int,
+        mechanism: int,
+        chunks: tuple[bytes, ...],
+        signature: bytes,
+    ) -> bool:
+        calls.append(("verify", mechanism, chunks, signature, f"key={key}"))
+        return True
+
+    rs = _session_with_mechanisms("DSA_SHA256")
+    monkeypatch.setattr(test_dsa_complete, "_generate_dsa_keypair", lambda _rs: (10, 11, 12))
+    monkeypatch.setattr(test_dsa_complete, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(test_dsa_complete, "sign_multipart", _sign_multipart)
+    monkeypatch.setattr(test_dsa_complete, "verify_multipart", _verify_multipart)
+
+    test_dsa_complete.TestDSAPrehash()._multipart_sign_verify_roundtrip(
+        rs,
+        "DSA_SHA256",
+        CKM_DSA_SHA256,
+    )
+
+    chunks = (
+        b"DSA prehash multipart ",
+        b"sign/verify ",
+        b"test data",
+    )
+    assert calls == [
+        ("sign", CKM_DSA_SHA256, chunks, None, "key=12"),
+        ("verify", CKM_DSA_SHA256, chunks, b"signature", "key=11"),
     ]
