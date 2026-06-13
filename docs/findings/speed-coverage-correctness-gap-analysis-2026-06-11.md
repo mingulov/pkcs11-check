@@ -283,7 +283,9 @@ smoke behavior, or covered only by one narrow variation.
    verifies that changing the shared-secret input changes the derived output.
    IKE2 PRF+ HMAC-SHA256 exact-vector coverage now uses typed
    `CK_IKE2_PRF_PLUS_DERIVE_PARAMS` and checks the OASIS `prf+(baseKey,
-   seedData)` recurrence. TLS KDF TLS1.0/1.1 exact-vector coverage now sets
+   seedData)` recurrence. IKE2 PRF+ HMAC-SHA256 multiblock exact-vector
+   coverage now requests 48 bytes to exercise the second PRF+ HMAC block and
+   counter chaining. TLS KDF TLS1.0/1.1 exact-vector coverage now sets
    `CK_TLS_KDF_PARAMS.prfMechanism` to `CKM_TLS_PRF` and checks the RFC 2246
    MD5/SHA-1 split-secret PRF output. TLS PRF exact-vector coverage now checks
    `CKM_TLS_PRF` output against the same RFC 2246 PRF. TLS 1.0/1.1

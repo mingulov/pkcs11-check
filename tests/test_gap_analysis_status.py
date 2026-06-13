@@ -229,15 +229,21 @@ def test_gap_analysis_marks_ike2_prf_plus_exact_vector_as_added() -> None:
     ike = _read("src/pkcs11_check/testcases/test_ike.py")
     pack = _read("src/pkcs11_check/raw/pack_mechanisms.py")
     raw_pack_tests = _read("tests/test_raw_pack.py")
+    ref_tests = _read("tests/test_protocol_kdf_reference_vectors.py")
     doc = GAP_DOC.read_text(encoding="utf-8")
+    doc_flat = " ".join(doc.split())
 
     assert "mech_ike2_prf_plus_derive" in pack
     assert "CK_IKE2_PRF_PLUS_DERIVE_PARAMS" in pack
     assert "test_ike2_prf_plus_derive_packer_uses_typed_oasis_struct" in raw_pack_tests
     assert "test_prf_plus_hmac_sha256_exact_vector" in ike
+    assert "test_prf_plus_hmac_sha256_multiblock_exact_vector" in ike
+    assert "bits=384" in ike
     assert "_ike2_prf_plus_hmac_sha256_reference" in ike
+    assert "test_ike2_prf_plus_hmac_sha256_multiblock_reference_vector" in ref_tests
 
     assert "IKE2 PRF+ HMAC-SHA256 exact-vector coverage" in doc
+    assert "IKE2 PRF+ HMAC-SHA256 multiblock exact-vector coverage" in doc_flat
 
 
 def test_gap_analysis_marks_ike1_exact_vectors_as_added() -> None:

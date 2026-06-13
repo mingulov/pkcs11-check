@@ -414,6 +414,43 @@ class TestIKE2PRFPlusDerive:
             if base_key:
                 destroy_quietly(rs.raw, rs.sh, base_key)
 
+    def test_prf_plus_hmac_sha256_multiblock_exact_vector(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_IKE2_PRF_PLUS_DERIVE follows OASIS prf+ across HMAC blocks."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("IKE2_PRF_PLUS_DERIVE"):
+            pytest.skip("CKM_IKE2_PRF_PLUS_DERIVE not supported")
+        base_key = 0
+        try:
+            base_key = _create_sha256_hmac_derive_key(rs)
+            expected = _ike2_prf_plus_hmac_sha256_reference(
+                _BASE_KEY_BYTES,
+                _NONCE_I + _NONCE_R,
+                48,
+            )
+            derived = _derive_generic(
+                rs,
+                base_key,
+                CKM_IKE2_PRF_PLUS_DERIVE,
+                _NONCE_I + _NONCE_R,
+                bits=384,
+            )
+            try:
+                assert _get_value(rs, derived) == expected
+            finally:
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _DERIVE_ERROR_CKRS,
+                "CKM_IKE2_PRF_PLUS_DERIVE HMAC-SHA256 multiblock exact vector not operational",
+            )
+        finally:
+            if base_key:
+                destroy_quietly(rs.raw, rs.sh, base_key)
+
     def test_derive_aes128(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("IKE2_PRF_PLUS_DERIVE"):

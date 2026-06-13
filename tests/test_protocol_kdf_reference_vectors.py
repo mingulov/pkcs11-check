@@ -62,6 +62,20 @@ def test_ike2_prf_plus_hmac_sha256_reference_vector() -> None:
     )
 
 
+def test_ike2_prf_plus_hmac_sha256_multiblock_reference_vector() -> None:
+    assert (
+        test_ike._ike2_prf_plus_hmac_sha256_reference(
+            test_ike._BASE_KEY_BYTES,
+            test_ike._NONCE_I + test_ike._NONCE_R,
+            48,
+        ).hex()
+        == (
+            "e3703ee905295e6c0141c98f382e17e9df07a5d0e7fb5d1d5eb45e117022cbb"
+            "1c5710476207a417af1bc594f29830d68"
+        )
+    )
+
+
 def test_ike1_prf_hmac_sha256_reference_vector() -> None:
     assert (
         test_ike._ike1_prf_hmac_sha256_reference(
