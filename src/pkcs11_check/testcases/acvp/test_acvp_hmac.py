@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     sign_single,
@@ -163,13 +164,27 @@ def _sign_hmac_with_key_fallback(rs: Any, vec: dict[str, Any]) -> bytes:
                 destroy_quietly(rs.raw, rs.sh, key)
 
     if key_use_errors:
-        pytest.xfail(
-            f"{vec['mech_display']} advertised but imported HMAC key was not accepted: "
-            + "; ".join(key_use_errors)
+        xfail_as(
+            "not_operational",
+            kind="crypto",
+            label=f"{vec['mech_display']}:sign",
+            summary=(
+                f"{vec['mech_display']} advertised but imported HMAC key was not accepted: "
+                + "; ".join(key_use_errors)
+            ),
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
-    pytest.xfail(
-        f"{vec['mech_display']} advertised but HMAC key setup failed for typed and "
-        f"generic key types: {'; '.join(key_setup_errors)}"
+    xfail_as(
+        "not_operational",
+        kind="crypto",
+        label=f"{vec['mech_display']}:sign",
+        summary=(
+            f"{vec['mech_display']} advertised but HMAC key setup failed for typed and "
+            f"generic key types: {'; '.join(key_setup_errors)}"
+        ),
+        source=vec.get("_source"),
+        vector_id=vec.get("_vector_id"),
     )
 
 

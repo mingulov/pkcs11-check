@@ -18,6 +18,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.pack import attr_ulong
 from pkcs11_check.raw.pack_mechanisms import mech_sign_context
 from pkcs11_check.raw.recipes import (
@@ -264,7 +265,14 @@ class TestMlDsaSigGen:
                         exc, f"{vec_id}: generated signature verification"
                     )
                 if not verified:
-                    pytest.fail(f"{vec_id}: Generated signature failed verification")
+                    fail_as(
+                        "wrong_result",
+                        kind="crypto",
+                        label=f"{vec_id}:ML-DSA:sign-verify",
+                        summary=f"{vec_id}: Generated signature failed verification",
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
+                    )
             finally:
                 destroy_quietly(rs.raw, rs.sh, pub_key)
 
@@ -329,15 +337,36 @@ class TestMlDsaSigVer:
                 )
             except AssertionError as exc:
                 if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
-                    pytest.xfail(f"{vec_id}: advertised Hash-ML-DSA params are not operational")
+                    xfail_as(
+                        "not_operational",
+                        kind="crypto",
+                        label=f"{mech_name}:verify",
+                        summary=f"{vec_id}: advertised Hash-ML-DSA params are not operational",
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
+                    )
                 if vec["expected_pass"]:
                     _xfail_if_mldsa_runtime_reject(exc, f"{vec_id}: valid signature verification")
                 verified = signature_rejected_or_xfail(exc, vec_id)
 
             if not vec["expected_pass"] and verified:
-                pytest.fail(f"{vec_id}: module ACCEPTED an INVALID ML-DSA signature")
+                fail_as(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label=f"{mech_name}:verify",
+                    summary=f"{vec_id}: module ACCEPTED an INVALID ML-DSA signature",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             if vec["expected_pass"] and not verified:
-                pytest.fail(f"{vec_id}: module rejected a VALID ML-DSA signature")
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label=f"{mech_name}:verify",
+                    summary=f"{vec_id}: module rejected a VALID ML-DSA signature",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
         except AssertionError as exc:
             _handle_unsupported(exc, vec["param_set"])
         finally:
