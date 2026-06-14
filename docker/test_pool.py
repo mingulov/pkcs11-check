@@ -103,6 +103,9 @@ VARIANT_PROVIDERS = [
     "opencryptoki-master",
     "wolfpkcs11-master",
     "corepkcs11-main",
+    # craton-hsm-core: pure-Rust in-process module, built from main with the auto-init patch
+    # (docker/craton-hsm/patches/) so the token is provisioned in every subprocess.
+    "craton-hsm",
     # NetHSM: keyfender server + nethsm-pkcs11 co-located; undivided (not in SHARD_MAP) —
     # narrow/fast coverage and each shard would re-provision its own server.
     "nethsm",

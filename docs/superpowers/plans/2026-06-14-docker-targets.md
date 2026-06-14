@@ -16,15 +16,16 @@
 
 ---
 
-## Task 1: craton-hsm target (in-process Rust `.so`) — DROPPED (NOT FEASIBLE)
+## Task 1: craton-hsm target (in-process Rust `.so`) — DONE (with auto-init patch)
 
-> **Outcome (2026-06-14):** Implemented and debugged to a building image with a working
-> `C_Initialize`, then **removed**. craton's in-process PKCS#11 mode keeps token auth in
-> memory **per process**, so a provisioned token is not visible across pkcs11-check's per-file
-> subprocesses (runtime-proven: `init-token` succeeds in one process, `init-pin` →
-> `CKR_TOKEN_NOT_RECOGNIZED` in the next). Full evidence + build recipe:
-> `docs/findings/craton-hsm-feasibility-2026-06-14.md`. The steps below are retained for
-> reference / a future daemon-mode attempt only.
+> **Outcome (2026-06-14):** craton's in-process module keeps token auth in memory per process
+> (a real craton bug — `persist_objects` is documented but unwired; see
+> `docs/findings/craton-hsm-feasibility-2026-06-14.md`). Resolved with a small patch
+> (`docker/craton-hsm/patches/0001-auto-init-token-from-config.patch`) adding
+> `initial_so_pin`/`initial_user_pin` config so the token auto-provisions at `C_Initialize` in
+> every process. Build-verified: login succeeds in a fresh process (build-time check + a
+> separate `docker compose run`). The Dockerfile below now applies the patch and uses
+> `PKCS11_CHECK_PIN=UserPin1` + the relative-default config.
 
 **Files:**
 - Create: `docker/craton-hsm/Dockerfile`

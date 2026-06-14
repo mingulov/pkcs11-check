@@ -58,13 +58,16 @@ run script (daemon-backed modules).
 
 ---
 
-## 2. Target A — craton-hsm-core — DROPPED (NOT FEASIBLE in-process)
+## 2. Target A — craton-hsm-core — FEASIBLE WITH AUTO-INIT PATCH
 
-> **Revised verdict (2026-06-14):** the initial "FEASIBLE" assessment was wrong. craton's
-> in-process PKCS#11 mode does not persist token authentication (SO/user PIN) across
-> processes — it is daemon-oriented — so it is incompatible with the suite's per-file
-> subprocess isolation. Dropped from the matrix. Evidence + the (otherwise complete) build
-> recipe: `docs/findings/craton-hsm-feasibility-2026-06-14.md`. Section retained for context.
+> **Revised verdict (2026-06-14):** craton's in-process module does not persist token auth
+> across processes (a real craton bug: `persist_objects` is documented but unwired into
+> `HsmCore`). Resolved with a small upstream-style patch
+> (`docker/craton-hsm/patches/0001-auto-init-token-from-config.patch`) adding
+> `initial_so_pin`/`initial_user_pin` config so the token auto-provisions at `C_Initialize`;
+> each test subprocess then sees a ready token and generates keys in-memory per file.
+> Build-verified (cross-process login works). Evidence:
+> `docs/findings/craton-hsm-feasibility-2026-06-14.md`.
 
 **What:** pure-Rust PKCS#11 v3.0 software HSM (a SoftHSMv2 rewrite). In-process
 `libcraton_hsm.so`, **no daemon, no network**. License Apache-2.0. No release tags →

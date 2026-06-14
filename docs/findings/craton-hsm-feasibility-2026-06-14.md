@@ -41,7 +41,34 @@ in-process `.so` is single-process and, at `main@d3203bf`, fully in-memory.
 **No setting fixes this.** Making craton in-process usable for the suite needs an UPSTREAM
 change: wire `ObjectStore::with_persistence` into `HsmCore` on `persist_objects=true`, AND add
 token-init-state persistence (which does not exist). A suite-side per-subprocess token-init
-hook would violate the project's no-per-provider-special-casing principle. So craton is dropped.
+hook would violate the project's no-per-provider-special-casing principle.
+
+## This is a craton BUG (docs/config promise persistence the code doesn't deliver)
+
+craton's own docs document `persist_objects` as working:
+- `docs/fork-safety.md:51`: "When persistence is enabled (`persist_objects = true`), the
+  `EncryptedStore` acquires an exclusive file lock … at `C_Initialize` time."
+- `docs/tested-platforms.md`: "Persistent storage (redb) ✅ ✅ ✅"; `docs/install.md` documents
+  `storage_path` + `persistence.enabled=true`.
+
+But **both** production entry points — the PKCS#11 `.so` AND the gRPC daemon
+(`*/daemon/.../main.rs: HsmCore::new(&hsm_config)`) — go through `HsmCore::try_new`, which
+hardcodes the in-memory `ObjectStore::new()` and never reads `persist_objects`. Only
+`tests/persistence.rs` / `tests/crypto_vectors_phase2.rs` construct `ObjectStore::with_persistence`
+directly (bypassing `HsmCore`), so the unit tests pass while the integration is missing — no
+test catches that `persist_objects` is a silent no-op. **Conclusion:** file persistence is
+designed, documented, and unit-tested, but the wiring into `HsmCore` was forgotten. Worth an
+upstream report.
+
+## Resolution chosen: Option A — auto-init token from config (patch)
+
+Rather than fix persistence (objects + the absent token-auth persistence), the suite only needs
+each subprocess to present a *provisioned* token. A small craton patch
+(`docker/craton-hsm/patches/`) adds `[security] initial_so_pin` / `initial_user_pin` config
+fields and, in `Token::new_with_config`, sets the SO/user PIN hashes + `initialized` flags from
+them — so every process self-provisions identically at `C_Initialize`. The suite logs in and
+generates its own keys in-memory per test file (no cross-process persistence needed). This is a
+provisioning patch (not bug-hiding); craton's crypto behavior is tested unmodified.
 
 ## What WAS solved (recipe, for any future daemon-mode attempt)
 

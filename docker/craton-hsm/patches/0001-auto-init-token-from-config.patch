@@ -1,0 +1,68 @@
+diff --git a/src/config/config.rs b/src/config/config.rs
+index 48f4cd3..c616bfc 100644
+--- a/src/config/config.rs
++++ b/src/config/config.rs
+@@ -83,6 +83,13 @@ pub struct SecurityConfig {
+     pub max_failed_logins: u32,
+     #[serde(default = "default_pbkdf2_iterations")]
+     pub pbkdf2_iterations: u32,
++    /// pkcs11-check test patch: if both are set, the token auto-provisions itself
++    /// (SO + user PIN) at C_Initialize, so multi-process callers each see a ready
++    /// token without cross-process persistence. For test deployments only.
++    #[serde(default)]
++    pub initial_so_pin: Option<String>,
++    #[serde(default)]
++    pub initial_user_pin: Option<String>,
+ }
+ 
+ // Custom Debug to avoid leaking security parameters in logs/panics.
+@@ -147,6 +154,8 @@ impl Default for SecurityConfig {
+             pin_max_length: default_pin_max(),
+             max_failed_logins: default_max_failed(),
+             pbkdf2_iterations: default_pbkdf2_iterations(),
++            initial_so_pin: None,
++            initial_user_pin: None,
+         }
+     }
+ }
+diff --git a/src/token/token.rs b/src/token/token.rs
+index 710acc7..3ac37dc 100644
+--- a/src/token/token.rs
++++ b/src/token/token.rs
+@@ -170,7 +170,7 @@ impl Token {
+             auth_state.so_pin_locked = data.so_pin_locked;
+         }
+ 
+-        Self {
++        let token = Self {
+             label: RwLock::new(label),
+             so_pin_hash: RwLock::new(None),
+             user_pin_hash: RwLock::new(None),
+@@ -184,7 +184,27 @@ impl Token {
+             max_failed_logins,
+             pbkdf2_iterations,
+             lockout_store,
++        };
++
++        // pkcs11-check test patch: auto-provision the token from config so every
++        // process sees a ready token. craton's in-process module keeps token auth in
++        // memory only, and pkcs11-check runs each test file in its own subprocess, so
++        // without this each subprocess starts unprovisioned and C_Login fails. The
++        // SO/user PIN are set directly (config is trusted). Test deployments only.
++        if let Some(cfg) = config {
++            if let (Some(so_pin), Some(user_pin)) = (
++                cfg.security.initial_so_pin.as_ref(),
++                cfg.security.initial_user_pin.as_ref(),
++            ) {
++                *token.so_pin_hash.write() = Some(token.hash_pin(so_pin.as_bytes()));
++                *token.user_pin_hash.write() = Some(token.hash_pin(user_pin.as_bytes()));
++                let mut auth = token.auth.lock();
++                auth.initialized = true;
++                auth.user_pin_initialized = true;
++            }
+         }
++
++        token
+     }
+ 
+     /// Persist the current lockout counters to disk (if a store is configured).
