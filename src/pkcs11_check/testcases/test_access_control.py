@@ -52,6 +52,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
+    assert_correct,
     get_pin_bytes,
     is_known_error,
     require_operational_aes_keygen,
@@ -334,7 +335,13 @@ class TestCopyableAttribute:
                 return
             try:
                 copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [CKA_LABEL])
-                assert copy_attrs[CKA_LABEL] == "copy-dst"
+                assert_correct(
+                    actual=copy_attrs[CKA_LABEL],
+                    expected="copy-dst",
+                    label="C_CopyObject:CKA_LABEL on copy",
+                    operation="C_CopyObject",
+                    kind="metadata",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, copied_h)
         finally:
@@ -370,9 +377,27 @@ class TestCopyObject:
                     key_h,
                     [CKA_KEY_TYPE, CKA_VALUE_LEN],
                 )
-                assert copy_attrs[CKA_LABEL] == "copied-label"
-                assert copy_attrs[CKA_KEY_TYPE] == orig_attrs[CKA_KEY_TYPE]
-                assert copy_attrs[CKA_VALUE_LEN] == orig_attrs[CKA_VALUE_LEN]
+                assert_correct(
+                    actual=copy_attrs[CKA_LABEL],
+                    expected="copied-label",
+                    label="C_CopyObject:CKA_LABEL on copy",
+                    operation="C_CopyObject",
+                    kind="metadata",
+                )
+                assert_correct(
+                    actual=copy_attrs[CKA_KEY_TYPE],
+                    expected=orig_attrs[CKA_KEY_TYPE],
+                    label="C_CopyObject:CKA_KEY_TYPE preserved on copy",
+                    operation="C_CopyObject",
+                    kind="metadata",
+                )
+                assert_correct(
+                    actual=copy_attrs[CKA_VALUE_LEN],
+                    expected=orig_attrs[CKA_VALUE_LEN],
+                    label="C_CopyObject:CKA_VALUE_LEN preserved on copy",
+                    operation="C_CopyObject",
+                    kind="metadata",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, copied_h)
         finally:
