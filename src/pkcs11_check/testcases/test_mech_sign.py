@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -170,13 +171,18 @@ def _xfail_kat_import_not_operational(
     symmetric-MAC call sites.
     """
     if is_known_error(exc, _KAT_IMPORT_CAPABILITY_REJECT_RVS):
-        pytest.xfail(
-            not_operational_reason(
+        classify(
+            "not_operational",
+            kind="crypto",
+            label=f"{entry.mech_name}:key-import",
+            operation="C_CreateObject",
+            mechanism=entry.mech_name,
+            summary=not_operational_reason(
                 f"{entry.mech_name}:key-import",
                 f"{object_label}: {_ckr_name_from_exception(exc)}"
                 if isinstance(exc, CkrAssertionError)
                 else f"{object_label}: {exc}",
-            )
+            ),
         )
     raise exc
 

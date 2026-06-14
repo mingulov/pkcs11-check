@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes, to_ubyte_buf
@@ -104,7 +105,13 @@ def _xfail_if_message_init_rejected(rv: int, *, label: str) -> None:
         int(CKR_GENERAL_ERROR),
     )
     if rv in reject:
-        pytest.xfail(f"{label}: advertised message op rejected with {ckr_name(rv)}")
+        classify(
+            "not_operational",
+            kind="crypto",
+            label=label,
+            actual=rv,
+            summary=f"{label}: advertised message op rejected with {ckr_name(rv)}",
+        )
 
 
 def _require_message_functions(rs: RawSession, *function_names: str) -> None:
@@ -1360,10 +1367,17 @@ class TestMessageEncrypt:
                 # Try to clean up — if MessageEncryptFinal exists, cancel.
                 if hasattr(rs.raw, "C_MessageEncryptFinal"):
                     rs.raw.C_MessageEncryptFinal(rs.sh)
-                pytest.fail(
-                    "SECURITY: C_MessageEncryptInit accepted a key with "
-                    "CKA_ENCRYPT=False — usage-attribute enforcement "
-                    "missing on the v3.0 message-based API path."
+                classify(
+                    "self_contradiction",
+                    kind="policy",
+                    label="C_MessageEncryptInit on a CKA_ENCRYPT=False key",
+                    operation="C_MessageEncryptInit",
+                    mechanism="CKM_AES_GCM",
+                    summary=(
+                        "SECURITY: C_MessageEncryptInit accepted a key with "
+                        "CKA_ENCRYPT=False — usage-attribute enforcement "
+                        "missing on the v3.0 message-based API path."
+                    ),
                 )
 
             # CKR_OK was handled above (security finding -> fail). Here the op

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.rv import ckr_name
@@ -143,11 +144,19 @@ class TestMechProbeNoRegistry:
         if entry.config is not None:
             pytest.skip(f"{entry.mech_name}: registered mechanism -- tested elsewhere")
         if entry.flags == 0:
-            # Flags == 0 is a spec violation but not a crash.  Fail with a
-            # clear message rather than silently passing.
-            pytest.fail(
-                f"{entry.mech_name} (0x{entry.mech_id:08x}): "
-                f"flags == 0 -- no operation class bits set (CKF_EXTENSION expected at minimum)"
+            # Flags == 0 is a spec violation but not a crash: C_GetMechanismList
+            # advertises the mechanism while C_GetMechanismInfo sets no operation
+            # bits -- the two query interfaces self-contradict (Type-D metadata).
+            classify(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{entry.mech_name}:C_GetMechanismInfo flags",
+                operation="C_GetMechanismInfo",
+                mechanism=entry.mech_name,
+                summary=(
+                    f"{entry.mech_name} (0x{entry.mech_id:08x}): "
+                    "flags == 0 -- no operation class bits set (CKF_EXTENSION expected at minimum)"
+                ),
             )
         # At least one known operation bit or CKF_EXTENSION must be set
         assert entry.flags & _OP_FLAGS, (
