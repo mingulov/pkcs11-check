@@ -26,7 +26,7 @@ FROM nitrokey/nethsm:testing
 # interpreter needed). bash: install-test-tools.sh and run-pkcs11-check.sh are bash scripts.
 # Build deps cover any sdist-only Python wheels and the fault-proxy compile.
 RUN apk add --no-cache bash curl ca-certificates gcc musl-dev libgcc \
-    python3 python3-dev libffi-dev openssl-dev make
+    python3 python3-dev libffi-dev openssl-dev make opensc
 
 # uv (the installer auto-detects the musl target).
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
