@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import template_from_dict
 from pkcs11_check.raw.recipes import (
     find_objects,
@@ -57,7 +58,13 @@ class TestMechanismObjects:
                 mtype = attrs[CKA_MECHANISM_TYPE]
                 assert isinstance(mtype, int), f"Expected int MECHANISM_TYPE, got {type(mtype)}"
             except AssertionError as e:
-                pytest.xfail(f"Cannot read CKA_MECHANISM_TYPE from mechanism object: {e}")
+                classify(
+                    "not_operational",
+                    kind="metadata",
+                    label="CKO_MECHANISM:CKA_MECHANISM_TYPE",
+                    operation="C_GetAttributeValue",
+                    summary=f"Cannot read CKA_MECHANISM_TYPE from mechanism object: {e}",
+                )
 
     def test_mechanism_type_is_known(self, p11_raw_session: Any) -> None:
         """CKA_MECHANISM_TYPE values correspond to known mechanisms or vendor range."""

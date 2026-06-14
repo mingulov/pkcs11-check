@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import attr_ulong, mech_bytes, mech_simple, template
@@ -1305,7 +1306,14 @@ class TestMalformedWrappedBlob:
                 )
                 raise
             if len(wrapped) < 2:
-                pytest.xfail(f"{entry.mech_name}: wrap output too short to truncate")
+                classify(
+                    "honest_deviation",
+                    kind="crypto",
+                    label=label,
+                    operation="C_WrapKey",
+                    mechanism=entry.mech_name,
+                    summary=f"{entry.mech_name}: wrap output too short to truncate",
+                )
 
             unwrap_exc: AssertionError | None = None
             try:

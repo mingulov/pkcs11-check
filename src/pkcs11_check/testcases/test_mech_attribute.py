@@ -16,10 +16,11 @@ with full attribute readback.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
 from pkcs11_check.raw.types_std import (
@@ -64,13 +65,20 @@ def _read_attr_safe(rs: RawSession, handle: int, attr_id: int, label: str) -> An
         if is_known_error(exc, _ATTRIBUTE_READ_UNSUPPORTED_RVS):
             return None
         if is_known_error(exc, _ATTRIBUTE_READ_NONCLEAN_RVS):
-            pytest.xfail(
-                f"{label} attribute read rejected with non-clean CKR: CKR_ATTRIBUTE_VALUE_INVALID"
+            xfail_as(
+                "nonspec_reject",
+                kind="metadata",
+                label=label,
+                operation="C_GetAttributeValue",
+                summary=(
+                    f"{label} attribute read rejected with non-clean CKR: "
+                    "CKR_ATTRIBUTE_VALUE_INVALID"
+                ),
             )
         raise AssertionError(f"Unexpected error reading {label} on handle {handle}: {exc}") from exc
 
 
-def _xfail_generated_local_false(mech_name: str, label: str) -> None:
+def _xfail_generated_local_false(mech_name: str, label: str) -> NoReturn:
     from pkcs11_check.compliance import ComplianceLevel, note
 
     note(
@@ -78,7 +86,14 @@ def _xfail_generated_local_false(mech_name: str, label: str) -> None:
         ComplianceLevel.NOT_RECOMMENDED,
         reference="PKCS#11 v3.1 Sec.4.9.2: CKA_LOCAL True if key generated on token",
     )
-    pytest.xfail(f"{mech_name} {label}: CKA_LOCAL=False for generated key")
+    xfail_as(
+        "honest_deviation",
+        kind="metadata",
+        label=f"{mech_name} {label} CKA_LOCAL",
+        mechanism=mech_name,
+        spec_ref="PKCS#11 v3.1 Sec.4.9.2",
+        summary=f"{mech_name} {label}: CKA_LOCAL=False for generated key",
+    )
 
 
 class TestKeyAttributes:

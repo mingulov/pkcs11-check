@@ -37,6 +37,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 from pkcs11_check.testcases._raw_subprocess import run_raw_script
 
@@ -356,7 +357,20 @@ class TestDigestEncryptUpdate:
         if returncode != 0:
             fatals = [ln for ln in stdout.splitlines() if ln.startswith("FATAL:")]
             detail = fatals[0] if fatals else f"stdout={stdout!r} stderr={stderr!r}"
-            pytest.fail(f"Subprocess failed: {detail}")
+            if returncode < 0:
+                classify(
+                    "crash",
+                    label="C_DigestEncryptUpdate",
+                    operation="C_DigestEncryptUpdate",
+                    summary=f"Subprocess crashed (signal {-returncode}): {detail}",
+                )
+            classify(
+                "not_operational",
+                kind="crypto",
+                label="C_DigestEncryptUpdate",
+                operation="C_DigestEncryptUpdate",
+                summary=f"Subprocess failed: {detail}",
+            )
 
         assert "DIGEST_REF" in lines_map, f"Missing DIGEST_REF in output: {stdout!r}"
         assert "CT_REF" in lines_map, f"Missing CT_REF in output: {stdout!r}"
@@ -545,7 +559,20 @@ class TestDecryptDigestUpdate:
         if returncode != 0:
             fatals = [ln for ln in stdout.splitlines() if ln.startswith("FATAL:")]
             detail = fatals[0] if fatals else f"stdout={stdout!r} stderr={stderr!r}"
-            pytest.fail(f"Subprocess failed: {detail}")
+            if returncode < 0:
+                classify(
+                    "crash",
+                    label="C_DecryptDigestUpdate",
+                    operation="C_DecryptDigestUpdate",
+                    summary=f"Subprocess crashed (signal {-returncode}): {detail}",
+                )
+            classify(
+                "not_operational",
+                kind="crypto",
+                label="C_DecryptDigestUpdate",
+                operation="C_DecryptDigestUpdate",
+                summary=f"Subprocess failed: {detail}",
+            )
 
         assert "PT_REF" in lines_map, f"Missing PT_REF in output: {stdout!r}"
         assert "DIGEST_REF" in lines_map, f"Missing DIGEST_REF in output: {stdout!r}"

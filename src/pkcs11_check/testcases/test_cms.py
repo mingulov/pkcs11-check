@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import PackedMechanism, _mech_struct, mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -214,7 +215,14 @@ class TestCMSSig:
             # Attempt CMS_SIG sign without params - must fail, not crash.
             try:
                 sign_single(rs.raw, rs.sh, priv, CKM_CMS_SIG, b"test message")
-                pytest.fail("CKM_CMS_SIG sign succeeded without CK_CMS_SIG_PARAMS")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="CKM_CMS_SIG:C_Sign without CK_CMS_SIG_PARAMS",
+                    operation="C_Sign",
+                    mechanism="CKM_CMS_SIG",
+                    summary="CKM_CMS_SIG sign succeeded without CK_CMS_SIG_PARAMS",
+                )
             except AssertionError as exc:
                 if is_known_error(exc, _CMS_MISSING_PARAMS_EXPECTED_CKRS):
                     return

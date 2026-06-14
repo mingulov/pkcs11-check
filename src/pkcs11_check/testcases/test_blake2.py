@@ -15,6 +15,7 @@ from typing import Any, NamedTuple, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_bytes, mech_simple, template
 from pkcs11_check.raw.recipes import (
     derive_key,
@@ -1236,9 +1237,16 @@ class TestBlake2bKeyed:
                     "template instead of deriving the secret bytes"
                 )
             if value == expected:
-                pytest.xfail(
-                    f"{case.key_derive_name} accepted and ignored caller-supplied CKA_VALUE "
-                    "in a derive template"
+                classify(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=f"{case.key_derive_name} CKA_VALUE injection (derive template)",
+                    operation="C_DeriveKey",
+                    mechanism=f"CKM_{case.key_derive_name}",
+                    summary=(
+                        f"{case.key_derive_name} accepted and ignored caller-supplied CKA_VALUE "
+                        "in a derive template"
+                    ),
                 )
             raise AssertionError(
                 f"{case.key_derive_name} accepted caller-supplied CKA_VALUE in a derive "
