@@ -6,8 +6,7 @@ Subprocess wrapper for crash-safe test execution.
 
 from __future__ import annotations
 
-import pytest
-
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
@@ -82,7 +81,15 @@ def assert_subprocess_no_crash(
     assert_subprocess_completed(rc, stdout, stderr, context=context)
     for line in stdout.splitlines():
         if line.startswith(SETUP_XFAIL_PREFIX):
-            pytest.xfail(line.removeprefix(SETUP_XFAIL_PREFIX).strip())
+            # Child setup (keygen/Init) cleanly errored before the probe could run:
+            # an advertised capability that is not operational -> xfail, recorded
+            # via classify() so the plugin runtime gate never has to synthesize a
+            # record-less verdict for it.
+            xfail_as(
+                "not_operational",
+                label=context,
+                summary=line.removeprefix(SETUP_XFAIL_PREFIX).strip(),
+            )
 
 
 def child_setup_reject_known(
@@ -95,7 +102,8 @@ def child_setup_reject_known(
     If ``exc`` matches one of ``known_ckrs`` (a clean, advertised-but-not-
     operational reject), emit a ``SETUP_XFAIL`` marker on stdout and return True
     so the caller can stop the probe cleanly; the parent's
-    ``assert_subprocess_no_crash`` turns the marker into ``pytest.xfail``.
+    ``assert_subprocess_no_crash`` turns the marker into a classified
+    ``not_operational`` xfail.
     Otherwise return False so the caller re-raises -- an unexpected error or
     crash must still surface, never be hidden by the setup guard.
     """
