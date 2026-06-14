@@ -61,6 +61,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     CIPHER_OP_RUNTIME_REJECT_RVS,
+    assert_correct,
     classify_negative_rv,
     is_known_error,
     require_operational_aes_keygen,
@@ -124,7 +125,15 @@ class TestAESCTR:
                 plaintext,
                 mech_param=mech_ctr(CKM_AES_CTR),
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_AES_CTR:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_AES_CTR",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             assert len(ct) == len(plaintext)
             pt = decrypt_single(
                 rs.raw,
@@ -134,7 +143,13 @@ class TestAESCTR:
                 ct,
                 mech_param=mech_ctr(CKM_AES_CTR),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_AES_CTR:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_CTR",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -181,7 +196,16 @@ class TestAESCTR:
                     "CKM_AES_CTR advertised but encrypt is not operational",
                 )
                 raise
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_AES_CTR:encrypt key independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_AES_CTR",
+                    summary="different keys (same counter) produced identical CTR "
+                    "ciphertext -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -235,7 +259,13 @@ class TestAESCTR:
                 ct,
                 mech_param=mech_ctr(CKM_AES_CTR),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_AES_CTR:decrypt non-block-aligned roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_CTR",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -312,7 +342,15 @@ class TestAESCTS:
                     "CKM_AES_CTS advertised but encrypt is not operational",
                 )
                 raise
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_AES_CTS:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_AES_CTS",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -321,7 +359,13 @@ class TestAESCTS:
                 ct,
                 mech_param=mech_bytes(CKM_AES_CTS, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_AES_CTS:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_CTS",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -369,7 +413,16 @@ class TestAESCTS:
                     "CKM_AES_CTS advertised but encrypt is not operational",
                 )
                 raise
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_AES_CTS:encrypt key independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_AES_CTS",
+                    summary="different keys (same IV) produced identical CTS "
+                    "ciphertext -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -405,7 +458,15 @@ class TestAESCFB:
                 plaintext,
                 mech_param=mech_bytes(mech, iv),
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="AES-CFB:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism=f"CKM_{mech_name_str}",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -414,7 +475,13 @@ class TestAESCFB:
                 ct,
                 mech_param=mech_bytes(mech, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="AES-CFB:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism=f"CKM_{mech_name_str}",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -447,7 +514,16 @@ class TestAESCFB:
                 plaintext,
                 mech_param=mech_bytes(mech, iv),
             )
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="AES-CFB:encrypt key independence",
+                    operation="C_Encrypt",
+                    mechanism=f"CKM_{mech_name_str}",
+                    summary="different keys (same IV) produced identical CFB "
+                    "ciphertext -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -473,7 +549,15 @@ class TestAESOFB:
                 plaintext,
                 mech_param=mech_bytes(CKM_AES_OFB, iv),
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_AES_OFB:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_AES_OFB",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -482,7 +566,13 @@ class TestAESOFB:
                 ct,
                 mech_param=mech_bytes(CKM_AES_OFB, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_AES_OFB:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_OFB",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -512,7 +602,16 @@ class TestAESOFB:
                 plaintext,
                 mech_param=mech_bytes(CKM_AES_OFB, iv),
             )
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_AES_OFB:encrypt key independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_AES_OFB",
+                    summary="different keys (same IV) produced identical OFB "
+                    "ciphertext -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -604,7 +703,15 @@ class TestAESMACGeneral:
                 data,
                 mech_param=mech_bytes(CKM_AES_MAC_GENERAL, mac_len.to_bytes(8, "little")),
             )
-            assert mac1 != mac2
+            if mac1 == mac2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_AES_MAC_GENERAL:sign key independence",
+                    operation="C_Sign",
+                    mechanism="CKM_AES_MAC_GENERAL",
+                    summary="different keys produced identical MAC -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -690,7 +797,15 @@ class TestAESMAC:
             data = b"same data different keys"
             sig1 = sign_single(rs.raw, rs.sh, k1, CKM_AES_MAC, data)
             sig2 = sign_single(rs.raw, rs.sh, k2, CKM_AES_MAC, data)
-            assert sig1 != sig2
+            if sig1 == sig2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_AES_MAC:sign key independence",
+                    operation="C_Sign",
+                    mechanism="CKM_AES_MAC",
+                    summary="different keys produced identical MAC -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, k1)
             destroy_quietly(rs.raw, rs.sh, k2)
@@ -796,7 +911,15 @@ class TestAESXCBCMAC:
         try:
             mac1 = sign_single(rs.raw, rs.sh, key1, CKM_AES_XCBC_MAC, data)
             mac2 = sign_single(rs.raw, rs.sh, key2, CKM_AES_XCBC_MAC, data)
-            assert mac1 != mac2
+            if mac1 == mac2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_AES_XCBC_MAC:sign key independence",
+                    operation="C_Sign",
+                    mechanism="CKM_AES_XCBC_MAC",
+                    summary="different keys produced identical XCBC-MAC -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -847,7 +970,15 @@ class TestAESKeyWrapPKCS7:
                 target,
                 CKM_AES_KEY_WRAP_PKCS7,
             )
-            assert wrapped != key_bytes
+            if wrapped == key_bytes:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_AES_KEY_WRAP_PKCS7:wrap confidentiality",
+                    operation="C_WrapKey",
+                    mechanism="CKM_AES_KEY_WRAP_PKCS7",
+                    summary="wrapped blob equals the raw key value -- key transport leaked the key",
+                )
 
             unwrapped = unwrap_key_for_mechanism_roundtrip(
                 rs,
@@ -865,7 +996,13 @@ class TestAESKeyWrapPKCS7:
             )
             try:
                 okm = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
-                assert okm == key_bytes
+                assert_correct(
+                    actual=okm,
+                    expected=key_bytes,
+                    label="CKM_AES_KEY_WRAP_PKCS7:unwrap roundtrip",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_AES_KEY_WRAP_PKCS7",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -921,7 +1058,15 @@ class TestAESKeyWrapPKCS7:
                 target,
                 CKM_AES_KEY_WRAP_PKCS7,
             )
-            assert wrapped1 != wrapped2
+            if wrapped1 == wrapped2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_AES_KEY_WRAP_PKCS7:wrap key independence",
+                    operation="C_WrapKey",
+                    mechanism="CKM_AES_KEY_WRAP_PKCS7",
+                    summary="different wrapping keys produced identical wrap -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, target)
             destroy_quietly(rs.raw, rs.sh, wrap_key1)
