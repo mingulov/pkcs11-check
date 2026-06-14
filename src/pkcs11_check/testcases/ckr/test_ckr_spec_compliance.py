@@ -57,6 +57,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
 )
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     classify_negative_rv,
     classify_policy_enforcement,
     gen_aes_key_or_xfail,
@@ -337,7 +338,13 @@ class TestCKRMultipartCompliance:
                 ct,
                 mech_param=mech2,
             )
-            assert pt == data
+            assert_correct(
+                actual=pt,
+                expected=data,
+                label="AES_CBC:multipart decrypt(encrypt(pt)) roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -349,4 +356,10 @@ class TestCKRMultipartCompliance:
         data = b"multipart digest compliance test" * 100
         p11_digest = digest_single(rs.raw, rs.sh, CKM_SHA256, data)
         py_digest = hashlib.sha256(data).digest()
-        assert p11_digest == py_digest
+        assert_correct(
+            actual=p11_digest,
+            expected=py_digest,
+            label="SHA256:multipart digest matches single-shot known answer",
+            operation="C_Digest",
+            mechanism="CKM_SHA256",
+        )

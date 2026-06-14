@@ -65,7 +65,7 @@ from pkcs11_check.testcases.ckr._malformed_attrs import (
     make_bool_attr_overlong,
     make_ulong_attr_with_length,
 )
-from pkcs11_check.testcases.conftest import classify_negative_rv
+from pkcs11_check.testcases.conftest import assert_correct, classify_negative_rv
 
 pytestmark = pytest.mark.access
 
@@ -124,8 +124,22 @@ class TestGenerateKeyErrors:
                     summary="C_GenerateKey(NULL, 0) returned CKR_OK without a key handle",
                 )
             attrs = read_attributes(rs.raw, rs.sh, key.value, [CKA_CLASS, CKA_KEY_TYPE])
-            assert attrs[CKA_CLASS] == CKO_SECRET_KEY
-            assert attrs[CKA_KEY_TYPE] == expected_key_type
+            assert_correct(
+                actual=attrs[CKA_CLASS],
+                expected=CKO_SECRET_KEY,
+                label=f"{name}:generate-key-null-template:CKA_CLASS",
+                operation="C_GenerateKey",
+                mechanism=f"CKM_{name}",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=expected_key_type,
+                label=f"{name}:generate-key-null-template:CKA_KEY_TYPE",
+                operation="C_GenerateKey",
+                mechanism=f"CKM_{name}",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key.value)
 
