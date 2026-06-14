@@ -179,15 +179,7 @@ class TestHKDFKeyGen:
 
     @pytest.mark.parametrize(
         "key_type",
-        [
-            CKK_HKDF,
-            pytest.param(
-                CKK_GENERIC_SECRET,
-                marks=pytest.mark.xfail(
-                    reason="CKM_HKDF_KEY_GEN should produce CKK_HKDF per spec",
-                ),
-            ),
-        ],
+        [CKK_HKDF, CKK_GENERIC_SECRET],
         ids=["CKK_HKDF", "CKK_GENERIC_SECRET"],
     )
     def test_hkdf_key_gen_basic(
@@ -195,7 +187,16 @@ class TestHKDFKeyGen:
         p11_raw_session: Any,
         key_type: int,
     ) -> None:
-        """Generate a key via CKM_HKDF_KEY_GEN with the given key type."""
+        """Generate a key via CKM_HKDF_KEY_GEN with the given key type.
+
+        Per the OASIS HKDF profile, ``CKM_HKDF_KEY_GEN`` produces a ``CKK_HKDF``
+        key.  Requesting ``CKK_GENERIC_SECRET`` therefore probes a spec
+        constraint: a module that produces ``CKK_HKDF`` regardless (the
+        spec-correct type) is a clean, noted deviation from the requested type
+        (``honest_deviation``); a module that honors ``CKK_GENERIC_SECRET`` as
+        asked is also acceptable.  This replaces the prior declarative
+        ``@pytest.mark.xfail`` so every outcome carries a classify() record.
+        """
         rs = p11_raw_session
         if not rs.has_mechanism("HKDF_KEY_GEN"):
             pytest.skip("CKM_HKDF_KEY_GEN not supported")
@@ -224,7 +225,23 @@ class TestHKDFKeyGen:
                     _KEYGEN_VALUE_READ_ERROR_RVS,
                     "CKM_HKDF_KEY_GEN generated key CKA_VALUE readback rejected",
                 )
-            assert attrs[CKA_KEY_TYPE] == key_type
+            actual_key_type = attrs[CKA_KEY_TYPE]
+            if key_type == CKK_GENERIC_SECRET and actual_key_type == CKK_HKDF:
+                # The module ignored the requested CKK_GENERIC_SECRET and produced
+                # the spec-mandated CKK_HKDF: a clean, noted deviation from the
+                # requested type, recorded via classify() rather than a bare
+                # declarative xfail (which would emit no classification record).
+                xfail_as(
+                    "honest_deviation",
+                    label="CKM_HKDF_KEY_GEN:key_type",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_HKDF_KEY_GEN",
+                    summary=(
+                        "CKM_HKDF_KEY_GEN produced CKK_HKDF (the spec-mandated type) "
+                        "for a CKK_GENERIC_SECRET request"
+                    ),
+                )
+            assert actual_key_type == key_type
             value = attrs[CKA_VALUE]
             assert len(value) == 32  # 256 bits = 32 bytes
             assert attrs[CKA_DERIVE] is True
