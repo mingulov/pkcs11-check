@@ -89,6 +89,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    assert_correct,
     gen_aes_key_or_xfail,
     get_pin_bytes,
     is_known_error,
@@ -661,7 +662,13 @@ class TestBoundaryLengthCrypto:
                     # Block-aligned - should work
                     ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, data)
                     pt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, ct)
-                    assert pt == data
+                    assert_correct(
+                        actual=pt,
+                        expected=data,
+                        label="AES_ECB:block-aligned decrypt(encrypt(pt)) roundtrip",
+                        operation="C_Decrypt",
+                        mechanism="CKM_AES_ECB",
+                    )
                 else:
                     # Non-aligned - should fail with proper CKR
                     try:
