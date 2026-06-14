@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import xfail_as
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -33,7 +33,11 @@ from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
     SIGNATURE_REJECT_RVS,
 )
-from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    gen_aes_key_or_xfail,
+    xfail_if_known_ckr,
+)
 
 # Phase 6 P3: the v3.0 message functions are already gated by the function-list
 # capability check (_skip_unless_message_functions). Past that gate the op is
@@ -271,7 +275,13 @@ class TestMessageEncryptDecrypt:
                     exc, _MESSAGE_OP_REJECT_RVS, "advertised message decrypt rejected (CKM_AES_CBC)"
                 )
                 raise
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="AES_CBC:message decrypt(encrypt(pt)) roundtrip",
+                operation="C_DecryptMessage",
+                mechanism="CKM_AES_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -357,7 +367,13 @@ class TestMessageEncryptDecrypt:
             if rv != CKR_OK:
                 _handle_message_rv(rv, "C_MessageDecryptFinal")
 
-            assert bytes(out_buf[: out_len.value]) == plaintext
+            assert_correct(
+                actual=bytes(out_buf[: out_len.value]),
+                expected=plaintext,
+                label="AES_CBC:message multipart decrypt roundtrip",
+                operation="C_DecryptMessageNext",
+                mechanism="CKM_AES_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -379,9 +395,26 @@ class TestMessageEncryptDecrypt:
                     exc, _MESSAGE_OP_REJECT_RVS, "advertised message encrypt rejected (CKM_AES_CBC)"
                 )
                 raise
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="AES_CBC:message encrypt produced plaintext (no-op)",
+                    operation="C_EncryptMessage",
+                    mechanism="CKM_AES_CBC",
+                    summary=(
+                        "AES_CBC: message-API ciphertext equals the plaintext -- "
+                        "encryption was a no-op (crypto break)"
+                    ),
+                )
             pt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_CBC, ct)
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="AES_CBC:message-encrypt standard-decrypt cross-verify",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 

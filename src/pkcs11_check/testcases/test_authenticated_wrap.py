@@ -64,6 +64,7 @@ from pkcs11_check.testcases._negotiation import TEMPLATE_SHAPE_REJECTS
 from pkcs11_check.testcases.conftest import (
     EC_CURVE_UNSUPPORTED_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    assert_correct,
     classify_discrimination,
     gen_ec_keypair_or_xfail,
     is_known_error,
@@ -256,7 +257,18 @@ class TestAuthenticatedWrap:
             except AssertionError as exc:
                 _xfail_if_wrap_runtime_reject(exc, "AES-GCM authenticated wrap rejected")
 
-            assert wrapped != original_value
+            if wrapped == original_value:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_AES_GCM:authenticated wrap output equals key value",
+                    operation="C_WrapKeyAuthenticated",
+                    mechanism="CKM_AES_GCM",
+                    summary=(
+                        "AES-GCM authenticated wrap produced output identical to the "
+                        "plaintext key value -- wrapping was a no-op (crypto break)"
+                    ),
+                )
             assert any(wrap_mech.buffer_bytes("tag")), (
                 "C_WrapKeyAuthenticated returned CKR_OK but left the auth tag buffer zeroed"
             )
@@ -277,7 +289,13 @@ class TestAuthenticatedWrap:
             )
             try:
                 unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
-                assert unwrapped_value == original_value
+                assert_correct(
+                    actual=unwrapped_value,
+                    expected=original_value,
+                    label="CKM_AES_GCM:authenticated wrap/unwrap preserves key material",
+                    operation="C_UnwrapKeyAuthenticated",
+                    mechanism="CKM_AES_GCM",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -367,7 +385,13 @@ class TestAuthenticatedWrap:
                 mech_param=unwrap_mech,
             )
             value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
-            assert value == original
+            assert_correct(
+                actual=value,
+                expected=original,
+                label="CKM_AES_GCM:generated-IV wrap/unwrap preserves key material",
+                operation="C_UnwrapKeyAuthenticated",
+                mechanism="CKM_AES_GCM",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, unwrapped)
             destroy_quietly(rs.raw, rs.sh, wrap_h)
@@ -951,8 +975,12 @@ class TestEcdhAesKeyWrap:
             # Round-trip succeeded — verify it recovered the original key.
             unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE]).get(CKA_VALUE)
             destroy_quietly(rs.raw, rs.sh, unwrapped)
-            assert unwrapped_value == original, (
-                f"CKM_{case.short_name} roundtrip recovered a different key than was wrapped"
+            assert_correct(
+                actual=unwrapped_value,
+                expected=original,
+                label=f"CKM_{case.short_name}:ECDH wrap/unwrap preserves key material",
+                operation="C_UnwrapKey",
+                mechanism=f"CKM_{case.short_name}",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
