@@ -284,6 +284,7 @@ class TestGenerateKeyErrors:
             rv,
             TEMPLATE_ERRORS,
             label="C_GenerateKey with CK_ULONG-sized CKA_TOKEN boolean attribute",
+            kind="metadata",
         )
 
     @pytest.mark.parametrize(

@@ -751,6 +751,7 @@ class TestInvalidECCurve:
             reject_exc,
             _INVALID_EC_CURVE_REJECT_RVS,
             label="import EC public key with invalid curve OID",
+            kind="crypto",
         )
 
 

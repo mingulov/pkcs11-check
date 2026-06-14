@@ -168,6 +168,7 @@ class TestGcmTagSize:
                 reject_exc,
                 _WEAK_PARAM_REJECT_RVS,
                 label=f"AES-GCM with {tag_bits}-bit tag (below NIST 96-bit minimum)",
+                kind="crypto",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

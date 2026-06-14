@@ -579,6 +579,7 @@ class TestDSARaw:
                 rv,
                 (CKR_DATA_LEN_RANGE,),
                 label="CKM_DSA wrong-length digest",
+                kind="crypto",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

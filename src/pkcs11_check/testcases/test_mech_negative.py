@@ -686,7 +686,7 @@ class TestWrongKeyType:
                 )
             except AssertionError as caught:
                 derive_exc = caught
-            reject_or_classify(derive_exc, (CKR_KEY_TYPE_INCONSISTENT,), label=label)
+            reject_or_classify(derive_exc, (CKR_KEY_TYPE_INCONSISTENT,), label=label, kind="policy")
         finally:
             if derived_key != 0:
                 destroy_quietly(rs.raw, rs.sh, derived_key)
@@ -810,7 +810,7 @@ class TestBadParameters:
             sign_key, verify_key = generate_key_for_sign(rs, entry, config)
             mech = mech_simple(entry.mech_id)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), sign_key)
-            classify_negative_rv(rv, _MISSING_REQUIRED_PARAM_RVS, label=label)
+            classify_negative_rv(rv, _MISSING_REQUIRED_PARAM_RVS, label=label, kind="crypto")
         finally:
             destroy_quietly(rs.raw, rs.sh, sign_key)
             if verify_key is not None and verify_key != sign_key:
