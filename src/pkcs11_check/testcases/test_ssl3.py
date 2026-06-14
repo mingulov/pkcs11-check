@@ -77,6 +77,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     destroy_returned_handles,
     is_known_error,
     reject_or_classify,
@@ -455,7 +456,13 @@ class TestSSL3MasterKeyDerive:
             try:
                 raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(raw_val, bytes)
-                assert raw_val == expected
+                assert_correct(
+                    actual=raw_val,
+                    expected=expected,
+                    label="CKM_SSL3_MASTER_KEY_DERIVE:C_DeriveKey KAT (master secret)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
@@ -569,9 +576,12 @@ class TestSSL3MasterKeyDeriveDH:
             try:
                 raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(raw_val, bytes)
-                assert raw_val == expected, (
-                    "SSL3 master secret DH output mismatch: "
-                    f"expected {expected.hex()}, got {raw_val.hex()}"
+                assert_correct(
+                    actual=raw_val,
+                    expected=expected,
+                    label="CKM_SSL3_MASTER_KEY_DERIVE_DH:C_DeriveKey KAT (master secret DH)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE_DH",
                 )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)

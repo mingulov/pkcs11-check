@@ -40,6 +40,7 @@ from pkcs11_check.raw.types_std import (
     CKM_ECDH1_DERIVE,
     CKO_SECRET_KEY,
 )
+from pkcs11_check.testcases.conftest import assert_correct
 
 pytestmark = pytest.mark.crossverify
 
@@ -133,10 +134,12 @@ class TestECDHKnownAnswer:
             crypto_secret = crypto_priv.exchange(ec.ECDH(), p11_pub_crypto)
 
             # Both should produce the same raw shared secret
-            assert p11_secret == crypto_secret, (
-                f"ECDH shared secret mismatch: "
-                f"PKCS#11={p11_secret.hex()[:16]}... "
-                f"crypto={crypto_secret.hex()[:16]}..."
+            assert_correct(
+                actual=p11_secret,
+                expected=crypto_secret,
+                label="CKM_ECDH1_DERIVE:C_DeriveKey KAT (vs cryptography)",
+                operation="C_DeriveKey",
+                mechanism="CKM_ECDH1_DERIVE",
             )
         finally:
             if derived_h:

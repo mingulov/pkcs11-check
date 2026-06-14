@@ -61,7 +61,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import assert_correct, xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
 
@@ -443,9 +443,12 @@ class TestSP800108CounterKDF:
             expected = _sp800_108_counter_hmac_sha256_reference(
                 _BASE_KEY_BYTES, _LABEL, _CONTEXT, 128
             )
-            assert val == expected, (
-                "CKM_SP800_108_COUNTER_KDF AES-128 output mismatch: "
-                f"got {val.hex()}, expected {expected.hex()}"
+            assert_correct(
+                actual=val,
+                expected=expected,
+                label="CKM_SP800_108_COUNTER_KDF:C_DeriveKey KAT (AES-128)",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_COUNTER_KDF",
             )
         except AssertionError as exc:
             xfail_if_known_ckr(
@@ -471,9 +474,12 @@ class TestSP800108CounterKDF:
             expected = _sp800_108_counter_hmac_sha256_reference(
                 _BASE_KEY_BYTES, _LABEL, _CONTEXT, 256
             )
-            assert val == expected, (
-                "CKM_SP800_108_COUNTER_KDF AES-256 output mismatch: "
-                f"got {val.hex()}, expected {expected.hex()}"
+            assert_correct(
+                actual=val,
+                expected=expected,
+                label="CKM_SP800_108_COUNTER_KDF:C_DeriveKey KAT (AES-256)",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_COUNTER_KDF",
             )
         except AssertionError as exc:
             xfail_if_known_ckr(
@@ -629,9 +635,12 @@ class TestSP800108FeedbackKDF:
             expected = _sp800_108_feedback_hmac_sha256_reference(
                 _BASE_KEY_BYTES, _LABEL, _CONTEXT, 128
             )
-            assert val == expected, (
-                "CKM_SP800_108_FEEDBACK_KDF AES-128 output mismatch: "
-                f"got {val.hex()}, expected {expected.hex()}"
+            assert_correct(
+                actual=val,
+                expected=expected,
+                label="CKM_SP800_108_FEEDBACK_KDF:C_DeriveKey KAT (AES-128)",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_FEEDBACK_KDF",
             )
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF not operational")
@@ -659,9 +668,12 @@ class TestSP800108FeedbackKDF:
             expected = _sp800_108_feedback_hmac_sha256_reference(
                 _BASE_KEY_BYTES, _LABEL, _CONTEXT, 128, iv=iv
             )
-            assert val == expected, (
-                "CKM_SP800_108_FEEDBACK_KDF with IV AES-128 output mismatch: "
-                f"got {val.hex()}, expected {expected.hex()}"
+            assert_correct(
+                actual=val,
+                expected=expected,
+                label="CKM_SP800_108_FEEDBACK_KDF:C_DeriveKey KAT (AES-128 with IV)",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_FEEDBACK_KDF",
             )
         except AssertionError as exc:
             xfail_if_known_ckr(
@@ -766,9 +778,12 @@ class TestSP800108DoublePipelineKDF:
             expected = _sp800_108_double_pipeline_hmac_sha256_reference(
                 _BASE_KEY_BYTES, _LABEL, _CONTEXT, 128
             )
-            assert val == expected, (
-                "CKM_SP800_108_DOUBLE_PIPELINE_KDF AES-128 output mismatch: "
-                f"got {val.hex()}, expected {expected.hex()}"
+            assert_correct(
+                actual=val,
+                expected=expected,
+                label="CKM_SP800_108_DOUBLE_PIPELINE_KDF:C_DeriveKey KAT (AES-128)",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_DOUBLE_PIPELINE_KDF",
             )
         except AssertionError as exc:
             xfail_if_known_ckr(
@@ -797,9 +812,12 @@ class TestSP800108DoublePipelineKDF:
             expected = _sp800_108_double_pipeline_hmac_sha256_reference(
                 _BASE_KEY_BYTES, _LABEL, _CONTEXT, 256
             )
-            assert val == expected, (
-                "CKM_SP800_108_DOUBLE_PIPELINE_KDF AES-256 output mismatch: "
-                f"got {val.hex()}, expected {expected.hex()}"
+            assert_correct(
+                actual=val,
+                expected=expected,
+                label="CKM_SP800_108_DOUBLE_PIPELINE_KDF:C_DeriveKey KAT (AES-256)",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_DOUBLE_PIPELINE_KDF",
             )
         except AssertionError as exc:
             xfail_if_known_ckr(

@@ -17,6 +17,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA3_384,
     CKM_SHA3_512,
 )
+from pkcs11_check.testcases.conftest import assert_correct
 
 pytestmark = pytest.mark.crossverify
 
@@ -55,7 +56,13 @@ class TestSHA3Digest:
         py_digest = hash_fn(data).digest()
 
         assert len(p11_digest) == digest_len
-        assert p11_digest == py_digest
+        assert_correct(
+            actual=p11_digest,
+            expected=py_digest,
+            label=f"{name}:C_Digest KAT (abc)",
+            operation="C_Digest",
+            mechanism=name,
+        )
 
     @pytest.mark.parametrize(
         "name,mechanism,hash_fn,digest_len",
@@ -79,7 +86,13 @@ class TestSHA3Digest:
         py_digest = hash_fn(b"").digest()
 
         assert len(p11_digest) == digest_len
-        assert p11_digest == py_digest
+        assert_correct(
+            actual=p11_digest,
+            expected=py_digest,
+            label=f"{name}:C_Digest KAT (empty)",
+            operation="C_Digest",
+            mechanism=name,
+        )
 
     @pytest.mark.parametrize(
         "name,mechanism,hash_fn,digest_len",
@@ -103,4 +116,10 @@ class TestSHA3Digest:
         p11_digest = digest_single(rs.raw, rs.sh, mechanism, data)
         py_digest = hash_fn(data).digest()
 
-        assert p11_digest == py_digest
+        assert_correct(
+            actual=p11_digest,
+            expected=py_digest,
+            label=f"{name}:C_Digest KAT (10KB)",
+            operation="C_Digest",
+            mechanism=name,
+        )

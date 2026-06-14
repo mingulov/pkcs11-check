@@ -92,6 +92,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     destroy_returned_handles,
     is_known_error,
     reject_or_classify,
@@ -413,9 +414,12 @@ class TestTLS10PreMasterKeyGen:
                     _SERVER_RANDOM,
                     48,
                 )
-                assert value == expected, (
-                    "TLS 1.0/1.1 master secret output mismatch: "
-                    f"expected {expected.hex()}, got {value.hex()}"
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label="CKM_TLS_MASTER_KEY_DERIVE:C_DeriveKey KAT (TLS 1.0/1.1 master secret)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS_MASTER_KEY_DERIVE",
                 )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -571,8 +575,12 @@ class TestTLS10PreMasterKeyGen:
                     _SERVER_RANDOM,
                     48,
                 )
-                assert value == expected, (
-                    f"CKM_TLS_PRF output mismatch: expected {expected.hex()}, got {value.hex()}"
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label="CKM_TLS_PRF:C_DeriveKey KAT",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS_PRF",
                 )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -639,9 +647,12 @@ class TestTLS12MasterKeyDerive:
                     _SERVER_RANDOM,
                     48,
                 )
-                assert value == expected, (
-                    "TLS 1.2 master secret output mismatch: "
-                    f"expected {expected.hex()}, got {value.hex()}"
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label="CKM_TLS12_MASTER_KEY_DERIVE:C_DeriveKey KAT (TLS 1.2 master secret)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_MASTER_KEY_DERIVE",
                 )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -705,9 +716,14 @@ class TestTLS12MasterKeyDerive:
                     _SERVER_RANDOM,
                     48,
                 )
-                assert value == expected, (
-                    "TLS 1.2 master secret DH output mismatch: "
-                    f"expected {expected.hex()}, got {value.hex()}"
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label=(
+                        "CKM_TLS12_MASTER_KEY_DERIVE_DH:C_DeriveKey KAT (TLS 1.2 master secret DH)"
+                    ),
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_MASTER_KEY_DERIVE_DH",
                 )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -1106,8 +1122,12 @@ class TestTLS12KDF:
                     _SERVER_RANDOM,
                     32,
                 )
-                assert value == expected, (
-                    f"CKM_TLS12_KDF output mismatch: got {value.hex()}, expected {expected.hex()}"
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label="CKM_TLS12_KDF:C_DeriveKey KAT",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_KDF",
                 )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -1168,9 +1188,12 @@ class TestTLS12KDF:
                     32,
                     context_data=b"context-info",
                 )
-                assert value == expected, (
-                    "CKM_TLS12_KDF context-data output mismatch: "
-                    f"got {value.hex()}, expected {expected.hex()}"
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label="CKM_TLS12_KDF:C_DeriveKey KAT (context-data exact vector)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_KDF",
                 )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -1285,9 +1308,12 @@ class TestTLS12KDF:
                     _SERVER_RANDOM,
                     32,
                 )
-                assert value == expected, (
-                    "CKM_TLS_KDF TLS1.0/1.1 PRF output mismatch: "
-                    f"got {value.hex()}, expected {expected.hex()}"
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label="CKM_TLS_KDF:C_DeriveKey KAT (TLS 1.0/1.1 PRF exact vector)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS_KDF",
                 )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -1357,9 +1383,15 @@ class TestTLS12Extended:
                     session_hash,
                     48,
                 )
-                assert value == expected, (
-                    "TLS 1.2 extended master secret output mismatch: "
-                    f"got {value.hex()}, expected {expected.hex()}"
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label=(
+                        "CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:C_DeriveKey KAT "
+                        "(extended master secret)"
+                    ),
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
                 )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -1422,9 +1454,15 @@ class TestTLS12Extended:
                     session_hash,
                     48,
                 )
-                assert value == expected, (
-                    "TLS 1.2 extended master secret DH output mismatch: "
-                    f"got {value.hex()}, expected {expected.hex()}"
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label=(
+                        "CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH:C_DeriveKey KAT "
+                        "(extended master secret DH)"
+                    ),
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH",
                 )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)

@@ -47,7 +47,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import assert_correct, xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
 
@@ -156,8 +156,12 @@ class TestConcatenateBaseAndKey:
                 mech_param=mech_bytes(CKM_CONCATENATE_BASE_AND_KEY, param_bytes),
             )
             derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert derived_value == expected, (
-                f"Expected {expected.hex()}, got {derived_value.hex()}"
+            assert_correct(
+                actual=derived_value,
+                expected=expected,
+                label="CKM_CONCATENATE_BASE_AND_KEY:C_DeriveKey KAT",
+                operation="C_DeriveKey",
+                mechanism="CKM_CONCATENATE_BASE_AND_KEY",
             )
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_CONCATENATE_BASE_AND_KEY derive failed")
@@ -228,8 +232,12 @@ class TestConcatenateBaseAndData:
                 mech_param=mech_string_data(CKM_CONCATENATE_BASE_AND_DATA, data_bytes),
             )
             derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert derived_value == expected, (
-                f"Expected {expected.hex()}, got {derived_value.hex()}"
+            assert_correct(
+                actual=derived_value,
+                expected=expected,
+                label="CKM_CONCATENATE_BASE_AND_DATA:C_DeriveKey KAT",
+                operation="C_DeriveKey",
+                mechanism="CKM_CONCATENATE_BASE_AND_DATA",
             )
         except AssertionError as exc:
             xfail_if_known_ckr(
@@ -314,8 +322,12 @@ class TestConcatenateDataAndBase:
                 mech_param=mech_string_data(CKM_CONCATENATE_DATA_AND_BASE, data_bytes),
             )
             derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert derived_value == expected, (
-                f"Expected {expected.hex()}, got {derived_value.hex()}"
+            assert_correct(
+                actual=derived_value,
+                expected=expected,
+                label="CKM_CONCATENATE_DATA_AND_BASE:C_DeriveKey KAT",
+                operation="C_DeriveKey",
+                mechanism="CKM_CONCATENATE_DATA_AND_BASE",
             )
         except AssertionError as exc:
             xfail_if_known_ckr(
@@ -396,8 +408,12 @@ class TestXorBaseAndData:
                 mech_param=mech_string_data(CKM_XOR_BASE_AND_DATA, data_bytes),
             )
             derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert derived_value == expected, (
-                f"Expected {expected.hex()}, got {derived_value.hex()}"
+            assert_correct(
+                actual=derived_value,
+                expected=expected,
+                label="CKM_XOR_BASE_AND_DATA:C_DeriveKey KAT (cross-verify)",
+                operation="C_DeriveKey",
+                mechanism="CKM_XOR_BASE_AND_DATA",
             )
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_XOR_BASE_AND_DATA derive failed")
@@ -426,7 +442,13 @@ class TestXorBaseAndData:
                 mech_param=mech_string_data(CKM_XOR_BASE_AND_DATA, data_bytes),
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert val == base_bytes
+            assert_correct(
+                actual=val,
+                expected=base_bytes,
+                label="CKM_XOR_BASE_AND_DATA:C_DeriveKey KAT (zero-data identity)",
+                operation="C_DeriveKey",
+                mechanism="CKM_XOR_BASE_AND_DATA",
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_XOR_BASE_AND_DATA derive failed")
         finally:
@@ -455,7 +477,13 @@ class TestXorBaseAndData:
                 mech_param=mech_string_data(CKM_XOR_BASE_AND_DATA, data_bytes),
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert val == expected
+            assert_correct(
+                actual=val,
+                expected=expected,
+                label="CKM_XOR_BASE_AND_DATA:C_DeriveKey KAT (all-ones bitflip)",
+                operation="C_DeriveKey",
+                mechanism="CKM_XOR_BASE_AND_DATA",
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_XOR_BASE_AND_DATA derive failed")
         finally:
@@ -492,8 +520,12 @@ class TestExtractKeyFromKey:
                 mech_param=mech_bytes(CKM_EXTRACT_KEY_FROM_KEY, _ulong_bytes(0)),
             )
             derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert derived_value == expected, (
-                f"Expected {expected.hex()}, got {derived_value.hex()}"
+            assert_correct(
+                actual=derived_value,
+                expected=expected,
+                label="CKM_EXTRACT_KEY_FROM_KEY:C_DeriveKey KAT (offset 0)",
+                operation="C_DeriveKey",
+                mechanism="CKM_EXTRACT_KEY_FROM_KEY",
             )
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_EXTRACT_KEY_FROM_KEY derive failed")
@@ -522,8 +554,12 @@ class TestExtractKeyFromKey:
                 mech_param=mech_bytes(CKM_EXTRACT_KEY_FROM_KEY, _ulong_bytes(128)),
             )
             derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert derived_value == expected, (
-                f"Expected {expected.hex()}, got {derived_value.hex()}"
+            assert_correct(
+                actual=derived_value,
+                expected=expected,
+                label="CKM_EXTRACT_KEY_FROM_KEY:C_DeriveKey KAT (offset 128)",
+                operation="C_DeriveKey",
+                mechanism="CKM_EXTRACT_KEY_FROM_KEY",
             )
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_EXTRACT_KEY_FROM_KEY derive failed")

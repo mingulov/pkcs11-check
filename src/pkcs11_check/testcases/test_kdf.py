@@ -57,6 +57,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     gen_ec_keypair_or_xfail,
     hmac_sign_or_xfail,
     xfail_if_known_ckr,
@@ -122,7 +123,13 @@ class TestKeyDeriveSoftware:
         try:
             p11_mac = hmac_sign_or_xfail(rs, p11_key, CKM_SHA256_HMAC, data, label="SHA256_HMAC")
             py_mac = hmac_mod.new(key_bytes, data, hashlib.sha256).digest()
-            assert p11_mac == py_mac
+            assert_correct(
+                actual=p11_mac,
+                expected=py_mac,
+                label="CKM_SHA256_HMAC:C_Sign KAT (HMAC-as-KDF)",
+                operation="C_Sign",
+                mechanism="CKM_SHA256_HMAC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, p11_key)
 
@@ -146,7 +153,13 @@ class TestKeyDeriveSoftware:
         try:
             p11_mac = hmac_sign_or_xfail(rs, p11_key, CKM_SHA512_HMAC, data, label="SHA512_HMAC")
             py_mac = hmac_mod.new(key_bytes, data, hashlib.sha512).digest()
-            assert p11_mac == py_mac
+            assert_correct(
+                actual=p11_mac,
+                expected=py_mac,
+                label="CKM_SHA512_HMAC:C_Sign KAT (HMAC-as-KDF)",
+                operation="C_Sign",
+                mechanism="CKM_SHA512_HMAC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, p11_key)
 

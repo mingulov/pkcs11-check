@@ -69,6 +69,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     destroy_returned_handles,
     is_known_error,
     reject_or_classify,
@@ -936,8 +937,12 @@ class TestWTLSPRF:
                     _WTLS_PRF_SEED,
                     16,
                 )
-                assert value == expected, (
-                    f"CKM_WTLS_PRF output mismatch: got {value.hex()}, expected {expected.hex()}"
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label="CKM_WTLS_PRF:C_DeriveKey KAT (16-byte output)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_WTLS_PRF",
                 )
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
@@ -1085,9 +1090,12 @@ class TestWTLSPRF:
                     _WTLS_PRF_SEED,
                     32,
                 )
-                assert long == expected, (
-                    "CKM_WTLS_PRF 32-byte output mismatch: "
-                    f"got {long.hex()}, expected {expected.hex()}"
+                assert_correct(
+                    actual=long,
+                    expected=expected,
+                    label="CKM_WTLS_PRF:C_DeriveKey KAT (32-byte output)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_WTLS_PRF",
                 )
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
