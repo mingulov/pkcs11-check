@@ -66,6 +66,26 @@ def crashes_from_results(results_json: Path | None) -> list[dict[str, Any]]:
     return crashes
 
 
+def passed_from_results(results_json: Path | None) -> int | None:
+    """Read ``summary.passed`` from a ``results.json`` file, if available.
+
+    Returns ``None`` when the file is missing/unreadable or carries no
+    ``summary.passed`` integer, so the report header simply omits the
+    ``passed`` token in that case.
+    """
+    if results_json is None:
+        return None
+    try:
+        payload = json.loads(results_json.read_text())
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    summary = payload.get("summary") if isinstance(payload, dict) else None
+    if not isinstance(summary, dict):
+        return None
+    passed = summary.get("passed")
+    return passed if isinstance(passed, int) else None
+
+
 def _parse_named(values: list[str] | None, default_provider: str | None) -> dict[str, Path]:
     """Parse repeated ``NAME=path`` (or bare ``path`` for a single provider)."""
     out: dict[str, Path] = {}
@@ -107,8 +127,9 @@ def _write_provider(
     provider: str,
     groups: list[dict[str, Any]],
     out_dir: Path,
+    pass_count: int | None = None,
 ) -> None:
-    md = render_provider(provider, groups)
+    md = render_provider(provider, groups, pass_count=pass_count)
     (out_dir / f"{provider}.md").write_text(md)
     with (out_dir / f"{provider}.jsonl").open("w") as fh:
         for group in groups:
@@ -185,11 +206,12 @@ def main(argv: list[str] | None = None) -> int:
 
     provider_groups: dict[str, list[dict[str, Any]]] = {}
     for provider, report_path in report_logs.items():
-        crashes = crashes_from_results(results_jsons.get(provider))
+        results_json = results_jsons.get(provider)
+        crashes = crashes_from_results(results_json)
         groups = extract_groups(report_path, crashes=crashes)
         enrich(groups, module_issues_text=module_issues, provider=provider)
         provider_groups[provider] = groups
-        _write_provider(provider, groups, out_dir)
+        _write_provider(provider, groups, out_dir, pass_count=passed_from_results(results_json))
 
     if len(provider_groups) > 1:
         correlation = correlate(provider_groups)
