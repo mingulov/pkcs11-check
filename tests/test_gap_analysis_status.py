@@ -1435,7 +1435,8 @@ def test_gap_analysis_marks_x942_value_len_truncation_as_added() -> None:
     doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
 
     assert "test_x942_dh_derive_rfc5114_value_len_truncation" in x942
-    assert "X9.42 DH CKA_VALUE_LEN=16 must keep the rightmost bytes" in x942
+    # The truncation-keeps-rightmost-bytes verdict is now expressed via assert_correct().
+    assert "CKA_VALUE_LEN truncation keeps rightmost bytes" in x942
 
     assert "X9.42 DH requested-value-length truncation coverage" in doc_flat
 

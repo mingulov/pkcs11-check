@@ -20,6 +20,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     LengthArg,
     PackedMechanism,
@@ -94,6 +95,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     classify_negative_rv,
     is_known_error,
     reject_or_classify,
@@ -336,8 +338,22 @@ def _read_x942_params(
     assert isinstance(prime, bytes)
     assert isinstance(base, bytes)
     assert isinstance(subprime, bytes)
-    assert prime_bits == expected_prime_bits
-    assert subprime_bits == expected_subprime_bits
+    assert_correct(
+        actual=prime_bits,
+        expected=expected_prime_bits,
+        label="CKM_X9_42_DH_PARAMETER_GEN:CKA_PRIME_BITS readback",
+        operation="C_GenerateKey",
+        mechanism="CKM_X9_42_DH_PARAMETER_GEN",
+        kind="metadata",
+    )
+    assert_correct(
+        actual=subprime_bits,
+        expected=expected_subprime_bits,
+        label="CKM_X9_42_DH_PARAMETER_GEN:CKA_SUBPRIME_BITS readback",
+        operation="C_GenerateKey",
+        mechanism="CKM_X9_42_DH_PARAMETER_GEN",
+        kind="metadata",
+    )
     assert len(prime) * 8 >= expected_prime_bits
     assert len(base) > 0
     assert len(subprime) * 8 >= expected_subprime_bits
@@ -822,8 +838,22 @@ class TestX942DHKeyPairGen:
         try:
             pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert pub_kt == CKK_X9_42_DH
-            assert priv_kt == CKK_X9_42_DH
+            assert_correct(
+                actual=pub_kt,
+                expected=CKK_X9_42_DH,
+                label="CKM_X9_42_DH_KEY_PAIR_GEN:public-key CKA_KEY_TYPE readback",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_kt,
+                expected=CKK_X9_42_DH,
+                label="CKM_X9_42_DH_KEY_PAIR_GEN:private-key CKA_KEY_TYPE readback",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -834,7 +864,14 @@ class TestX942DHKeyPairGen:
         pub, priv = _generate_x942_keypair(rs)
         try:
             pub_prime = read_attributes(rs.raw, rs.sh, pub, [CKA_PRIME])[CKA_PRIME]
-            assert pub_prime == X942_PRIME_2048
+            assert_correct(
+                actual=pub_prime,
+                expected=X942_PRIME_2048,
+                label="CKM_X9_42_DH_KEY_PAIR_GEN:public-key CKA_PRIME matches params",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -845,7 +882,14 @@ class TestX942DHKeyPairGen:
         pub, priv = _generate_x942_keypair(rs)
         try:
             pub_subprime = read_attributes(rs.raw, rs.sh, pub, [CKA_SUBPRIME])[CKA_SUBPRIME]
-            assert pub_subprime == X942_SUBPRIME
+            assert_correct(
+                actual=pub_subprime,
+                expected=X942_SUBPRIME,
+                label="CKM_X9_42_DH_KEY_PAIR_GEN:public-key CKA_SUBPRIME matches params",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -886,7 +930,13 @@ class TestX942DHDerive:
 
             va = read_attributes(rs.raw, rs.sh, alice_shared, [CKA_VALUE])[CKA_VALUE]
             vb = read_attributes(rs.raw, rs.sh, bob_shared, [CKA_VALUE])[CKA_VALUE]
-            assert va == vb
+            assert_correct(
+                actual=va,
+                expected=vb,
+                label="CKM_X9_42_DH_DERIVE:shared-secret agreement (A*B == B*A)",
+                operation="C_DeriveKey",
+                mechanism="CKM_X9_42_DH_DERIVE",
+            )
         finally:
             for h in (alice_pub, alice_priv, bob_pub, bob_priv):
                 destroy_quietly(rs.raw, rs.sh, h)
@@ -917,7 +967,18 @@ class TestX942DHDerive:
 
             plaintext = b"X9.42 DH test!!" + b"\x00"  # 16 bytes for AES-ECB
             ct = encrypt_single(rs.raw, rs.sh, shared_key, CKM_AES_ECB, plaintext)
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_AES_ECB:ciphertext must differ from plaintext",
+                    operation="C_Encrypt",
+                    mechanism="CKM_AES_ECB",
+                    summary=(
+                        "CKM_AES_ECB with an X9.42-DH-derived key returned ciphertext "
+                        "equal to the plaintext -- encryption was a no-op"
+                    ),
+                )
 
             bob_key = _x942_derive_aes(
                 rs,
@@ -926,7 +987,13 @@ class TestX942DHDerive:
                 extra_attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
             )
             pt = decrypt_single(rs.raw, rs.sh, bob_key, CKM_AES_ECB, ct)
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_X9_42_DH_DERIVE:AES-ECB roundtrip (both parties)",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_ECB",
+            )
         finally:
             for h in (alice_pub, alice_priv, bob_pub, bob_priv):
                 destroy_quietly(rs.raw, rs.sh, h)
@@ -1176,7 +1243,14 @@ class TestX942DHDerive:
                 "CKM_X9_42_DH_DERIVE RFC 5114 exact vector",
             )
             value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert value == _X942_RFC5114_EXPECTED_SECRET_32
+            assert_correct(
+                actual=value,
+                expected=_X942_RFC5114_EXPECTED_SECRET_32,
+                label="CKM_X9_42_DH_DERIVE:C_DeriveKey KAT (RFC 5114)",
+                operation="C_DeriveKey",
+                mechanism="CKM_X9_42_DH_DERIVE",
+                source="RFC 5114",
+            )
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -1235,10 +1309,20 @@ class TestX942DHDerive:
                 )
                 derived_values[requested_len] = value
 
-            assert derived_values[32] == _X942_RFC5114_EXPECTED_SECRET_32
-            assert derived_values[16] == derived_values[32][-16:], (
-                "X9.42 DH CKA_VALUE_LEN=16 must keep the rightmost bytes "
-                "of the longer derived secret"
+            assert_correct(
+                actual=derived_values[32],
+                expected=_X942_RFC5114_EXPECTED_SECRET_32,
+                label="CKM_X9_42_DH_DERIVE:C_DeriveKey KAT (RFC 5114, len=32)",
+                operation="C_DeriveKey",
+                mechanism="CKM_X9_42_DH_DERIVE",
+                source="RFC 5114",
+            )
+            assert_correct(
+                actual=derived_values[16],
+                expected=derived_values[32][-16:],
+                label="CKM_X9_42_DH_DERIVE:CKA_VALUE_LEN truncation keeps rightmost bytes",
+                operation="C_DeriveKey",
+                mechanism="CKM_X9_42_DH_DERIVE",
             )
         finally:
             for derived in derived_keys:
@@ -1341,7 +1425,13 @@ class TestX942DHDerive:
             )
             plaintext = b"x9.42 concat kdf"
             ciphertext = encrypt_single(rs.raw, rs.sh, derived, CKM_AES_ECB, plaintext)
-            assert decrypt_single(rs.raw, rs.sh, derived, CKM_AES_ECB, ciphertext) == plaintext
+            assert_correct(
+                actual=decrypt_single(rs.raw, rs.sh, derived, CKM_AES_ECB, ciphertext),
+                expected=plaintext,
+                label="CKM_X9_42_DH_DERIVE:AES-ECB roundtrip (CKD_SHA1_KDF_CONCATENATE)",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_ECB",
+            )
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -1393,7 +1483,13 @@ class TestX942DHDerive:
             )
             plaintext = b"x9.42 asn1 kdf.."
             ciphertext = encrypt_single(rs.raw, rs.sh, derived, CKM_AES_ECB, plaintext)
-            assert decrypt_single(rs.raw, rs.sh, derived, CKM_AES_ECB, ciphertext) == plaintext
+            assert_correct(
+                actual=decrypt_single(rs.raw, rs.sh, derived, CKM_AES_ECB, ciphertext),
+                expected=plaintext,
+                label="CKM_X9_42_DH_DERIVE:AES-ECB roundtrip (CKD_SHA1_KDF_ASN1)",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_ECB",
+            )
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -1536,7 +1632,13 @@ class TestX942DHParameterGen:
 
             va = read_attributes(rs.raw, rs.sh, alice_shared, [CKA_VALUE])[CKA_VALUE]
             vb = read_attributes(rs.raw, rs.sh, bob_shared, [CKA_VALUE])[CKA_VALUE]
-            assert va == vb
+            assert_correct(
+                actual=va,
+                expected=vb,
+                label="CKM_X9_42_DH_DERIVE:shared-secret agreement (generated params)",
+                operation="C_DeriveKey",
+                mechanism="CKM_X9_42_DH_DERIVE",
+            )
         finally:
             for h in (alice_pub, alice_priv, bob_pub, bob_priv, alice_shared, bob_shared, dp):
                 if h:
@@ -1626,7 +1728,13 @@ class TestX942DHHybridDerive:
             assert isinstance(alice_value, bytes)
             assert isinstance(bob_value, bytes)
             assert len(alice_value) == _X942_EXTENDED_SECRET_LEN
-            assert alice_value == bob_value
+            assert_correct(
+                actual=alice_value,
+                expected=bob_value,
+                label="CKM_X9_42_DH_HYBRID_DERIVE:shared-secret agreement",
+                operation="C_DeriveKey",
+                mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
+            )
             assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
         finally:
             for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
@@ -1690,9 +1798,12 @@ class TestX942DHHybridDerive:
                 assert len(value) == requested_len
                 derived_values[requested_len] = value
 
-            assert derived_values[16] == derived_values[_X942_EXTENDED_SECRET_LEN][-16:], (
-                "X9.42 hybrid CKA_VALUE_LEN=16 must keep the rightmost bytes "
-                "of the longer derived secret"
+            assert_correct(
+                actual=derived_values[16],
+                expected=derived_values[_X942_EXTENDED_SECRET_LEN][-16:],
+                label="CKM_X9_42_DH_HYBRID_DERIVE:CKA_VALUE_LEN truncation keeps rightmost bytes",
+                operation="C_DeriveKey",
+                mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
             )
         finally:
             for handle in (*alice[:4], *bob[:4], *derived_keys):
@@ -1770,7 +1881,13 @@ class TestX942DHHybridDerive:
             bob_value = read_attributes(rs.raw, rs.sh, bob_secret, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(alice_value, bytes)
             assert isinstance(bob_value, bytes)
-            assert alice_value == bob_value
+            assert_correct(
+                actual=alice_value,
+                expected=bob_value,
+                label="CKM_X9_42_DH_HYBRID_DERIVE:shared-secret agreement (concat KDF)",
+                operation="C_DeriveKey",
+                mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
+            )
             assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
         finally:
             for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
@@ -1848,7 +1965,13 @@ class TestX942DHHybridDerive:
             bob_value = read_attributes(rs.raw, rs.sh, bob_secret, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(alice_value, bytes)
             assert isinstance(bob_value, bytes)
-            assert alice_value == bob_value
+            assert_correct(
+                actual=alice_value,
+                expected=bob_value,
+                label="CKM_X9_42_DH_HYBRID_DERIVE:shared-secret agreement (CKD_SHA1_KDF_ASN1)",
+                operation="C_DeriveKey",
+                mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
+            )
             assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
         finally:
             for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
@@ -2011,7 +2134,13 @@ class TestX942MQVDerive:
             assert isinstance(alice_value, bytes)
             assert isinstance(bob_value, bytes)
             assert len(alice_value) == _X942_EXTENDED_SECRET_LEN
-            assert alice_value == bob_value
+            assert_correct(
+                actual=alice_value,
+                expected=bob_value,
+                label="CKM_X9_42_MQV_DERIVE:shared-secret agreement",
+                operation="C_DeriveKey",
+                mechanism="CKM_X9_42_MQV_DERIVE",
+            )
             assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
         finally:
             for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
@@ -2076,9 +2205,12 @@ class TestX942MQVDerive:
                 assert len(value) == requested_len
                 derived_values[requested_len] = value
 
-            assert derived_values[16] == derived_values[_X942_EXTENDED_SECRET_LEN][-16:], (
-                "X9.42 MQV CKA_VALUE_LEN=16 must keep the rightmost bytes "
-                "of the longer derived secret"
+            assert_correct(
+                actual=derived_values[16],
+                expected=derived_values[_X942_EXTENDED_SECRET_LEN][-16:],
+                label="CKM_X9_42_MQV_DERIVE:CKA_VALUE_LEN truncation keeps rightmost bytes",
+                operation="C_DeriveKey",
+                mechanism="CKM_X9_42_MQV_DERIVE",
             )
         finally:
             for handle in (*alice[:4], *bob[:4], *derived_keys):
@@ -2158,7 +2290,13 @@ class TestX942MQVDerive:
             bob_value = read_attributes(rs.raw, rs.sh, bob_secret, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(alice_value, bytes)
             assert isinstance(bob_value, bytes)
-            assert alice_value == bob_value
+            assert_correct(
+                actual=alice_value,
+                expected=bob_value,
+                label="CKM_X9_42_MQV_DERIVE:shared-secret agreement (CKD_SHA1_KDF_CONCATENATE)",
+                operation="C_DeriveKey",
+                mechanism="CKM_X9_42_MQV_DERIVE",
+            )
             assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
         finally:
             for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
@@ -2238,7 +2376,13 @@ class TestX942MQVDerive:
             bob_value = read_attributes(rs.raw, rs.sh, bob_secret, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(alice_value, bytes)
             assert isinstance(bob_value, bytes)
-            assert alice_value == bob_value
+            assert_correct(
+                actual=alice_value,
+                expected=bob_value,
+                label="CKM_X9_42_MQV_DERIVE:shared-secret agreement (CKD_SHA1_KDF_ASN1)",
+                operation="C_DeriveKey",
+                mechanism="CKM_X9_42_MQV_DERIVE",
+            )
             assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
         finally:
             for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
