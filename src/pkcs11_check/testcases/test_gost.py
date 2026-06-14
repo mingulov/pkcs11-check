@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -63,7 +64,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import assert_correct, xfail_if_known_ckr
 
 pytestmark = pytest.mark.full
 
@@ -247,8 +248,22 @@ class TestGOST28147Encryption:
                 _do,
                 "CKM_GOST28147_ECB RFC 8891 KAT not operational",
             )
-            assert ciphertext == _GOST28147_RFC8891_MAGMA_CIPHERTEXT
-            assert plaintext == _GOST28147_RFC8891_MAGMA_PLAINTEXT
+            assert_correct(
+                actual=ciphertext,
+                expected=_GOST28147_RFC8891_MAGMA_CIPHERTEXT,
+                label="CKM_GOST28147_ECB:encrypt RFC 8891 Magma KAT",
+                operation="C_Encrypt",
+                mechanism="CKM_GOST28147_ECB",
+                source="RFC8891",
+            )
+            assert_correct(
+                actual=plaintext,
+                expected=_GOST28147_RFC8891_MAGMA_PLAINTEXT,
+                label="CKM_GOST28147_ECB:decrypt RFC 8891 Magma KAT",
+                operation="C_Decrypt",
+                mechanism="CKM_GOST28147_ECB",
+                source="RFC8891",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -274,7 +289,13 @@ class TestGOST28147Encryption:
             def _do() -> None:
                 ct = encrypt_single(rs.raw, rs.sh, key, CKM_GOST28147_ECB, _TWO_BLOCKS)
                 pt = decrypt_single(rs.raw, rs.sh, key, CKM_GOST28147_ECB, ct)
-                assert pt == _TWO_BLOCKS
+                assert_correct(
+                    actual=pt,
+                    expected=_TWO_BLOCKS,
+                    label="CKM_GOST28147_ECB:decrypt roundtrip",
+                    operation="C_Decrypt",
+                    mechanism="CKM_GOST28147_ECB",
+                )
 
             _try_or_xfail(_do, "CKM_GOST28147_ECB not operational")
         finally:
@@ -299,7 +320,15 @@ class TestGOST28147Encryption:
             def _do() -> None:
                 ct1 = encrypt_single(rs.raw, rs.sh, key1, CKM_GOST28147_ECB, _TWO_BLOCKS)
                 ct2 = encrypt_single(rs.raw, rs.sh, key2, CKM_GOST28147_ECB, _TWO_BLOCKS)
-                assert ct1 != ct2, "Different keys produced identical ECB ciphertext"
+                if ct1 == ct2:
+                    classify(
+                        "wrong_result",
+                        kind="crypto",
+                        label="CKM_GOST28147_ECB:encrypt key independence",
+                        operation="C_Encrypt",
+                        mechanism="CKM_GOST28147_ECB",
+                        summary="different keys produced identical ECB ciphertext -- key not used",
+                    )
 
             _try_or_xfail(_do, "CKM_GOST28147_ECB not operational")
         finally:
@@ -343,7 +372,13 @@ class TestGOST28147Encryption:
                     ct,
                     mech_param=mech_bytes(CKM_GOST28147, iv),
                 )
-                assert pt == _TWO_BLOCKS
+                assert_correct(
+                    actual=pt,
+                    expected=_TWO_BLOCKS,
+                    label="CKM_GOST28147:decrypt roundtrip",
+                    operation="C_Decrypt",
+                    mechanism="CKM_GOST28147",
+                )
 
             _try_or_xfail(_do, "CKM_GOST28147 not operational")
         finally:
@@ -401,7 +436,14 @@ class TestGOST28147MAC:
                 return mac
 
             mac = _try_or_xfail(_do, "CKM_GOST28147_MAC RFC 7836 KAT not operational")
-            assert mac == _GOST28147_RFC7836_CEK_MAC
+            assert_correct(
+                actual=mac,
+                expected=_GOST28147_RFC7836_CEK_MAC,
+                label="CKM_GOST28147_MAC:sign RFC 7836 CEK_MAC KAT",
+                operation="C_Sign",
+                mechanism="CKM_GOST28147_MAC",
+                source="RFC7836",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -488,7 +530,14 @@ class TestGOST28147KeyWrap:
                 )
 
             wrapped = _try_or_xfail(_do, "CKM_GOST28147_KEY_WRAP RFC 7836 KAT not operational")
-            assert wrapped == _GOST28147_RFC7836_WRAPPED_KEY
+            assert_correct(
+                actual=wrapped,
+                expected=_GOST28147_RFC7836_WRAPPED_KEY,
+                label="CKM_GOST28147_KEY_WRAP:wrap RFC 7836 KAT",
+                operation="C_WrapKey",
+                mechanism="CKM_GOST28147_KEY_WRAP",
+                source="RFC7836",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, target_key)
             destroy_quietly(rs.raw, rs.sh, wrapping_key)
@@ -601,7 +650,15 @@ class TestGOSTR3411Digest:
         def _do() -> None:
             d1 = digest_single(rs.raw, rs.sh, CKM_GOSTR3411, data)
             d2 = digest_single(rs.raw, rs.sh, CKM_GOSTR3411, data)
-            assert d1 == d2, "CKM_GOSTR3411 digest is not deterministic"
+            if d1 != d2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_GOSTR3411:digest determinism",
+                    operation="C_Digest",
+                    mechanism="CKM_GOSTR3411",
+                    summary="two digests of the same input differ -- digest is not deterministic",
+                )
 
         _try_or_xfail(_do, "CKM_GOSTR3411 digest not operational")
 

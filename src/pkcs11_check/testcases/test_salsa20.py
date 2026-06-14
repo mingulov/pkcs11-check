@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_chacha20, mech_salsa20, mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -44,6 +45,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
+    assert_correct,
     xfail_if_known_ckr,
 )
 
@@ -142,7 +144,15 @@ class TestSalsa20:
                 plaintext,
                 mech_param=param,
             )
-            assert ciphertext != plaintext
+            if ciphertext == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_SALSA20:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_SALSA20",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             assert len(ciphertext) == len(plaintext)  # stream cipher: no padding
             recovered = decrypt_single(
                 rs.raw,
@@ -152,7 +162,13 @@ class TestSalsa20:
                 ciphertext,
                 mech_param=param,
             )
-            assert recovered == plaintext
+            assert_correct(
+                actual=recovered,
+                expected=plaintext,
+                label="CKM_SALSA20:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_SALSA20",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -188,7 +204,16 @@ class TestSalsa20:
                 plaintext,
                 mech_param=mech_salsa20(CKM_SALSA20, nonce2),
             )
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_SALSA20:encrypt nonce independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_SALSA20",
+                    summary="different nonces (same key) produced identical "
+                    "ciphertext -- nonce ignored",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -284,7 +309,15 @@ class TestPoly1305:
             data = b"same message for both keys"
             tag1 = sign_single(rs.raw, rs.sh, key1, CKM_POLY1305, data)
             tag2 = sign_single(rs.raw, rs.sh, key2, CKM_POLY1305, data)
-            assert tag1 != tag2
+            if tag1 == tag2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_POLY1305:sign key independence",
+                    operation="C_Sign",
+                    mechanism="CKM_POLY1305",
+                    summary="different keys produced identical Poly1305 tag -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -335,7 +368,15 @@ class TestChaCha20Standalone:
                 plaintext,
                 mech_param=param,
             )
-            assert ciphertext != plaintext
+            if ciphertext == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_CHACHA20:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_CHACHA20",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             assert len(ciphertext) == len(plaintext)  # stream cipher: no padding
             recovered = decrypt_single(
                 rs.raw,
@@ -345,7 +386,13 @@ class TestChaCha20Standalone:
                 ciphertext,
                 mech_param=param,
             )
-            assert recovered == plaintext
+            assert_correct(
+                actual=recovered,
+                expected=plaintext,
+                label="CKM_CHACHA20:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_CHACHA20",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -383,7 +430,16 @@ class TestChaCha20Standalone:
                 plaintext,
                 mech_param=mech_chacha20(CKM_CHACHA20, nonce2),
             )
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_CHACHA20:encrypt nonce independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_CHACHA20",
+                    summary="different nonces (same key) produced identical "
+                    "ciphertext -- nonce ignored",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -422,6 +478,15 @@ class TestChaCha20Standalone:
                 plaintext,
                 mech_param=mech_chacha20(CKM_CHACHA20, _CHACHA20_NONCE, counter=1),
             )
-            assert ct0 != ct1
+            if ct0 == ct1:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_CHACHA20:encrypt block-counter independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_CHACHA20",
+                    summary="different block counters (same key/nonce) produced "
+                    "identical ciphertext -- counter ignored",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
