@@ -55,7 +55,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_reject
 from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
 from pkcs11_check.testcases._signature_policy import xfail_if_op_not_operational
-from pkcs11_check.testcases.conftest import extract_ec_point
+from pkcs11_check.testcases.conftest import assert_correct, extract_ec_point
 
 pytestmark = pytest.mark.interop
 
@@ -291,7 +291,14 @@ class TestAESInterop:
             cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())  # nosec B305
             dec = cipher.decryptor()
             pt = dec.update(ct) + dec.finalize()
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="AES_ECB:P11-encrypt cryptography-decrypt round-trip",
+                operation="C_Encrypt",
+                mechanism="CKM_AES_ECB",
+                source="cryptography",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -326,7 +333,14 @@ class TestAESInterop:
                 pt = decrypt_single(rs.raw, rs.sh, key_h, CKM_AES_ECB, ct)
             except AssertionError as exc:
                 xfail_if_interop_operation_reject(exc, "AES_ECB decrypt")
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="AES_ECB:cryptography-encrypt P11-decrypt round-trip",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_ECB",
+                source="cryptography",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -366,7 +380,14 @@ class TestAESInterop:
 
             aesgcm = AESGCM(key_bytes)
             pt = aesgcm.decrypt(nonce, ct_tag, b"")
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="AES_GCM:P11-encrypt cryptography-decrypt round-trip",
+                operation="C_Encrypt",
+                mechanism="CKM_AES_GCM",
+                source="cryptography",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -406,7 +427,14 @@ class TestHMACInterop:
             h.update(data)
             crypto_mac = h.finalize()
 
-            assert p11_mac == crypto_mac
+            assert_correct(
+                actual=p11_mac,
+                expected=crypto_mac,
+                label="SHA256_HMAC:MAC cross-verify vs cryptography",
+                operation="C_Sign",
+                mechanism="CKM_SHA256_HMAC",
+                source="cryptography",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -440,6 +468,13 @@ class TestHMACInterop:
             h.update(data)
             crypto_mac = h.finalize()
 
-            assert p11_mac == crypto_mac
+            assert_correct(
+                actual=p11_mac,
+                expected=crypto_mac,
+                label="SHA_1_HMAC:MAC cross-verify vs cryptography",
+                operation="C_Sign",
+                mechanism="CKM_SHA_1_HMAC",
+                source="cryptography",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)

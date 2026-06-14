@@ -37,7 +37,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import assert_correct, xfail_if_known_ckr
 from pkcs11_check.testcases.data import KAT_DIR as VECTORS_DIR
 from pkcs11_check.testcases.data import load_json_cached
 
@@ -166,7 +166,14 @@ class TestSHA256KAT:
         msg = bytes.fromhex(vec["msg"])
         expected = bytes.fromhex(vec["digest"])
         result = _digest_kat_or_xfail(rs, CKM_SHA256, "SHA256", msg)
-        assert result == expected
+        assert_correct(
+            actual=result,
+            expected=expected,
+            label="SHA256:digest KAT",
+            operation="C_Digest",
+            mechanism="CKM_SHA256",
+            source="NIST SHAVS",
+        )
 
 
 class TestSHA512KAT:
@@ -182,7 +189,14 @@ class TestSHA512KAT:
         msg = bytes.fromhex(vec["msg"])
         expected = bytes.fromhex(vec["digest"])
         result = _digest_kat_or_xfail(rs, CKM_SHA512, "SHA512", msg)
-        assert result == expected
+        assert_correct(
+            actual=result,
+            expected=expected,
+            label="SHA512:digest KAT",
+            operation="C_Digest",
+            mechanism="CKM_SHA512",
+            source="NIST SHAVS",
+        )
 
 
 class TestSHA1KAT:
@@ -198,7 +212,14 @@ class TestSHA1KAT:
         msg = bytes.fromhex(vec["msg"])
         expected = bytes.fromhex(vec["digest"])
         result = _digest_kat_or_xfail(rs, CKM_SHA_1, "SHA_1", msg)
-        assert result == expected
+        assert_correct(
+            actual=result,
+            expected=expected,
+            label="SHA_1:digest KAT",
+            operation="C_Digest",
+            mechanism="CKM_SHA_1",
+            source="NIST SHAVS",
+        )
 
 
 class TestSHA384KAT:
@@ -214,7 +235,14 @@ class TestSHA384KAT:
         msg = bytes.fromhex(vec["msg"])
         expected = bytes.fromhex(vec["digest"])
         result = _digest_kat_or_xfail(rs, CKM_SHA384, "SHA384", msg)
-        assert result == expected
+        assert_correct(
+            actual=result,
+            expected=expected,
+            label="SHA384:digest KAT",
+            operation="C_Digest",
+            mechanism="CKM_SHA384",
+            source="NIST SHAVS",
+        )
 
 
 class TestSHA224KAT:
@@ -230,7 +258,14 @@ class TestSHA224KAT:
         msg = bytes.fromhex(vec["msg"])
         expected = bytes.fromhex(vec["digest"])
         result = _digest_kat_or_xfail(rs, CKM_SHA224, "SHA224", msg)
-        assert result == expected
+        assert_correct(
+            actual=result,
+            expected=expected,
+            label="SHA224:digest KAT",
+            operation="C_Digest",
+            mechanism="CKM_SHA224",
+            source="NIST SHAVS",
+        )
 
 
 class TestAESECBKAT:
@@ -248,7 +283,14 @@ class TestAESECBKAT:
         expected_ct = bytes.fromhex(vec["ciphertext"])
         try:
             result = _aes_kat_encrypt_or_xfail(rs, key, plaintext)
-            assert result == expected_ct
+            assert_correct(
+                actual=result,
+                expected=expected_ct,
+                label="AES_ECB:encrypt KAT",
+                operation="C_Encrypt",
+                mechanism="CKM_AES_ECB",
+                source="NIST SP 800-38A",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -264,6 +306,13 @@ class TestAESECBKAT:
         expected_pt = bytes.fromhex(vec["plaintext"])
         try:
             result = _aes_kat_decrypt_or_xfail(rs, key, ciphertext)
-            assert result == expected_pt
+            assert_correct(
+                actual=result,
+                expected=expected_pt,
+                label="AES_ECB:decrypt KAT",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_ECB",
+                source="NIST SP 800-38A",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

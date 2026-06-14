@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes
 from pkcs11_check.raw.recipes import (
     copy_object,
@@ -52,6 +53,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
     is_known_error,
@@ -74,7 +76,13 @@ class TestRoundTripInvariants:
             plaintext = b"roundtrip_verify"  # exactly 16 bytes
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, plaintext)
             pt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, ct)
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="AES_ECB:decrypt(encrypt(pt)) roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_ECB",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -101,7 +109,13 @@ class TestRoundTripInvariants:
                 ct,
                 mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="AES_CBC_PAD:decrypt(encrypt(pt)) roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_CBC_PAD",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -187,7 +201,13 @@ class TestRoundTripInvariants:
             )
             try:
                 unwrapped_attrs = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])
-                assert unwrapped_attrs[CKA_VALUE] == key_bytes
+                assert_correct(
+                    actual=unwrapped_attrs[CKA_VALUE],
+                    expected=key_bytes,
+                    label="AES_KEY_WRAP:wrap/unwrap preserves key material",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_AES_KEY_WRAP",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -228,7 +248,18 @@ class TestDeterminismInvariants:
             plaintext = b"different keys!!"
             ct1 = encrypt_single(rs.raw, rs.sh, k1, CKM_AES_ECB, plaintext)
             ct2 = encrypt_single(rs.raw, rs.sh, k2, CKM_AES_ECB, plaintext)
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="AES_ECB:distinct keys produce identical ciphertext",
+                    operation="C_Encrypt",
+                    mechanism="CKM_AES_ECB",
+                    summary=(
+                        "AES_ECB: two different keys produced identical ciphertext for the "
+                        "same plaintext -- encryption ignores the key (crypto break)"
+                    ),
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, k1)
             destroy_quietly(rs.raw, rs.sh, k2)
@@ -285,7 +316,13 @@ class TestCopyEquivalence:
                 plaintext = b"cross-decrypt!!!"
                 ct = encrypt_single(rs.raw, rs.sh, original, CKM_AES_ECB, plaintext)
                 pt = decrypt_single(rs.raw, rs.sh, copy, CKM_AES_ECB, ct)
-                assert pt == plaintext
+                assert_correct(
+                    actual=pt,
+                    expected=plaintext,
+                    label="AES_ECB:copy decrypts original's ciphertext",
+                    operation="C_Decrypt",
+                    mechanism="CKM_AES_ECB",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, copy)
         finally:
