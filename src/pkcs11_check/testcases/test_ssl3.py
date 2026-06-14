@@ -25,6 +25,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_ulong,
     mech_bytes,
@@ -294,7 +295,14 @@ class TestSSL3PreMasterKeyGen:
                 destroy_quietly(rs.raw, rs.sh, key.value)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_PRE_MASTER_KEY_GEN not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_PRE_MASTER_KEY_GEN:C_GenerateKey",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
+                    summary=f"CKM_SSL3_PRE_MASTER_KEY_GEN not operational: {exc}",
+                )
             raise
 
     def test_generate_produces_random_output(self, p11_raw_session: Any) -> None:
@@ -342,7 +350,14 @@ class TestSSL3PreMasterKeyGen:
                 destroy_quietly(rs.raw, rs.sh, key1.value)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_PRE_MASTER_KEY_GEN not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_PRE_MASTER_KEY_GEN:C_GenerateKey",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
+                    summary=f"CKM_SSL3_PRE_MASTER_KEY_GEN not operational: {exc}",
+                )
             raise
 
 
@@ -391,7 +406,14 @@ class TestSSL3MasterKeyDerive:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_MASTER_KEY_DERIVE not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_MASTER_KEY_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE",
+                    summary=f"CKM_SSL3_MASTER_KEY_DERIVE not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pre_master)
@@ -438,7 +460,14 @@ class TestSSL3MasterKeyDerive:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_MASTER_KEY_DERIVE not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_MASTER_KEY_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE",
+                    summary=f"CKM_SSL3_MASTER_KEY_DERIVE not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pre_master)
@@ -490,7 +519,14 @@ class TestSSL3MasterKeyDeriveDH:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_MASTER_KEY_DERIVE_DH not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_MASTER_KEY_DERIVE_DH:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE_DH",
+                    summary=f"CKM_SSL3_MASTER_KEY_DERIVE_DH not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pre_master)
@@ -541,7 +577,14 @@ class TestSSL3MasterKeyDeriveDH:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_MASTER_KEY_DERIVE_DH not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_MASTER_KEY_DERIVE_DH:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE_DH",
+                    summary=f"CKM_SSL3_MASTER_KEY_DERIVE_DH not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pre_master)
@@ -598,7 +641,14 @@ class TestSSL3KeyAndMacDerive:
                 )
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_KEY_AND_MAC_DERIVE not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_KEY_AND_MAC_DERIVE:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
+                    summary=f"CKM_SSL3_KEY_AND_MAC_DERIVE not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, master_secret)
@@ -676,7 +726,14 @@ class TestSSL3KeyAndMacDerive:
                 )
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_KEY_AND_MAC_DERIVE not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_KEY_AND_MAC_DERIVE:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
+                    summary=f"CKM_SSL3_KEY_AND_MAC_DERIVE not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, master_secret)
@@ -744,7 +801,14 @@ class TestSSL3Mac:
             assert len(mac) == 16, f"Expected 16-byte MD5 MAC, got {len(mac)}"
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_MD5_MAC sign not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_MD5_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_MD5_MAC",
+                    summary=f"CKM_SSL3_MD5_MAC sign not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -778,7 +842,14 @@ class TestSSL3Mac:
             assert mac1 == mac2, "CKM_SSL3_MD5_MAC produced different MACs for identical input"
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_MD5_MAC not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_MD5_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_MD5_MAC",
+                    summary=f"CKM_SSL3_MD5_MAC not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -811,7 +882,14 @@ class TestSSL3Mac:
             assert mac_a != mac_b, "CKM_SSL3_MD5_MAC produced same MAC for different data"
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_MD5_MAC not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_MD5_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_MD5_MAC",
+                    summary=f"CKM_SSL3_MD5_MAC not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -836,7 +914,14 @@ class TestSSL3Mac:
             assert len(mac) == 20, f"Expected 20-byte SHA1 MAC, got {len(mac)}"
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_SHA1_MAC sign not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_SHA1_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_SHA1_MAC",
+                    summary=f"CKM_SSL3_SHA1_MAC sign not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -870,7 +955,14 @@ class TestSSL3Mac:
             assert mac1 == mac2, "CKM_SSL3_SHA1_MAC produced different MACs for identical input"
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_SHA1_MAC not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_SHA1_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_SHA1_MAC",
+                    summary=f"CKM_SSL3_SHA1_MAC not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -903,7 +995,14 @@ class TestSSL3Mac:
             assert mac_a != mac_b, "CKM_SSL3_SHA1_MAC produced same MAC for different data"
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_SHA1_MAC not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_SHA1_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_SHA1_MAC",
+                    summary=f"CKM_SSL3_SHA1_MAC not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -938,7 +1037,14 @@ class TestSSL3Mac:
             assert mac1 != mac2, "CKM_SSL3_MD5_MAC produced same MAC for different keys"
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_MD5_MAC not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_MD5_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_MD5_MAC",
+                    summary=f"CKM_SSL3_MD5_MAC not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -974,7 +1080,14 @@ class TestSSL3Mac:
             assert mac1 != mac2, "CKM_SSL3_SHA1_MAC produced same MAC for different keys"
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_SHA1_MAC not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_SHA1_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_SHA1_MAC",
+                    summary=f"CKM_SSL3_SHA1_MAC not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key2)
