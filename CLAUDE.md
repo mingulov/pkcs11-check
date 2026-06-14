@@ -75,7 +75,7 @@ gated on provider identity**. No per-provider config, baselines, or allowlists.
   they are not `xfail`ed.
 - Full model + kind rules: [docs/classification-model-design.md](docs/classification-model-design.md).
 
-Two spec-grounded refinements (design: docs/superpowers/specs/2026-06-10-advertised-capability-honesty-design.md):
+Two spec-grounded refinements (advertised-capability-honesty model):
 - **Sanctioned policy refusal = pass:** in the `test_mech_*` claim layer, a clean refusal with
   `CKR_OPERATION_NOT_VALIDATED` (PKCS#11 v3.2 validation-policy code) is conformant → **pass** +
   `compliance.note`. Any other clean refusal of an advertised (mechanism, operation) stays xfail.
@@ -140,7 +140,7 @@ auto-injects it for any un-migrated fail/xfail) and must NEVER be emitted by a t
 ### Fixture usage (performance vs isolation)
 - **`p11_module_session`**: Use for high-count vector-replay or read-only object import tests (e.g. Wycheproof, ACVP, CCTV, X.509 vectors). This fixture reuses one session/login per test file for massive speedup.
 - **`p11_raw_session`**: Use for everything else: security/FFI tests (where a crash must not kill a shared session), lifecycle/login tests, state-machine tests, destructive tests, or small files (< 15 tests) where the ROI is low.
-- **Audit Rule (2026-06-13)**: The migration of existing tests to shared sessions is complete (covering >95% of suite execution). Do not migrate the remaining 170+ files (security, lifecycle, low-count) to shared sessions; they must remain isolated on `p11_raw_session`. See [docs/findings/session-reuse-final-gap-analysis-2026-06-13.md](docs/findings/session-reuse-final-gap-analysis-2026-06-13.md) for the full breakdown.
+- **Audit Rule (2026-06-13)**: The migration of existing tests to shared sessions is complete (covering >95% of suite execution). Do not migrate the remaining 170+ files (security, lifecycle, low-count) to shared sessions; they must remain isolated on `p11_raw_session`.
 
 ### Module-specific behavior
 - Document module quirks in `docs/module-issues.md`, not as silent `pass` in code

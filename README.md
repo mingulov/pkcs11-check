@@ -124,7 +124,6 @@ src/pkcs11_check/
 - `docs/module-issues.md` — per-module bugs and quirks
 - `docs/test-universe.md` — collected product-test counts by group
 - `docs/mechanism-output-parameters.md` — generated IV/nonce/tag output-parameter coverage
-- `docs/todo.md` — public roadmap and known limitations
 - `docs/cve-regression.md` — CVE coverage tracker
 - `docs/file-isolation.md` — isolation runner design
 

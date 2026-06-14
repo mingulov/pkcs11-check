@@ -40,8 +40,8 @@ BouncyHSM v2.1.0 · pkcs11-mock v2.0.0
 
 ### Test Results
 
-Latest full provider matrix (`docs/matrix/baseline-2026-06-04.json`,
-2026-06-04), one row per distinct build. Validated by **two independent full
+Latest full provider matrix (baseline dated 2026-06-04), one row per distinct
+build. Validated by **two independent full
 sweeps** that agree; failures held or decreased on every provider vs the v0.1.2
 baseline (PC-6 keygen reclassification + gap-triage), crashes stable.
 
@@ -246,8 +246,8 @@ Findings are classified under a hardware-token threat model and are not CVE-grad
 vulnerability claims against upstream projects. The two CRITICAL rows are
 upstream-known properties of NSS softokn (software-only token) rather than
 defects; HIGH-severity issues span 4 modules; real SIGSEGV crashes in all 6
-modules. See [docs/release-v0.1.0.md](docs/release-v0.1.0.md) for the
-severity-model note and full breakdown.
+modules. See the v0.1.0 release notes for the severity-model note and full
+breakdown.
 
 ### Requirements
 

@@ -4,9 +4,6 @@ Some PKCS#11 mechanism parameter structures contain caller-owned buffers that a
 module may update during the operation. These are easy to miss because the
 operation result is not only returned through the normal output argument.
 
-See [mutable-mechanism-parameter-gap-analysis.md](mutable-mechanism-parameter-gap-analysis.md)
-for the current Approach A gap analysis and implementation priorities.
-
 ## Covered Surfaces
 
 - `CK_GCM_PARAMS.pIv` for vendor/provider-generated classic `CKM_AES_GCM` IVs.

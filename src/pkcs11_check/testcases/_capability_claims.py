@@ -14,7 +14,7 @@ roundtrip is classified here:
   positive-op row; same rationale as _operability.classify_kat_clean_error).
 - non-CKR exception            wrong-output assert or harness bug -> re-raise.
 
-Design: docs/superpowers/specs/2026-06-10-advertised-capability-honesty-design.md.
+Design: advertised-capability-honesty model (see docs/architecture.md).
 """
 
 from __future__ import annotations
