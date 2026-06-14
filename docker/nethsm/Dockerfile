@@ -2,12 +2,17 @@
 # Server and module talk over 127.0.0.1, so the target runs under network_mode: none.
 # nethsm-pkcs11 keygen auto-escalates to the NetHSM administrator (creds in p11nethsm.conf).
 
-# --- Builder: compile the PKCS#11 module from a release tag (glibc is fine here) ---
-FROM rust:slim AS builder
+# --- Builder: compile the PKCS#11 module with MUSL so it loads on the Alpine final stage.
+# The runtime image (nitrokey/nethsm:testing) is Alpine/musl and has no glibc loader
+# (ld-linux-x86-64.so.2), so a glibc-built .so fails to load. rust:alpine builds musl by
+# default; statically link OpenSSL so the .so has no external libssl dependency at run time. ---
+FROM rust:alpine AS builder
 ARG NETHSM_PKCS11_REF="v2.2.0"
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git gcc pkg-config libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache git musl-dev openssl-dev openssl-libs-static pkgconf perl make
+ENV OPENSSL_STATIC=1
+# musl defaults to static linking, which cannot produce a cdylib (.so). Disable crt-static so
+# the module builds as a dynamic musl shared library that loads on the Alpine runtime.
+ENV RUSTFLAGS="-C target-feature=-crt-static"
 RUN git clone --depth 1 --branch "$NETHSM_PKCS11_REF" \
     https://github.com/Nitrokey/nethsm-pkcs11.git /build/m
 WORKDIR /build/m
@@ -20,7 +25,7 @@ FROM nitrokey/nethsm:testing
 # which satisfies the suite's >=3.12 floor — so uv uses the system python directly (no managed
 # interpreter needed). bash: install-test-tools.sh and run-pkcs11-check.sh are bash scripts.
 # Build deps cover any sdist-only Python wheels and the fault-proxy compile.
-RUN apk add --no-cache bash curl ca-certificates gcc musl-dev \
+RUN apk add --no-cache bash curl ca-certificates gcc musl-dev libgcc \
     python3 python3-dev libffi-dev openssl-dev make
 
 # uv (the installer auto-detects the musl target).
