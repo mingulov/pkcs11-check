@@ -10,6 +10,7 @@ from typing import Any, NamedTuple, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import (
     attr_bytes,
@@ -146,9 +147,16 @@ def _gen_montgomery_wrap_keypair_or_xfail(rs: Any) -> tuple[int, int]:
             raise
 
     detail = "; ".join(str(exc) for exc in curve_rejects)
-    pytest.xfail(
-        "CKM_EC_MONTGOMERY_KEY_PAIR_GEN advertised but neither X25519 nor X448 "
-        f"keypair generation is available for ECDH-X-AES-KW setup: {detail}"
+    xfail_as(
+        "not_operational",
+        kind="crypto",
+        label="CKM_EC_MONTGOMERY_KEY_PAIR_GEN:ECDH-X-AES-KW setup",
+        operation="C_GenerateKeyPair",
+        mechanism="CKM_EC_MONTGOMERY_KEY_PAIR_GEN",
+        summary=(
+            "CKM_EC_MONTGOMERY_KEY_PAIR_GEN advertised but neither X25519 nor X448 "
+            f"keypair generation is available for ECDH-X-AES-KW setup: {detail}"
+        ),
     )
 
 
@@ -333,7 +341,14 @@ class TestAuthenticatedWrap:
                         CKR_MECHANISM_PARAM_INVALID,
                     },
                 ):
-                    pytest.xfail(f"AES-GCM authenticated generated-IV wrap rejected: {exc}")
+                    classify(
+                        "not_operational",
+                        kind="crypto",
+                        label="CKM_AES_GCM:C_WrapKeyAuthenticated (generated IV)",
+                        operation="C_WrapKeyAuthenticated",
+                        mechanism="CKM_AES_GCM",
+                        summary=f"AES-GCM authenticated generated-IV wrap rejected: {exc}",
+                    )
                 raise
             iv = wrap_mech.buffer_bytes("iv")
             tag = wrap_mech.buffer_bytes("tag")
