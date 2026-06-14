@@ -19,6 +19,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKC_X_509,
 )
+from pkcs11_check.testcases.conftest import assert_correct
 from pkcs11_check.testcases.x509.conftest import (
     import_cert_object,
     load_limbo_testcases,
@@ -100,7 +101,13 @@ class TestCertificateAttributes:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
             val = attrs[CKA_VALUE]
             if val != b"Hello world!":
-                assert val == der
+                assert_correct(
+                    actual=val,
+                    expected=der,
+                    label="X509:CKA_VALUE matches imported DER",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
 
             # CKA_CERTIFICATE_TYPE MUST be X_509
             try:

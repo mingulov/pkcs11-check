@@ -30,7 +30,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
     CKR_USER_NOT_LOGGED_IN,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 from pkcs11_check.testcases.x509.conftest import (
     import_cert_raw,
     load_limbo_testcases,
@@ -148,7 +148,13 @@ class TestLimboCertImport:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_LABEL])
             label = attrs[CKA_LABEL]
             if label != "Pkcs11Interop":
-                assert label == _portable_label(tc["id"])
+                assert_correct(
+                    actual=label,
+                    expected=_portable_label(tc["id"]),
+                    label="X509:CKA_LABEL round-trips on raw cert import",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
 
             if needed_attrs:
                 note(

@@ -40,7 +40,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 from pkcs11_check.testcases.x509.conftest import (
     _build_cert_template,
     import_cert_object,
@@ -136,7 +136,13 @@ class TestCertificateImport:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_CERTIFICATE_TYPE])
-            assert attrs[CKA_CERTIFICATE_TYPE] == CKC_X_509
+            assert_correct(
+                actual=attrs[CKA_CERTIFICATE_TYPE],
+                expected=CKC_X_509,
+                label="X509:CKA_CERTIFICATE_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not support CKA_CERTIFICATE_TYPE")
@@ -204,7 +210,13 @@ class TestCertificateExtractFields:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
             val = attrs[CKA_VALUE]
             if val != b"Hello world!":  # pkcs11-mock
-                assert val == ca_cert_der
+                assert_correct(
+                    actual=val,
+                    expected=ca_cert_der,
+                    label="X509:CKA_VALUE matches imported DER",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
         except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not support reading CKA_VALUE")
@@ -327,7 +339,13 @@ class TestCertificateExtractFields:
                 h,
                 [CKA_SUBJECT, CKA_ISSUER],
             )
-            assert attrs[CKA_SUBJECT] == attrs[CKA_ISSUER]
+            assert_correct(
+                actual=attrs[CKA_SUBJECT],
+                expected=attrs[CKA_ISSUER],
+                label="X509:self-signed CA CKA_SUBJECT == CKA_ISSUER",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not extract Subject/Issuer")

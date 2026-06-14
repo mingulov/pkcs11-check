@@ -32,6 +32,7 @@ from pkcs11_check.raw.types_std import (
     CKA_MODIFIABLE,
     CKA_TOKEN,
 )
+from pkcs11_check.testcases.conftest import assert_correct
 from pkcs11_check.testcases.x509.conftest import import_cert_object
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
@@ -150,7 +151,13 @@ class TestCertificateLifecycle:
             )
             try:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_ID])
-                assert attrs[CKA_ID] == cid
+                assert_correct(
+                    actual=attrs[CKA_ID],
+                    expected=cid,
+                    label="X509:CKA_ID readback after set on certificate",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError:
