@@ -216,7 +216,13 @@ class TestECDHKnownAnswer:
 
             secret_ab = read_attributes(rs.raw, rs.sh, key_ab, [CKA_VALUE])[CKA_VALUE]
             secret_ba = read_attributes(rs.raw, rs.sh, key_ba, [CKA_VALUE])[CKA_VALUE]
-            assert secret_ab == secret_ba
+            assert_correct(
+                actual=secret_ab,
+                expected=secret_ba,
+                label="CKM_ECDH1_DERIVE:shared-secret symmetric agreement",
+                operation="C_DeriveKey",
+                mechanism="CKM_ECDH1_DERIVE",
+            )
         finally:
             if key_ab:
                 destroy_quietly(rs.raw, rs.sh, key_ab)

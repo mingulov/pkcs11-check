@@ -67,7 +67,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import assert_correct, is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
 
@@ -214,7 +214,13 @@ class TestECDH1CofactorDerive:
 
             shared_ab = _ecdh_derive(rs, priv_a, point_b, CKM_ECDH1_COFACTOR_DERIVE)
             shared_ba = _ecdh_derive(rs, priv_b, point_a, CKM_ECDH1_COFACTOR_DERIVE)
-            assert _read_value(rs, shared_ab) == _read_value(rs, shared_ba)
+            assert_correct(
+                actual=_read_value(rs, shared_ab),
+                expected=_read_value(rs, shared_ba),
+                label="CKM_ECDH1_COFACTOR_DERIVE:shared-secret agreement (A<->B)",
+                operation="C_DeriveKey",
+                mechanism="CKM_ECDH1_COFACTOR_DERIVE",
+            )
         finally:
             if shared_ab:
                 destroy_quietly(rs.raw, rs.sh, shared_ab)
@@ -243,7 +249,13 @@ class TestECDH1CofactorDerive:
             shared_standard = _ecdh_derive(rs, priv_a, point_b, CKM_ECDH1_DERIVE)
             shared_cofactor = _ecdh_derive(rs, priv_a, point_b, CKM_ECDH1_COFACTOR_DERIVE)
             # secp256r1 has cofactor=1 so results must match
-            assert _read_value(rs, shared_standard) == _read_value(rs, shared_cofactor)
+            assert_correct(
+                actual=_read_value(rs, shared_standard),
+                expected=_read_value(rs, shared_cofactor),
+                label="CKM_ECDH1_COFACTOR_DERIVE:matches standard derive (cofactor=1)",
+                operation="C_DeriveKey",
+                mechanism="CKM_ECDH1_COFACTOR_DERIVE",
+            )
         finally:
             if shared_standard:
                 destroy_quietly(rs.raw, rs.sh, shared_standard)
@@ -271,7 +283,16 @@ class TestECDH1CofactorDerive:
 
             shared_ab = _ecdh_derive(rs, priv_a, point_b, CKM_ECDH1_COFACTOR_DERIVE)
             shared_ac = _ecdh_derive(rs, priv_a, point_c, CKM_ECDH1_COFACTOR_DERIVE)
-            assert _read_value(rs, shared_ab) != _read_value(rs, shared_ac)
+            if _read_value(rs, shared_ab) == _read_value(rs, shared_ac):
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_ECDH1_COFACTOR_DERIVE:peer dependence",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_ECDH1_COFACTOR_DERIVE",
+                    summary="different peer public keys derived identical secret -- "
+                    "secret does not depend on the peer",
+                )
         finally:
             if shared_ab:
                 destroy_quietly(rs.raw, rs.sh, shared_ab)
@@ -310,7 +331,14 @@ class TestECDH1CofactorDerive:
                 raise  # unreachable
 
             attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_KEY_TYPE, CKA_VALUE])
-            assert attrs[CKA_KEY_TYPE] == CKK_AES
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=CKK_AES,
+                label="CKM_ECDH1_COFACTOR_DERIVE:derived CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                mechanism="CKM_ECDH1_COFACTOR_DERIVE",
+                kind="metadata",
+            )
             val = attrs[CKA_VALUE]
             assert isinstance(val, bytes)
             assert len(val) == 32
@@ -549,7 +577,14 @@ class TestECMontgomeryKeyPairGen:
 
         try:
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE, CKA_EC_POINT])
-            assert attrs[CKA_KEY_TYPE] == CKK_EC_MONTGOMERY
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=CKK_EC_MONTGOMERY,
+                label="CKM_EC_MONTGOMERY_KEY_PAIR_GEN:X25519 CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                mechanism="CKM_EC_MONTGOMERY_KEY_PAIR_GEN",
+                kind="metadata",
+            )
             ec_point = attrs[CKA_EC_POINT]
             assert ec_point is not None
             assert len(ec_point) > 0
@@ -572,7 +607,14 @@ class TestECMontgomeryKeyPairGen:
 
         try:
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE, CKA_EC_POINT])
-            assert attrs[CKA_KEY_TYPE] == CKK_EC_MONTGOMERY
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=CKK_EC_MONTGOMERY,
+                label="CKM_EC_MONTGOMERY_KEY_PAIR_GEN:X448 CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                mechanism="CKM_EC_MONTGOMERY_KEY_PAIR_GEN",
+                kind="metadata",
+            )
             ec_point = attrs[CKA_EC_POINT]
             assert ec_point is not None
             assert len(ec_point) > 0
@@ -600,7 +642,16 @@ class TestECMontgomeryKeyPairGen:
         try:
             point_a = read_attributes(rs.raw, rs.sh, pub_a, [CKA_EC_POINT])[CKA_EC_POINT]
             point_b = read_attributes(rs.raw, rs.sh, pub_b, [CKA_EC_POINT])[CKA_EC_POINT]
-            assert point_a != point_b
+            if point_a == point_b:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_EC_MONTGOMERY_KEY_PAIR_GEN:X25519 keypair uniqueness",
+                    operation="C_GenerateKeyPair",
+                    mechanism="CKM_EC_MONTGOMERY_KEY_PAIR_GEN",
+                    summary="two independent X25519 keygens produced identical public "
+                    "points -- keygen entropy failure",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_a)
             destroy_quietly(rs.raw, rs.sh, pub_a)
@@ -637,7 +688,13 @@ class TestECMontgomeryKeyPairGen:
 
             val_ab = _read_value(rs, shared_ab)
             val_ba = _read_value(rs, shared_ba)
-            assert val_ab == val_ba
+            assert_correct(
+                actual=val_ab,
+                expected=val_ba,
+                label="CKM_ECDH1_DERIVE:X25519 shared-secret agreement (A<->B)",
+                operation="C_DeriveKey",
+                mechanism="CKM_ECDH1_DERIVE",
+            )
             assert len(val_ab) == 32
         finally:
             if shared_ab:

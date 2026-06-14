@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -132,7 +133,16 @@ class TestECDSAPrehash:
             except AssertionError as exc:
                 xfail_if_op_not_operational(exc, f"CKM_{mech_name}")
             sig2 = sign_single(rs.raw, rs.sh, priv, mech, data)
-            assert sig1 != sig2, f"CKM_{mech_name}: two ECDSA signatures should differ (random k)"
+            if sig1 == sig2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label=f"CKM_{mech_name}:sign nonce uniqueness",
+                    operation="C_Sign",
+                    mechanism=f"CKM_{mech_name}",
+                    summary="two ECDSA signatures of the same data are identical -- "
+                    "nonce (k) reuse leaks the private key",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
