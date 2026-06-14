@@ -51,7 +51,7 @@ the right thing done imperfectly is `xfail`; the wrong thing done (or a crash) i
 |---|---|---|
 | **pass** | `CKR_OK` + correct output/value | rejects with the **expected** spec CKR |
 | **xfail** | clean error — advertised but not operational | rejects with **some other** (clean) code |
-| **fail** | `CKR_OK` but **wrong** output/value | `CKR_OK`/accepted **and** it is a crypto-correctness break (Type A) or self-contradiction (Type B/C/D) |
+| **fail** | `CKR_OK` but **wrong** output/value | `CKR_OK`/accepted **and** it is a crypto-correctness break or a self-contradiction |
 | **fail** | crash / hang | crash / hang |
 | **skip** | capability genuinely absent | capability genuinely absent |
 
@@ -60,19 +60,20 @@ the right thing done imperfectly is `xfail`; the wrong thing done (or a crash) i
 "noted deviation, investigate later" bucket — it is recorded, not hidden, and is **never
 gated on provider identity**. No per-provider config, baselines, or allowlists.
 
-- The four self-contradiction classes that `fail` on acceptance: **A** crypto-correctness
-  (wrong/forgeable result), **B** attribute/permission (claimed a protection then violated
-  it), **C** lifecycle/state (claimed success then didn't honor it), **D** derived-attribute
-  invariant (two linked attributes that cannot both be true).
+- The four self-contradiction classes (the `kind` field) that `fail` on acceptance:
+  **crypto** (wrong/forgeable result), **policy** (attribute/permission — claimed a protection
+  then violated it), **lifecycle** (claimed success then didn't honor it), **metadata**
+  (derived-attribute invariant — two linked attributes that cannot both be true).
 - Helpers (in `testcases/conftest.py`): `classify_negative_rv(rv, expected_rvs, *, label,
   allow_ok=False)` and `reject_or_classify(exc, expected_rvs, *, label)` for negative ops
-  outside the table; `classify_policy_enforcement(*, claimed, violated, label)` for Type B;
-  `classify_lifecycle_effect(*, claimed_success, effect_observed, label)` for Type C.
-  Table-driven negative sites use `assert_ckr()` (3-way) over `CkrExpectation` in
-  `testcases/ckr/_ckr_spec.py`.
-- **This supersedes** the "use `pytest.xfail()` for known module bugs" guidance below for
-  Type-A and self-contradiction (Type B/C/D) classes: those `fail`, they are not `xfail`ed.
-- Full model + A/B/C/D rules: [docs/classification-model-design.md](docs/classification-model-design.md).
+  outside the table; `classify_policy_enforcement(*, claimed, violated, label)` for the policy
+  kind; `classify_lifecycle_effect(*, claimed_success, effect_observed, label)` for the
+  lifecycle kind. Table-driven negative sites use `assert_ckr()` (3-way) over `CkrExpectation`
+  in `testcases/ckr/_ckr_spec.py`.
+- **This supersedes** the "use `pytest.xfail()` for known module bugs" guidance below for the
+  crypto-correctness and self-contradiction (policy/lifecycle/metadata) classes: those `fail`,
+  they are not `xfail`ed.
+- Full model + kind rules: [docs/classification-model-design.md](docs/classification-model-design.md).
 
 Two spec-grounded refinements (design: docs/superpowers/specs/2026-06-10-advertised-capability-honesty-design.md):
 - **Sanctioned policy refusal = pass:** in the `test_mech_*` claim layer, a clean refusal with
@@ -145,8 +146,8 @@ auto-injects it for any un-migrated fail/xfail) and must NEVER be emitted by a t
 - Document module quirks in `docs/module-issues.md`, not as silent `pass` in code
 - Use `compliance.note()` for spec deviations that aren't bugs
 - Use `pytest.xfail()` for known module bugs with an explanatory message — but see the
-  Test-outcome classification model above: Type-A and self-contradiction (B/C/D) classes
-  `fail`, they are NOT `xfail`ed
+  Test-outcome classification model above: crypto-correctness and self-contradiction
+  (policy/lifecycle/metadata) classes `fail`, they are NOT `xfail`ed
 - NSS uses slot 1 (Certificate DB), not slot 0. Pass `--p11-slot=1`
 
 ### Conventions
