@@ -39,6 +39,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.pack import mech_bytes
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -406,9 +407,17 @@ class TestTemplateConstraintAttributes:
                 byref(allowed_len),
             )
             if rv != CKR_OK:
-                pytest.xfail(
-                    "CKM_AES_KEY_WRAP advertised but matching-template wrap is not "
-                    f"operational: {ckr_name(rv)}"
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_AES_KEY_WRAP:C_WrapKey (matching template)",
+                    operation="C_WrapKey",
+                    mechanism="CKM_AES_KEY_WRAP",
+                    actual=rv,
+                    summary=(
+                        "CKM_AES_KEY_WRAP advertised but matching-template wrap is not "
+                        f"operational: {ckr_name(rv)}"
+                    ),
                 )
 
             denied_len = c_ulong(0)
@@ -515,9 +524,17 @@ class TestTemplateConstraintAttributes:
                 byref(wrapped_len),
             )
             if rv != CKR_OK:
-                pytest.xfail(
-                    "CKM_AES_KEY_WRAP advertised but source-key wrap is not "
-                    f"operational: {ckr_name(rv)}"
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_AES_KEY_WRAP:C_WrapKey (source key)",
+                    operation="C_WrapKey",
+                    mechanism="CKM_AES_KEY_WRAP",
+                    actual=rv,
+                    summary=(
+                        "CKM_AES_KEY_WRAP advertised but source-key wrap is not "
+                        f"operational: {ckr_name(rv)}"
+                    ),
                 )
             wrapped_buf = (c_ubyte * wrapped_len.value)()
             rv = rs.raw.C_WrapKey(
@@ -529,9 +546,17 @@ class TestTemplateConstraintAttributes:
                 byref(wrapped_len),
             )
             if rv != CKR_OK:
-                pytest.xfail(
-                    "CKM_AES_KEY_WRAP advertised but source-key wrap retry is not "
-                    f"operational: {ckr_name(rv)}"
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_AES_KEY_WRAP:C_WrapKey (source key retry)",
+                    operation="C_WrapKey",
+                    mechanism="CKM_AES_KEY_WRAP",
+                    actual=rv,
+                    summary=(
+                        "CKM_AES_KEY_WRAP advertised but source-key wrap retry is not "
+                        f"operational: {ckr_name(rv)}"
+                    ),
                 )
 
             matching_template = template(
@@ -554,9 +579,17 @@ class TestTemplateConstraintAttributes:
                 byref(violating_unwrapped),
             )
             if rv != CKR_OK:
-                pytest.xfail(
-                    "CKM_AES_KEY_WRAP advertised but matching-template unwrap is not "
-                    f"operational: {ckr_name(rv)}"
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_AES_KEY_WRAP:C_UnwrapKey (matching template)",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_AES_KEY_WRAP",
+                    actual=rv,
+                    summary=(
+                        "CKM_AES_KEY_WRAP advertised but matching-template unwrap is not "
+                        f"operational: {ckr_name(rv)}"
+                    ),
                 )
             matching_unwrapped = violating_unwrapped.value
             violating_unwrapped = CK_OBJECT_HANDLE(0)
@@ -678,9 +711,17 @@ class TestTemplateConstraintAttributes:
                 byref(violating_derived),
             )
             if rv != CKR_OK:
-                pytest.xfail(
-                    "CKM_CONCATENATE_BASE_AND_DATA advertised but matching-template "
-                    f"derive is not operational: {ckr_name(rv)}"
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_CONCATENATE_BASE_AND_DATA:C_DeriveKey (matching template)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_CONCATENATE_BASE_AND_DATA",
+                    actual=rv,
+                    summary=(
+                        "CKM_CONCATENATE_BASE_AND_DATA advertised but matching-template "
+                        f"derive is not operational: {ckr_name(rv)}"
+                    ),
                 )
             matching_derived = violating_derived.value
             violating_derived = CK_OBJECT_HANDLE(0)
@@ -829,7 +870,13 @@ print(f"CF:0x{rv2:08x}")
 """,
         )
         if returncode != 0:
-            pytest.xfail(f"Subprocess failed: {stderr[:200]}")
+            classify(
+                "honest_deviation",
+                kind="lifecycle",
+                label="C_GetFunctionStatus probe subprocess",
+                operation="C_GetFunctionStatus",
+                summary=f"Subprocess failed: {stderr[:200]}",
+            )
         lines = stdout.strip().split("\n")
         gfs_line = next((ln for ln in lines if ln.startswith("GFS:")), None)
         assert gfs_line is not None, f"No GFS output: {stdout!r}"
@@ -838,8 +885,14 @@ print(f"CF:0x{rv2:08x}")
         # SoftHSM2 returns CKR_OPERATION_NOT_INITIALIZED (0x91) - module quirk.
         acceptable = {"0x00000051", "0x00000091", "0x00000054"}
         if rv_hex not in acceptable:
-            pytest.fail(
-                f"C_GetFunctionStatus: expected CKR_FUNCTION_NOT_PARALLEL (0x51), got {rv_hex}"
+            classify(
+                "self_contradiction",
+                kind="metadata",
+                label="C_GetFunctionStatus return code",
+                operation="C_GetFunctionStatus",
+                summary=(
+                    f"C_GetFunctionStatus: expected CKR_FUNCTION_NOT_PARALLEL (0x51), got {rv_hex}"
+                ),
             )
         if rv_hex != "0x00000051":
             from pkcs11_check.compliance import ComplianceLevel, note
@@ -865,15 +918,27 @@ print(f"CF:0x{rv:08x}")
 """,
         )
         if returncode != 0:
-            pytest.xfail(f"Subprocess failed: {stderr[:200]}")
+            classify(
+                "honest_deviation",
+                kind="lifecycle",
+                label="C_CancelFunction probe subprocess",
+                operation="C_CancelFunction",
+                summary=f"Subprocess failed: {stderr[:200]}",
+            )
         lines = stdout.strip().split("\n")
         cf_line = next((ln for ln in lines if ln.startswith("CF:")), None)
         assert cf_line is not None, f"No CF output: {stdout!r}"
         rv_hex = cf_line.split(":")[1]
         acceptable = {"0x00000051", "0x00000091", "0x00000054"}
         if rv_hex not in acceptable:
-            pytest.fail(
-                f"C_CancelFunction: expected CKR_FUNCTION_NOT_PARALLEL (0x51), got {rv_hex}"
+            classify(
+                "self_contradiction",
+                kind="metadata",
+                label="C_CancelFunction return code",
+                operation="C_CancelFunction",
+                summary=(
+                    f"C_CancelFunction: expected CKR_FUNCTION_NOT_PARALLEL (0x51), got {rv_hex}"
+                ),
             )
         if rv_hex != "0x00000051":
             from pkcs11_check.compliance import ComplianceLevel, note
@@ -1100,7 +1165,14 @@ class TestTier1Stragglers:
             except AssertionError as e:
                 # Advertised but the operation does not complete: a clean operational
                 # deviation, not a conformance break.
-                pytest.xfail(f"AES_CMAC_GENERAL sign failed: {e}")
+                xfail_as(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_AES_CMAC_GENERAL:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_AES_CMAC_GENERAL",
+                    summary=f"AES_CMAC_GENERAL sign failed: {e}",
+                )
             # Honoring the requested tag length is mandatory: a wrong length is the
             # module ignoring CK_MAC_GENERAL_PARAMS (wrong output on a positive op -> fail).
             assert len(sig) == mac_len, (
@@ -1146,11 +1218,21 @@ print(f"SEU:0x{rv:08x}")
         if "SKIP:" in stdout:
             pytest.skip(stdout.strip())
         if returncode < 0:
-            pytest.fail(
-                f"C_SignEncryptUpdate crashed (signal {-returncode}). Stderr: {stderr[:200]}"
+            classify(
+                "crash",
+                label="C_SignEncryptUpdate",
+                operation="C_SignEncryptUpdate",
+                summary=(
+                    f"C_SignEncryptUpdate crashed (signal {-returncode}). Stderr: {stderr[:200]}"
+                ),
             )
         if returncode != 0:
-            pytest.fail(f"No output: {stdout!r} {stderr[:200]}")
+            classify(
+                "crash",
+                label="C_SignEncryptUpdate probe subprocess",
+                operation="C_SignEncryptUpdate",
+                summary=f"No output: {stdout!r} {stderr[:200]}",
+            )
         seu_line = next((ln for ln in stdout.strip().split("\n") if ln.startswith("SEU:")), None)
         assert seu_line is not None, f"No output: {stdout!r} {stderr[:200]}"
         # Any CKR response is valid - we're testing the function exists and doesn't crash
@@ -1172,10 +1254,20 @@ print(f"DVU:0x{rv:08x}")
         if "SKIP:" in stdout:
             pytest.skip(stdout.strip())
         if returncode < 0:
-            pytest.fail(
-                f"C_DecryptVerifyUpdate crashed (signal {-returncode}). Stderr: {stderr[:200]}"
+            classify(
+                "crash",
+                label="C_DecryptVerifyUpdate",
+                operation="C_DecryptVerifyUpdate",
+                summary=(
+                    f"C_DecryptVerifyUpdate crashed (signal {-returncode}). Stderr: {stderr[:200]}"
+                ),
             )
         if returncode != 0:
-            pytest.fail(f"No output: {stdout!r} {stderr[:200]}")
+            classify(
+                "crash",
+                label="C_DecryptVerifyUpdate probe subprocess",
+                operation="C_DecryptVerifyUpdate",
+                summary=f"No output: {stdout!r} {stderr[:200]}",
+            )
         dvu_line = next((ln for ln in stdout.strip().split("\n") if ln.startswith("DVU:")), None)
         assert dvu_line is not None, f"No output: {stdout!r} {stderr[:200]}"
