@@ -86,6 +86,7 @@ from pkcs11_check.testcases._signature_policy import (
     xfail_if_op_not_operational,
 )
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     classify_negative_rv,
     is_known_error,
     xfail_if_known_ckr,
@@ -226,8 +227,20 @@ def _assert_generated_dsa_pq_attrs(raw: Any, sh: int, dp_handle: int) -> tuple[b
     assert isinstance(subprime, bytes)
     assert isinstance(prime_bits, int)
     assert isinstance(subprime_bits, int)
-    assert prime_bits == 2048
-    assert subprime_bits == 256
+    assert_correct(
+        actual=prime_bits,
+        expected=2048,
+        label="DSA parameter gen: CKA_PRIME_BITS readback",
+        operation="C_GetAttributeValue",
+        kind="metadata",
+    )
+    assert_correct(
+        actual=subprime_bits,
+        expected=256,
+        label="DSA parameter gen: CKA_SUBPRIME_BITS readback",
+        operation="C_GetAttributeValue",
+        kind="metadata",
+    )
     assert len(prime) > 0
     assert len(subprime) > 0
     return prime, subprime
@@ -538,7 +551,16 @@ class TestDSARaw:
 
             sig1 = sign_single(rs.raw, rs.sh, priv, CKM_DSA, digest)
             sig2 = sign_single(rs.raw, rs.sh, priv, CKM_DSA, digest)
-            assert sig1 != sig2
+            if sig1 == sig2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DSA:sign nonce uniqueness",
+                    operation="C_Sign",
+                    mechanism="CKM_DSA",
+                    summary="two DSA signatures of the same digest are identical -- "
+                    "nonce (k) reuse leaks the private key",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
