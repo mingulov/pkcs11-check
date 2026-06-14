@@ -214,7 +214,7 @@ fails. The existing `classify_*` / `assert_ckr` helpers now route through this s
 - **reason** ∈ {`wrong_result`, `accepted_invalid`, `self_contradiction`, `oracle`, `crash` (→ fail);
   `not_operational`, `nonspec_reject`, `honest_deviation` (→ xfail); `sanctioned_refusal` (→ pass)}
 - **kind** ∈ {`crypto`, `policy`, `lifecycle`, `metadata`} — the canonical machine field for the
-  legacy A/B/C/D self-contradiction classes
+  self-contradiction class
 - **severity** is *derived* from `(reason, kind)` in `classification.derive_verdict` — the single
   source of truth for the outcome/severity table (no per-site severity literals)
 
@@ -242,7 +242,7 @@ never fabricated).
 ### Report generator (`tools/report/`)
 
 Rolls the records up into per-provider reports: `<provider>.md` (compact, severity-first, grouped by
-`kind` with A/B/C/D aliases) + `<provider>.jsonl` (one enriched group per line); with more than one
+`kind`) + `<provider>.jsonl` (one enriched group per line); with more than one
 provider it also writes `_index.md` (counts table + top themes) and `_universal.md` (cross-provider
 correlation). See [../tools/report/README.md](../tools/report/README.md) and
 [commands.md](commands.md) for invocation.

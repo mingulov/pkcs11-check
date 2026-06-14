@@ -4,7 +4,7 @@ Layout (severity-first, size-budgeted):
 
 * header + counts line (``passed … · xfail … · fail … · crash …``)
 * ``━━ 🔴 CRITICAL · fail (n) ━━`` then ``🟠 HIGH``, grouped within each by
-  finding ``kind`` (with its legacy A/B/C/D letter alias)
+  finding ``kind``
 * a single collapsed ``🟡 deviations · xfail (n)`` section: one count line per
   xfail reason with a top example — never the full enumeration
 * ``⚪`` one-liners for sanctioned-refusal compliance and unclassified
@@ -17,14 +17,6 @@ folded to one line per reason. No hashes anywhere.
 from __future__ import annotations
 
 from typing import Any
-
-# kind -> legacy self-contradiction class letter (A/B/C/D)
-_KIND_ALIAS: dict[str, str] = {
-    "crypto": "A",
-    "policy": "B",
-    "lifecycle": "C",
-    "metadata": "D",
-}
 
 _XFAIL_REASONS = ("not_operational", "nonspec_reject", "honest_deviation")
 
@@ -63,11 +55,9 @@ def _counts_line(groups: list[dict[str, Any]], pass_count: int | None) -> str:
 
 
 def _kind_subheader(kind: str | None, reason: str) -> str:
-    """``crypto · accepted_invalid (Type A)`` — kind, reason, and letter alias."""
+    """``crypto · accepted_invalid`` — kind and reason keywords."""
     kindword = kind or "other"
-    alias = _KIND_ALIAS.get(kind or "")
-    suffix = f" (Type {alias})" if alias else ""
-    return f"{kindword} · {reason}{suffix}"
+    return f"{kindword} · {reason}"
 
 
 def _finding_lines(g: dict[str, Any]) -> list[str]:

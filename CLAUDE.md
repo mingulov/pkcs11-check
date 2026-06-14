@@ -96,7 +96,7 @@ derived centrally. The reason `unclassified` is **reserved** for the plugin's ru
 auto-injects it for any un-migrated fail/xfail) and must NEVER be emitted by a test.
 - reason ∈ {wrong_result, accepted_invalid, self_contradiction, oracle, crash (fail);
   not_operational, nonspec_reject, honest_deviation (xfail); sanctioned_refusal (pass)};
-  kind ∈ {crypto=A, policy=B, lifecycle=C, metadata=D}. See
+  kind ∈ {crypto, policy, lifecycle, metadata}. See
   [docs/architecture.md](docs/architecture.md) "At-source test-outcome classification".
 
 ### Error handling — CRITICAL

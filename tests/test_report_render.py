@@ -59,8 +59,9 @@ def test_critical_before_deviations_and_xfail_collapsed() -> None:
     assert "CKM_RSA_PKCS" in out
     assert "PKCS#11 v3.2" in out
 
-    # Type A alias present for crypto
-    assert "(Type A)" in out
+    # kind keyword present, no Type-letter alias
+    assert "crypto · accepted_invalid" in out
+    assert "(Type A)" not in out
 
     # the 24000 xfail is a SINGLE collapsed finding line, not enumerated
     collapsed = [ln for ln in lines if ln.startswith("[24000]")]
@@ -83,7 +84,7 @@ def test_counts_line_and_pass_omitted_when_none() -> None:
     assert "fail 1" in counts_line
 
 
-def test_kind_aliases_for_each_fail_kind() -> None:
+def test_kind_keywords_no_type_aliases() -> None:
     groups = [
         _group(kind="crypto", reason="wrong_result", severity="CRITICAL"),
         _group(kind="policy", reason="self_contradiction", severity="CRITICAL"),
@@ -91,10 +92,16 @@ def test_kind_aliases_for_each_fail_kind() -> None:
         _group(kind="metadata", reason="self_contradiction", severity="HIGH"),
     ]
     out = render_provider("p", groups)
-    assert "(Type A)" in out
-    assert "(Type B)" in out
-    assert "(Type C)" in out
-    assert "(Type D)" in out
+    # kind · reason keywords are present
+    assert "crypto · wrong_result" in out
+    assert "policy · self_contradiction" in out
+    assert "lifecycle · self_contradiction" in out
+    assert "metadata · self_contradiction" in out
+    # no Type-letter aliases anywhere
+    assert "(Type A)" not in out
+    assert "(Type B)" not in out
+    assert "(Type C)" not in out
+    assert "(Type D)" not in out
 
 
 def test_unclassified_collapsed_to_single_line() -> None:

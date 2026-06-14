@@ -7,29 +7,29 @@ passed 44957 · xfail 3 · fail 8 · crash 1
 
 ━━ 🔴 CRITICAL · fail (4) ━━
 
-### crypto · accepted_invalid (Type A)
+### crypto · accepted_invalid
 [2] C_Verify CKM_ECDSA_SHA256 — ECDSA accepts forged signature
   want CKR_SIGNATURE_INVALID · got CKR_OK · PKCS#11 v3.2 §6.8 · acvp · tc1 tc2
 
-### crypto · wrong_result (Type A)
+### crypto · wrong_result
 [1] C_Decrypt CKM_RSA_PKCS_OAEP — RSA-OAEP decrypt returns wrong plaintext
   got CKR_OK · PKCS#11 v3.2 §6.7 · wycheproof · tc77
 
-### policy · self_contradiction (Type B)
+### policy · self_contradiction
 [1] C_GetAttributeValue CKM_AES_KEY_GEN — CKA_SENSITIVE key value extractable
   got CKR_OK · PKCS#11 v3.2 §4.9
 
 ━━ 🟠 HIGH · fail (3) ━━
 
-### lifecycle · self_contradiction (Type C)
+### lifecycle · self_contradiction
 [1] C_DestroyObject — object usable after destroy reported success
   got CKR_OK · PKCS#11 v3.2 §5.7
 
-### metadata · self_contradiction (Type D)
+### metadata · self_contradiction
 [1] C_GetAttributeValue — imported key reports CKA_LOCAL=true and CKA_ALWAYS_SENSITIVE=true
   got CKR_OK · PKCS#11 v3.2 §4.9
 
-### crypto · oracle (Type A)
+### crypto · oracle
 [1] C_Decrypt CKM_RSA_PKCS — distinguishable padding-error oracle (Bleichenbacher)
   PKCS#11 v3.2 §6.7
 
