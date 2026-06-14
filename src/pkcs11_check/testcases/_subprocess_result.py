@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.testcases._subprocess_trace import (
     RV_TRACE_MARKER,
     record_subprocess_rv_trace,
@@ -30,10 +31,14 @@ def assert_subprocess_completed(
     """Fail if a crash-survival subprocess crashed or failed internally."""
     record_subprocess_rv_trace(stdout, stderr)
     if rc < 0:
-        pytest.fail(
-            f"{context}: module crashed with signal {-rc}\n"
-            f"stdout: {_format_subprocess_stream(stdout)}\n"
-            f"stderr: {_format_subprocess_stream(stderr)}"
+        classify(
+            "crash",
+            label=context,
+            summary=(
+                f"{context}: module crashed with signal {-rc}\n"
+                f"stdout: {_format_subprocess_stream(stdout)}\n"
+                f"stderr: {_format_subprocess_stream(stderr)}"
+            ),
         )
     if rc > 0:
         # A child that exited cleanly (non-zero, not a signal) only because it
@@ -47,8 +52,12 @@ def assert_subprocess_completed(
                 f"{context}: a PKCS#11 function used by this probe is not "
                 "implemented by the module (absent from the function list)"
             )
-        pytest.fail(
-            f"{context}: subprocess failed with exit code {rc}\n"
-            f"stdout: {_format_subprocess_stream(stdout)}\n"
-            f"stderr: {_format_subprocess_stream(stderr)}"
+        classify(
+            "crash",
+            label=context,
+            summary=(
+                f"{context}: subprocess failed with exit code {rc}\n"
+                f"stdout: {_format_subprocess_stream(stdout)}\n"
+                f"stderr: {_format_subprocess_stream(stderr)}"
+            ),
         )
