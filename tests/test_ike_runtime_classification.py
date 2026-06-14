@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from _pytest.outcomes import Failed
 
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
@@ -192,7 +193,7 @@ def test_ike1_prf_exact_vector_uses_typed_helper_and_fails_on_wrong_output(
     monkeypatch.setattr(test_ike, "destroy_quietly", lambda *_args, **_kwargs: None)
 
     rs = _session_with_mechanisms("IKE1_PRF_DERIVE")
-    with pytest.raises(AssertionError):
+    with pytest.raises(Failed, match="does not match known answer"):
         test_ike.TestIKE1PRFDerive().test_prf_hmac_sha256_exact_vector(rs)
 
     assert calls == [(1, 2, 0)]
@@ -215,7 +216,7 @@ def test_ike1_extended_exact_vector_uses_typed_helper_and_fails_on_wrong_output(
     monkeypatch.setattr(test_ike, "destroy_quietly", lambda *_args, **_kwargs: None)
 
     rs = _session_with_mechanisms("IKE1_EXTENDED_DERIVE")
-    with pytest.raises(AssertionError):
+    with pytest.raises(Failed, match="does not match known answer"):
         test_ike.TestIKE1ExtendedDerive().test_extended_hmac_sha256_exact_vector(rs)
 
     expected_extra = test_ike._NONCE_I + test_ike._NONCE_R + test_ike._SPI_I + test_ike._SPI_R

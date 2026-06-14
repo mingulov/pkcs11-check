@@ -662,10 +662,12 @@ def test_gap_analysis_marks_blake2b_keyed_semantics_as_covered() -> None:
 
     assert "_BLAKE2B_KEYED_CASES" in blake2
     assert "_blake2b_hmac_reference" in blake2
-    assert "assert mac == expected" in blake2
-    assert "assert mac == expected_full[:mac_len]" in blake2
-    assert "assert attrs[CKA_KEY_TYPE] == case.key_type" in blake2
-    assert "assert value == expected" in blake2
+    # The keyed-HMAC, HMAC_GENERAL-truncation, KEY_GEN key-type, and KEY_DERIVE
+    # KAT verdicts are now expressed via the typed assert_correct() helper.
+    assert "C_Sign KAT" in blake2
+    assert "expected=expected_full[:mac_len]" in blake2
+    assert "expected=case.key_type" in blake2
+    assert "C_DeriveKey KAT" in blake2
     assert "test_blake2b_hmac_general_rejects_invalid_lengths" in blake2
     assert "test_blake2b_hmac_general_boundary_lengths" in blake2
 

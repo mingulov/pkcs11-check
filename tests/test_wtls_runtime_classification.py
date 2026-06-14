@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from _pytest.outcomes import Failed
 
 from pkcs11_check.raw.pack import mech_wtls_prf
 from pkcs11_check.raw.rv import CkrAssertionError
@@ -179,7 +180,7 @@ def test_wtls_prf_output_length_fails_on_prefix_mismatch(
 
     monkeypatch.setattr(test_wtls, "_derive_wtls_prf_output", _derive_wtls_prf_output)
 
-    with pytest.raises(AssertionError, match="longer output"):
+    with pytest.raises(Failed, match="does not match known answer"):
         test_wtls.TestWTLSPRF().test_prf_output_len_extends_output(
             _session_with_mechanisms("WTLS_PRF")
         )
