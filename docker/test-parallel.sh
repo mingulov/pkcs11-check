@@ -93,7 +93,9 @@ if [[ "$batched_total" -ne "$discovered" ]]; then
 fi
 
 # Clean prior shard artifact dirs (may be root-owned from a previous container run).
-docker run --rm -v "$PROJECT_ROOT/artifacts:/artifacts" busybox sh -c \
+# --network none: this helper only touches a mounted volume; keep it isolated like every
+# other container in the suite (no target gets network at run time).
+docker run --rm --network none -v "$PROJECT_ROOT/artifacts:/artifacts" busybox sh -c \
     "rm -rf /artifacts/${provider}-shard-*" 2>/dev/null || true
 
 artifact_owner="${PKCS11_CHECK_ARTIFACT_OWNER:-$(id -u):$(id -g)}"

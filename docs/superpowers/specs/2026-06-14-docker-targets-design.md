@@ -29,6 +29,17 @@ New targets inherit this for free. Any client-server module therefore **must co-
 its server and the PKCS#11 module in one container, talking over `127.0.0.1`** (the
 bouncyhsm/tpm2 pattern).
 
+**Completeness (gap-checked 2026-06-14):** there is exactly one compose file, and exactly
+one raw `docker run` outside compose — a `busybox` artifact-cleanup helper in
+`test-parallel.sh`, which now also runs `--network none`. The suite invocation is offline
+(`uv run --no-sync` over a build-time `uv sync --frozen` venv), so the isolation does not
+break any target's run. **Known limitation (accepted "for now"):** the constraint is
+**run-time only**; **build** time still uses the network (git clone / cargo / apt are
+unavoidable when building a module from source). Exfiltration by a *malicious build script*
+is a separate, harder threat that is out of scope here — we build from inspected upstream
+sources, and the telemetry concern is about *running* an opaque module, which run-time
+isolation fully addresses.
+
 ## 1. The established "new target" pattern (what every target must touch)
 
 1. `docker/<name>/Dockerfile` — two-stage (builder with network → slim runtime). Must
