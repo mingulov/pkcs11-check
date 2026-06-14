@@ -78,6 +78,7 @@ The repo move does not touch `~/.claude/`, so the current session stays stable t
      `AGENTS.md` as a symlink → `CLAUDE.md`.
    - `git -C /home/user/src/m/pkcs11-check-ws add -A && git -C … commit -m "chore: init pkcs11-check workspace"`
 2. **Relocate memory (copy, then clean up later):**
+   - `mkdir -p ~/.claude/projects/-home-user-src-m-pkcs11-check-ws`
    - `cp -a ~/.claude/projects/-home-user-src-m-pkcs11-check/. ~/.claude/projects/-home-user-src-m-pkcs11-check-ws/`
    - Leaves the old key intact for now (live session undisturbed); it is deleted only
      after the user confirms the new location works.
@@ -246,7 +247,6 @@ when a session is opened at the workspace root.
 __pycache__/
 *.pyc
 .worktrees/
-/artifacts/
 /artifacts*/
 .mypy_cache/
 .ruff_cache/
