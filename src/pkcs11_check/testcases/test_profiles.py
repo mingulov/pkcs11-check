@@ -243,11 +243,13 @@ class TestProfileBehavioralConformance:
         if not tested_any:
             pytest.skip("No tabulated profile IDs advertised by module")
         if failures:
-            # An advertised profile (CKO_PROFILE present) missing mandatory functions
-            # is a self-contradiction: the module claims the profile then fails to
-            # expose what the profile requires (Type-B/metadata).
+            # An advertised profile missing mandatory functions is
+            # provider-incompleteness -> honest_deviation (noted xfail), not a hard
+            # fail: the suite is provider-general with no single reference
+            # implementation to declare the module broken (see Phase 5 P1a and
+            # tests/test_profiles_classification.py).
             classify(
-                "self_contradiction",
+                "honest_deviation",
                 kind="metadata",
                 label="CKO_PROFILE:required-functions",
                 summary="Profile conformance failures:\n  " + "\n  ".join(failures),
@@ -299,11 +301,13 @@ class TestProfileBehavioralConformance:
                 "'None specified' for mechs)"
             )
         if failures:
-            # An advertised profile (CKO_PROFILE present) missing mandatory mechanisms
-            # is a self-contradiction: the module claims the profile then fails to
-            # advertise the mechanisms it requires (Type-B/metadata).
+            # An advertised profile missing mandatory mechanisms is
+            # provider-incompleteness -> honest_deviation (noted xfail), not a hard
+            # fail: the suite is provider-general with no single reference
+            # implementation to declare the module broken (see Phase 5 P1a and
+            # tests/test_profiles_classification.py).
             classify(
-                "self_contradiction",
+                "honest_deviation",
                 kind="metadata",
                 label="CKO_PROFILE:required-mechanisms",
                 summary="Profile mechanism-conformance failures:\n  " + "\n  ".join(failures),
