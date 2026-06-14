@@ -849,7 +849,13 @@ class TestSSL3Mac:
                 data,
                 mech_param=mech_bytes(CKM_SSL3_MD5_MAC, mac_len_bytes),
             )
-            assert mac1 == mac2, "CKM_SSL3_MD5_MAC produced different MACs for identical input"
+            assert_correct(
+                actual=mac1,
+                expected=mac2,
+                label="CKM_SSL3_MD5_MAC:C_Sign determinism",
+                operation="C_Sign",
+                mechanism="CKM_SSL3_MD5_MAC",
+            )
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
                 classify(
@@ -962,7 +968,13 @@ class TestSSL3Mac:
                 data,
                 mech_param=mech_bytes(CKM_SSL3_SHA1_MAC, mac_len_bytes),
             )
-            assert mac1 == mac2, "CKM_SSL3_SHA1_MAC produced different MACs for identical input"
+            assert_correct(
+                actual=mac1,
+                expected=mac2,
+                label="CKM_SSL3_SHA1_MAC:C_Sign determinism",
+                operation="C_Sign",
+                mechanism="CKM_SSL3_SHA1_MAC",
+            )
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
                 classify(
@@ -1044,7 +1056,18 @@ class TestSSL3Mac:
                 data,
                 mech_param=mech_bytes(CKM_SSL3_MD5_MAC, mac_len_bytes),
             )
-            assert mac1 != mac2, "CKM_SSL3_MD5_MAC produced same MAC for different keys"
+            if mac1 == mac2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_SSL3_MD5_MAC:key must affect output",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_MD5_MAC",
+                    summary=(
+                        "CKM_SSL3_MD5_MAC produced the same MAC for two different keys "
+                        "over identical data -- the key was ignored"
+                    ),
+                )
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
                 classify(
@@ -1087,7 +1110,18 @@ class TestSSL3Mac:
                 data,
                 mech_param=mech_bytes(CKM_SSL3_SHA1_MAC, mac_len_bytes),
             )
-            assert mac1 != mac2, "CKM_SSL3_SHA1_MAC produced same MAC for different keys"
+            if mac1 == mac2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_SSL3_SHA1_MAC:key must affect output",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_SHA1_MAC",
+                    summary=(
+                        "CKM_SSL3_SHA1_MAC produced the same MAC for two different keys "
+                        "over identical data -- the key was ignored"
+                    ),
+                )
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
                 classify(

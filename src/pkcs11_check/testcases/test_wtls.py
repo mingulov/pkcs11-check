@@ -361,7 +361,14 @@ class TestWTLSPreMasterKeyGen:
             try:
                 assert key.value != 0
                 attrs = read_attributes(rs.raw, rs.sh, key.value, [CKA_KEY_TYPE])
-                assert attrs[CKA_KEY_TYPE] == CKK_GENERIC_SECRET
+                assert_correct(
+                    actual=attrs[CKA_KEY_TYPE],
+                    expected=CKK_GENERIC_SECRET,
+                    label="CKM_WTLS_PRE_MASTER_KEY_GEN:CKA_KEY_TYPE readback",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
+                    kind="metadata",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, key.value)
         except AssertionError as exc:
@@ -1081,8 +1088,12 @@ class TestWTLSPRF:
                 )
                 assert len(short) == 16, f"Expected 16 bytes, got {len(short)}"
                 assert len(long) == 32, f"Expected 32 bytes, got {len(long)}"
-                assert long[: len(short)] == short, (
-                    "WTLS PRF longer output did not preserve the shorter prefix"
+                assert_correct(
+                    actual=long[: len(short)],
+                    expected=short,
+                    label="CKM_WTLS_PRF:output-length prefix consistency",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_WTLS_PRF",
                 )
                 expected = _wtls_prf_sha256_reference(
                     _WTLS_PRF_SECRET,
@@ -1134,7 +1145,13 @@ class TestWTLSPRF:
                     label=b"key expansion",
                     output_len=16,
                 )
-                assert val1 == val2, "CKM_WTLS_PRF must be deterministic for identical inputs"
+                assert_correct(
+                    actual=val1,
+                    expected=val2,
+                    label="CKM_WTLS_PRF:C_DeriveKey determinism",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_WTLS_PRF",
+                )
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     classify(
