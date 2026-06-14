@@ -498,7 +498,7 @@ Ordered by severity then category.
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/ckr/test_ckr_object.py::TestSetAttributeErrors::test_set_readonly_class`
 - **Message:** Failed: C_SetAttributeValue claimed success and the read-only CKA_CLASS actually changed (self-contradiction) [PKCS#11 v3.1 Sec.5.7.6: CKA_CLASS is read-only]
-- **Evidence:** W13 Type B: ckr/test_ckr_object::test_set_readonly_class — C_SetAttributeValue claimed CKR_OK and read-only CKA_CLASS actually changed. PKCS#11 v3.1 Sec.5.7.6.
+- **Evidence:** W13 policy: ckr/test_ckr_object::test_set_readonly_class — C_SetAttributeValue claimed CKR_OK and read-only CKA_CLASS actually changed. PKCS#11 v3.1 Sec.5.7.6.
 
 ### `test_ckr_raw_buffer.py` (3 findings)
 
@@ -581,7 +581,7 @@ stderr:
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 2
 - **Example nodeid:** `src/pkcs11_check/testcases/security/test_cve_regression.py::TestTookanUnwrapAttrs::test_unwrapped_key_preserves_extractable`
 - **Message:** pkcs11_check.raw.rv.CkrAssertionError: Unexpected CK_RV CKR_OPERATION_ACTIVE; expected one of: CKR_OK
-- **Evidence:** Type C lifecycle: C_WrapKey/C_UnwrapKey leaves an operation active after the call returns; next C_*Init in the same session returns CKR_OPERATION_ACTIVE. Spec PKCS#11 v3.1 Sec.5.14/5.15: wrap/unwrap always terminate. Evidence: test_unwrapped_key_preserves_extractable -> 'Unexpected CK_RV CKR_OPERATION_ACTIVE; expected CKR_OK'.
+- **Evidence:** lifecycle: C_WrapKey/C_UnwrapKey leaves an operation active after the call returns; next C_*Init in the same session returns CKR_OPERATION_ACTIVE. Spec PKCS#11 v3.1 Sec.5.14/5.15: wrap/unwrap always terminate. Evidence: test_unwrapped_key_preserves_extractable -> 'Unexpected CK_RV CKR_OPERATION_ACTIVE; expected CKR_OK'.
 
 ### `test_ffi_length_boundary.py` (17 findings)
 
@@ -915,7 +915,7 @@ stderr:
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/security/test_tookan.py::TestKeyTypeConfusionOnUnwrap::test_unwrap_aes_as_des3_rejected`
 - **Message:** pkcs11_check.raw.rv.CkrAssertionError: Unexpected CK_RV CKR_OPERATION_ACTIVE; expected one of: CKR_OK
-- **Evidence:** Type C lifecycle: security/test_tookan::test_unwrap_aes_as_des3_rejected failed with CKR_OPERATION_ACTIVE. Negative-op path still must terminate.
+- **Evidence:** lifecycle: security/test_tookan::test_unwrap_aes_as_des3_rejected failed with CKR_OPERATION_ACTIVE. Negative-op path still must terminate.
 
 ### `test_access.py` (1 findings)
 
@@ -925,7 +925,7 @@ stderr:
 - **Example nodeid:** `src/pkcs11_check/testcases/test_access.py::TestMultipleSessions::test_session_object_visible_in_other_session`
 - **Message:** assert 0 >= 1
  +  where 0 = len([])
-- **Evidence:** Type C: test_access::test_session_object_visible_in_other_session — session object created in A not visible in B. PKCS#11 v3.1 Sec.5.5: session objects visible across all sessions of the same slot.
+- **Evidence:** lifecycle: test_access::test_session_object_visible_in_other_session — session object created in A not visible in B. PKCS#11 v3.1 Sec.5.5: session objects visible across all sessions of the same slot.
 
 ### `test_access_control.py` (1 findings)
 
@@ -934,7 +934,7 @@ stderr:
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_access_control.py::TestCopyObject::test_copy_token_object_stays_token`
 - **Message:** assert False is True
-- **Evidence:** Type B: test_access_control::test_copy_token_object_stays_token — C_CopyObject of a CKA_TOKEN=True object yields copy with CKA_TOKEN=False. PKCS#11 v3.1 Sec.5.3: copy must preserve CKA_TOKEN.
+- **Evidence:** policy: test_access_control::test_copy_token_object_stays_token — C_CopyObject of a CKA_TOKEN=True object yields copy with CKA_TOKEN=False. PKCS#11 v3.1 Sec.5.3: copy must preserve CKA_TOKEN.
 
 ### `test_access_levels.py` (3 findings)
 
@@ -943,21 +943,21 @@ stderr:
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_access_levels.py::TestTrustedAttribute::test_user_cannot_set_trusted`
 - **Message:** Failed: SECURITY: USER session created and was granted CKA_TRUSTED=True on a freshly-generated key — trust boundary breached
-- **Evidence:** W12 Type B security: test_access_levels::test_user_cannot_set_trusted — USER session created a key with CKA_TRUSTED=True via C_GenerateKey. PKCS#11 v3.1 Sec.5.7.6: CKA_TRUSTED settable ONLY by SO. USER granting themselves trust = trust-boundary breach (opens CKA_WRAP_WITH_TRUSTED bypass).
+- **Evidence:** W12 policy security: test_access_levels::test_user_cannot_set_trusted — USER session created a key with CKA_TRUSTED=True via C_GenerateKey. PKCS#11 v3.1 Sec.5.7.6: CKA_TRUSTED settable ONLY by SO. USER granting themselves trust = trust-boundary breach (opens CKA_WRAP_WITH_TRUSTED bypass).
 
 #### F118 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:8d5790426535889f#phase6`
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_access_levels.py::TestTrustedAttribute::test_user_cannot_setattr_trusted`
 - **Message:** Failed: SECURITY: USER session escalated a key's CKA_TRUSTED from False to True via C_SetAttributeValue — trust boundary breached, opens CKA_WRAP_WITH_TRUSTED bypass
-- **Evidence:** W12 Type B: test_user_cannot_setattr_trusted — USER escalated CKA_TRUSTED False->True via C_SetAttributeValue. Trust boundary breach.
+- **Evidence:** W12 policy: test_user_cannot_setattr_trusted — USER escalated CKA_TRUSTED False->True via C_SetAttributeValue. Trust boundary breach.
 
 #### F119 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:be87bfff555dd79e#phase6`
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_access_levels.py::TestTrustedAttribute::test_wrap_with_trusted_cannot_be_cleared_once_true`
 - **Message:** Failed: SECURITY: CKA_WRAP_WITH_TRUSTED downgraded from True to False via C_SetAttributeValue
-- **Evidence:** W12 Type B: test_wrap_with_trusted_cannot_be_cleared_once_true — CKA_WRAP_WITH_TRUSTED downgraded True->False via C_SetAttributeValue. Once set, must be sticky per PKCS#11 spec.
+- **Evidence:** W12 policy: test_wrap_with_trusted_cannot_be_cleared_once_true — CKA_WRAP_WITH_TRUSTED downgraded True->False via C_SetAttributeValue. Once set, must be sticky per PKCS#11 spec.
 
 ### `test_aes_modes.py` (1 findings)
 
@@ -999,7 +999,7 @@ assert 145 == <CKR_OK: 0x00000000>
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_attribute_enforcement.py::TestTokenAttributePromotion::test_setattr_token_promotion_consistency`
 - **Message:** Failed: SECURITY: module silently ignored C_SetAttributeValue(CKA_TOKEN=True) — half-promoted state. Lying-module pattern at the persistence boundary.
-- **Evidence:** Type B lying-module: test_attribute_enforcement::test_setattr_token_promotion_consistency — module silently ignored C_SetAttributeValue(CKA_TOKEN=True) claiming CKR_OK without applying it. Half-promoted state. Self-contradiction at persistence boundary.
+- **Evidence:** policy lying-module: test_attribute_enforcement::test_setattr_token_promotion_consistency — module silently ignored C_SetAttributeValue(CKA_TOKEN=True) claiming CKR_OK without applying it. Half-promoted state. Self-contradiction at persistence boundary.
 
 ### `test_authenticated_wrap.py` (1 findings)
 
@@ -1008,7 +1008,7 @@ assert 145 == <CKR_OK: 0x00000000>
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_authenticated_wrap.py::TestWrapIntegrity::test_aes_key_wrap_bit_flip_detected`
 - **Message:** pkcs11_check.raw.rv.CkrAssertionError: Unexpected CK_RV CKR_OPERATION_ACTIVE; expected one of: CKR_OK
-- **Evidence:** Type C lifecycle: test_authenticated_wrap::test_aes_key_wrap_bit_flip_detected failed with CKR_OPERATION_ACTIVE.
+- **Evidence:** lifecycle: test_authenticated_wrap::test_aes_key_wrap_bit_flip_detected failed with CKR_OPERATION_ACTIVE.
 
 ### `test_buffers.py` (3 findings)
 
@@ -1063,7 +1063,7 @@ assert 112 == <CKR_BUFFER_TOO_SMALL: 0x00000150>
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_dh_key_agreement.py::TestDHKeyAgreement::test_dh_pkcs_derive_rfc3526_group14_rejects_zero_value_len`
 - **Message:** AssertionError: accepted CKM_DH_PKCS_DERIVE RFC 3526 Group 14 CKA_VALUE_LEN=0
-- **Evidence:** Accept-invalid: test_dh_key_agreement::test_dh_pkcs_derive_rfc3526_group14_rejects_zero_value_len — C_DeriveKey(CKM_DH_PKCS_DERIVE, CKA_VALUE_LEN=0) accepted. CKA_VALUE_LEN=0 invalid (spec requires positive output length). Type C accept-invalid.
+- **Evidence:** Accept-invalid: test_dh_key_agreement::test_dh_pkcs_derive_rfc3526_group14_rejects_zero_value_len — C_DeriveKey(CKM_DH_PKCS_DERIVE, CKA_VALUE_LEN=0) accepted. CKA_VALUE_LEN=0 invalid (spec requires positive output length). lifecycle accept-invalid.
 
 #### F132 [MEDIUM/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:0d906de6e8f87af8#phase6`
@@ -1125,7 +1125,7 @@ assert 112 == <CKR_BUFFER_TOO_SMALL: 0x00000150>
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 3
 - **Example nodeid:** `src/pkcs11_check/testcases/test_key_lifecycle.py::TestAESKeyWrapLifecycle::test_aes_wrap_unwrap_roundtrip`
 - **Message:** pkcs11_check.raw.rv.CkrAssertionError: Unexpected CK_RV CKR_FUNCTION_FAILED; expected one of: CKR_OK
-- **Evidence:** Type C lifecycle: test_key_lifecycle::test_aes_wrap_unwrap_roundtrip failed with CKR_OPERATION_ACTIVE.
+- **Evidence:** lifecycle: test_key_lifecycle::test_aes_wrap_unwrap_roundtrip failed with CKR_OPERATION_ACTIVE.
 
 ### `test_key_usage_policy.py` (3 findings)
 
@@ -1157,7 +1157,7 @@ assert 112 == <CKR_BUFFER_TOO_SMALL: 0x00000150>
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_keymgmt.py::TestKeyWrapUnwrap::test_wrap_unwrap_roundtrip`
 - **Message:** pkcs11_check.raw.rv.CkrAssertionError: Unexpected CK_RV CKR_OPERATION_ACTIVE; expected one of: CKR_OK
-- **Evidence:** Type C lifecycle: test_keymgmt::test_wrap_unwrap_roundtrip failed with CKR_OPERATION_ACTIVE.
+- **Evidence:** lifecycle: test_keymgmt::test_wrap_unwrap_roundtrip failed with CKR_OPERATION_ACTIVE.
 
 ### `test_large_objects.py` (1 findings)
 
@@ -1249,7 +1249,7 @@ assert 112 == <CKR_BUFFER_TOO_SMALL: 0x00000150>
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 2
 - **Example nodeid:** `src/pkcs11_check/testcases/test_mech_lifecycle.py::TestAESWrapUnwrapUse::test_aes_wrap_roundtrip`
 - **Message:** pkcs11_check.raw.rv.CkrAssertionError: Unexpected CK_RV CKR_OPERATION_ACTIVE; expected one of: CKR_OK
-- **Evidence:** Type C lifecycle: test_mech_lifecycle::test_aes_wrap_roundtrip — C_WrapKey(CKM_AES_KEY_WRAP) returns CKR_OPERATION_ACTIVE; prior wrap left state dangling.
+- **Evidence:** lifecycle: test_mech_lifecycle::test_aes_wrap_roundtrip — C_WrapKey(CKM_AES_KEY_WRAP) returns CKR_OPERATION_ACTIVE; prior wrap left state dangling.
 
 #### F155 [LOW/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:0d0700b1313eb8b2`
@@ -1372,14 +1372,14 @@ assert 112 == <CKR_BUFFER_TOO_SMALL: 0x00000150>
 - **Direction:** `ACCEPT_INVALID` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_mech_negative.py::TestBadParameters::test_registry_sign_missing_required_param[HASH_ML_DSA]`
 - **Message:** Failed: HASH_ML_DSA C_SignInit with missing required params: accepted invalid (CKR_OK) -- must reject
-- **Evidence:** wolfpkcs11 returns CKR_OK for C_SignInit(CKM_HASH_ML_DSA) with NULL pParameter where the registry requires a CK_SIGN_ADDITIONAL_DATA_PARAMS (test_mech_negative.py:809-814 calls classify_negative_rv expecting CKR_MECHANISM_PARAM_INVALID). A signature operation can be initiated without the required mechanism parameter, so signatures may be made under an unspecified/missing parameter set. Type A crypto-correctness validation gap on an advertised sign mechanism.
+- **Evidence:** wolfpkcs11 returns CKR_OK for C_SignInit(CKM_HASH_ML_DSA) with NULL pParameter where the registry requires a CK_SIGN_ADDITIONAL_DATA_PARAMS (test_mech_negative.py:809-814 calls classify_negative_rv expecting CKR_MECHANISM_PARAM_INVALID). A signature operation can be initiated without the required mechanism parameter, so signatures may be made under an unspecified/missing parameter set. crypto-correctness validation gap on an advertised sign mechanism.
 
 #### F172 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:25adb0e88267139f#phase6`
 - **Direction:** `ACCEPT_INVALID` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_mech_negative.py::TestBadParameters::test_registry_verify_missing_required_param[HASH_ML_DSA]`
 - **Message:** Failed: HASH_ML_DSA C_VerifyInit with missing required params: accepted invalid (CKR_OK) -- must reject
-- **Evidence:** wolfpkcs11 returns CKR_OK for C_VerifyInit(CKM_HASH_ML_DSA) with NULL pParameter (test_mech_negative.py:855-861). Same validation gap as the SignInit sibling: verify can be initiated without the required CK_SIGN_ADDITIONAL_DATA_PARAMS. Type A crypto-correctness gap on the advertised verify path.
+- **Evidence:** wolfpkcs11 returns CKR_OK for C_VerifyInit(CKM_HASH_ML_DSA) with NULL pParameter (test_mech_negative.py:855-861). Same validation gap as the SignInit sibling: verify can be initiated without the required CK_SIGN_ADDITIONAL_DATA_PARAMS. crypto-correctness gap on the advertised verify path.
 
 #### F173 [LOW/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:64f7860f29268ed6#phase6`
@@ -1675,7 +1675,7 @@ assert <CKR_MECHANISM_INVALID: 0x00000070> in (<CKR_OK: 0x00000000>, 33, <CKR_OP
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_mech_wrap.py::TestMechWrapRoundtrip::test_wrap_unwrap_aes_key[AES_KEY_WRAP_PAD]`
 - **Message:** pkcs11_check.raw.rv.CkrAssertionError: Unexpected CK_RV CKR_OPERATION_ACTIVE; expected one of: CKR_OK
-- **Evidence:** Type C lifecycle: test_mech_wrap::test_wrap_unwrap_aes_key[AES_KEY_WRAP_PAD] failed with CKR_OPERATION_ACTIVE.
+- **Evidence:** lifecycle: test_mech_wrap::test_wrap_unwrap_aes_key[AES_KEY_WRAP_PAD] failed with CKR_OPERATION_ACTIVE.
 
 #### F214 [LOW/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:302387b26aa6f9b3`
@@ -1707,7 +1707,7 @@ assert <CKR_MECHANISM_INVALID: 0x00000070> in (<CKR_OK: 0x00000000>, 33, <CKR_OP
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 2
 - **Example nodeid:** `src/pkcs11_check/testcases/test_metamorphic.py::TestRoundTripInvariants::test_wrap_unwrap_preserves_material`
 - **Message:** pkcs11_check.raw.rv.CkrAssertionError: Unexpected CK_RV CKR_ARGUMENTS_BAD; expected one of: CKR_OK
-- **Evidence:** Type C lifecycle: test_metamorphic::test_wrap_unwrap_preserves_material failed with CKR_OPERATION_ACTIVE on CKM_AES_KEY_WRAP.
+- **Evidence:** lifecycle: test_metamorphic::test_wrap_unwrap_preserves_material failed with CKR_OPERATION_ACTIVE on CKM_AES_KEY_WRAP.
 
 ### `test_multipart_streaming.py` (3 findings)
 
@@ -1739,63 +1739,63 @@ assert <CKR_MECHANISM_INVALID: 0x00000070> in (<CKR_OK: 0x00000000>, 33, <CKR_OP
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_c_digest_terminates_after_each_call`
 - **Message:** Failed: SHA256: C_Digest(empty) returned CKR_ARGUMENTS_BAD but left the digest operation active (next C_DigestInit -> CKR_OPERATION_ACTIVE) -- the spec requires C_Digest to always terminate the active digest operation: success claimed then contradicted (self-contradiction)
-- **Evidence:** Type C lifecycle: PKCS#11 spec 'C_Digest always terminates the active digest operation unless CKR_BUFFER_TOO_SMALL'. WolfPKCS11: C_Digest(empty) returned CKR_ARGUMENTS_BAD AND left the digest operation active (next C_DigestInit -> CKR_OPERATION_ACTIVE). Spec violation per classify_lifecycle_effect = self-contradiction.
+- **Evidence:** lifecycle: PKCS#11 spec 'C_Digest always terminates the active digest operation unless CKR_BUFFER_TOO_SMALL'. WolfPKCS11: C_Digest(empty) returned CKR_ARGUMENTS_BAD AND left the digest operation active (next C_DigestInit -> CKR_OPERATION_ACTIVE). Spec violation per classify_lifecycle_effect = self-contradiction.
 
 #### F222 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:e070daa9dae0b596#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-input]`
 - **Message:** Failed: C_Encrypt with NULL input pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** Type C lifecycle: C_Encrypt with NULL input pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active.
+- **Evidence:** lifecycle: C_Encrypt with NULL input pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active.
 
 #### F223 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:ffaaddd0ac3aa9f5#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-length]`
 - **Message:** Failed: C_Encrypt with NULL length pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** Type C lifecycle: C_Encrypt with NULL length pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active.
+- **Evidence:** lifecycle: C_Encrypt with NULL length pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active.
 
 #### F224 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:9f9e1b3bb507d76c#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-update-input]`
 - **Message:** Failed: C_EncryptUpdate with NULL input pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** Type C lifecycle: C_EncryptUpdate with NULL input pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active.
+- **Evidence:** lifecycle: C_EncryptUpdate with NULL input pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active.
 
 #### F225 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:c6ae4ea50821eddc#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-update-length]`
 - **Message:** Failed: C_EncryptUpdate with NULL length pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** Type C lifecycle: C_EncryptUpdate with NULL length pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active.
+- **Evidence:** lifecycle: C_EncryptUpdate with NULL length pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active.
 
 #### F226 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:1c0bfbf46c90e6d8#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[decrypt-input]`
 - **Message:** Failed: C_Decrypt with NULL input pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** Type C lifecycle: C_Decrypt with NULL input pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active.
+- **Evidence:** lifecycle: C_Decrypt with NULL input pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active.
 
 #### F227 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:8ae9a04c6a0c081a#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[decrypt-length]`
 - **Message:** Failed: C_Decrypt with NULL length pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** Type C lifecycle: C_Decrypt with NULL length pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active.
+- **Evidence:** lifecycle: C_Decrypt with NULL length pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active.
 
 #### F228 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:5991e0811a2914fe#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[decrypt-update-input]`
 - **Message:** Failed: C_DecryptUpdate with NULL input pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** Type C lifecycle: C_DecryptUpdate with NULL input pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active.
+- **Evidence:** lifecycle: C_DecryptUpdate with NULL input pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active.
 
 #### F229 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:2e9652a090ebdd76#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[decrypt-update-length]`
 - **Message:** Failed: C_DecryptUpdate with NULL length pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** Type C lifecycle: C_DecryptUpdate with NULL length pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active.
+- **Evidence:** lifecycle: C_DecryptUpdate with NULL length pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active.
 
 #### F230 [MEDIUM/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:3f7583e3221a873f#phase6`
@@ -1829,7 +1829,7 @@ assert <CKR_MECHANISM_INVALID: 0x00000070> in (<CKR_OK: 0x00000000>, 33, <CKR_OP
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 2
 - **Example nodeid:** `src/pkcs11_check/testcases/test_ro_session_restrictions.py::TestROWrapUnwrapRestrictions::test_unwrap_to_token_object_in_ro_fails`
 - **Message:** pkcs11_check.raw.rv.CkrAssertionError: Unexpected CK_RV CKR_OPERATION_ACTIVE; expected one of: CKR_OK
-- **Evidence:** Type C lifecycle: C_UnwrapKey leaves op active; subsequent op init returns CKR_OPERATION_ACTIVE. OPERATION_ACTIVE epidemic cohort.
+- **Evidence:** lifecycle: C_UnwrapKey leaves op active; subsequent op init returns CKR_OPERATION_ACTIVE. OPERATION_ACTIVE epidemic cohort.
 
 ### `test_rsa_key_wrapping.py` (1 findings)
 
@@ -1867,7 +1867,7 @@ assert <CKR_MECHANISM_INVALID: 0x00000070> in (<CKR_OK: 0x00000000>, 33, <CKR_OP
 - **Message:** AssertionError: Session B cannot see private object - login not shared
 assert 0 >= 1
  +  where 0 = len([])
-- **Evidence:** Type C: test_session_state_machine::test_login_in_one_session_visible_in_another — login in session A NOT visible in session B. PKCS#11 v3.1 Sec.5.5: login state is token-wide. WolfPKCS11 treats login per-session.
+- **Evidence:** lifecycle: test_session_state_machine::test_login_in_one_session_visible_in_another — login in session A NOT visible in session B. PKCS#11 v3.1 Sec.5.5: login state is token-wide. WolfPKCS11 treats login per-session.
 
 ### `test_set_attribute.py` (2 findings)
 
@@ -1876,14 +1876,14 @@ assert 0 >= 1
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_set_attribute.py::TestSetAttributeNegative::test_cannot_change_class`
 - **Message:** Failed: write read-only CKA_CLASS (PKCS#11 Base v3.0 Table 15): claimed success and the read-only value actually changed
-- **Evidence:** W13 Type B: test_set_attribute::test_cannot_change_class — C_SetAttributeValue(CKA_CLASS) returned CKR_OK AND the CKA_CLASS value actually changed. PKCS#11 Base v3.0 Table 15: CKA_CLASS is read-only. Self-contradiction.
+- **Evidence:** W13 policy: test_set_attribute::test_cannot_change_class — C_SetAttributeValue(CKA_CLASS) returned CKR_OK AND the CKA_CLASS value actually changed. PKCS#11 Base v3.0 Table 15: CKA_CLASS is read-only. Self-contradiction.
 
 #### F239 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:1ab4bc019419d365#phase6`
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_set_attribute.py::TestSetAttributeAtomicity::test_set_attribute_mixed_template_is_atomic`
 - **Message:** Failed: C_SetAttributeValue partially applied CKA_LABEL before rejecting a later read-only CKA_CLASS row
-- **Evidence:** Type B atomicity: test_set_attribute::test_set_attribute_mixed_template_is_atomic — C_SetAttributeValue PARTIALLY applied CKA_LABEL before rejecting a later read-only CKA_CLASS row. PKCS#11 v3.1 Sec.5.7.6: C_SetAttributeValue must be atomic.
+- **Evidence:** policy atomicity: test_set_attribute::test_set_attribute_mixed_template_is_atomic — C_SetAttributeValue PARTIALLY applied CKA_LABEL before rejecting a later read-only CKA_CLASS row. PKCS#11 v3.1 Sec.5.7.6: C_SetAttributeValue must be atomic.
 
 ### `test_sign_recover.py` (1 findings)
 

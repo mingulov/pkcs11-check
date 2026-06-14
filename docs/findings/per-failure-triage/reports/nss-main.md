@@ -190,7 +190,7 @@ Ordered by severity then category.
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/ckr/test_ckr_object.py::TestCreateObjectErrors::test_allowed_mechanisms_empty_null_pointer_enforced`
 - **Message:** Failed: CKA_ALLOWED_MECHANISMS empty-array enforcement for C_EncryptInit/C_Encrypt: claimed the protection then violated it (self-contradiction)
-- **Evidence:** A key created with an empty CKA_ALLOWED_MECHANISMS array (NULL_PTR, ulValueLen=0) reads back as [] yet still permits C_EncryptInit/C_Encrypt with CKM_AES_ECB (CKR_OK) instead of CKR_MECHANISM_INVALID / CKR_KEY_FUNCTION_NOT_PERMITTED. Type-B self-contradiction (claimed the restriction then violated it). Documented NSS finding (module-issues.md:264-272); shared with opencryptoki; softhsm2/kryoptic/wolfpkcs11 enforce.
+- **Evidence:** A key created with an empty CKA_ALLOWED_MECHANISMS array (NULL_PTR, ulValueLen=0) reads back as [] yet still permits C_EncryptInit/C_Encrypt with CKM_AES_ECB (CKR_OK) instead of CKR_MECHANISM_INVALID / CKR_KEY_FUNCTION_NOT_PERMITTED. policy self-contradiction (claimed the restriction then violated it). Documented NSS finding (module-issues.md:264-272); shared with opencryptoki; softhsm2/kryoptic/wolfpkcs11 enforce.
 
 ### `test_ckr_raw_buffer.py` (6 findings)
 
@@ -266,7 +266,7 @@ assert 1 == 32
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/ckr/test_ckr_wrap.py::TestWrapKeyErrors::test_key_not_extractable`
 - **Message:** Failed: C_WrapKey on a CKA_EXTRACTABLE=False key (PKCS#11 v3.1 Sec.5.14.3 requires CKR_KEY_UNEXTRACTABLE): claimed the protection then violated it (self-contradiction)
-- **Evidence:** C_WrapKey succeeded (CKR_OK) on a key whose CKA_EXTRACTABLE=False reads back as False, instead of CKR_KEY_UNEXTRACTABLE (PKCS#11 v3.1 Sec.5.14.3). Type-B self-contradiction: claimed the non-extractable protection then violated it (key material leaves the token). Documented NSS finding (module-issues.md:519-527); softhsm2 enforces and passes.
+- **Evidence:** C_WrapKey succeeded (CKR_OK) on a key whose CKA_EXTRACTABLE=False reads back as False, instead of CKR_KEY_UNEXTRACTABLE (PKCS#11 v3.1 Sec.5.14.3). policy self-contradiction: claimed the non-extractable protection then violated it (key material leaves the token). Documented NSS finding (module-issues.md:519-527); softhsm2 enforces and passes.
 
 #### F032 [HIGH/SOFT_TOKEN_CAVEAT] — 📚 DOCS_ONLY
 - **Signature:** `sha1:96659c0242d30e3c`
@@ -686,7 +686,7 @@ stdout: P11_RV_TRACE_JSON:[{"i":0,"fn":"C_Initialize","mech":null,"rv":0,"rv_nam
 - **Message:** AssertionError: assert 32 == 16
  +  where 32 = len(b'\x90\x9b\xe3\x92y\xfe\xc3\xad\x8b\x16Tj\x95it\xeeC[\xb4\xac\xfa\x8f\x0c\x91g\xf0\xf0\x19\xff\x97\x7fE')
  +    where b'\x90\x9b\xe3\x92y\xfe\xc3\xad\x8b\x16Tj\x95it\xeeC[\xb4\xac\xfa\x8f\x0c\x91g\xf0\xf0\x19\xff\x97\x7fE' = _get_value(RawSession(ra
-- **Evidence:** CKM_IKE_PRF_DERIVE with CKA_VALUE_LEN=16 returned CKR_OK but produced a 32-byte derived key (assert len(derived)==32, expected 16). Type-A wrong-output: the derived key length does not match the requested CKA_VALUE_LEN (PKCS#11 derive semantics require the requested length). Distinct from the documented IKE CKR_MECHANISM_PARAM_INVALID stub (module-issues.md:805-822) -- here IKE_PRF_DERIVE IS operational but emits the wrong-length output. Crypto-correctness break on key derivation.
+- **Evidence:** CKM_IKE_PRF_DERIVE with CKA_VALUE_LEN=16 returned CKR_OK but produced a 32-byte derived key (assert len(derived)==32, expected 16). crypto wrong-output: the derived key length does not match the requested CKA_VALUE_LEN (PKCS#11 derive semantics require the requested length). Distinct from the documented IKE CKR_MECHANISM_PARAM_INVALID stub (module-issues.md:805-822) -- here IKE_PRF_DERIVE IS operational but emits the wrong-length output. Crypto-correctness break on key derivation.
 
 ### `test_kdf.py` (1 findings)
 
@@ -1876,7 +1876,7 @@ stdout: P11_RV_TRACE_JSON:[{"i":0,"fn":"C_Initialize","mech":null,"rv":0,"rv_nam
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-update-input]`
 - **Message:** Failed: C_EncryptUpdate with NULL input pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** C_EncryptUpdate(NULL input, nonzero len) returned CKR_ARGUMENTS_BAD but left the encrypt op active; next C_EncryptInit -> CKR_OPERATION_ACTIVE. Type-C lifecycle self-contradiction (clean error then op not terminated). Cohort with documented NSS C_EncryptFinal non-termination family (module-issues.md:358-376); this is the NULL-input variant on the update path.
+- **Evidence:** C_EncryptUpdate(NULL input, nonzero len) returned CKR_ARGUMENTS_BAD but left the encrypt op active; next C_EncryptInit -> CKR_OPERATION_ACTIVE. lifecycle self-contradiction (clean error then op not terminated). Cohort with documented NSS C_EncryptFinal non-termination family (module-issues.md:358-376); this is the NULL-input variant on the update path.
 
 ### `test_remaining_gaps.py` (2 findings)
 
@@ -1885,14 +1885,14 @@ stdout: P11_RV_TRACE_JSON:[{"i":0,"fn":"C_Initialize","mech":null,"rv":0,"rv_nam
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_remaining_gaps.py::TestTemplateConstraintAttributes::test_wrap_template_enforces_target_attributes`
 - **Message:** Failed: CKA_WRAP_TEMPLATE target-attribute enforcement: claimed the protection then violated it (self-contradiction)
-- **Evidence:** CKA_WRAP_TEMPLATE target-attribute constraint: a wrapping key with a CKA_WRAP_TEMPLATE is still allowed to wrap a target key whose attributes violate the template (CKR_OK) instead of CKR_KEY_FUNCTION_NOT_PERMITTED. Type-B self-contradiction (claimed the wrap policy then violated it). Same class as the documented NSS CKA_WRAP_WITH_TRUSTED / non-extractable wrap Type-B findings (module-issues.md:509-536). Not previously recorded for CKA_WRAP_TEMPLATE.
+- **Evidence:** CKA_WRAP_TEMPLATE target-attribute constraint: a wrapping key with a CKA_WRAP_TEMPLATE is still allowed to wrap a target key whose attributes violate the template (CKR_OK) instead of CKR_KEY_FUNCTION_NOT_PERMITTED. policy self-contradiction (claimed the wrap policy then violated it). Same class as the documented NSS CKA_WRAP_WITH_TRUSTED / non-extractable wrap policy findings (module-issues.md:509-536). Not previously recorded for CKA_WRAP_TEMPLATE.
 
 #### F248 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:aa13aa83aaa5d25f#phase6`
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_remaining_gaps.py::TestTemplateConstraintAttributes::test_unwrap_template_enforces_created_object_attributes`
 - **Message:** Failed: CKA_UNWRAP_TEMPLATE created-object enforcement: claimed the protection then violated it (self-contradiction)
-- **Evidence:** CKA_UNWRAP_TEMPLATE created-object constraint: a wrapping key with a CKA_UNWRAP_TEMPLATE permits unwrapping a key whose resulting attributes violate the template (CKR_OK) instead of CKR_KEY_FUNCTION_NOT_PERMITTED / CKR_TEMPLATE_INCONSISTENT. Type-B self-contradiction (claimed the unwrap policy then violated it). Companion to the CKA_WRAP_TEMPLATE finding; same class as documented NSS wrap-policy Type-B findings.
+- **Evidence:** CKA_UNWRAP_TEMPLATE created-object constraint: a wrapping key with a CKA_UNWRAP_TEMPLATE permits unwrapping a key whose resulting attributes violate the template (CKR_OK) instead of CKR_KEY_FUNCTION_NOT_PERMITTED / CKR_TEMPLATE_INCONSISTENT. policy self-contradiction (claimed the unwrap policy then violated it). Companion to the CKA_WRAP_TEMPLATE finding; same class as documented NSS wrap-policy findings.
 
 ### `test_set_attribute.py` (1 findings)
 
@@ -1901,7 +1901,7 @@ stdout: P11_RV_TRACE_JSON:[{"i":0,"fn":"C_Initialize","mech":null,"rv":0,"rv_nam
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_set_attribute.py::TestSetAttributeAtomicity::test_set_attribute_mixed_template_is_atomic`
 - **Message:** Failed: C_SetAttributeValue partially applied CKA_LABEL before rejecting a later read-only CKA_CLASS row
-- **Evidence:** C_SetAttributeValue with a mixed template (CKA_LABEL + read-only CKA_CLASS) partially applied CKA_LABEL then rejected the CKA_CLASS row, leaving the object in a half-modified state. Violates the PKCS#11 atomicity guarantee for C_SetAttributeValue (all-or-nothing). Type-C lifecycle/state self-contradiction (claimed success on one row, rejected another, object left inconsistent). Shared deviation (bouncyhsm/kryoptic also fail); not previously recorded for NSS.
+- **Evidence:** C_SetAttributeValue with a mixed template (CKA_LABEL + read-only CKA_CLASS) partially applied CKA_LABEL then rejected the CKA_CLASS row, leaving the object in a half-modified state. Violates the PKCS#11 atomicity guarantee for C_SetAttributeValue (all-or-nothing). lifecycle/state self-contradiction (claimed success on one row, rejected another, object left inconsistent). Shared deviation (bouncyhsm/kryoptic also fail); not previously recorded for NSS.
 
 ### `test_sign_recover.py` (1 findings)
 

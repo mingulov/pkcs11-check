@@ -1468,7 +1468,7 @@
         "src/pkcs11_check/testcases/test_ec_import_coherence.py::test_ec_public_key_import_is_coherent[brainpoolP256r1]"
       ],
       "messages_sample": [
-        "Failed: brainpoolP256r1: C_CreateObject returned CKR_OK but the object is not honored (Type-C self-contradiction): object incoherent after CKR_OK create: Unexpected CK_RV CKR_OBJECT_HANDLE_INVALID; expected one of: CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID"
+        "Failed: brainpoolP256r1: C_CreateObject returned CKR_OK but the object is not honored (lifecycle self-contradiction): object incoherent after CKR_OK create: Unexpected CK_RV CKR_OBJECT_HANDLE_INVALID; expected one of: CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID"
       ],
       "test_file": "src/pkcs11_check/testcases/test_ec_import_coherence.py",
       "direction": "ACCEPT_INVALID",
@@ -1483,7 +1483,7 @@
         "src/pkcs11_check/testcases/test_ec_import_coherence.py::test_ec_public_key_import_is_coherent[secp256k1]"
       ],
       "messages_sample": [
-        "Failed: secp256k1: C_CreateObject returned CKR_OK but the object is not honored (Type-C self-contradiction): object incoherent after CKR_OK create: Unexpected CK_RV CKR_OBJECT_HANDLE_INVALID; expected one of: CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID"
+        "Failed: secp256k1: C_CreateObject returned CKR_OK but the object is not honored (lifecycle self-contradiction): object incoherent after CKR_OK create: Unexpected CK_RV CKR_OBJECT_HANDLE_INVALID; expected one of: CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID"
       ],
       "test_file": "src/pkcs11_check/testcases/test_ec_import_coherence.py",
       "direction": "ACCEPT_INVALID",

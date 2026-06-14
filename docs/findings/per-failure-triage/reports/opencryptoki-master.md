@@ -63,7 +63,7 @@ Ordered by severity then category.
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/ckr/test_ckr_object.py::TestCreateObjectErrors::test_allowed_mechanisms_empty_null_pointer_enforced`
 - **Message:** Failed: CKA_ALLOWED_MECHANISMS empty-array enforcement for C_EncryptInit/C_Encrypt: claimed the protection then violated it (self-contradiction)
-- **Evidence:** CKA_ALLOWED_MECHANISMS empty-array enforcement: key created with CKA_ALLOWED_MECHANISMS=[] (empty array = no mechanisms permitted), yet C_EncryptInit/C_Encrypt succeeds. Type B attribute self-contradiction - module claimed the protection (empty allowed-mechanisms list) then violated it by allowing encrypt. PKCS#11 v3.1 Sec.4.6.4: CKA_ALLOWED_MECHANISMS restricts which mechanisms can be used with the key.
+- **Evidence:** CKA_ALLOWED_MECHANISMS empty-array enforcement: key created with CKA_ALLOWED_MECHANISMS=[] (empty array = no mechanisms permitted), yet C_EncryptInit/C_Encrypt succeeds. policy attribute self-contradiction - module claimed the protection (empty allowed-mechanisms list) then violated it by allowing encrypt. PKCS#11 v3.1 Sec.4.6.4: CKA_ALLOWED_MECHANISMS restricts which mechanisms can be used with the key.
 
 ### `test_ckr_raw_buffer.py` (4 findings)
 
@@ -168,7 +168,7 @@ stderr:
 - **Example nodeid:** `src/pkcs11_check/testcases/security/test_cve_regression.py::TestTookanUnwrapAttrs::test_unwrapped_key_preserves_extractable`
 - **Message:** AssertionError: Tookan: unwrapped key is EXTRACTABLE despite template saying False
 assert True is False
-- **Evidence:** Tookan unwrap attribute violation: C_UnwrapKey with template CKA_EXTRACTABLE=False produces a key whose CKA_EXTRACTABLE attribute reads True. Type B attribute self-contradiction - module accepted the protection-claiming template then violated it. Root cause: opencryptoki ignores policy attributes (CKA_EXTRACTABLE/CKA_SENSITIVE) in unwrap templates (documented in docs/module-issues.md), so the unwrapped key inherits EXTRACTABLE from the wrapped blob (which was True). Security impact: key marked n
+- **Evidence:** Tookan unwrap attribute violation: C_UnwrapKey with template CKA_EXTRACTABLE=False produces a key whose CKA_EXTRACTABLE attribute reads True. policy attribute self-contradiction - module accepted the protection-claiming template then violated it. Root cause: opencryptoki ignores policy attributes (CKA_EXTRACTABLE/CKA_SENSITIVE) in unwrap templates (documented in docs/module-issues.md), so the unwrapped key inherits EXTRACTABLE from the wrapped blob (which was True). Security impact: key marked n
 
 ### `test_error_path_kwp.py` (1 findings)
 
@@ -456,7 +456,7 @@ assert 0 == 3
 - **Example nodeid:** `src/pkcs11_check/testcases/test_buffers.py::TestOutputBufferEdgeCases::test_sign_final_buffer_too_small_then_correct`
 - **Message:** AssertionError: Retry C_SignFinal with 256-byte buffer returned 0x00000091 — signature state was not preserved across BUFFER_TOO_SMALL
 assert 145 == <CKR_OK: 0x00000000>
-- **Evidence:** Retry C_SignFinal with 256-byte buffer (RSA-2048 correct size) returned CKR_BUFFER_TOO_SMALL (0x91) - signature operation state was NOT preserved across the initial CKR_BUFFER_TOO_SMALL. PKCS#11 v3.1 Sec.5.3: C_SignFinal returning CKR_BUFFER_TOO_SMALL must NOT terminate the operation; the retry with the reported size must succeed. Type C lifecycle self-contradiction.
+- **Evidence:** Retry C_SignFinal with 256-byte buffer (RSA-2048 correct size) returned CKR_BUFFER_TOO_SMALL (0x91) - signature operation state was NOT preserved across the initial CKR_BUFFER_TOO_SMALL. PKCS#11 v3.1 Sec.5.3: C_SignFinal returning CKR_BUFFER_TOO_SMALL must NOT terminate the operation; the retry with the reported size must succeed. lifecycle self-contradiction.
 
 ### `test_des.py` (3 findings)
 
@@ -1562,7 +1562,7 @@ assert 145 == <CKR_OK: 0x00000000>
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_c_verify_final_terminates_after_rejected_signature`
 - **Message:** Failed: RSA: C_VerifyFinal(empty) returned CKR_ARGUMENTS_BAD but left the verify operation active (next C_VerifyInit -> CKR_OPERATION_ACTIVE) -- the spec requires C_VerifyFinal to ALWAYS terminate the active verification operation: success claimed then contradicted (self-contradiction)
-- **Evidence:** C_VerifyFinal(empty sig) returned CKR_ARGUMENTS_BAD but left the verify operation active (next C_VerifyInit -> CKR_OPERATION_ACTIVE). PKCS#11 v3.1 requires C_VerifyFinal to ALWAYS terminate the active verification operation. Type C lifecycle self-contradiction (claimed a verdict then didn't honor termination).
+- **Evidence:** C_VerifyFinal(empty sig) returned CKR_ARGUMENTS_BAD but left the verify operation active (next C_VerifyInit -> CKR_OPERATION_ACTIVE). PKCS#11 v3.1 requires C_VerifyFinal to ALWAYS terminate the active verification operation. lifecycle self-contradiction (claimed a verdict then didn't honor termination).
 
 #### F206 [LOW/PROVIDER_BUG] — 📚 DOCS_ONLY
 - **Signature:** `sha1:f568a84edcc8ebbc#phase6`

@@ -131,7 +131,7 @@ THEMES = [
         ),
     ),
     (
-        "Op-termination Type-C lifecycle",
+        "Op-termination lifecycle",
         re.compile(
             r"\b(op[-_ ]?termination|operation_active|operation_left_active|dangling op|CKR_OPERATION_ACTIVE)\b",
             re.I,
@@ -182,7 +182,7 @@ THEMES = [
         re.compile(r"\b(accept[-_ ]?invalid.*PKCS|Bleichenbacher|RSA[-_ ]?PKCS1.*accept)\b", re.I),
     ),
     (
-        "Wrong-output / Type-A crypto-correctness",
+        "Wrong-output / crypto-correctness",
         re.compile(
             r"\b(wrong output|wrong[-_ ]?output|Type[-_ ]?A|digest.*SHA.256.*empty|ignores IV)\b",
             re.I,

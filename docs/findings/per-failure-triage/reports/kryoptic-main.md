@@ -54,7 +54,7 @@ Ordered by severity then category.
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/ckr/test_ckr_decrypt.py::TestDecryptDataErrors::test_rsa_ciphertext_wrong_length`
 - **Message:** Failed: C_Decrypt(RSA_ciphertext_wrong_length): accepted (CKR_OK) but must reject [PKCS#11 v3.1 Sec.5.9.2]
-- **Evidence:** kryoptic-main accepts (CKR_OK) a 128-byte ciphertext on C_Decrypt(CKM_RSA_PKCS) with an RSA-2048 key (expects 256). test_ckr_decrypt.py:157 explicitly classifies this as Type-A accept-invalid on RSA-PAD. Per triage model, accept-invalid on RSA-PAD -> HIGH (oracle/padding surface). Smoking gun: rv==CKR_OK on wrong-length RSA ciphertext.
+- **Evidence:** kryoptic-main accepts (CKR_OK) a 128-byte ciphertext on C_Decrypt(CKM_RSA_PKCS) with an RSA-2048 key (expects 256). test_ckr_decrypt.py:157 explicitly classifies this as crypto accept-invalid on RSA-PAD. Per triage model, accept-invalid on RSA-PAD -> HIGH (oracle/padding surface). Smoking gun: rv==CKR_OK on wrong-length RSA ciphertext.
 
 #### F007 [LOW/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:7a919ab3dd52f301#phase6`
@@ -134,7 +134,7 @@ Ordered by severity then category.
 - **Direction:** `ACCEPT_INVALID` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/ckr/test_ckr_object.py::TestSetAttributeErrors::test_set_readonly_class`
 - **Message:** pkcs11_check.raw.rv.CkrAssertionError: Unexpected CK_RV CKR_GENERAL_ERROR; expected one of: CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID
-- **Evidence:** kryoptic's C_SetAttributeValue on a CKO_DATA object accepts a read-only CKA_CLASS write to CKO_SECRET_KEY (returns CKR_OK), then read_attributes -> C_GetAttributeValue returns CKR_GENERAL_ERROR (test_ckr_object.py:352-356). Object left in a broken state after an accepted write -> Type C self-contradiction. Same root class as the kryoptic test_set_attribute.py failures.
+- **Evidence:** kryoptic's C_SetAttributeValue on a CKO_DATA object accepts a read-only CKA_CLASS write to CKO_SECRET_KEY (returns CKR_OK), then read_attributes -> C_GetAttributeValue returns CKR_GENERAL_ERROR (test_ckr_object.py:352-356). Object left in a broken state after an accepted write -> lifecycle self-contradiction. Same root class as the kryoptic test_set_attribute.py failures.
 
 ### `test_ckr_raw_buffer.py` (9 findings)
 
@@ -595,7 +595,7 @@ stderr: thread '<unnamed>' (317) panicked
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_access_levels.py::TestPublicSessionRestrictions::test_public_create_private_session_object_rejected`
 - **Message:** Failed: public (unauthenticated) session created a CKA_PRIVATE=True session object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN): claimed the protection then violated it (self-contradiction)
-- **Evidence:** kryoptic-main allows an unauthenticated (public) session to C_CreateObject a CKA_PRIVATE=True session object with CKR_OK; PKCS#11 requires CKR_USER_NOT_LOGGED_IN (test_access_levels.py:1590 test_public_create_private_session_object_rejected -> classify_policy_enforcement violated). Type-B access-control self-contradiction: private object created without login. Not in module-issues.md.
+- **Evidence:** kryoptic-main allows an unauthenticated (public) session to C_CreateObject a CKA_PRIVATE=True session object with CKR_OK; PKCS#11 requires CKR_USER_NOT_LOGGED_IN (test_access_levels.py:1590 test_public_create_private_session_object_rejected -> classify_policy_enforcement violated). policy access-control self-contradiction: private object created without login. Not in module-issues.md.
 
 #### F065 [LOW/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:da2c313206513792#phase6`
@@ -611,7 +611,7 @@ stderr: thread '<unnamed>' (317) panicked
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_aes_kdf.py::TestAESCBCEncryptData::test_derive_different_iv`
 - **Message:** AssertionError: assert b'\x9aH\xa4L\x84.\x9f~\\<(\xc2\xd0\xaf\xb9G' != b'\x9aH\xa4L\x84.\x9f~\\<(\xc2\xd0\xaf\xb9G'
-- **Evidence:** kryoptic-main CKM_AES_CBC_ENCRYPT_DATA derivation produces BYTE-IDENTICAL derived keys (CKA_VALUE) for two different IVs (0x00..0x0f vs 0x10..0x1f) with identical base key+data: test_aes_kdf.py:366 assert v1 != v2 fails (both 0x9a48a44c...). The IV security parameter has ZERO effect on the CBC-KDF output -> Type-A crypto-correctness break; CBC-KDF that ignores IV is broken.
+- **Evidence:** kryoptic-main CKM_AES_CBC_ENCRYPT_DATA derivation produces BYTE-IDENTICAL derived keys (CKA_VALUE) for two different IVs (0x00..0x0f vs 0x10..0x1f) with identical base key+data: test_aes_kdf.py:366 assert v1 != v2 fails (both 0x9a48a44c...). The IV security parameter has ZERO effect on the CBC-KDF output -> crypto-correctness break; CBC-KDF that ignores IV is broken.
 
 ### `test_aes_modes.py` (1 findings)
 
@@ -1575,7 +1575,7 @@ assert b'\x01\x03\x0...d\x1f\x1f\x1f' == b'\x00\x01\x0...x0c\r\x0e\x0f'
   
   At index 0 diff: b'\x01' != b'\x00'
   Use -v to get more diff
-- **Evidence:** kryptic returns CKR_OK for CKM_EXTRACT_KEY_FROM_KEY at bit offset 0 but produces 32 bytes of bit-transformed output (010303070507070f...) instead of the first 16 bytes of the base key (000102...0f) (test_misc_kdf.py:159). EXTRACT_KEY_FROM_KEY is a simple sub-key byte slice (PKCS#11 Sec.6.18.5); there is no parameter-encoding ambiguity for this mechanism, so returning a different-length transformed value is an unambiguous kryptic derive bug. Type A wrong-output.
+- **Evidence:** kryptic returns CKR_OK for CKM_EXTRACT_KEY_FROM_KEY at bit offset 0 but produces 32 bytes of bit-transformed output (010303070507070f...) instead of the first 16 bytes of the base key (000102...0f) (test_misc_kdf.py:159). EXTRACT_KEY_FROM_KEY is a simple sub-key byte slice (PKCS#11 Sec.6.18.5); there is no parameter-encoding ambiguity for this mechanism, so returning a different-length transformed value is an unambiguous kryptic derive bug. crypto wrong-output.
 
 #### F199 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:7615c2e7aa87d32e#phase6`
@@ -1586,7 +1586,7 @@ assert b'\x11\x13\x1...r\x0f\x0f\x1f' == b'\x10\x11\x1...c\x1d\x1e\x1f'
   
   At index 0 diff: b'\x11' != b'\x10'
   Use -v to get more diff
-- **Evidence:** kryptic returns CKR_OK for CKM_EXTRACT_KEY_FROM_KEY at a byte-boundary offset but produces a 32-byte bit-transformed value (11131317...) instead of the expected 16-byte slice (101112...1f) of the base key (test_misc_kdf.py:231). Same unambiguous derive bug as the offset-zero sibling: EXTRACT_KEY_FROM_KEY must return the requested byte slice, not a transformed over-length value. Type A wrong-output.
+- **Evidence:** kryptic returns CKR_OK for CKM_EXTRACT_KEY_FROM_KEY at a byte-boundary offset but produces a 32-byte bit-transformed value (11131317...) instead of the expected 16-byte slice (101112...1f) of the base key (test_misc_kdf.py:231). Same unambiguous derive bug as the offset-zero sibling: EXTRACT_KEY_FROM_KEY must return the requested byte slice, not a transformed over-length value. crypto wrong-output.
 
 ### `test_operation_termination.py` (8 findings)
 
@@ -1595,56 +1595,56 @@ assert b'\x11\x13\x1...r\x0f\x0f\x1f' == b'\x10\x11\x1...c\x1d\x1e\x1f'
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-input]`
 - **Message:** Failed: C_Encrypt with NULL input pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** kryptic-main null-arg lifecycle: C_Encrypt(single) with NULL input pointer returns CKR_ARGUMENTS_BAD but leaves the encrypt op ACTIVE (next C_EncryptInit -> CKR_OPERATION_ACTIVE). Spec requires C_Encrypt to ALWAYS terminate the operation. Type-C self-contradiction; cascades CKR_OPERATION_ACTIVE onto later tests.
+- **Evidence:** kryptic-main null-arg lifecycle: C_Encrypt(single) with NULL input pointer returns CKR_ARGUMENTS_BAD but leaves the encrypt op ACTIVE (next C_EncryptInit -> CKR_OPERATION_ACTIVE). Spec requires C_Encrypt to ALWAYS terminate the operation. lifecycle self-contradiction; cascades CKR_OPERATION_ACTIVE onto later tests.
 
 #### F201 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:c8b3a59e5156f0b0#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-length]`
 - **Message:** Failed: C_Encrypt with NULL length pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** kryptic-main: C_Encrypt(single) NULL length pointer -> CKR_ARGUMENTS_BAD but encrypt op left ACTIVE. Same Type-C lifecycle root as the null-arg cohort (test_operation_termination.py:489).
+- **Evidence:** kryptic-main: C_Encrypt(single) NULL length pointer -> CKR_ARGUMENTS_BAD but encrypt op left ACTIVE. Same lifecycle root as the null-arg cohort (test_operation_termination.py:489).
 
 #### F202 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:d1d7a1ce3771bd1a#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-update-input]`
 - **Message:** Failed: C_EncryptUpdate with NULL input pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** kryptic-main: C_EncryptUpdate NULL input pointer -> CKR_ARGUMENTS_BAD but encrypt op left ACTIVE. Same Type-C lifecycle root as the null-arg cohort (test_operation_termination.py:489).
+- **Evidence:** kryptic-main: C_EncryptUpdate NULL input pointer -> CKR_ARGUMENTS_BAD but encrypt op left ACTIVE. Same lifecycle root as the null-arg cohort (test_operation_termination.py:489).
 
 #### F203 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:2b8fd0ae8d585cfd#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[encrypt-update-length]`
 - **Message:** Failed: C_EncryptUpdate with NULL length pointer returned CKR_ARGUMENTS_BAD but left the encrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** kryptic-main: C_EncryptUpdate NULL length pointer -> CKR_ARGUMENTS_BAD but encrypt op left ACTIVE. Same Type-C lifecycle root as the null-arg cohort (test_operation_termination.py:489).
+- **Evidence:** kryptic-main: C_EncryptUpdate NULL length pointer -> CKR_ARGUMENTS_BAD but encrypt op left ACTIVE. Same lifecycle root as the null-arg cohort (test_operation_termination.py:489).
 
 #### F204 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:7f83ae8d23f73e01#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[decrypt-input]`
 - **Message:** Failed: C_Decrypt with NULL input pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** kryptic-main: C_Decrypt(single) NULL input pointer -> CKR_ARGUMENTS_BAD but decrypt op left ACTIVE. Same Type-C lifecycle root as the null-arg cohort (test_operation_termination.py:489).
+- **Evidence:** kryptic-main: C_Decrypt(single) NULL input pointer -> CKR_ARGUMENTS_BAD but decrypt op left ACTIVE. Same lifecycle root as the null-arg cohort (test_operation_termination.py:489).
 
 #### F205 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:dedf25e2a49baf74#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[decrypt-length]`
 - **Message:** Failed: C_Decrypt with NULL length pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** kryptic-main: C_Decrypt(single) NULL length pointer -> CKR_ARGUMENTS_BAD but decrypt op left ACTIVE. Same Type-C lifecycle root as the null-arg cohort (test_operation_termination.py:489).
+- **Evidence:** kryptic-main: C_Decrypt(single) NULL length pointer -> CKR_ARGUMENTS_BAD but decrypt op left ACTIVE. Same lifecycle root as the null-arg cohort (test_operation_termination.py:489).
 
 #### F206 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:7bcb31816002f619#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[decrypt-update-input]`
 - **Message:** Failed: C_DecryptUpdate with NULL input pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** kryptic-main: C_DecryptUpdate NULL input pointer -> CKR_ARGUMENTS_BAD but decrypt op left ACTIVE. Same Type-C lifecycle root as the null-arg cohort (test_operation_termination.py:489).
+- **Evidence:** kryptic-main: C_DecryptUpdate NULL input pointer -> CKR_ARGUMENTS_BAD but decrypt op left ACTIVE. Same lifecycle root as the null-arg cohort (test_operation_termination.py:489).
 
 #### F207 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:f56d2a08ace19b07#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_null_argument_rejection_terminates_encrypt_decrypt_operation[decrypt-update-length]`
 - **Message:** Failed: C_DecryptUpdate with NULL length pointer returned CKR_ARGUMENTS_BAD but left the decrypt operation active (next init -> CKR_OPERATION_ACTIVE): success claimed then contradicted (self-contradiction)
-- **Evidence:** kryptic-main: C_DecryptUpdate NULL length pointer -> CKR_ARGUMENTS_BAD but decrypt op left ACTIVE. Same Type-C lifecycle root as the null-arg cohort (test_operation_termination.py:489).
+- **Evidence:** kryptic-main: C_DecryptUpdate NULL length pointer -> CKR_ARGUMENTS_BAD but decrypt op left ACTIVE. Same lifecycle root as the null-arg cohort (test_operation_termination.py:489).
 
 ### `test_ro_session_restrictions.py` (1 findings)
 
@@ -1662,21 +1662,21 @@ assert b'\x11\x13\x1...r\x0f\x0f\x1f' == b'\x10\x11\x1...c\x1d\x1e\x1f'
 - **Direction:** `ACCEPT_INVALID` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_set_attribute.py::TestSetAttributeAtomicity::test_set_attribute_mixed_template_is_atomic`
 - **Message:** Failed: C_SetAttributeValue mixed mutable/read-only template: attribute(s) could not be read back after the write (Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID; expected one of: CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID) -- the object was left in an inconsistent state
-- **Evidence:** kryptic's C_SetAttributeValue on an AES key with a mixed mutable+read-only template returns without rejecting, then C_GetAttributeValue on the object returns CKR_ATTRIBUTE_VALUE_INVALID (test_set_attribute.py:193-199 read-back via _read_back_or_fail). The object is left unreadable after an accepted write: claimed success then broken state -> Type C self-contradiction, fail per the classification model.
+- **Evidence:** kryptic's C_SetAttributeValue on an AES key with a mixed mutable+read-only template returns without rejecting, then C_GetAttributeValue on the object returns CKR_ATTRIBUTE_VALUE_INVALID (test_set_attribute.py:193-199 read-back via _read_back_or_fail). The object is left unreadable after an accepted write: claimed success then broken state -> lifecycle self-contradiction, fail per the classification model.
 
 #### F210 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:33f58e21cebe13cf#phase6`
 - **Direction:** `ACCEPT_INVALID` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_set_attribute.py::TestSetAttributeNegative::test_cannot_change_class`
 - **Message:** Failed: write read-only CKA_CLASS (PKCS#11 Base v3.0 Table 15): attribute(s) could not be read back after the write (Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID; expected one of: CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID) -- the object was left in an inconsistent state
-- **Evidence:** kryptic accepts a C_SetAttributeValue writing read-only CKA_CLASS (PKCS#11 Base v3.0 Table 15) on an AES key, then C_GetAttributeValue returns CKR_ATTRIBUTE_VALUE_INVALID (test_set_attribute.py:232 via _classify_readonly_write/_read_back_or_fail). Read-only write accepted and the object is left in a broken readback state -> Type C self-contradiction.
+- **Evidence:** kryptic accepts a C_SetAttributeValue writing read-only CKA_CLASS (PKCS#11 Base v3.0 Table 15) on an AES key, then C_GetAttributeValue returns CKR_ATTRIBUTE_VALUE_INVALID (test_set_attribute.py:232 via _classify_readonly_write/_read_back_or_fail). Read-only write accepted and the object is left in a broken readback state -> lifecycle self-contradiction.
 
 #### F211 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:3084d1d72871f1c4#phase6`
 - **Direction:** `ACCEPT_INVALID` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_set_attribute.py::TestSetAttributeNegative::test_cannot_change_key_type`
 - **Message:** Failed: write read-only CKA_KEY_TYPE (PKCS#11 Base v3.0 Table 15): attribute(s) could not be read back after the write (Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID; expected one of: CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID) -- the object was left in an inconsistent state
-- **Evidence:** kryptic accepts a C_SetAttributeValue writing read-only CKA_KEY_TYPE (Table 15) to CKK_RSA on an AES key, then C_GetAttributeValue returns CKR_ATTRIBUTE_VALUE_INVALID (test_set_attribute.py:247 via _classify_readonly_write). Same Type C self-contradiction as the CKA_CLASS sibling: read-only write accepted then object unreadable.
+- **Evidence:** kryptic accepts a C_SetAttributeValue writing read-only CKA_KEY_TYPE (Table 15) to CKK_RSA on an AES key, then C_GetAttributeValue returns CKR_ATTRIBUTE_VALUE_INVALID (test_set_attribute.py:247 via _classify_readonly_write). Same lifecycle self-contradiction as the CKA_CLASS sibling: read-only write accepted then object unreadable.
 
 ### `test_sp800_108_kdf.py` (2 findings)
 
@@ -1689,7 +1689,7 @@ assert b'Df\xe5\xd4[...)8Y3O\x97\xa8' == b'\xca\xffzj5...e\x8d\x8b\xc2'
   
   At index 0 diff: b'D' != b'\xca'
   Use -v to get more diff
-- **Evidence:** kryptic returns CKR_OK for CKM_SP800_108_COUNTER_KDF derive but the 16-byte output (4466e5d4...) does not match the textbook NIST SP 800-108 counter construction (counter||label||0x00||context||L, HMAC-SHA256) computed from the same base key/label/context (test_sp800_108_kdf.py:431-455, reference at :91-108). Type A wrong-output on a successful derive. Manual review needed to confirm whether kryptic serializes CK_SP800_108_KDF_PARAMS data array differently from the harness reference (a known PKC
+- **Evidence:** kryptic returns CKR_OK for CKM_SP800_108_COUNTER_KDF derive but the 16-byte output (4466e5d4...) does not match the textbook NIST SP 800-108 counter construction (counter||label||0x00||context||L, HMAC-SHA256) computed from the same base key/label/context (test_sp800_108_kdf.py:431-455, reference at :91-108). crypto wrong-output on a successful derive. Manual review needed to confirm whether kryptic serializes CK_SP800_108_KDF_PARAMS data array differently from the harness reference (a known PKC
 
 #### F213 [HIGH/PROVIDER_BUG] — 🔍 MANUAL_REVIEW
 - **Signature:** `sha1:a2194647ac713ec4#phase6`
@@ -1700,7 +1700,7 @@ assert b'\xc0\x01\xb...\x9a\xb5\x98m' == b'\x0e\xb7>`\...b8L"l\x8b\x1a'
   
   At index 0 diff: b'\xc0' != b'\x0e'
   Use -v to get more diff
-- **Evidence:** kryptic returns CKR_OK for CKM_SP800_108_FEEDBACK_KDF derive but the output (c001b502...) does not match the NIST SP 800-108 feedback construction (IV||fixed_input_suffix, HMAC-SHA256) computed from the same inputs (test_sp800_108_kdf.py:614-640, reference at :111-129). Type A wrong-output on a successful derive. Same parameter-serialization caveat as the counter-KDF sibling; confirm CK_SP800_108_FEEDBACK_KDF_PARAMS encoding before reporting.
+- **Evidence:** kryptic returns CKR_OK for CKM_SP800_108_FEEDBACK_KDF derive but the output (c001b502...) does not match the NIST SP 800-108 feedback construction (IV||fixed_input_suffix, HMAC-SHA256) computed from the same inputs (test_sp800_108_kdf.py:614-640, reference at :111-129). crypto wrong-output on a successful derive. Same parameter-serialization caveat as the counter-KDF sibling; confirm CK_SP800_108_FEEDBACK_KDF_PARAMS encoding before reporting.
 
 ### `test_tls12.py` (1 findings)
 
@@ -1712,7 +1712,7 @@ assert b'\xc0\x01\xb...\x9a\xb5\x98m' == b'\x0e\xb7>`\...b8L"l\x8b\x1a'
 assert b'AQ\x8e\x92D...xdb\xfaq\xfcT' == b'\\\x01%\xc5...xa7\x8aK9\xd7'
   
   At index 0 diff: b'
-- **Evidence:** kryptic returns CKR_OK for CKM_TLS12_KDF derive (context-data exact vector) but the output (41518e92...) does not match the TLS 1.2 PRF (HMAC-SHA256) reference (5c0125c5...) computed from the same inputs (test_tls12.py:1045-1090). Type A wrong-output on a successful derive. Manual review to confirm the CKM_TLS12_KDF / TLS12_PARAMS field encoding matches the harness reference before reporting.
+- **Evidence:** kryptic returns CKR_OK for CKM_TLS12_KDF derive (context-data exact vector) but the output (41518e92...) does not match the TLS 1.2 PRF (HMAC-SHA256) reference (5c0125c5...) computed from the same inputs (test_tls12.py:1045-1090). crypto wrong-output on a successful derive. Manual review to confirm the CKM_TLS12_KDF / TLS12_PARAMS field encoding matches the harness reference before reporting.
 
 ### `test_wycheproof_aes.py` (27 findings)
 

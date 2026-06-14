@@ -75,10 +75,10 @@ See `_universal.md` for full analysis. Themes with multi-provider impact:
 
 | Theme | Worst severity | Providers affected |
 |---|---|---|
-| Wrong-output / Type-A crypto-correctness | CRITICAL | 4 — kryoptic, nss, softhsm2, wolfpkcs11 |
+| Wrong-output / crypto-correctness | CRITICAL | 4 — kryoptic, nss, softhsm2, wolfpkcs11 |
 | Advertised-but-not-operational mechanism | HIGH | 7 — corepkcs11, kryoptic, nss, opencryptoki, softhsm2, tpm2, wolfpkcs11 |
 | CBC-PKCS5 padding oracle (Vaudenay) | HIGH | 6 — kryoptic, nss, opencryptoki, softhsm2, tpm2, wolfpkcs11 |
-| Op-termination Type-C lifecycle | HIGH | 6 — kryoptic, nss, opencryptoki, softhsm2, tpm2, wolfpkcs11 |
+| Op-termination lifecycle | HIGH | 6 — kryoptic, nss, opencryptoki, softhsm2, tpm2, wolfpkcs11 |
 | Trust-boundary attribute escalation | HIGH | 4 — corepkcs11, kryoptic, nss, wolfpkcs11 |
 | NULL-pointer SIGSEGV family | HIGH | 1 — nss |
 | Wrap/unwrap policy bypass | HIGH | 1 — nss |

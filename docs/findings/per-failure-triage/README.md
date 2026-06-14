@@ -83,10 +83,10 @@ docs/findings/per-failure-triage/
 
 **The 2 CRITICAL findings:**
 1. `kryptic-main` `CKM_AES_CBC_ENCRYPT_DATA` KDF ignores IV — byte-identical
-   derived keys for different IVs (Type-A crypto-correctness break).
+   derived keys for different IVs (crypto-correctness break).
    See [reports/kryoptic-main.md](reports/kryoptic-main.md) F066.
 2. `tpm2` `C_GetAttributeValue` leaks `CKA_VALUE` of imported
-   `CKA_SENSITIVE=True` AES key (Type-B sensitivity claim violated).
+   `CKA_SENSITIVE=True` AES key (policy sensitivity claim violated).
    See [reports/tpm2.md](reports/tpm2.md) F179.
 
 ## Status
@@ -159,11 +159,11 @@ Applies the AGENTS.md model: classify by **what the module did vs what is correc
 |---|---|
 | accept-invalid (lax) on auth/AEAD/RSA-PAD | Critical/High (oracle/forgery/Bleichenbacher/Manger/Vaudenay) |
 | reject-valid (over-strict) on same | Low (functional bug, "advertised but not operational") |
-| wrong-output on successful operation | Critical (Type-A crypto-correctness break) |
+| wrong-output on successful operation | Critical (crypto-correctness break) |
 | crash | High (always — "a segfault IS the finding") |
 | clean error on advertised mechanism | Low (capability gap) |
 
-Self-contradiction classes (Type A/B/C/D) → fail (not xfail):
+Self-contradiction classes (crypto/policy/lifecycle/metadata) → fail (not xfail):
 - **A** crypto-correctness (wrong/forgeable result)
 - **B** attribute/permission (claimed a protection then violated it)
 - **C** lifecycle/state (claimed success then didn't honor it)

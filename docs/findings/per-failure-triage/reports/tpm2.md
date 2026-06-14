@@ -161,7 +161,7 @@ Ordered by severity then category.
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/ckr/test_ckr_object.py::TestSetAttributeErrors::test_set_readonly_class`
 - **Message:** Failed: C_SetAttributeValue claimed success and the read-only CKA_CLASS actually changed (self-contradiction) [PKCS#11 v3.1 Sec.5.7.6: CKA_CLASS is read-only]
-- **Evidence:** tpm2: C_SetAttributeValue on read-only CKA_CLASS claimed success AND CKA_CLASS actually changed (self-contradiction). PKCS#11 v3.1 Sec.5.7.6: CKA_CLASS is read-only. Type-B attribute/permission self-contradiction.
+- **Evidence:** tpm2: C_SetAttributeValue on read-only CKA_CLASS claimed success AND CKA_CLASS actually changed (self-contradiction). PKCS#11 v3.1 Sec.5.7.6: CKA_CLASS is read-only. policy attribute/permission self-contradiction.
 
 ### `test_ckr_priority.py` (1 findings)
 
@@ -1400,21 +1400,21 @@ assert <CKR_ATTRIBUTE_VALUE_INVALID: 0x00000013> == <CKR_OK: 0x00000000>
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_c_verify_terminates_after_rejected_rsa_signature`
 - **Message:** Failed: RSA: C_Verify(empty) returned CKR_ARGUMENTS_BAD but left the verify operation active (next C_VerifyInit -> CKR_OPERATION_ACTIVE) -- the spec requires C_Verify to ALWAYS terminate the active verification operation: success claimed then contradicted (self-contradiction)
-- **Evidence:** tpm2: C_Verify(empty RSA sig) returned CKR_ARGUMENTS_BAD but left the verify operation active — next C_VerifyInit returns CKR_OPERATION_ACTIVE. PKCS#11 v3.1 requires C_Verify to ALWAYS terminate the active verification operation. Type-C lifecycle self-contradiction. Test source explicitly names tpm2-pkcs11 as the offender for empty-sig CKR_ARGUMENTS_BAD.
+- **Evidence:** tpm2: C_Verify(empty RSA sig) returned CKR_ARGUMENTS_BAD but left the verify operation active — next C_VerifyInit returns CKR_OPERATION_ACTIVE. PKCS#11 v3.1 requires C_Verify to ALWAYS terminate the active verification operation. lifecycle self-contradiction. Test source explicitly names tpm2-pkcs11 as the offender for empty-sig CKR_ARGUMENTS_BAD.
 
 #### F170 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:6f26a605e476e892#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_c_verify_terminates_after_rejected_ecdsa_signature`
 - **Message:** Failed: ECDSA: C_Verify(empty) returned CKR_ARGUMENTS_BAD but left the verify operation active (next C_VerifyInit -> CKR_OPERATION_ACTIVE) -- the spec requires C_Verify to ALWAYS terminate the active verification operation: success claimed then contradicted (self-contradiction)
-- **Evidence:** tpm2: C_Verify(empty ECDSA sig) returned CKR_ARGUMENTS_BAD but left the verify operation active (CKR_OPERATION_ACTIVE on next init). Same Type-C lifecycle self-contradiction as the RSA variant.
+- **Evidence:** tpm2: C_Verify(empty ECDSA sig) returned CKR_ARGUMENTS_BAD but left the verify operation active (CKR_OPERATION_ACTIVE on next init). Same lifecycle self-contradiction as the RSA variant.
 
 #### F171 [HIGH/PROVIDER_BUG] — 📨 PROVIDER_REPORT
 - **Signature:** `sha1:47b90dcd8f21183f#phase6`
 - **Direction:** `CLEAN_ERROR` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_operation_termination.py::test_c_verify_final_terminates_after_rejected_signature`
 - **Message:** Failed: RSA: C_VerifyFinal(empty) returned CKR_ARGUMENTS_BAD but left the verify operation active (next C_VerifyInit -> CKR_OPERATION_ACTIVE) -- the spec requires C_VerifyFinal to ALWAYS terminate the active verification operation: success claimed then contradicted (self-contradiction)
-- **Evidence:** tpm2: C_VerifyFinal(empty) returned CKR_ARGUMENTS_BAD but left the verify operation active. PKCS#11 requires C_VerifyFinal to always terminate. Type-C lifecycle self-contradiction.
+- **Evidence:** tpm2: C_VerifyFinal(empty) returned CKR_ARGUMENTS_BAD but left the verify operation active. PKCS#11 requires C_VerifyFinal to always terminate. lifecycle self-contradiction.
 
 ### `test_remaining_gaps.py` (1 findings)
 
@@ -1486,7 +1486,7 @@ assert <CKR_ATTRIBUTE_VALUE_INVALID: 0x00000013> == <CKR_OK: 0x00000000>
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_sensitivity.py::TestSensitiveKeyValue::test_sensitive_value_not_copied_on_rejected_get_attribute`
 - **Message:** Failed: raw C_GetAttributeValue copied CKA_VALUE bytes for a CKA_SENSITIVE=True AES key: claimed the protection then violated it (self-contradiction)
-- **Evidence:** tpm2: raw C_GetAttributeValue copied CKA_VALUE bytes for an imported CKA_SENSITIVE=True AES key (test_sensitivity). Import via C_CreateObject succeeded and CKA_SENSITIVE read back True, then C_GetAttributeValue(CKA_VALUE) returned CKR_OK and copied the secret into the caller buffer. Type-B self-contradiction: claimed the protection then violated it. Sensitive key material leak is a crypto-correctness break.
+- **Evidence:** tpm2: raw C_GetAttributeValue copied CKA_VALUE bytes for an imported CKA_SENSITIVE=True AES key (test_sensitivity). Import via C_CreateObject succeeded and CKA_SENSITIVE read back True, then C_GetAttributeValue(CKA_VALUE) returned CKR_OK and copied the secret into the caller buffer. policy self-contradiction: claimed the protection then violated it. Sensitive key material leak is a crypto-correctness break.
 
 ### `test_session_edge_cases.py` (2 findings)
 
@@ -1529,7 +1529,7 @@ assert <CKR_ATTRIBUTE_VALUE_INVALID: 0x00000013> == <CKR_OK: 0x00000000>
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/test_set_attribute.py::TestSetAttributeNegative::test_cannot_change_modulus`
 - **Message:** Failed: write read-only CKA_MODULUS on an RSA public key: claimed success and the read-only value actually changed
-- **Evidence:** tpm2: C_SetAttributeValue on read-only CKA_MODULUS of an RSA public key claimed success AND the modulus actually changed to the new value. CKA_MODULUS is read-only (PKCS#11 Base Table 12). Type-B attribute/permission self-contradiction with crypto-correctness impact (public-key identity is tied to the modulus).
+- **Evidence:** tpm2: C_SetAttributeValue on read-only CKA_MODULUS of an RSA public key claimed success AND the modulus actually changed to the new value. CKA_MODULUS is read-only (PKCS#11 Base Table 12). policy attribute/permission self-contradiction with crypto-correctness impact (public-key identity is tied to the modulus).
 
 ### `test_sign.py` (1 findings)
 
@@ -1772,7 +1772,7 @@ assert <CKR_ATTRIBUTE_VALUE_INVALID: 0x00000013> == <CKR_OK: 0x00000000>
 - **Direction:** `OTHER` · **Outcome:** `failure` · **Tests covered:** 1
 - **Example nodeid:** `src/pkcs11_check/testcases/x509/test_lifecycle.py::TestCertificateLifecycle::test_cert_modifiability`
 - **Message:** Failed: Successfully modified label on non-modifiable cert
-- **Evidence:** tpm2: C_SetAttributeValue(CKA_LABEL) succeeded on a certificate created with CKA_MODIFIABLE=False, and the label actually changed. Type-B self-contradiction: claimed non-modifiable then honored a modification.
+- **Evidence:** tpm2: C_SetAttributeValue(CKA_LABEL) succeeded on a certificate created with CKA_MODIFIABLE=False, and the label actually changed. policy self-contradiction: claimed non-modifiable then honored a modification.
 
 
 ## Already documented in `docs/module-issues.md` (45 findings)
