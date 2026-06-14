@@ -37,7 +37,5 @@ ALLOWLIST = {
     "src/pkcs11_check/testcases/test_ssl3.py",
     "src/pkcs11_check/testcases/test_stateful_sigs.py",
     "src/pkcs11_check/testcases/test_subprocess_safety.py",
-    "src/pkcs11_check/testcases/test_tls12.py",
     "src/pkcs11_check/testcases/test_token_flags.py",
-    "src/pkcs11_check/testcases/test_wtls.py",
 }

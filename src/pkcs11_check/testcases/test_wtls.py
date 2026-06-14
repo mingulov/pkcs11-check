@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_ulong,
     mech_simple,
@@ -185,8 +186,15 @@ def _derive_wtls_prf_output(
     out_len = ctypes.cast(mech.params.pulOutputLen, ctypes.POINTER(CK_ULONG))[0]
     actual_len = int(out_len)
     if actual_len > output_len:
-        pytest.fail(
-            f"CKM_WTLS_PRF reported {actual_len} output bytes for a {output_len}-byte buffer"
+        classify(
+            "self_contradiction",
+            kind="metadata",
+            label="CKM_WTLS_PRF:output-length",
+            operation="C_DeriveKey",
+            mechanism="CKM_WTLS_PRF",
+            summary=(
+                f"CKM_WTLS_PRF reported {actual_len} output bytes for a {output_len}-byte buffer"
+            ),
         )
     return mech.buffer_bytes("output")[:actual_len]
 
@@ -357,7 +365,14 @@ class TestWTLSPreMasterKeyGen:
                 destroy_quietly(rs.raw, rs.sh, key.value)
         except AssertionError as exc:
             if is_known_error(exc, _WTLS_ERROR_RVS):
-                pytest.xfail(f"CKM_WTLS_PRE_MASTER_KEY_GEN not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_WTLS_PRE_MASTER_KEY_GEN:C_GenerateKey",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
+                    summary=f"CKM_WTLS_PRE_MASTER_KEY_GEN not operational: {exc}",
+                )
             raise
 
     def test_generate_yields_non_zero_material(self, p11_raw_session: Any) -> None:
@@ -399,7 +414,14 @@ class TestWTLSPreMasterKeyGen:
                 destroy_quietly(rs.raw, rs.sh, key.value)
         except AssertionError as exc:
             if is_known_error(exc, _WTLS_ERROR_RVS):
-                pytest.xfail(f"CKM_WTLS_PRE_MASTER_KEY_GEN not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_WTLS_PRE_MASTER_KEY_GEN:C_GenerateKey",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
+                    summary=f"CKM_WTLS_PRE_MASTER_KEY_GEN not operational: {exc}",
+                )
             raise
 
     def test_two_generated_keys_differ(self, p11_raw_session: Any) -> None:
@@ -451,7 +473,14 @@ class TestWTLSPreMasterKeyGen:
                 destroy_quietly(rs.raw, rs.sh, key1.value)
         except AssertionError as exc:
             if is_known_error(exc, _WTLS_ERROR_RVS):
-                pytest.xfail(f"CKM_WTLS_PRE_MASTER_KEY_GEN not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_WTLS_PRE_MASTER_KEY_GEN:C_GenerateKey",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
+                    summary=f"CKM_WTLS_PRE_MASTER_KEY_GEN not operational: {exc}",
+                )
             raise
 
 
@@ -498,7 +527,14 @@ class TestWTLSMasterKeyDerive:
                     destroy_quietly(rs.raw, rs.sh, derived)
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
-                    pytest.xfail(f"CKM_WTLS_MASTER_KEY_DERIVE not operational: {exc}")
+                    classify(
+                        "not_operational",
+                        kind="crypto",
+                        label="CKM_WTLS_MASTER_KEY_DERIVE:C_DeriveKey",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_WTLS_MASTER_KEY_DERIVE",
+                        summary=f"CKM_WTLS_MASTER_KEY_DERIVE not operational: {exc}",
+                    )
                 raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pms)
@@ -565,7 +601,14 @@ class TestWTLSMasterKeyDeriveDHECC:
                     destroy_quietly(rs.raw, rs.sh, derived)
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
-                    pytest.xfail(f"CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC not operational: {exc}")
+                    classify(
+                        "not_operational",
+                        kind="crypto",
+                        label="CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC:C_DeriveKey",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC",
+                        summary=f"CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC not operational: {exc}",
+                    )
                 raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pms)
@@ -639,7 +682,14 @@ class TestWTLSKeyAndMacDerive:
                     destroy_returned_handles(rs, out.hMacSecret, out.hKey)
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
-                    pytest.xfail(f"CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE not operational: {exc}")
+                    classify(
+                        "not_operational",
+                        kind="crypto",
+                        label="CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE:C_DeriveKey",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE",
+                        summary=f"CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE not operational: {exc}",
+                    )
                 raise
         finally:
             destroy_quietly(rs.raw, rs.sh, master)
@@ -715,7 +765,14 @@ class TestWTLSKeyAndMacDerive:
                     destroy_returned_handles(rs, out.hMacSecret, out.hKey)
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
-                    pytest.xfail(f"CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE not operational: {exc}")
+                    classify(
+                        "not_operational",
+                        kind="crypto",
+                        label="CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE:C_DeriveKey",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE",
+                        summary=f"CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE not operational: {exc}",
+                    )
                 raise
         finally:
             destroy_quietly(rs.raw, rs.sh, master)
@@ -812,7 +869,14 @@ class TestWTLSKeyAndMacDerive:
                 )
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
-                    pytest.xfail(f"WTLS key-and-MAC derivation not operational: {exc}")
+                    classify(
+                        "not_operational",
+                        kind="crypto",
+                        label="CKM_WTLS_SERVER/CLIENT_KEY_AND_MAC_DERIVE:C_DeriveKey",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE",
+                        summary=f"WTLS key-and-MAC derivation not operational: {exc}",
+                    )
                 raise
             finally:
                 if cli_out is not None:
@@ -877,7 +941,14 @@ class TestWTLSPRF:
                 )
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
-                    pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
+                    classify(
+                        "not_operational",
+                        kind="crypto",
+                        label="CKM_WTLS_PRF:C_DeriveKey",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_WTLS_PRF",
+                        summary=f"CKM_WTLS_PRF not operational: {exc}",
+                    )
                 raise
         finally:
             destroy_quietly(rs.raw, rs.sh, secret)
@@ -932,7 +1003,14 @@ class TestWTLSPRF:
                 assert val1 != val2, "WTLS PRF seed change did not affect derived output"
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
-                    pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
+                    classify(
+                        "not_operational",
+                        kind="crypto",
+                        label="CKM_WTLS_PRF:C_DeriveKey",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_WTLS_PRF",
+                        summary=f"CKM_WTLS_PRF not operational: {exc}",
+                    )
                 raise
         finally:
             destroy_quietly(rs.raw, rs.sh, secret)
@@ -961,7 +1039,14 @@ class TestWTLSPRF:
                 assert val1 != val2, "WTLS PRF label change did not affect derived output"
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
-                    pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
+                    classify(
+                        "not_operational",
+                        kind="crypto",
+                        label="CKM_WTLS_PRF:C_DeriveKey",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_WTLS_PRF",
+                        summary=f"CKM_WTLS_PRF not operational: {exc}",
+                    )
                 raise
         finally:
             destroy_quietly(rs.raw, rs.sh, secret)
@@ -1006,7 +1091,14 @@ class TestWTLSPRF:
                 )
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
-                    pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
+                    classify(
+                        "not_operational",
+                        kind="crypto",
+                        label="CKM_WTLS_PRF:C_DeriveKey",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_WTLS_PRF",
+                        summary=f"CKM_WTLS_PRF not operational: {exc}",
+                    )
                 raise
         finally:
             destroy_quietly(rs.raw, rs.sh, secret)
@@ -1037,7 +1129,14 @@ class TestWTLSPRF:
                 assert val1 == val2, "CKM_WTLS_PRF must be deterministic for identical inputs"
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
-                    pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
+                    classify(
+                        "not_operational",
+                        kind="crypto",
+                        label="CKM_WTLS_PRF:C_DeriveKey",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_WTLS_PRF",
+                        summary=f"CKM_WTLS_PRF not operational: {exc}",
+                    )
                 raise
         finally:
             destroy_quietly(rs.raw, rs.sh, secret)
