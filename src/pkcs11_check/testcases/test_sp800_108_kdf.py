@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import PackedMechanism, PointerArg
 from pkcs11_check.raw.recipes import (
     derive_key,
@@ -518,7 +519,13 @@ class TestSP800108CounterKDF:
             )
             v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
-            assert v1 == v2, "Deterministic KDF produced different outputs"
+            assert_correct(
+                actual=v1,
+                expected=v2,
+                label="CKM_SP800_108_COUNTER_KDF:C_DeriveKey determinism",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_COUNTER_KDF",
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_COUNTER_KDF derivation not operational"
@@ -708,7 +715,18 @@ class TestSP800108FeedbackKDF:
             )
             v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
-            assert v1 != v2, "Different IVs produced same derived key"
+            if v1 == v2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_SP800_108_FEEDBACK_KDF:IV must affect output",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_SP800_108_FEEDBACK_KDF",
+                    summary=(
+                        "CKM_SP800_108_FEEDBACK_KDF: two different IVs produced the same "
+                        "derived key -- the IV was ignored"
+                    ),
+                )
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF not operational")
         finally:
@@ -742,7 +760,13 @@ class TestSP800108FeedbackKDF:
             )
             v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
-            assert v1 == v2, "Deterministic KDF produced different outputs"
+            assert_correct(
+                actual=v1,
+                expected=v2,
+                label="CKM_SP800_108_FEEDBACK_KDF:C_DeriveKey determinism",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_FEEDBACK_KDF",
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF not operational")
         finally:
@@ -852,7 +876,13 @@ class TestSP800108DoublePipelineKDF:
             )
             v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
-            assert v1 == v2, "Deterministic KDF produced different outputs"
+            assert_correct(
+                actual=v1,
+                expected=v2,
+                label="CKM_SP800_108_DOUBLE_PIPELINE_KDF:C_DeriveKey determinism",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_DOUBLE_PIPELINE_KDF",
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_DOUBLE_PIPELINE_KDF not operational"

@@ -53,7 +53,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import assert_correct, is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
 
@@ -241,7 +241,14 @@ class TestHKDFKeyGen:
                         "for a CKK_GENERIC_SECRET request"
                     ),
                 )
-            assert actual_key_type == key_type
+            assert_correct(
+                actual=actual_key_type,
+                expected=key_type,
+                label="CKM_HKDF_KEY_GEN:CKA_KEY_TYPE readback",
+                operation="C_GenerateKey",
+                mechanism="CKM_HKDF_KEY_GEN",
+                kind="metadata",
+            )
             value = attrs[CKA_VALUE]
             assert len(value) == 32  # 256 bits = 32 bytes
             assert attrs[CKA_DERIVE] is True
@@ -329,7 +336,13 @@ class TestHKDFData:
             derived_2 = _hkdf_data_derive(rs, base_key, b"det-salt", b"det-info")
             val_1 = read_attributes(rs.raw, rs.sh, derived_1, [CKA_VALUE])[CKA_VALUE]
             val_2 = read_attributes(rs.raw, rs.sh, derived_2, [CKA_VALUE])[CKA_VALUE]
-            assert val_1 == val_2, "HKDF_DATA must be deterministic"
+            assert_correct(
+                actual=val_1,
+                expected=val_2,
+                label="CKM_HKDF_DATA:C_DeriveKey determinism",
+                operation="C_DeriveKey",
+                mechanism="CKM_HKDF_DATA",
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "HKDF_DATA derive failed")
         finally:

@@ -291,7 +291,13 @@ class TestECDHDerive:
 
             val_ab = read_attributes(rs.raw, rs.sh, shared_ab, [CKA_VALUE])[CKA_VALUE]
             val_ba = read_attributes(rs.raw, rs.sh, shared_ba, [CKA_VALUE])[CKA_VALUE]
-            assert val_ab == val_ba
+            assert_correct(
+                actual=val_ab,
+                expected=val_ba,
+                label="CKM_ECDH1_DERIVE:shared-secret agreement (A*B == B*A)",
+                operation="C_DeriveKey",
+                mechanism="CKM_ECDH1_DERIVE",
+            )
         finally:
             for h in (pub_a, priv_a, pub_b, priv_b):
                 destroy_quietly(rs.raw, rs.sh, h)
@@ -447,7 +453,13 @@ class TestSHA3ShakeKeyDerive:
                 )
             v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
-            assert v1 == v2, "Same base key and mechanism must produce same derived key"
+            assert_correct(
+                actual=v1,
+                expected=v2,
+                label=f"{mech_name}:C_DeriveKey determinism",
+                operation="C_DeriveKey",
+                mechanism=f"CKM_{mech_name}",
+            )
         finally:
             if d1:
                 destroy_quietly(rs.raw, rs.sh, d1)
