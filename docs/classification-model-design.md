@@ -279,3 +279,20 @@ C_SignInit"); `CKR_OPERATION_NOT_VALIDATED` is the sanctioned validation-policy 
 
 Both refinements are provider-general: discrimination is by return code, probe effect, and
 CKO_VALIDATION capability only.
+
+## Refinement (2026-06-14): at-source emission + reason vocabulary
+
+This does not rewrite the model above — it makes the verdict machine-recorded. Tests emit a
+structured `Classification` at the decision point via `pkcs11_check.classification.classify()`
+(and `fail_as`/`xfail_as`/`assert_correct`), which records the verdict then raises the implied
+pytest outcome. See the design spec
+[superpowers/specs/2026-06-13-at-source-classification-design.md](superpowers/specs/2026-06-13-at-source-classification-design.md).
+
+- The A/B/C/D self-contradiction classes are now the canonical machine field **`kind`**:
+  `crypto`=A, `policy`=B, `lifecycle`=C, `metadata`=D.
+- The runtime **reason** vocabulary is the 9 reasons: `wrong_result`, `accepted_invalid`,
+  `self_contradiction`, `oracle`, `crash` (→ fail); `not_operational`, `nonspec_reject`,
+  `honest_deviation` (→ xfail); `sanctioned_refusal` (→ pass). (`unclassified` is a reserved
+  runtime-gate marker, never emitted by a test.)
+- **Severity** is derived centrally from `(reason, kind)` in `classification.derive_verdict` —
+  the single source of truth, replacing per-site severity choices.

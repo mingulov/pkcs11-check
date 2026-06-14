@@ -91,6 +91,28 @@ uv run pkcs11-check compare-coverage old/coverage.json new/coverage.json --outpu
 state. Use it before trusting a speed change that rearranges sharding, skips, or
 fast paths.
 
+## Per-provider classification report
+
+Roll at-source classifications (and runner-side crash findings) up into per-provider
+conformance reports. Run after a test run that produced a `report.jsonl` (the `test_cmd`
+JSON path sets `PKCS11_CHECK_REPORT_LOG` so the plugin writes one).
+
+```bash
+# Single provider (bare paths; --provider names it; --results-json adds crash findings):
+uv run python -m tools.report --report-log /path/report.jsonl \
+    --results-json /path/results.json --provider <name> --out docs/findings/<dir>
+
+# Multi-provider (repeat NAME=path; writes _index.md + _universal.md too):
+uv run python -m tools.report \
+    --report-log nss=/p/nss.jsonl --report-log softhsm2=/p/sh.jsonl --out <dir>
+```
+
+Flags: `--report-log` (path, or `NAME=path`, repeatable), `--results-json` (optional, same
+forms, for crash/timeout findings), `--provider` (names the provider for the single bare-path
+form), `--out` (output directory). Writes `<provider>.md` + `<provider>.jsonl` per provider, and
+`_index.md` + `_universal.md` when more than one provider is given. See
+[../tools/report/README.md](../tools/report/README.md).
+
 ## Docker testing
 
 ```bash

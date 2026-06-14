@@ -185,6 +185,68 @@ helpers — **use these instead of hand-rolling per-CKR allowlists or bare `pyte
 `import_*_negotiated` helpers (`testcases/conftest.py`); skip is only for genuinely-absent
 capability. See [findings/import-skip-audit.md](findings/import-skip-audit.md).
 
+## At-source test-outcome classification
+
+Tests emit a structured *classification* at the decision point — the moment a test decides what the
+module did — instead of flattening the verdict into a free-text `pytest.fail`/`pytest.xfail` string.
+Design spec: [superpowers/specs/2026-06-13-at-source-classification-design.md](superpowers/specs/2026-06-13-at-source-classification-design.md);
+plan: [superpowers/plans/2026-06-13-at-source-classification.md](superpowers/plans/2026-06-13-at-source-classification.md).
+
+### Emission API (`pkcs11_check.classification`)
+
+```python
+from pkcs11_check import classification as C
+C.classify(reason, *, kind=…, label, operation, mechanism, expected, actual,
+           spec_ref, source, vector_id, summary, detail)
+```
+
+`classify()` builds the `Classification` record, stores it in the per-test collector, and **then
+raises the implied pytest outcome** (`pytest.fail` for a fail reason, `pytest.xfail` for an xfail
+reason; a pass reason returns normally). Thin typed wrappers `fail_as(reason, **kw)` and
+`xfail_as(reason, **kw)` (both `-> NoReturn`) guard that the reason matches the intended outcome.
+KAT output equality is checked with `assert_correct(*, actual, expected, label, …)`
+(`testcases/conftest.py`): equal values pass; a mismatch emits a `wrong_result`/`crypto` record and
+fails. The existing `classify_*` / `assert_ckr` helpers now route through this same machinery.
+
+### The model
+
+- **outcome** ∈ {`pass`, `xfail`, `fail`}
+- **reason** ∈ {`wrong_result`, `accepted_invalid`, `self_contradiction`, `oracle`, `crash` (→ fail);
+  `not_operational`, `nonspec_reject`, `honest_deviation` (→ xfail); `sanctioned_refusal` (→ pass)}
+- **kind** ∈ {`crypto`, `policy`, `lifecycle`, `metadata`} — the canonical machine field for the
+  legacy A/B/C/D self-contradiction classes
+- **severity** is *derived* from `(reason, kind)` in `classification.derive_verdict` — the single
+  source of truth for the outcome/severity table (no per-site severity literals)
+
+### Transport to `report.jsonl`
+
+Each emission rides to `report.jsonl` on the pytest `user_properties` key `pkcs11_classification`
+(the same mechanism used by compliance notes and rv-trace). `plugin.py`
+(`_attach_classification_to_report`) attaches the serialized records to the call-phase report and
+clears the collector on teardown. **Crashes** are converted runner-side via
+`core/file_runner.crash_classification` because the crashed process is dead and cannot self-emit.
+Spec references come from the central `pkcs11_check.spec_refs.lookup` table (OASIS PKCS#11 v3.2;
+precise sections only when confirmed against the local mirror, otherwise a truthful coarse form —
+never fabricated).
+
+### Gates
+
+- **Static gate** ([../tests/test_no_raw_xfail_fail.py](../tests/test_no_raw_xfail_fail.py)) forbids
+  raw `pytest.xfail(`/`pytest.fail(` under `testcases/` (outside the sanctioned `conftest.py` /
+  `_ckr_spec.py`), forbids any test emitting the reserved `unclassified` reason, and asserts the
+  migration allowlist is now empty — so the gate is fully hard.
+- **Runtime gate** (plugin): any testcase that ends as fail/xfail without an emitted record gets a
+  synthetic `reason="unclassified"` record auto-injected, so coverage is always 100% and the
+  remaining bare-assert tail shows up as a visible backlog rather than silently uncovered.
+
+### Report generator (`tools/report/`)
+
+Rolls the records up into per-provider reports: `<provider>.md` (compact, severity-first, grouped by
+`kind` with A/B/C/D aliases) + `<provider>.jsonl` (one enriched group per line); with more than one
+provider it also writes `_index.md` (counts table + top themes) and `_universal.md` (cross-provider
+correlation). See [../tools/report/README.md](../tools/report/README.md) and
+[commands.md](commands.md) for invocation.
+
 ## PKCS#11 Specification
 
 OASIS spec in Markdown is not vendored in this repository. When working from a local checkout of

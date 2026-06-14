@@ -85,6 +85,20 @@ Two spec-grounded refinements (design: docs/superpowers/specs/2026-06-10-adverti
   SPECIFIC acceptable return codes" rule below; that rule remains in force for negative-op
   assertions.
 
+#### At-source emission (how tests record verdicts)
+
+Tests MUST record their verdict at the decision point via `classification.classify()` /
+`fail_as()` / `xfail_as()` / `assert_correct()` (or the existing `classify_*` / `assert_ckr`
+helpers, which now route through it) — NOT raw `pytest.xfail()` / `pytest.fail()` in `testcases/`
+(enforced by `tests/test_no_raw_xfail_fail.py`). The emitted record carries
+reason/kind/label/operation/mechanism/expected/actual and rides to `report.jsonl`; severity is
+derived centrally. The reason `unclassified` is **reserved** for the plugin's runtime gate (it
+auto-injects it for any un-migrated fail/xfail) and must NEVER be emitted by a test.
+- reason ∈ {wrong_result, accepted_invalid, self_contradiction, oracle, crash (fail);
+  not_operational, nonspec_reject, honest_deviation (xfail); sanctioned_refusal (pass)};
+  kind ∈ {crypto=A, policy=B, lifecycle=C, metadata=D}. See
+  [docs/architecture.md](docs/architecture.md) "At-source test-outcome classification".
+
 ### Error handling — CRITICAL
 - **NEVER use a bare `except Exception: pass` or catch-all CKR check** — this hides real bugs. Every CKR check must list SPECIFIC acceptable return codes.
 - Use predefined CKR tuples for common patterns:
