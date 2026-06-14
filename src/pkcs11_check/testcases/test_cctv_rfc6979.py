@@ -20,6 +20,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -135,8 +136,16 @@ def _skip_or_xfail_cctv_ec_import_reject(exc: AssertionError, label: str) -> NoR
         # the classification model (not skip).
         # May include curve-capability rejects expressed as generic CKRs --
         # recorded as xfail, not hidden.
-        pytest.xfail(
-            not_operational_reason("ECDSA_SHA256:key-import", f"{label}: {ckr_name(exc.rv)}")
+        xfail_as(
+            "not_operational",
+            kind="crypto",
+            label="ECDSA_SHA256:key-import",
+            operation="C_CreateObject",
+            mechanism="CKM_ECDSA_SHA256",
+            actual=exc.rv,
+            summary=not_operational_reason(
+                "ECDSA_SHA256:key-import", f"{label}: {ckr_name(exc.rv)}"
+            ),
         )
     xfail_if_known_ckr(
         exc,
@@ -180,9 +189,16 @@ def test_rfc6979_ecdsa_verify(p11_raw_session: Any) -> None:
             )
             raise
         if not verified:
-            pytest.fail(
-                "Module rejected a VALID ECDSA-SHA256 signature - "
-                "the RFC 6979 CCTV vector should verify correctly"
+            fail_as(
+                "wrong_result",
+                kind="crypto",
+                label="ECDSA_SHA256:verify (RFC6979 CCTV vector)",
+                operation="C_Verify",
+                mechanism="CKM_ECDSA_SHA256",
+                summary=(
+                    "Module rejected a VALID ECDSA-SHA256 signature - "
+                    "the RFC 6979 CCTV vector should verify correctly"
+                ),
             )
     finally:
         if pub_key:
@@ -224,9 +240,16 @@ def test_rfc6979_ecdsa_sign_deterministic(p11_raw_session: Any) -> None:
             )
             raise
         if sig != _EXPECTED_SIG:
-            pytest.xfail(
-                "Module does not use RFC 6979 deterministic k "
-                f"(got {sig.hex()[:32]}..., expected {_EXPECTED_SIG.hex()[:32]}...)"
+            classify(
+                "honest_deviation",
+                kind="crypto",
+                label="ECDSA_SHA256:sign (RFC6979 deterministic k)",
+                operation="C_Sign",
+                mechanism="CKM_ECDSA_SHA256",
+                summary=(
+                    "Module does not use RFC 6979 deterministic k "
+                    f"(got {sig.hex()[:32]}..., expected {_EXPECTED_SIG.hex()[:32]}...)"
+                ),
             )
     finally:
         if priv_key:

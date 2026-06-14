@@ -13,6 +13,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.pack import (
     attr_bytes,
     attr_ulong,
@@ -268,7 +269,13 @@ class TestMLKEMKeyGeneration:
         try:
             attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_DERIVE])
             if CKA_DERIVE not in attrs:
-                pytest.xfail("ML-KEM private key does not expose CKA_DERIVE")
+                classify(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="ML-KEM private key CKA_DERIVE",
+                    mechanism="CKM_ML_KEM",
+                    summary="ML-KEM private key does not expose CKA_DERIVE",
+                )
             assert attrs[CKA_DERIVE] is False, (
                 "ML-KEM private key reported CKA_DERIVE=True; ML-KEM keys "
                 "encapsulate/decapsulate and must not be usable as derive keys"
@@ -494,7 +501,14 @@ class TestMLKEMCiphertextSize:
 
             # We can only check size if the module uses the expected parameter set
             if len(ct) not in _ML_KEM_CIPHERTEXT_SIZES.values():
-                pytest.xfail(f"Unexpected ciphertext size {len(ct)} - may be non-standard")
+                classify(
+                    "honest_deviation",
+                    kind="crypto",
+                    label="ML-KEM ciphertext size",
+                    operation="C_EncapsulateKey",
+                    mechanism="CKM_ML_KEM",
+                    summary=f"Unexpected ciphertext size {len(ct)} - may be non-standard",
+                )
             # If size matches this parameter set, check it
             if len(ct) == expected_ct_len:
                 assert len(ct) == expected_ct_len
@@ -548,10 +562,18 @@ class TestMLKEMKeyDerivation:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 v3.2 Sec.5.14.8; FIPS 203",
                 )
-                pytest.xfail(
-                    f"Module ignores CKA_VALUE_LEN for ML-KEM KEM-derived keys: "
-                    f"requested 16 bytes, got {len(value)} bytes "
-                    f"(ML-KEM shared secret is always 32 bytes per FIPS 203)"
+                classify(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="ML-KEM encapsulate CKA_VALUE_LEN",
+                    operation="C_EncapsulateKey",
+                    mechanism="CKM_ML_KEM",
+                    spec_ref="PKCS#11 v3.2 Sec.5.14.8; FIPS 203",
+                    summary=(
+                        "Module ignores CKA_VALUE_LEN for ML-KEM KEM-derived keys: "
+                        f"requested 16 bytes, got {len(value)} bytes "
+                        "(ML-KEM shared secret is always 32 bytes per FIPS 203)"
+                    ),
                 )
             assert len(value) == 16, f"Expected 16-byte AES-128 key, got {len(value)} bytes"
         finally:
@@ -613,11 +635,17 @@ class TestMLKEMKeyDerivation:
         try:
             pub, priv = _generate_ml_kem_keypair(rs, param_set=param_set)
         except (AssertionError, OSError):
-            pytest.xfail(
-                f"Module does not support CKA_PARAMETER_SET={param_set_name} - "
-                "may use a fixed parameter set"
+            xfail_as(
+                "not_operational",
+                kind="crypto",
+                label=f"ML-KEM keypair (CKA_PARAMETER_SET={param_set_name})",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                summary=(
+                    f"Module does not support CKA_PARAMETER_SET={param_set_name} - "
+                    "may use a fixed parameter set"
+                ),
             )
-            raise  # unreachable
         shared = 0
         try:
             shared, ct = _encapsulate_ml_kem_or_xfail(
