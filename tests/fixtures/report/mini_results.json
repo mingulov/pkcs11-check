@@ -1,0 +1,10 @@
+{
+  "units": [
+    {
+      "target": "tests/test_arithmetic_overflow.py",
+      "status": "crashed",
+      "returncode": 11,
+      "duration_s": 0.42
+    }
+  ]
+}
