@@ -182,7 +182,7 @@ def test_ccm_valid_vector_wrong_plaintext_fails(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(aes, "decrypt_single", lambda *_a, **_k: b"\xde\xad\xbe\xef")
     monkeypatch.setattr(aes, "destroy_quietly", lambda *_a: None)
 
-    with pytest.raises(AssertionError, match="plaintext mismatch"):
+    with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
         aes.test_aes_ccm(_AesSession("AES_CCM"), vec_id, vec)
 
 

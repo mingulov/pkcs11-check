@@ -117,9 +117,9 @@ def test_gap_analysis_marks_protocol_kdf_semantics_as_dedicated_coverage() -> No
     doc = GAP_DOC.read_text(encoding="utf-8")
 
     assert "_sp800_108_counter_hmac_sha256_reference" in sp800
-    assert "assert val == expected" in sp800
+    assert "CKM_SP800_108_COUNTER_KDF:C_DeriveKey KAT" in sp800
     assert "_tls12_prf_sha256" in tls12
-    assert "assert value == expected" in tls12
+    assert "CKM_TLS12_KDF:C_DeriveKey KAT" in tls12
     assert "test_prf_seed_affects_output" in wtls
     assert "test_prf_label_affects_output" in wtls
     assert "_derive_wtls_prf_output" in wtls
@@ -127,7 +127,7 @@ def test_gap_analysis_marks_protocol_kdf_semantics_as_dedicated_coverage() -> No
     assert 'buffer_bytes("output")' in wtls
     assert "test_base_key_affects_output" in ike
     assert 'REQUIRED_MECHANISMS = ["PKCS5_PBKD2"]' in pbkdf2
-    assert "assert dk_actual == dk_expected" in pbkdf2
+    assert "PBKDF2:C_DeriveKey KAT" in pbkdf2
 
     assert "Protocol KDFs are intentionally skipped" not in doc
     assert "Dedicated protocol KDF semantic coverage exists" in doc
@@ -419,7 +419,7 @@ def test_gap_analysis_marks_tls_master_secret_exact_vector_as_added() -> None:
     guard = _read("tests/test_tls_key_material_derivation.py")
     doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
 
-    assert "TLS 1.0/1.1 master secret output mismatch" in tls
+    assert "CKM_TLS_MASTER_KEY_DERIVE:C_DeriveKey KAT (TLS 1.0/1.1 master secret)" in tls
     assert "test_tls_master_secret_reference_matches_rfc2246_prf_vector" in guard
     assert "test_tls_master_key_derive_fails_on_wrong_exact_output" in guard
 
@@ -432,7 +432,7 @@ def test_gap_analysis_marks_tls_prf_exact_vector_as_added() -> None:
     guard = _read("tests/test_tls_key_material_derivation.py")
     doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
 
-    assert "CKM_TLS_PRF output mismatch" in tls
+    assert "CKM_TLS_PRF:C_DeriveKey KAT" in tls
     assert "test_tls_prf_fails_on_wrong_exact_output" in guard
 
     assert "TLS PRF exact-vector coverage" in doc_flat
@@ -488,8 +488,8 @@ def test_gap_analysis_marks_tls12_extended_master_secret_exact_vector_as_added()
     doc_flat = " ".join(doc.split())
 
     assert "_tls12_extended_master_secret_reference" in tls
-    assert "extended master secret output mismatch" in tls
-    assert "extended master secret DH output mismatch" in tls
+    assert "CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:C_DeriveKey KAT" in tls
+    assert "CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH:C_DeriveKey KAT" in tls
     assert "test_tls12_extended_master_secret_reference_matches_rfc7627_prf_vector" in guard
     assert "test_tls12_extended_master_secret_dh_reference_matches_rfc7627_prf_vector" in guard
     assert "test_tls12_extended_master_key_derive_fails_on_wrong_exact_output" in guard
@@ -505,8 +505,8 @@ def test_gap_analysis_marks_tls12_master_secret_exact_vector_as_added() -> None:
     guard = _read("tests/test_tls_key_material_derivation.py")
     doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
 
-    assert "TLS 1.2 master secret output mismatch" in tls
-    assert "TLS 1.2 master secret DH output mismatch" in tls
+    assert "CKM_TLS12_MASTER_KEY_DERIVE:C_DeriveKey KAT (TLS 1.2 master secret)" in tls
+    assert "CKM_TLS12_MASTER_KEY_DERIVE_DH:C_DeriveKey KAT" in tls
     assert "test_tls12_master_secret_reference_matches_prf_vector" in guard
     assert "test_tls12_master_secret_dh_reference_matches_prf_vector" in guard
     assert "test_tls12_master_key_derive_fails_on_wrong_exact_output" in guard
@@ -523,7 +523,7 @@ def test_gap_analysis_marks_ssl3_master_secret_exact_vector_as_added() -> None:
 
     assert "_ssl3_master_secret_reference" in ssl3
     assert "test_derive_master_secret_exact_vector" in ssl3
-    assert "assert raw_val == expected" in ssl3
+    assert "CKM_SSL3_MASTER_KEY_DERIVE:C_DeriveKey KAT (master secret)" in ssl3
 
     assert "SSL3 master-secret exact-vector coverage" in doc
 
@@ -562,7 +562,7 @@ def test_gap_analysis_marks_ssl3_dh_master_secret_exact_vector_as_added() -> Non
     doc_flat = " ".join(GAP_DOC.read_text(encoding="utf-8").split())
 
     assert "test_derive_master_secret_dh_exact_vector" in ssl3
-    assert "SSL3 master secret DH output mismatch" in ssl3
+    assert "CKM_SSL3_MASTER_KEY_DERIVE_DH:C_DeriveKey KAT (master secret DH)" in ssl3
     assert "test_ssl3_master_key_derive_dh_fails_on_wrong_exact_output" in guard
 
     assert "SSL3 master-secret DH exact-vector coverage" in doc_flat

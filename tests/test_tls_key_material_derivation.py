@@ -530,7 +530,7 @@ def test_tls12_kdf_context_data_fails_on_wrong_exact_output(
     monkeypatch.setattr(test_tls12, "read_attributes", lambda *_args: {CKA_VALUE: wrong})
     monkeypatch.setattr(test_tls12, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(AssertionError, match="CKM_TLS12_KDF context-data output mismatch"):
+    with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
         test_tls12.TestTLS12KDF().test_tls12_kdf_context_data_exact_vector(_tls12_kdf_session())
 
     assert len(derive_calls) == 1
@@ -569,7 +569,7 @@ def test_tls_master_key_derive_fails_on_wrong_exact_output(
     monkeypatch.setattr(test_tls12, "read_attributes", lambda *_args: {CKA_VALUE: wrong})
     monkeypatch.setattr(test_tls12, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(AssertionError, match="TLS 1.0/1.1 master secret output mismatch"):
+    with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
         test_tls12.TestTLS10PreMasterKeyGen().test_tls_master_key_derive(_tls_master_session())
 
     assert len(derive_calls) == 1
@@ -608,7 +608,7 @@ def test_tls_prf_fails_on_wrong_exact_output(
     monkeypatch.setattr(test_tls12, "read_attributes", lambda *_args: {CKA_VALUE: wrong})
     monkeypatch.setattr(test_tls12, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(AssertionError, match="CKM_TLS_PRF output mismatch"):
+    with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
         test_tls12.TestTLS10PreMasterKeyGen().test_tls_prf(_tls_prf_session())
 
     assert len(derive_calls) == 1
@@ -647,7 +647,7 @@ def test_tls12_master_key_derive_fails_on_wrong_exact_output(
     monkeypatch.setattr(test_tls12, "read_attributes", lambda *_args: {CKA_VALUE: wrong})
     monkeypatch.setattr(test_tls12, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(AssertionError, match="master secret output mismatch"):
+    with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
         test_tls12.TestTLS12MasterKeyDerive().test_master_key_derive(_tls12_master_session())
 
     assert len(derive_calls) == 1
@@ -692,7 +692,7 @@ def test_tls12_master_key_derive_dh_fails_on_wrong_exact_output(
     monkeypatch.setattr(test_tls12, "read_attributes", lambda *_args: {CKA_VALUE: wrong})
     monkeypatch.setattr(test_tls12, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(AssertionError, match="master secret DH output mismatch"):
+    with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
         test_tls12.TestTLS12MasterKeyDerive().test_master_key_derive_dh(_tls12_master_dh_session())
 
     assert len(derive_calls) == 1
@@ -732,7 +732,7 @@ def test_tls12_extended_master_key_derive_fails_on_wrong_exact_output(
     monkeypatch.setattr(test_tls12, "read_attributes", lambda *_args: {CKA_VALUE: wrong})
     monkeypatch.setattr(test_tls12, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(AssertionError, match="extended master secret output mismatch"):
+    with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
         test_tls12.TestTLS12Extended().test_extended_master_key_derive(_tls12_ems_session())
 
     assert len(derive_calls) == 1
@@ -780,7 +780,7 @@ def test_tls12_extended_master_key_derive_dh_fails_on_wrong_exact_output(
     monkeypatch.setattr(test_tls12, "read_attributes", lambda *_args: {CKA_VALUE: wrong})
     monkeypatch.setattr(test_tls12, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(AssertionError, match="extended master secret DH output mismatch"):
+    with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
         test_tls12.TestTLS12Extended().test_extended_master_key_derive_dh(_tls12_ems_dh_session())
 
     assert len(derive_calls) == 1

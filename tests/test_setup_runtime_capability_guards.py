@@ -2661,7 +2661,7 @@ def test_kdf_hmac_as_kdf_wrong_mac_is_hard_fail(
     monkeypatch.setattr(test_kdf, "destroy_quietly", lambda *_a, **_k: None)
     rs = _session_with_mechanisms("SHA256_HMAC")
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
         test_kdf.TestKeyDeriveSoftware().test_hmac_as_kdf(rs)
 
 

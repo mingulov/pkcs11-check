@@ -133,7 +133,7 @@ def test_wtls_prf_exact_vector_fails_on_mismatch(
         lambda *_args, **_kwargs: b"\x00" * 16,
     )
 
-    with pytest.raises(AssertionError, match="CKM_WTLS_PRF output mismatch"):
+    with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
         test_wtls.TestWTLSPRF().test_prf_derive(_session_with_mechanisms("WTLS_PRF"))
 
 

@@ -144,5 +144,5 @@ def test_acvp_shake_helper_detects_wrong_output() -> None:
         "expected_md": hashlib.shake_128(b"abc").digest(16),
     }
 
-    with pytest.raises(AssertionError, match="SHAKE XOF mismatch"):
+    with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
         test_acvp_hash._run_acvp_shake_vector(_session(raw), "SHAKE-128-1.0-tc1", vec)

@@ -159,7 +159,7 @@ def test_invalid_ecdh_with_shared_secret_success_is_reported(
     monkeypatch.setattr(ecdh, "read_attributes", _read_zeros)
     monkeypatch.setattr(ecdh, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(AssertionError, match="mismatch"):
+    with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
         ecdh.test_ecdh(_EcdhSession(), vec_id, vec)
 
 

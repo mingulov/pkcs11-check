@@ -67,5 +67,5 @@ def test_chacha_valid_vector_wrong_plaintext_fails(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(chacha, "decrypt_single", lambda *_a, **_k: b"\xde\xad\xbe\xef")
     monkeypatch.setattr(chacha, "destroy_quietly", lambda *_a: None)
 
-    with pytest.raises(AssertionError, match="plaintext mismatch"):
+    with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
         chacha.test_chacha20_poly1305(_ChaChaSession(), vec_id, vec)
