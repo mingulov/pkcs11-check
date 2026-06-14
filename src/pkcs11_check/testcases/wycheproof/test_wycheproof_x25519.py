@@ -50,7 +50,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._operability import not_operational_reason
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import assert_correct, is_known_error, xfail_if_known_ckr
 from pkcs11_check.testcases.wycheproof._key_decoders import (
     decode_xdh_private_bytes,
     decode_xdh_public_bytes,
@@ -319,7 +319,14 @@ def test_xdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         destroy_quietly(rs.raw, rs.sh, priv_key)
 
     if result == "valid" and shared is not None:
-        assert shared == shared_expected
+        assert_correct(
+            actual=shared,
+            expected=shared_expected,
+            label=f"X25519/X448:C_DeriveKey KAT {vec_id}",
+            operation="C_DeriveKey",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     if result == "invalid" and shared is not None:
         classify(
             "accepted_invalid",

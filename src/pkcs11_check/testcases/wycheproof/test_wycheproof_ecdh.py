@@ -48,7 +48,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._operability import not_operational_reason
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import assert_correct, is_known_error, xfail_if_known_ckr
 from pkcs11_check.testcases.wycheproof._key_decoders import (
     decode_ec_private_scalar,
     decode_ec_public_point,
@@ -327,7 +327,15 @@ def test_ecdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
         shared = attrs[CKA_VALUE]
         assert isinstance(shared, bytes)
         if result == "valid":
-            assert shared == shared_expected, f"ECDH shared secret mismatch for {vec_id}"
+            assert_correct(
+                actual=shared,
+                expected=shared_expected,
+                label=f"ECDH:C_DeriveKey KAT {vec_id}",
+                operation="C_DeriveKey",
+                mechanism="CKM_ECDH1_DERIVE",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         elif result == "invalid":
             destroy_quietly(rs.raw, rs.sh, derived_key)
             # Only an OFF-base-curve derive is the genuine invalid-curve attack.

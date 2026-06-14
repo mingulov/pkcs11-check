@@ -53,6 +53,7 @@ from pkcs11_check.testcases._operability import (
     probe_operability,
 )
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     import_rsa_private_key_negotiated,
     is_known_error,
     xfail_if_known_ckr,
@@ -468,7 +469,15 @@ def test_rsa_oaep(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
         destroy_quietly(rs.raw, rs.sh, priv_key)
 
     if result == "valid" and plaintext is not None:
-        assert plaintext == msg_expected
+        assert_correct(
+            actual=plaintext,
+            expected=msg_expected,
+            label=f"RSA-OAEP:C_Decrypt KAT {vec_id}",
+            operation="C_Decrypt",
+            mechanism="CKM_RSA_PKCS_OAEP",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     if result == "invalid" and plaintext is not None:
         classify(
             "accepted_invalid",

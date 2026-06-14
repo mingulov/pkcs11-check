@@ -65,7 +65,11 @@ from pkcs11_check.testcases._operability import (
     xfail_vacuous_reject,
 )
 from pkcs11_check.testcases.acvp.aes.base_runner_aead import _aead_operability as _ccm_operability
-from pkcs11_check.testcases.conftest import import_secret_key_negotiated, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    import_secret_key_negotiated,
+    xfail_if_known_ckr,
+)
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
 pytestmark = pytest.mark.wycheproof
@@ -342,7 +346,15 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
             source=vec.get("_source"),
             vector_id=vec.get("_vector_id"),
         )
-    assert recovered == msg_expected, f"AES-KW {vec_id}: unwrapped key material mismatch"
+    assert_correct(
+        actual=recovered,
+        expected=msg_expected,
+        label=f"AES-KW:C_UnwrapKey KAT {vec_id}",
+        operation="C_UnwrapKey",
+        mechanism="CKM_AES_KEY_WRAP",
+        source=vec.get("_source"),
+        vector_id=vec.get("_vector_id"),
+    )
 
 
 # --- AES Key Wrap with Padding (RFC 5649) ---
@@ -416,9 +428,14 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
         destroy_quietly(rs.raw, rs.sh, wrap_key_h)
 
     if result == "valid" and wrapped is not None:
-        assert wrapped == ct_expected, (
-            f"AES-KWP wrap output differs for {vec_id} "
-            f"(got {len(wrapped)}B, expected {len(ct_expected)}B)"
+        assert_correct(
+            actual=wrapped,
+            expected=ct_expected,
+            label=f"AES-KWP:C_WrapKey KAT {vec_id}",
+            operation="C_WrapKey",
+            mechanism="CKM_AES_KEY_WRAP_KWP",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
     if result == "invalid" and wrapped is not None and wrapped == ct_expected:
         classify(
@@ -528,7 +545,15 @@ def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
         destroy_quietly(rs.raw, rs.sh, key)
 
     if result == "valid" and plaintext is not None:
-        assert plaintext == msg_expected, f"AES-CCM {vec_id}: plaintext mismatch"
+        assert_correct(
+            actual=plaintext,
+            expected=msg_expected,
+            label=f"AES-CCM:C_Decrypt KAT {vec_id}",
+            operation="C_Decrypt",
+            mechanism="CKM_AES_CCM",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     if result == "invalid" and plaintext is not None:
         classify(
             "accepted_invalid",
@@ -709,4 +734,12 @@ def test_aes_xts(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
         destroy_quietly(rs.raw, rs.sh, key)
 
     if result == "valid" and ct is not None:
-        assert ct == ct_expected
+        assert_correct(
+            actual=ct,
+            expected=ct_expected,
+            label=f"AES-XTS:C_Encrypt KAT {vec_id}",
+            operation="C_Encrypt",
+            mechanism="CKM_AES_XTS",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )

@@ -61,6 +61,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     import_ec_public_key_negotiated,
     import_rsa_public_key_negotiated,
     is_known_error,
@@ -252,7 +253,15 @@ class TestAESGCMWycheproof:
             )
             # Decryption succeeded
             if result == "valid" or result == "acceptable":
-                assert pt == msg
+                assert_correct(
+                    actual=pt,
+                    expected=msg,
+                    label=f"AES-GCM:C_Decrypt KAT tc{vec['tcId']}",
+                    operation="C_Decrypt",
+                    mechanism="CKM_AES_GCM",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             elif result == "invalid":
                 classify(
                     "accepted_invalid",
@@ -365,7 +374,15 @@ class TestHMACSHA256Wycheproof:
             # Truncate to expected tag size
             truncated = mac[:tag_size]
             if result == "valid":
-                assert truncated == tag_expected
+                assert_correct(
+                    actual=truncated,
+                    expected=tag_expected,
+                    label=f"HMAC-SHA256:C_Sign KAT tc{vec['tcId']}",
+                    operation="C_Sign",
+                    mechanism="CKM_SHA256_HMAC",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             elif result == "invalid" and truncated == tag_expected:
                 classify(
                     "accepted_invalid",
@@ -543,7 +560,15 @@ class TestAESCBCPKCS5Wycheproof:
                 mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
             )
             if result == "valid" or result == "acceptable":
-                assert pt == msg
+                assert_correct(
+                    actual=pt,
+                    expected=msg,
+                    label=f"AES-CBC-PAD:C_Decrypt KAT tc{vec['tcId']}",
+                    operation="C_Decrypt",
+                    mechanism="CKM_AES_CBC_PAD",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             elif result == "invalid":
                 classify(
                     "accepted_invalid",

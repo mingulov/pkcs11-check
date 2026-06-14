@@ -35,7 +35,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA_1,
 )
 from pkcs11_check.testcases._operability import not_operational_reason
-from pkcs11_check.testcases.conftest import import_secret_key_negotiated
+from pkcs11_check.testcases.conftest import assert_correct, import_secret_key_negotiated
 
 pytestmark = [pytest.mark.wycheproof, pytest.mark.subprocess_per_test]
 REQUIRED_MECHANISMS = ["HKDF_DERIVE"]
@@ -174,7 +174,15 @@ def test_hkdf(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
         destroy_quietly(rs.raw, rs.sh, ikm_key)
 
     if result == "valid" and okm is not None:
-        assert okm == okm_expected
+        assert_correct(
+            actual=okm,
+            expected=okm_expected,
+            label=f"HKDF:C_DeriveKey KAT {vec_id}",
+            operation="C_DeriveKey",
+            mechanism="CKM_HKDF_DERIVE",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     if result == "invalid" and okm is not None:
         classify(
             "accepted_invalid",

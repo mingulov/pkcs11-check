@@ -47,6 +47,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     import_rsa_private_key_negotiated,
     is_known_error,
     xfail_if_known_ckr,
@@ -216,9 +217,14 @@ def test_rsa_pkcs1_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, A
             _skip_or_xfail_rsa_private_import_reject(e, key_size, sha, mech_display)
 
         sig = sign_single(rs.raw, rs.sh, key_obj, mechanism, msg)
-        assert sig == expected_sig, (
-            f"Signature mismatch for {vec_id} ({key_size}-bit {sha}): "
-            f"got {sig.hex()[:32]}... expected {expected_sig.hex()[:32]}..."
+        assert_correct(
+            actual=sig,
+            expected=expected_sig,
+            label=f"{mech_display}:C_Sign KAT {vec_id} ({key_size}-bit {sha})",
+            operation="C_Sign",
+            mechanism=mech_display,
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
     finally:
         if key_obj is not None:

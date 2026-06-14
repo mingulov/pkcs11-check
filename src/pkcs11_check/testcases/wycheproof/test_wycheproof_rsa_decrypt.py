@@ -34,6 +34,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     import_rsa_private_key_negotiated,
     is_known_error,
     xfail_if_known_ckr,
@@ -205,7 +206,15 @@ def test_rsa_pkcs1_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, 
         destroy_quietly(rs.raw, rs.sh, priv_key)
 
     if result == "valid" and plaintext is not None:
-        assert plaintext == msg_expected
+        assert_correct(
+            actual=plaintext,
+            expected=msg_expected,
+            label=f"CKM_RSA_PKCS:C_Decrypt KAT {vec_id}",
+            operation="C_Decrypt",
+            mechanism="CKM_RSA_PKCS",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     if result == "invalid" and plaintext is not None:
         # RSA PKCS#1 v1.5 is the canonical Bleichenbacher case. The recommended
         # mitigation (RFC 8017 §7.2.2; "Marvin" 2023) is to NOT reveal padding

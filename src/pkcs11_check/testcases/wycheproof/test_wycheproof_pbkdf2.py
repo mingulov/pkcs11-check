@@ -53,7 +53,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import reject_or_classify, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import assert_correct, reject_or_classify, xfail_if_known_ckr
 
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["PKCS5_PBKD2"]
@@ -235,7 +235,11 @@ def test_pbkdf2(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> No
         return
 
     if result == "valid":
-        assert dk_actual == dk_expected, (
-            f"PBKDF2 output mismatch for {vec_id}: "
-            f"got {dk_actual.hex()[:20]}... expected {dk_expected.hex()[:20]}..."
+        assert_correct(
+            actual=dk_actual,
+            expected=dk_expected,
+            label=f"PBKDF2:C_DeriveKey KAT {vec_id}",
+            operation="C_DeriveKey",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )

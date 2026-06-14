@@ -28,7 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKM_CHACHA20_POLY1305,
 )
 from pkcs11_check.testcases._operability import not_operational_reason
-from pkcs11_check.testcases.conftest import import_secret_key_negotiated
+from pkcs11_check.testcases.conftest import assert_correct, import_secret_key_negotiated
 
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["CHACHA20_POLY1305"]
@@ -133,7 +133,15 @@ def test_chacha20_poly1305(p11_module_session: Any, vec_id: str, vec: dict[str, 
         destroy_quietly(rs.raw, rs.sh, key)
 
     if result == "valid" and plaintext is not None:
-        assert plaintext == msg_expected, f"ChaCha20-Poly1305 {vec_id}: plaintext mismatch"
+        assert_correct(
+            actual=plaintext,
+            expected=msg_expected,
+            label=f"CHACHA20_POLY1305:C_Decrypt KAT {vec_id}",
+            operation="C_Decrypt",
+            mechanism="CKM_CHACHA20_POLY1305",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     if result == "invalid" and plaintext is not None:
         classify(
             "accepted_invalid",

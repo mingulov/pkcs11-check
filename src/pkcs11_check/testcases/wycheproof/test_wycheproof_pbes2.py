@@ -59,7 +59,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import assert_correct, xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
 pytestmark = pytest.mark.wycheproof
@@ -225,4 +225,11 @@ def test_pbes2_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
             source=vec.get("_source"),
             vector_id=vec.get("_vector_id"),
         )
-    assert plaintext == expected, f"PBES2 plaintext mismatch for {vec_id}"
+    assert_correct(
+        actual=plaintext,
+        expected=expected,
+        label=f"PBES2:C_Decrypt KAT {vec_id}",
+        operation="C_Decrypt",
+        source=vec.get("_source"),
+        vector_id=vec.get("_vector_id"),
+    )
