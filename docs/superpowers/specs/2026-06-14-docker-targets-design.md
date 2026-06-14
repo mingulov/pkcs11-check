@@ -58,7 +58,13 @@ run script (daemon-backed modules).
 
 ---
 
-## 2. Target A — craton-hsm-core (FEASIBLE, low effort, build now)
+## 2. Target A — craton-hsm-core — DROPPED (NOT FEASIBLE in-process)
+
+> **Revised verdict (2026-06-14):** the initial "FEASIBLE" assessment was wrong. craton's
+> in-process PKCS#11 mode does not persist token authentication (SO/user PIN) across
+> processes — it is daemon-oriented — so it is incompatible with the suite's per-file
+> subprocess isolation. Dropped from the matrix. Evidence + the (otherwise complete) build
+> recipe: `docs/findings/craton-hsm-feasibility-2026-06-14.md`. Section retained for context.
 
 **What:** pure-Rust PKCS#11 v3.0 software HSM (a SoftHSMv2 rewrite). In-process
 `libcraton_hsm.so`, **no daemon, no network**. License Apache-2.0. No release tags →

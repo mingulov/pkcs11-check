@@ -483,19 +483,9 @@ branch_source = "pkcs11_mock_master"
 openssl = "not applicable to provider behavior"
 build_evidence = "2026-05-24 docker compose build test-pkcs11-mock"
 
-[sources.craton_hsm_main]
-kind = "git_branch"
-repo = "https://github.com/craton-co/craton-hsm-core.git"
-selector = "main"
-commit = "d3203bf1f79550a368b5e96a015b9456663080eb"
-commit_date = "2026-06-07T00:00:00Z"
-
-[targets.craton_hsm]
-service = "test-craton-hsm"
-provider = "Craton HSM (core)"
-branch_source = "craton_hsm_main"
-openssl = "not applicable: RustCrypto default backend (no OpenSSL dependency)"
-build_evidence = "main@d3203bf; cargo build --release -p craton_hsm; Apache-2.0; no release tags exist; Docker build validation pending"
+# craton-hsm-core was evaluated and DROPPED: its in-process PKCS#11 mode keeps token auth
+# in memory per process, incompatible with pkcs11-check's per-file subprocess isolation.
+# See docs/findings/craton-hsm-feasibility-2026-06-14.md.
 
 [sources.nethsm_pkcs11_release]
 kind = "git_tag"

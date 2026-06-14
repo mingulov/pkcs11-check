@@ -16,7 +16,15 @@
 
 ---
 
-## Task 1: craton-hsm target (in-process Rust `.so`)
+## Task 1: craton-hsm target (in-process Rust `.so`) — DROPPED (NOT FEASIBLE)
+
+> **Outcome (2026-06-14):** Implemented and debugged to a building image with a working
+> `C_Initialize`, then **removed**. craton's in-process PKCS#11 mode keeps token auth in
+> memory **per process**, so a provisioned token is not visible across pkcs11-check's per-file
+> subprocesses (runtime-proven: `init-token` succeeds in one process, `init-pin` →
+> `CKR_TOKEN_NOT_RECOGNIZED` in the next). Full evidence + build recipe:
+> `docs/findings/craton-hsm-feasibility-2026-06-14.md`. The steps below are retained for
+> reference / a future daemon-mode attempt only.
 
 **Files:**
 - Create: `docker/craton-hsm/Dockerfile`
@@ -48,7 +56,7 @@ WORKDIR /build/craton
 # and the awslc/fips features need cmake; default features = rustcrypto-backend (what we want).
 # If the package name differs, `cargo metadata` / `ls target/release/*.so` reveals the real
 # crate; adjust -p and the COPY below accordingly.
-RUN cargo build --release -p craton_hsm
+RUN cargo build --release -p craton-hsm  # package is hyphenated; lib is craton_hsm -> libcraton_hsm.so
 
 FROM python:3.14-slim
 
@@ -142,7 +150,7 @@ service = "test-craton-hsm"
 provider = "Craton HSM (core)"
 branch_source = "craton_hsm_main"
 openssl = "n/a — RustCrypto default backend (no OpenSSL)"
-build_evidence = "main@d3203bf; cargo build --release -p craton_hsm; Apache-2.0; no tags"
+build_evidence = "main@d3203bf; cargo build --release -p craton-hsm; Apache-2.0; no tags"
 ```
 
 - [ ] **Step 5: Static validation**
@@ -164,7 +172,7 @@ git commit -m "docker: add craton-hsm target (pure-Rust in-process PKCS#11, no n
 - [ ] **Step 7: Build + run validation (user's Docker env)**
 
 Run: `./docker/test.sh craton-hsm`
-Expected: image builds; `cargo build` produces `libcraton_hsm.so`; `pkcs11-tool --init-token`/`--init-pin` succeed; the suite runs and writes `artifacts/craton-hsm/report.jsonl`. If `cargo build -p craton_hsm` fails on the package name, run `cargo metadata --no-deps --format-version 1 | python3 -c "import json,sys;print([p['name'] for p in json.load(sys.stdin)['packages']])"` to find the cdylib crate and update `-p` + the COPY path. If `--init-token` errors on slot, add `--slot 0`.
+Expected: image builds; `cargo build` produces `libcraton_hsm.so`; `pkcs11-tool --init-token`/`--init-pin` succeed; the suite runs and writes `artifacts/craton-hsm/report.jsonl`. (Resolved: the package is `craton-hsm` (hyphen), the cdylib lib is `craton_hsm`.) If `--init-token` errors on slot, add `--slot 0`.
 
 ---
 

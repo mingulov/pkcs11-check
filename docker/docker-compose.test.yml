@@ -208,18 +208,6 @@ services:
       PKCS11_CHECK_PIN: "0000"
       PKCS11_CHECK_SLOT: "0"
 
-  # craton-hsm-core (main; pure-Rust PKCS#11 v3.0 software HSM)
-  test-craton-hsm:
-    <<: *common
-    build:
-      context: ..
-      dockerfile: docker/craton-hsm/Dockerfile
-      args:
-        CRATON_REF: "${CRATON_REF:-main}"
-    environment:
-      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/craton-hsm
-      PKCS11_CHECK_PIN: "1234"
-
   # NSS main branch (source tip, full PQC)
   test-nss-main:
     <<: *common

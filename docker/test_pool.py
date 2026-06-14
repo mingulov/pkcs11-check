@@ -103,9 +103,6 @@ VARIANT_PROVIDERS = [
     "opencryptoki-master",
     "wolfpkcs11-master",
     "corepkcs11-main",
-    # craton-hsm-core has no release tags — only ever a main build (cold build may be
-    # skipped on failure), so it lives with the other dev/variant images.
-    "craton-hsm",
     # NetHSM: keyfender server + nethsm-pkcs11 co-located; undivided (not in SHARD_MAP) —
     # narrow/fast coverage and each shard would re-provision its own server.
     "nethsm",
