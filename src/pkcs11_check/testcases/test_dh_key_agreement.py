@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_bool,
     attr_bytes,
@@ -72,6 +73,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     classify_negative_rv,
     reject_or_classify,
     xfail_if_known_ckr,
@@ -329,7 +331,13 @@ class TestDHKeyAgreement:
                 # Both should derive the same key material
                 a_val = read_attributes(rs.raw, rs.sh, alice_shared, [CKA_VALUE])
                 b_val = read_attributes(rs.raw, rs.sh, bob_shared, [CKA_VALUE])
-                assert a_val[CKA_VALUE] == b_val[CKA_VALUE]
+                assert_correct(
+                    actual=a_val[CKA_VALUE],
+                    expected=b_val[CKA_VALUE],
+                    label="CKM_DH_PKCS_DERIVE:shared-secret agreement (A*B == B*A)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_DH_PKCS_DERIVE",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, alice_shared)
                 destroy_quietly(rs.raw, rs.sh, bob_shared)
@@ -369,7 +377,18 @@ class TestDHKeyAgreement:
                 plaintext = b"DH key agreement!" + b"\x00" * 15  # pad to 32 bytes
                 plaintext = plaintext[:32]
                 ct = encrypt_single(rs.raw, rs.sh, shared_key, CKM_AES_ECB, plaintext)
-                assert ct != plaintext
+                if ct == plaintext:
+                    classify(
+                        "wrong_result",
+                        kind="crypto",
+                        label="CKM_AES_ECB:ciphertext must differ from plaintext",
+                        operation="C_Encrypt",
+                        mechanism="CKM_AES_ECB",
+                        summary=(
+                            "CKM_AES_ECB with a DH-derived key returned ciphertext equal "
+                            "to the plaintext -- encryption was a no-op"
+                        ),
+                    )
 
                 # Bob derives the same shared key, decrypts
                 bob_key = _dh_derive_or_xfail(
@@ -388,7 +407,13 @@ class TestDHKeyAgreement:
                 )
                 try:
                     pt = decrypt_single(rs.raw, rs.sh, bob_key, CKM_AES_ECB, ct)
-                    assert pt == plaintext
+                    assert_correct(
+                        actual=pt,
+                        expected=plaintext,
+                        label="CKM_DH_PKCS_DERIVE:AES-ECB roundtrip (both parties)",
+                        operation="C_Decrypt",
+                        mechanism="CKM_AES_ECB",
+                    )
                 finally:
                     destroy_quietly(rs.raw, rs.sh, bob_key)
             finally:
@@ -434,7 +459,14 @@ class TestDHKeyAgreement:
                 label="CKM_DH_PKCS_DERIVE RFC 3526 Group 14 exact vector",
             )
             value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert value == _DH_RFC3526_GROUP14_EXPECTED_SECRET_32
+            assert_correct(
+                actual=value,
+                expected=_DH_RFC3526_GROUP14_EXPECTED_SECRET_32,
+                label="CKM_DH_PKCS_DERIVE:C_DeriveKey KAT (RFC 3526 Group 14)",
+                operation="C_DeriveKey",
+                mechanism="CKM_DH_PKCS_DERIVE",
+                source="RFC 3526 Group 14",
+            )
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -486,10 +518,20 @@ class TestDHKeyAgreement:
                 )
                 derived_values[requested_len] = value
 
-            assert derived_values[32] == _DH_RFC3526_GROUP14_EXPECTED_SECRET_32
-            assert derived_values[16] == derived_values[32][-16:], (
-                "DH RFC 3526 CKA_VALUE_LEN=16 must keep the rightmost bytes "
-                "of the longer derived secret"
+            assert_correct(
+                actual=derived_values[32],
+                expected=_DH_RFC3526_GROUP14_EXPECTED_SECRET_32,
+                label="CKM_DH_PKCS_DERIVE:C_DeriveKey KAT (RFC 3526 Group 14, len=32)",
+                operation="C_DeriveKey",
+                mechanism="CKM_DH_PKCS_DERIVE",
+                source="RFC 3526 Group 14",
+            )
+            assert_correct(
+                actual=derived_values[16],
+                expected=derived_values[32][-16:],
+                label="CKM_DH_PKCS_DERIVE:CKA_VALUE_LEN truncation keeps rightmost bytes",
+                operation="C_DeriveKey",
+                mechanism="CKM_DH_PKCS_DERIVE",
             )
         finally:
             for derived in derived_keys:
@@ -585,8 +627,12 @@ class TestDHKeyAgreement:
                 )
                 derived_values[requested_len] = value
 
-            assert derived_values[16] == derived_values[32][-16:], (
-                "DH CKA_VALUE_LEN=16 must keep the rightmost bytes of the longer derived secret"
+            assert_correct(
+                actual=derived_values[16],
+                expected=derived_values[32][-16:],
+                label="CKM_DH_PKCS_DERIVE:CKA_VALUE_LEN truncation keeps rightmost bytes",
+                operation="C_DeriveKey",
+                mechanism="CKM_DH_PKCS_DERIVE",
             )
         finally:
             for key in derived_keys:
@@ -877,7 +923,13 @@ class TestDHParameterGeneration:
                 try:
                     va = read_attributes(rs.raw, rs.sh, key_a, [CKA_VALUE])[CKA_VALUE]
                     vb = read_attributes(rs.raw, rs.sh, key_b, [CKA_VALUE])[CKA_VALUE]
-                    assert va == vb
+                    assert_correct(
+                        actual=va,
+                        expected=vb,
+                        label="CKM_DH_PKCS_DERIVE:shared-secret agreement (generated params)",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_DH_PKCS_DERIVE",
+                    )
                 finally:
                     destroy_quietly(rs.raw, rs.sh, key_a)
                     destroy_quietly(rs.raw, rs.sh, key_b)
