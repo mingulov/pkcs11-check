@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.attr_metadata import ATTR_VALUE_TYPES
 from pkcs11_check.raw.recipes import (
     create_object,
@@ -101,7 +102,13 @@ class TestSecretKeyDefaults:
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="PKCS#11 v3.1 Sec.4.9.2: CKA_LOCAL True if key generated on token",
             )
-            pytest.xfail("Module returns CKA_LOCAL=False for generated key (spec violation)")
+            classify(
+                "honest_deviation",
+                kind="metadata",
+                label="CKA_LOCAL default (generated AES key)",
+                spec_ref="PKCS#11 v3.1 Sec.4.9.2",
+                summary="Module returns CKA_LOCAL=False for generated key (spec violation)",
+            )
 
     def test_sensitive_is_bool(self, aes_key: Any) -> None:
         """CKA_SENSITIVE defaults to a boolean (True on most modules)."""
@@ -147,7 +154,13 @@ class TestSecretKeyDefaults:
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="PKCS#11 v3.1 Sec.4.9.2: default CKA_PRIVATE is True for secret keys",
             )
-            pytest.xfail("Module defaults CKA_PRIVATE=False for secret keys (spec violation)")
+            classify(
+                "honest_deviation",
+                kind="metadata",
+                label="CKA_PRIVATE default (secret key)",
+                spec_ref="PKCS#11 v3.1 Sec.4.9.2",
+                summary="Module defaults CKA_PRIVATE=False for secret keys (spec violation)",
+            )
 
     def test_always_sensitive_consistent(self, aes_key: Any) -> None:
         """CKA_ALWAYS_SENSITIVE is True when SENSITIVE defaults to True."""
@@ -199,8 +212,14 @@ class TestKeyPairDefaults:
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="PKCS#11 v3.1 Sec.4.9.2: CKA_LOCAL True if key generated on token",
             )
-            pytest.xfail(
-                "Module returns CKA_LOCAL=False for generated RSA public key (spec violation)"
+            classify(
+                "honest_deviation",
+                kind="metadata",
+                label="CKA_LOCAL default (RSA public key)",
+                spec_ref="PKCS#11 v3.1 Sec.4.9.2",
+                summary=(
+                    "Module returns CKA_LOCAL=False for generated RSA public key (spec violation)"
+                ),
             )
 
     def test_private_key_local(self, rsa_keypair: Any) -> None:
@@ -218,8 +237,14 @@ class TestKeyPairDefaults:
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="PKCS#11 v3.1 Sec.4.9.2: CKA_LOCAL True if key generated on token",
             )
-            pytest.xfail(
-                "Module returns CKA_LOCAL=False for generated RSA private key (spec violation)"
+            classify(
+                "honest_deviation",
+                kind="metadata",
+                label="CKA_LOCAL default (RSA private key)",
+                spec_ref="PKCS#11 v3.1 Sec.4.9.2",
+                summary=(
+                    "Module returns CKA_LOCAL=False for generated RSA private key (spec violation)"
+                ),
             )
 
     def test_private_key_sensitive(self, rsa_keypair: Any) -> None:
@@ -247,8 +272,12 @@ class TestKeyPairDefaults:
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="PKCS#11 v3.1 Sec.4.9.2: default CKA_EXTRACTABLE for private keys",
             )
-            pytest.xfail(
-                "Module defaults CKA_EXTRACTABLE=True for RSA private key (spec violation)"
+            classify(
+                "honest_deviation",
+                kind="metadata",
+                label="CKA_EXTRACTABLE default (RSA private key)",
+                spec_ref="PKCS#11 v3.1 Sec.4.9.2",
+                summary="Module defaults CKA_EXTRACTABLE=True for RSA private key (spec violation)",
             )
 
     def test_private_key_private(self, rsa_keypair: Any) -> None:
@@ -265,7 +294,13 @@ class TestKeyPairDefaults:
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="PKCS#11 v3.1 Sec.4.9.2: default CKA_PRIVATE is True for private keys",
             )
-            pytest.xfail("Module defaults CKA_PRIVATE=False for RSA private key (spec violation)")
+            classify(
+                "honest_deviation",
+                kind="metadata",
+                label="CKA_PRIVATE default (RSA private key)",
+                spec_ref="PKCS#11 v3.1 Sec.4.9.2",
+                summary="Module defaults CKA_PRIVATE=False for RSA private key (spec violation)",
+            )
 
     def test_public_key_encrypt_is_bool(self, rsa_keypair: Any) -> None:
         """Public key CKA_ENCRYPT is a boolean."""

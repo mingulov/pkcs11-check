@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     create_object,
     destroy_quietly,
@@ -64,7 +65,13 @@ class TestMalformedAttributes:
                 },
             )
             destroy_quietly(rs.raw, rs.sh, h)
-            pytest.fail("Module accepted invalid CKA_CLASS value 0xDEADBEEF")
+            classify(
+                "accepted_invalid",
+                kind="metadata",
+                label="C_CreateObject:invalid CKA_CLASS",
+                operation="C_CreateObject",
+                summary="Module accepted invalid CKA_CLASS value 0xDEADBEEF",
+            )
         except AssertionError as e:
             if _is_template_error(e):
                 pass  # Correct rejection
@@ -123,7 +130,13 @@ class TestMalformedAttributes:
             pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 0)
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
-            pytest.fail("Module accepted RSA key size 0")
+            classify(
+                "accepted_invalid",
+                kind="crypto",
+                label="C_GenerateKeyPair:RSA key size 0",
+                operation="C_GenerateKeyPair",
+                summary="Module accepted RSA key size 0",
+            )
         except AssertionError as e:
             if _is_key_size_error(e):
                 pass  # Correct rejection
@@ -156,7 +169,13 @@ class TestMalformedAttributes:
                 },
             )
             destroy_quietly(rs.raw, rs.sh, h)
-            pytest.fail("Module accepted object without CKA_CLASS")
+            classify(
+                "accepted_invalid",
+                kind="metadata",
+                label="C_CreateObject:missing CKA_CLASS",
+                operation="C_CreateObject",
+                summary="Module accepted object without CKA_CLASS",
+            )
         except AssertionError as e:
             if _is_template_error(e):
                 pass  # Correct rejection

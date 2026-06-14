@@ -32,6 +32,7 @@ from typing import Any, Literal
 
 import pytest
 
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_aes_key,
@@ -96,15 +97,32 @@ def _classify_derived_invariant(
     - otherwise -> ``pass``.
     """
     if not base_holds:
-        pytest.xfail(
-            f"{label}: base attribute did not take effect (isolated deviation, not the invariant)"
+        xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            summary=(
+                f"{label}: base attribute did not take effect "
+                "(isolated deviation, not the invariant)"
+            ),
         )
     if not derived_present:
-        pytest.xfail(f"{label}: derived attribute not reported (honest non-support)")
+        xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            summary=f"{label}: derived attribute not reported (honest non-support)",
+        )
     if derived_value is not True:
-        pytest.fail(
-            f"{label}: base attribute held the whole lifetime but derived attribute "
-            f"is {derived_value!r}, must be True (self-contradiction)"
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            spec_ref="PKCS#11 v3.1 Sec.4.9.4",
+            summary=(
+                f"{label}: base attribute held the whole lifetime but derived attribute "
+                f"is {derived_value!r}, must be True (self-contradiction)"
+            ),
         )
 
 
@@ -127,18 +145,38 @@ def _classify_generated_key_origin_invariant(
     key's known origin and is a failure.
     """
     if not local_present:
-        pytest.xfail(f"{label}: CKA_LOCAL not reported (honest non-support)")
+        xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            summary=f"{label}: CKA_LOCAL not reported (honest non-support)",
+        )
     if local_value is not True:
-        pytest.xfail(f"{label}: CKA_LOCAL is {local_value!r} (isolated wrong value)")
+        xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            summary=f"{label}: CKA_LOCAL is {local_value!r} (isolated wrong value)",
+        )
     if not mechanism_present:
-        pytest.xfail(f"{label}: CKA_KEY_GEN_MECHANISM not reported (honest non-support)")
+        xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            summary=f"{label}: CKA_KEY_GEN_MECHANISM not reported (honest non-support)",
+        )
 
     actual_mechanism = require_ulong_attr(mechanism_value, "CKA_KEY_GEN_MECHANISM")
     if actual_mechanism != expected_mechanism:
-        pytest.fail(
-            f"{label}: CKA_LOCAL=True but CKA_KEY_GEN_MECHANISM is "
-            f"{actual_mechanism:#x}, expected {expected_mechanism:#x} "
-            "(linked-origin self-contradiction)"
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            summary=(
+                f"{label}: CKA_LOCAL=True but CKA_KEY_GEN_MECHANISM is "
+                f"{actual_mechanism:#x}, expected {expected_mechanism:#x} "
+                "(linked-origin self-contradiction)"
+            ),
         )
 
 
@@ -155,11 +193,23 @@ def _read_ulong_attr_state(
     if rv == CKR_ATTRIBUTE_TYPE_INVALID:
         return "unsupported", None
     if rv != CKR_OK:
-        pytest.fail(f"C_GetAttributeValue({attr_type:#x}) returned {ckr_name(rv)}")
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=f"CKA_{attr_type:#x}:C_GetAttributeValue",
+            operation="C_GetAttributeValue",
+            actual=rv,
+            summary=f"C_GetAttributeValue({attr_type:#x}) returned {ckr_name(rv)}",
+        )
     if query.ulValueLen == CK_UNAVAILABLE_INFORMATION:
         return "unavailable", None
     if query.ulValueLen != ctypes.sizeof(CK_ULONG):
-        pytest.xfail(f"attribute {attr_type:#x}: malformed CK_ULONG length {query.ulValueLen}")
+        xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=f"CKA_{attr_type:#x}:C_GetAttributeValue",
+            summary=f"attribute {attr_type:#x}: malformed CK_ULONG length {query.ulValueLen}",
+        )
 
     value = CK_ULONG(0)
     attr = CK_ATTRIBUTE()
@@ -171,7 +221,14 @@ def _read_ulong_attr_state(
     if rv == CKR_ATTRIBUTE_TYPE_INVALID:
         return "unsupported", None
     if rv != CKR_OK:
-        pytest.fail(f"C_GetAttributeValue({attr_type:#x}) returned {ckr_name(rv)}")
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=f"CKA_{attr_type:#x}:C_GetAttributeValue",
+            operation="C_GetAttributeValue",
+            actual=rv,
+            summary=f"C_GetAttributeValue({attr_type:#x}) returned {ckr_name(rv)}",
+        )
     if attr.ulValueLen == CK_UNAVAILABLE_INFORMATION or value.value == CK_UNAVAILABLE_INFORMATION:
         return "unavailable", None
     return "present", int(value.value)
@@ -187,19 +244,44 @@ def _classify_imported_key_origin_invariant(
 ) -> None:
     """Classify linked origin attributes on an imported key."""
     if not local_present:
-        pytest.xfail(f"{label}: CKA_LOCAL not reported (honest non-support)")
+        xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            summary=f"{label}: CKA_LOCAL not reported (honest non-support)",
+        )
     if local_value is not False:
-        pytest.xfail(f"{label}: CKA_LOCAL is {local_value!r} (isolated wrong value)")
+        xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            summary=f"{label}: CKA_LOCAL is {local_value!r} (isolated wrong value)",
+        )
     if mechanism_state == "unsupported":
-        pytest.xfail(f"{label}: CKA_KEY_GEN_MECHANISM not reported (honest non-support)")
+        xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            summary=f"{label}: CKA_KEY_GEN_MECHANISM not reported (honest non-support)",
+        )
     if mechanism_state == "unavailable":
         return
     if mechanism_state == "present":
-        pytest.fail(
-            f"{label}: CKA_LOCAL=False but CKA_KEY_GEN_MECHANISM is "
-            f"{mechanism_value!r}, expected unavailable (linked-origin self-contradiction)"
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            summary=(
+                f"{label}: CKA_LOCAL=False but CKA_KEY_GEN_MECHANISM is "
+                f"{mechanism_value!r}, expected unavailable (linked-origin self-contradiction)"
+            ),
         )
-    pytest.fail(f"{label}: unexpected CKA_KEY_GEN_MECHANISM state {mechanism_state!r}")
+    fail_as(
+        "self_contradiction",
+        kind="metadata",
+        label=label,
+        summary=f"{label}: unexpected CKA_KEY_GEN_MECHANISM state {mechanism_state!r}",
+    )
 
 
 class TestDerivedAttributeInvariants:
