@@ -671,7 +671,7 @@ def reject_or_classify(exc, expected_rvs, *, label, kind=None):
 
 - [ ] **Step 5: Commit** — `refactor(conftest): reject_or_classify emits Classification`.
 
-### Task 2.3: `classify_policy_enforcement` → `classify()` (Type B)
+### Task 2.3: `classify_policy_enforcement` → `classify()` (policy)
 
 **Files:**
 - Modify: `src/pkcs11_check/testcases/conftest.py` (~line 846)
@@ -721,7 +721,7 @@ def classify_policy_enforcement(*, claimed, violated, label):
 
 - [ ] **Step 5: Commit** — `refactor(conftest): classify_policy_enforcement emits Classification`.
 
-### Task 2.4: `classify_lifecycle_effect` → `classify()` (Type C)
+### Task 2.4: `classify_lifecycle_effect` → `classify()` (lifecycle)
 
 **Files:**
 - Modify: `src/pkcs11_check/testcases/conftest.py` (~line 867)
@@ -1217,7 +1217,7 @@ count 24000) to `render_provider("kryoptic-main", groups)` and assert:
   - the xfail bucket is **collapsed** to a single count-line (the 24000 nodeids are NOT all
     listed) — assert `output.count("\n") < 60` (size budget);
   - exact values present: `CKR_OK`, `CKM_RSA_PKCS`, `PKCS#11 v3.2`, the `tcId`s;
-  - no `sha1` substring; the `kind` letter alias `(Type A)` present for a crypto fail.
+  - no `sha1` substring; the `kind` letter alias `(crypto)` present for a crypto fail.
 
 - [ ] **Step 2: Run, verify fail.**
 
@@ -1321,7 +1321,7 @@ uv run ruff format --check . && uv run ruff check . && uv run mypy src && uv run
 
 - [ ] **Step 1:** add a short "At-source classification" subsection to `docs/architecture.md`
 linking the spec + this plan; update `docs/classification-model-design.md` to note `kind` is the
-canonical field (A/B/C/D are display aliases) and the 9-reason vocabulary.
+canonical field (the retired letter aliases were display-only) and the 9-reason vocabulary.
 - [ ] **Step 2:** add a one-line note to `CLAUDE.md` under the classification-model section that
 tests emit via `classify()` (no raw `pytest.xfail/fail` in `testcases/`).
 - [ ] **Step 3: Commit** — `docs: document at-source classification model + reason vocabulary`.
@@ -1332,7 +1332,7 @@ tests emit via `classify()` (no raw `pytest.xfail/fail` in `testcases/`).
 
 - [ ] Every `reason` in the spec's 9-value vocabulary has a `derive_verdict` row + a producer
   (helper, `assert_ckr`, `assert_correct`, runner, or a migrated raw site).
-- [ ] `kind` letter aliases (A/B/C/D) appear only in the **renderer**, never as a stored field.
+- [ ] `kind` is stored and rendered as the keyword (`crypto`/`policy`/`lifecycle`/`metadata`); the retired letter aliases appear nowhere.
 - [ ] No raw `pytest.xfail(`/`pytest.fail(` under `testcases/` outside the sanctioned modules
   (static gate green; allowlist empty).
 - [ ] Zero `unclassified` records in a full mock run.

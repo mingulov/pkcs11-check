@@ -66,8 +66,13 @@ wrong-but-isolated metadata value is making an honest, provider-dependent choice
 
 ## Classification rules by test type
 
-The negative/security cases divide into four types. A and B were the original split;
+The negative/security cases divide into four kinds. A and B were the original split;
 C and D are the *same* self-contradiction principle applied to lifecycle and metadata.
+
+> **Historical note (retired aliases):** the A/B/C/D letters below are kept only as a
+> record of the original taxonomy. The canonical machine field is `kind`, whose values are
+> the keywords `crypto` (A), `policy` (B), `lifecycle` (C), and `metadata` (D). Code,
+> comments, and messages use those keywords — do not introduce the letters in new text.
 
 ### Type A — cryptographic correctness → `fail`
 

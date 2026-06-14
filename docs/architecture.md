@@ -177,8 +177,8 @@ helpers — **use these instead of hand-rolling per-CKR allowlists or bare `pyte
 - **Negative-op classification** (`testcases/conftest.py` / `ckr/_ckr_spec.py`):
   `reject_or_classify(exc, expected_rvs, *, label)` / `classify_negative_rv(...)` (rejection with
   the expected spec CKR = pass, some other clean code = xfail, accepted-invalid = fail);
-  `assert_ckr()` (3-way) for table-driven sites; `classify_policy_enforcement` (Type B) /
-  `classify_lifecycle_effect` (Type C) for self-contradiction checks.
+  `assert_ckr()` (3-way) for table-driven sites; `classify_policy_enforcement` (policy) /
+  `classify_lifecycle_effect` (lifecycle) for self-contradiction checks.
 
 **Import-skip rule:** a *negotiated* import that fails for all storage shapes on a module that
 *advertises* the mechanism is "advertised but not operational" → `xfail`, never `skip`. Use the

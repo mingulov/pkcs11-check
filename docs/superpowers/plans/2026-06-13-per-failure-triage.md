@@ -66,7 +66,7 @@ docs/findings/per-failure-triage/
   "category": "PROVIDER_BUG",
   "severity": "LOW",
   "direction": "REJECT_VALID",
-  "evidence": "Master build rejects tc1-valid of every CCM variant with CKR_ENCRYPTED_DATA_INVALID. Per §9.5 of artifacts-base-analysis-2026-06-13.md, reject-valid on AEAD is a functional bug (false negative, clean CKR), not a Type A forgery. NOT an oracle.",
+  "evidence": "Master build rejects tc1-valid of every CCM variant with CKR_ENCRYPTED_DATA_INVALID. Per §9.5 of artifacts-base-analysis-2026-06-13.md, reject-valid on AEAD is a functional bug (false negative, clean CKR), not a crypto forgery. NOT an oracle.",
   "spec_ref": "PKCS#11 v3.0 §2.13.2 (CKM_AES_CCM); v3.2 validation-policy",
   "routing": "PROVIDER_REPORT(wolfpkcs11-master)",
   "group_id": "wolfpkcs11-master/REJECT_VALID/ccm-decrypt",
@@ -81,7 +81,7 @@ docs/findings/per-failure-triage/
 | What module did | Direction | Default category | Default severity |
 |---|---|---|---|
 | Crash (SIGSEGV/SIGABRT/...) on valid input | CRASH | PROVIDER_BUG | HIGH (CRITICAL if auth/op was correct beforehand) |
-| CKR_OK + wrong output (forgery, mismatched digest) | WRONG_OUTPUT | PROVIDER_BUG | CRITICAL (Type A) |
+| CKR_OK + wrong output (forgery, mismatched digest) | WRONG_OUTPUT | PROVIDER_BUG | CRITICAL (crypto) |
 | CKR_OK on input that must be rejected (oracle) | ACCEPT_INVALID | PROVIDER_BUG | CRITICAL/HIGH |
 | Claimed protection (CKA_SENSITIVE=TRUE) then violated it | TYPE_B | PROVIDER_BUG | CRITICAL |
 | Claimed success (CKR_OK) then didn't honor it | TYPE_C | PROVIDER_BUG | HIGH |
@@ -446,7 +446,7 @@ For each of the 5 crash dossiers, decide: was the crash triggered by (a) valid P
 | Crash after `pytest.fail` / `sys.exit` / explicit abort in test code | `FALSE_POSITIVE` (test aborted cleanly, not the module) |
 | Crash during mechanism not advertised by the module | `HARNESS_BUG` (test should have skipped) |
 
-**Severity:** crashes are always at least HIGH. If the test that crashed was about to demonstrate a Type A/B/C bug, severity = CRITICAL.
+**Severity:** crashes are always at least HIGH. If the test that crashed was about to demonstrate a crypto/policy/lifecycle bug, severity = CRITICAL.
 
 - [ ] **Step 1: Process each dossier and append verdict to `verdicts.jsonl`**
 

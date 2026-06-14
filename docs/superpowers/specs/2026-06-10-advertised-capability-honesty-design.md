@@ -22,7 +22,7 @@ PKCS#11 v3.2, local mirror):
   `CKR_DEVICE_ERROR` instead of a sanctioned code), while the refusal itself is the right
   direction (safe, honest — e.g. FIPS *requires* refusing SHA-1 sign). Under the model's
   pivot ("right thing done imperfectly = xfail"), this is xfail. No security consequence
-  (callers get a clean error and can fall back) → not a Type B/C/D self-contradiction.
+  (callers get a clean error and can fall back) → not a policy/lifecycle/metadata self-contradiction.
 - **Why only `CKR_OPERATION_NOT_VALIDATED` earns pass+note, not `CKR_MECHANISM_INVALID`:**
   an *advertised* mechanism refusing with "cannot be used in the selected token with the
   selected function" contradicts the advertisement itself (self-inconsistent metadata

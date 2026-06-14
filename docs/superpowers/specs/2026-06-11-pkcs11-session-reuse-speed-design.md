@@ -55,7 +55,7 @@ These files create per-test temporary objects or keys with `CKA_TOKEN=False` and
 - Missing mechanism remains a skip, not a hidden pass, and appears in JSON reports.
 - File-skip counts survive JSONL merge/rewrite paths in `results.json` and `quality.json`.
 - Provider crashes remain findings because file/test subprocess isolation is unchanged.
-- Type-A and self-contradiction failures remain failures.
+- crypto and self-contradiction failures remain failures.
 - No provider identity checks, allowlists, baselines, xfails, or crash suppressions are introduced.
 - `p11_raw_session` remains available and unchanged for tests that require fresh sessions.
 - The old in-body capability checks remain where they document the local operation precondition.

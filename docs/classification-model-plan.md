@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.13, pytest, pure-ctypes `pkcs11_check.raw`, `uv run`.
 
-**Companion spec:** `docs/classification-model-design.md` (the model + A/B/C/D rules). This plan supersedes that spec's *mechanism* section per the 2026-05-27 audits.
+**Companion spec:** `docs/classification-model-design.md` (the model + crypto/policy/lifecycle/metadata rules). This plan supersedes that spec's *mechanism* section per the 2026-05-27 audits.
 
 ---
 
@@ -25,7 +25,7 @@
 | Per-test edits + helpers (original spec) | **Rejected as primary** — re-encodes the fail/xfail direction at ~250 sites; that is how today's asymmetries arose (`test_api_security.py:241` xfails a violation its sibling `:387` fails). Wrong altitude. |
 | **Table-centric** (extend `_ckr_spec.py`) | **Chosen** — table already exists & is the house idiom; rule lives once; sibling rows adjacent so asymmetry is visible; `rv` carried structurally on `CkrAssertionError.rv`. |
 | conftest hookwrapper | Rejected — implicit control flow in the fragile runtest/report hooks; doesn't cut edit count. |
-| `@negative` marker | Optional sugar for the N2 tier only; can't express dynamic/probe (Type B/C) cases. |
+| `@negative` marker | Optional sugar for the N2 tier only; can't express dynamic/probe (policy/lifecycle) cases. |
 
 ## Validation model (every phase)
 
@@ -161,7 +161,7 @@ def reject_or_classify(exc, expected_rvs, *, label):
 - [x] **Step 4 — Run, verify pass.** → PASS.
 - [x] **Step 5 — Commit.** `git commit -am "Add classify_negative_rv + reject_or_classify negative helpers"`
 
-### Task 4 — Type-B / Type-C self-contradiction classifiers
+### Task 4 — policy / lifecycle self-contradiction classifiers
 
 - [x] **Step 1 — Failing tests:**
 ```python
@@ -178,14 +178,14 @@ def test_lifecycle_claimed_effect_fails():
 - [x] **Step 3 — Implement:**
 ```python
 def classify_policy_enforcement(*, claimed, violated, label):
-    """Type-B: claimed=module reported the protective attribute back; violated=protection breached."""
+    """policy: claimed=module reported the protective attribute back; violated=protection breached."""
     if not claimed:
         pytest.xfail(f"{label}: module does not claim the protection (honest non-support)")
     if violated:
         pytest.fail(f"{label}: claimed the protection then violated it (self-contradiction)")
 
 def classify_lifecycle_effect(*, claimed_success, effect_observed, label):
-    """Type-C: claimed_success=prior op returned CKR_OK (e.g. destroy); effect_observed=contradiction seen."""
+    """lifecycle: claimed_success=prior op returned CKR_OK (e.g. destroy); effect_observed=contradiction seen."""
     if not claimed_success:
         pytest.xfail(f"{label}: prior operation did not claim success")
     if effect_observed:
@@ -193,11 +193,11 @@ def classify_lifecycle_effect(*, claimed_success, effect_observed, label):
 ```
 - [x] **Step 4 — Run, verify pass.** → PASS.
 - [x] **Step 5 — Provider-neutral check.** `uv run pytest tests/test_provider_neutral_findings.py -q` → PASS.
-- [x] **Step 6 — Commit.** `git commit -am "Add Type-B/Type-C self-contradiction classifiers"`
+- [x] **Step 6 — Commit.** `git commit -am "Add policy/lifecycle self-contradiction classifiers"`
 
 ### Task 5 — Document the model in CLAUDE.md
 
-- [x] **Step 1 — Add** the model table + core principle to `CLAUDE.md` (Coding Rules), with a one-line note that it **supersedes** "use `pytest.xfail()` for known module bugs" for Type-A / self-contradiction classes; link `docs/classification-model-design.md`.
+- [x] **Step 1 — Add** the model table + core principle to `CLAUDE.md` (Coding Rules), with a one-line note that it **supersedes** "use `pytest.xfail()` for known module bugs" for crypto / self-contradiction classes; link `docs/classification-model-design.md`.
 - [x] **Step 2 — Commit.** `git commit -am "Document test-outcome classification model"`
 
 ---
@@ -235,15 +235,15 @@ elif result == "invalid":
 
 ---
 
-## Phase 3 — N1 (A/B/C) + Type-D new tests (depends Phase 1)
+## Phase 3 — N1 (A/B/C) + metadata new tests (depends Phase 1)
 
 **Goal:** apply the model to the ~46 acceptance sites. One commit per file; each gets a mock-`raw` meta-test asserting the new branch.
 
-### Type A — crypto-correctness → `fail` (no claim-check)
+### crypto — crypto-correctness → `fail` (no claim-check)
 Replace the accept-tolerant branch with `pytest.fail`/`classify_negative_rv(rv, expected, label)` (no `allow_ok`).
 - [x] **Sites:** `security/test_cve_regression.py:681` (invalid EC OID), `security/test_parameter_validation.py:522,475,352` (+4 weak-param: gcm weak-tag/weak-iv/iv-reuse, pss sLen=0, xts identical halves), `ckr/test_ckr_decrypt.py:169` (wrong-len ciphertext; drop `allow_success`), `ckr/test_ckr_verify.py:60,144`, `ckr/test_ckr_sign.py:53`, `test_errors.py:289` (verify wrong-mech; reclassify the `if rv==CKR_OK: pass`), `test_kem.py:755` (CKA_VALUE injection). One task per file; meta-test + commit each.
 
-### Type B — attribute/permission → claim-check (`classify_policy_enforcement`)
+### policy — attribute/permission → claim-check (`classify_policy_enforcement`)
 **Pattern (canonical, `test_sensitivity.py:64` — currently inverted):**
 ```python
 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
@@ -254,11 +254,11 @@ classify_policy_enforcement(claimed=claimed, violated=violated, label="read sens
 ```
 - [x] **Sites:** `test_sensitivity.py:64,117` (+ dup `ckr/test_ckr_object.py:122`, `ckr/test_ckr_codes.py:127`, `ckr/test_ckr_spec_compliance.py:197`), `test_api_security.py:241,363`, `test_tookan.py:203,268`, `ckr/test_ckr_raw_attrs.py:119,200`, `test_access_levels.py:962`, `test_attribute_enforcement.py:110`, `test_kem.py:858`. For copy-escalation, `claimed` = original read-back holds the protective value; `violated` = copy exposes it. One task per file; meta-test + commit.
 
-### Type C — lifecycle → effect-check (`classify_lifecycle_effect`), content-tagged
+### lifecycle — lifecycle → effect-check (`classify_lifecycle_effect`), content-tagged
 **Pattern (use-after-destroy):** tag the object with a unique `CKA_LABEL` before destroy; after destroy, the op `claimed_success` = destroy returned `CKR_OK`, `effect_observed` = a subsequent read returns the *tagged* object's content (distinguishes survival from handle reuse).
 - [x] **Sites:** use-after-destroy `ckr/test_ckr_object.py:143,198,255`, `ckr/test_ckr_decrypt.py:240`, `ckr/test_ckr_verify.py:82`, `ckr/test_ckr_sign.py:92`, `ckr/test_ckr_codes.py:193`, `ckr/test_ckr_priority.py:48`, `security/test_handle_reuse.py:54`; read-only setattr (effect = value mutated, readable attrs only) `test_set_attribute.py:109,128,146,161`, `ckr/test_ckr_object.py:167`. One task per file; meta-test + commit.
 
-### Type D — derived-attribute invariant NEW tests → `fail` on contradiction
+### metadata — derived-attribute invariant NEW tests → `fail` on contradiction
 - [x] **Task 3z** — Create `src/pkcs11_check/testcases/test_attribute_invariants.py` (suite-generated keys only): `NEVER_EXTRACTABLE` must be `True` when the key was created `EXTRACTABLE=False` and never changed; `ALWAYS_SENSITIVE` vs `SENSITIVE` likewise. Contradiction → `fail`; isolated wrong value elsewhere stays `xfail`. Meta-test + commit. Update `docs/module-issues.md` NSS `NEVER_EXTRACTABLE` entry.
 
 ---
@@ -291,7 +291,7 @@ classify_negative_rv(rv, (CKR_SESSION_READ_ONLY,), label="create token object on
   - [x] `test_session_edge_cases.py` — stale-session `C_FindObjectsInit`/`C_GenerateKey` guards (lines 68, 93) → 3-way `classify_negative_rv`. (`C_CloseAllSessions` line 125 `assert rv is not None` and the null-CK_NOTIFY probe line 245 are positive/crash-only, not must-reject negatives — left as-is.)
   - [x] the 6 `ckr/` raw files (`test_ckr_raw_{state,multipart,attrs}`, `test_ckr_{slot_token,random,destructive}`) — surveyed and resolved per-file:
     - `test_ckr_slot_token.py:38` — in-process `C_GetMechanismInfo` bogus-mechanism reject → 3-way `classify_negative_rv`. (`C_WaitForSlotEvent` line 55 is a tolerant probe where CKR_OK is a valid pass — N/A.)
-    - `test_ckr_raw_attrs.py` — the CKA_SIGN=False sibling (`test_sign_not_permitted`) was the odd one out (bare in-child `assert rv in (...)` + no claim-check) while its encrypt/decrypt siblings already used the parent-side Type-B `_classify_permission_flag`; converted to match (`_claim` + parent `_classify_permission_flag`).
+    - `test_ckr_raw_attrs.py` — the CKA_SIGN=False sibling (`test_sign_not_permitted`) was the odd one out (bare in-child `assert rv in (...)` + no claim-check) while its encrypt/decrypt siblings already used the parent-side policy `_classify_permission_flag`; converted to match (`_claim` + parent `_classify_permission_flag`).
     - `test_ckr_raw_multipart.py` — 10 C_*Update/Final-without-Init must-reject probes: moved the in-child `assert rv == CKR_OPERATION_NOT_INITIALIZED` to a parent-side `_classify_multipart_ckr` over the printed `CKR:` line (CKR_OK→fail, spec→pass, other clean→xfail instead of a false child-crash).
     - `test_ckr_raw_state.py` — 4 double/cross-Init state probes: parent-side tolerant `_classify_state_ckr` (`allow_ok=True`, CKR_OPERATION_ACTIVE *or* CKR_OK pass, any third clean code → xfail not crash; first-init-failed marker handled). `test_encrypt_then_sign_init` is a pure no-crash probe (many codes acceptable) — left as-is.
     - `test_ckr_destructive.py` — 6 InitToken/SetPIN/InitPIN error-condition probes: parent-side `_classify_destructive_ckr` over the printed `CKR:` line, replacing the in-child `assert rv == <spec>` that previously mislabeled a non-spec clean reject as a crash.
@@ -334,16 +334,16 @@ classify_negative_rv(rv, (CKR_SESSION_READ_ONLY,), label="create token object on
 - [x] **P3 message-API:** `test_message_crypto.py` — 5 `except AssertionError: pytest.skip("Message ... not supported")` blocks (encrypt/decrypt legs) now route through `xfail_if_known_ckr` (advertised-but-rejecting → `xfail`, not `skip`; non-CKR propagates). `test_mech_message.py` — 4 `C_Message*Init` legs widened from `MECHANISM_INVALID`-only to a shared `_xfail_if_message_init_rejected` helper (positive-op 3-way); the CKA_ENCRYPT=False must-reject site (`:481`) routed through `classify_negative_rv` (CKR_OK security finding still `fail`, spec reject pass, other clean → xfail).
 - [x] **P2 wrong-result leaks → `fail`:** `test_crossverify_extended.py` GCM — split the conflated `except`: a clean reject of the decrypt op → `xfail` (shared `CIPHER_OP_RUNTIME_REJECT_RVS`), but a successful decrypt whose plaintext differs from the cryptography-library reference → hard `fail` (was swallowed by skip). `test_ecdh_extended.py` XEdDSA — split similarly: clean reject of the verify op → `xfail`, but a self-produced signature that does not verify with its own key → hard `fail` (was xfailed). Isolated metadata defaults (`CKA_LOCAL`/`CKA_PRIVATE`) **left as `xfail`** per the model (no change).
 - [x] **C cleanups:**
-    - `ckr/test_ckr_wrap.py:84` — the skip that masked the "doesn't honour CKA_EXTRACTABLE=False" case is replaced by a Type-B `classify_policy_enforcement` (claimed-then-wrapped/exported → `fail`; not-claimed → `xfail`; claimed-and-rejected → pass).
+    - `ckr/test_ckr_wrap.py:84` — the skip that masked the "doesn't honour CKA_EXTRACTABLE=False" case is replaced by a policy `classify_policy_enforcement` (claimed-then-wrapped/exported → `fail`; not-claimed → `xfail`; claimed-and-rejected → pass).
     - `ckr/test_ckr_session.py:67` — token-login-state (non-capability) skip → `xfail`; the wrong-PIN assert routed through `classify_negative_rv` (CKR_OK = accepted wrong PIN → `fail`; non-spec reject → `xfail`).
     - `test_object_visibility.py:487` and `test_profiles.py:64` — substring `"CKR_..." in str(exc)` matches replaced with exact `is_known_error(exc, <specific set>)`.
-    - `security/test_crypto_weakness.py` — **assessed: all `note()` sites are genuine posture observations** (weak-RSA/DES/MD5/SSL3 availability + deprecated sign that merely *produces* output + PIN-timing). None is a Type-A crypto-correctness break or Type-B claimed-then-violated, so all correctly stay `note()` per the file's documented "NOT pass/fail" posture-probe design. No change.
+    - `security/test_crypto_weakness.py` — **assessed: all `note()` sites are genuine posture observations** (weak-RSA/DES/MD5/SSL3 availability + deprecated sign that merely *produces* output + PIN-timing). None is a crypto-correctness break or policy claimed-then-violated, so all correctly stay `note()` per the file's documented "NOT pass/fail" posture-probe design. No change.
 
 ---
 
 ## Self-review
 
-- **Spec coverage:** model (P1 T2/T5), `kind` (P1 T1), A/B/C helpers (P1 T3/T4 → applied P3), Type-D new tests (P3 T3z), V1/V2 (P2), N2 (P4), P1a/P1b (P5), P2/P3/C (P6), validation harness (validation model). All covered.
+- **Spec coverage:** model (P1 T2/T5), `kind` (P1 T1), A/B/C helpers (P1 T3/T4 → applied P3), metadata new tests (P3 T3z), V1/V2 (P2), N2 (P4), P1a/P1b (P5), P2/P3/C (P6), validation harness (validation model). All covered.
 - **Placeholders:** none — each phase lists exact sites + a shown pattern; per-site code is the pattern applied (repetitive sweep), not vague TODOs.
 - **Type consistency:** `assert_ckr(expectation, actual, strict)` unchanged; helpers `classify_negative_rv(rv, expected_rvs, *, label, allow_ok=False)`, `reject_or_classify(exc, expected_rvs, *, label)`, `classify_policy_enforcement(*, claimed, violated, label)`, `classify_lifecycle_effect(*, claimed_success, effect_observed, label)` referenced consistently across phases.
 - **Non-goal preserved:** no provider identity in any helper signature or message.

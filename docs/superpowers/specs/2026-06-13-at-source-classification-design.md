@@ -8,7 +8,7 @@
   hand-off: *"remaining UNKNOWNs will be classified by a different (in-tool) workflow."*
   This is that workflow.
 - **Builds on:** `docs/classification-model-design.md` (the pass/xfail/fail model and the
-  A/B/C/D self-contradiction rules), the advertised-capability-honesty refinements, and
+  crypto/policy/lifecycle/metadata self-contradiction rules), the advertised-capability-honesty refinements, and
   the existing `compliance.py` + RV-trace `user_properties` plumbing.
 
 ## Problem
@@ -76,13 +76,13 @@ Because `reason → outcome` is fixed, the migration cannot accidentally flip a 
 `xfail`: choosing the wrong `reason` is a visible, reviewable error, and `derive_verdict`
 enforces the mapping.
 
-### `kind` (4) — the domain (replaces the A/B/C/D letters)
+### `kind` (4) — the domain (the keywords that replaced the retired letter aliases)
 
 `crypto` · `policy` · `lifecycle` · `metadata`. This is a 1:1 alias for the model doc's
 self-contradiction classes (A=crypto, B=policy, C=lifecycle, D=metadata; see
-`classification-model-design.md:70`). The **letters are retired as the primary label** — they
-mean nothing to a provider maintainer or a fresh agent — but the report renders the legacy
-letter parenthetically for continuity, e.g. `self_contradiction · policy (Type B)`.
+`classification-model-design.md:70`). The **letters are retired** — they mean nothing to a
+provider maintainer or a fresh agent — so the report renders the keyword only, e.g.
+`self_contradiction · policy`.
 
 `kind` is **required** for `wrong_result`, `accepted_invalid`, and `self_contradiction` — it
 selects severity and, for self-contradiction, names the broken invariant — and **optional** for

@@ -453,7 +453,7 @@ git commit -m "refactor(testcases): tookan type-confusion to discrimination (neg
 **Files:**
 - Modify: `src/pkcs11_check/testcases/ckr/test_ckr_wrap.py` (`test_wrapping_key_size_range` ~295-370)
 
-- [ ] **Step 1: Replace the quirk splice (~362)** `*(() if ckr_strict else quirk_extras(p11_config, "size_range_on_wrap"))` with the spec set only, classified 3-way so softhsm2's `CKR_GENERAL_ERROR` becomes **xfail** (not pass). Keep the existing `CKR_OK → pytest.fail` (Type-A) branch. Use `classify_negative_rv(rv, accepted, label=..., allow_ok=False)` with `accepted = (CKR_WRAPPING_KEY_SIZE_RANGE, CKR_KEY_SIZE_RANGE, CKR_WRAPPING_KEY_TYPE_INCONSISTENT, CKR_KEY_TYPE_INCONSISTENT)`; preserve `--ckr-strict` semantics (if `ckr_strict` should promote xfail→fail, gate via `assert_ckr`/the strict flag as the surrounding code does). Remove the `_module_quirks` import.
+- [ ] **Step 1: Replace the quirk splice (~362)** `*(() if ckr_strict else quirk_extras(p11_config, "size_range_on_wrap"))` with the spec set only, classified 3-way so softhsm2's `CKR_GENERAL_ERROR` becomes **xfail** (not pass). Keep the existing `CKR_OK → pytest.fail` (crypto) branch. Use `classify_negative_rv(rv, accepted, label=..., allow_ok=False)` with `accepted = (CKR_WRAPPING_KEY_SIZE_RANGE, CKR_KEY_SIZE_RANGE, CKR_WRAPPING_KEY_TYPE_INCONSISTENT, CKR_KEY_TYPE_INCONSISTENT)`; preserve `--ckr-strict` semantics (if `ckr_strict` should promote xfail→fail, gate via `assert_ckr`/the strict flag as the surrounding code does). Remove the `_module_quirks` import.
 
 - [ ] **Step 2: Verify** — softhsm2 run: the undersized wrap test now **xfails** on softhsm2 (was pass). `uv run mypy`.
 
