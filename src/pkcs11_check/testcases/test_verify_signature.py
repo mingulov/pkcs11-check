@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -124,8 +125,17 @@ class TestVerifySignatureRoundtrip:
             data_ptr, data_len = _data_buf(data)
             rv = rs.raw.C_VerifySignature(rs.sh, data_ptr, data_len)
             if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
-                pytest.xfail(
-                    f"C_VerifySignature rejected wrong signature with non-clean CKR: {ckr_name(rv)}"
+                classify(
+                    "nonspec_reject",
+                    kind="crypto",
+                    label="RSA_PKCS:C_VerifySignature wrong-sig",
+                    operation="C_VerifySignature",
+                    mechanism="CKM_RSA_PKCS",
+                    actual=rv,
+                    summary=(
+                        f"C_VerifySignature rejected wrong signature with non-clean CKR: "
+                        f"{ckr_name(rv)}"
+                    ),
                 )
             classify_negative_rv(
                 rv,
@@ -166,9 +176,17 @@ class TestVerifySignatureRoundtrip:
             if rv != CKR_OK:
                 # Some modules validate the key/signature correspondence at init.
                 if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
-                    pytest.xfail(
-                        f"C_VerifySignatureInit rejected the mismatched key with a "
-                        f"non-clean CKR: {ckr_name(rv)}"
+                    classify(
+                        "nonspec_reject",
+                        kind="crypto",
+                        label="RSA_PKCS:C_VerifySignatureInit wrong-key",
+                        operation="C_VerifySignatureInit",
+                        mechanism="CKM_RSA_PKCS",
+                        actual=rv,
+                        summary=(
+                            f"C_VerifySignatureInit rejected the mismatched key with a "
+                            f"non-clean CKR: {ckr_name(rv)}"
+                        ),
                     )
                 classify_negative_rv(
                     rv,
@@ -180,9 +198,17 @@ class TestVerifySignatureRoundtrip:
             data_ptr, data_len = _data_buf(data)
             rv = rs.raw.C_VerifySignature(rs.sh, data_ptr, data_len)
             if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
-                pytest.xfail(
-                    f"C_VerifySignature rejected the mismatched-key signature with a "
-                    f"non-clean CKR: {ckr_name(rv)}"
+                classify(
+                    "nonspec_reject",
+                    kind="crypto",
+                    label="RSA_PKCS:C_VerifySignature wrong-key",
+                    operation="C_VerifySignature",
+                    mechanism="CKM_RSA_PKCS",
+                    actual=rv,
+                    summary=(
+                        f"C_VerifySignature rejected the mismatched-key signature with a "
+                        f"non-clean CKR: {ckr_name(rv)}"
+                    ),
                 )
             classify_negative_rv(
                 rv,

@@ -29,7 +29,6 @@ ALLOWLIST = {
     "src/pkcs11_check/testcases/test_mechanism_objects.py",
     "src/pkcs11_check/testcases/test_mutex_callback_safety.py",
     "src/pkcs11_check/testcases/test_object_visibility.py",
-    "src/pkcs11_check/testcases/test_pqc_sign.py",
     "src/pkcs11_check/testcases/test_profiles.py",
     "src/pkcs11_check/testcases/test_remaining_gaps.py",
     "src/pkcs11_check/testcases/test_rsa_oaep.py",
@@ -41,6 +40,5 @@ ALLOWLIST = {
     "src/pkcs11_check/testcases/test_subprocess_safety.py",
     "src/pkcs11_check/testcases/test_tls12.py",
     "src/pkcs11_check/testcases/test_token_flags.py",
-    "src/pkcs11_check/testcases/test_verify_signature.py",
     "src/pkcs11_check/testcases/test_wtls.py",
 }
