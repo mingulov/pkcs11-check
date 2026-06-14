@@ -18,6 +18,7 @@ from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_MECHANISM_INFO,
     CK_ULONG,
+    CKF_DONT_BLOCK,
     CKM_AES_GCM,
     CKM_AES_XTS,
     CKM_CHACHA20,
@@ -89,8 +90,11 @@ class TestWaitForSlotEventErrors:
         """Non-blocking WaitForSlotEvent -> CKR_NO_EVENT or CKR_FUNCTION_NOT_SUPPORTED."""
         rs = p11_raw_session
         slot_id = CK_ULONG(0)
-        # flags=0 means non-blocking (CKF_DONT_BLOCK not needed for non-blocking)
-        rv = rs.raw.C_WaitForSlotEvent(0, byref(slot_id), None)
+        # CKF_DONT_BLOCK is REQUIRED for a non-blocking probe. Per PKCS#11 v3.2 §5.5.4,
+        # flags=0 BLOCKS until a slot event occurs — against a module that honors that
+        # (e.g. NetHSM) flags=0 hangs forever, and a signal-based test timeout cannot
+        # interrupt the blocked native call. CKF_DONT_BLOCK returns immediately.
+        rv = rs.raw.C_WaitForSlotEvent(CKF_DONT_BLOCK, byref(slot_id), None)
         acceptable = (
             CKR_OK,  # Event returned - possible on some setups
             CKR_NO_EVENT,  # Expected for software tokens
