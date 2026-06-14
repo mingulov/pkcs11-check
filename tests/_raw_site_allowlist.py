@@ -29,7 +29,6 @@ ALLOWLIST = {
     "src/pkcs11_check/testcases/test_mechanism_objects.py",
     "src/pkcs11_check/testcases/test_mutex_callback_safety.py",
     "src/pkcs11_check/testcases/test_object_visibility.py",
-    "src/pkcs11_check/testcases/test_profiles.py",
     "src/pkcs11_check/testcases/test_remaining_gaps.py",
     "src/pkcs11_check/testcases/test_rsa_oaep.py",
     "src/pkcs11_check/testcases/test_seed.py",
