@@ -1066,11 +1066,14 @@ def assert_correct(
     mechanism: str | None = None,
     source: str | None = None,
     vector_id: str | None = None,
+    kind: str = "crypto",
 ) -> None:
-    """KAT correctness check: equal values pass; a mismatch is wrong_result (crypto).
+    """KAT correctness check: equal values pass; a mismatch is wrong_result.
 
-    On mismatch, emits a ``wrong_result``/``crypto``/``CRITICAL`` classification
-    record and raises ``pytest.fail`` via :func:`pkcs11_check.classification.classify`.
+    On mismatch, emits a ``wrong_result`` classification record and raises
+    ``pytest.fail`` via :func:`pkcs11_check.classification.classify`. ``kind``
+    selects the verdict family (default ``"crypto"`` -- the common case for KAT
+    outputs; pass ``"metadata"`` for a non-crypto attribute-value verdict).
     On match, returns normally with no side effects.
     """
     from pkcs11_check import classification as C
@@ -1079,7 +1082,7 @@ def assert_correct(
         return
     C.classify(
         "wrong_result",
-        kind="crypto",
+        kind=kind,
         label=label,
         operation=operation,
         mechanism=mechanism,
