@@ -817,7 +817,7 @@ class TestTrustedAttribute:
     def test_user_cannot_set_trusted(self, p11_raw_session: Any) -> None:
         """USER session must not be able to gen a key with CKA_TRUSTED=True.
 
-        Per PKCS#11 v3.1 Sec.4.7, only the SO can mark a key as TRUSTED.
+        Per PKCS#11 v3.2, only the SO can mark a key as TRUSTED.
         A USER session creating a TRUSTED=True key bypasses the SO trust
         boundary used by CKA_WRAP_WITH_TRUSTED to gate sensitive wraps.
         """
@@ -845,7 +845,7 @@ class TestTrustedAttribute:
             note(
                 "USER session can create CKA_TRUSTED=True key (should require SO)",
                 ComplianceLevel.CRITICAL,
-                reference="PKCS#11 v3.1 Sec.4.7: CKA_TRUSTED set by SO only",
+                reference="PKCS#11 v3.2: CKA_TRUSTED set by SO only",
             )
             # Read back to confirm the violation rather than just trust the
             # gen success — some modules silently drop the attribute.
@@ -917,7 +917,7 @@ class TestTrustedAttribute:
                     "USER session escalated CKA_TRUSTED=False → True via "
                     "C_SetAttributeValue (should require SO)",
                     ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.4.7: CKA_TRUSTED set by SO only",
+                    reference="PKCS#11 v3.2: CKA_TRUSTED set by SO only",
                 )
                 fail_as(
                     "self_contradiction",

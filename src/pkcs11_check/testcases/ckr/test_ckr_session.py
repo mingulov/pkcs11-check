@@ -2,7 +2,7 @@
 
 Covers C_OpenSession, C_CloseSession, C_Login, C_Logout.
 
-Source: PKCS#11 v3.1 Sec.5.6.1-5.6.8.
+Source: PKCS#11 v3.2-5.6.8.
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ class TestLoginErrors:
     def test_already_logged_in(self, p11_raw_session: Any) -> None:
         """Double login -> CKR_USER_ALREADY_LOGGED_IN.
 
-        Per PKCS#11 v3.1 Sec.5.6.7: C_Login when already logged in MUST return
+        Per PKCS#11 v3.2: C_Login when already logged in MUST return
         CKR_USER_ALREADY_LOGGED_IN. NSS returns CKR_PIN_INCORRECT because it
         re-validates the PIN on every C_Login call even when already authenticated.
         CKR_USER_TYPE_INVALID is accepted for NSS slots that require no login.

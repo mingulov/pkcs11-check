@@ -1,6 +1,6 @@
 """CKR compliance tests for C_SignInit and C_Sign.
 
-Source: PKCS#11 v3.1 Sec.5.10.1 (C_SignInit), Sec.5.10.2 (C_Sign).
+Source: PKCS#11 v3.2 (C_SignInit, C_Sign).
 """
 
 from __future__ import annotations

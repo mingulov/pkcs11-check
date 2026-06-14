@@ -287,7 +287,7 @@ def _handle_cts_error(rs: Any, exc: AssertionError, vec_id: str, direction: str)
             f"CKM_AES_CTS {direction} returned CKR_DEVICE_ERROR for {vec_id}. "
             "Module advertises CTS but fails on valid input.",
             ComplianceLevel.CRITICAL,
-            reference="PKCS#11 v3.1 CKM_AES_CTS",
+            reference="PKCS#11 v3.2 CKM_AES_CTS",
         )
         xfail_as(
             "not_operational",

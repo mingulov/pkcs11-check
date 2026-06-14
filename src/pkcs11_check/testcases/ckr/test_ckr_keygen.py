@@ -1,6 +1,6 @@
 """CKR compliance tests for C_GenerateKey and C_GenerateKeyPair.
 
-Source: PKCS#11 v3.1 Sec.5.14.1 (C_GenerateKey), Sec.5.14.2 (C_GenerateKeyPair).
+Source: PKCS#11 v3.2 (C_GenerateKey, C_GenerateKeyPair).
 """
 
 from __future__ import annotations

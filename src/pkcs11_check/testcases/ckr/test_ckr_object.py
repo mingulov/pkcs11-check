@@ -3,7 +3,7 @@
 Covers C_CreateObject, C_CopyObject, C_DestroyObject, C_GetObjectSize,
 C_GetAttributeValue, C_SetAttributeValue, C_FindObjects*.
 
-Source: PKCS#11 v3.1 Sec.5.7.1-5.7.9.
+Source: PKCS#11 v3.2-5.7.9.
 """
 
 from __future__ import annotations
@@ -314,7 +314,7 @@ class TestGetAttributeErrors:
                 claimed=claimed,
                 violated=violated,
                 label="read CKA_VALUE on a CKA_SENSITIVE=True key "
-                "(PKCS#11 v3.1 Sec.5.7.5 requires CKR_ATTRIBUTE_SENSITIVE)",
+                "(PKCS#11 v3.2 requires CKR_ATTRIBUTE_SENSITIVE)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -377,11 +377,11 @@ class TestSetAttributeErrors:
                     kind="policy",
                     label="C_SetAttributeValue:read-only-class",
                     operation="C_SetAttributeValue",
-                    spec_ref="PKCS#11 v3.1 Sec.5.7.6",
+                    spec_ref="PKCS#11 v3.2",
                     summary=(
                         "C_SetAttributeValue claimed success and the read-only CKA_CLASS "
                         "actually changed (self-contradiction) "
-                        "[PKCS#11 v3.1 Sec.5.7.6: CKA_CLASS is read-only]"
+                        "[PKCS#11 v3.2: CKA_CLASS is read-only]"
                     ),
                 )
             # CKR_OK no-op: wrong code with no harm (value unchanged) -> xfail.
@@ -389,7 +389,7 @@ class TestSetAttributeErrors:
                 "honest_deviation",
                 label="C_SetAttributeValue:read-only-class",
                 operation="C_SetAttributeValue",
-                spec_ref="PKCS#11 v3.1 Sec.5.7.6",
+                spec_ref="PKCS#11 v3.2",
                 summary=(
                     "C_SetAttributeValue returned CKR_OK for a read-only CKA_CLASS write "
                     "but the value was unchanged (no-op; spec prefers CKR_ATTRIBUTE_READ_ONLY)"

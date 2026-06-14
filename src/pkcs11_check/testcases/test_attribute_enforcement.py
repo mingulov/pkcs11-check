@@ -220,7 +220,7 @@ class TestDestroyable:
                 f"Module accepted CKA_DESTROYABLE=False at C_CreateObject "
                 f"but readback returns {val!r} — silent ignore at create time.",
                 ComplianceLevel.CRITICAL,
-                reference="PKCS#11 v3.1 Sec.4.1.2",
+                reference="PKCS#11 v3.2",
             )
             fail_as(
                 "self_contradiction",
@@ -245,7 +245,7 @@ class TestDestroyable:
             note(
                 "Module ignores CKA_DESTROYABLE=False -- C_DestroyObject succeeded",
                 ComplianceLevel.CRITICAL,
-                reference="PKCS#11 v3.1 Sec.4.1.2: CKA_DESTROYABLE=False must prevent destroy",
+                reference="PKCS#11 v3.2: CKA_DESTROYABLE=False must prevent destroy",
             )
             fail_as(
                 "self_contradiction",
@@ -286,7 +286,7 @@ class TestDestroyable:
 class TestTokenAttributePromotion:
     """GAP-A5: session-object → token-object promotion via SetAttribute.
 
-    PKCS#11 v3.1 Sec.4.7 lists CKA_TOKEN as a Common Object Attribute
+    PKCS#11 v3.2 lists CKA_TOKEN as a Common Object Attribute
     with "R/W after creation" semantics — promotion IS allowed by the
     spec, but only by an authenticated user with R/W token access. The
     security concerns:
@@ -381,7 +381,7 @@ class TestTokenAttributePromotion:
                     f"caller believes object is now a token object but it "
                     f"isn't.",
                     ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.4.7 CKA_TOKEN R/W semantics",
+                    reference="PKCS#11 v3.2 CKA_TOKEN R/W semantics",
                 )
                 fail_as(
                     "self_contradiction",

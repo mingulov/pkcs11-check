@@ -62,7 +62,7 @@ def _preamble(p11_config: Any) -> str:
 class TestSessionHandleBoundary:
     """Probe C_* session functions with boundary session handles (0, MAX).
 
-    PKCS#11 v3.1 Sec. 5.6: functions taking CK_SESSION_HANDLE must return
+    PKCS#11 v3.2: functions taking CK_SESSION_HANDLE must return
     CKR_SESSION_HANDLE_INVALID for unknown handles -- never crash.
     """
 
@@ -125,7 +125,7 @@ cleanup()
 class TestObjectHandleBoundary:
     """Probe C_* object functions with boundary object handles (0, MAX).
 
-    PKCS#11 v3.1 Sec. 5.7: functions taking CK_OBJECT_HANDLE must return
+    PKCS#11 v3.2: functions taking CK_OBJECT_HANDLE must return
     CKR_OBJECT_HANDLE_INVALID for unknown handles -- never crash.
     """
 
@@ -209,7 +209,7 @@ cleanup()
 class TestNullMechanismInit:
     """Probe C_*Init functions with NULL mechanism pointer.
 
-    PKCS#11 v3.1: CK_MECHANISM_PTR must not be NULL. The module should
+    PKCS#11 v3.2: CK_MECHANISM_PTR must not be NULL. The module should
     return CKR_ARGUMENTS_BAD or CKR_MECHANISM_INVALID -- never crash.
     """
 

@@ -5,7 +5,7 @@ against the OASIS PKCS#11 spec. In compat mode (default), acceptable
 alternatives are logged as compliance notes. In strict mode (--ckr-strict),
 only the spec-mandated CKR is accepted.
 
-Source: PKCS#11 v3.1 Sec.5.8.1 (C_EncryptInit), Sec.5.8.2 (C_Encrypt).
+Source: PKCS#11 v3.2 (C_EncryptInit, C_Encrypt).
 """
 
 from __future__ import annotations

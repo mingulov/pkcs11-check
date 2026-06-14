@@ -4,7 +4,7 @@ Tests cross-operation conflicts and state violations:
 - CKR_OPERATION_NOT_INITIALIZED: calling operation without Init
 - CKR_OPERATION_ACTIVE: starting new operation while one is active
 
-Source: PKCS#11 v3.1 Sec.5.1.6 (OPERATION_ACTIVE, OPERATION_NOT_INITIALIZED).
+Source: PKCS#11 v3.2 (OPERATION_ACTIVE, OPERATION_NOT_INITIALIZED).
 """
 
 from __future__ import annotations

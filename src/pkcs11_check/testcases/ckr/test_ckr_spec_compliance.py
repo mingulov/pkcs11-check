@@ -212,7 +212,7 @@ class TestCKRAttributeCompliance:
     def test_sensitive_value_returns_attribute_sensitive(self, p11_raw_session: Any) -> None:
         """Reading VALUE on SENSITIVE key -> CKR_ATTRIBUTE_SENSITIVE (spec).
 
-        PKCS#11 v3.1 Sec.4.9.2: C_GetAttributeValue(CKA_VALUE) on a CKA_SENSITIVE=True
+        PKCS#11 v3.2: C_GetAttributeValue(CKA_VALUE) on a CKA_SENSITIVE=True
         key MUST return CKR_ATTRIBUTE_SENSITIVE.
         """
         rs = p11_raw_session
@@ -229,7 +229,7 @@ class TestCKRAttributeCompliance:
                 claimed=claimed,
                 violated=violated,
                 label="read CKA_VALUE on a CKA_SENSITIVE=True key "
-                "(PKCS#11 v3.1 Sec.4.9.2 requires CKR_ATTRIBUTE_SENSITIVE)",
+                "(PKCS#11 v3.2 requires CKR_ATTRIBUTE_SENSITIVE)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

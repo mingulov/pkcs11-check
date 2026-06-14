@@ -1,6 +1,6 @@
 """CKR compliance tests for C_DeriveKey.
 
-Source: PKCS#11 v3.1 Sec.5.14.5.
+Source: PKCS#11 v3.2.
 """
 
 from __future__ import annotations

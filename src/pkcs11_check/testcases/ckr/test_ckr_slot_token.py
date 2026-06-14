@@ -3,7 +3,7 @@
 Covers C_GetSlotInfo, C_GetTokenInfo, C_GetMechanismList, C_GetMechanismInfo,
 C_WaitForSlotEvent.
 
-Source: PKCS#11 v3.1 Sec.5.5.1-5.5.7.
+Source: PKCS#11 v3.2-5.5.7.
 """
 
 from __future__ import annotations

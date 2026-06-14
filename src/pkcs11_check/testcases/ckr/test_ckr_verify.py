@@ -1,6 +1,6 @@
 """CKR compliance tests for C_VerifyInit and C_Verify.
 
-Source: PKCS#11 v3.1 Sec.5.11.1 (C_VerifyInit), Sec.5.11.2 (C_Verify).
+Source: PKCS#11 v3.2 (C_VerifyInit, C_Verify).
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """CKR compliance tests for C_SeedRandom and C_GenerateRandom.
 
-Source: PKCS#11 v3.1 Sec.5.18.1-5.18.2.
+Source: PKCS#11 v3.2-5.18.2.
 """
 
 from __future__ import annotations

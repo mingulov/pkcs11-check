@@ -437,7 +437,7 @@ class TestTookanUnwrapAttrs:
                         "Module honoured CKA_SENSITIVE=False on unwrap of a "
                         "SENSITIVE=True key — Tookan sec.3.3 attack succeeded.",
                         ComplianceLevel.CRITICAL,
-                        reference="Tookan paper §3.3 / PKCS#11 v3.1 Sec.4.7",
+                        reference="Tookan paper §3.3 / PKCS#11 v3.2",
                     )
                     classify(
                         "self_contradiction",
@@ -445,7 +445,7 @@ class TestTookanUnwrapAttrs:
                         label="Tookan unwrap sensitive downgrade",
                         operation="C_UnwrapKey",
                         mechanism="CKM_AES_KEY_WRAP",
-                        spec_ref="Tookan paper §3.3 / PKCS#11 v3.1 Sec.4.7",
+                        spec_ref="Tookan paper §3.3 / PKCS#11 v3.2",
                         summary="SECURITY: Tookan §3.3 — unwrap with CKA_SENSITIVE=False "
                         "produced a non-sensitive copy of a SENSITIVE=True key. "
                         "Sensitive-key boundary breached on unwrap.",

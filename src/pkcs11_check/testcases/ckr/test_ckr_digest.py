@@ -1,6 +1,6 @@
 """CKR compliance tests for C_DigestInit and C_Digest.
 
-Source: PKCS#11 v3.1 Sec.5.12.1 (C_DigestInit), Sec.5.12.2 (C_Digest).
+Source: PKCS#11 v3.2 (C_DigestInit, C_Digest).
 """
 
 from __future__ import annotations

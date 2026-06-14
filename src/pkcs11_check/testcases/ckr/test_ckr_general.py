@@ -3,7 +3,7 @@
 Covers C_Initialize, C_Finalize, C_GetInterfaceList.
 All tests run in subprocess - these functions affect global library state.
 
-Source: PKCS#11 v3.1 Sec.5.4.1-5.4.4.
+Source: PKCS#11 v3.2-5.4.4.
 """
 
 from __future__ import annotations

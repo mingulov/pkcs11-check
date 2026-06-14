@@ -242,7 +242,7 @@ class TestForkSafety:
 class TestSessionObjectProcessIsolation:
     """CROSS-PROC-001: cross-process session-object isolation.
 
-    PKCS#11 v3.1 Sec.4.2 says session objects belong to a session, and
+    PKCS#11 v3.2 says session objects belong to a session, and
     sessions belong to an "application". An application is whatever
     called C_Initialize — distinct processes are distinct applications.
     Session objects MUST NOT be visible to a different process even if
@@ -351,7 +351,7 @@ class TestSessionObjectProcessIsolation:
         pid = os.fork()
         if pid == 0:
             # Child: must Finalize the inherited handle before re-Initializing,
-            # per PKCS#11 v3.1 Sec.5.6.5 fork semantics.
+            # per PKCS#11 v3.2 fork semantics.
             raw.C_Finalize(None)
             try:
                 raw2 = RawPKCS11.from_lib("{module}")
@@ -516,17 +516,17 @@ class TestSessionObjectProcessIsolation:
                 f"Cross-process session-object leak detected: a session "
                 f"object created in the parent process was visible to a "
                 f"child process that re-Initialized the module. PKCS#11 "
-                f"v3.1 Sec.4.2 says session objects belong to a single "
+                f"v3.2 says session objects belong to a single "
                 f"application, and distinct processes are distinct "
                 f"applications. Diagnostic: {diag}",
                 ComplianceLevel.CRITICAL,
-                reference="PKCS#11 v3.1 Sec.4.2 / Sec.5.6.5",
+                reference="PKCS#11 v3.2",
             )
             classify(
                 "self_contradiction",
                 kind="policy",
                 label="cross-process session-object isolation",
-                spec_ref="PKCS#11 v3.1 Sec.4.2 / Sec.5.6.5",
+                spec_ref="PKCS#11 v3.2",
                 summary=(
                     "SECURITY: cross-process session-object isolation violated "
                     "— child process saw the parent's session object. "

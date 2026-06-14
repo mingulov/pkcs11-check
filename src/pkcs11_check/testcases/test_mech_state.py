@@ -6,7 +6,7 @@ Tests verify that the module correctly enforces PKCS#11 operation state:
 - C_Sign, C_Verify, C_Digest: same patterns
 - C_DecryptFinal without C_DecryptInit -> CKR_OPERATION_NOT_INITIALIZED
 
-Source: PKCS#11 v3.1 Section 5 -- each function description lists
+Source: PKCS#11 v3.2 -- each function description lists
 CKR_OPERATION_NOT_INITIALIZED and CKR_OPERATION_ACTIVE as valid return values.
 
 These tests are NOT parametrized -- they use hard-coded AES and SHA-256 mechanisms
@@ -469,7 +469,7 @@ class TestMultiPartCrossSession:
     A multi-part state initialised in session A must NOT be accessible from
     session B. A module that lets session B continue session A's
     operation has a state-confusion bug — multi-part state is per-session
-    per the spec (PKCS#11 v3.1 Sec.5.6, Sec.5.10.1).
+    per the spec (PKCS#11 v3.2).
     """
 
     def test_encrypt_update_from_other_session(self, p11_raw_session: RawSession) -> None:

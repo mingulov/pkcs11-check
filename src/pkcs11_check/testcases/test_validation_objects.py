@@ -1,8 +1,8 @@
-"""PKCS#11 v3.1 validation object tests.
+"""PKCS#11 v3.2 validation object tests.
 
 CKO_VALIDATION objects describe third-party validations such as FIPS or
 Common Criteria certifications.  These are read-only token objects defined
-in PKCS#11 v3.1.  Most modules will not have validation objects, so tests
+in PKCS#11 v3.2.  Most modules will not have validation objects, so tests
 skip gracefully when none are present.
 """
 
@@ -62,7 +62,7 @@ def _find_validation_objects(raw: Any, sh: int) -> list[int]:
 
 
 class TestValidationObjects:
-    """Tests for CKO_VALIDATION object enumeration (PKCS#11 v3.1+)."""
+    """Tests for CKO_VALIDATION object enumeration (PKCS#11 v3.2+)."""
 
     def test_validation_object_enumeration(self, p11_raw_session: Any) -> None:
         """Enumerate CKO_VALIDATION objects without error."""

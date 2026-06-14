@@ -3,7 +3,7 @@
 Each test triggers a specific error condition and validates the CKR code
 against the OASIS PKCS#11 spec.
 
-Source: PKCS#11 v3.1 Sec.5.9.1 (C_DecryptInit), Sec.5.9.2 (C_Decrypt).
+Source: PKCS#11 v3.2 (C_DecryptInit, C_Decrypt).
 """
 
 from __future__ import annotations

@@ -4,7 +4,7 @@ When multiple error conditions apply simultaneously, the PKCS#11 spec
 defines priority rules. These tests verify the higher-priority CKR is
 returned.
 
-Source: PKCS#11 v3.1 Sec.5.1.7 (relative priorities).
+Source: PKCS#11 v3.2 (relative priorities).
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ class TestErrorPriority:
             note(
                 "Module returned MECHANISM_INVALID before checking handle validity",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 v3.1 Sec.5.1.7",
+                reference="PKCS#11 v3.2",
             )
         # Other errors acceptable
 

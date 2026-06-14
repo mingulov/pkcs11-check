@@ -5,7 +5,7 @@ and the decrypt equivalents) was introduced in PKCS#11 v3.0.  It allows a single
 session initialisation to be reused for many independent messages with per-message
 parameters (e.g. different GCM IVs) without a round-trip C_*Init call per message.
 
-Reference: PKCS#11 v3.1 Sec.5.4 (Message-based encryption functions).
+Reference: PKCS#11 v3.2 (Message-based encryption functions).
 """
 
 from __future__ import annotations
@@ -912,7 +912,7 @@ class TestMessageEncrypt:
         C_MessageEncryptInit / C_EncryptMessage / C_MessageEncryptFinal and
         the matching decrypt side.
 
-        Reference: PKCS#11 v3.1 Sec.5.4 (Message-based encryption functions).
+        Reference: PKCS#11 v3.2 (Message-based encryption functions).
         """
         rs = p11_module_session
         if not rs.has_mechanism("AES_GCM"):
@@ -1361,8 +1361,7 @@ class TestMessageEncrypt:
                     "based API. The classical C_EncryptInit path enforces "
                     "CKA_ENCRYPT; the message API must do the same.",
                     ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.4.7 (CKA_ENCRYPT) / Sec.5.4 "
-                    "(message-based encryption)",
+                    reference="PKCS#11 v3.2 (CKA_ENCRYPT enforcement for message-based encryption)",
                 )
                 # Try to clean up — if MessageEncryptFinal exists, cancel.
                 if hasattr(rs.raw, "C_MessageEncryptFinal"):
@@ -1406,7 +1405,7 @@ class TestMessageEncrypt:
         with CK_GCM_MESSAGE_PARAMS and that C_MessageSignFinal cleanly ends the
         session, exercising the full message-based sign init/cleanup path.
 
-        Reference: PKCS#11 v3.1 Sec.5.5 (Message-based signing functions).
+        Reference: PKCS#11 v3.2 (Message-based signing functions).
         """
         rs = p11_module_session
         if not rs.has_mechanism("AES_GMAC"):

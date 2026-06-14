@@ -218,7 +218,7 @@ class TestRSAPaddingOracle:
                     f"ciphertexts ({error_types}), enabling padding oracle attack "
                     f"(Manger 2001 / Bleichenbacher-style)",
                     ComplianceLevel.CRITICAL,
-                    reference="Manger (2001); PKCS#11 v3.1 Sec.6.1.8: implementations "
+                    reference="Manger (2001); PKCS#11 v3.2: implementations "
                     "SHOULD return CKR_ENCRYPTED_DATA_INVALID uniformly",
                 )
                 classify(
@@ -664,8 +664,7 @@ class TestAESPaddingOracle:
                     f"unchecked malleability allows direct plaintext "
                     f"manipulation).",
                     ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.5.4: padding validation "
-                    "expected on padded mechanisms",
+                    reference="PKCS#11 v3.2: padding validation expected on padded mechanisms",
                 )
                 classify(
                     "accepted_invalid",

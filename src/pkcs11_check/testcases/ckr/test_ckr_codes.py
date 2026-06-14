@@ -108,7 +108,7 @@ class TestCKRAttributeErrors:
     def test_ckr_attribute_sensitive(self, p11_raw_session: Any) -> None:
         """Reading CKA_VALUE on sensitive key triggers CKR_ATTRIBUTE_SENSITIVE.
 
-        PKCS#11 v3.1 Sec.4.9.2: CKA_VALUE on a CKA_SENSITIVE=True key MUST return
+        PKCS#11 v3.2: CKA_VALUE on a CKA_SENSITIVE=True key MUST return
         CKR_ATTRIBUTE_SENSITIVE.
         """
         rs = p11_raw_session
@@ -125,7 +125,7 @@ class TestCKRAttributeErrors:
                 claimed=claimed,
                 violated=violated,
                 label="read CKA_VALUE on a CKA_SENSITIVE=True key "
-                "(PKCS#11 v3.1 Sec.4.9.2 requires CKR_ATTRIBUTE_SENSITIVE)",
+                "(PKCS#11 v3.2 requires CKR_ATTRIBUTE_SENSITIVE)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -152,7 +152,7 @@ class TestCKRSessionErrors:
     def test_ckr_user_already_logged_in(self, p11_raw_session: Any) -> None:
         """Double login triggers CKR_USER_ALREADY_LOGGED_IN.
 
-        Per PKCS#11 v3.1 Sec.5.6.7: C_Login when already logged in MUST return
+        Per PKCS#11 v3.2: C_Login when already logged in MUST return
         CKR_USER_ALREADY_LOGGED_IN. NSS returns CKR_PIN_INCORRECT because it
         re-validates the PIN on every C_Login call even when already authenticated.
         CKR_USER_TYPE_INVALID is accepted for NSS slots that require no login.

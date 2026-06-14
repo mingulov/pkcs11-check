@@ -70,7 +70,7 @@ class TestSensitiveKeyValue:
                 claimed=claimed,
                 violated=violated,
                 label="read CKA_VALUE on a CKA_SENSITIVE=True AES key "
-                "(PKCS#11 v3.1 Sec.4.9.2: sensitive attributes cannot be revealed)",
+                "(PKCS#11 v3.2: sensitive attributes cannot be revealed)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -242,7 +242,7 @@ class TestSensitiveKeyValue:
                 claimed=claimed,
                 violated=violated,
                 label="read CKA_PRIVATE_EXPONENT on a CKA_SENSITIVE=True RSA private key "
-                "(PKCS#11 v3.1 Sec.4.9.2: sensitive attributes cannot be revealed)",
+                "(PKCS#11 v3.2: sensitive attributes cannot be revealed)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

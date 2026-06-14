@@ -244,7 +244,7 @@ class TestWrapDecryptOracle:
                         claimed=claimed,
                         violated=extracted,
                         label="wrap-decrypt oracle extracts a non-extractable/sensitive key "
-                        "(PKCS#11 v3.1 Sec.4.9.4: CKA_WRAP and CKA_DECRYPT should not both "
+                        "(PKCS#11 v3.2: CKA_WRAP and CKA_DECRYPT should not both "
                         "be True)",
                     )
                 except AssertionError as exc:
@@ -376,7 +376,7 @@ class TestAttributeLaunderingViaCopy:
                         claimed=claimed,
                         violated=violated,
                         label="C_CopyObject escalates CKA_EXTRACTABLE False->True and exposes "
-                        "key material (PKCS#11 v3.1 Sec.4.9.4: CKA_EXTRACTABLE may only "
+                        "key material (PKCS#11 v3.2: CKA_EXTRACTABLE may only "
                         "change True->False on copy)",
                     )
                 finally:

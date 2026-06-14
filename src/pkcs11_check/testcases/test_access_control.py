@@ -104,13 +104,13 @@ class TestPrivateAttribute:
                 note(
                     "Module defaults CKA_PRIVATE to False for secret keys (spec requires True)",
                     ComplianceLevel.NOT_RECOMMENDED,
-                    reference="PKCS#11 v3.1 Sec.4.9.2: default CKA_PRIVATE is True for secret keys",
+                    reference="PKCS#11 v3.2: default CKA_PRIVATE is True for secret keys",
                 )
                 classify(
                     "honest_deviation",
                     kind="metadata",
                     label="CKA_PRIVATE default (secret key)",
-                    spec_ref="PKCS#11 v3.1 Sec.4.9.2",
+                    spec_ref="PKCS#11 v3.2",
                     summary="Module defaults CKA_PRIVATE=False for secret keys (spec violation)",
                 )
         finally:
@@ -195,7 +195,7 @@ class TestModifiableAttribute:
     def test_modifiable_false_blocks_set_attribute(self, p11_raw_session: Any) -> None:
         """CKA_MODIFIABLE=False MUST block C_SetAttributeValue on any attribute.
 
-        PKCS#11 v3.1 Sec.4.1.2: when CKA_MODIFIABLE=False, the object's
+        PKCS#11 v3.2: when CKA_MODIFIABLE=False, the object's
         attributes are immutable. The spec does NOT carve out a "non-security
         attributes are still settable" exception — even CKA_LABEL changes
         must be rejected.
@@ -247,14 +247,14 @@ class TestModifiableAttribute:
                     f"the attribute was silently ignored at create time, "
                     f"making downstream MODIFIABLE enforcement untestable.",
                     ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.4.1.2",
+                    reference="PKCS#11 v3.2",
                 )
                 classify(
                     "self_contradiction",
                     kind="policy",
                     label="CKA_MODIFIABLE=False enforcement (create-time)",
                     operation="C_CreateObject",
-                    spec_ref="PKCS#11 v3.1 Sec.4.1.2",
+                    spec_ref="PKCS#11 v3.2",
                     summary=(
                         "SECURITY: module silently ignored CKA_MODIFIABLE=False "
                         "at create time (read-back returned True) — would have "
@@ -285,14 +285,14 @@ class TestModifiableAttribute:
                 "C_SetAttributeValue succeeded on CKA_MODIFIABLE=False key "
                 "(expected CKR_ACTION_PROHIBITED).",
                 ComplianceLevel.CRITICAL,
-                reference="PKCS#11 v3.1 Sec.4.1.2",
+                reference="PKCS#11 v3.2",
             )
             classify(
                 "self_contradiction",
                 kind="policy",
                 label="CKA_MODIFIABLE=False enforcement (C_SetAttributeValue)",
                 operation="C_SetAttributeValue",
-                spec_ref="PKCS#11 v3.1 Sec.4.1.2",
+                spec_ref="PKCS#11 v3.2",
                 summary=(
                     "SECURITY: module accepted C_SetAttributeValue on a "
                     "CKA_MODIFIABLE=False key — attribute mutability "
@@ -451,7 +451,7 @@ class TestCopyObject:
             note(
                 "Module ignores CKA_COPYABLE=False: C_CopyObject succeeded on non-copyable key",
                 ComplianceLevel.CRITICAL,
-                reference="PKCS#11 v3.1 Sec.4.1.2: CKA_COPYABLE=False must prevent copy",
+                reference="PKCS#11 v3.2: CKA_COPYABLE=False must prevent copy",
             )
             destroy_quietly(rs.raw, rs.sh, copied_h)
             classify(
@@ -459,7 +459,7 @@ class TestCopyObject:
                 kind="policy",
                 label="CKA_COPYABLE=False enforcement (C_CopyObject)",
                 operation="C_CopyObject",
-                spec_ref="PKCS#11 v3.1 Sec.4.1.2",
+                spec_ref="PKCS#11 v3.2",
                 summary=(
                     "SECURITY: module copied a CKA_COPYABLE=False key — "
                     "copy-prohibition silently ignored"

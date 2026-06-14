@@ -6,7 +6,7 @@ CKR_ARGUMENTS_BAD (0x00000007) instead of segfaulting.
 All tests run in subprocess - modules may crash on NULL parameters.
 A segfault (returncode < 0) is a provider crash finding and fails the test.
 
-Source: PKCS#11 v3.1 Sec.5.1.6 (CKR_ARGUMENTS_BAD).
+Source: PKCS#11 v3.2 (CKR_ARGUMENTS_BAD).
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def _check_null_result(
         note(
             f"{func_name}(NULL): accepted without error",
             ComplianceLevel.NOT_RECOMMENDED,
-            reference="PKCS#11 v3.1 Sec.5.1.6: CKR_ARGUMENTS_BAD",
+            reference="PKCS#11 v3.2: CKR_ARGUMENTS_BAD",
         )
     else:
         # Other CKR - module validates but returns different error
@@ -65,7 +65,7 @@ def _check_null_result(
         note(
             f"{func_name}(NULL): returned CKR 0x{ckr:08x} (expected ARGUMENTS_BAD)",
             ComplianceLevel.NOT_RECOMMENDED,
-            reference="PKCS#11 v3.1 Sec.5.1.6: CKR_ARGUMENTS_BAD",
+            reference="PKCS#11 v3.2: CKR_ARGUMENTS_BAD",
         )
 
 

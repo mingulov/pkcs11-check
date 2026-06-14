@@ -4,7 +4,7 @@ PKCS#11 defines several *derived* attributes whose value is fixed by the
 history of a key, not set independently by the caller:
 
 - ``CKA_NEVER_EXTRACTABLE`` is ``CK_TRUE`` iff ``CKA_EXTRACTABLE`` has been
-  ``CK_FALSE`` for the entire lifetime of the key (PKCS#11 v3.1 Sec.4.9.4).
+  ``CK_FALSE`` for the entire lifetime of the key (PKCS#11 v3.2).
 - ``CKA_ALWAYS_SENSITIVE`` is ``CK_TRUE`` iff ``CKA_SENSITIVE`` has been
   ``CK_TRUE`` for the entire lifetime of the key (Sec.4.9.4).
 
@@ -118,7 +118,7 @@ def _classify_derived_invariant(
             "self_contradiction",
             kind="metadata",
             label=label,
-            spec_ref="PKCS#11 v3.1 Sec.4.9.4",
+            spec_ref="PKCS#11 v3.2",
             summary=(
                 f"{label}: base attribute held the whole lifetime but derived attribute "
                 f"is {derived_value!r}, must be True (self-contradiction)"
@@ -300,7 +300,7 @@ class TestDerivedAttributeInvariants:
                 derived_present=CKA_NEVER_EXTRACTABLE in attrs,
                 derived_value=attrs.get(CKA_NEVER_EXTRACTABLE),
                 label="CKA_NEVER_EXTRACTABLE on a key created EXTRACTABLE=False and never changed "
-                "(PKCS#11 v3.1 Sec.4.9.4)",
+                "(PKCS#11 v3.2)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -363,7 +363,7 @@ class TestDerivedAttributeInvariants:
                 derived_present=CKA_ALWAYS_SENSITIVE in attrs,
                 derived_value=attrs.get(CKA_ALWAYS_SENSITIVE),
                 label="CKA_ALWAYS_SENSITIVE on a key created SENSITIVE=True and never changed "
-                "(PKCS#11 v3.1 Sec.4.9.4)",
+                "(PKCS#11 v3.2)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

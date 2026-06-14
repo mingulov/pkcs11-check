@@ -84,14 +84,14 @@ def _xfail_generated_local_false(mech_name: str, label: str) -> NoReturn:
     note(
         f"{mech_name} {label} CKA_LOCAL=False for generated key",
         ComplianceLevel.NOT_RECOMMENDED,
-        reference="PKCS#11 v3.1 Sec.4.9.2: CKA_LOCAL True if key generated on token",
+        reference="PKCS#11 v3.2: CKA_LOCAL True if key generated on token",
     )
     xfail_as(
         "honest_deviation",
         kind="metadata",
         label=f"{mech_name} {label} CKA_LOCAL",
         mechanism=mech_name,
-        spec_ref="PKCS#11 v3.1 Sec.4.9.2",
+        spec_ref="PKCS#11 v3.2",
         summary=f"{mech_name} {label}: CKA_LOCAL=False for generated key",
     )
 

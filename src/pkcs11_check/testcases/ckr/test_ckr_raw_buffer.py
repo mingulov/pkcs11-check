@@ -170,7 +170,7 @@ def classify_undersized_digest_outcome(overwritten: int, ckr_ok: bool) -> None:
         note(
             f"C_Digest wrote {overwritten} bytes past a declared 1-byte output buffer.",
             ComplianceLevel.CRITICAL,
-            reference="PKCS#11 v3.1 Sec.5.10.2",
+            reference="PKCS#11 v3.2",
         )
         # A real out-of-bounds write past the declared output buffer: the module
         # ignored the declared size it was given -> self-contradiction.
@@ -179,7 +179,7 @@ def classify_undersized_digest_outcome(overwritten: int, ckr_ok: bool) -> None:
             kind="policy",
             label="C_Digest:undersized-output-buffer",
             operation="C_Digest",
-            spec_ref="PKCS#11 v3.1 Sec.5.10.2",
+            spec_ref="PKCS#11 v3.2",
             summary=(
                 f"SECURITY: C_Digest wrote {overwritten} bytes past a declared 1-byte output "
                 f"buffer (out-of-bounds write)"
@@ -192,7 +192,7 @@ def classify_undersized_digest_outcome(overwritten: int, ckr_ok: bool) -> None:
             "honest_deviation",
             label="C_Digest:undersized-output-buffer",
             operation="C_Digest",
-            spec_ref="PKCS#11 v3.1 Sec.5.10.2",
+            spec_ref="PKCS#11 v3.2",
             summary=(
                 "C_Digest returned CKR_OK for a 1-byte output buffer without writing past it "
                 "(PKCS#11 §5.10.2 expects CKR_BUFFER_TOO_SMALL; clean return-code deviation, "
@@ -207,7 +207,7 @@ class TestBufferTooSmall:
     def test_digest_buffer_too_small(self, p11_config: Any) -> None:
         """C_Digest with 1-byte output -> CKR_BUFFER_TOO_SMALL.
 
-        PKCS#11 v3.1 Sec.5.10.2: C_Digest with undersized output buffer MUST return
+        PKCS#11 v3.2: C_Digest with undersized output buffer MUST return
         CKR_BUFFER_TOO_SMALL and update *pulDigestLen with the required size.
 
         Uses a 64-byte buffer filled with guard bytes (0xAA) and passes out_len=1.

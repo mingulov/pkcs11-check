@@ -227,7 +227,7 @@ class TestDigestEncryptUpdate:
            e. DigestFinal -> digest
         4. Assert: ciphertext == ct_ref AND digest == SHA-256(data).
 
-        Source: PKCS#11 v3.1 Sec.5.14.1.
+        Source: PKCS#11 v3.2.
         """
         _skip_missing_mechanisms(p11_raw_session, ("AES_KEY_GEN", "AES_CBC", "SHA256"))
         module_path, slot_index, pin = _get_params(p11_config)
@@ -426,7 +426,7 @@ class TestDecryptDigestUpdate:
            e. DigestFinal -> digest of decrypted plaintext
         4. Assert: recovered plaintext == original data AND digest == SHA-256(data).
 
-        Source: PKCS#11 v3.1 Sec.5.14.2.
+        Source: PKCS#11 v3.2.
         """
         _skip_missing_mechanisms(p11_raw_session, ("AES_KEY_GEN", "AES_CBC", "SHA256"))
         module_path, slot_index, pin = _get_params(p11_config)

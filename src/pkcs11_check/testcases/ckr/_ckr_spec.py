@@ -174,7 +174,7 @@ class CkrExpectation:
     """Acceptable CKR codes in compat mode (before universal injection)."""
 
     spec_ref: str
-    """OASIS spec reference, e.g. 'PKCS#11 v3.1 Sec.5.8.1'."""
+    """OASIS spec reference, e.g. 'PKCS#11 v3.2'."""
 
     allow_success: bool = False
     """True if permissive modules may accept the operation."""
@@ -394,7 +394,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="mechanism_not_supported",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.8.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_key_function_not_permitted": CkrExpectation(
         function="C_EncryptInit",
@@ -406,7 +406,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
             CKR_MECHANISM_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_key_type_inconsistent": CkrExpectation(
         function="C_EncryptInit",
@@ -418,7 +418,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.1",
+        spec_ref="PKCS#11 v3.2",
         priority_note="Higher priority than CKR_KEY_FUNCTION_NOT_PERMITTED",
     ),
     "init_key_handle_invalid": CkrExpectation(
@@ -426,7 +426,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="invalid_key_handle",
         spec_ckr=CKR_KEY_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.8.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_mechanism_param_invalid": CkrExpectation(
         function="C_EncryptInit",
@@ -439,7 +439,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.1",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["AES_CBC"],
     ),
     # --- C_Encrypt errors ---
@@ -448,7 +448,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="data_not_block_aligned",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.8.2",
+        spec_ref="PKCS#11 v3.2",
         priority_note="Higher priority than CKR_DATA_INVALID",
         mechanisms=["AES_ECB"],
     ),
@@ -457,7 +457,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="empty_plaintext",
         spec_ckr=(CKR_DATA_LEN_RANGE, CKR_DATA_INVALID),
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.8.2",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,
     ),
     "data_too_long_rsa": CkrExpectation(
@@ -465,7 +465,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="RSA_PKCS_data_exceeds_k_minus_11",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.8.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["RSA_PKCS"],
     ),
     "operation_not_initialized": CkrExpectation(
@@ -473,21 +473,21 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="no_prior_C_EncryptInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_key_size_range": CkrExpectation(
         function="C_EncryptInit",
         condition="key_size_out_of_range",
         spec_ckr=CKR_KEY_SIZE_RANGE,
         compat_tuple=KEY_SIZE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.8.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "data_invalid_cbc_padding": CkrExpectation(
         function="C_Encrypt",
         condition="AES_CBC_PAD_non_block_aligned_accepted",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.8.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["AES_CBC_PAD"],
         allow_success=True,  # CBC-PAD handles non-aligned data by design
     ),
@@ -496,7 +496,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="AES_GCM_empty_plaintext_with_AAD",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.8.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["AES_GCM"],
         allow_success=True,  # GCM can encrypt 0 bytes with just AAD
     ),
@@ -506,7 +506,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="non_aligned_partial_block",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.8.3",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["AES_ECB"],
         testable=True,  # Testable via RawPKCS11 multipart
     ),
@@ -515,7 +515,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="no_prior_C_EncryptInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     # --- C_EncryptFinal errors ---
@@ -524,7 +524,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="incomplete_block_at_finalize",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.8.4",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["AES_ECB"],
         testable=True,  # Testable via RawPKCS11 multipart
     ),
@@ -533,7 +533,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="no_prior_C_EncryptInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     # --- Additional C_EncryptInit errors ---
@@ -542,7 +542,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="init_called_while_operation_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_state.py)
     ),
     "init_user_not_logged_in": CkrExpectation(
@@ -550,7 +550,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="key_requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     # --- Additional C_Encrypt errors ---
@@ -559,7 +559,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="invalid_plaintext_content",
         spec_ckr=CKR_DATA_INVALID,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.8.2",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,
     ),
     # --- Mechanism-specific C_EncryptInit errors ---
@@ -573,7 +573,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.1",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["RSA_PKCS_OAEP"],
     ),
     "aes_gcm_mechanism_param_invalid": CkrExpectation(
@@ -586,7 +586,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.1",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["AES_GCM"],
     ),
     "aes_cbc_iv_wrong_length": CkrExpectation(
@@ -599,7 +599,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.1",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["AES_CBC"],
     ),
     # --- Mechanism-specific C_Encrypt errors ---
@@ -608,7 +608,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="RSA_PKCS_zero_byte_plaintext",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.8.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["RSA_PKCS"],
         allow_success=True,  # Some modules accept empty plaintext for RSA-PKCS
     ),
@@ -617,7 +617,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="RSA_OAEP_plaintext_exceeds_k_minus_2hLen_minus_2",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.8.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["RSA_PKCS_OAEP"],
     ),
     "aes_gcm_data_overflow": CkrExpectation(
@@ -625,7 +625,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="AES_GCM_plaintext_exceeds_theoretical_limit",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.8.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["AES_GCM"],
         testable=True,  # Testable via RawPKCS11
     ),
@@ -635,7 +635,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback to cancel - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -644,7 +644,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="cannot_cancel_active_operation",
         spec_ckr=CKR_FUNCTION_FAILED,  # OperationCancelFailed not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires active operation + cancel attempt - not exposed by python-pkcs11
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
@@ -654,7 +654,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy - not available in test tokens
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -664,21 +664,21 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     "buffer_too_small": CkrExpectation(
         function="C_Encrypt",
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     "function_canceled": CkrExpectation(
         function="C_Encrypt",
         condition="operation_canceled",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.2",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback to cancel - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -687,7 +687,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="called_during_multipart",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     # --- Additional C_EncryptUpdate errors ---
@@ -696,14 +696,14 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.3",
+        spec_ref="PKCS#11 v3.2",
     ),
     "update_buffer_too_small": CkrExpectation(
         function="C_EncryptUpdate",
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "update_function_canceled": CkrExpectation(
@@ -711,7 +711,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="canceled",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback to cancel - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -720,7 +720,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="called_after_C_Encrypt",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     # --- Additional C_EncryptFinal errors ---
@@ -729,14 +729,14 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.4",
+        spec_ref="PKCS#11 v3.2",
     ),
     "final_buffer_too_small": CkrExpectation(
         function="C_EncryptFinal",
         condition="output_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "final_function_canceled": CkrExpectation(
@@ -744,7 +744,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="canceled",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.4",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback to cancel - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -753,7 +753,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         condition="called_during_single_part",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.8.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
 }
@@ -780,7 +780,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="mechanism_not_supported",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_key_type_inconsistent": CkrExpectation(
         function="C_DecryptInit",
@@ -792,7 +792,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_mechanism_param_invalid": CkrExpectation(
         function="C_DecryptInit",
@@ -805,7 +805,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["AES_CBC"],
     ),
     # --- C_Decrypt errors ---
@@ -814,7 +814,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="ciphertext_not_block_aligned",
         spec_ckr=CKR_ENCRYPTED_DATA_LEN_RANGE,
         compat_tuple=_DECRYPT_DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         priority_note="Higher priority than CKR_ENCRYPTED_DATA_INVALID",
         mechanisms=["AES_ECB"],
     ),
@@ -823,7 +823,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="garbage_ciphertext",
         spec_ckr=(CKR_ENCRYPTED_DATA_INVALID, CKR_ENCRYPTED_DATA_LEN_RANGE),
         compat_tuple=_DECRYPT_DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["AES_ECB"],
     ),
     "rsa_ciphertext_wrong_length": CkrExpectation(
@@ -831,7 +831,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="RSA_ciphertext_wrong_length",
         spec_ckr=CKR_ENCRYPTED_DATA_LEN_RANGE,
         compat_tuple=_DECRYPT_DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["RSA_PKCS"],
         kind="crypto",
         # Type-A crypto-correctness: a wrong-length RSA ciphertext that decrypts
@@ -844,7 +844,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="non_aligned_partial_ciphertext",
         spec_ckr=CKR_ENCRYPTED_DATA_LEN_RANGE,
         compat_tuple=_DECRYPT_DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "update_operation_not_initialized": CkrExpectation(
@@ -852,7 +852,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="no_prior_C_DecryptInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     "final_encrypted_data_invalid": CkrExpectation(
@@ -860,7 +860,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="incomplete_ciphertext_at_finalize",
         spec_ckr=CKR_ENCRYPTED_DATA_INVALID,
         compat_tuple=_DECRYPT_DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "final_operation_not_initialized": CkrExpectation(
@@ -868,7 +868,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="no_prior_C_DecryptInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     "init_operation_active": CkrExpectation(
@@ -876,7 +876,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="init_called_while_operation_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_state.py)
     ),
     "encrypted_data_cbc_wrong_padding": CkrExpectation(
@@ -884,7 +884,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="AES_CBC_PAD_ciphertext_with_bad_padding",
         spec_ckr=CKR_ENCRYPTED_DATA_INVALID,
         compat_tuple=_DECRYPT_DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["AES_CBC_PAD"],
     ),
     "rsa_oaep_garbage": CkrExpectation(
@@ -892,7 +892,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="RSA_OAEP_garbage_ciphertext",
         spec_ckr=CKR_ENCRYPTED_DATA_INVALID,
         compat_tuple=_DECRYPT_DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["RSA_PKCS_OAEP"],
     ),
     "init_key_function_not_permitted": CkrExpectation(
@@ -905,28 +905,28 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
             CKR_MECHANISM_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_key_handle_invalid": CkrExpectation(
         function="C_DecryptInit",
         condition="invalid_key_handle",
         spec_ckr=CKR_KEY_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_key_size_range": CkrExpectation(
         function="C_DecryptInit",
         condition="key_size_out_of_range",
         spec_ckr=CKR_KEY_SIZE_RANGE,
         compat_tuple=KEY_SIZE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "operation_not_initialized": CkrExpectation(
         function="C_Decrypt",
         condition="no_prior_C_DecryptInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- Mechanism-specific C_DecryptInit errors ---
     "rsa_oaep_mechanism_param_invalid": CkrExpectation(
@@ -939,7 +939,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["RSA_PKCS_OAEP"],
     ),
     # --- Mechanism-specific C_Decrypt errors ---
@@ -948,7 +948,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="AES_GCM_tampered_ciphertext_or_tag",
         spec_ckr=CKR_ENCRYPTED_DATA_INVALID,
         compat_tuple=_DECRYPT_DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["AES_GCM"],
     ),
     "aes_cbc_pad_wrong_length": CkrExpectation(
@@ -956,7 +956,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="AES_CBC_PAD_ciphertext_not_block_aligned",
         spec_ckr=CKR_ENCRYPTED_DATA_LEN_RANGE,
         compat_tuple=_DECRYPT_DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["AES_CBC_PAD"],
     ),
     "rsa_pkcs_ciphertext_format_invalid": CkrExpectation(
@@ -964,7 +964,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="RSA_PKCS_valid_length_but_malformed_ciphertext",
         spec_ckr=CKR_ENCRYPTED_DATA_INVALID,
         compat_tuple=_DECRYPT_DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["RSA_PKCS"],
     ),
     # --- Missing v2.40 entries ---
@@ -973,7 +973,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "init_function_canceled": CkrExpectation(
@@ -981,7 +981,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -990,7 +990,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="cannot_cancel_active_operation",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
@@ -1000,7 +1000,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -1009,7 +1009,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "arguments_bad": CkrExpectation(
@@ -1017,7 +1017,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "buffer_too_small": CkrExpectation(
@@ -1025,7 +1025,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "function_canceled": CkrExpectation(
@@ -1033,7 +1033,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -1042,7 +1042,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "user_not_logged_in": CkrExpectation(
@@ -1050,7 +1050,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "update_arguments_bad": CkrExpectation(
@@ -1058,7 +1058,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "update_buffer_too_small": CkrExpectation(
@@ -1066,7 +1066,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "update_encrypted_data_invalid": CkrExpectation(
@@ -1074,7 +1074,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="invalid_ciphertext_content",
         spec_ckr=CKR_ENCRYPTED_DATA_INVALID,
         compat_tuple=_DECRYPT_DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "update_function_canceled": CkrExpectation(
@@ -1082,7 +1082,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -1091,7 +1091,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "update_user_not_logged_in": CkrExpectation(
@@ -1099,7 +1099,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "final_arguments_bad": CkrExpectation(
@@ -1107,7 +1107,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "final_buffer_too_small": CkrExpectation(
@@ -1115,7 +1115,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "final_encrypted_data_len_range": CkrExpectation(
@@ -1123,7 +1123,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="incomplete_ciphertext_block",
         spec_ckr=CKR_ENCRYPTED_DATA_LEN_RANGE,
         compat_tuple=_DECRYPT_DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "final_function_canceled": CkrExpectation(
@@ -1131,7 +1131,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.4",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -1140,7 +1140,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "final_user_not_logged_in": CkrExpectation(
@@ -1148,7 +1148,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "decrypt_digest_update_arguments_bad": CkrExpectation(
@@ -1156,7 +1156,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "decrypt_digest_update_buffer_too_small": CkrExpectation(
@@ -1164,7 +1164,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "decrypt_digest_update_encrypted_data_invalid": CkrExpectation(
@@ -1172,7 +1172,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="invalid_ciphertext_in_dual_op",
         spec_ckr=CKR_ENCRYPTED_DATA_INVALID,
         compat_tuple=_DECRYPT_DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.15.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "decrypt_digest_update_encrypted_data_len_range": CkrExpectation(
@@ -1180,7 +1180,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="ciphertext_wrong_length_in_dual_op",
         spec_ckr=CKR_ENCRYPTED_DATA_LEN_RANGE,
         compat_tuple=_DECRYPT_DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.15.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "decrypt_digest_update_function_canceled": CkrExpectation(
@@ -1188,7 +1188,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -1197,7 +1197,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "decrypt_digest_update_operation_not_initialized": CkrExpectation(
@@ -1205,7 +1205,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_not_initialized",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "decrypt_verify_update_arguments_bad": CkrExpectation(
@@ -1213,7 +1213,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "decrypt_verify_update_buffer_too_small": CkrExpectation(
@@ -1221,7 +1221,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "decrypt_verify_update_data_len_range": CkrExpectation(
@@ -1229,7 +1229,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="verify_data_length_error",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.15.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "decrypt_verify_update_encrypted_data_invalid": CkrExpectation(
@@ -1237,7 +1237,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="invalid_ciphertext_in_dual_op",
         spec_ckr=CKR_ENCRYPTED_DATA_INVALID,
         compat_tuple=_DECRYPT_DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.15.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "decrypt_verify_update_encrypted_data_len_range": CkrExpectation(
@@ -1245,7 +1245,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="ciphertext_wrong_length_in_dual_op",
         spec_ckr=CKR_ENCRYPTED_DATA_LEN_RANGE,
         compat_tuple=_DECRYPT_DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.15.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "decrypt_verify_update_function_canceled": CkrExpectation(
@@ -1253,7 +1253,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.4",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -1262,7 +1262,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "decrypt_verify_update_operation_not_initialized": CkrExpectation(
@@ -1270,7 +1270,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_not_initialized",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
 }
@@ -1287,7 +1287,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="mechanism_not_supported",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_key_type_inconsistent": CkrExpectation(
         function="C_SignInit",
@@ -1299,7 +1299,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        spec_ref="PKCS#11 v3.2",
         kind="crypto",
         # Type-A crypto-correctness: an AES key under an RSA signing mechanism is
         # key-type confusion; acceptance must fail for any provider.
@@ -1315,14 +1315,14 @@ CKR_SIGN: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_key_handle_invalid": CkrExpectation(
         function="C_SignInit",
         condition="invalid_key_handle",
         spec_ckr=CKR_KEY_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_key_function_not_permitted": CkrExpectation(
         function="C_SignInit",
@@ -1334,7 +1334,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
             CKR_MECHANISM_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_Sign errors ---
     "data_len_range": CkrExpectation(
@@ -1342,21 +1342,21 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="data_too_long_for_mechanism",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.10.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     "operation_not_initialized": CkrExpectation(
         function="C_Sign",
         condition="no_prior_C_SignInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     "data_invalid": CkrExpectation(
         function="C_Sign",
         condition="data_format_error",
         spec_ckr=CKR_DATA_INVALID,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.10.2",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Most mechanisms hash data, so format doesn't matter
     ),
     # --- C_SignInit additional errors ---
@@ -1365,14 +1365,14 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="key_size_too_small_for_mechanism",
         spec_ckr=CKR_KEY_SIZE_RANGE,
         compat_tuple=KEY_SIZE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_operation_active": CkrExpectation(
         function="C_SignInit",
         condition="init_called_while_operation_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_state.py)
     ),
     # --- C_SignUpdate errors ---
@@ -1381,7 +1381,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="partial_data_too_long",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.10.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "update_operation_not_initialized": CkrExpectation(
@@ -1389,7 +1389,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="no_prior_C_SignInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     # --- C_SignFinal errors ---
@@ -1398,7 +1398,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="incomplete_data_at_finalize",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.10.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "final_operation_not_initialized": CkrExpectation(
@@ -1406,7 +1406,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="no_prior_C_SignInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     "final_buffer_too_small": CkrExpectation(
@@ -1414,7 +1414,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     # --- C_SignRecover errors ---
@@ -1423,21 +1423,21 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="mechanism_not_supported_for_recover",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.10.5",
+        spec_ref="PKCS#11 v3.2",
     ),
     "recover_data_len_range": CkrExpectation(
         function="C_SignRecover",
         condition="data_too_long_for_recover",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.10.6",
+        spec_ref="PKCS#11 v3.2",
     ),
     "recover_operation_not_initialized": CkrExpectation(
         function="C_SignRecover",
         condition="no_prior_C_SignRecoverInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     # --- Mechanism-specific C_SignInit errors ---
@@ -1451,7 +1451,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["ECDSA"],
     ),
     "hmac_mechanism_param_invalid": CkrExpectation(
@@ -1464,7 +1464,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["SHA256_HMAC_GENERAL"],
     ),
     "rsa_pss_mechanism_param_invalid": CkrExpectation(
@@ -1477,7 +1477,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["RSA_PKCS_PSS"],
     ),
     # --- Mechanism-specific C_Sign errors ---
@@ -1486,7 +1486,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="Ed25519_message_exceeds_max_size",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.10.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["EDDSA"],
         allow_success=True,  # Ed25519 has no practical message size limit in most impls
     ),
@@ -1495,7 +1495,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="RSA_PKCS_data_exceeds_k_minus_11",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.10.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["RSA_PKCS"],
     ),
     # --- Missing v2.40 entries ---
@@ -1504,7 +1504,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "init_function_canceled": CkrExpectation(
@@ -1512,7 +1512,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -1521,7 +1521,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="cannot_cancel_active_operation",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
@@ -1531,7 +1531,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -1540,7 +1540,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "arguments_bad": CkrExpectation(
@@ -1548,7 +1548,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "buffer_too_small": CkrExpectation(
@@ -1556,7 +1556,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_buffer.py)
     ),
     "function_canceled": CkrExpectation(
@@ -1564,7 +1564,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.2",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -1573,7 +1573,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="operation_rejected_by_policy",
         spec_ckr=CKR_FUNCTION_REJECTED,
         compat_tuple=(CKR_FUNCTION_REJECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "operation_active": CkrExpectation(
@@ -1581,7 +1581,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "token_resource_exceeded": CkrExpectation(
@@ -1589,7 +1589,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="token_storage_exhausted",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via stress test
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
@@ -1598,7 +1598,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "update_arguments_bad": CkrExpectation(
@@ -1606,7 +1606,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "update_function_canceled": CkrExpectation(
@@ -1614,7 +1614,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -1623,7 +1623,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "update_token_resource_exceeded": CkrExpectation(
@@ -1631,7 +1631,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="token_storage_exhausted",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via stress test
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
@@ -1640,7 +1640,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "final_arguments_bad": CkrExpectation(
@@ -1648,7 +1648,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "final_function_canceled": CkrExpectation(
@@ -1656,7 +1656,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.4",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -1665,7 +1665,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="operation_rejected_by_policy",
         spec_ckr=CKR_FUNCTION_REJECTED,
         compat_tuple=(CKR_FUNCTION_REJECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "final_operation_active": CkrExpectation(
@@ -1673,7 +1673,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "final_token_resource_exceeded": CkrExpectation(
@@ -1681,7 +1681,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="token_storage_exhausted",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via stress test
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
@@ -1690,7 +1690,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "recover_init_arguments_bad": CkrExpectation(
@@ -1698,7 +1698,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "recover_init_function_canceled": CkrExpectation(
@@ -1706,7 +1706,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -1720,7 +1720,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
             CKR_MECHANISM_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "recover_init_key_handle_invalid": CkrExpectation(
@@ -1728,7 +1728,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="invalid_key_handle",
         spec_ckr=CKR_KEY_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.10.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "recover_init_key_size_range": CkrExpectation(
@@ -1736,7 +1736,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="key_size_out_of_range",
         spec_ckr=CKR_KEY_SIZE_RANGE,
         compat_tuple=KEY_SIZE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.10.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "recover_init_key_type_inconsistent": CkrExpectation(
@@ -1749,7 +1749,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "recover_init_mechanism_param_invalid": CkrExpectation(
@@ -1762,7 +1762,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "recover_init_operation_active": CkrExpectation(
@@ -1770,7 +1770,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "recover_init_operation_cancel_failed": CkrExpectation(
@@ -1778,7 +1778,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="cannot_cancel_active_operation",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
@@ -1788,7 +1788,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -1797,7 +1797,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "recover_arguments_bad": CkrExpectation(
@@ -1805,7 +1805,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "recover_buffer_too_small": CkrExpectation(
@@ -1813,7 +1813,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "recover_data_invalid": CkrExpectation(
@@ -1821,7 +1821,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="invalid_data_for_recover",
         spec_ckr=CKR_DATA_INVALID,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.10.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "recover_function_canceled": CkrExpectation(
@@ -1829,7 +1829,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.6",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -1838,7 +1838,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "recover_token_resource_exceeded": CkrExpectation(
@@ -1846,7 +1846,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="token_storage_exhausted",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via stress test
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
@@ -1855,7 +1855,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.10.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "sign_encrypt_update_arguments_bad": CkrExpectation(
@@ -1863,7 +1863,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "sign_encrypt_update_buffer_too_small": CkrExpectation(
@@ -1871,7 +1871,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "sign_encrypt_update_data_len_range": CkrExpectation(
@@ -1879,7 +1879,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="data_length_error_in_dual_op",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.15.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "sign_encrypt_update_function_canceled": CkrExpectation(
@@ -1887,7 +1887,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -1896,7 +1896,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "sign_encrypt_update_operation_not_initialized": CkrExpectation(
@@ -1904,7 +1904,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="operation_not_initialized",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "sign_encrypt_update_user_not_logged_in": CkrExpectation(
@@ -1912,7 +1912,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
 }
@@ -1929,7 +1929,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="mechanism_not_supported",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_key_type_inconsistent": CkrExpectation(
         function="C_VerifyInit",
@@ -1941,7 +1941,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         kind="crypto",
         # Type-A crypto-correctness: initializing verify with an AES key under
         # an RSA mechanism is key-type confusion; acceptance must fail for any
@@ -1952,7 +1952,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="invalid_key_handle",
         spec_ckr=CKR_KEY_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_key_function_not_permitted": CkrExpectation(
         function="C_VerifyInit",
@@ -1964,7 +1964,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
             CKR_MECHANISM_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # SoftHSM2 doesn't check CKA_VERIFY at init
     ),
     # --- C_Verify errors ---
@@ -1973,14 +1973,14 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="tampered_signature",
         spec_ckr=CKR_SIGNATURE_INVALID,
         compat_tuple=(CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     "signature_len_range": CkrExpectation(
         function="C_Verify",
         condition="signature_wrong_length",
         spec_ckr=CKR_SIGNATURE_LEN_RANGE,
         compat_tuple=(CKR_SIGNATURE_LEN_RANGE, CKR_SIGNATURE_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         priority_note="Higher priority than CKR_SIGNATURE_INVALID",
         kind="crypto",
         # Type-A crypto-correctness: a wrong-length RSA signature that verifies
@@ -1992,14 +1992,14 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="oversized_data_for_raw_verify",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     "operation_not_initialized": CkrExpectation(
         function="C_Verify",
         condition="no_prior_C_VerifyInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_VerifyInit additional errors ---
     "init_key_size_range": CkrExpectation(
@@ -2007,14 +2007,14 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="key_size_too_small_for_mechanism",
         spec_ckr=CKR_KEY_SIZE_RANGE,
         compat_tuple=KEY_SIZE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_operation_active": CkrExpectation(
         function="C_VerifyInit",
         condition="init_called_while_operation_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_state.py)
     ),
     # --- C_VerifyUpdate errors ---
@@ -2023,7 +2023,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="partial_data_too_long",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.11.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "update_operation_not_initialized": CkrExpectation(
@@ -2031,7 +2031,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="no_prior_C_VerifyInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     # --- C_VerifyFinal errors ---
@@ -2040,14 +2040,14 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="tampered_signature_at_finalize",
         spec_ckr=CKR_SIGNATURE_INVALID,
         compat_tuple=(CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
     ),
     "final_operation_not_initialized": CkrExpectation(
         function="C_VerifyFinal",
         condition="no_prior_C_VerifyInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     # --- C_VerifyRecover errors ---
@@ -2056,21 +2056,21 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="mechanism_not_supported_for_recover",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
     ),
     "recover_signature_invalid": CkrExpectation(
         function="C_VerifyRecover",
         condition="tampered_signature_for_recover",
         spec_ckr=CKR_SIGNATURE_INVALID,
         compat_tuple=(CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.6",
+        spec_ref="PKCS#11 v3.2",
     ),
     "recover_operation_not_initialized": CkrExpectation(
         function="C_VerifyRecover",
         condition="no_prior_C_VerifyRecoverInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     # --- C_Verify additional errors ---
@@ -2079,7 +2079,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="data_format_error",
         spec_ckr=CKR_DATA_INVALID,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Most mechanisms hash data, so format doesn't matter
     ),
     # --- Mechanism-specific C_Verify errors ---
@@ -2088,7 +2088,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="ECDSA_tampered_signature",
         spec_ckr=CKR_SIGNATURE_INVALID,
         compat_tuple=(CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["ECDSA"],
     ),
     "hmac_signature_invalid": CkrExpectation(
@@ -2096,7 +2096,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="HMAC_tampered_signature",
         spec_ckr=CKR_SIGNATURE_INVALID,
         compat_tuple=(CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["SHA256_HMAC"],
     ),
     "ecdsa_signature_len_range": CkrExpectation(
@@ -2104,7 +2104,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="ECDSA_wrong_length_signature",
         spec_ckr=CKR_SIGNATURE_LEN_RANGE,
         compat_tuple=(CKR_SIGNATURE_LEN_RANGE, CKR_SIGNATURE_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["ECDSA"],
         priority_note="Higher priority than CKR_SIGNATURE_INVALID",
     ),
@@ -2113,7 +2113,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="HMAC_truncated_signature",
         spec_ckr=CKR_SIGNATURE_LEN_RANGE,
         compat_tuple=(CKR_SIGNATURE_LEN_RANGE, CKR_SIGNATURE_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["SHA256_HMAC"],
         priority_note="Higher priority than CKR_SIGNATURE_INVALID",
     ),
@@ -2122,7 +2122,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="RSA_PSS_tampered_signature",
         spec_ckr=CKR_SIGNATURE_INVALID,
         compat_tuple=(CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["RSA_PKCS_PSS"],
     ),
     # --- C_VerifyInit mechanism-specific errors ---
@@ -2136,7 +2136,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- Missing v2.40 entries ---
     "init_arguments_bad": CkrExpectation(
@@ -2144,7 +2144,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "init_function_canceled": CkrExpectation(
@@ -2152,7 +2152,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -2161,7 +2161,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="cannot_cancel_active_operation",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
@@ -2171,7 +2171,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -2180,7 +2180,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "arguments_bad": CkrExpectation(
@@ -2188,7 +2188,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "function_canceled": CkrExpectation(
@@ -2196,7 +2196,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -2205,7 +2205,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "token_resource_exceeded": CkrExpectation(
@@ -2213,7 +2213,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="token_storage_exhausted",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via stress test
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
@@ -2222,7 +2222,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "update_function_canceled": CkrExpectation(
@@ -2230,7 +2230,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -2239,7 +2239,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "update_token_resource_exceeded": CkrExpectation(
@@ -2247,7 +2247,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="token_storage_exhausted",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via stress test
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
@@ -2256,7 +2256,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "final_data_len_range": CkrExpectation(
@@ -2264,7 +2264,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="data_length_out_of_range",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "final_function_canceled": CkrExpectation(
@@ -2272,7 +2272,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -2281,7 +2281,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "final_signature_len_range": CkrExpectation(
@@ -2289,7 +2289,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="signature_wrong_length_at_finalize",
         spec_ckr=CKR_SIGNATURE_LEN_RANGE,
         compat_tuple=(CKR_SIGNATURE_LEN_RANGE, CKR_SIGNATURE_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "final_token_resource_exceeded": CkrExpectation(
@@ -2297,7 +2297,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="token_storage_exhausted",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via stress test
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
@@ -2306,7 +2306,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "recover_init_function_canceled": CkrExpectation(
@@ -2314,7 +2314,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -2328,7 +2328,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
             CKR_MECHANISM_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "recover_init_key_handle_invalid": CkrExpectation(
@@ -2336,7 +2336,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="invalid_key_handle",
         spec_ckr=CKR_KEY_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "recover_init_key_size_range": CkrExpectation(
@@ -2344,7 +2344,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="key_size_out_of_range",
         spec_ckr=CKR_KEY_SIZE_RANGE,
         compat_tuple=KEY_SIZE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "recover_init_key_type_inconsistent": CkrExpectation(
@@ -2357,7 +2357,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "recover_init_mechanism_param_invalid": CkrExpectation(
@@ -2370,7 +2370,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "recover_init_operation_active": CkrExpectation(
@@ -2378,7 +2378,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "recover_init_operation_cancel_failed": CkrExpectation(
@@ -2386,7 +2386,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="cannot_cancel_active_operation",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
@@ -2396,7 +2396,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -2405,7 +2405,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "recover_arguments_bad": CkrExpectation(
@@ -2413,7 +2413,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "recover_buffer_too_small": CkrExpectation(
@@ -2421,7 +2421,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "recover_data_invalid": CkrExpectation(
@@ -2429,7 +2429,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="recovered_data_invalid",
         spec_ckr=CKR_DATA_INVALID,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.11.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "recover_data_len_range": CkrExpectation(
@@ -2437,7 +2437,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="recovered_data_length_error",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.11.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "recover_function_canceled": CkrExpectation(
@@ -2445,7 +2445,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.6",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -2454,7 +2454,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "recover_signature_len_range": CkrExpectation(
@@ -2462,7 +2462,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="signature_wrong_length_for_recover",
         spec_ckr=CKR_SIGNATURE_LEN_RANGE,
         compat_tuple=(CKR_SIGNATURE_LEN_RANGE, CKR_SIGNATURE_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "recover_token_resource_exceeded": CkrExpectation(
@@ -2470,7 +2470,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         condition="token_storage_exhausted",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via stress test
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
@@ -2488,7 +2488,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="mechanism_not_supported",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.12.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_mechanism_param_invalid": CkrExpectation(
         function="C_DigestInit",
@@ -2500,14 +2500,14 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "init_encrypt_mechanism": CkrExpectation(
         function="C_DigestInit",
         condition="using_encrypt_mechanism_for_digest",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.12.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_Digest errors ---
     "operation_not_initialized": CkrExpectation(
@@ -2515,7 +2515,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="no_prior_C_DigestInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_DigestInit additional errors ---
     "init_operation_active": CkrExpectation(
@@ -2523,7 +2523,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="init_called_while_digest_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_state.py)
     ),
     # --- C_Digest additional errors ---
@@ -2532,7 +2532,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_buffer.py)
     ),
     "empty_data": CkrExpectation(
@@ -2540,7 +2540,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="digest_of_empty_bytes",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.12.2",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Digesting empty data is valid per most implementations
     ),
     # --- C_DigestUpdate errors ---
@@ -2549,7 +2549,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="no_prior_C_DigestInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     # --- C_DigestKey errors ---
@@ -2563,7 +2563,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
             CKR_FUNCTION_FAILED,
             CKR_FUNCTION_NOT_SUPPORTED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.4",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Some modules may accept any key type
     ),
     "key_handle_invalid": CkrExpectation(
@@ -2571,7 +2571,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="destroyed_key_handle",
         spec_ckr=CKR_KEY_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.12.4",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_DigestFinal errors ---
     "final_operation_not_initialized": CkrExpectation(
@@ -2579,7 +2579,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="no_prior_C_DigestInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     "final_buffer_too_small": CkrExpectation(
@@ -2587,7 +2587,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     # --- C_DigestXofInit errors (v3.0+) ---
@@ -2596,7 +2596,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="mechanism_not_supported_for_xof",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.12.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DigestUpdate additional errors ---
@@ -2605,7 +2605,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="partial_data_exceeds_limits",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.12.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     # --- C_DigestKey additional errors ---
@@ -2619,7 +2619,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
             CKR_FUNCTION_FAILED,
             CKR_FUNCTION_NOT_SUPPORTED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.4",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Most modules don't restrict DigestKey by CKA flags
     ),
     "key_digest_operation_not_initialized": CkrExpectation(
@@ -2631,7 +2631,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
             CKR_FUNCTION_FAILED,
             CKR_FUNCTION_NOT_SUPPORTED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.4",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- Missing v2.40 entries ---
     "init_arguments_bad": CkrExpectation(
@@ -2639,7 +2639,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "init_function_canceled": CkrExpectation(
@@ -2647,7 +2647,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -2656,7 +2656,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="cannot_cancel_active_operation",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
@@ -2666,7 +2666,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -2675,7 +2675,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "arguments_bad": CkrExpectation(
@@ -2683,7 +2683,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "function_canceled": CkrExpectation(
@@ -2691,7 +2691,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.2",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -2700,7 +2700,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "update_arguments_bad": CkrExpectation(
@@ -2708,7 +2708,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "update_function_canceled": CkrExpectation(
@@ -2716,7 +2716,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -2725,7 +2725,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "key_function_canceled": CkrExpectation(
@@ -2733,7 +2733,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.4",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -2742,7 +2742,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="key_size_out_of_range",
         spec_ckr=CKR_KEY_SIZE_RANGE,
         compat_tuple=KEY_SIZE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.12.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "key_operation_active": CkrExpectation(
@@ -2750,7 +2750,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "final_arguments_bad": CkrExpectation(
@@ -2758,7 +2758,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "final_function_canceled": CkrExpectation(
@@ -2766,7 +2766,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -2775,7 +2775,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "digest_encrypt_update_arguments_bad": CkrExpectation(
@@ -2783,7 +2783,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "digest_encrypt_update_buffer_too_small": CkrExpectation(
@@ -2791,7 +2791,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "digest_encrypt_update_data_len_range": CkrExpectation(
@@ -2799,7 +2799,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="data_length_error_in_dual_op",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.15.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     "digest_encrypt_update_function_canceled": CkrExpectation(
@@ -2807,7 +2807,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.2",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -2816,7 +2816,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "digest_encrypt_update_operation_not_initialized": CkrExpectation(
@@ -2824,7 +2824,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_not_initialized",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.15.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
     # --- C_DigestXofInit additional errors (v3.0+) ---
@@ -2833,7 +2833,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_init_function_canceled": CkrExpectation(
@@ -2841,7 +2841,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.7",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -2855,7 +2855,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_init_operation_active": CkrExpectation(
@@ -2863,7 +2863,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_init_operation_cancel_failed": CkrExpectation(
@@ -2871,7 +2871,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="cannot_cancel_active_operation",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.7",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
@@ -2881,7 +2881,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.7",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -2890,7 +2890,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DigestXof errors (v3.0+) ---
@@ -2899,7 +2899,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.8",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_function_canceled": CkrExpectation(
@@ -2907,7 +2907,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.8",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -2916,7 +2916,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.8",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_operation_not_initialized": CkrExpectation(
@@ -2924,7 +2924,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="no_prior_C_DigestXofInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.8",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DigestXofUpdate errors (v3.0+) ---
@@ -2933,7 +2933,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_update_exceeded_max_iterations": CkrExpectation(
@@ -2941,7 +2941,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="maximum_iterations_exceeded",
         spec_ckr=CKR_EXCEEDED_MAX_ITERATIONS,
         compat_tuple=(CKR_EXCEEDED_MAX_ITERATIONS, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_update_function_canceled": CkrExpectation(
@@ -2949,7 +2949,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.9",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -2958,7 +2958,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_update_operation_not_initialized": CkrExpectation(
@@ -2966,7 +2966,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="no_prior_C_DigestXofInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DigestXofExtract errors (v3.0+) ---
@@ -2975,7 +2975,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.10",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_extract_function_canceled": CkrExpectation(
@@ -2983,7 +2983,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.10",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -2992,7 +2992,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.10",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_extract_operation_not_initialized": CkrExpectation(
@@ -3000,7 +3000,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="no_prior_C_DigestXofInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.10",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DigestXofFinal errors (v3.0+) ---
@@ -3009,7 +3009,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.11",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_final_function_canceled": CkrExpectation(
@@ -3017,7 +3017,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.11",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -3026,7 +3026,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.11",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_final_operation_not_initialized": CkrExpectation(
@@ -3034,7 +3034,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="no_prior_C_DigestXofInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.11",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DigestXofKeyValue errors (v3.0+) ---
@@ -3043,7 +3043,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.12",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -3052,7 +3052,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="invalid_key_handle",
         spec_ckr=CKR_KEY_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.12.12",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_key_value_key_indigestible": CkrExpectation(
@@ -3060,7 +3060,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="key_not_digestible",
         spec_ckr=CKR_KEY_INDIGESTIBLE,
         compat_tuple=(CKR_KEY_INDIGESTIBLE, CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.12",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_key_value_key_size_range": CkrExpectation(
@@ -3068,7 +3068,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="key_size_out_of_range",
         spec_ckr=CKR_KEY_SIZE_RANGE,
         compat_tuple=KEY_SIZE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.12.12",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_key_value_operation_active": CkrExpectation(
@@ -3076,7 +3076,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.12",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_key_value_operation_not_initialized": CkrExpectation(
@@ -3084,7 +3084,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         condition="no_prior_C_DigestXofInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.12.12",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
 }
@@ -3101,7 +3101,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="unsupported_mechanism",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "genkey_bad_size": CkrExpectation(
         function="C_GenerateKey",
@@ -3110,7 +3110,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         # tpm2 has no symmetric-keygen surface -> CKR_FUNCTION_NOT_SUPPORTED for any
         # negative keygen probe; accept it as a clean reject (xfail, not fail). PC-6.
         compat_tuple=(*KEY_SIZE_ERRORS, CKR_FUNCTION_NOT_SUPPORTED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Kryoptic accepts AES key size 0 and non-standard sizes
     ),
     "genkey_template_incomplete": CkrExpectation(
@@ -3118,7 +3118,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="missing_required_attribute",
         spec_ckr=CKR_TEMPLATE_INCOMPLETE,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "genkey_template_inconsistent": CkrExpectation(
         function="C_GenerateKey",
@@ -3126,7 +3126,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         spec_ckr=CKR_TEMPLATE_INCONSISTENT,
         # PC-6: tpm2 has no symmetric-keygen surface -> FUNCTION_NOT_SUPPORTED (xfail).
         compat_tuple=(*TEMPLATE_ERRORS, CKR_FUNCTION_NOT_SUPPORTED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "genkey_attribute_type_invalid": CkrExpectation(
         function="C_GenerateKey",
@@ -3134,7 +3134,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         spec_ckr=CKR_ATTRIBUTE_TYPE_INVALID,
         # PC-6: tpm2 has no symmetric-keygen surface -> FUNCTION_NOT_SUPPORTED (xfail).
         compat_tuple=(*TEMPLATE_ERRORS, CKR_FUNCTION_NOT_SUPPORTED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Some modules ignore unknown attributes
     ),
     "genkey_attribute_read_only": CkrExpectation(
@@ -3147,7 +3147,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
             CKR_TEMPLATE_INCONSISTENT,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Module may ignore CKA_CLASS in keygen
     ),
     # --- C_GenerateKeyPair errors ---
@@ -3156,14 +3156,14 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="invalid_key_size",
         spec_ckr=CKR_ATTRIBUTE_VALUE_INVALID,
         compat_tuple=KEY_SIZE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     "genkeypair_mechanism_invalid": CkrExpectation(
         function="C_GenerateKeyPair",
         condition="unsupported_mechanism",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     "genkeypair_curve_not_supported": CkrExpectation(
         function="C_GenerateKeyPair",
@@ -3176,7 +3176,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
             CKR_MECHANISM_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     "genkeypair_domain_params_invalid": CkrExpectation(
         function="C_GenerateKeyPair",
@@ -3189,14 +3189,14 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
             CKR_MECHANISM_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     "genkeypair_template_inconsistent": CkrExpectation(
         function="C_GenerateKeyPair",
         condition="conflicting_pub_priv_templates",
         spec_ckr=CKR_TEMPLATE_INCONSISTENT,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_GenerateKey additional errors ---
     "genkey_session_read_only": CkrExpectation(
@@ -3204,14 +3204,14 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="token_key_in_read_only_session",
         spec_ckr=CKR_SESSION_READ_ONLY,
         compat_tuple=(CKR_SESSION_READ_ONLY, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "genkey_operation_active": CkrExpectation(
         function="C_GenerateKey",
         condition="keygen_while_operation_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "genkey_user_not_logged_in": CkrExpectation(
@@ -3219,7 +3219,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="private_key_without_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Modules without login requirements accept this
     ),
     # --- C_GenerateKeyPair additional errors ---
@@ -3228,14 +3228,14 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="token_keypair_in_read_only_session",
         spec_ckr=CKR_SESSION_READ_ONLY,
         compat_tuple=(CKR_SESSION_READ_ONLY, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     "genkeypair_operation_active": CkrExpectation(
         function="C_GenerateKeyPair",
         condition="keygen_pair_while_operation_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "genkeypair_attribute_type_invalid": CkrExpectation(
@@ -3243,7 +3243,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="bogus_attribute_in_template",
         spec_ckr=CKR_ATTRIBUTE_TYPE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Some modules ignore unknown attributes
     ),
     "genkeypair_attribute_read_only": CkrExpectation(
@@ -3256,7 +3256,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
             CKR_TEMPLATE_INCONSISTENT,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Module may ignore CKA_CLASS in keygen
     ),
     # --- Missing v2.40 entries ---
@@ -3265,7 +3265,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "genkey_curve_not_supported_gen": CkrExpectation(
@@ -3278,7 +3278,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
             CKR_ATTRIBUTE_VALUE_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "genkey_function_canceled": CkrExpectation(
@@ -3286,7 +3286,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -3300,7 +3300,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "genkey_pin_expired": CkrExpectation(
@@ -3308,7 +3308,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -3317,7 +3317,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="token_is_write_protected",
         spec_ckr=CKR_TOKEN_WRITE_PROTECTED,
         compat_tuple=(CKR_TOKEN_WRITE_PROTECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 with R/O session
     ),
     "genkeypair_arguments_bad": CkrExpectation(
@@ -3325,7 +3325,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "genkeypair_function_canceled": CkrExpectation(
@@ -3333,7 +3333,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -3347,7 +3347,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "genkeypair_parameter_set_not_supported": CkrExpectation(
@@ -3359,7 +3359,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
             CKR_ATTRIBUTE_VALUE_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "genkeypair_pin_expired": CkrExpectation(
@@ -3367,7 +3367,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -3376,7 +3376,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="missing_required_attribute_in_template",
         spec_ckr=CKR_TEMPLATE_INCOMPLETE,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "genkeypair_token_write_protected": CkrExpectation(
@@ -3384,7 +3384,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="token_is_write_protected",
         spec_ckr=CKR_TOKEN_WRITE_PROTECTED,
         compat_tuple=(CKR_TOKEN_WRITE_PROTECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 with R/O session
     ),
     "genkeypair_user_not_logged_in": CkrExpectation(
@@ -3392,7 +3392,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
 }
@@ -3408,7 +3408,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         condition="unsupported_mechanism",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
     ),
     "key_type_inconsistent": CkrExpectation(
         function="C_DeriveKey",
@@ -3424,7 +3424,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
             CKR_FUNCTION_FAILED,
             CKR_KEY_HANDLE_INVALID,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         # SoftHSM2: CKR_TEMPLATE_INCOMPLETE, OpenCryptoki: CKR_MECHANISM_PARAM_INVALID
         # NSS: CKR_KEY_HANDLE_INVALID
     ),
@@ -3438,7 +3438,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
     ),
     "key_function_not_permitted": CkrExpectation(
         function="C_DeriveKey",
@@ -3450,14 +3450,14 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
             CKR_MECHANISM_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
     ),
     "template_incomplete": CkrExpectation(
         function="C_DeriveKey",
         condition="missing_output_key_type",
         spec_ckr=CKR_TEMPLATE_INCOMPLETE,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
     ),
     "domain_params_invalid": CkrExpectation(
         function="C_DeriveKey",
@@ -3469,7 +3469,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
             CKR_ATTRIBUTE_VALUE_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["ECDH1_DERIVE"],
     ),
     "template_inconsistent": CkrExpectation(
@@ -3477,28 +3477,28 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         condition="conflicting_output_attributes",
         spec_ckr=CKR_TEMPLATE_INCONSISTENT,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
     ),
     "key_handle_invalid": CkrExpectation(
         function="C_DeriveKey",
         condition="destroyed_base_key_handle",
         spec_ckr=CKR_KEY_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
     ),
     "key_size_range": CkrExpectation(
         function="C_DeriveKey",
         condition="output_key_size_invalid",
         spec_ckr=CKR_KEY_SIZE_RANGE,
         compat_tuple=KEY_SIZE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
     ),
     "operation_active": CkrExpectation(
         function="C_DeriveKey",
         condition="derive_while_operation_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "session_read_only": CkrExpectation(
@@ -3506,14 +3506,14 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         condition="derive_token_key_in_RO_session",
         spec_ckr=CKR_SESSION_READ_ONLY,
         compat_tuple=(CKR_SESSION_READ_ONLY, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
     ),
     "user_not_logged_in": CkrExpectation(
         function="C_DeriveKey",
         condition="private_derived_key_without_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Modules without login requirements accept this
     ),
     "attribute_type_invalid": CkrExpectation(
@@ -3521,7 +3521,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         condition="bogus_attr_in_derive_template",
         spec_ckr=CKR_ATTRIBUTE_TYPE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Some modules ignore unknown attributes
     ),
     "attribute_value_invalid": CkrExpectation(
@@ -3529,7 +3529,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         condition="bad_value_in_derive_template",
         spec_ckr=CKR_ATTRIBUTE_VALUE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
     ),
     "attribute_read_only": CkrExpectation(
         function="C_DeriveKey",
@@ -3541,7 +3541,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
             CKR_TEMPLATE_INCONSISTENT,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Module may ignore CKA_CLASS in derive
     ),
     "ecdh_mechanism_param_invalid": CkrExpectation(
@@ -3554,7 +3554,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["ECDH1_DERIVE"],
     ),
     "hkdf_mechanism_param_invalid": CkrExpectation(
@@ -3567,7 +3567,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         mechanisms=["HKDF_DERIVE"],
         testable=True,  # Testable via RawPKCS11
     ),
@@ -3577,7 +3577,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "curve_not_supported": CkrExpectation(
@@ -3590,7 +3590,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
             CKR_ATTRIBUTE_VALUE_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "function_canceled": CkrExpectation(
@@ -3598,7 +3598,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -3607,7 +3607,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -3616,7 +3616,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         condition="token_is_write_protected",
         spec_ckr=CKR_TOKEN_WRITE_PROTECTED,
         compat_tuple=(CKR_TOKEN_WRITE_PROTECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 with R/O session
     ),
 }
@@ -4097,14 +4097,14 @@ CKR_WRAP: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
     ),
     "wrap_mechanism_invalid": CkrExpectation(
         function="C_WrapKey",
         condition="unsupported_mechanism",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
     ),
     "unwrap_wrapped_key_invalid": CkrExpectation(
         function="C_UnwrapKey",
@@ -4117,7 +4117,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
     ),
     "wrap_key_type_inconsistent": CkrExpectation(
         function="C_WrapKey",
@@ -4129,7 +4129,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
     ),
     "wrap_wrapping_key_size_range": CkrExpectation(
         function="C_WrapKey",
@@ -4153,7 +4153,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
             CKR_KEY_TYPE_INCONSISTENT,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
         kind="metadata",
         testable=True,  # Testable via RawPKCS11
     ),
@@ -4167,7 +4167,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
     ),
     "unwrap_wrapped_key_len_range": CkrExpectation(
         function="C_UnwrapKey",
@@ -4180,7 +4180,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         priority_note="Higher priority than CKR_WRAPPED_KEY_INVALID",
     ),
     "unwrap_template_incomplete": CkrExpectation(
@@ -4188,14 +4188,14 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         condition="missing_required_unwrap_attrs",
         spec_ckr=CKR_TEMPLATE_INCOMPLETE,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
     ),
     "wrap_key_handle_invalid": CkrExpectation(
         function="C_WrapKey",
         condition="destroyed_key_to_wrap",
         spec_ckr=CKR_KEY_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
     ),
     "wrap_key_not_wrappable": CkrExpectation(
         function="C_WrapKey",
@@ -4207,14 +4207,14 @@ CKR_WRAP: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
     ),
     "wrap_operation_active": CkrExpectation(
         function="C_WrapKey",
         condition="wrap_while_operation_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "wrap_buffer_too_small": CkrExpectation(
@@ -4222,7 +4222,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "wrap_session_read_only": CkrExpectation(
@@ -4230,7 +4230,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         condition="token_wrap_in_RO_session",
         spec_ckr=CKR_SESSION_READ_ONLY,
         compat_tuple=(CKR_SESSION_READ_ONLY, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Wrap doesn't create token objects, most modules allow it
     ),
     "unwrap_mechanism_invalid": CkrExpectation(
@@ -4238,7 +4238,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         condition="unsupported_unwrap_mechanism",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
     ),
     "unwrap_key_type_inconsistent": CkrExpectation(
         function="C_UnwrapKey",
@@ -4250,14 +4250,14 @@ CKR_WRAP: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
     ),
     "unwrap_operation_active": CkrExpectation(
         function="C_UnwrapKey",
         condition="unwrap_while_operation_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "unwrap_session_read_only": CkrExpectation(
@@ -4265,14 +4265,14 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         condition="unwrap_to_token_object_in_RO_session",
         spec_ckr=CKR_SESSION_READ_ONLY,
         compat_tuple=(CKR_SESSION_READ_ONLY, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
     ),
     "unwrap_user_not_logged_in": CkrExpectation(
         function="C_UnwrapKey",
         condition="private_key_unwrap_without_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Modules without login requirements accept this
     ),
     # --- Missing v2.40 entries ---
@@ -4281,7 +4281,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "unwrap_attribute_read_only": CkrExpectation(
@@ -4294,7 +4294,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
             CKR_TEMPLATE_INCONSISTENT,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 with R/O session
     ),
     "unwrap_attribute_type_invalid": CkrExpectation(
@@ -4302,7 +4302,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         condition="unknown_attribute_in_unwrap_template",
         spec_ckr=CKR_ATTRIBUTE_TYPE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "unwrap_attribute_value_invalid": CkrExpectation(
@@ -4310,7 +4310,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         condition="invalid_value_in_unwrap_template",
         spec_ckr=CKR_ATTRIBUTE_VALUE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "unwrap_buffer_too_small": CkrExpectation(
@@ -4318,7 +4318,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "unwrap_curve_not_supported": CkrExpectation(
@@ -4331,7 +4331,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
             CKR_ATTRIBUTE_VALUE_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "unwrap_domain_params_invalid": CkrExpectation(
@@ -4344,7 +4344,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
             CKR_ATTRIBUTE_VALUE_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "unwrap_function_canceled": CkrExpectation(
@@ -4352,7 +4352,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -4366,7 +4366,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "unwrap_parameter_set_not_supported": CkrExpectation(
@@ -4378,7 +4378,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
             CKR_ATTRIBUTE_VALUE_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "unwrap_pin_expired": CkrExpectation(
@@ -4386,7 +4386,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -4395,7 +4395,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         condition="conflicting_unwrap_template_attrs",
         spec_ckr=CKR_TEMPLATE_INCONSISTENT,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "unwrap_token_write_protected": CkrExpectation(
@@ -4403,7 +4403,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         condition="token_is_write_protected",
         spec_ckr=CKR_TOKEN_WRITE_PROTECTED,
         compat_tuple=(CKR_TOKEN_WRITE_PROTECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 with R/O session
     ),
     "unwrap_unwrapping_key_handle_invalid": CkrExpectation(
@@ -4415,7 +4415,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
             CKR_KEY_HANDLE_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "unwrap_unwrapping_key_size_range": CkrExpectation(
@@ -4423,7 +4423,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         condition="unwrapping_key_size_out_of_range",
         spec_ckr=CKR_UNWRAPPING_KEY_SIZE_RANGE,
         compat_tuple=(CKR_UNWRAPPING_KEY_SIZE_RANGE, CKR_KEY_SIZE_RANGE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "unwrap_unwrapping_key_type_inconsistent": CkrExpectation(
@@ -4435,7 +4435,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
             CKR_KEY_TYPE_INCONSISTENT,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
 }
@@ -4451,28 +4451,28 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="missing_CKA_CLASS",
         spec_ckr=CKR_TEMPLATE_INCOMPLETE,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "create_invalid_class": CkrExpectation(
         function="C_CreateObject",
         condition="CKA_CLASS_is_0xDEADBEEF",
         spec_ckr=CKR_ATTRIBUTE_VALUE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "get_attr_sensitive": CkrExpectation(
         function="C_GetAttributeValue",
         condition="read_VALUE_on_SENSITIVE_key",
         spec_ckr=CKR_ATTRIBUTE_SENSITIVE,
         compat_tuple=(CKR_ATTRIBUTE_SENSITIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.5",
+        spec_ref="PKCS#11 v3.2",
     ),
     "get_attr_destroyed": CkrExpectation(
         function="C_GetAttributeValue",
         condition="destroyed_object_handle",
         spec_ckr=CKR_OBJECT_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.5",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Some modules don't detect invalid handles
     ),
     "set_attr_readonly": CkrExpectation(
@@ -4480,7 +4480,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="modify_read_only_CKA_CLASS",
         spec_ckr=CKR_ATTRIBUTE_READ_ONLY,
         compat_tuple=(CKR_ATTRIBUTE_READ_ONLY, CKR_ATTRIBUTE_TYPE_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.6",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Kryoptic accepts CKA_CLASS modification
     ),
     "destroy_already_destroyed": CkrExpectation(
@@ -4488,7 +4488,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="double_destroy",
         spec_ckr=CKR_OBJECT_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.3",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Some modules silently accept double destroy
     ),
     # --- C_CreateObject additional errors ---
@@ -4497,7 +4497,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="bogus_attribute_type",
         spec_ckr=CKR_ATTRIBUTE_TYPE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.1",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Module may ignore unknown attributes
     ),
     "create_private_object_not_logged_in": CkrExpectation(
@@ -4505,7 +4505,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="private_object_without_login",
         spec_ckr=CKR_ATTRIBUTE_VALUE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.1",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Modules without login requirements accept this
     ),
     # --- C_CopyObject errors ---
@@ -4519,7 +4519,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
             CKR_FUNCTION_FAILED,
             CKR_FUNCTION_NOT_SUPPORTED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.2",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Module may not enforce CKA_COPYABLE
     ),
     "copy_destroyed_handle": CkrExpectation(
@@ -4527,7 +4527,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="copy_destroyed_object",
         spec_ckr=CKR_OBJECT_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.2",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,
     ),
     # --- C_GetObjectSize errors ---
@@ -4536,7 +4536,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="destroyed_handle",
         spec_ckr=CKR_OBJECT_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.4",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,
     ),
     # --- C_SetAttributeValue additional errors ---
@@ -4545,7 +4545,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="CKA_MODIFIABLE_is_False",
         spec_ckr=CKR_ACTION_PROHIBITED,
         compat_tuple=(CKR_ACTION_PROHIBITED, CKR_ATTRIBUTE_READ_ONLY, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.6",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,
     ),
     # --- C_FindObjects* errors ---
@@ -4554,7 +4554,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="FindObjects_without_FindObjectsInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.8",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_CreateObject session/domain errors ---
     "create_session_read_only": CkrExpectation(
@@ -4562,7 +4562,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="token_object_in_RO_session",
         spec_ckr=CKR_SESSION_READ_ONLY,
         compat_tuple=(CKR_SESSION_READ_ONLY, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "create_curve_not_supported": CkrExpectation(
         function="C_CreateObject",
@@ -4575,7 +4575,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
             CKR_MECHANISM_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "create_domain_params_invalid": CkrExpectation(
         function="C_CreateObject",
@@ -4587,7 +4587,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
             CKR_ATTRIBUTE_VALUE_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_CopyObject additional errors ---
     "copy_template_inconsistent": CkrExpectation(
@@ -4595,21 +4595,21 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="conflicting_copy_template_attrs",
         spec_ckr=CKR_TEMPLATE_INCONSISTENT,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     "copy_session_read_only": CkrExpectation(
         function="C_CopyObject",
         condition="copy_to_token_object_in_RO_session",
         spec_ckr=CKR_SESSION_READ_ONLY,
         compat_tuple=(CKR_SESSION_READ_ONLY, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     "copy_handle_invalid": CkrExpectation(
         function="C_CopyObject",
         condition="non_existent_object_handle",
         spec_ckr=CKR_OBJECT_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_DestroyObject additional errors ---
     "destroy_action_prohibited": CkrExpectation(
@@ -4617,7 +4617,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="CKA_DESTROYABLE_is_False",
         spec_ckr=CKR_ACTION_PROHIBITED,
         compat_tuple=(CKR_ACTION_PROHIBITED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.3",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Not all modules enforce CKA_DESTROYABLE
     ),
     "destroy_session_read_only": CkrExpectation(
@@ -4625,7 +4625,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="destroy_token_object_in_RO_session",
         spec_ckr=CKR_SESSION_READ_ONLY,
         compat_tuple=(CKR_SESSION_READ_ONLY, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.3",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_SetAttributeValue additional errors ---
     "set_attr_type_invalid": CkrExpectation(
@@ -4633,7 +4633,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="set_bogus_attribute_type",
         spec_ckr=CKR_ATTRIBUTE_TYPE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.6",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Module may ignore unknown attributes
     ),
     "set_attr_value_invalid": CkrExpectation(
@@ -4641,14 +4641,14 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="set_wrong_value_for_known_attr",
         spec_ckr=CKR_ATTRIBUTE_VALUE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.6",
+        spec_ref="PKCS#11 v3.2",
     ),
     "set_attr_template_inconsistent": CkrExpectation(
         function="C_SetAttributeValue",
         condition="conflicting_attribute_modifications",
         spec_ckr=CKR_TEMPLATE_INCONSISTENT,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.6",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_FindObjectsInit additional errors ---
     "find_attr_value_invalid": CkrExpectation(
@@ -4656,7 +4656,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="search_with_bogus_attr_value",
         spec_ckr=CKR_ATTRIBUTE_VALUE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.7",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Module may return empty results instead of error
     ),
     # --- Missing v2.40 entries ---
@@ -4665,7 +4665,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "create_attribute_read_only": CkrExpectation(
@@ -4678,7 +4678,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
             CKR_TEMPLATE_INCONSISTENT,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 with R/O session
     ),
     "create_operation_active": CkrExpectation(
@@ -4686,7 +4686,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "create_parameter_set_not_supported": CkrExpectation(
@@ -4698,7 +4698,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
             CKR_ATTRIBUTE_VALUE_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "create_pin_expired": CkrExpectation(
@@ -4706,7 +4706,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -4715,7 +4715,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="conflicting_create_template_attrs",
         spec_ckr=CKR_TEMPLATE_INCONSISTENT,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "create_token_write_protected": CkrExpectation(
@@ -4723,7 +4723,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="token_is_write_protected",
         spec_ckr=CKR_TOKEN_WRITE_PROTECTED,
         compat_tuple=(CKR_TOKEN_WRITE_PROTECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 with R/O session
     ),
     "create_user_not_logged_in": CkrExpectation(
@@ -4731,7 +4731,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "copy_arguments_bad": CkrExpectation(
@@ -4739,7 +4739,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "copy_attribute_read_only": CkrExpectation(
@@ -4752,7 +4752,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
             CKR_TEMPLATE_INCONSISTENT,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 with R/O session
     ),
     "copy_attribute_type_invalid": CkrExpectation(
@@ -4760,7 +4760,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="unknown_attribute_in_copy_template",
         spec_ckr=CKR_ATTRIBUTE_TYPE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "copy_attribute_value_invalid": CkrExpectation(
@@ -4768,7 +4768,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="invalid_value_in_copy_template",
         spec_ckr=CKR_ATTRIBUTE_VALUE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "copy_operation_active": CkrExpectation(
@@ -4776,7 +4776,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "copy_pin_expired": CkrExpectation(
@@ -4784,7 +4784,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.2",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -4793,7 +4793,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="token_is_write_protected",
         spec_ckr=CKR_TOKEN_WRITE_PROTECTED,
         compat_tuple=(CKR_TOKEN_WRITE_PROTECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 with R/O session
     ),
     "copy_user_not_logged_in": CkrExpectation(
@@ -4801,7 +4801,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "destroy_operation_active": CkrExpectation(
@@ -4809,7 +4809,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "destroy_pin_expired": CkrExpectation(
@@ -4817,7 +4817,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -4826,7 +4826,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="token_is_write_protected",
         spec_ckr=CKR_TOKEN_WRITE_PROTECTED,
         compat_tuple=(CKR_TOKEN_WRITE_PROTECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 with R/O session
     ),
     "get_size_arguments_bad": CkrExpectation(
@@ -4834,7 +4834,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_size_information_sensitive": CkrExpectation(
@@ -4842,7 +4842,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="size_info_is_sensitive",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_INFORMATION_SENSITIVE not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
         spec_ckr_code="CKR_INFORMATION_SENSITIVE",
     ),
@@ -4851,7 +4851,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "get_attr_arguments_bad": CkrExpectation(
@@ -4859,7 +4859,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_attr_type_invalid": CkrExpectation(
@@ -4867,7 +4867,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="query_unknown_attribute",
         spec_ckr=CKR_ATTRIBUTE_TYPE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "get_attr_buffer_too_small": CkrExpectation(
@@ -4875,7 +4875,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "get_attr_operation_active": CkrExpectation(
@@ -4883,7 +4883,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "set_attr_arguments_bad": CkrExpectation(
@@ -4891,7 +4891,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "set_attr_object_handle_invalid": CkrExpectation(
@@ -4899,7 +4899,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="destroyed_object_handle",
         spec_ckr=CKR_OBJECT_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "set_attr_operation_active": CkrExpectation(
@@ -4907,7 +4907,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "set_attr_session_read_only": CkrExpectation(
@@ -4915,7 +4915,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="modify_token_object_in_RO_session",
         spec_ckr=CKR_SESSION_READ_ONLY,
         compat_tuple=(CKR_SESSION_READ_ONLY, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "set_attr_token_write_protected": CkrExpectation(
@@ -4923,7 +4923,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="token_is_write_protected",
         spec_ckr=CKR_TOKEN_WRITE_PROTECTED,
         compat_tuple=(CKR_TOKEN_WRITE_PROTECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 with R/O session
     ),
     "set_attr_user_not_logged_in": CkrExpectation(
@@ -4931,7 +4931,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "find_init_arguments_bad": CkrExpectation(
@@ -4939,7 +4939,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "find_init_attribute_type_invalid": CkrExpectation(
@@ -4947,14 +4947,14 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="unknown_attribute_in_search_template",
         spec_ckr=CKR_ATTRIBUTE_TYPE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.7.7",
+        spec_ref="PKCS#11 v3.2",
     ),
     "find_init_operation_active": CkrExpectation(
         function="C_FindObjectsInit",
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "find_init_pin_expired": CkrExpectation(
@@ -4962,7 +4962,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.7",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -4971,7 +4971,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.8",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "find_operation_active": CkrExpectation(
@@ -4979,7 +4979,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.8",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "find_final_operation_active": CkrExpectation(
@@ -4987,7 +4987,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "find_final_operation_not_initialized": CkrExpectation(
@@ -4995,7 +4995,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         condition="operation_not_initialized",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.7.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 multipart
     ),
 }
@@ -5011,21 +5011,21 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="incorrect_PIN",
         spec_ckr=CKR_PIN_INCORRECT,
         compat_tuple=(CKR_PIN_INCORRECT, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.7",
+        spec_ref="PKCS#11 v3.2",
     ),
     "login_already_logged_in": CkrExpectation(
         function="C_Login",
         condition="double_login",
         spec_ckr=CKR_USER_ALREADY_LOGGED_IN,
         compat_tuple=(CKR_USER_ALREADY_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.7",
+        spec_ref="PKCS#11 v3.2",
     ),
     "logout_not_logged_in": CkrExpectation(
         function="C_Logout",
         condition="logout_without_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.8",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Some modules don't error on logout without login
     ),
     # --- C_OpenSession errors ---
@@ -5034,7 +5034,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="non_existent_slot_ID",
         spec_ckr=CKR_SLOT_ID_INVALID,
         compat_tuple=(CKR_SLOT_ID_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_CloseSession errors ---
     "close_handle_invalid": CkrExpectation(
@@ -5042,7 +5042,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="invalid_session_handle",
         spec_ckr=CKR_SESSION_HANDLE_INVALID,
         compat_tuple=SESSION_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.6.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_Login additional errors ---
     "login_user_type_invalid": CkrExpectation(
@@ -5050,14 +5050,14 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="invalid_user_type",
         spec_ckr=CKR_USER_TYPE_INVALID,
         compat_tuple=(CKR_USER_TYPE_INVALID, CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.7",
+        spec_ref="PKCS#11 v3.2",
     ),
     "login_pin_locked": CkrExpectation(
         function="C_Login",
         condition="PIN_locked_after_too_many_attempts",
         spec_ckr=CKR_PIN_LOCKED,
         compat_tuple=(CKR_PIN_LOCKED, CKR_PIN_INCORRECT, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     # --- C_OpenSession additional errors ---
@@ -5066,14 +5066,14 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="exhaust_session_limit",
         spec_ckr=CKR_SESSION_COUNT,
         compat_tuple=(CKR_SESSION_COUNT, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     "open_token_write_protected": CkrExpectation(
         function="C_OpenSession",
         condition="RW_session_on_write_protected_token",
         spec_ckr=CKR_TOKEN_WRITE_PROTECTED,
         compat_tuple=(CKR_TOKEN_WRITE_PROTECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.1",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_GetSessionInfo errors ---
     "get_session_info_handle_invalid": CkrExpectation(
@@ -5081,7 +5081,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="invalid_session_handle",
         spec_ckr=CKR_SESSION_HANDLE_INVALID,
         compat_tuple=SESSION_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.6.4",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_CloseAllSessions errors ---
     "close_all_slot_invalid": CkrExpectation(
@@ -5089,7 +5089,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="non_existent_slot_ID",
         spec_ckr=CKR_SLOT_ID_INVALID,
         compat_tuple=(CKR_SLOT_ID_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.3",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_Login additional errors ---
     "login_user_another_logged_in": CkrExpectation(
@@ -5101,7 +5101,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
             CKR_USER_ALREADY_LOGGED_IN,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.7",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_Login additional PIN errors ---
     "login_pin_len_range": CkrExpectation(
@@ -5109,7 +5109,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="PIN_too_short_or_too_long",
         spec_ckr=CKR_PIN_LEN_RANGE,
         compat_tuple=(CKR_PIN_LEN_RANGE, CKR_PIN_INCORRECT, CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.7",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_GetOperationState session error ---
     "get_op_state_session_invalid": CkrExpectation(
@@ -5117,7 +5117,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="invalid_session_handle",
         spec_ckr=CKR_SESSION_HANDLE_INVALID,
         compat_tuple=SESSION_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.6.5",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_SetOperationState session error ---
     "set_op_state_session_invalid": CkrExpectation(
@@ -5125,7 +5125,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="invalid_session_handle",
         spec_ckr=CKR_SESSION_HANDLE_INVALID,
         compat_tuple=SESSION_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.6.6",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- Missing v2.40 entries ---
     "open_arguments_bad": CkrExpectation(
@@ -5133,7 +5133,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_null_params.py)
     ),
     "open_session_async_not_supported": CkrExpectation(
@@ -5141,7 +5141,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="async_sessions_not_supported",
         spec_ckr=CKR_SESSION_ASYNC_NOT_SUPPORTED,
         compat_tuple=(CKR_SESSION_ASYNC_NOT_SUPPORTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # v3.0+ async sessions - not widely supported
         # Untestable: v3.2 async sessions not widely supported
     ),
@@ -5150,7 +5150,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="parallel_sessions_not_supported",
         spec_ckr=CKR_SESSION_PARALLEL_NOT_SUPPORTED,
         compat_tuple=(CKR_SESSION_PARALLEL_NOT_SUPPORTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Legacy parallel sessions - not testable
         # Untestable: legacy deprecated function
     ),
@@ -5159,7 +5159,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="RO_session_while_SO_logged_in",
         spec_ckr=CKR_SESSION_READ_WRITE_SO_EXISTS,
         compat_tuple=(CKR_SESSION_READ_WRITE_SO_EXISTS, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "open_token_not_recognized": CkrExpectation(
@@ -5167,7 +5167,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="token_not_recognized_in_slot",
         spec_ckr=CKR_TOKEN_NOT_RECOGNIZED,
         compat_tuple=(CKR_TOKEN_NOT_RECOGNIZED, CKR_SLOT_ID_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires physical token state change
         # Untestable: requires unrecognized token hardware event
     ),
@@ -5176,7 +5176,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "get_session_info_arguments_bad": CkrExpectation(
@@ -5184,7 +5184,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_session_info_operation_active": CkrExpectation(
@@ -5192,7 +5192,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "login_arguments_bad": CkrExpectation(
@@ -5200,7 +5200,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "login_function_canceled": CkrExpectation(
@@ -5208,7 +5208,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.7",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -5217,7 +5217,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "login_operation_not_initialized": CkrExpectation(
@@ -5225,7 +5225,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="operation_not_initialized",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "login_session_read_only_exists": CkrExpectation(
@@ -5233,7 +5233,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="SO_login_with_RO_sessions_open",
         spec_ckr=CKR_SESSION_READ_ONLY_EXISTS,
         compat_tuple=(CKR_SESSION_READ_ONLY_EXISTS, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "login_user_pin_not_initialized": CkrExpectation(
@@ -5241,7 +5241,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="user_PIN_not_initialized",
         spec_ckr=CKR_USER_PIN_NOT_INITIALIZED,
         compat_tuple=(CKR_USER_PIN_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "login_user_too_many_types": CkrExpectation(
@@ -5249,7 +5249,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="too_many_user_types_logged_in",
         spec_ckr=CKR_USER_TOO_MANY_TYPES,
         compat_tuple=(CKR_USER_TOO_MANY_TYPES, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "logout_operation_active": CkrExpectation(
@@ -5257,7 +5257,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.8",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     # --- C_LoginUser errors (v3.0+) ---
@@ -5266,7 +5266,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "login_user_function_canceled": CkrExpectation(
@@ -5274,7 +5274,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.9",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -5283,7 +5283,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "login_user_operation_not_initialized": CkrExpectation(
@@ -5291,7 +5291,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="operation_not_initialized",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "login_user_pin_incorrect": CkrExpectation(
@@ -5299,7 +5299,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="incorrect_PIN",
         spec_ckr=CKR_PIN_INCORRECT,
         compat_tuple=(CKR_PIN_INCORRECT, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "login_user_pin_locked": CkrExpectation(
@@ -5307,7 +5307,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="PIN_locked_after_too_many_attempts",
         spec_ckr=CKR_PIN_LOCKED,
         compat_tuple=(CKR_PIN_LOCKED, CKR_PIN_INCORRECT, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "login_user_session_read_only_exists": CkrExpectation(
@@ -5315,7 +5315,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="SO_login_with_RO_sessions_open",
         spec_ckr=CKR_SESSION_READ_ONLY_EXISTS,
         compat_tuple=(CKR_SESSION_READ_ONLY_EXISTS, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "login_user_already_logged_in": CkrExpectation(
@@ -5323,7 +5323,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="double_login",
         spec_ckr=CKR_USER_ALREADY_LOGGED_IN,
         compat_tuple=(CKR_USER_ALREADY_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "login_user_another_already_logged_in": CkrExpectation(
@@ -5335,7 +5335,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
             CKR_USER_ALREADY_LOGGED_IN,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "c_login_user_pin_not_initialized": CkrExpectation(
@@ -5343,7 +5343,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="user_PIN_not_initialized",
         spec_ckr=CKR_USER_PIN_NOT_INITIALIZED,
         compat_tuple=(CKR_USER_PIN_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "c_login_user_too_many_types": CkrExpectation(
@@ -5351,7 +5351,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="too_many_user_types_logged_in",
         spec_ckr=CKR_USER_TOO_MANY_TYPES,
         compat_tuple=(CKR_USER_TOO_MANY_TYPES, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "c_login_user_type_invalid": CkrExpectation(
@@ -5359,7 +5359,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="invalid_user_type",
         spec_ckr=CKR_USER_TYPE_INVALID,
         compat_tuple=(CKR_USER_TYPE_INVALID, CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_SessionCancel errors (v3.0+) ---
@@ -5368,7 +5368,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "session_cancel_operation_cancel_failed": CkrExpectation(
@@ -5376,7 +5376,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="cannot_cancel_active_operation",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
@@ -5387,7 +5387,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.11",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
 }
@@ -5407,7 +5407,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
             CKR_FUNCTION_NOT_SUPPORTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.18.1",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Module may accept seeding
     ),
     # --- C_GenerateRandom errors ---
@@ -5416,7 +5416,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         condition="NULL_buffer_pointer",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.18.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Via ctypes
     ),
     "generate_random_zero_length": CkrExpectation(
@@ -5424,7 +5424,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         condition="zero_byte_request",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.18.2",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Most modules accept 0-length request
     ),
     "generate_random_large": CkrExpectation(
@@ -5432,7 +5432,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         condition="one_megabyte_request",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.18.2",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Most modules handle large requests
     ),
     # --- C_SeedRandom additional errors ---
@@ -5446,7 +5446,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
             CKR_FUNCTION_NOT_SUPPORTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.18.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Via ctypes
     ),
     # --- Missing v2.40 entries ---
@@ -5455,7 +5455,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.18.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -5464,7 +5464,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.18.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "seed_random_no_rng": CkrExpectation(
@@ -5472,7 +5472,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         condition="no_random_number_generator",
         spec_ckr=CKR_RANDOM_NO_RNG,
         compat_tuple=(CKR_RANDOM_NO_RNG, CKR_FUNCTION_NOT_SUPPORTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.18.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "seed_user_not_logged_in": CkrExpectation(
@@ -5480,7 +5480,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.18.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
     "generate_function_canceled": CkrExpectation(
@@ -5488,7 +5488,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.18.2",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -5497,7 +5497,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.18.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "generate_random_no_rng": CkrExpectation(
@@ -5505,7 +5505,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         condition="no_random_number_generator",
         spec_ckr=CKR_RANDOM_NO_RNG,
         compat_tuple=(CKR_RANDOM_NO_RNG, CKR_FUNCTION_NOT_SUPPORTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.18.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "generate_seed_random_required": CkrExpectation(
@@ -5513,7 +5513,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         condition="token_requires_seeding_before_generation",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_SEED_RANDOM_REQUIRED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.18.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
         spec_ckr_code="CKR_SEED_RANDOM_REQUIRED",
     ),
@@ -5522,7 +5522,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.18.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 without login
     ),
 }
@@ -5538,14 +5538,14 @@ CKR_STATE: dict[str, CkrExpectation] = {
         condition="no_active_operation",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_STATE_UNSAVEABLE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.5",
+        spec_ref="PKCS#11 v3.2",
     ),
     "set_state_invalid": CkrExpectation(
         function="C_SetOperationState",
         condition="garbage_state_data",
         spec_ckr=CKR_SAVED_STATE_INVALID,
         compat_tuple=(CKR_SAVED_STATE_INVALID, CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.6",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_GetOperationState additional errors ---
     "get_state_buffer_too_small": CkrExpectation(
@@ -5553,7 +5553,7 @@ CKR_STATE: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_STATE_UNSAVEABLE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     # --- C_SetOperationState additional errors ---
@@ -5562,7 +5562,7 @@ CKR_STATE: dict[str, CkrExpectation] = {
         condition="state_requires_key_but_none_supplied",
         spec_ckr=CKR_KEY_NEEDED,
         compat_tuple=(CKR_KEY_NEEDED, CKR_SAVED_STATE_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "set_state_key_not_needed": CkrExpectation(
@@ -5570,7 +5570,7 @@ CKR_STATE: dict[str, CkrExpectation] = {
         condition="state_does_not_need_key_but_key_supplied",
         spec_ckr=CKR_KEY_NOT_NEEDED,
         compat_tuple=(CKR_KEY_NOT_NEEDED, CKR_SAVED_STATE_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     # --- Missing v2.40 entries ---
@@ -5579,7 +5579,7 @@ CKR_STATE: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_state_operation_active": CkrExpectation(
@@ -5587,7 +5587,7 @@ CKR_STATE: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "get_state_state_unsaveable": CkrExpectation(
@@ -5595,7 +5595,7 @@ CKR_STATE: dict[str, CkrExpectation] = {
         condition="operation_state_cannot_be_saved",
         spec_ckr=CKR_STATE_UNSAVEABLE,
         compat_tuple=(CKR_STATE_UNSAVEABLE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "set_state_arguments_bad": CkrExpectation(
@@ -5603,7 +5603,7 @@ CKR_STATE: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "set_state_key_changed": CkrExpectation(
@@ -5611,7 +5611,7 @@ CKR_STATE: dict[str, CkrExpectation] = {
         condition="key_changed_since_state_saved",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_KEY_CHANGED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
         spec_ckr_code="CKR_KEY_CHANGED",
     ),
@@ -5620,7 +5620,7 @@ CKR_STATE: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.6.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
 }
@@ -5636,35 +5636,35 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="non_existent_slot_ID",
         spec_ckr=CKR_SLOT_ID_INVALID,
         compat_tuple=(CKR_SLOT_ID_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     "get_token_info_invalid_slot": CkrExpectation(
         function="C_GetTokenInfo",
         condition="non_existent_slot_ID",
         spec_ckr=CKR_SLOT_ID_INVALID,
         compat_tuple=(CKR_SLOT_ID_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.3",
+        spec_ref="PKCS#11 v3.2",
     ),
     "get_mech_list_invalid_slot": CkrExpectation(
         function="C_GetMechanismList",
         condition="non_existent_slot_ID",
         spec_ckr=CKR_SLOT_ID_INVALID,
         compat_tuple=(CKR_SLOT_ID_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.5",
+        spec_ref="PKCS#11 v3.2",
     ),
     "get_mech_info_invalid": CkrExpectation(
         function="C_GetMechanismInfo",
         condition="non_existent_mechanism",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=(CKR_MECHANISM_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.6",
+        spec_ref="PKCS#11 v3.2",
     ),
     "wait_for_slot_event_no_event": CkrExpectation(
         function="C_WaitForSlotEvent",
         condition="non_blocking_no_event",
         spec_ckr=CKR_NO_EVENT,
         compat_tuple=(CKR_NO_EVENT, CKR_FUNCTION_NOT_SUPPORTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.4",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_GetSlotList additional errors ---
     "get_slot_list_buffer_too_small": CkrExpectation(
@@ -5672,7 +5672,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     # --- C_GetTokenInfo additional errors ---
@@ -5681,7 +5681,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="token_not_present_in_slot",
         spec_ckr=CKR_TOKEN_NOT_PRESENT,
         compat_tuple=(CKR_TOKEN_NOT_PRESENT, CKR_SLOT_ID_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires physical token removal
         # Untestable: requires physical token removal
     ),
@@ -5691,7 +5691,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="open_sessions_exist",
         spec_ckr=CKR_SESSION_EXISTS,
         compat_tuple=(CKR_SESSION_EXISTS, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "init_token_pin_incorrect": CkrExpectation(
@@ -5699,7 +5699,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="wrong_SO_PIN",
         spec_ckr=CKR_PIN_INCORRECT,
         compat_tuple=(CKR_PIN_INCORRECT, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     # --- C_InitPIN errors ---
@@ -5708,7 +5708,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="not_logged_in_as_SO",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.8",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_SetPIN errors ---
     "set_pin_incorrect": CkrExpectation(
@@ -5716,21 +5716,21 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="wrong_old_PIN",
         spec_ckr=CKR_PIN_INCORRECT,
         compat_tuple=(CKR_PIN_INCORRECT, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.9",
+        spec_ref="PKCS#11 v3.2",
     ),
     "set_pin_len_range": CkrExpectation(
         function="C_SetPIN",
         condition="new_PIN_too_short",
         spec_ckr=CKR_PIN_LEN_RANGE,
         compat_tuple=(CKR_PIN_LEN_RANGE, CKR_PIN_INCORRECT, CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.9",
+        spec_ref="PKCS#11 v3.2",
     ),
     "set_pin_session_read_only": CkrExpectation(
         function="C_SetPIN",
         condition="read_only_session",
         spec_ckr=CKR_SESSION_READ_ONLY,
         compat_tuple=(CKR_SESSION_READ_ONLY, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.9",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- Missing v2.40 entries ---
     "get_slot_list_arguments_bad": CkrExpectation(
@@ -5738,7 +5738,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 (proven in test_ckr_null_params.py)
     ),
     "get_slot_info_arguments_bad": CkrExpectation(
@@ -5746,7 +5746,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_token_info_arguments_bad": CkrExpectation(
@@ -5754,7 +5754,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_token_info_token_not_recognized": CkrExpectation(
@@ -5762,7 +5762,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="token_not_recognized_in_slot",
         spec_ckr=CKR_TOKEN_NOT_RECOGNIZED,
         compat_tuple=(CKR_TOKEN_NOT_RECOGNIZED, CKR_SLOT_ID_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires physical token state change
         # Untestable: requires unrecognized token hardware event
     ),
@@ -5771,7 +5771,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_mech_list_buffer_too_small": CkrExpectation(
@@ -5779,7 +5779,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "get_mech_list_token_not_recognized": CkrExpectation(
@@ -5787,7 +5787,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="token_not_recognized_in_slot",
         spec_ckr=CKR_TOKEN_NOT_RECOGNIZED,
         compat_tuple=(CKR_TOKEN_NOT_RECOGNIZED, CKR_SLOT_ID_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires physical token state change
         # Untestable: requires unrecognized token hardware event
     ),
@@ -5796,7 +5796,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_mech_info_slot_invalid": CkrExpectation(
@@ -5804,7 +5804,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="non_existent_slot_ID",
         spec_ckr=CKR_SLOT_ID_INVALID,
         compat_tuple=(CKR_SLOT_ID_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "get_mech_info_token_not_recognized": CkrExpectation(
@@ -5812,7 +5812,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="token_not_recognized_in_slot",
         spec_ckr=CKR_TOKEN_NOT_RECOGNIZED,
         compat_tuple=(CKR_TOKEN_NOT_RECOGNIZED, CKR_SLOT_ID_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.6",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires physical token state change
         # Untestable: requires unrecognized token hardware event
     ),
@@ -5821,7 +5821,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "init_token_function_canceled": CkrExpectation(
@@ -5829,7 +5829,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.7",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -5838,7 +5838,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="SO_PIN_locked",
         spec_ckr=CKR_PIN_LOCKED,
         compat_tuple=(CKR_PIN_LOCKED, CKR_PIN_INCORRECT, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "init_token_slot_invalid": CkrExpectation(
@@ -5846,7 +5846,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="non_existent_slot_ID",
         spec_ckr=CKR_SLOT_ID_INVALID,
         compat_tuple=(CKR_SLOT_ID_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "init_token_token_not_recognized": CkrExpectation(
@@ -5854,7 +5854,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="token_not_recognized_in_slot",
         spec_ckr=CKR_TOKEN_NOT_RECOGNIZED,
         compat_tuple=(CKR_TOKEN_NOT_RECOGNIZED, CKR_SLOT_ID_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.7",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires physical token state change
         # Untestable: requires unrecognized token hardware event
     ),
@@ -5863,7 +5863,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="token_is_write_protected",
         spec_ckr=CKR_TOKEN_WRITE_PROTECTED,
         compat_tuple=(CKR_TOKEN_WRITE_PROTECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 with R/O session
     ),
     "init_pin_arguments_bad": CkrExpectation(
@@ -5871,7 +5871,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.8",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "init_pin_function_canceled": CkrExpectation(
@@ -5879,7 +5879,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.8",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -5888,7 +5888,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.8",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "init_pin_pin_invalid": CkrExpectation(
@@ -5896,7 +5896,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="invalid_PIN_format",
         spec_ckr=CKR_PIN_INVALID,
         compat_tuple=(CKR_PIN_INVALID, CKR_PIN_INCORRECT, CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.8",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "init_pin_pin_len_range": CkrExpectation(
@@ -5904,7 +5904,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="PIN_length_out_of_range",
         spec_ckr=CKR_PIN_LEN_RANGE,
         compat_tuple=(CKR_PIN_LEN_RANGE, CKR_PIN_INCORRECT, CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.8",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "init_pin_session_read_only": CkrExpectation(
@@ -5912,7 +5912,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="not_in_RW_SO_session",
         spec_ckr=CKR_SESSION_READ_ONLY,
         compat_tuple=(CKR_SESSION_READ_ONLY, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.8",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "init_pin_token_write_protected": CkrExpectation(
@@ -5920,7 +5920,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="token_is_write_protected",
         spec_ckr=CKR_TOKEN_WRITE_PROTECTED,
         compat_tuple=(CKR_TOKEN_WRITE_PROTECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.8",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 with R/O session
     ),
     "init_pin_pin_too_weak": CkrExpectation(
@@ -5934,7 +5934,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.8",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via subprocess with 1-byte PIN
     ),
     "init_pin_token_not_initialized": CkrExpectation(
@@ -5942,7 +5942,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="token_not_initialized",
         spec_ckr=CKR_TOKEN_NOT_INITIALIZED,
         compat_tuple=(CKR_TOKEN_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.8",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via subprocess on uninitialized token
     ),
     "set_pin_arguments_bad": CkrExpectation(
@@ -5950,7 +5950,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "set_pin_function_canceled": CkrExpectation(
@@ -5958,7 +5958,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.9",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -5967,7 +5967,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "set_pin_pin_invalid": CkrExpectation(
@@ -5975,7 +5975,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="invalid_new_PIN_format",
         spec_ckr=CKR_PIN_INVALID,
         compat_tuple=(CKR_PIN_INVALID, CKR_PIN_INCORRECT, CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "set_pin_pin_locked": CkrExpectation(
@@ -5983,7 +5983,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="PIN_locked_after_attempts",
         spec_ckr=CKR_PIN_LOCKED,
         compat_tuple=(CKR_PIN_LOCKED, CKR_PIN_INCORRECT, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
     ),
     "set_pin_token_write_protected": CkrExpectation(
@@ -5991,7 +5991,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="token_is_write_protected",
         spec_ckr=CKR_TOKEN_WRITE_PROTECTED,
         compat_tuple=(CKR_TOKEN_WRITE_PROTECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.9",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11 with R/O session
     ),
     "wait_slot_event_arguments_bad": CkrExpectation(
@@ -5999,7 +5999,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
 }
@@ -6015,7 +6015,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="already_initialized",
         spec_ckr=CKR_CRYPTOKI_ALREADY_INITIALIZED,
         compat_tuple=(CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.1",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Some modules accept double init
     ),
     "finalize_not_initialized": CkrExpectation(
@@ -6023,14 +6023,14 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="not_initialized",
         spec_ckr=CKR_CRYPTOKI_NOT_INITIALIZED,
         compat_tuple=(CKR_CRYPTOKI_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     "get_info_null": CkrExpectation(
         function="C_GetInfo",
         condition="NULL_pInfo_pointer",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Via ctypes
     ),
     # --- C_GetFunctionList ---
@@ -6039,7 +6039,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="successful_call",
         spec_ckr=CKR_ARGUMENTS_BAD,  # Only possible error is NULL pointer
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.4",
+        spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Normal call succeeds
         testable=True,
     ),
@@ -6049,7 +6049,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="double_finalize",
         spec_ckr=CKR_CRYPTOKI_NOT_INITIALIZED,
         compat_tuple=(CKR_CRYPTOKI_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.2",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- C_GetInfo after finalize ---
     "get_info_after_finalize": CkrExpectation(
@@ -6057,7 +6057,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="called_after_C_Finalize",
         spec_ckr=CKR_CRYPTOKI_NOT_INITIALIZED,
         compat_tuple=(CKR_CRYPTOKI_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.3",
+        spec_ref="PKCS#11 v3.2",
     ),
     # --- Missing v2.40 entries ---
     "initialize_arguments_bad": CkrExpectation(
@@ -6065,7 +6065,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "initialize_cant_lock": CkrExpectation(
@@ -6073,7 +6073,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="mutex_locking_not_supported",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_CANT_LOCK not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
         spec_ckr_code="CKR_CANT_LOCK",
     ),
@@ -6082,7 +6082,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="thread_creation_required",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_NEED_TO_CREATE_THREADS not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
         spec_ckr_code="CKR_NEED_TO_CREATE_THREADS",
     ),
@@ -6091,7 +6091,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_func_status_function_not_parallel": CkrExpectation(
@@ -6099,7 +6099,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="parallel_execution_not_supported",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_FUNCTION_NOT_PARALLEL not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Legacy v2.01 parallel function - not testable
         # Untestable: legacy deprecated function
         spec_ckr_code="CKR_FUNCTION_NOT_PARALLEL",
@@ -6109,7 +6109,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "cancel_func_function_not_parallel": CkrExpectation(
@@ -6117,7 +6117,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="parallel_execution_not_supported",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_FUNCTION_NOT_PARALLEL not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.6",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Legacy v2.01 parallel function - not testable
         # Untestable: legacy deprecated function
         spec_ckr_code="CKR_FUNCTION_NOT_PARALLEL",
@@ -6127,7 +6127,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.6",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "get_interface_list_arguments_bad": CkrExpectation(
@@ -6135,7 +6135,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.8",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_interface_list_buffer_too_small": CkrExpectation(
@@ -6143,7 +6143,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.8",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "get_interface_arguments_bad": CkrExpectation(
@@ -6151,7 +6151,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_interface_buffer_too_small": CkrExpectation(
@@ -6159,7 +6159,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.4.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
 }
@@ -6487,7 +6487,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -6501,7 +6501,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
             CKR_MECHANISM_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_init_key_handle_invalid": CkrExpectation(
@@ -6509,7 +6509,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="invalid_key_handle",
         spec_ckr=CKR_KEY_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_init_key_size_range": CkrExpectation(
@@ -6517,7 +6517,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="key_size_out_of_range",
         spec_ckr=CKR_KEY_SIZE_RANGE,
         compat_tuple=KEY_SIZE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_init_key_type_inconsistent": CkrExpectation(
@@ -6530,7 +6530,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_init_mechanism_invalid": CkrExpectation(
@@ -6538,7 +6538,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="mechanism_not_supported",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_init_mechanism_param_invalid": CkrExpectation(
@@ -6551,7 +6551,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_init_operation_active": CkrExpectation(
@@ -6559,7 +6559,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_init_operation_cancel_failed": CkrExpectation(
@@ -6567,7 +6567,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="cannot_cancel_active_operation",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
@@ -6577,7 +6577,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -6586,7 +6586,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_EncryptMessage errors ---
@@ -6595,7 +6595,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_buffer_too_small": CkrExpectation(
@@ -6603,7 +6603,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_data_invalid": CkrExpectation(
@@ -6611,7 +6611,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="invalid_plaintext_content",
         spec_ckr=CKR_DATA_INVALID,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_data_len_range": CkrExpectation(
@@ -6619,7 +6619,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="data_length_out_of_range",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_function_canceled": CkrExpectation(
@@ -6627,7 +6627,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -6641,7 +6641,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_operation_active": CkrExpectation(
@@ -6649,7 +6649,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="multipart_message_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_operation_not_initialized": CkrExpectation(
@@ -6657,7 +6657,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="no_prior_C_MessageEncryptInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_EncryptMessageBegin errors ---
@@ -6666,7 +6666,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -6680,7 +6680,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_begin_operation_active": CkrExpectation(
@@ -6688,7 +6688,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="multipart_message_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_begin_operation_not_initialized": CkrExpectation(
@@ -6696,7 +6696,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="no_prior_C_MessageEncryptInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_begin_pin_expired": CkrExpectation(
@@ -6704,7 +6704,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -6713,7 +6713,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_EncryptMessageNext errors ---
@@ -6722,7 +6722,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_next_buffer_too_small": CkrExpectation(
@@ -6730,7 +6730,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_next_data_len_range": CkrExpectation(
@@ -6738,7 +6738,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="data_length_out_of_range",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.9.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_next_function_canceled": CkrExpectation(
@@ -6746,7 +6746,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.4",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -6760,7 +6760,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_next_operation_active": CkrExpectation(
@@ -6768,7 +6768,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="called_without_C_EncryptMessageBegin",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_next_operation_not_initialized": CkrExpectation(
@@ -6776,7 +6776,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="no_prior_C_MessageEncryptInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_MessageEncryptFinal errors ---
@@ -6785,7 +6785,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_final_function_canceled": CkrExpectation(
@@ -6793,7 +6793,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -6802,7 +6802,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="multipart_message_still_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_final_operation_not_initialized": CkrExpectation(
@@ -6810,7 +6810,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         condition="no_prior_C_MessageEncryptInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.9.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
 }
@@ -6827,7 +6827,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_init_function_canceled": CkrExpectation(
@@ -6835,7 +6835,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -6849,7 +6849,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
             CKR_MECHANISM_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_init_key_handle_invalid": CkrExpectation(
@@ -6857,7 +6857,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="invalid_key_handle",
         spec_ckr=CKR_KEY_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_init_key_size_range": CkrExpectation(
@@ -6865,7 +6865,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="key_size_out_of_range",
         spec_ckr=CKR_KEY_SIZE_RANGE,
         compat_tuple=KEY_SIZE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_init_key_type_inconsistent": CkrExpectation(
@@ -6878,7 +6878,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_init_mechanism_invalid": CkrExpectation(
@@ -6886,7 +6886,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="mechanism_not_supported",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_init_mechanism_param_invalid": CkrExpectation(
@@ -6899,7 +6899,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_init_operation_active": CkrExpectation(
@@ -6907,7 +6907,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_init_operation_cancel_failed": CkrExpectation(
@@ -6915,7 +6915,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="cannot_cancel_active_operation",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
@@ -6925,7 +6925,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -6934,7 +6934,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DecryptMessage errors ---
@@ -6943,7 +6943,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="AEAD_authentication_tag_invalid",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_AEAD_DECRYPT_FAILED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_AEAD_DECRYPT_FAILED",
     ),
@@ -6952,7 +6952,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_buffer_too_small": CkrExpectation(
@@ -6960,7 +6960,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_encrypted_data_invalid": CkrExpectation(
@@ -6972,7 +6972,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
             CKR_ENCRYPTED_DATA_LEN_RANGE,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_encrypted_data_len_range": CkrExpectation(
@@ -6984,7 +6984,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
             CKR_ENCRYPTED_DATA_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_function_canceled": CkrExpectation(
@@ -6992,7 +6992,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -7006,7 +7006,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_operation_active": CkrExpectation(
@@ -7014,7 +7014,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="multipart_message_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_operation_cancel_failed": CkrExpectation(
@@ -7022,7 +7022,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="cannot_cancel_active_operation",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
@@ -7032,7 +7032,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="no_prior_C_MessageDecryptInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_user_not_logged_in": CkrExpectation(
@@ -7040,7 +7040,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DecryptMessageBegin errors ---
@@ -7049,7 +7049,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_begin_function_canceled": CkrExpectation(
@@ -7057,7 +7057,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -7071,7 +7071,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_begin_operation_active": CkrExpectation(
@@ -7079,7 +7079,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="multipart_message_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_begin_operation_not_initialized": CkrExpectation(
@@ -7087,7 +7087,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="no_prior_C_MessageDecryptInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_begin_pin_expired": CkrExpectation(
@@ -7095,7 +7095,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -7104,7 +7104,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DecryptMessageNext errors ---
@@ -7113,7 +7113,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="AEAD_authentication_tag_invalid",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_AEAD_DECRYPT_FAILED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_AEAD_DECRYPT_FAILED",
     ),
@@ -7122,7 +7122,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_next_buffer_too_small": CkrExpectation(
@@ -7130,7 +7130,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_next_encrypted_data_invalid": CkrExpectation(
@@ -7142,7 +7142,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
             CKR_ENCRYPTED_DATA_LEN_RANGE,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_next_encrypted_data_len_range": CkrExpectation(
@@ -7154,7 +7154,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
             CKR_ENCRYPTED_DATA_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_next_function_canceled": CkrExpectation(
@@ -7162,7 +7162,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -7176,7 +7176,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_next_operation_active": CkrExpectation(
@@ -7184,7 +7184,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="called_without_C_DecryptMessageBegin",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_next_operation_not_initialized": CkrExpectation(
@@ -7192,7 +7192,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="no_prior_C_MessageDecryptInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_next_user_not_logged_in": CkrExpectation(
@@ -7200,7 +7200,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_MessageDecryptFinal errors ---
@@ -7209,7 +7209,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_final_function_canceled": CkrExpectation(
@@ -7217,7 +7217,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -7226,7 +7226,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="multipart_message_still_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_final_operation_not_initialized": CkrExpectation(
@@ -7234,7 +7234,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="no_prior_C_MessageDecryptInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_final_user_not_logged_in": CkrExpectation(
@@ -7242,7 +7242,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
 }
@@ -7259,7 +7259,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_init_function_canceled": CkrExpectation(
@@ -7267,7 +7267,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -7281,7 +7281,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
             CKR_MECHANISM_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_init_key_handle_invalid": CkrExpectation(
@@ -7289,7 +7289,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="invalid_key_handle",
         spec_ckr=CKR_KEY_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_init_key_size_range": CkrExpectation(
@@ -7297,7 +7297,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="key_size_out_of_range",
         spec_ckr=CKR_KEY_SIZE_RANGE,
         compat_tuple=KEY_SIZE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_init_key_type_inconsistent": CkrExpectation(
@@ -7310,7 +7310,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_init_mechanism_invalid": CkrExpectation(
@@ -7318,7 +7318,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="mechanism_not_supported",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_init_mechanism_param_invalid": CkrExpectation(
@@ -7331,7 +7331,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_init_operation_active": CkrExpectation(
@@ -7339,7 +7339,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_init_pin_expired": CkrExpectation(
@@ -7347,7 +7347,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -7356,7 +7356,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_SignMessage errors ---
@@ -7365,7 +7365,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_buffer_too_small": CkrExpectation(
@@ -7373,7 +7373,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_data_invalid": CkrExpectation(
@@ -7381,7 +7381,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="invalid_data_content",
         spec_ckr=CKR_DATA_INVALID,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_data_len_range": CkrExpectation(
@@ -7389,7 +7389,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="data_length_out_of_range",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_function_canceled": CkrExpectation(
@@ -7397,7 +7397,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -7406,7 +7406,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="signature_rejected_by_token_policy",
         spec_ckr=CKR_FUNCTION_REJECTED,
         compat_tuple=(CKR_FUNCTION_REJECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_mechanism_param_invalid": CkrExpectation(
@@ -7419,7 +7419,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_operation_active": CkrExpectation(
@@ -7427,7 +7427,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="multipart_message_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_operation_not_initialized": CkrExpectation(
@@ -7435,7 +7435,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="no_prior_C_MessageSignInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_token_resource_exceeded": CkrExpectation(
@@ -7443,7 +7443,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="token_resource_limit_reached",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
@@ -7452,7 +7452,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_SignMessageBegin errors ---
@@ -7461,7 +7461,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_begin_function_canceled": CkrExpectation(
@@ -7469,7 +7469,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -7483,7 +7483,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_begin_operation_active": CkrExpectation(
@@ -7491,7 +7491,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="multipart_message_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_begin_operation_not_initialized": CkrExpectation(
@@ -7499,7 +7499,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="no_prior_C_MessageSignInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_begin_pin_expired": CkrExpectation(
@@ -7507,7 +7507,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -7516,7 +7516,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="token_resource_limit_reached",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
@@ -7525,7 +7525,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_SignMessageNext errors ---
@@ -7534,7 +7534,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_next_buffer_too_small": CkrExpectation(
@@ -7542,7 +7542,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_next_data_len_range": CkrExpectation(
@@ -7550,7 +7550,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="data_length_out_of_range",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_next_function_canceled": CkrExpectation(
@@ -7558,7 +7558,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -7567,7 +7567,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="signature_rejected_by_token_policy",
         spec_ckr=CKR_FUNCTION_REJECTED,
         compat_tuple=(CKR_FUNCTION_REJECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_next_mechanism_param_invalid": CkrExpectation(
@@ -7580,7 +7580,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_next_operation_active": CkrExpectation(
@@ -7588,7 +7588,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="called_without_C_SignMessageBegin",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_next_operation_not_initialized": CkrExpectation(
@@ -7596,7 +7596,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="no_prior_C_MessageSignInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_next_token_resource_exceeded": CkrExpectation(
@@ -7604,7 +7604,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="token_resource_limit_reached",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
@@ -7613,7 +7613,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_MessageSignFinal errors ---
@@ -7622,7 +7622,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_final_function_canceled": CkrExpectation(
@@ -7630,7 +7630,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -7639,7 +7639,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="signature_rejected_by_token_policy",
         spec_ckr=CKR_FUNCTION_REJECTED,
         compat_tuple=(CKR_FUNCTION_REJECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_final_operation_active": CkrExpectation(
@@ -7647,7 +7647,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="multipart_message_still_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_final_operation_not_initialized": CkrExpectation(
@@ -7655,7 +7655,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="no_prior_C_MessageSignInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_final_token_resource_exceeded": CkrExpectation(
@@ -7663,7 +7663,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="token_resource_limit_reached",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
@@ -7672,7 +7672,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
 }
@@ -7689,7 +7689,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_init_function_canceled": CkrExpectation(
@@ -7697,7 +7697,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -7711,7 +7711,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
             CKR_MECHANISM_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_init_key_handle_invalid": CkrExpectation(
@@ -7719,7 +7719,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="invalid_key_handle",
         spec_ckr=CKR_KEY_HANDLE_INVALID,
         compat_tuple=HANDLE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.16.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_init_key_size_range": CkrExpectation(
@@ -7727,7 +7727,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="key_size_out_of_range",
         spec_ckr=CKR_KEY_SIZE_RANGE,
         compat_tuple=KEY_SIZE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.16.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_init_key_type_inconsistent": CkrExpectation(
@@ -7740,7 +7740,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_init_mechanism_invalid": CkrExpectation(
@@ -7748,7 +7748,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="mechanism_not_supported",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.16.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_init_mechanism_param_invalid": CkrExpectation(
@@ -7761,7 +7761,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_init_operation_active": CkrExpectation(
@@ -7769,7 +7769,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_init_pin_expired": CkrExpectation(
@@ -7777,7 +7777,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -7786,7 +7786,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.1",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_VerifyMessage errors ---
@@ -7795,7 +7795,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_data_invalid": CkrExpectation(
@@ -7803,7 +7803,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="invalid_data_content",
         spec_ckr=CKR_DATA_INVALID,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.16.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_data_len_range": CkrExpectation(
@@ -7811,7 +7811,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="data_length_out_of_range",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.16.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_function_canceled": CkrExpectation(
@@ -7819,7 +7819,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.2",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -7833,7 +7833,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_operation_active": CkrExpectation(
@@ -7841,7 +7841,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="multipart_message_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_operation_not_initialized": CkrExpectation(
@@ -7849,7 +7849,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="no_prior_C_MessageVerifyInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_signature_invalid": CkrExpectation(
@@ -7857,7 +7857,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="signature_verification_failed",
         spec_ckr=CKR_SIGNATURE_INVALID,
         compat_tuple=(CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_signature_len_range": CkrExpectation(
@@ -7865,7 +7865,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="signature_length_out_of_range",
         spec_ckr=CKR_SIGNATURE_LEN_RANGE,
         compat_tuple=(CKR_SIGNATURE_LEN_RANGE, CKR_SIGNATURE_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_token_resource_exceeded": CkrExpectation(
@@ -7873,7 +7873,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="token_resource_limit_reached",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
@@ -7883,7 +7883,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_begin_function_canceled": CkrExpectation(
@@ -7891,7 +7891,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -7905,7 +7905,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_begin_operation_active": CkrExpectation(
@@ -7913,7 +7913,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="multipart_message_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_begin_operation_not_initialized": CkrExpectation(
@@ -7921,7 +7921,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="no_prior_C_MessageVerifyInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_begin_pin_expired": CkrExpectation(
@@ -7929,7 +7929,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.3",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -7938,7 +7938,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_VerifyMessageNext errors ---
@@ -7947,7 +7947,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_next_data_len_range": CkrExpectation(
@@ -7955,7 +7955,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="data_length_out_of_range",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.16.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_next_function_canceled": CkrExpectation(
@@ -7963,7 +7963,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.4",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -7977,7 +7977,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_next_operation_active": CkrExpectation(
@@ -7985,7 +7985,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="called_without_C_VerifyMessageBegin",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_next_operation_not_initialized": CkrExpectation(
@@ -7993,7 +7993,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="no_prior_C_MessageVerifyInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_next_signature_invalid": CkrExpectation(
@@ -8001,7 +8001,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="signature_verification_failed",
         spec_ckr=CKR_SIGNATURE_INVALID,
         compat_tuple=(CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_next_signature_len_range": CkrExpectation(
@@ -8009,7 +8009,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="signature_length_out_of_range",
         spec_ckr=CKR_SIGNATURE_LEN_RANGE,
         compat_tuple=(CKR_SIGNATURE_LEN_RANGE, CKR_SIGNATURE_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_next_token_resource_exceeded": CkrExpectation(
@@ -8017,7 +8017,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="token_resource_limit_reached",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.4",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
@@ -8027,7 +8027,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_final_data_len_range": CkrExpectation(
@@ -8035,7 +8035,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="data_length_out_of_range",
         spec_ckr=CKR_DATA_LEN_RANGE,
         compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.16.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_final_function_canceled": CkrExpectation(
@@ -8043,7 +8043,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -8052,7 +8052,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="multipart_message_still_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_final_operation_not_initialized": CkrExpectation(
@@ -8060,7 +8060,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="no_prior_C_MessageVerifyInit",
         spec_ckr=CKR_OPERATION_NOT_INITIALIZED,
         compat_tuple=(CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_final_token_resource_exceeded": CkrExpectation(
@@ -8068,7 +8068,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         condition="token_resource_limit_reached",
         spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(CKR_FUNCTION_FAILED,),
-        spec_ref="PKCS#11 v3.1 Sec.5.16.5",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
@@ -8086,7 +8086,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_attribute_read_only": CkrExpectation(
@@ -8094,7 +8094,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="template_specifies_read_only_attribute",
         spec_ckr=CKR_ATTRIBUTE_READ_ONLY,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_attribute_type_invalid": CkrExpectation(
@@ -8102,7 +8102,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="template_has_invalid_attribute_type",
         spec_ckr=CKR_ATTRIBUTE_TYPE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_attribute_value_invalid": CkrExpectation(
@@ -8110,7 +8110,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="template_has_invalid_attribute_value",
         spec_ckr=CKR_ATTRIBUTE_VALUE_INVALID,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_buffer_too_small": CkrExpectation(
@@ -8118,7 +8118,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_curve_not_supported": CkrExpectation(
@@ -8126,7 +8126,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="EC_curve_not_supported",
         spec_ckr=CKR_CURVE_NOT_SUPPORTED,
         compat_tuple=(CKR_CURVE_NOT_SUPPORTED, CKR_MECHANISM_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_domain_params_invalid": CkrExpectation(
@@ -8134,7 +8134,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="domain_parameters_invalid",
         spec_ckr=CKR_DOMAIN_PARAMS_INVALID,
         compat_tuple=(CKR_DOMAIN_PARAMS_INVALID, CKR_MECHANISM_PARAM_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_function_canceled": CkrExpectation(
@@ -8142,7 +8142,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="operation_canceled_by_callback",
         spec_ckr=CKR_FUNCTION_CANCELED,
         compat_tuple=(CKR_FUNCTION_CANCELED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
@@ -8151,7 +8151,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="mechanism_not_supported",
         spec_ckr=CKR_MECHANISM_INVALID,
         compat_tuple=MECHANISM_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_mechanism_param_invalid": CkrExpectation(
@@ -8164,7 +8164,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_operation_active": CkrExpectation(
@@ -8172,7 +8172,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="operation_already_active",
         spec_ckr=CKR_OPERATION_ACTIVE,
         compat_tuple=(CKR_OPERATION_ACTIVE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_parameter_set_not_supported": CkrExpectation(
@@ -8180,7 +8180,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="PQC_parameter_set_not_supported",
         spec_ckr=CKR_PARAMETER_SET_NOT_SUPPORTED,
         compat_tuple=(CKR_PARAMETER_SET_NOT_SUPPORTED, CKR_MECHANISM_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_pin_expired": CkrExpectation(
@@ -8188,7 +8188,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="PIN_has_expired",
         spec_ckr=CKR_PIN_EXPIRED,
         compat_tuple=(CKR_PIN_EXPIRED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires token with PIN expiration policy
         # Untestable: cannot force PIN expiry on software tokens
     ),
@@ -8197,7 +8197,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="RO_session_cannot_create_objects",
         spec_ckr=CKR_SESSION_READ_ONLY,
         compat_tuple=(CKR_SESSION_READ_ONLY, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_template_incomplete": CkrExpectation(
@@ -8205,7 +8205,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="template_missing_required_attributes",
         spec_ckr=CKR_TEMPLATE_INCOMPLETE,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_template_inconsistent": CkrExpectation(
@@ -8213,7 +8213,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="template_has_conflicting_attributes",
         spec_ckr=CKR_TEMPLATE_INCONSISTENT,
         compat_tuple=TEMPLATE_ERRORS,
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_token_write_protected": CkrExpectation(
@@ -8221,7 +8221,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="token_is_write_protected",
         spec_ckr=CKR_TOKEN_WRITE_PROTECTED,
         compat_tuple=(CKR_TOKEN_WRITE_PROTECTED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_unwrapping_key_handle_invalid": CkrExpectation(
@@ -8233,7 +8233,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
             CKR_KEY_HANDLE_INVALID,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_unwrapping_key_size_range": CkrExpectation(
@@ -8241,7 +8241,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="unwrapping_key_size_out_of_range",
         spec_ckr=CKR_UNWRAPPING_KEY_SIZE_RANGE,
         compat_tuple=(CKR_UNWRAPPING_KEY_SIZE_RANGE, CKR_KEY_SIZE_RANGE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_unwrapping_key_type_inconsistent": CkrExpectation(
@@ -8253,7 +8253,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
             CKR_KEY_TYPE_INCONSISTENT,
             CKR_FUNCTION_FAILED,
         ),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_user_not_logged_in": CkrExpectation(
@@ -8261,7 +8261,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="requires_login",
         spec_ckr=CKR_USER_NOT_LOGGED_IN,
         compat_tuple=(CKR_USER_NOT_LOGGED_IN, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_wrapped_key_invalid": CkrExpectation(
@@ -8269,7 +8269,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="wrapped_key_data_invalid",
         spec_ckr=CKR_WRAPPED_KEY_INVALID,
         compat_tuple=(CKR_WRAPPED_KEY_INVALID, CKR_WRAPPED_KEY_LEN_RANGE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_wrapped_key_len_range": CkrExpectation(
@@ -8277,7 +8277,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         condition="wrapped_key_length_out_of_range",
         spec_ckr=CKR_WRAPPED_KEY_LEN_RANGE,
         compat_tuple=(CKR_WRAPPED_KEY_LEN_RANGE, CKR_WRAPPED_KEY_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.14.7",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
 }
@@ -8294,7 +8294,7 @@ CKR_ASYNC: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.21.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "async_get_id_state_unsaveable": CkrExpectation(
@@ -8302,7 +8302,7 @@ CKR_ASYNC: dict[str, CkrExpectation] = {
         condition="async_state_cannot_be_saved",
         spec_ckr=CKR_STATE_UNSAVEABLE,
         compat_tuple=(CKR_STATE_UNSAVEABLE, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.21.2",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     # --- C_AsyncJoin errors ---
@@ -8311,7 +8311,7 @@ CKR_ASYNC: dict[str, CkrExpectation] = {
         condition="NULL_pointer_argument",
         spec_ckr=CKR_ARGUMENTS_BAD,
         compat_tuple=(CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.21.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "async_join_buffer_too_small": CkrExpectation(
@@ -8319,7 +8319,7 @@ CKR_ASYNC: dict[str, CkrExpectation] = {
         condition="output_buffer_too_small",
         spec_ckr=CKR_BUFFER_TOO_SMALL,
         compat_tuple=(CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.21.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "async_join_saved_state_invalid": CkrExpectation(
@@ -8327,7 +8327,7 @@ CKR_ASYNC: dict[str, CkrExpectation] = {
         condition="saved_async_state_invalid",
         spec_ckr=CKR_SAVED_STATE_INVALID,
         compat_tuple=(CKR_SAVED_STATE_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.21.3",
+        spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
 }
@@ -8343,7 +8343,7 @@ CKR_UNTESTABLE: dict[str, CkrExpectation] = {
         condition="async_operation_pending",
         spec_ckr=CKR_PENDING,
         compat_tuple=(CKR_PENDING, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.1.1",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires async-capable token with in-flight operation
         # Documented for completeness. CKR_PENDING is returned when an async
         # operation has not yet completed. Requires v3.0+ async session support
@@ -8354,7 +8354,7 @@ CKR_UNTESTABLE: dict[str, CkrExpectation] = {
         condition="FIPS_self_test_during_init",
         spec_ckr=CKR_FIPS_SELF_TEST_FAILED,
         compat_tuple=(CKR_FIPS_SELF_TEST_FAILED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires FIPS module with corrupt integrity check
         # Documented for completeness. Returned by C_Initialize when the FIPS
         # module's built-in self-test fails. Cannot trigger without corrupting
@@ -8365,7 +8365,7 @@ CKR_UNTESTABLE: dict[str, CkrExpectation] = {
         condition="dependent_library_load_failure",
         spec_ckr=CKR_LIBRARY_LOAD_FAILED,
         compat_tuple=(CKR_LIBRARY_LOAD_FAILED, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.5",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires missing/corrupt dependent library
         # Documented for completeness. Returned by C_Initialize when a required
         # dependent library cannot be loaded. Cannot trigger without modifying
@@ -8376,7 +8376,7 @@ CKR_UNTESTABLE: dict[str, CkrExpectation] = {
         condition="malformed_public_key_used_for_verification",
         spec_ckr=CKR_PUBLIC_KEY_INVALID,
         compat_tuple=(CKR_PUBLIC_KEY_INVALID, CKR_KEY_HANDLE_INVALID, CKR_FUNCTION_FAILED),
-        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires importing a key with corrupted public key data
         # Could be tested by creating a key object with corrupted EC point or
         # RSA modulus via C_CreateObject with invalid CKA_PUBLIC_KEY_VALUE,

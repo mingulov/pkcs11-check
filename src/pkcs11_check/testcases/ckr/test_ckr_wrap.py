@@ -1,6 +1,6 @@
 """CKR compliance tests for C_WrapKey and C_UnwrapKey.
 
-Source: PKCS#11 v3.1 Sec.5.14.3 (C_WrapKey), Sec.5.14.4 (C_UnwrapKey).
+Source: PKCS#11 v3.2 (C_WrapKey, C_UnwrapKey).
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ class TestWrapKeyErrors:
     def test_key_not_extractable(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Wrapping non-extractable key -> CKR_KEY_UNEXTRACTABLE.
 
-        PKCS#11 v3.1 Sec.5.14.3: C_WrapKey on a key with CKA_EXTRACTABLE=False MUST
+        PKCS#11 v3.2: C_WrapKey on a key with CKA_EXTRACTABLE=False MUST
         return CKR_KEY_UNEXTRACTABLE.
         """
         rs = p11_raw_session
@@ -109,7 +109,7 @@ class TestWrapKeyErrors:
                     "C_WrapKey returned CKR_OK on CKA_EXTRACTABLE=False key "
                     "(expected CKR_KEY_UNEXTRACTABLE). Non-extractable keys can be exported.",
                     ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.5.14.3",
+                    reference="PKCS#11 v3.2",
                 )
             # Phase 6 C: a module that claims CKA_EXTRACTABLE=False then wraps the
             # key anyway is a self-contradiction -> fail (was masked by skip). A
@@ -119,7 +119,7 @@ class TestWrapKeyErrors:
                 claimed=claimed,
                 violated=violated,
                 label="C_WrapKey on a CKA_EXTRACTABLE=False key "
-                "(PKCS#11 v3.1 Sec.5.14.3 requires CKR_KEY_UNEXTRACTABLE)",
+                "(PKCS#11 v3.2 requires CKR_KEY_UNEXTRACTABLE)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_key)
@@ -172,7 +172,7 @@ class TestWrapKeyErrors:
     def test_wrapping_key_handle_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Stale wrap-key handle -> CKR_WRAPPING_KEY_HANDLE_INVALID.
 
-        PKCS#11 v3.1 Sec.5.14.3: "the key handle specified to be used to
+        PKCS#11 v3.2: "the key handle specified to be used to
         wrap another key is not valid."
 
         Use a destroyed handle to guarantee invalidity (handle 0 may be
@@ -211,7 +211,7 @@ class TestWrapKeyErrors:
                     "C_WrapKey returned CKR_OK on a destroyed wrap-key handle "
                     "(expected CKR_WRAPPING_KEY_HANDLE_INVALID).",
                     ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.5.14.3",
+                    reference="PKCS#11 v3.2",
                 )
                 # Use-after-destroy: the wrap key was destroyed yet C_WrapKey used
                 # it and exported key material -> self-contradiction.
@@ -221,7 +221,7 @@ class TestWrapKeyErrors:
                     label="C_WrapKey:stale-wrap-key-handle",
                     operation="C_WrapKey",
                     mechanism="CKM_AES_KEY_WRAP",
-                    spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+                    spec_ref="PKCS#11 v3.2",
                     summary=(
                         "Module accepted a stale wrap-key handle "
                         "(expected CKR_WRAPPING_KEY_HANDLE_INVALID)"
@@ -242,7 +242,7 @@ class TestWrapKeyErrors:
     def test_wrapping_key_type_inconsistent(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Wrap key of wrong type for mechanism -> CKR_WRAPPING_KEY_TYPE_INCONSISTENT.
 
-        PKCS#11 v3.1 Sec.5.14.3: "the type of the key specified to wrap
+        PKCS#11 v3.2: "the type of the key specified to wrap
         another key is not consistent with the mechanism specified for
         wrapping."
 
@@ -288,7 +288,7 @@ class TestWrapKeyErrors:
                     "C_WrapKey returned CKR_OK with a generic-secret wrap key "
                     "for CKM_AES_KEY_WRAP (expected CKR_WRAPPING_KEY_TYPE_INCONSISTENT).",
                     ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.5.14.3",
+                    reference="PKCS#11 v3.2",
                 )
                 fail_as(
                     "accepted_invalid",
@@ -296,7 +296,7 @@ class TestWrapKeyErrors:
                     label="C_WrapKey:wrapping-key-type-inconsistent",
                     operation="C_WrapKey",
                     mechanism="CKM_AES_KEY_WRAP",
-                    spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+                    spec_ref="PKCS#11 v3.2",
                     summary=(
                         "Module accepted a generic-secret key for AES wrap "
                         "(expected CKR_WRAPPING_KEY_TYPE_INCONSISTENT)"
@@ -320,7 +320,7 @@ class TestWrapKeyErrors:
     ) -> None:
         """Wrap key of out-of-range size -> CKR_WRAPPING_KEY_SIZE_RANGE.
 
-        PKCS#11 v3.1 Sec.5.14.3: "the supplied wrapping key's size is
+        PKCS#11 v3.2: "the supplied wrapping key's size is
         outside the range of key sizes that it can handle."
 
         Try to import an undersized AES key (8 bytes / 64 bits) — below
@@ -370,7 +370,7 @@ class TestWrapKeyErrors:
                     "(expected CKR_WRAPPING_KEY_SIZE_RANGE — AES requires "
                     "128/192/256 bits).",
                     ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.5.14.3",
+                    reference="PKCS#11 v3.2",
                 )
                 classify(
                     "accepted_invalid",
@@ -379,7 +379,7 @@ class TestWrapKeyErrors:
                     operation="C_WrapKey",
                     mechanism="CKM_AES_KEY_WRAP",
                     actual=rv,
-                    spec_ref="PKCS#11 v3.1 Sec.5.14.3",
+                    spec_ref="PKCS#11 v3.2",
                     summary=(
                         "Module accepted a 64-bit AES wrap key for CKM_AES_KEY_WRAP "
                         "(expected CKR_WRAPPING_KEY_SIZE_RANGE)"

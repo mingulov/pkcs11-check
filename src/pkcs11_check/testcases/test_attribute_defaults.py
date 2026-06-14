@@ -100,13 +100,13 @@ class TestSecretKeyDefaults:
             note(
                 "Module returns CKA_LOCAL=False for generated secret key (spec requires True)",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 v3.1 Sec.4.9.2: CKA_LOCAL True if key generated on token",
+                reference="PKCS#11 v3.2: CKA_LOCAL True if key generated on token",
             )
             classify(
                 "honest_deviation",
                 kind="metadata",
                 label="CKA_LOCAL default (generated AES key)",
-                spec_ref="PKCS#11 v3.1 Sec.4.9.2",
+                spec_ref="PKCS#11 v3.2",
                 summary="Module returns CKA_LOCAL=False for generated key (spec violation)",
             )
 
@@ -152,13 +152,13 @@ class TestSecretKeyDefaults:
             note(
                 "Module defaults CKA_PRIVATE to False for secret keys (spec requires True)",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 v3.1 Sec.4.9.2: default CKA_PRIVATE is True for secret keys",
+                reference="PKCS#11 v3.2: default CKA_PRIVATE is True for secret keys",
             )
             classify(
                 "honest_deviation",
                 kind="metadata",
                 label="CKA_PRIVATE default (secret key)",
-                spec_ref="PKCS#11 v3.1 Sec.4.9.2",
+                spec_ref="PKCS#11 v3.2",
                 summary="Module defaults CKA_PRIVATE=False for secret keys (spec violation)",
             )
 
@@ -210,13 +210,13 @@ class TestKeyPairDefaults:
             note(
                 "Module returns CKA_LOCAL=False for generated RSA public key (spec requires True)",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 v3.1 Sec.4.9.2: CKA_LOCAL True if key generated on token",
+                reference="PKCS#11 v3.2: CKA_LOCAL True if key generated on token",
             )
             classify(
                 "honest_deviation",
                 kind="metadata",
                 label="CKA_LOCAL default (RSA public key)",
-                spec_ref="PKCS#11 v3.1 Sec.4.9.2",
+                spec_ref="PKCS#11 v3.2",
                 summary=(
                     "Module returns CKA_LOCAL=False for generated RSA public key (spec violation)"
                 ),
@@ -235,13 +235,13 @@ class TestKeyPairDefaults:
             note(
                 "Module returns CKA_LOCAL=False for generated RSA private key (spec requires True)",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 v3.1 Sec.4.9.2: CKA_LOCAL True if key generated on token",
+                reference="PKCS#11 v3.2: CKA_LOCAL True if key generated on token",
             )
             classify(
                 "honest_deviation",
                 kind="metadata",
                 label="CKA_LOCAL default (RSA private key)",
-                spec_ref="PKCS#11 v3.1 Sec.4.9.2",
+                spec_ref="PKCS#11 v3.2",
                 summary=(
                     "Module returns CKA_LOCAL=False for generated RSA private key (spec violation)"
                 ),
@@ -270,13 +270,13 @@ class TestKeyPairDefaults:
             note(
                 "Module defaults CKA_EXTRACTABLE=True for RSA private key (spec recommends False)",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 v3.1 Sec.4.9.2: default CKA_EXTRACTABLE for private keys",
+                reference="PKCS#11 v3.2: default CKA_EXTRACTABLE for private keys",
             )
             classify(
                 "honest_deviation",
                 kind="metadata",
                 label="CKA_EXTRACTABLE default (RSA private key)",
-                spec_ref="PKCS#11 v3.1 Sec.4.9.2",
+                spec_ref="PKCS#11 v3.2",
                 summary="Module defaults CKA_EXTRACTABLE=True for RSA private key (spec violation)",
             )
 
@@ -292,13 +292,13 @@ class TestKeyPairDefaults:
             note(
                 "Module defaults CKA_PRIVATE=False for RSA private key (spec requires True)",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 v3.1 Sec.4.9.2: default CKA_PRIVATE is True for private keys",
+                reference="PKCS#11 v3.2: default CKA_PRIVATE is True for private keys",
             )
             classify(
                 "honest_deviation",
                 kind="metadata",
                 label="CKA_PRIVATE default (RSA private key)",
-                spec_ref="PKCS#11 v3.1 Sec.4.9.2",
+                spec_ref="PKCS#11 v3.2",
                 summary="Module defaults CKA_PRIVATE=False for RSA private key (spec violation)",
             )
 

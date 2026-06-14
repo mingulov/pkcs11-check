@@ -3,7 +3,7 @@
 Happy-path functional tests exercising state save/restore for active operations.
 Error-path CKR tests are in ckr/test_ckr_state.py.
 
-Source: PKCS#11 v3.1 Sec.5.6.5 (C_GetOperationState), Sec.5.6.6 (C_SetOperationState).
+Source: PKCS#11 v3.2 (C_GetOperationState, C_SetOperationState).
 
 Most PKCS#11 modules return CKR_STATE_UNSAVEABLE for active operations - this is
 spec-conformant behaviour (Sec.5.6.5: the token may return CKR_STATE_UNSAVEABLE if the
@@ -207,7 +207,7 @@ class TestGetOperationStateAPI:
                 "CKR_ARGUMENTS_BAD instead of the more specific "
                 "CKR_SAVED_STATE_INVALID",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 v3.1 C_SetOperationState return values",
+                reference="PKCS#11 v3.2 C_SetOperationState return values",
             )
         # 3-way: accepting a garbage state blob (CKR_OK) -> fail; the spec code
         # CKR_SAVED_STATE_INVALID -> pass; another clean reject (e.g.
@@ -215,7 +215,7 @@ class TestGetOperationStateAPI:
         classify_negative_rv(
             rv,
             (CKR_SAVED_STATE_INVALID,),
-            label="C_SetOperationState with a garbage state blob (PKCS#11 v3.1 Sec.5.6.6)",
+            label="C_SetOperationState with a garbage state blob (PKCS#11 v3.2)",
         )
 
 
@@ -542,7 +542,7 @@ class TestEncryptStateRoundTrip:
         Skips when the module returns CKR_STATE_UNSAVEABLE or
         CKR_FUNCTION_NOT_SUPPORTED (most software tokens do not save encrypt state).
 
-        Source: PKCS#11 v3.1 Sec.5.6.5-Sec.5.6.6.
+        Source: PKCS#11 v3.2.
         """
         _skip_missing_mechanisms(p11_raw_session, ("AES_KEY_GEN", "AES_CBC"))
         module_path, slot_index, pin_bytes = _get_params(p11_config)

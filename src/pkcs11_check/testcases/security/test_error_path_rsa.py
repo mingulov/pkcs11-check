@@ -175,7 +175,7 @@ class TestRsaPkcsDecryptErrorPaths:
     sized relative to the actual modulus, and calls C_DecryptInit + C_Decrypt.
     The module must return a CKR error, not crash.
 
-    PKCS#11 v3.1 Sec. 6.1: modules must validate ciphertext length and
+    PKCS#11 v3.2: modules must validate ciphertext length and
     format before performing any decryption. Crashes are bugs.
     """
 
@@ -281,7 +281,7 @@ class TestRsaOaepDecryptErrorPaths:
     Each test generates a fresh RSA 2048-bit keypair and crafts malformed
     OAEP input. The module must return a CKR error, not crash.
 
-    PKCS#11 v3.1 Sec. 6.1: OAEP ciphertext validation must not cause
+    PKCS#11 v3.2: OAEP ciphertext validation must not cause
     heap overflow or undefined behaviour on invalid input.
     """
 
@@ -334,7 +334,7 @@ class TestRsaVerifyCorruptedSignature:
     C_VerifyInit + C_Verify. The module must return CKR_SIGNATURE_INVALID
     or CKR_SIGNATURE_LEN_RANGE cleanly.
 
-    PKCS#11 v3.1 Sec. 6.3: C_Verify must validate the signature and return
+    PKCS#11 v3.2: C_Verify must validate the signature and return
     CKR_SIGNATURE_INVALID for a non-matching signature -- never crash.
     """
 

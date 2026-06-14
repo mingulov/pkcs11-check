@@ -2,8 +2,8 @@
 
 Happy-path functional tests exercising sign-recover and verify-recover operations.
 
-Source: PKCS#11 v3.1 Sec.5.10.5 (C_SignRecoverInit), Sec.5.10.6 (C_SignRecover),
-        Sec.5.11.5 (C_VerifyRecoverInit), Sec.5.11.6 (C_VerifyRecover).
+Source: PKCS#11 v3.2 (C_SignRecoverInit, C_SignRecover,
+        C_VerifyRecoverInit, C_VerifyRecover).
 
 C_SignRecover produces a signature from which the original data can be recovered.
 C_VerifyRecover takes a signature and recovers the original data (and verifies it).
@@ -253,7 +253,7 @@ class TestSignRecover:
         3. C_SignRecover(padded_data) -> signature.
         4. Verify signature length equals modulus size (256 bytes).
 
-        Source: PKCS#11 v3.1 Sec.5.10.5-Sec.5.10.6.
+        Source: PKCS#11 v3.2.
         """
         if not _has_rsa_x509(p11_module):
             pytest.skip("CKM_RSA_X_509 not supported by this module")
@@ -325,7 +325,7 @@ class TestSignRecover:
         3. C_VerifyRecoverInit -> C_VerifyRecover(signature) -> recovered_data.
         4. Assert recovered_data == padded_data.
 
-        Source: PKCS#11 v3.1 Sec.5.10.5-Sec.5.10.6, Sec.5.11.5-Sec.5.11.6.
+        Source: PKCS#11 v3.2.
         """
         if not _has_rsa_x509(p11_module):
             pytest.skip("CKM_RSA_X_509 not supported by this module")
@@ -429,7 +429,7 @@ class TestSignRecover:
         Passing shorter data must return CKR_DATA_LEN_RANGE or CKR_ARGUMENTS_BAD
         (or similar), not crash or silently succeed.
 
-        Source: PKCS#11 v3.1 Sec.5.10.6 error table.
+        Source: PKCS#11 v3.2 error table.
         """
         if not _has_rsa_x509(p11_module):
             pytest.skip("CKM_RSA_X_509 not supported by this module")

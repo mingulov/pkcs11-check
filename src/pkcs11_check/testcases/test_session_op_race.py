@@ -11,7 +11,7 @@ Existing `test_threading.py` runs threads but each opens a *new* session,
 which avoids the race.  These tests deliberately share one session
 across racing threads.
 
-Source: PKCS#11 v3.1 §5.1 (one active operation per session),
+Source: PKCS#11 v3.2 (one active operation per session),
         §5 each `C_*Init` lists CKR_OPERATION_ACTIVE as a valid return.
 """
 
