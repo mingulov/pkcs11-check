@@ -44,6 +44,5 @@ def test_no_test_site_emits_reserved_unclassified_reason() -> None:
         text=True,
     ).stdout.strip()
     assert not out, (
-        "'unclassified' is reserved for the plugin runtime gate; "
-        f"remove from testcases/:\n{out}"
+        f"'unclassified' is reserved for the plugin runtime gate; remove from testcases/:\n{out}"
     )
