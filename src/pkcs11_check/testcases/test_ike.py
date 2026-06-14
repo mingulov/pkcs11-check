@@ -59,7 +59,11 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import reject_or_classify, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    reject_or_classify,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -441,7 +445,13 @@ class TestIKE2PRFPlusDerive:
                 _NONCE_I + _NONCE_R,
             )
             try:
-                assert _get_value(rs, derived) == expected
+                assert_correct(
+                    actual=_get_value(rs, derived),
+                    expected=expected,
+                    label="CKM_IKE2_PRF_PLUS_DERIVE:C_DeriveKey KAT (HMAC-SHA256)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_IKE2_PRF_PLUS_DERIVE",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
@@ -478,7 +488,13 @@ class TestIKE2PRFPlusDerive:
                 bits=384,
             )
             try:
-                assert _get_value(rs, derived) == expected
+                assert_correct(
+                    actual=_get_value(rs, derived),
+                    expected=expected,
+                    label="CKM_IKE2_PRF_PLUS_DERIVE:C_DeriveKey KAT (HMAC-SHA256 multiblock)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_IKE2_PRF_PLUS_DERIVE",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
@@ -610,7 +626,13 @@ class TestIKE2PRFPlusDerive:
             d1 = _derive_generic(rs, base_key, CKM_IKE2_PRF_PLUS_DERIVE, _NONCE_I + _NONCE_R)
             d2 = _derive_generic(rs, base_key, CKM_IKE2_PRF_PLUS_DERIVE, _NONCE_I + _NONCE_R)
             try:
-                assert _get_value(rs, d1) == _get_value(rs, d2)
+                assert_correct(
+                    actual=_get_value(rs, d1),
+                    expected=_get_value(rs, d2),
+                    label="CKM_IKE2_PRF_PLUS_DERIVE:C_DeriveKey determinism",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_IKE2_PRF_PLUS_DERIVE",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, d2)
                 destroy_quietly(rs.raw, rs.sh, d1)
@@ -658,7 +680,13 @@ class TestIKEPRFDerive:
         try:
             derived = _derive_generic(rs, base_key, CKM_IKE_PRF_DERIVE, _NONCE_I + _NONCE_R)
             try:
-                assert _get_value(rs, derived) == expected
+                assert_correct(
+                    actual=_get_value(rs, derived),
+                    expected=expected,
+                    label="CKM_IKE_PRF_DERIVE:C_DeriveKey KAT (HMAC-SHA256)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_IKE_PRF_DERIVE",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
@@ -840,7 +868,13 @@ class TestIKEPRFDerive:
             d1 = _derive_generic(rs, base_key, CKM_IKE_PRF_DERIVE, _NONCE_I + _NONCE_R)
             d2 = _derive_generic(rs, base_key, CKM_IKE_PRF_DERIVE, _NONCE_I + _NONCE_R)
             try:
-                assert _get_value(rs, d1) == _get_value(rs, d2)
+                assert_correct(
+                    actual=_get_value(rs, d1),
+                    expected=_get_value(rs, d2),
+                    label="CKM_IKE_PRF_DERIVE:C_DeriveKey determinism",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_IKE_PRF_DERIVE",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, d2)
                 destroy_quietly(rs.raw, rs.sh, d1)
@@ -892,7 +926,13 @@ class TestIKE1PRFDerive:
         try:
             derived = _derive_ike1_prf(rs, base_key, keygxy_key, key_number=0)
             try:
-                assert _get_value(rs, derived) == expected
+                assert_correct(
+                    actual=_get_value(rs, derived),
+                    expected=expected,
+                    label="CKM_IKE1_PRF_DERIVE:C_DeriveKey KAT (HMAC-SHA256)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_IKE1_PRF_DERIVE",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
@@ -1003,7 +1043,13 @@ class TestIKE1PRFDerive:
             d1 = _derive_ike1_prf(rs, base_key, keygxy_key)
             d2 = _derive_ike1_prf(rs, base_key, keygxy_key)
             try:
-                assert _get_value(rs, d1) == _get_value(rs, d2)
+                assert_correct(
+                    actual=_get_value(rs, d1),
+                    expected=_get_value(rs, d2),
+                    label="CKM_IKE1_PRF_DERIVE:C_DeriveKey determinism",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_IKE1_PRF_DERIVE",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, d2)
                 destroy_quietly(rs.raw, rs.sh, d1)
@@ -1062,7 +1108,13 @@ class TestIKE1ExtendedDerive:
                 extra_data=extra_data,
             )
             try:
-                assert _get_value(rs, derived) == expected
+                assert_correct(
+                    actual=_get_value(rs, derived),
+                    expected=expected,
+                    label="CKM_IKE1_EXTENDED_DERIVE:C_DeriveKey KAT (HMAC-SHA256)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_IKE1_EXTENDED_DERIVE",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
@@ -1101,7 +1153,13 @@ class TestIKE1ExtendedDerive:
                 value_len=48,
             )
             try:
-                assert _get_value(rs, derived) == expected
+                assert_correct(
+                    actual=_get_value(rs, derived),
+                    expected=expected,
+                    label="CKM_IKE1_EXTENDED_DERIVE:C_DeriveKey KAT (HMAC-SHA256 multiblock)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_IKE1_EXTENDED_DERIVE",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
@@ -1209,7 +1267,13 @@ class TestIKE1ExtendedDerive:
             d1 = _derive_ike1_extended(rs, base_key, keygxy_key=keygxy_key, extra_data=param)
             d2 = _derive_ike1_extended(rs, base_key, keygxy_key=keygxy_key, extra_data=param)
             try:
-                assert _get_value(rs, d1) == _get_value(rs, d2)
+                assert_correct(
+                    actual=_get_value(rs, d1),
+                    expected=_get_value(rs, d2),
+                    label="CKM_IKE1_EXTENDED_DERIVE:C_DeriveKey determinism",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_IKE1_EXTENDED_DERIVE",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, d2)
                 destroy_quietly(rs.raw, rs.sh, d1)

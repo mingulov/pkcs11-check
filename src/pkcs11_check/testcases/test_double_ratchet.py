@@ -75,7 +75,12 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, reject_or_classify, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    is_known_error,
+    reject_or_classify,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.full
 
@@ -916,7 +921,18 @@ class TestX2RatchetEncrypt:
                 CKM_X2RATCHET_ENCRYPT,
                 plaintext,
             )
-            assert ciphertext != plaintext
+            if ciphertext == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_X2RATCHET_ENCRYPT:ciphertext must differ from plaintext",
+                    operation="C_Encrypt",
+                    mechanism="CKM_X2RATCHET_ENCRYPT",
+                    summary=(
+                        "CKM_X2RATCHET_ENCRYPT returned ciphertext equal to the "
+                        "plaintext -- encryption was a no-op"
+                    ),
+                )
             assert len(ciphertext) > 0
         except AssertionError as exc:
             if is_known_error(exc, _RATCHET_ERROR_RVS):
@@ -951,7 +967,18 @@ class TestX2RatchetEncrypt:
                 CKM_X2RATCHET_ENCRYPT,
                 plaintext,
             )
-            assert ciphertext != plaintext, "Ciphertext must not equal plaintext"
+            if ciphertext == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_X2RATCHET_ENCRYPT:ciphertext must differ from plaintext",
+                    operation="C_Encrypt",
+                    mechanism="CKM_X2RATCHET_ENCRYPT",
+                    summary=(
+                        "CKM_X2RATCHET_ENCRYPT returned ciphertext equal to the "
+                        "plaintext -- encryption was a no-op"
+                    ),
+                )
         except AssertionError as exc:
             if is_known_error(exc, _RATCHET_ERROR_RVS):
                 classify(
@@ -1047,7 +1074,13 @@ class TestX2RatchetEncrypt:
                 CKM_X2RATCHET_DECRYPT,
                 ciphertext,
             )
-            assert recovered == plaintext, "Roundtrip plaintext mismatch"
+            assert_correct(
+                actual=recovered,
+                expected=plaintext,
+                label="CKM_X2RATCHET_ENCRYPT/DECRYPT:roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_X2RATCHET_DECRYPT",
+            )
         except AssertionError as exc:
             if is_known_error(exc, _RATCHET_ERROR_RVS):
                 classify(
