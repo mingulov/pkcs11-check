@@ -11,25 +11,37 @@ Repo: `https://github.com/craton-co/craton-hsm-core` (Apache-2.0, no release tag
 `main@d3203bf`). Pure-Rust software HSM (SoftHSMv2 rewrite). cdylib **package** `craton-hsm`,
 **lib** `craton_hsm` → `libcraton_hsm.so`.
 
-## The fatal limitation (source + runtime evidence)
+## The fatal limitation — the PKCS#11 `.so` is entirely in-memory (source + runtime proof)
 
-- `src/token/token.rs:175-176` — `Token::new_with_config` always constructs
-  `so_pin_hash: RwLock::new(None)` and `user_pin_hash: RwLock::new(None)`.
-- Only **lockout counters** are persisted (`persist_lockout` → `LockoutStore`); a repo-wide
-  grep for serialization of `so_pin_hash`/`user_pin_hash` to the `EncryptedStore` returns
-  nothing. `persist_objects = true` persists token **objects** (keys), NOT the SO/user PIN.
-- **Runtime proof:** in the build, two consecutive `pkcs11-tool` calls (two processes):
-  - process 1 `--init-token --so-pin SoPin1234` → `Token successfully initialized`
-  - process 2 `--init-pin --pin … --so-pin SoPin1234` → `C_Login failed: CKR_TOKEN_NOT_RECOGNIZED (0xe1)`
-  The SO PIN set in process 1 is gone in process 2.
+craton **does** have a complete persistence layer — `EncryptedStore` (redb, AES-256-GCM under
+a user-PIN-derived PBKDF2 key, `src/store/encrypted_store.rs`), `ObjectStore::with_persistence`
++ `set_persist_key` + `load_from_store` (`src/store/attributes.rs`). The catch: **it is wired
+nowhere in the production path — only in `tests/persistence.rs`.**
 
-This is by design: craton's multi-process story is its **gRPC daemon** (`craton-hsm-daemon`),
-where one long-running process holds token state and clients connect. The in-process `.so` is
-a single-process backend. pkcs11-check's isolation model is multi-process, so it cannot share
-a provisioned token through the in-process module.
+1. **Objects are never persisted by the module.** `C_Initialize` (`functions.rs:310`) does
+   `Arc::new(HsmCore::new(&config))`. `HsmCore::try_new` (`core.rs:146`) **hardcodes
+   `object_store: ObjectStore::new()` (in-memory) and never reads `config.token.persist_objects`.**
+   It never constructs `ObjectStore::with_persistence(...)`. So in the PKCS#11 `.so`,
+   `persist_objects = true` is a **no-op** — no config or env can change this; it needs a code change.
+2. **Token auth/init-state is never persisted, anywhere.** `Token::new_with_config`
+   (`token.rs:175-176`) always constructs `so_pin_hash: None` / `user_pin_hash: None`. Only
+   **lockout counters** are persisted (`persist_lockout` → `LockoutStore`); a repo-wide grep for
+   serialization of `so_pin_hash`/`user_pin_hash` returns nothing (not even in tests).
+3. **Runtime proof** (two consecutive `pkcs11-tool` calls = two processes, same filesystem):
+   - process 1 `--init-token --so-pin SoPin1234` → `Token successfully initialized`
+   - process 2 `--init-pin --so-pin SoPin1234` → `C_Login failed: CKR_TOKEN_NOT_RECOGNIZED (0xe1)`
+   (`error.rs:132` maps `TokenNotInitialized → CKR_TOKEN_NOT_RECOGNIZED`.) The token from
+   process 1 does not exist in process 2.
 
-A craton-specific per-subprocess token-init hook in the suite would be required, which
-violates the project's no-per-provider-special-casing principle. So craton is dropped here.
+pkcs11-check runs each test *file* in its own subprocess (segfault survival), so a token
+provisioned at build time (or by any prior process) is invisible at run time → every login
+fails. craton's multi-process story is its **gRPC daemon** (`craton-hsm-daemon`); the
+in-process `.so` is single-process and, at `main@d3203bf`, fully in-memory.
+
+**No setting fixes this.** Making craton in-process usable for the suite needs an UPSTREAM
+change: wire `ObjectStore::with_persistence` into `HsmCore` on `persist_objects=true`, AND add
+token-init-state persistence (which does not exist). A suite-side per-subprocess token-init
+hook would violate the project's no-per-provider-special-casing principle. So craton is dropped.
 
 ## What WAS solved (recipe, for any future daemon-mode attempt)
 
