@@ -666,6 +666,49 @@ def clean_prior_shards(project_root: Path, providers: list[str]) -> None:
     )
 
 
+def generate_report(provider: str, project_root: Path) -> None:
+    """Generate the per-provider markdown report from the merged pooled artifacts.
+
+    Runs ``python -m tools.report`` as a subprocess (isolating it from the pool
+    process; the merged ``report.jsonl`` can be hundreds of MB) and writes
+    ``artifacts/<provider>-pooled/<provider>.md`` + ``<provider>.jsonl``. Failures
+    are logged but never abort the pool.
+    """
+    pooled = project_root / "artifacts" / f"{provider}-pooled"
+    report_log = pooled / "report.jsonl"
+    if not report_log.exists():
+        return
+    cmd = [
+        sys.executable,
+        "-m",
+        "tools.report",
+        "--report-log",
+        str(report_log),
+        "--provider",
+        provider,
+        "--out",
+        str(pooled),
+    ]
+    results = pooled / "results.json"
+    if results.exists():
+        cmd += ["--results-json", str(results)]
+    proc = subprocess.run(  # noqa: S603
+        cmd,
+        cwd=project_root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if proc.returncode == 0:
+        print_pool_event(f"  report: artifacts/{provider}-pooled/{provider}.md")
+    else:
+        tail = proc.stderr.decode(errors="replace").strip().splitlines()[-3:]
+        print_pool_event(
+            f"  report generation failed for {provider} (rc={proc.returncode}): {' '.join(tail)}",
+            file=sys.stderr,
+        )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Global mixed pool across PKCS#11 providers.")
     ap.add_argument(
@@ -676,6 +719,11 @@ def main() -> int:
         help="max concurrent containers (K)",
     )
     ap.add_argument("--no-build", action="store_true", help="skip rebuilding provider images")
+    ap.add_argument(
+        "--no-report",
+        action="store_true",
+        help="skip generating the per-provider markdown report after merging each provider",
+    )
     ap.add_argument(
         "--all",
         action="store_true",
@@ -877,6 +925,8 @@ def main() -> int:
             )
         if present:
             merge_shard_dirs(present, Path(f"artifacts/{p}-pooled"))
+            if not args.no_report:
+                generate_report(p, project_root)
         res = Path(f"artifacts/{p}-pooled/results.json")
         shard_time = format_elapsed(shard_time_by_provider[p])
         if res.exists():

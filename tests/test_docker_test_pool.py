@@ -166,3 +166,15 @@ def test_every_compose_service_is_network_isolated() -> None:
         assert isolated, (
             f"service {name} is not network-isolated (needs <<: *common or network_mode: none)"
         )
+
+
+def test_pool_generates_per_provider_markdown_report() -> None:
+    """After merging each provider, the pool generates a per-provider markdown report via
+    tools.report (gated by --no-report). Guards the report-generation wiring."""
+    pool = _load_test_pool()
+    assert hasattr(pool, "generate_report"), "test_pool.py must define generate_report"
+    src = (Path(__file__).resolve().parents[1] / "docker" / "test_pool.py").read_text()
+    assert "--no-report" in src, "the --no-report opt-out flag must exist"
+    assert "generate_report(p, project_root)" in src, "the merge loop must call generate_report"
+    assert "if not args.no_report:" in src, "report generation must be gated on --no-report"
+    assert "tools.report" in src, "generate_report must invoke the tools.report generator"
