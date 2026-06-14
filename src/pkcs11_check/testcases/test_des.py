@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -70,6 +71,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
+    assert_correct,
     is_known_error,
     xfail_if_known_ckr,
 )
@@ -195,10 +197,24 @@ class TestDESEncryption:
                 _TWO_BLOCKS,
                 xfail_msg=des_skip,
             )
-            assert ct != _TWO_BLOCKS
+            if ct == _TWO_BLOCKS:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_ECB:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES_ECB",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             assert len(ct) == len(_TWO_BLOCKS)
             pt = decrypt_single(rs.raw, rs.sh, key, CKM_DES_ECB, ct)
-            assert pt == _TWO_BLOCKS
+            assert_correct(
+                actual=pt,
+                expected=_TWO_BLOCKS,
+                label="CKM_DES_ECB:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES_ECB",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -223,7 +239,15 @@ class TestDESEncryption:
                 xfail_msg=des_skip,
             )
             ct2 = encrypt_single(rs.raw, rs.sh, key2, CKM_DES_ECB, _TWO_BLOCKS)
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_ECB:encrypt key independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES_ECB",
+                    summary="different keys produced identical ECB ciphertext -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -253,7 +277,15 @@ class TestDESEncryption:
                 mech_param=mech_bytes(CKM_DES_CBC, iv),
                 xfail_msg=des_skip,
             )
-            assert ct != _TWO_BLOCKS
+            if ct == _TWO_BLOCKS:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_CBC:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES_CBC",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -262,7 +294,13 @@ class TestDESEncryption:
                 ct,
                 mech_param=mech_bytes(CKM_DES_CBC, iv),
             )
-            assert pt == _TWO_BLOCKS
+            assert_correct(
+                actual=pt,
+                expected=_TWO_BLOCKS,
+                label="CKM_DES_CBC:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -300,7 +338,16 @@ class TestDESEncryption:
                 _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_DES_CBC, iv2),
             )
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_CBC:encrypt IV independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES_CBC",
+                    summary="different IVs (same key) produced identical CBC "
+                    "ciphertext -- IV ignored",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -331,7 +378,15 @@ class TestDESEncryption:
                 mech_param=mech_bytes(CKM_DES_CBC_PAD, iv),
                 xfail_msg=des_skip,
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_CBC_PAD:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES_CBC_PAD",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             # Ciphertext is padded to block boundary
             assert len(ct) % 8 == 0
             pt = decrypt_single(
@@ -342,7 +397,13 @@ class TestDESEncryption:
                 ct,
                 mech_param=mech_bytes(CKM_DES_CBC_PAD, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_DES_CBC_PAD:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES_CBC_PAD",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -372,7 +433,15 @@ class TestDESEncryption:
                 mech_param=mech_bytes(CKM_DES_OFB64, iv),
                 xfail_msg=des_skip,
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_OFB64:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES_OFB64",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             assert len(ct) == len(plaintext)
             pt = decrypt_single(
                 rs.raw,
@@ -382,7 +451,13 @@ class TestDESEncryption:
                 ct,
                 mech_param=mech_bytes(CKM_DES_OFB64, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_DES_OFB64:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES_OFB64",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -412,7 +487,15 @@ class TestDESEncryption:
                 mech_param=mech_bytes(CKM_DES_CFB8, iv),
                 xfail_msg=des_skip,
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_CFB8:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES_CFB8",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -421,7 +504,13 @@ class TestDESEncryption:
                 ct,
                 mech_param=mech_bytes(CKM_DES_CFB8, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_DES_CFB8:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES_CFB8",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -451,7 +540,15 @@ class TestDESEncryption:
                 mech_param=mech_bytes(CKM_DES_CFB64, iv),
                 xfail_msg=des_skip,
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_CFB64:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES_CFB64",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -460,7 +557,13 @@ class TestDESEncryption:
                 ct,
                 mech_param=mech_bytes(CKM_DES_CFB64, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_DES_CFB64:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES_CFB64",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -566,7 +669,15 @@ class TestDESMAC:
                     pytest.skip(des_skip)
                 raise
             mac2 = sign_single(rs.raw, rs.sh, key2, CKM_DES_MAC, data)
-            assert mac1 != mac2
+            if mac1 == mac2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_MAC:sign key independence",
+                    operation="C_Sign",
+                    mechanism="CKM_DES_MAC",
+                    summary="different keys produced identical MAC -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -656,10 +767,24 @@ class TestDES3Encryption:
         )
         try:
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_DES3_ECB, _TWO_BLOCKS)
-            assert ct != _TWO_BLOCKS
+            if ct == _TWO_BLOCKS:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES3_ECB:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES3_ECB",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             assert len(ct) == len(_TWO_BLOCKS)
             pt = decrypt_single(rs.raw, rs.sh, key, CKM_DES3_ECB, ct)
-            assert pt == _TWO_BLOCKS
+            assert_correct(
+                actual=pt,
+                expected=_TWO_BLOCKS,
+                label="CKM_DES3_ECB:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES3_ECB",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -676,7 +801,15 @@ class TestDES3Encryption:
         try:
             ct1 = encrypt_single(rs.raw, rs.sh, key1, CKM_DES3_ECB, _TWO_BLOCKS)
             ct2 = encrypt_single(rs.raw, rs.sh, key2, CKM_DES3_ECB, _TWO_BLOCKS)
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES3_ECB:encrypt key independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES3_ECB",
+                    summary="different keys produced identical ECB ciphertext -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -704,7 +837,15 @@ class TestDES3Encryption:
                 _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_DES3_CBC, iv),
             )
-            assert ct != _TWO_BLOCKS
+            if ct == _TWO_BLOCKS:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES3_CBC:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES3_CBC",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -713,7 +854,13 @@ class TestDES3Encryption:
                 ct,
                 mech_param=mech_bytes(CKM_DES3_CBC, iv),
             )
-            assert pt == _TWO_BLOCKS
+            assert_correct(
+                actual=pt,
+                expected=_TWO_BLOCKS,
+                label="CKM_DES3_CBC:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES3_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -749,7 +896,16 @@ class TestDES3Encryption:
                 _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_DES3_CBC, iv2),
             )
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES3_CBC:encrypt IV independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES3_CBC",
+                    summary="different IVs (same key) produced identical CBC "
+                    "ciphertext -- IV ignored",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -777,7 +933,15 @@ class TestDES3Encryption:
                 plaintext,
                 mech_param=mech_bytes(CKM_DES3_CBC_PAD, iv),
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES3_CBC_PAD:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES3_CBC_PAD",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             assert len(ct) % 8 == 0
             pt = decrypt_single(
                 rs.raw,
@@ -787,7 +951,13 @@ class TestDES3Encryption:
                 ct,
                 mech_param=mech_bytes(CKM_DES3_CBC_PAD, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_DES3_CBC_PAD:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES3_CBC_PAD",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -820,7 +990,15 @@ class TestDES3Encryption:
                 plaintext,
                 mech_param=mech_bytes(CKM_DES3_CBC_PAD, iv),
             )
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES3_CBC_PAD:encrypt key independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES3_CBC_PAD",
+                    summary="different keys produced identical CBC-PAD ciphertext -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -922,7 +1100,15 @@ class TestDES3MAC:
         try:
             mac1 = sign_single(rs.raw, rs.sh, key1, CKM_DES3_CMAC, data)
             mac2 = sign_single(rs.raw, rs.sh, key2, CKM_DES3_CMAC, data)
-            assert mac1 != mac2
+            if mac1 == mac2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES3_CMAC:sign key independence",
+                    operation="C_Sign",
+                    mechanism="CKM_DES3_CMAC",
+                    summary="different keys produced identical CMAC -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -978,7 +1164,15 @@ class TestDES3MAC:
         try:
             mac1 = sign_single(rs.raw, rs.sh, key1, CKM_DES3_MAC, data)
             mac2 = sign_single(rs.raw, rs.sh, key2, CKM_DES3_MAC, data)
-            assert mac1 != mac2
+            if mac1 == mac2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES3_MAC:sign key independence",
+                    operation="C_Sign",
+                    mechanism="CKM_DES3_MAC",
+                    summary="different keys produced identical MAC -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
