@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     PackedMechanism,
     attr_ulong,
@@ -69,6 +70,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    assert_correct,
     classify_discrimination,
     unwrap_key_for_mechanism_roundtrip,
     xfail_if_known_ckr,
@@ -393,7 +395,13 @@ class TestRSAX931KeyPairGen:
                 ct,
                 mech_param=oaep,
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="RSA-OAEP:decrypt(X9.31 key) roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS_OAEP",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -495,7 +503,13 @@ class TestRSAAESKeyWrap:
                     unwrapped,
                     [CKA_VALUE],
                 )
-                assert unwrapped_attrs[CKA_VALUE] == original_value
+                assert_correct(
+                    actual=unwrapped_attrs[CKA_VALUE],
+                    expected=original_value,
+                    label="CKM_RSA_AES_KEY_WRAP:unwrap AES-128 roundtrip",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_RSA_AES_KEY_WRAP",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -557,7 +571,13 @@ class TestRSAAESKeyWrap:
                     unwrapped,
                     [CKA_VALUE],
                 )
-                assert unwrapped_attrs[CKA_VALUE] == original_value
+                assert_correct(
+                    actual=unwrapped_attrs[CKA_VALUE],
+                    expected=original_value,
+                    label="CKM_RSA_AES_KEY_WRAP:unwrap AES-256 roundtrip",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_RSA_AES_KEY_WRAP",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -719,10 +739,25 @@ class TestRSAOAEPTPM:
                 raise
 
             assert len(ct) == 256  # 2048-bit RSA
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_OAEP_TPM_1_1:encrypt",
+                    operation="C_Encrypt",
+                    mechanism="CKM_RSA_PKCS_OAEP_TPM_1_1",
+                    summary="ciphertext equals plaintext -- encryption was a no-op "
+                    "(plaintext leak)",
+                )
 
             pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP_TPM_1_1, ct)
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_RSA_PKCS_OAEP_TPM_1_1:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS_OAEP_TPM_1_1",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -759,7 +794,16 @@ class TestRSAOAEPTPM:
                 raise
 
             # OAEP uses random padding - two encryptions should differ
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_OAEP_TPM_1_1:encrypt randomization",
+                    operation="C_Encrypt",
+                    mechanism="CKM_RSA_PKCS_OAEP_TPM_1_1",
+                    summary="two OAEP encryptions of the same plaintext are identical -- "
+                    "padding is not randomized",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -793,7 +837,13 @@ class TestRSAOAEPTPM:
                 raise
 
             pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP_TPM_1_1, ct)
-            assert pt == max_plaintext
+            assert_correct(
+                actual=pt,
+                expected=max_plaintext,
+                label="CKM_RSA_PKCS_OAEP_TPM_1_1:decrypt max-plaintext roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS_OAEP_TPM_1_1",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

@@ -35,6 +35,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     import_rsa_private_key_negotiated,
     import_rsa_public_key_negotiated,
     skip_unless_mechanism,
@@ -97,7 +98,13 @@ class TestRSAPublicKeyImport:
         try:
             assert imported != 0
             attrs = read_attributes(rs.raw, rs.sh, imported, [CKA_KEY_TYPE])
-            assert attrs[CKA_KEY_TYPE] == CKK_RSA
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=CKK_RSA,
+                label="RSA public-key import: CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, imported)
 
@@ -158,7 +165,13 @@ class TestRSAPrivateKeyImport:
         try:
             assert imported != 0
             attrs = read_attributes(rs.raw, rs.sh, imported, [CKA_KEY_TYPE])
-            assert attrs[CKA_KEY_TYPE] == CKK_RSA
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=CKK_RSA,
+                label="RSA private-key import: CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, imported)
 

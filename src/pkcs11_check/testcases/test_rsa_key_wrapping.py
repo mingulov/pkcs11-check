@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import xfail_as
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.pack import mech_oaep
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -46,6 +46,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._signature_policy import xfail_if_op_not_operational
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     classify_policy_enforcement,
     gen_rsa_keypair_or_xfail,
     reject_or_classify,
@@ -106,7 +107,16 @@ class TestRSAPKCSWrap:
                 aes_key,
                 CKM_RSA_PKCS,
             )
-            assert wrapped != original_value
+            if wrapped == original_value:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS:wrap AES-128 confidentiality",
+                    operation="C_WrapKey",
+                    mechanism="CKM_RSA_PKCS",
+                    summary="wrapped blob equals the raw key value -- key transport "
+                    "leaked the key in cleartext",
+                )
             assert len(wrapped) == 256  # 2048-bit RSA -> 256 bytes
 
             try:
@@ -131,7 +141,13 @@ class TestRSAPKCSWrap:
                 xfail_if_op_not_operational(exc, "CKM_RSA_PKCS unwrap (key transport)")
             try:
                 unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
-                assert unwrapped_value == original_value
+                assert_correct(
+                    actual=unwrapped_value,
+                    expected=original_value,
+                    label="CKM_RSA_PKCS:unwrap AES-128 roundtrip",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_RSA_PKCS",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -179,7 +195,13 @@ class TestRSAPKCSWrap:
                 xfail_if_op_not_operational(exc, "CKM_RSA_PKCS unwrap (key transport)")
             try:
                 unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
-                assert unwrapped_value == original_value
+                assert_correct(
+                    actual=unwrapped_value,
+                    expected=original_value,
+                    label="CKM_RSA_PKCS:unwrap AES-256 roundtrip",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_RSA_PKCS",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -210,7 +232,16 @@ class TestRSAPKCSWrap:
                 aes_key,
                 CKM_RSA_PKCS,
             )
-            assert wrapped1 != wrapped2  # Randomized padding
+            if wrapped1 == wrapped2:  # Randomized padding
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS:wrap randomization",
+                    operation="C_WrapKey",
+                    mechanism="CKM_RSA_PKCS",
+                    summary="two RSA-PKCS#1v1.5 wraps of the same key are identical -- "
+                    "padding is not randomized",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -267,7 +298,13 @@ class TestRSAOAEPWrap:
             )
             try:
                 unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
-                assert unwrapped_value == original_value
+                assert_correct(
+                    actual=unwrapped_value,
+                    expected=original_value,
+                    label="CKM_RSA_PKCS_OAEP:unwrap AES roundtrip",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_RSA_PKCS_OAEP",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -333,7 +370,13 @@ class TestWrappedKeyUsability:
                 xfail_if_op_not_operational(exc, "CKM_RSA_PKCS unwrap (key transport)")
             try:
                 pt = decrypt_single(rs.raw, rs.sh, unwrapped, CKM_AES_ECB, ct)
-                assert pt == plaintext
+                assert_correct(
+                    actual=pt,
+                    expected=plaintext,
+                    label="CKM_RSA_PKCS:unwrapped AES key usability roundtrip",
+                    operation="C_Decrypt",
+                    mechanism="CKM_AES_ECB",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
