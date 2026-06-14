@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_aes_key,
@@ -90,7 +91,14 @@ class TestSensitiveKeyValue:
                 attrs={CKA_SENSITIVE: True, CKA_EXTRACTABLE: False},
             )
         except AssertionError as exc:
-            pytest.xfail(f"Cannot import sensitive AES key for raw CKA_VALUE probe: {exc}")
+            classify(
+                "not_operational",
+                kind="policy",
+                label="import sensitive AES key for raw CKA_VALUE probe",
+                operation="C_CreateObject",
+                summary=f"Cannot import sensitive AES key for raw CKA_VALUE probe: {exc}",
+            )
+            raise
 
         try:
             sens_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
@@ -107,9 +115,17 @@ class TestSensitiveKeyValue:
             observed = bytes(value_buf)
             leaked = observed == secret or observed.startswith(secret[:16])
             if rv not in (CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID):
-                pytest.xfail(
-                    "C_GetAttributeValue(CKA_VALUE on sensitive key) rejected with "
-                    f"non-standard CKR {rv:#x}"
+                classify(
+                    "nonspec_reject",
+                    kind="policy",
+                    label="C_GetAttributeValue(CKA_VALUE on sensitive key)",
+                    operation="C_GetAttributeValue",
+                    actual=rv,
+                    expected=[CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID],
+                    summary=(
+                        "C_GetAttributeValue(CKA_VALUE on sensitive key) rejected with "
+                        f"non-standard CKR {rv:#x}"
+                    ),
                 )
             classify_policy_enforcement(
                 claimed=claimed,
@@ -139,13 +155,26 @@ class TestSensitiveKeyValue:
                 attrs={CKA_SENSITIVE: True, CKA_EXTRACTABLE: False, CKA_LABEL: label},
             )
         except AssertionError as exc:
-            pytest.xfail(f"Cannot import sensitive AES key for mixed-attribute probe: {exc}")
+            classify(
+                "not_operational",
+                kind="policy",
+                label="import sensitive AES key for mixed-attribute probe",
+                operation="C_CreateObject",
+                summary=f"Cannot import sensitive AES key for mixed-attribute probe: {exc}",
+            )
+            raise
 
         try:
             sens_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
             if sens_attrs.get(CKA_SENSITIVE) is not True:
-                pytest.xfail(
-                    "mixed C_GetAttributeValue probe requires a key that reports CKA_SENSITIVE=True"
+                classify(
+                    "honest_deviation",
+                    kind="policy",
+                    label="mixed C_GetAttributeValue sensitive probe precondition",
+                    summary=(
+                        "mixed C_GetAttributeValue probe requires a key that "
+                        "reports CKA_SENSITIVE=True"
+                    ),
                 )
 
             label_buf = (ctypes.c_ubyte * len(label))()
