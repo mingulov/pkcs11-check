@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.pack import attr_ulong, template
 from pkcs11_check.raw.recipes import find_objects, read_attributes, set_attributes
 from pkcs11_check.raw.types_std import (
@@ -81,7 +82,13 @@ class TestValidationObjects:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALIDATION_TYPE])
                 vtype = attrs[CKA_VALIDATION_TYPE]
             except AssertionError as e:
-                pytest.xfail(f"Cannot read CKA_VALIDATION_TYPE from validation object: {e}")
+                xfail_as(
+                    "not_operational",
+                    kind="metadata",
+                    label="CKO_VALIDATION:CKA_VALIDATION_TYPE",
+                    operation="C_GetAttributeValue",
+                    summary=f"Cannot read CKA_VALIDATION_TYPE from validation object: {e}",
+                )
             if vtype < vendor_base:
                 assert vtype in _KNOWN_VALIDATION_TYPES, (
                     f"Unknown non-vendor validation type 0x{vtype:08X}"
@@ -99,7 +106,13 @@ class TestValidationObjects:
                 level = attrs[CKA_VALIDATION_LEVEL]
                 assert isinstance(level, int), f"Expected int VALIDATION_LEVEL, got {type(level)}"
             except AssertionError as e:
-                pytest.xfail(f"Cannot read CKA_VALIDATION_LEVEL from validation object: {e}")
+                classify(
+                    "not_operational",
+                    kind="metadata",
+                    label="CKO_VALIDATION:CKA_VALIDATION_LEVEL",
+                    operation="C_GetAttributeValue",
+                    summary=f"Cannot read CKA_VALIDATION_LEVEL from validation object: {e}",
+                )
 
     def test_validation_authority_type_is_known(self, p11_raw_session: Any) -> None:
         """CKA_VALIDATION_AUTHORITY_TYPE is a known authority or vendor."""
@@ -149,6 +162,12 @@ class TestValidationObjects:
                 h,
                 {CKA_VALIDATION_TYPE: CKV_TYPE_UNSPECIFIED},
             )
-            pytest.fail("Module accepted C_SetAttributeValue on CKO_VALIDATION")
+            classify(
+                "self_contradiction",
+                kind="policy",
+                label="CKO_VALIDATION:read-only",
+                operation="C_SetAttributeValue",
+                summary="Module accepted C_SetAttributeValue on CKO_VALIDATION",
+            )
         except AssertionError:
             pass  # Expected: module rejected the write

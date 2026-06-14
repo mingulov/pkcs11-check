@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
 from pkcs11_check.raw.rv import ckr_name
@@ -56,7 +57,14 @@ def _read_local_flag(rs: RawSession, handle: int, label: str) -> Any | None:
             return None
         if is_known_error(exc, _LOCAL_READ_NONCLEAN_RVS):
             rv = int(getattr(exc, "rv", CKR_ATTRIBUTE_VALUE_INVALID))
-            pytest.xfail(f"{label} CKA_LOCAL read rejected with non-clean CKR: {ckr_name(rv)}")
+            xfail_as(
+                "not_operational",
+                kind="metadata",
+                label=f"{label}:CKA_LOCAL",
+                operation="C_GetAttributeValue",
+                actual=rv,
+                summary=f"{label} CKA_LOCAL read rejected with non-clean CKR: {ckr_name(rv)}",
+            )
         raise AssertionError(
             f"Unexpected error reading CKA_LOCAL on handle {handle}: {exc}"
         ) from exc
@@ -71,7 +79,13 @@ def _xfail_generated_local_false(mech_name: str, label: str) -> None:
         ComplianceLevel.NOT_RECOMMENDED,
         reference="PKCS#11 v3.1 Sec.4.9.2: CKA_LOCAL True if key generated on token",
     )
-    pytest.xfail(f"{mech_name} {label}: CKA_LOCAL=False for generated key")
+    classify(
+        "honest_deviation",
+        kind="metadata",
+        label=f"{mech_name}:{label}:CKA_LOCAL",
+        mechanism=mech_name,
+        summary=f"{mech_name} {label}: CKA_LOCAL=False for generated key",
+    )
 
 
 class TestMechKeygen:

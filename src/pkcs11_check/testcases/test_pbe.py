@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import PackedMechanism, mech_pbe, mech_pbkdf2
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
 from pkcs11_check.raw.rv import ckr_name, expect_rv
@@ -117,7 +118,14 @@ _PBE_MECH_NAMES: dict[int, str] = {
 def _expect_pbe_gen_key_rv(rv: int, mech_type: int) -> None:
     mech_name = _PBE_MECH_NAMES[int(mech_type)]
     if rv in _PBE_ERROR_RVS:
-        pytest.xfail(f"{mech_name} advertised but C_GenerateKey is not operational: {ckr_name(rv)}")
+        classify(
+            "not_operational",
+            label=f"{mech_name}:C_GenerateKey",
+            operation="C_GenerateKey",
+            mechanism=mech_name,
+            actual=rv,
+            summary=f"{mech_name} advertised but C_GenerateKey is not operational: {ckr_name(rv)}",
+        )
     expect_rv(rv, CKR_OK, context=f"{mech_name} C_GenerateKey")
 
 
@@ -598,9 +606,16 @@ class TestPBASHA1:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 spec CKM_PBA_SHA1_WITH_SHA1_HMAC, CKK_SHA_1_HMAC",
                 )
-                pytest.xfail(
-                    f"Module returns CKK_GENERIC_SECRET (0x{actual_key_type:02x}) instead of "
-                    f"CKK_SHA_1_HMAC (0x28) for CKM_PBA_SHA1_WITH_SHA1_HMAC key generation"
+                classify(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKM_PBA_SHA1_WITH_SHA1_HMAC:CKA_KEY_TYPE",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_PBA_SHA1_WITH_SHA1_HMAC",
+                    summary=(
+                        f"Module returns CKK_GENERIC_SECRET (0x{actual_key_type:02x}) instead of "
+                        f"CKK_SHA_1_HMAC (0x28) for CKM_PBA_SHA1_WITH_SHA1_HMAC key generation"
+                    ),
                 )
             assert attrs[CKA_KEY_TYPE] == CKK_SHA_1_HMAC, (
                 f"Expected CKK_SHA_1_HMAC (0x28), got 0x{actual_key_type:02x}"

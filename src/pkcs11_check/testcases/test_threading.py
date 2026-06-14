@@ -35,6 +35,8 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, fail_as
+
 pytestmark = [
     pytest.mark.stress,
     pytest.mark.destructive,
@@ -242,15 +244,25 @@ class TestConcurrentUnderOSLocking:
                 "(no multi-threaded support advertised)"
             )
         if rc is None:
-            pytest.fail(
-                f"{workload}: module HUNG under CKF_OS_LOCKING_OK concurrency "
-                f"(timeout) -- a spec-valid multi-threaded contract must make progress"
+            fail_as(
+                "crash",
+                kind="lifecycle",
+                label=f"threading:{workload}",
+                summary=(
+                    f"{workload}: module HUNG under CKF_OS_LOCKING_OK concurrency "
+                    f"(timeout) -- a spec-valid multi-threaded contract must make progress"
+                ),
             )
         if rc < 0:
-            pytest.fail(
-                f"{workload}: module SIGSEGV (signal {-rc}) under CKF_OS_LOCKING_OK "
-                f"concurrency -- a spec-valid multi-threaded contract MUST be "
-                f"crash-safe. stderr: {stderr}"
+            classify(
+                "crash",
+                kind="lifecycle",
+                label=f"threading:{workload}",
+                summary=(
+                    f"{workload}: module SIGSEGV (signal {-rc}) under CKF_OS_LOCKING_OK "
+                    f"concurrency -- a spec-valid multi-threaded contract MUST be "
+                    f"crash-safe. stderr: {stderr}"
+                ),
             )
         assert "OK" in stdout, (
             f"{workload}: child did not finish cleanly under CKF_OS_LOCKING_OK "
