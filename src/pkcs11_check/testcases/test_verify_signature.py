@@ -151,7 +151,7 @@ class TestVerifySignatureRoundtrip:
 
         SECURITY: a module that ultimately returns CKR_OK when verifying a
         signature against a mismatched public key silently accepts forged
-        signatures (Type-A crypto-correctness break).
+        signatures (crypto-correctness break).
 
         The verification verdict is produced by C_VerifySignature, not by
         C_VerifySignatureInit: for same-size RSA keys the signature length matches

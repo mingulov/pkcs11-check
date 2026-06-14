@@ -148,7 +148,7 @@ class TestGcmTagSize:
             pt = b"A" * 32
             mech = mech_gcm(CKM_AES_GCM, iv, tag_bits=tag_bits)
             overhead = tag_bits // 8 if tag_bits > 0 else 0
-            # Type-A crypto-correctness: a sub-96-bit tag forges authentication;
+            # crypto-correctness: a sub-96-bit tag forges authentication;
             # accepting it is a break (fail), an expected reject is pass, another
             # clean reject is xfail.
             reject_exc: AssertionError | None = None
@@ -201,7 +201,7 @@ class TestGcmIvWeakness:
         try:
             pt = b"B" * 32
             mech = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
-            # Type-A crypto-correctness: an empty/short GCM IV undermines the
+            # crypto-correctness: an empty/short GCM IV undermines the
             # uniqueness guarantee; accepting it is a break (fail).
             reject_exc: AssertionError | None = None
             try:
@@ -256,7 +256,7 @@ class TestGcmIvReuse:
                 mech_param=mech1,
                 output_overhead=16,
             )
-            # Second encrypt with SAME key + SAME IV. Type-A crypto-correctness:
+            # Second encrypt with SAME key + SAME IV. crypto-correctness:
             # IV reuse with the same GCM key breaks confidentiality and
             # authenticity; accepting the second encrypt is a break (fail).
             mech2 = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
@@ -530,7 +530,7 @@ class TestXtsKeyValidation:
         # 256-bit key = 128-bit data key + 128-bit tweak key (identical)
         half = b"\xaa" * 16
         key_material = half + half  # Both halves identical
-        # Type-A crypto-correctness: identical XTS key halves degenerate the
+        # crypto-correctness: identical XTS key halves degenerate the
         # construction to ECB-like behavior (NIST SP 800-38E forbids it).
         # Rejecting at import is a spec-correct rejection (pass). If import is
         # accepted, the encrypt must reject -- accepting the encrypt is a break.
@@ -585,7 +585,7 @@ _WEAK_RSA_EXPONENTS = [
 
 # Cryptographically invalid public exponents (no usable RSA key exists): e=0
 # (no inverse), e=1 (identity -- no encryption), and even exponents e=2/e=4
-# (no inverse modulo phi(n)). Accepting one of these is a Type-A
+# (no inverse modulo phi(n)). Accepting one of these is a
 # crypto-correctness break (fail). e=3 is a valid (if low) odd exponent that a
 # conformant module may legitimately accept, so it stays a posture note.
 _CRYPTO_INVALID_RSA_EXPONENTS = {0, 1, 2, 4}
@@ -621,7 +621,7 @@ class TestRsaExponent:
             reject_exc = exc
 
         if exponent in _CRYPTO_INVALID_RSA_EXPONENTS:
-            # Type-A crypto-correctness: no usable RSA key exists for this
+            # crypto-correctness: no usable RSA key exists for this
             # exponent; acceptance is a break (fail).
             try:
                 reject_or_classify(
@@ -696,7 +696,7 @@ class TestEcPointValidation:
 
             invalid_point = self._craft_invalid_point(raw_point, point_type)
 
-            # Type-A crypto-correctness: deriving a shared secret from an
+            # crypto-correctness: deriving a shared secret from an
             # off-curve / infinity / truncated public point enables an
             # invalid-curve attack that can leak the private key (NIST SP
             # 800-56A requires full public-key validation). Accepting the

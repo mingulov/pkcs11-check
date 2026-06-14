@@ -23,7 +23,7 @@ Observed offenders fail on DIFFERENT operations / inputs, so we probe several:
 Under the shared module-scoped session this single dangling operation cascaded
 CKR_OPERATION_ACTIVE onto thousands of unrelated tests; the harness now recovers
 the shared session (see tests/test_operation_active_recovery.py) and THIS test
-attributes the genuine provider bug to its source as a Type-C lifecycle
+attributes the genuine provider bug to its source as a lifecycle
 self-contradiction (the op returned a verdict, then did not honor termination).
 
 Runs on a fresh function-scoped session so any operation a non-compliant provider

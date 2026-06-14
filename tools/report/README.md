@@ -30,7 +30,7 @@ report.jsonl + results.json
   `sources`, and first-member metadata.
 - **render** (`render.py`) — emits the compact provider markdown: a counts line, crash and fail
   sections ordered by severity (`🔴 CRITICAL` → `🟠 HIGH` → `🟡 MEDIUM` → `⚪ LOW`) grouped within
-  each by finding `kind` with its legacy A/B/C/D alias, a single collapsed `🟡 deviations · xfail`
+  each by finding `kind` keyword (crypto/policy/lifecycle/metadata), a single collapsed `🟡 deviations · xfail`
   section (one count line per xfail reason with a top example, never the full enumeration), and `⚪`
   one-liners for sanctioned-refusal compliance and the unclassified backlog. The fail sections plus
   the folded tail stay near one screen even at thousands of findings.

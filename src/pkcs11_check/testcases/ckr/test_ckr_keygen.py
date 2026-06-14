@@ -114,7 +114,7 @@ class TestGenerateKeyErrors:
         try:
             if not key.value:
                 # C_GenerateKey claimed CKR_OK yet returned no key handle:
-                # claimed success not honored -> Type-C lifecycle contradiction.
+                # claimed success not honored -> lifecycle contradiction.
                 fail_as(
                     "self_contradiction",
                     kind="lifecycle",

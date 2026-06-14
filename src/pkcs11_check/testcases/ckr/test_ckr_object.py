@@ -303,7 +303,7 @@ class TestGetAttributeErrors:
         rs = p11_raw_session
         key = gen_aes_key_or_xfail(rs, 256, attrs={CKA_SENSITIVE: True})
         try:
-            # Type-B claim/effect-check: claimed = the key reports
+            # policy claim/effect-check: claimed = the key reports
             # CKA_SENSITIVE=True back; violated = the protected CKA_VALUE is
             # actually readable (read_attributes omits unavailable attributes).
             sens_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
@@ -359,7 +359,7 @@ class TestSetAttributeErrors:
             },
         )
         try:
-            # Try to change CKA_CLASS (read-only). Type-C effect-check:
+            # Try to change CKA_CLASS (read-only). lifecycle effect-check:
             # claimed_success = C_SetAttributeValue returned CKR_OK; the
             # contradiction is only real if the read-only value *actually*
             # changed. A CKR_OK no-op (value unchanged) is a wrong code with no
@@ -370,7 +370,7 @@ class TestSetAttributeErrors:
                 return  # Rejected a write to a read-only attribute -- correct.
             class_attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_CLASS])
             if class_attrs.get(CKA_CLASS) == CKO_SECRET_KEY:
-                # Type-B: claimed read-only protection on CKA_CLASS yet the write
+                # policy: claimed read-only protection on CKA_CLASS yet the write
                 # took effect -> self-contradiction.
                 fail_as(
                     "self_contradiction",
@@ -416,7 +416,7 @@ class TestCopyObjectErrors:
             tmpl.count,
             byref(new_handle),
         )
-        # Type-C use-after-destroy effect-check: claimed_success = destroy
+        # lifecycle use-after-destroy effect-check: claimed_success = destroy
         # reported CKR_OK; effect_observed = the copy of the destroyed object
         # produced a live new object handle (the object was usable after
         # destroy).
@@ -600,7 +600,7 @@ class TestDestroyObjectErrors:
     def test_destroy_already_destroyed(self, p11_raw_session: Any) -> None:
         """Double destroy -> CKR_OBJECT_HANDLE_INVALID."""
         rs = p11_raw_session
-        # Type-C use-after-destroy effect-check. Tag the object so survival is
+        # lifecycle use-after-destroy effect-check. Tag the object so survival is
         # distinguishable from handle reuse. claimed_success = the first destroy
         # reported CKR_OK; effect_observed = the tagged object is still findable
         # afterwards (the destroy was claimed but did not take effect). The

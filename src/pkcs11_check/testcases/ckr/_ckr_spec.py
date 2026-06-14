@@ -834,7 +834,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ref="PKCS#11 v3.2",
         mechanisms=["RSA_PKCS"],
         kind="crypto",
-        # Type-A crypto-correctness: a wrong-length RSA ciphertext that decrypts
+        # crypto-correctness: a wrong-length RSA ciphertext that decrypts
         # is a break for any provider, so acceptance (CKR_OK) must fail -- no
         # allow_success exemption (no per-provider demotion).
     ),
@@ -1301,7 +1301,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         ),
         spec_ref="PKCS#11 v3.2",
         kind="crypto",
-        # Type-A crypto-correctness: an AES key under an RSA signing mechanism is
+        # crypto-correctness: an AES key under an RSA signing mechanism is
         # key-type confusion; acceptance must fail for any provider.
     ),
     "init_mechanism_param_invalid": CkrExpectation(
@@ -1943,7 +1943,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         ),
         spec_ref="PKCS#11 v3.2",
         kind="crypto",
-        # Type-A crypto-correctness: initializing verify with an AES key under
+        # crypto-correctness: initializing verify with an AES key under
         # an RSA mechanism is key-type confusion; acceptance must fail for any
         # provider (no allow_success exemption).
     ),
@@ -1983,7 +1983,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ref="PKCS#11 v3.2",
         priority_note="Higher priority than CKR_SIGNATURE_INVALID",
         kind="crypto",
-        # Type-A crypto-correctness: a wrong-length RSA signature that verifies
+        # crypto-correctness: a wrong-length RSA signature that verifies
         # (CKR_OK) is a break for any provider; acceptance must fail (no
         # allow_success exemption).
     ),

@@ -53,7 +53,7 @@ def _destroy_object(raw: Any, sh: int, handle: int) -> None:
 
 
 def _assert_destroyed_handle_error(rv: int, operation: str) -> None:
-    # Type-C use-after-destroy 3-way classification. The object was already
+    # lifecycle use-after-destroy 3-way classification. The object was already
     # destroyed (the prior C_DestroyObject was asserted to return CKR_OK), so
     # the operation must reject the stale handle:
     #   CKR_OK              -> fail (use-after-destroy: the op succeeded),

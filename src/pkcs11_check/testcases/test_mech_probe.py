@@ -146,7 +146,7 @@ class TestMechProbeNoRegistry:
         if entry.flags == 0:
             # Flags == 0 is a spec violation but not a crash: C_GetMechanismList
             # advertises the mechanism while C_GetMechanismInfo sets no operation
-            # bits -- the two query interfaces self-contradict (Type-D metadata).
+            # bits -- the two query interfaces self-contradict (metadata).
             classify(
                 "self_contradiction",
                 kind="metadata",

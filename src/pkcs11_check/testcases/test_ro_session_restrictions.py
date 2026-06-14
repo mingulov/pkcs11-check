@@ -852,7 +852,7 @@ class TestROWrapUnwrapRestrictions:
                     assert False, "Unwrap to TOKEN=True succeeded in RO session"
                 except AssertionError as e:
                     if "Unwrap to TOKEN=True succeeded" in str(e):
-                        raise  # Type-A acceptance must hard-fail
+                        raise  # crypto-correctness acceptance must hard-fail
                     reject_or_classify(
                         e,
                         _RO_OR_UNSUPPORTED_RVS,

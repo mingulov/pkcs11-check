@@ -391,7 +391,7 @@ class TestWrappedKeyUsability:
         CKR_ACTION_PROHIBITED if the key has CKA_EXTRACTABLE=False.
 
         SECURITY: A module that wraps a non-extractable key allows key material
-        exfiltration in violation of the PKCS#11 security model. This is a Type-B
+        exfiltration in violation of the PKCS#11 security model. This is a policy
         self-contradiction (the key reads back CKA_EXTRACTABLE=False, then its
         material leaves the token) and must FAIL, not xfail -- consistent with
         the sensitive-value and Tookan extractable-escalation security tests.
@@ -440,7 +440,7 @@ class TestWrappedKeyUsability:
                 )
                 return
 
-            # Wrap succeeded on a verified non-extractable key -- Type-B: claimed
+            # Wrap succeeded on a verified non-extractable key -- policy: claimed
             # the protection (CKA_EXTRACTABLE=False) then violated it (material
             # left the token).
             classify_policy_enforcement(

@@ -732,10 +732,10 @@ class TestInvalidECCurve:
         bad_oid = bytes([0x06, 0x05, 0xDE, 0xAD, 0xBE, 0xEF, 0x00])
         fake_point = b"\x04" + b"\x01" * 64  # Fake uncompressed point
 
-        # Type-A crypto-correctness: importing an EC public key with an invalid /
+        # crypto-correctness: importing an EC public key with an invalid /
         # unknown curve OID and a bogus point is a cryptographic correctness break
         # (CVE-2021-3798 pattern). Acceptance -> fail; expected curve/param reject ->
-        # pass; another clean reject code -> xfail. No claim-check (Type A).
+        # pass; another clean reject code -> xfail. No claim-check (crypto).
         reject_exc: AssertionError | None = None
         try:
             obj = create_object(

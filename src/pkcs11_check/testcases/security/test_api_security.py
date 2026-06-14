@@ -225,7 +225,7 @@ class TestWrapDecryptOracle:
         try:
             # The target is created PROTECTED (non-extractable + sensitive) so the
             # wrap-decrypt oracle, if it works, extracts material the module
-            # promised to protect -- a Type-B self-contradiction.
+            # promised to protect -- a policy self-contradiction.
             target_h = _gen_api_security_aes_key(
                 rs,
                 attrs={CKA_EXTRACTABLE: False, CKA_SENSITIVE: True},
@@ -362,7 +362,7 @@ class TestAttributeLaunderingViaCopy:
             attrs={CKA_EXTRACTABLE: False, CKA_COPYABLE: True},
         )
         try:
-            # Type-B claim/effect-check. claimed = the original key reads back
+            # policy claim/effect-check. claimed = the original key reads back
             # CKA_EXTRACTABLE=False (the module honored the protection); violated
             # = the escalated copy actually exposes CKA_VALUE.
             orig = read_attributes(rs.raw, rs.sh, key_h, [CKA_EXTRACTABLE])

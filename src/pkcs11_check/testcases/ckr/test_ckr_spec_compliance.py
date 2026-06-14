@@ -218,7 +218,7 @@ class TestCKRAttributeCompliance:
         rs = p11_raw_session
         key = gen_aes_key_or_xfail(rs, 256, attrs={CKA_SENSITIVE: True})
         try:
-            # Type-B claim/effect-check: claimed = the key reports
+            # policy claim/effect-check: claimed = the key reports
             # CKA_SENSITIVE=True back; violated = the protected CKA_VALUE is
             # actually readable (read_attributes omits unavailable attributes).
             sens_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])

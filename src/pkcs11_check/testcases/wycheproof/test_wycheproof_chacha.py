@@ -60,7 +60,7 @@ def test_chacha20_poly1305(p11_module_session: Any, vec_id: str, vec: dict[str, 
 
     Decrypts the supplied ct||tag so invalid vectors actually exercise tag
     rejection. A module that decrypts a forged/modified ciphertext or tag is a
-    crypto-correctness break (Type A -> fail). The previous produce-direction
+    crypto-correctness break (-> fail). The previous produce-direction
     (encrypt + compare) could never reject an invalid vector because a fresh
     correct ciphertext never matched the modified expected output.
     """

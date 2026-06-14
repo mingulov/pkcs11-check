@@ -61,7 +61,7 @@ class TestVerifyInitErrors:
             exp = CKR_VERIFY["init_key_type_inconsistent"]
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
             rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), key)
-            # Type-A crypto-correctness: accepting an AES key under an RSA verify
+            # crypto-correctness: accepting an AES key under an RSA verify
             # mechanism (CKR_OK) is key-type confusion -> fail; an expected
             # reject -> pass; another clean reject -> xfail (3-way assert_ckr).
             assert_ckr(exp, rv, ckr_strict)
@@ -77,7 +77,7 @@ class TestVerifyInitErrors:
         mech = mech_simple(CKM_SHA256_RSA_PKCS)
         rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub)
         if rv == CKR_OK:
-            # Type-C use-after-destroy: destroy claimed CKR_OK yet C_VerifyInit
+            # lifecycle use-after-destroy: destroy claimed CKR_OK yet C_VerifyInit
             # on the same handle still succeeded -> contradiction.
             classify_lifecycle_effect(
                 claimed_success=destroy_rv == CKR_OK,
@@ -155,7 +155,7 @@ class TestVerifyErrors:
             # CKR_DEVICE_ERROR is a clean non-spec reject -> classified as a noted
             # deviation (xfail) by assert_ckr via _TOKEN_UNIVERSAL; no provider-
             # specific pre-guard (it would leak provider identity into the report).
-            # Type-A crypto-correctness: a wrong-length RSA signature that
+            # crypto-correctness: a wrong-length RSA signature that
             # verifies (CKR_OK) is a break -> fail; an expected reject -> pass;
             # another clean reject -> xfail (3-way assert_ckr).
             assert_ckr(exp, rv, ckr_strict)

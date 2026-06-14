@@ -58,7 +58,7 @@ class TestSensitiveKeyValue:
             attrs={CKA_SENSITIVE: True},
         )
         try:
-            # Type-B claim/effect-check. read_attributes omits unavailable
+            # policy claim/effect-check. read_attributes omits unavailable
             # (sensitive) attributes rather than raising, so verify the effect:
             #   claimed  = the key reports CKA_SENSITIVE=True back,
             #   violated = the protected CKA_VALUE is actually readable.
@@ -233,7 +233,7 @@ class TestSensitiveKeyValue:
             private_attrs={CKA_SENSITIVE: True},
         )
         try:
-            # Type-B claim/effect-check (see test_sensitive_aes_value_not_readable).
+            # policy claim/effect-check (see test_sensitive_aes_value_not_readable).
             sens_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_SENSITIVE])
             claimed = sens_attrs.get(CKA_SENSITIVE) is True
             exp_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_PRIVATE_EXPONENT])

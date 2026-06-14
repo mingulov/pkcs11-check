@@ -189,7 +189,7 @@ def test_hmac_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, An
 
     Verifies the *supplied* tag with C_Verify so invalid vectors actually
     exercise rejection. A module that verifies an invalid (forged) tag as valid
-    is a crypto-correctness break (Type A -> fail). The previous
+    is a crypto-correctness break (-> fail). The previous
     produce-direction (C_Sign + compare) could never reject an invalid vector
     because a fresh correct tag never matched the modified expected tag. A
     valid MAC the module declines to verify (e.g. an unsupported truncated tag

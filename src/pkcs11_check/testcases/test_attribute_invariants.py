@@ -1,4 +1,4 @@
-"""Derived-attribute invariant tests (classification model Type D).
+"""Derived-attribute invariant tests (classification model: the metadata kind).
 
 PKCS#11 defines several *derived* attributes whose value is fixed by the
 history of a key, not set independently by the caller:
@@ -13,7 +13,7 @@ known: a key created ``CKA_EXTRACTABLE=False`` and never changed MUST report
 ``CKA_NEVER_EXTRACTABLE=True``; a key created ``CKA_SENSITIVE=True`` and never
 changed MUST report ``CKA_ALWAYS_SENSITIVE=True``.
 
-Classification (Type D, derived-invariant contradiction):
+Classification (metadata, derived-invariant contradiction):
 
 - precondition holds (the base attribute reads back the protective value) AND
   the derived attribute contradicts it -> ``fail`` (the module contradicts its
@@ -74,7 +74,7 @@ def _classify_derived_invariant(
     derived_value: Any,
     label: str,
 ) -> None:
-    """Type-D derived-attribute invariant classifier.
+    """Derived-attribute invariant classifier (metadata).
 
     Args:
         base_holds: the base attribute (e.g. ``CKA_EXTRACTABLE=False``) actually

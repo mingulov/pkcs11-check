@@ -5,7 +5,7 @@ absent). What it must NOT do is claim success and not honor it: corePKCS11
 (probed 2026-06-09, triage H6) accepts a secp256k1 public key with CKR_OK while
 binding the stored key to P-256 — the resulting object is incoherent
 (C_GetAttributeValue returns CKR_OBJECT_HANDLE_INVALID; C_VerifyInit returns
-CKR_KEY_HANDLE_INVALID). Claimed success that is not honored is a Type-C
+CKR_KEY_HANDLE_INVALID). Claimed success that is not honored is a lifecycle
 self-contradiction (classification model): ``fail``, never xfail/skip.
 
 KAT suites (e.g. Wycheproof ECDSA) skip vectors of such curves via the same
@@ -83,7 +83,7 @@ def test_ec_public_key_import_is_coherent(p11_module_session: Any, curve: str) -
                 operation="C_CreateObject",
                 summary=(
                     f"{curve}: C_CreateObject returned CKR_OK but the object is not "
-                    f"honored (Type-C self-contradiction): {defect}"
+                    f"honored (lifecycle self-contradiction): {defect}"
                 ),
             )
     finally:

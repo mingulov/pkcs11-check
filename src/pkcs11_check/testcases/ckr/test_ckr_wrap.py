@@ -87,7 +87,7 @@ class TestWrapKeyErrors:
             check[0].pValue = ctypes.cast(ctypes.pointer(val), ctypes.c_void_p)
             check[0].ulValueLen = ctypes.sizeof(val)
             rv = rs.raw.C_GetAttributeValue(rs.sh, target, check, 1)
-            # Type-B claim-check: did the module honour CKA_EXTRACTABLE=False?
+            # policy claim-check: did the module honour CKA_EXTRACTABLE=False?
             claimed = rv == CKR_OK and val.value == 0
 
             mech = mech_simple(CKM_AES_KEY_WRAP)
@@ -390,7 +390,7 @@ class TestWrapKeyErrors:
             #   * a size-or-type spec code -> pass,
             #   * any other clean reject (e.g. softhsm2's catch-all
             #     CKR_GENERAL_ERROR) -> xfail (an honest, recorded deviation),
-            #   * CKR_OK -> fail (already handled above as the Type-A break).
+            #   * CKR_OK -> fail (already handled above as the crypto-correctness break).
             # In strict mode (ckr_strict) a non-spec code is promoted to a hard
             # fail, preserving the strict/compat distinction.
             assert_ckr(CKR_WRAP["wrap_wrapping_key_size_range"], rv, ckr_strict)

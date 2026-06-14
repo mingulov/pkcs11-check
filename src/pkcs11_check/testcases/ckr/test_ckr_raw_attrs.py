@@ -28,7 +28,7 @@ pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
 
 def _classify_permission_flag(out: str, *, label: str) -> None:
-    """Type-B claim/effect-check from subprocess output.
+    """policy claim/effect-check from subprocess output.
 
     The subprocess prints ``CLAIM:0`` (the key read the permission flag back as
     False -- the module claims the restriction) or ``CLAIM:1`` (the flag was not
@@ -142,7 +142,7 @@ else:
 """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_EncryptInit with CKA_ENCRYPT=False")
-        # Type-B: enforcing CKA_ENCRYPT=False is mandatory (PKCS#11 v3.2).
+        # policy: enforcing CKA_ENCRYPT=False is mandatory (PKCS#11 v3.2).
         # claimed = the key read CKA_ENCRYPT back as False; violated = EncryptInit
         # still returned CKR_OK.
         _classify_permission_flag(
@@ -179,7 +179,7 @@ else:
 """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_SignInit with CKA_SIGN=False")
-        # Type-B: enforcing CKA_SIGN=False is mandatory (PKCS#11 v3.2).
+        # policy: enforcing CKA_SIGN=False is mandatory (PKCS#11 v3.2).
         _classify_permission_flag(
             out,
             label="C_SignInit with a CKA_SIGN=False key "
@@ -219,7 +219,7 @@ else:
 """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_DecryptInit with CKA_DECRYPT=False")
-        # Type-B: enforcing CKA_DECRYPT=False is mandatory (PKCS#11 v3.2).
+        # policy: enforcing CKA_DECRYPT=False is mandatory (PKCS#11 v3.2).
         _classify_permission_flag(
             out,
             label="C_DecryptInit with a CKA_DECRYPT=False key "

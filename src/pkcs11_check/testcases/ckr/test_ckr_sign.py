@@ -59,7 +59,7 @@ class TestSignInitErrors:
         try:
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), key)
-            # Type-A crypto-correctness: accepting an AES key under an RSA signing
+            # crypto-correctness: accepting an AES key under an RSA signing
             # mechanism (CKR_OK) is key-type confusion -> fail; an expected reject
             # -> pass; another clean reject -> xfail (3-way assert_ckr).
             assert_ckr(CKR_SIGN["init_key_type_inconsistent"], rv, ckr_strict)
@@ -100,7 +100,7 @@ class TestSignInitErrors:
         mech = mech_simple(CKM_SHA256_RSA_PKCS)
         rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
         if rv == CKR_OK:
-            # Type-C use-after-destroy: destroy claimed CKR_OK yet C_SignInit on
+            # lifecycle use-after-destroy: destroy claimed CKR_OK yet C_SignInit on
             # the same handle still succeeded -> contradiction.
             classify_lifecycle_effect(
                 claimed_success=destroy_rv == CKR_OK,

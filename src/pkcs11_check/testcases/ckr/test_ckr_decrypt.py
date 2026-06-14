@@ -200,7 +200,7 @@ class TestDecryptDataErrors:
             out_len = CK_ULONG(256)
             out_buf = (ctypes.c_ubyte * 256)()
             rv = rs.raw.C_Decrypt(rs.sh, data, 128, out_buf, byref(out_len))
-            # Type-A crypto-correctness: accepting a wrong-length RSA ciphertext
+            # crypto-correctness: accepting a wrong-length RSA ciphertext
             # (CKR_OK) is a break for any provider -> fail; an expected reject ->
             # pass; another clean reject code -> xfail (3-way assert_ckr).
             assert_ckr(exp, rv, ckr_strict)
@@ -285,7 +285,7 @@ class TestDecryptDataErrors:
         mech = mech_simple(CKM_AES_ECB)
         rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
         if rv == CKR_OK:
-            # Type-C use-after-destroy: the destroy claimed success yet
+            # lifecycle use-after-destroy: the destroy claimed success yet
             # C_DecryptInit on the same handle still succeeded -> contradiction.
             classify_lifecycle_effect(
                 claimed_success=destroy_rv == CKR_OK,

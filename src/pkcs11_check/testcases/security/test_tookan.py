@@ -213,7 +213,7 @@ class TestSensitivePreservation:
             attrs={CKA_EXTRACTABLE: False},
         )
         try:
-            # Type-B claim/effect-check. claimed = the original key reads back
+            # policy claim/effect-check. claimed = the original key reads back
             # CKA_EXTRACTABLE=False; violated = the copy reads back True.
             orig = read_attributes(rs.raw, rs.sh, key, [CKA_EXTRACTABLE])
             claimed = orig.get(CKA_EXTRACTABLE) is False
@@ -268,7 +268,7 @@ class TestWrapExtraction:
 
         # The target is created PROTECTED (non-extractable + sensitive) so that
         # any plaintext recovered from the wrapped blob is material the module
-        # promised never to release -- a Type-B self-contradiction.
+        # promised never to release -- a policy self-contradiction.
         target_h = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -287,7 +287,7 @@ class TestWrapExtraction:
             #   - any other clean reject code -> honest non-spec deviation (still
             #     no extraction) -> xfail.
             #   - CKR_OK -> the wrap succeeded; only THEN can the decrypt leg
-            #     reveal key material, which is the actual Type-B violation.
+            #     reveal key material, which is the actual policy violation.
             try:
                 wrapped = wrap_key(rs.raw, rs.sh, wrap_key_h, target_h, CKM_AES_KEY_WRAP)
             except AssertionError as exc:

@@ -446,7 +446,7 @@ class TestEcdhKeyAgreement:
 
             # The module claimed EC keygen success (gen_ec_keypair asserts CKR_OK).
             # CKA_EC_POINT is a mandatory, non-sensitive attribute on an EC public
-            # key, so an empty readback contradicts the claimed success (Type-C
+            # key, so an empty readback contradicts the claimed success (lifecycle
             # self-contradiction) -> fail, not skip.
             classify_lifecycle_effect(
                 claimed_success=True,

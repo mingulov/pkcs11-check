@@ -914,7 +914,7 @@ def reject_or_classify(
 
 
 def classify_policy_enforcement(*, claimed: bool, violated: bool, label: str) -> None:
-    """Type-B attribute/permission self-contradiction classifier.
+    """Policy attribute/permission self-contradiction classifier.
 
     Args:
         claimed: the module reported the protective attribute back (e.g. a
@@ -949,7 +949,7 @@ def classify_policy_enforcement(*, claimed: bool, violated: bool, label: str) ->
 
 
 def classify_lifecycle_effect(*, claimed_success: bool, effect_observed: bool, label: str) -> None:
-    """Type-C lifecycle/state self-contradiction classifier.
+    """Lifecycle/state self-contradiction classifier.
 
     Args:
         claimed_success: the prior operation returned ``CKR_OK`` (e.g. a

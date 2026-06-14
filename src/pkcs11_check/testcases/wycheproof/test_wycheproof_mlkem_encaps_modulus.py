@@ -20,7 +20,7 @@ Classification (negative op, per docs/classification-model-design.md):
   ``CKA_VALUE``)            -> ``pass``
 * rejected with some other clean ``CKR``                          -> ``xfail``
 * accepted (encapsulation succeeds with a non-canonical ``ek``)   -> ``fail``
-  (Type A: the module performed a cryptographic operation with a malformed key,
+  (crypto: the module performed a cryptographic operation with a malformed key,
   a FIPS 203 modulus-check violation)
 
 The test only runs where the module can import a *valid* raw ``ek`` and

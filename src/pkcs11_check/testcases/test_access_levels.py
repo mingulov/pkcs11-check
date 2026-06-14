@@ -1046,7 +1046,7 @@ class TestTrustedAttribute:
                 buf = (c_ubyte * out_len.value)()
                 rv = rs.raw.C_WrapKey(rs.sh, mech.byref(), wrapper_h, target_h, buf, byref(out_len))
             if rv == CKR_OK:
-                # Type-B: the target read back CKA_WRAP_WITH_TRUSTED=True (verified
+                # policy: the target read back CKA_WRAP_WITH_TRUSTED=True (verified
                 # above), yet an untrusted (non-CKA_TRUSTED) wrapping key wrapped
                 # it -- the module claimed the protection then violated it.
                 classify_policy_enforcement(
@@ -1504,7 +1504,7 @@ class TestPublicSessionRestrictions:
         C_GenerateKey for a private object from a public session must return
         CKR_USER_NOT_LOGGED_IN. A module that creates a usable private object
         without authentication has claimed the protection (CKA_PRIVATE=True reads
-        back) then violated it -- a Type-B self-contradiction, not a soft note.
+        back) then violated it -- a policy self-contradiction, not a soft note.
         """
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
@@ -1541,7 +1541,7 @@ class TestPublicSessionRestrictions:
                     "(unauthenticated) session",
                 )
                 return
-            # Created without login -- Type-B claim/effect check: claimed is that
+            # Created without login -- policy claim/effect check: claimed is that
             # the object reads back CKA_PRIVATE=True; violated is that it exists at
             # all (created by an unauthenticated session).
             priv = read_attributes(rs.raw, s1, created, [CKA_PRIVATE]).get(CKA_PRIVATE)
@@ -1620,7 +1620,7 @@ class TestPublicSessionRestrictions:
         Complements the C_GenerateKey path: the private-object login rule applies
         to direct object creation and to session (not only token) objects.
         Expected CKR_USER_NOT_LOGGED_IN; creating a usable private object without
-        authentication is a Type-B self-contradiction, not a soft note.
+        authentication is a policy self-contradiction, not a soft note.
         """
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
@@ -1657,7 +1657,7 @@ class TestPublicSessionRestrictions:
                     "(unauthenticated) session",
                 )
                 return
-            # Created without login -- Type-B claim/effect check.
+            # Created without login -- policy claim/effect check.
             priv = read_attributes(rs.raw, s1, created, [CKA_PRIVATE]).get(CKA_PRIVATE)
             classify_policy_enforcement(
                 claimed=priv is True,

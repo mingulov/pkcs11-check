@@ -882,7 +882,7 @@ class TestMLKEMNegative:
             )
             if rv == CKR_OK and handle.value:
                 destroy_quietly(rs.raw, rs.sh, handle.value)
-            # Type-A crypto-correctness: accepting CKA_VALUE in the decapsulation
+            # crypto-correctness: accepting CKA_VALUE in the decapsulation
             # template lets the caller dictate the derived key's secret bytes
             # instead of deriving them -- a break for any provider -> fail; an
             # expected template reject -> pass; another clean reject -> xfail.
@@ -982,7 +982,7 @@ class TestMLKEMNegative:
                 )
                 return
 
-            # rv == CKR_OK -- Type-B claim/effect-check. The protection is only
+            # rv == CKR_OK -- policy claim/effect-check. The protection is only
             # claimed if the private key actually reads back CKA_DECAPSULATE=False
             # (a module that did not honor the flag at create has not claimed the
             # protection -> honest non-support -> xfail). If it was claimed and
@@ -1009,7 +1009,7 @@ class TestMLKEMNegative:
 
         Mirrors ``test_decapsulate_missing_permission_flag``: a clean rejection
         classifies 3-way, while a *full* successful encapsulation against a key
-        that reads back CKA_ENCAPSULATE=False is a Type-B self-contradiction and
+        that reads back CKA_ENCAPSULATE=False is a policy self-contradiction and
         must fail (not silently pass on CKR_OK).
         """
         rs = p11_module_session
@@ -1073,7 +1073,7 @@ class TestMLKEMNegative:
                 )
                 return
 
-            # rv == CKR_OK -- Type-B claim/effect-check. The protection is only
+            # rv == CKR_OK -- policy claim/effect-check. The protection is only
             # claimed if the public key actually reads back CKA_ENCAPSULATE=False
             # (a module that did not honor the flag at create has not claimed the
             # protection -> honest non-support -> xfail). If it was claimed and

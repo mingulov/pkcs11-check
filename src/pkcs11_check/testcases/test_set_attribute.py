@@ -57,7 +57,7 @@ def _read_back_or_fail(rs: Any, handle: int, attrs: list[int], *, label: str) ->
     ``read_attributes`` already tolerates ``CKR_ATTRIBUTE_SENSITIVE`` /
     ``CKR_ATTRIBUTE_TYPE_INVALID`` (those attributes are simply omitted). Any
     *other* clean error from ``C_GetAttributeValue`` after a write means the
-    object can no longer be read back consistently -- a Type-C self-contradiction
+    object can no longer be read back consistently -- a lifecycle self-contradiction
     (the write was accepted, then the object was left in a bad state). Surface it
     as a clear finding instead of an opaque ``CkrAssertionError`` from the recipe.
     """
@@ -79,7 +79,7 @@ def _read_back_or_fail(rs: Any, handle: int, attrs: list[int], *, label: str) ->
 def _classify_readonly_write(
     rs: Any, handle: int, attr: int, new_value: Any, *, label: str
 ) -> None:
-    """Type-C effect-check for a write to a read-only attribute.
+    """lifecycle effect-check for a write to a read-only attribute.
 
     C_SetAttributeValue on a read-only attribute must reject. Verify the effect,
     not the return code:

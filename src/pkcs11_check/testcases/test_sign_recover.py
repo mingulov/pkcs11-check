@@ -565,7 +565,7 @@ class TestSignRecoverRecipes:
             # value AS AN INTEGER. Compare as integers so a benign leading-zero / length
             # representation difference is not mis-flagged. A genuine integer mismatch IS a
             # crypto-correctness break (the module recovered the wrong value) -> wrong_result
-            # (Type A fail), not a tolerable deviation. (Any documented per-module bug is
+            # (crypto fail), not a tolerable deviation. (Any documented per-module bug is
             # cross-referenced as KNOWN_ISSUE at the report layer, not hidden here.)
             recovered_int = int.from_bytes(recovered, "big") if recovered else -1
             if recovered_int != int.from_bytes(data, "big"):

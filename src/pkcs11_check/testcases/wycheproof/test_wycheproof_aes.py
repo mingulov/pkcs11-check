@@ -163,7 +163,7 @@ def test_aes_cmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
 
     Verifies the *supplied* tag with C_Verify so that invalid vectors actually
     exercise rejection. A module that verifies an invalid tag as valid is a
-    crypto-correctness break (Type A -> fail). The previous produce-direction
+    crypto-correctness break (-> fail). The previous produce-direction
     (C_Sign + compare) could never reject an invalid vector because a fresh
     correct tag never matched the modified expected tag.
     """
@@ -236,7 +236,7 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
 
     Unwraps the supplied wrapped blob (``ct``) so invalid vectors actually
     exercise rejection. A module that unwraps an invalid (malformed/forged)
-    wrapped blob is a crypto-correctness break (Type A -> fail). The previous
+    wrapped blob is a crypto-correctness break (-> fail). The previous
     produce-direction (wrap + compare) could never reject an invalid vector
     because a fresh correct wrap never matched the modified expected blob.
     """
@@ -459,7 +459,7 @@ def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
 
     Decrypts the supplied ct||tag so invalid vectors actually exercise tag
     rejection. A module that decrypts an invalid (forged/modified) ciphertext
-    or tag is a crypto-correctness break (Type A -> fail). The previous
+    or tag is a crypto-correctness break (-> fail). The previous
     produce-direction (encrypt + compare) could never reject an invalid vector
     because a fresh correct ciphertext never matched the modified expected one.
     """
@@ -576,8 +576,8 @@ def test_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
 
     GMAC is GCM with empty plaintext - authenticates AAD only. Verifies the
     *supplied* tag with C_Verify so invalid vectors actually exercise
-    rejection; an accepted invalid tag is a crypto-correctness break (Type A
-    -> fail). The previous produce-direction (C_Sign + compare) could never
+    rejection; an accepted invalid tag is a crypto-correctness break
+    (-> fail). The previous produce-direction (C_Sign + compare) could never
     reject an invalid vector.
     """
     rs = p11_module_session

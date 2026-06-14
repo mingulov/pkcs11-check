@@ -289,7 +289,7 @@ class TestInvalidOperations:
                     sig_buf,
                     len(sig),
                 )
-                # Type-A crypto-correctness: a signature produced under one hash
+                # crypto-correctness: a signature produced under one hash
                 # mechanism that verifies under a different hash mechanism
                 # (CKR_OK) accepts a signature over the wrong message digest --
                 # a break for any provider -> fail; an expected reject -> pass;

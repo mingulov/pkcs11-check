@@ -48,7 +48,7 @@ class TestErrorPriority:
         mech = mech_simple(CKM_SHA256)
         rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
         if rv == CKR_OK:
-            # Type-C use-after-destroy: the destroy claimed success yet
+            # lifecycle use-after-destroy: the destroy claimed success yet
             # C_EncryptInit on the same handle still succeeded -> contradiction.
             classify_lifecycle_effect(
                 claimed_success=destroy_rv == CKR_OK,
