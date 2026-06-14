@@ -83,6 +83,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     classify_negative_rv,
     reject_or_classify,
     xfail_if_known_ckr,
@@ -327,7 +328,13 @@ class TestBlake2bCrossVerify:
         data = b"BLAKE2B cross-verification test data"
         p11_digest = digest_single(rs.raw, rs.sh, mechanism, data)
         py_digest = hashlib.blake2b(data, digest_size=digest_size).digest()
-        assert p11_digest == py_digest
+        assert_correct(
+            actual=p11_digest,
+            expected=py_digest,
+            label=f"CKM_{mech_name_str}:C_Digest KAT",
+            operation="C_Digest",
+            mechanism=f"CKM_{mech_name_str}",
+        )
 
     @pytest.mark.parametrize(
         "mech_name_str,mechanism,digest_size",
@@ -351,7 +358,13 @@ class TestBlake2bCrossVerify:
         data = bytes(range(256))
         p11_digest = digest_single(rs.raw, rs.sh, mechanism, data)
         py_digest = hashlib.blake2b(data, digest_size=digest_size).digest()
-        assert p11_digest == py_digest
+        assert_correct(
+            actual=p11_digest,
+            expected=py_digest,
+            label=f"CKM_{mech_name_str}:C_Digest KAT (binary)",
+            operation="C_Digest",
+            mechanism=f"CKM_{mech_name_str}",
+        )
 
 
 class TestBlake2bProperties:
@@ -365,7 +378,13 @@ class TestBlake2bProperties:
         data = b"deterministic test"
         d1 = digest_single(rs.raw, rs.sh, CKM_BLAKE2B_256, data)
         d2 = digest_single(rs.raw, rs.sh, CKM_BLAKE2B_256, data)
-        assert d1 == d2
+        assert_correct(
+            actual=d1,
+            expected=d2,
+            label="CKM_BLAKE2B_256:C_Digest determinism",
+            operation="C_Digest",
+            mechanism="CKM_BLAKE2B_256",
+        )
 
     def test_different_input_different_digest(self, p11_raw_session: Any) -> None:
         """Different inputs produce different BLAKE2B-256 digests."""
@@ -383,7 +402,13 @@ class TestBlake2bProperties:
             pytest.skip("CKM_BLAKE2B_256 not supported")
         digest = _digest_empty_or_xfail(rs.raw, rs.sh, CKM_BLAKE2B_256, "BLAKE2B_256")
         expected = hashlib.blake2b(b"", digest_size=32).digest()
-        assert digest == expected
+        assert_correct(
+            actual=digest,
+            expected=expected,
+            label="CKM_BLAKE2B_256:C_Digest KAT (empty)",
+            operation="C_Digest",
+            mechanism="CKM_BLAKE2B_256",
+        )
 
     def test_empty_data_blake2b_512(self, p11_raw_session: Any) -> None:
         """BLAKE2B-512 digest of empty data matches hashlib."""
@@ -392,7 +417,13 @@ class TestBlake2bProperties:
             pytest.skip("CKM_BLAKE2B_512 not supported")
         digest = _digest_empty_or_xfail(rs.raw, rs.sh, CKM_BLAKE2B_512, "BLAKE2B_512")
         expected = hashlib.blake2b(b"", digest_size=64).digest()
-        assert digest == expected
+        assert_correct(
+            actual=digest,
+            expected=expected,
+            label="CKM_BLAKE2B_512:C_Digest KAT (empty)",
+            operation="C_Digest",
+            mechanism="CKM_BLAKE2B_512",
+        )
 
     def test_large_data(self, p11_raw_session: Any) -> None:
         """BLAKE2B-256 digest of 1 MiB data matches hashlib."""
@@ -402,7 +433,13 @@ class TestBlake2bProperties:
         data = b"\xab" * (1024 * 1024)
         p11_digest = digest_single(rs.raw, rs.sh, CKM_BLAKE2B_256, data)
         expected = hashlib.blake2b(data, digest_size=32).digest()
-        assert p11_digest == expected
+        assert_correct(
+            actual=p11_digest,
+            expected=expected,
+            label="CKM_BLAKE2B_256:C_Digest KAT (1MiB)",
+            operation="C_Digest",
+            mechanism="CKM_BLAKE2B_256",
+        )
 
 
 class TestBlake2bKeyed:
@@ -434,7 +471,13 @@ class TestBlake2bKeyed:
                 _BLAKE2B_TEST_DATA,
                 case.digest_len,
             )
-            assert mac == expected
+            assert_correct(
+                actual=mac,
+                expected=expected,
+                label=f"CKM_{case.hmac_name}:C_Sign KAT",
+                operation="C_Sign",
+                mechanism=f"CKM_{case.hmac_name}",
+            )
 
             try:
                 assert verify_single(
@@ -578,7 +621,13 @@ class TestBlake2bKeyed:
                 _BLAKE2B_TEST_DATA,
                 case.digest_len,
             )
-            assert mac == expected_full[:mac_len]
+            assert_correct(
+                actual=mac,
+                expected=expected_full[:mac_len],
+                label=f"CKM_{case.hmac_general_name}:C_Sign KAT (truncated)",
+                operation="C_Sign",
+                mechanism=f"CKM_{case.hmac_general_name}",
+            )
 
             try:
                 assert verify_single(
@@ -826,7 +875,14 @@ class TestBlake2bKeyed:
         key = _generate_blake2b_hmac_key(rs, case)
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_TYPE, CKA_VALUE])
-            assert attrs[CKA_KEY_TYPE] == case.key_type
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=case.key_type,
+                label=f"CKM_{case.key_gen_name}:CKA_KEY_TYPE readback",
+                operation="C_GenerateKey",
+                mechanism=f"CKM_{case.key_gen_name}",
+                kind="metadata",
+            )
             key_value = attrs[CKA_VALUE]
             assert isinstance(key_value, bytes)
             assert len(key_value) == case.digest_len
@@ -850,7 +906,13 @@ class TestBlake2bKeyed:
                 _BLAKE2B_TEST_DATA,
                 case.digest_len,
             )
-            assert mac == expected
+            assert_correct(
+                actual=mac,
+                expected=expected,
+                label=f"CKM_{case.hmac_name}:C_Sign KAT (generated key)",
+                operation="C_Sign",
+                mechanism=f"CKM_{case.hmac_name}",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -938,7 +1000,13 @@ class TestBlake2bKeyed:
 
             value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             expected = hashlib.blake2b(_BLAKE2B_TEST_KEY, digest_size=case.digest_len).digest()
-            assert value == expected
+            assert_correct(
+                actual=value,
+                expected=expected,
+                label=f"CKM_{case.key_derive_name}:C_DeriveKey KAT",
+                operation="C_DeriveKey",
+                mechanism=f"CKM_{case.key_derive_name}",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base)
             if derived:
@@ -975,10 +1043,23 @@ class TestBlake2bKeyed:
                 )
 
             attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_KEY_TYPE, CKA_VALUE])
-            assert attrs[CKA_KEY_TYPE] == CKK_GENERIC_SECRET
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=CKK_GENERIC_SECRET,
+                label=f"CKM_{case.key_derive_name}:CKA_KEY_TYPE readback (default template)",
+                operation="C_DeriveKey",
+                mechanism=f"CKM_{case.key_derive_name}",
+                kind="metadata",
+            )
             value = attrs[CKA_VALUE]
             expected = hashlib.blake2b(_BLAKE2B_TEST_KEY, digest_size=case.digest_len).digest()
-            assert value == expected
+            assert_correct(
+                actual=value,
+                expected=expected,
+                label=f"CKM_{case.key_derive_name}:C_DeriveKey KAT (default template)",
+                operation="C_DeriveKey",
+                mechanism=f"CKM_{case.key_derive_name}",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base)
             if derived:
@@ -1017,7 +1098,14 @@ class TestBlake2bKeyed:
                 )
 
             attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_KEY_TYPE, CKA_VALUE])
-            assert attrs[CKA_KEY_TYPE] == CKK_GENERIC_SECRET
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=CKK_GENERIC_SECRET,
+                label=f"CKM_{case.key_derive_name}:CKA_KEY_TYPE readback (length-only template)",
+                operation="C_DeriveKey",
+                mechanism=f"CKM_{case.key_derive_name}",
+                kind="metadata",
+            )
             value = attrs[CKA_VALUE]
             assert isinstance(value, bytes)
             assert len(value) == requested_len

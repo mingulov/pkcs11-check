@@ -171,7 +171,13 @@ class TestDigestProperties:
         data = b"deterministic test"
         d1 = _digest_or_xfail(rs, CKM_SHA256, data)
         d2 = _digest_or_xfail(rs, CKM_SHA256, data)
-        assert d1 == d2
+        assert_correct(
+            actual=d1,
+            expected=d2,
+            label="CKM_SHA256:C_Digest determinism",
+            operation="C_Digest",
+            mechanism="CKM_SHA256",
+        )
 
     def test_sha256_different_input_different_digest(self, p11_raw_session: Any) -> None:
         """Different inputs produce different digests."""
