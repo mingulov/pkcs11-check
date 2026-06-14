@@ -8,9 +8,9 @@ The initial migration (Phase 1) successfully converted 72 high-count vector file
 
 The core principle of the classification model is accurate reporting of self-contradictions (Types A, B, C, and D). Reusing a session across independent tests introduces shared state, which risks generating false findings or masking real ones in specific test categories.
 
-### A. Lifecycle and State-Machine Tests (Type C Risk)
+### A. Lifecycle and State-Machine Tests (lifecycle Risk)
 Tests in `ckr/`, `test_operation_state.py`, and `test_session_state_machine.py` explicitly probe the module's handling of active operations, session closures, and login transitions.
-*   **The Risk**: If a shared session is used, a prior test might leave an operation active (a common provider bug). While the harness has self-healing (`_init_or_recover`), relying on it during a test *designed* to find state-machine bugs would mask the Type C failure.
+*   **The Risk**: If a shared session is used, a prior test might leave an operation active (a common provider bug). While the harness has self-healing (`_init_or_recover`), relying on it during a test *designed* to find state-machine bugs would mask the lifecycle failure.
 *   **Conclusion**: Lifecycle tests absolutely require the strict isolation of `p11_raw_session`.
 
 ### B. Session Object Memory Leaks (CKR_DEVICE_MEMORY)

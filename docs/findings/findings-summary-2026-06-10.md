@@ -7,7 +7,7 @@ triage reasoning in `issues-triage.md`. All harness fixes are on `dev`.
 
 Classification model (one rule, provider-general): `CKR_OK`+correct = **pass**; clean error on an
 advertised mechanism = **xfail** (recorded deviation, not hidden); `CKR_OK`+wrong output / crash /
-self-contradiction (Type A/B/C/D) = **fail**; capability genuinely absent = **skip**.
+self-contradiction (crypto/policy/lifecycle/metadata) = **fail**; capability genuinely absent = **skip**.
 
 ---
 
@@ -16,28 +16,28 @@ self-contradiction (Type A/B/C/D) = **fail**; capability genuinely absent = **sk
 | Provider | Finding | Class | Severity |
 |---|---|---|---|
 | **wolfpkcs11** | Digest path leaks a raw wolfSSL error (`-132`, `0x…ff7c`) as the `CK_RV` instead of a defined `CKR_*` (whole SHA-2/SHA-3 digest path, ~309) | spec violation (non-`CKR_*` return) | High |
-| **wolfpkcs11** | AES-CCM decrypt does not authenticate — accepts invalid tags (`423×`) and returns plaintext+unstripped-tag (no MAC verify) | Type-A crypto/auth break | **Critical** |
+| **wolfpkcs11** | AES-CCM decrypt does not authenticate — accepts invalid tags (`423×`) and returns plaintext+unstripped-tag (no MAC verify) | crypto/auth break | **Critical** |
 | **wolfpkcs11** | RSA-OAEP rejects valid edge-case vectors despite an operational combo: empty-message (`msglen=0`, ~125), 3-prime RSA keys (54), near-max length (~15) — others decrypt them fine | correctness (OAEP decoder edge cases) | Medium |
 | **wolfpkcs11** | AES-CBC-PAD accepts non-PKCS#5 padding (BadPadding 141 + NoPadding 3) | padding-validation deviation | Medium |
 | **wolfpkcs11** | Output-buffer size-protocol violations: `C_GetMechanismList` reports count 1 (real 65); `C_GetAttributeValue` writes 13B past a 1B buffer (OOB write); `C_WrapKey` reports garbage required length | §5.2 buffer protocol + OOB write | High |
-| **wolfpkcs11** | `CKA_MODIFIABLE=False` mutability constraint ignored (`C_SetAttributeValue` accepted) | Type-B self-contradiction | Medium |
+| **wolfpkcs11** | `CKA_MODIFIABLE=False` mutability constraint ignored (`C_SetAttributeValue` accepted) | policy self-contradiction | Medium |
 | **wolfpkcs11** | Crashes on normal input: `test_wycheproof_hkdf` SIGABRT (after 10 valid vectors), `test_ckr_keygen` SIGSEGV, `test_access_levels` SIGSEGV (SO-login path). *Stable; master fixes most — report vs master.* | crash | High |
-| **bouncyhsm** | AES-CCM decrypt does not authenticate (same no-auth class as wolfpkcs11): accepts invalid tags + returns unstripped tag bytes (~423 forgery + ~1,268 wrong-plaintext on full suite) | Type-A crypto/auth break | **Critical** |
+| **bouncyhsm** | AES-CCM decrypt does not authenticate (same no-auth class as wolfpkcs11): accepts invalid tags + returns unstripped tag bytes (~423 forgery + ~1,268 wrong-plaintext on full suite) | crypto/auth break | **Critical** |
 | **bouncyhsm** | SIGSEGV on `C_GetAttributeValue` after `C_DestroyObject` — native shim checks RPC status `rv` instead of the method return `rvMethod`, dereferences `envelope.Data` on a stale handle (root-caused in `bouncy-pkcs11.c`) | crash (shim bug) | High |
-| **bouncyhsm** | `C_VerifyFinal(empty sig)` → `CKR_ARGUMENTS_BAD` leaves the verify op active (no termination) | Type-C lifecycle | Medium |
-| **kryoptic** | `C_Verify`/`C_VerifyFinal` of a wrong-**length** signature (`CKR_SIGNATURE_LEN_RANGE`) does not terminate the operation (spec: "always terminates") → `CKR_OPERATION_ACTIVE` cascade on the next op | Type-C lifecycle | High |
-| **opencryptoki** | Multipart `C_VerifyFinal(empty sig)` → `CKR_ARGUMENTS_BAD` leaves the verify op active (single-shot `C_Verify` terminates correctly) | Type-C lifecycle | Medium |
+| **bouncyhsm** | `C_VerifyFinal(empty sig)` → `CKR_ARGUMENTS_BAD` leaves the verify op active (no termination) | lifecycle | Medium |
+| **kryoptic** | `C_Verify`/`C_VerifyFinal` of a wrong-**length** signature (`CKR_SIGNATURE_LEN_RANGE`) does not terminate the operation (spec: "always terminates") → `CKR_OPERATION_ACTIVE` cascade on the next op | lifecycle | High |
+| **opencryptoki** | Multipart `C_VerifyFinal(empty sig)` → `CKR_ARGUMENTS_BAD` leaves the verify op active (single-shot `C_Verify` terminates correctly) | lifecycle | Medium |
 | **opencryptoki** | AES-CBC-PAD accepts non-PKCS#5 padding (same 144 as wolfpkcs11) | padding-validation deviation | Medium |
 | **opencryptoki** | AES-CTR `ulCounterBits = 0` / `129` accepted (out of `[1,128]`) | parameter-validation deviation | Low |
-| **tpm2-pkcs11** | `C_VerifyFinal(empty sig)` leaves the verify op active; recovery needs close+reopen (v2.40, no `C_SessionCancel`) | Type-C lifecycle | Medium |
+| **tpm2-pkcs11** | `C_VerifyFinal(empty sig)` leaves the verify op active; recovery needs close+reopen (v2.40, no `C_SessionCancel`) | lifecycle | Medium |
 | **tpm2-pkcs11** | `test_fork_after_initialize` times out (daemon/TPM connection does not survive fork+re-Initialize) | robustness (daemon) | Low |
 | **tpm2-pkcs11** | ACVP RSA SigVer with imported keys: 27/27 valid SHA-1 vectors rejected — advertised-but-not-operational for imported-key SHA-1 (now xfail) | not-operational deviation | Low |
 | **NSS softoken** | SIGSEGV: MAC mechanism (`CKM_SHA256_HMAC`/`CKM_AES_CMAC`) with an RSA key — `NSC_SignInit` skips key-type validation, `sftk_MAC_Create` uses uninitialized `PORT_New` → dereferences garbage `destroy_func` (root-caused; reported upstream, assessed out-of-threat-model) | crash (heap-state-dependent) | Medium |
 | **NSS softoken** | `CKM_RSA_X_509` unwrap takes key bytes from the leading (not trailing) end of the decrypted block | correctness | Medium |
-| **corePKCS11** | Silent EC curve rebind: `C_CreateObject` accepts a curve then stores/uses a different one (secp256k1/brainpoolP256r1 → unusable) | Type-C self-contradiction | Medium |
+| **corePKCS11** | Silent EC curve rebind: `C_CreateObject` accepts a curve then stores/uses a different one (secp256k1/brainpoolP256r1 → unusable) | lifecycle self-contradiction | Medium |
 | **corePKCS11** | Secret-key import advertised but not operational (CMAC/HMAC sign → `KEY_TYPE_INCONSISTENT`, readback → `OBJECT_HANDLE_INVALID`) | not-operational deviation | Low |
 | **softhsm2** | `C_SignInit/C_VerifyInit(CKM_ECDSA, RSA key)` lenient (returns `CKR_OK`) but the terminal op safely refuses — lazy-but-safe key-type validation (only provider that defers it) | deviation (xfail) | Low |
-| **pkcs11-mock** | Stores a canned 12-byte `CKA_VALUE` for every imported cert → readback contradiction (Type-C). *Test fixture, not a real module — expected.* | n/a (fixture) | — |
+| **pkcs11-mock** | Stores a canned 12-byte `CKA_VALUE` for every imported cert → readback contradiction (lifecycle). *Test fixture, not a real module — expected.* | n/a (fixture) | — |
 
 ---
 
@@ -96,5 +96,5 @@ spec-legal or not-operational behavior as a hard failure:
    key transport), not the public wrap; wrap the 3 unwrap sites with `xfail_if_op_not_operational`.
 2. Gap-analysis recs: vacuous negative-op-reject downgrade on NOT_OPERATIONAL mechanisms; registry
    coverage meta-check; import-skip→xfail audit.
-3. nss `mldsa_verify` 8F (determine real Type-A vs deviation); opencryptoki AES-CBC-PKCS5 144 writeup.
+3. nss `mldsa_verify` 8F (determine real crypto vs deviation); opencryptoki AES-CBC-PKCS5 144 writeup.
 4. Hardening reclassification (open); `dev → main` promotion (Denis only).

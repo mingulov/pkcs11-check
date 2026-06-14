@@ -803,7 +803,7 @@ classes are already covered:
 - `CKA_DERIVE=False` must prevent `C_DeriveKey`. (Covered.)
 - `CKA_ENCAPSULATE=False` and `CKA_DECAPSULATE=False` must prevent v3.2 KEM
   operations when those attributes and entry points are available. (Covered as a
-  Type-B claim/effect check on both sides. A negative KEM permission probe must
+  policy claim/effect check on both sides. A negative KEM permission probe must
   drive the **full** operation with a real output buffer — a size-query-only
   probe can be masked by a module whose `pCiphertext=NULL` query rejects before
   the permission check, and must never tolerate `CKR_OK` via a catch-all
@@ -836,7 +836,7 @@ Readability of `CKA_WRAP_TEMPLATE`, `CKA_UNWRAP_TEMPLATE`, and
 - A deriving key with `CKA_DERIVE_TEMPLATE` must not derive an object that
   violates the nested template.
 - If the module accepts and reports the constraint attribute, then later
-  violating it is a Type-B permission self-contradiction and should fail.
+  violating it is a policy permission self-contradiction and should fail.
 
 Initial coverage added:
 
@@ -844,12 +844,12 @@ Initial coverage added:
   a wrapping key is generated with a nested `CKA_LABEL` constraint, a matching
   target is checked first, and a second target with a different label must not
   be wrapped. If the module reports the template attribute and still accepts the
-  violating target, the test fails as a Type-B policy self-contradiction; clean
+  violating target, the test fails as a policy self-contradiction; clean
   non-operational paths remain visible skips or xfails.
 - `CKA_UNWRAP_TEMPLATE` enforcement now wraps a real AES key first, unwraps it
   once with a matching output template, then tries to unwrap the same blob with
   a violating `CKA_LABEL`. A claimed template followed by accepted violation is
-  a Type-B policy self-contradiction.
+  a policy self-contradiction.
 - `CKA_DERIVE_TEMPLATE` enforcement now imports a real derivable generic-secret
   key with a nested label constraint, derives once through
   `CKM_CONCATENATE_BASE_AND_DATA` with a matching output template, then repeats
@@ -1098,7 +1098,7 @@ guard (GCM ivGenerator); operation-state cleanup after NULL args and
 digest-init-NULL; ML-KEM derive-false; mechanism-list filtering; find-objects
 NULL match-all; derive NULL base handle; misaligned-pointer probes;
 wrong-key-type init + continuation; KDF/PBE/TLS/SP800-108 length probes; DH/HKDF
-derive-length effect checks; v3.2 KEM encapsulate/decapsulate permission (Type-B,
+derive-length effect checks; v3.2 KEM encapsulate/decapsulate permission (policy,
 encapsulate fixed this pass).
 
 **Remaining, in priority order:**

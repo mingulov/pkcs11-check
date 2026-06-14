@@ -36,7 +36,7 @@ All four helpers (`classify_negative_rv:430`, `reject_or_classify:464`,
 Signatures consistent (keyword-only `label`, compatible `expected_rvs` typing).
 Messages always include the actual rv name and the expected set; no provider
 identity in any of the four helpers' f-strings. The intentional asymmetry —
-the two Type-B/C classifiers have no expected-set because their pivot is a
+the two policy/lifecycle classifiers have no expected-set because their pivot is a
 boolean claim — is correct by design.
 
 ---

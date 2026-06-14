@@ -44,9 +44,9 @@ git history). Outcome:
   could pass. It now mirrors the decapsulate test: it drives the **full**
   encapsulation (generous output buffer, so a non-conformant size query cannot
   mask the result) and classifies 3-way (`classify_negative_rv` on reject,
-  Type-B `classify_policy_enforcement` on full success). Verified on the Docker
+  policy `classify_policy_enforcement` on full success). Verified on the Docker
   matrix: a module that enforces the flag passes; a module that does not now
-  **fails as a Type-B finding** instead of passing silently.
+  **fails as a policy finding** instead of passing silently.
 
 - **Doc/file-map corrections** applied to the File Existence Audit, Priority
   Matrix counts, and Files-To-Create list (three "new files" already exist under
@@ -268,17 +268,17 @@ git history). Outcome:
 | `CKA_COPYABLE` | `CKA_COPYABLE=False` must prevent copying | Clean rejection | Medium |
 | `CKA_DESTROYABLE` | `CKA_DESTROYABLE=False` must prevent destruction | Clean rejection | Low |
 | Public session | No login, must not create private token/session objects (KEM/unwrap/derive/copy/create) | Clean rejection | Medium |
-| `CKA_ALWAYS_SENSITIVE` | Claim must be honored | Type-B self-contradiction if violated | Medium |
-| `CKA_NEVER_EXTRACTABLE` | Claim must be honored | Type-B self-contradiction if violated | Medium |
+| `CKA_ALWAYS_SENSITIVE` | Claim must be honored | policy self-contradiction if violated | Medium |
+| `CKA_NEVER_EXTRACTABLE` | Claim must be honored | policy self-contradiction if violated | Medium |
 | `CKA_PRIVATE` | Public session must not create private objects | Clean rejection | Low |
-| `CKA_ALLOWED_MECHANISMS` | Empty array must not allow mechanism use | Type-B self-contradiction if violated | Medium |
-| `CKA_WRAP_WITH_TRUSTED` | Transition rules must be enforced | Type-B self-contradiction if violated | High |
+| `CKA_ALLOWED_MECHANISMS` | Empty array must not allow mechanism use | policy self-contradiction if violated | Medium |
+| `CKA_WRAP_WITH_TRUSTED` | Transition rules must be enforced | policy self-contradiction if violated | High |
 
 **Initial Coverage Added:**
 - `CKA_ALLOWED_MECHANISMS` empty array coverage
 - `CKA_DERIVE`, `CKA_ENCAPSULATE`, `CKA_DECAPSULATE`, `CKA_COPYABLE`, `CKA_DESTROYABLE`, public session object creation
 
-**Expected Outcome:** Clean access-control rejection. Creating/using object after claiming operation prohibited = Type-B self-contradiction, must fail (not xfail).
+**Expected Outcome:** Clean access-control rejection. Creating/using object after claiming operation prohibited = policy self-contradiction, must fail (not xfail).
 
 ---
 
@@ -290,9 +290,9 @@ git history). Outcome:
 
 | Constraint Attribute | Test Scenario | Expected Outcome | Complexity |
 |---------------------|---------------|------------------|------------|
-| `CKA_WRAP_TEMPLATE` | Generate wrapping key with nested `CKA_LABEL` constraint, verify matching target works, then try wrapping target with different label | Type-B self-contradiction if violation accepted | High |
-| `CKA_UNWRAP_TEMPLATE` | Wrap real AES key, unwrap once with matching output template, then unwrap same blob with violating `CKA_LABEL` | Type-B self-contradiction if violation accepted | High |
-| `CKA_DERIVE_TEMPLATE` | Import derivable key with nested label constraint, derive once with matching template, then derive with violating label | Type-B self-contradiction if violation accepted | High |
+| `CKA_WRAP_TEMPLATE` | Generate wrapping key with nested `CKA_LABEL` constraint, verify matching target works, then try wrapping target with different label | policy self-contradiction if violation accepted | High |
+| `CKA_UNWRAP_TEMPLATE` | Wrap real AES key, unwrap once with matching output template, then unwrap same blob with violating `CKA_LABEL` | policy self-contradiction if violation accepted | High |
+| `CKA_DERIVE_TEMPLATE` | Import derivable key with nested label constraint, derive once with matching template, then derive with violating label | policy self-contradiction if violation accepted | High |
 
 **Initial Coverage Added:**
 - All three scenarios listed above already have coverage
@@ -301,7 +301,7 @@ git history). Outcome:
 - More mechanism families: RSA/OAEP unwrap, ECDH/HKDF derive, v3.2 KEM encapsulate/decapsulate templates
 - Additional nested constraints beyond `CKA_LABEL`: key type, operation permissions, sensitivity/extractability, allowed mechanisms
 
-**Expected Outcome:** If module reports template attribute and still accepts violating target, Type-B self-contradiction failure.
+**Expected Outcome:** If module reports template attribute and still accepts violating target, policy self-contradiction failure.
 
 ---
 
@@ -805,24 +805,24 @@ Every test classifies `pass`/`xfail`/`fail`/`skip` by one provider-general rule:
 |---------|-------------------------------------------------|--------------------------------------------------|
 | **pass** | `CKR_OK` + correct output/value | Rejects with **expected** spec CKR |
 | **xfail** | Clean error — advertised but not operational | Rejects with **some other** (clean) code |
-| **fail** | `CKR_OK` but **wrong** output/value | `CKR_OK`/accepted **and** crypto-correctness break (Type A) or self-contradiction (Type B/C/D) |
+| **fail** | `CKR_OK` but **wrong** output/value | `CKR_OK`/accepted **and** crypto-correctness break (crypto) or self-contradiction (policy/lifecycle/metadata) |
 | **fail** | Crash / hang | Crash / hang |
 | **skip** | Capability genuinely absent | Capability genuinely absent |
 
 **Core principle:** Self-contradiction = `fail`. A single honest deviation = `xfail`.
 
 **Four self-contradiction classes that `fail` on acceptance:**
-- **Type A:** Crypto-correctness (wrong/forgeable result)
-- **Type B:** Attribute/permission (claimed protection then violated it)
-- **Type C:** Lifecycle/state (claimed success then didn't honor it)
-- **Type D:** Derived-attribute invariant (two linked attributes that cannot both be true)
+- **crypto:** Crypto-correctness (wrong/forgeable result)
+- **policy:** Attribute/permission (claimed protection then violated it)
+- **lifecycle:** Lifecycle/state (claimed success then didn't honor it)
+- **metadata:** Derived-attribute invariant (two linked attributes that cannot both be true)
 
 ### Helper Functions
 
 - `classify_negative_rv(rv, expected_rvs, *, label, allow_ok=False)` — for negative ops outside table
 - `reject_or_classify(exc, expected_rvs, *, label)` — for negative ops outside table
-- `classify_policy_enforcement(*, claimed, violated, label)` — for Type B
-- `classify_lifecycle_effect(*, claimed_success, effect_observed, label)` — for Type C
+- `classify_policy_enforcement(*, claimed, violated, label)` — for policy
+- `classify_lifecycle_effect(*, claimed_success, effect_observed, label)` — for lifecycle
 - `assert_ckr()` (3-way) over `CkrExpectation` in `testcases/ckr/_ckr_spec.py` — for table-driven negative sites
 
 ### Subprocess Isolation
@@ -846,8 +846,8 @@ Every test classifies `pass`/`xfail`/`fail`/`skip` by one provider-general rule:
 | Data length truncation | Clean length/data rejection |
 | Misaligned caller pointers | No crash or forced process exit (robustness probe, not strict conformance) |
 | Buffer/state management | Exact size reporting on NULL-buffer query, no overwrite on undersized non-NULL call |
-| Access-control enforcement | Clean access-control rejection; violation = Type-B self-contradiction |
-| Nested template enforcement | Clean rejection if template reported; violation = Type-B self-contradiction |
+| Access-control enforcement | Clean access-control rejection; violation = policy self-contradiction |
+| Nested template enforcement | Clean rejection if template reported; violation = policy self-contradiction |
 | Operation-state cleanup | Spec-correct active/terminated state |
 | Generated output guarding | No output overwrite beyond declared length, correct operation |
 | Thread/lifetime stress | No crash, hang, double free, use-after-free, or corrupted state |
@@ -990,7 +990,7 @@ These API surfaces are not identified as hardening targets in any of the three d
   - Effects on existing sessions and objects after re-init
   - Called from RO session (should fail with CKR_SESSION_READ_ONLY_EXISTS)
 - **Best location:** `testcases/test_destructive_token_policy.py` (new file)
-- **Classification:** Type-C lifecycle (claimed success then state inconsistent)
+- **Classification:** lifecycle (claimed success then state inconsistent)
 
 #### S3: C_InitPIN Edge Cases — High Priority (Destructive)
 
@@ -1020,7 +1020,7 @@ These API surfaces are not identified as hardening targets in any of the three d
   - Each probe in subprocess via `run_raw_subprocess`
   - Expect CKR_SESSION_HANDLE_INVALID or CKR_SESSION_CLOSED; crash = fail
 - **Best location:** `testcases/security/test_api_boundary.py` (extend) or new `testcases/security/test_stale_handle_probe.py`
-- **Classification:** Type-C lifecycle (claimed handle closed then accepted operations)
+- **Classification:** lifecycle (claimed handle closed then accepted operations)
 
 #### S6: Object Handle Validity Across Sessions — High Priority
 
@@ -1030,7 +1030,7 @@ These API surfaces are not identified as hardening targets in any of the three d
   - Using a session-object handle from a different concurrent session
   - Object handle reuse after C_DestroyObject across sessions
 - **Best location:** `testcases/security/test_handle_reuse.py` (extend) or new file
-- **Classification:** Type-C lifecycle
+- **Classification:** lifecycle
 
 #### S7: C_GetFunctionStatus / C_CancelFunction Edge Cases — Low Priority
 

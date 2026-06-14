@@ -50,7 +50,7 @@ have results; the post-pool procedure (Denis 2026-06-10) is DONE:
 A1–A16, A18, A19 shipped + two-stage reviewed across Batches 1–4 (b38ad9b2 e0340c2d 3c72cc3f
 45441f10 72b9b7d8 74d09c18 b25b9bd5 b75dd935) + D1–D3 (6857bebf b56c3f8c 9a040f98). A17 (DSA)
 = evidence-backed DEFER (skip hit by ZERO providers; resolution recipe in doc). §5 marks COMPLETE.
-- **Two fresh-data DETERMINATIONS (both GENUINE Type-A, HIGH confidence, upstream-reportable, docs only):**
+- **Two fresh-data DETERMINATIONS (both GENUINE crypto, HIGH confidence, upstream-reportable, docs only):**
   nss `test_mldsa_verify` 8F = ML-DSA non-malleability break (verifies +1-byte-over-length
   sigs/keys; FIPS-204 fixed-length; `b251ad1b`); opencryptoki AES-CBC-PKCS5 144F = malformed-
   ciphertext acceptance (byte-identical to wolfpkcs11-stable; strict providers reject 216P;
@@ -176,7 +176,7 @@ over-claim ×2 docs; opencryptoki verify-final). A parallel worker also landed
   positives; off-curve derive stays FAIL "invalid-curve attack". Fresh-verified:
   softhsm2/opencryptoki 42F→0F, kryoptic 0F. 18 guard meta-tests.
 - **RSA-PSS salt-variant acceptance:** reference auto-salt verification discriminates a genuine
-  re-salted signature (xfail: salt policy not enforced — tpm2) from accepted garbage (Type-A
+  re-salted signature (xfail: salt policy not enforced — tpm2) from accepted garbage (crypto
   fail). tpm2 rsa_pss 46F→0F (passes unchanged 781), softhsm2 control 1183P/0F.
 - **CKR_OPERATION_ACTIVE collaterals → xfail** in `_signature_policy` + PSS tuples (root cause
   stays FAIL in test_operation_termination). tpm2 rsa 12F→0F.
@@ -193,7 +193,7 @@ over-claim ×2 docs; opencryptoki verify-final). A parallel worker also landed
   registry suites (gaps: registry completeness, coverage meta-check); two leak classes violate
   "internal failure must be xfail, never pass": vacuous negative-op passes + 32 import-skip sites.
 - **pkcs11-mock limbo 175F determined GENUINE** (mock stores a canned 12-byte CKA_VALUE for every
-  cert → Type-C readback contradiction, correctly FAILs; count grew from pool's 88F because the
+  cert → lifecycle readback contradiction, correctly FAILs; count grew from pool's 88F because the
   portable-label fix let more imports succeed). Not yet written into module-issues.md.
 - Parallel session also landed: FIPS ECDSA-prehash/RSA-encrypt xfails (+ xfail_if_op_not_operational
   helper), wrong-key-type lenient-init xfail (a4ca5891), C_Digest OOB split, X25519/EdDSA sweep
@@ -211,11 +211,11 @@ over-claim ×2 docs; opencryptoki verify-final). A parallel worker also landed
 3. **Coverage meta-check** for advertised-but-unprobed mechanisms (registry blind spots visible).
 4. **Import-skip→xfail audit** (32 `pytest.skip("Cannot import …")` sites; only
    negotiated-exhausted + advertised mechanisms qualify).
-5. **nss mldsa_verify 8F** (verify-direction invalid acceptance = potential REAL Type A —
+5. **nss mldsa_verify 8F** (verify-direction invalid acceptance = potential REAL crypto —
    determine, don't assume) + nss/mock malformed-length ulong CKR buckets (⚖️ family).
 6. **opencryptoki AES-CBC-PKCS5 144F** — determine (wolfpkcs11's analogous OAEP/CBC-PAD were
    confirmed genuine).
-7. **pkcs11-mock section in module-issues.md** (canned-CKA_VALUE Type-C; evidence above).
+7. **pkcs11-mock section in module-issues.md** (canned-CKA_VALUE lifecycle; evidence above).
 8. **Mechanism-registry Phases B–D** (longer arc).
 9. **Catalog follow-up:** retain unknown-name manifest entries as `MechEntry(config=None)` so
    the blind-spot check sees them (check `select_for_scenario` tolerance).

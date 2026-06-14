@@ -378,7 +378,7 @@ The following areas have weak or absent coverage:
 
 **Principle 5:** Distinguish between self-contradiction (fail) and deviation (xfail)
 
-- Self-contradiction: Module claims protection then violates it (Type-B)
+- Self-contradiction: Module claims protection then violates it (policy)
 - Deviation: Module rejects advertised mechanism with clean error (xfail)
 - Crash: Always fail (segfault IS the finding)
 

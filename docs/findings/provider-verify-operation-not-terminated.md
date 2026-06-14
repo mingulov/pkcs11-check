@@ -143,7 +143,7 @@ rejection code), not as failures.
 1. **Surfaced as a finding** — `testcases/test_operation_termination.py` is a
    provider-general conformance test that rejects a signature (probing several
    malformations: too-short, too-long, empty, all-zero, wrong-value) and asserts
-   the verify operation was terminated. It `fail`s (Type-C lifecycle
+   the verify operation was terminated. It `fail`s (lifecycle
    self-contradiction) on kryoptic and tpm2-pkcs11 and `pass`es on compliant
    modules. No per-provider configuration.
 2. **Cascade neutralized** — `recipes._init_or_recover` wraps every single-shot

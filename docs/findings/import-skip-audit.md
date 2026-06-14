@@ -107,7 +107,7 @@ NIST P-curves (secp256r1/384r1/521r1) — which ECDSA advertisement implies — 
 
 | # | File:line | Determination | Action |
 |---|---|---|---|
-| D1 | `acvp/test_acvp_ecdh.py:441` | **Type-C fail** — empty `CKA_EC_POINT` after claimed `EC_KEY_PAIR_GEN` success is a self-contradiction (never legitimately exercised in any artifacts2 baseline; latent finding-mask). | skip → `classify_lifecycle_effect` (fail). Commit `6857bebf`. |
+| D1 | `acvp/test_acvp_ecdh.py:441` | **lifecycle fail** — empty `CKA_EC_POINT` after claimed `EC_KEY_PAIR_GEN` success is a self-contradiction (never legitimately exercised in any artifacts2 baseline; latent finding-mask). | skip → `classify_lifecycle_effect` (fail). Commit `6857bebf`. |
 | D2 | `wycheproof/test_wycheproof_x25519.py` `test_xdh`, `test_wycheproof_ecdh.py` `test_ecdh` broad branches (the **B4/B5** rows) | **A-like xfail** (overturns the B-lean) — softhsm2/tpm2/wolfpkcs11/kryoptic operationally derive ECDH/XDH (hundreds–thousands of passes) yet refuse the canonical *valid*-vector private import with a broad CKR; the raw single-template import IS the spec path (no negotiated EC-private importer needed). Curve-unsupported branch stays C. | broad branch skip → `xfail(not_operational_reason(…))`. Commit `b56c3f8c`. |
 | D3 | `acvp/test_acvp_slhdsa.py` import helper | **xfail; boundary = mechanism advertisement** — no PQC genuine-absence import CKR analogue, so once `has_mechanism` passes any clean import reject is not-operational. Matches the ML-DSA precedent + the ML-KEM `docs/module-issues.md:349` convention. Clean — no fresh docker run needed. | unify `_PQC_IMPORT_NOT_OPERATIONAL_RVS`; `_skip_if_import_unsupported` → `_xfail_if_import_not_operational`. Commit `9a040f98`. |
 
@@ -216,7 +216,7 @@ vector-shape, never an `import_dsa_public_key` refusal). See the A17 row for the
 - The "wrong-type scaffolding" wrap skips (B2/B3) — not the capability under test.
 
 **Resolve before touching (D-items):** D1 (`acvp_ecdh:441` point-extract — get the CKR; may be a
-Type-C self-contradiction = fail, not xfail), D2 (X25519/X448 private import — needs per-curve CKR
+lifecycle self-contradiction = fail, not xfail), D2 (X25519/X448 private import — needs per-curve CKR
 evidence + a negotiated EC-private importer that does not yet exist), D3 (PQC import CKR boundary).
 
 **Meta-test approach:** for each batch, add a unit test that drives the helper with a synthetic
@@ -236,13 +236,13 @@ after each: `uv run pytest tests/` ⇒ 2111 passed / 2 skipped / **0 xfailed**; 
 `mypy --strict` clean). Evidence is from the READ-ONLY `artifacts2/` pooled baselines
 (per-provider `report.jsonl`, `outcome`/`longrepr` scanned).
 
-### D1 — `acvp/test_acvp_ecdh.py:441` point-extract → **Type-C fail** (was skip)
+### D1 — `acvp/test_acvp_ecdh.py:441` point-extract → **lifecycle fail** (was skip)
 
-**Determination: latent Type-C self-contradiction, downgraded skip → fail.** By line 441
+**Determination: latent lifecycle self-contradiction, downgraded skip → fail.** By line 441
 the keypair was produced by `gen_ec_keypair` (CKM_EC_KEY_PAIR_GEN), which asserts
 `CKR_OK` internally — *success is claimed*. `CKA_EC_POINT` is a mandatory, non-sensitive
 attribute on an EC **public** key, so an empty readback after that claimed success is a
-self-contradiction (claimed success → effect not observable), exactly the Type-C class.
+self-contradiction (claimed success → effect not observable), exactly the lifecycle class.
 
 **Evidence (artifacts2):** *no baseline ever hits the :441 skip.* Every real module that
 generates the keypair returns a readable point. Providers reaching `test_ecdh_key_agreement_basic`
@@ -339,7 +339,7 @@ meta-test additions in `tests/test_acvp_slhdsa_runtime_classification.py`.
   evidence-backed and carries its resolution recipe (A17 row).
 - **Category B (legitimate, raw-import optional):** 5 (B1–B5; B4/B5 cross-listed as D2).
 - **Category C (legitimate, capability/test-data absent):** 10 (C1–C10).
-- **Category D (RESOLVED 2026-06-10, see §4a):** 3 (D1 → Type-C **fail**; D2 → A-like **xfail**,
+- **Category D (RESOLVED 2026-06-10, see §4a):** 3 (D1 → lifecycle **fail**; D2 → A-like **xfail**,
   B4/B5 reclassified; D3 → **xfail**, boundary = mechanism advertisement). All implemented TDD.
 - **Cross-check confirms the leak is live:** tpm2 (~22k EC-curve skips, NIST P-curves in the broad
   branch = A), corePKCS11 (988 EC + 201 RSA = the documented precedent), kryoptic-fips (216 RSA

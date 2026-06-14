@@ -92,7 +92,7 @@ Classification follows AGENTS.md §"Test-outcome classification model" with the 
 threat-model adjustment. **CVE-impact column** = impact if this provider were backed by real
 hardware or reachable through a proxy.
 
-### CRITICAL — Type A (crypto-correctness) or Type B (protection violated)
+### CRITICAL — crypto (crypto-correctness) or policy (protection violated)
 
 | # | Provider | Finding | Class | Soft-token sev | CVE-impact sev | Source |
 |---|---|---|---|---|---|---|
@@ -104,7 +104,7 @@ hardware or reachable through a proxy.
 | C6 | **bouncyhsm** | RSA PKCS#1 v1.5 **non-uniform errors** (Bleichenbacher oracle); RSA-OAEP **non-uniform errors** (Manger oracle); AES-CBC-PAD **Vaudenay oracle**. 3 distinct padding oracles. | A | HIGH (concrete oracle) | **CRITICAL** | `test_padding_oracle.py` (bouncyhsm-unique set) |
 | C7 | **wolfpkcs11** | **Digest subsystem non-functional** — `C_Digest` returns garbage `CK_RV = 0xffffffffffffff7c` (=-132 i64, **out of CKR_* range**) for SHA-1/SHA-2; returns `CKR_ARGUMENTS_BAD` for SHA-3. ~250 failing tests (`test_digest` 0P/19F, `test_kat` 8F, `test_acvp_hash` 160F, `test_multipart_streaming` 6F, `test_buffers` digest subset). Mechanism advertised but operation broken. | spec/A | HIGH | **CRITICAL** | wolfpkcs11 (+master) |
 
-### HIGH — crashes (segfault = the finding), Type C lifecycle self-contradiction, major spec breaks
+### HIGH — crashes (segfault = the finding), lifecycle self-contradiction, major spec breaks
 
 | # | Provider | Finding | Class | Soft-token sev | CVE-impact sev | Source |
 |---|---|---|---|---|---|---|
@@ -113,7 +113,7 @@ hardware or reachable through a proxy.
 | H3 | **wolfpkcs11** | SIGABRT `wycheproof_hkdf.py` (rc=6), SIGTRAP `x509/test_identity.py` (rc=5), SIGHUP `test_access_levels.py` + `test_metamorphic.py` (rc=1). | crash | MEDIUM | HIGH | 4 more files |
 | H4 | **kryptic-fips** | 5 SIGABRT files in FIPS mode: `test_ccm`, `test_mech_derive`, `test_mech_encrypt`, `test_misc_kdf`, `wycheproof_aes` (all rc=6). FIPS-mode self-aborts. | crash | MEDIUM | HIGH (FIPS contexts) | kryptic-fips-only |
 | H5 | **bouncyhsm** | SIGSEGV `test_parameter_validation.py` (rc=11, after visible IV-reuse failures). SIGSEGV `test_ckr_object.py` (rc=11, crash stdout lost on retry). | crash | MEDIUM | HIGH | bouncyhsm |
-| H6 | **bouncyhsm** | `C_Decrypt`/`DecryptUpdate` with NULL ptr returns `CKR_ARGUMENTS_BAD` but **leaves operation active** → `CKR_OPERATION_ACTIVE` on next init. Type C: claims cleanup, doesn't honor. | C | MEDIUM | HIGH | `test_operation_termination.py` |
+| H6 | **bouncyhsm** | `C_Decrypt`/`DecryptUpdate` with NULL ptr returns `CKR_ARGUMENTS_BAD` but **leaves operation active** → `CKR_OPERATION_ACTIVE` on next init. lifecycle: claims cleanup, doesn't honor. | C | MEDIUM | HIGH | `test_operation_termination.py` |
 | H7 | **bouncyhsm + wolfpkcs11** | Wrong `pulSize` after `CKR_BUFFER_TOO_SMALL`: returns **8 not 32, 16 not 256**. Retry preserves wrong state (stuck `pulSize=1`). Spec: caller needs correct size to alloc. | spec | MEDIUM | HIGH (DoS / memory unsafety in client) | `test_buffers.py` (bouncyhsm + wolfpkcs11, NOT bouncyhsm-only as initially thought) |
 | H7b | **wolfpkcs11** | RSA-OAEP **accepts invalid ciphertexts** — 209 wycheproof `*-invalid` vectors decrypt successfully across SHA-1/224/256/384/512 × RSA-2048/3072/4096. Manger-style oracle. | A | MEDIUM (host) | HIGH | `test_wycheproof_rsa_oaep.py` (wolfpkcs11 + bouncyhsm) |
 | H7c | **opencryptoki (root cause: OpenSSL PR #30663, upstream-known)** | AES-KWP **buffer overwrite on corrupted input** — `CKM_AES_KEY_WRAP_KWP` decrypt with corrupted AIV/padding returns `CKR_GENERAL_ERROR` BUT writes past the caller's output buffer (canary `guard=00000000000000004b` overwritten). Out-of-bounds write triggered by malformed ciphertext. **Root cause is upstream in OpenSSL's AES-KWP decrypt path (OpenSSL PR #30663), not in opencryptoki itself — surfaces through opencryptoki because it delegates KWP to libcrypto.** | A/unsafety | MEDIUM (host) | **HIGH** (memory safety, attacker-controlled input) | `security/test_error_path_kwp.py` (8F, opencryptoki-only among pool — other OpenSSL-backed providers either don't advertise CKM_AES_KEY_WRAP_KWP or use a different code path) |
@@ -167,13 +167,13 @@ hardware or reachable through a proxy.
 - **C1 — bouncyhsm EdDSA wrong signature** (`test_sign_p11_verify_crypto` → `InvalidSignature`). 
   Confirmed real: test signs via `C_Sign`, then calls `cryptography.hazmat...Ed25519PublicKey.verify()`.
   Other providers pass. This is a **genuine RFC-8032-correctness break in bouncyhsm**.
-- **C2 — bouncyhsm `CKA_MODULUS` changeable.** Type B protection violation.
+- **C2 — bouncyhsm `CKA_MODULUS` changeable.** policy protection violation.
 - **C3 — bouncyhsm AES-GCM IV reuse accepted.** (May be related to existing C5; needs separation.)
 - **C4 — bouncyhsm AES-GCM 4-byte IV accepted.**
 - **C7 — wolfpkcs11 digest subsystem broken.** ~250 digest tests fail. Returns out-of-range CK_RV
   `0xffffffffffffff7c` (=-132 i64) for SHA-1/2 and `CKR_ARGUMENTS_BAD` for SHA-3. Mechanism is
   advertised but operation is broken — likely wolfCrypt internal error leaking through CK_RV.
-- **H6 — bouncyhsm NULL-pr `C_Decrypt` leaves op active.** Type C.
+- **H6 — bouncyhsm NULL-pr `C_Decrypt` leaves op active.** lifecycle.
 - **H7 — bouncyhsm + wolfpkcs11 wrong `pulSize` after `CKR_BUFFER_TOO_SMALL`.** Shared bug
   (initially thought bouncyhsm-only).
 - **H7b — wolfpkcs11 (and bouncyhsm) RSA-OAEP accepts invalid ciphertexts.** 209 wycheproof
@@ -340,14 +340,14 @@ release and master swapped bug directions on the same operation. Corrected below
 | ID | Finding (master-canonical) | Direction | Fails | Status |
 |---|---|---|---|---|
 | **W1** | **RSA-OAEP decrypt rejects VALID ciphertexts** — `tc1-valid` of every OAEP variant (SHA-1/224/256/384/512 × RSA-2048/3072/4096) returns `CKR_ENCRYPTED_DATA_INVALID`. OAEP decrypt is functionally broken in master. **Severity dropped from release:** the release accepted invalid ciphertexts (Manger oracle → Critical); master flipped to over-strict reject. **Reject-valid is NOT a security issue** (no oracle, no leak, no wrong output — just a clean false-negative error). Per AGENTS.md this is "advertised but not operational" → xfail-class, not a security finding. | reject-valid (clean error) | 210 | **LOW — functional bug, not security** |
-| **W2** | **AES-CCM decrypt rejects VALID ciphertexts** — `tc45..tc50+` valid-tag vectors return `CKR_ENCRYPTED_DATA_INVALID`. CCM decrypt functionally broken in master. **Severity dropped from release:** C5 was release "accept-invalid" (Critical, Type A — AEAD authenticity bypassed); master flipped to "reject-valid". **Reject-valid does NOT violate any AES-CCM security property** — it's a false negative on a valid ciphertext, returned as a clean `CKR_ENCRYPTED_DATA_INVALID`. No leak, no forgery, no crash. | reject-valid (clean error) | 44 | **LOW — functional bug, not security** |
+| **W2** | **AES-CCM decrypt rejects VALID ciphertexts** — `tc45..tc50+` valid-tag vectors return `CKR_ENCRYPTED_DATA_INVALID`. CCM decrypt functionally broken in master. **Severity dropped from release:** C5 was release "accept-invalid" (Critical, crypto — AEAD authenticity bypassed); master flipped to "reject-valid". **Reject-valid does NOT violate any AES-CCM security property** — it's a false negative on a valid ciphertext, returned as a clean `CKR_ENCRYPTED_DATA_INVALID`. No leak, no forgery, no crash. | reject-valid (clean error) | 44 | **LOW — functional bug, not security** |
 | **W3** | **`C_DigestKey` produces wrong digest** — output equals SHA-256 of empty input (`e3b0c44298fc1c14…`) regardless of key material. The key is not being mixed into the digest. Real correctness bug. | wrong output | 3 | **HIGH — report** |
-| **W4** | **`C_DigestKey` accepts sensitive/non-extractable imported key** — `test_digest_key_sensitive_non_extractable_imported_key` fails: module digests a protected key. Type B protection violation (sensitive key material shouldn't be digestable). | protection | 1 | **HIGH — report** |
+| **W4** | **`C_DigestKey` accepts sensitive/non-extractable imported key** — `test_digest_key_sensitive_non_extractable_imported_key` fails: module digests a protected key. policy protection violation (sensitive key material shouldn't be digestable). | protection | 1 | **HIGH — report** |
 | **W5** | **ML-DSA sign+verify roundtrip fails** with `CKR_FUNCTION_FAILED` for all hash variants (SHA-256/384/512, SHA3-256). ML-DSA broken in master. | fails | 4 | **HIGH — report** |
 | **W6** | **ML-DSA verify** — mix of valid-sigs-rejected (`tc147-valid`, `tc161-valid`) and invalid-handling issues across mldsa_44/65. | mixed | 15 | **HIGH — report** |
 | **W7** | **Valid ECDSA signatures rejected** on less-common curves/hashes: secp224r1, SHA3-224/256/384/512, SHAKE128, P1363. wolfCrypt curve/hash-support gap. | reject-valid | 14 | **MEDIUM — report** |
 | **W8** | **HKDF derive returns `CKR_ATTRIBUTE_VALUE_INVALID`** for all HKDF-key/data derive operations. HKDF broken in master. | fails | 4 | **MEDIUM — report** |
-| **W9** | **NULL-pointer lifecycle (Type C)** — `C_Encrypt/Decrypt/EncryptUpdate/DecryptUpdate` with NULL input/length pointer returns `CKR_ARGUMENTS_BAD` BUT **leaves the operation active** → next init gets `CKR_OPERATION_ACTIVE`. Same bug class as bouncyhsm H6. Also: SHA256 `C_Digest(empty)` returns `CKR_ARGUMENTS_BAD` but leaves op active. | C (lifecycle) | 10 | **HIGH — report** |
+| **W9** | **NULL-pointer lifecycle (lifecycle)** — `C_Encrypt/Decrypt/EncryptUpdate/DecryptUpdate` with NULL input/length pointer returns `CKR_ARGUMENTS_BAD` BUT **leaves the operation active** → next init gets `CKR_OPERATION_ACTIVE`. Same bug class as bouncyhsm H6. Also: SHA256 `C_Digest(empty)` returns `CKR_ARGUMENTS_BAD` but leaves op active. | C (lifecycle) | 10 | **HIGH — report** |
 | **W10** | **SHA-3 empty-input digest returns `CKR_ARGUMENTS_BAD`** — SHA3_224/256/384/512 empty-input cases all fail. | spec | 4 | **MEDIUM — report** |
 | W11 | Crash files remaining in master: `wycheproof/test_wycheproof_hkdf.py` (rc=6 SIGABRT), `x509/test_identity.py` (rc=5 SIGTRAP). Down from 18 → 4 crashes. | crash | 2 files | **HIGH — report** |
 
@@ -393,7 +393,7 @@ When the same operation has opposite bug directions in release vs master:
 |---|---|---|
 | **accept-invalid** (lax) on auth/AEAD/RSA-PAD | YES — authenticity/integrity bypassed (oracle, forgery, Bleichenbacher/Manger/Vaudenay) | **Critical/High** |
 | **reject-valid** (over-strict) on same | NO — false negative, clean error return, no leak/forgery/wrong-output | **Low** (functional bug, "advertised but not operational") |
-| **wrong-output** on a successful operation | YES — Type A crypto-correctness break (caller believes result is correct) | **Critical** |
+| **wrong-output** on a successful operation | YES — crypto-correctness break (caller believes result is correct) | **Critical** |
 
 This is why master's W1/W2 are LOW while the release's same-mechanism findings were Critical:
 master traded a security break for a functional bug. **Always classify by what the module

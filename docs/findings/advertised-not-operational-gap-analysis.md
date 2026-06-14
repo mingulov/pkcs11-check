@@ -72,7 +72,7 @@ object classes; only the negotiated-exhausted case qualifies.)
 - Positive-op row: clean error = xfail — unchanged.
 - `INCONCLUSIVE` probe (setup could not stage the canonical op) keeps legacy rules — unchanged.
 - Lenient-init-but-safe-op xfail (a4ca5891) — same direction.
-- Crash/wrong-output stay hard FAIL everywhere; nothing in this analysis weakens Type A–D.
+- Crash/wrong-output stay hard FAIL everywhere; nothing in this analysis weakens crypto–D.
 
 ## Recommended execution order
 

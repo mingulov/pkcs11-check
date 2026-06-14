@@ -228,7 +228,7 @@ documented stable/master PQC split, not a delta artifact.
    master), `test_mech_multipart.py` fail 18→0 (xfail +18, stable).
 4. **No unexpected new failure class.** Only **one** file shows a fail **increase**:
    stable `test_interface.py` **0 → 1** (`test_v30_encrypt_decrypt_aes` returns truncated
-   plaintext — `…test data 12` vs `…test data 123`, a Type-A correctness bug). This is a
+   plaintext — `…test data 12` vs `…test data 123`, a crypto correctness bug). This is a
    **genuine wolfpkcs11 finding newly surfaced, not a regression**: in the baseline that file
    was a *crashed* unit (rc=11) that died **before** the v3.0 crypto test ran, so the test
    had no recorded verdict; this run the exit-time crash landed on a different file, the v3.0
