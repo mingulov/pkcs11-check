@@ -46,3 +46,13 @@ def test_no_test_site_emits_reserved_unclassified_reason() -> None:
     assert not out, (
         f"'unclassified' is reserved for the plugin runtime gate; remove from testcases/:\n{out}"
     )
+
+
+def test_allowlist_is_empty() -> None:
+    """Migration complete: no files remain in the raw-site allowlist, so the static
+    gate is fully hard — any new raw pytest.xfail/fail under testcases/ now fails CI."""
+    from tests._raw_site_allowlist import ALLOWLIST
+
+    assert not ALLOWLIST, (
+        f"migration incomplete — files remain in the allowlist: {sorted(ALLOWLIST)}"
+    )
