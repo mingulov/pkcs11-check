@@ -22,6 +22,5 @@ ALLOWLIST = {
     "src/pkcs11_check/testcases/test_object_visibility.py",
     "src/pkcs11_check/testcases/test_remaining_gaps.py",
     "src/pkcs11_check/testcases/test_ssl3.py",
-    "src/pkcs11_check/testcases/test_stateful_sigs.py",
     "src/pkcs11_check/testcases/test_subprocess_safety.py",
 }
