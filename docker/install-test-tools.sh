@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install shared test tooling (fault-proxy, pkcs11-provider, p11-kit)
-# for pkcs11-check Docker images. Handles Debian (apt) and Fedora (dnf).
+# for pkcs11-check Docker images. Handles Debian (apt), Fedora (dnf), Alpine (apk).
 set -euo pipefail
 
 # --- Detect distro ---
@@ -8,6 +8,8 @@ if command -v apt-get &>/dev/null; then
     DISTRO=debian
 elif command -v dnf &>/dev/null; then
     DISTRO=fedora
+elif command -v apk &>/dev/null; then
+    DISTRO=alpine
 else
     echo "WARNING: Unknown distro, skipping test tool install" >&2
     exit 0
@@ -18,12 +20,16 @@ case $DISTRO in
     debian) apt-get update && apt-get install -y --no-install-recommends \
                 p11-kit p11-kit-modules ;;
     fedora) dnf install -y p11-kit ;;
+    alpine) apk add --no-cache p11-kit ;;
 esac
 
 # --- pkcs11-provider (OpenSSL 3.x PKCS#11 provider) ---
+# Best-effort outside Debian: not packaged everywhere. Tests that route crypto
+# through the OpenSSL provider skip cleanly if it is absent.
 case $DISTRO in
     debian) apt-get install -y --no-install-recommends pkcs11-provider ;;
     fedora) dnf install -y pkcs11-provider || true ;;
+    alpine) apk add --no-cache pkcs11-provider || true ;;
 esac
 
 # --- fault-proxy (compile from bundled source) ---
@@ -38,4 +44,5 @@ fi
 case $DISTRO in
     debian) rm -rf /var/lib/apt/lists/* ;;
     fedora) dnf clean all ;;
+    alpine) rm -rf /var/cache/apk/* ;;
 esac

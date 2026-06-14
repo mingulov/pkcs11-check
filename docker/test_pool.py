@@ -106,6 +106,9 @@ VARIANT_PROVIDERS = [
     # craton-hsm-core has no release tags — only ever a main build (cold build may be
     # skipped on failure), so it lives with the other dev/variant images.
     "craton-hsm",
+    # NetHSM: keyfender server + nethsm-pkcs11 co-located; undivided (not in SHARD_MAP) —
+    # narrow/fast coverage and each shard would re-provision its own server.
+    "nethsm",
 ]
 # Heavy/manual providers are runnable through the pool, but not included in
 # default or normal --all sweeps.

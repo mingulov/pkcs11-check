@@ -358,5 +358,17 @@ services:
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/pkcs11-mock
 
+  # NetHSM — keyfender server + nethsm-pkcs11 .so, co-located over loopback
+  test-nethsm:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: docker/nethsm/Dockerfile
+      args:
+        NETHSM_PKCS11_REF: "${NETHSM_PKCS11_REF:-v2.2.0}"
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nethsm
+      PKCS11_CHECK_PIN: "opPassphrase1"
+
 volumes:
   pkcs11-check-cache:

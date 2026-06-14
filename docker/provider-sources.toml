@@ -496,3 +496,24 @@ provider = "Craton HSM (core)"
 branch_source = "craton_hsm_main"
 openssl = "not applicable: RustCrypto default backend (no OpenSSL dependency)"
 build_evidence = "main@d3203bf; cargo build --release -p craton_hsm; Apache-2.0; no release tags exist; Docker build validation pending"
+
+[sources.nethsm_pkcs11_release]
+kind = "git_tag"
+repo = "https://github.com/Nitrokey/nethsm-pkcs11.git"
+selector = "v2.2.0"
+commit_date = "2026-04-23T00:00:00Z"
+
+[sources.nethsm_server]
+kind = "docker_image"
+repo = "docker.io/nitrokey/nethsm"
+selector = "testing"
+# Server is image/digest-pinned, NOT source-built: keyfender is an OCaml/MirageOS stack.
+# Resolve a digest with `docker manifest inspect` before a release run.
+
+[targets.nethsm]
+service = "test-nethsm"
+provider = "Nitrokey NetHSM"
+release_source = "nethsm_pkcs11_release"
+supporting_source = "nethsm_server"
+openssl = "not applicable: module talks REST to the co-located keyfender server"
+build_evidence = "nethsm-pkcs11 v2.2.0 + nitrokey/nethsm:testing (Alpine, system python3.12); keygen via admin escalation; Docker build validation pending"

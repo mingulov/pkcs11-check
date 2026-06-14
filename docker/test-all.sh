@@ -35,6 +35,7 @@ ALL_PROVIDERS=(
     tpm2
     pkcs11-mock
     bouncyhsm
+    nethsm
 )
 
 HEAVY_PROVIDERS=(
