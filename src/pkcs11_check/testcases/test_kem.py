@@ -71,6 +71,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     classify_negative_rv,
     classify_policy_enforcement,
     is_known_error,
@@ -241,8 +242,22 @@ class TestMLKEMKeyGeneration:
         try:
             pub_cls = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])[CKA_CLASS]
             priv_cls = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])[CKA_CLASS]
-            assert pub_cls == CKO_PUBLIC_KEY
-            assert priv_cls == CKO_PRIVATE_KEY
+            assert_correct(
+                actual=pub_cls,
+                expected=CKO_PUBLIC_KEY,
+                label="CKM_ML_KEM_KEY_PAIR_GEN:public-key CKA_CLASS readback",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_cls,
+                expected=CKO_PRIVATE_KEY,
+                label="CKM_ML_KEM_KEY_PAIR_GEN:private-key CKA_CLASS readback",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -255,8 +270,22 @@ class TestMLKEMKeyGeneration:
         try:
             pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert pub_kt == CKK_ML_KEM
-            assert priv_kt == CKK_ML_KEM
+            assert_correct(
+                actual=pub_kt,
+                expected=CKK_ML_KEM,
+                label="CKM_ML_KEM_KEY_PAIR_GEN:public-key CKA_KEY_TYPE readback",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_kt,
+                expected=CKK_ML_KEM,
+                label="CKM_ML_KEM_KEY_PAIR_GEN:private-key CKA_KEY_TYPE readback",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -376,7 +405,13 @@ class TestMLKEMEncapsulateDecapsulate:
             # Both sides must produce the same shared secret
             encap_value = read_attributes(rs.raw, rs.sh, encap_handle, [CKA_VALUE])[CKA_VALUE]
             decap_value = read_attributes(rs.raw, rs.sh, decap_handle, [CKA_VALUE])[CKA_VALUE]
-            assert encap_value == decap_value, "Encapsulated and decapsulated secrets differ"
+            assert_correct(
+                actual=decap_value,
+                expected=encap_value,
+                label="CKM_ML_KEM:encapsulate/decapsulate shared-secret match",
+                operation="C_DecapsulateKey",
+                mechanism="CKM_ML_KEM",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -406,7 +441,18 @@ class TestMLKEMEncapsulateDecapsulate:
                 _encap_attrs(),
                 "encapsulate",
             )
-            assert ct1 != ct2, "Two encapsulations produced identical ciphertexts (bad randomness)"
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_ML_KEM:encapsulation must use fresh randomness",
+                    operation="C_EncapsulateKey",
+                    mechanism="CKM_ML_KEM",
+                    summary=(
+                        "Two ML-KEM encapsulations against the same public key produced "
+                        "identical ciphertexts -- encapsulation randomness was reused"
+                    ),
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -548,7 +594,14 @@ class TestMLKEMKeyDerivation:
             )
             assert isinstance(ct, bytes) and len(ct) > 0
             kt = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert kt == CKK_AES
+            assert_correct(
+                actual=kt,
+                expected=CKK_AES,
+                label="CKM_ML_KEM:encapsulated AES-128 key CKA_KEY_TYPE readback",
+                operation="C_EncapsulateKey",
+                mechanism="CKM_ML_KEM",
+                kind="metadata",
+            )
             value = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(value, bytes)
             if len(value) != 16:
@@ -604,7 +657,14 @@ class TestMLKEMKeyDerivation:
             )
             assert isinstance(ct, bytes) and len(ct) > 0
             kt = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert kt == CKK_AES
+            assert_correct(
+                actual=kt,
+                expected=CKK_AES,
+                label="CKM_ML_KEM:encapsulated AES-256 key CKA_KEY_TYPE readback",
+                operation="C_EncapsulateKey",
+                mechanism="CKM_ML_KEM",
+                kind="metadata",
+            )
             value = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(value, bytes)
             assert len(value) == 32, f"Expected 32-byte AES-256 key, got {len(value)} bytes"
@@ -701,7 +761,13 @@ class TestMLKEMDecapsulation:
             # Some modules (Kryoptic) may always produce 32-byte shared secret
             assert len(dec_val) in (aes_len, 32)
             if len(dec_val) == aes_len:
-                assert enc_val == dec_val
+                assert_correct(
+                    actual=dec_val,
+                    expected=enc_val,
+                    label="CKM_ML_KEM:encapsulate/decapsulate AES-key match",
+                    operation="C_DecapsulateKey",
+                    mechanism="CKM_ML_KEM",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

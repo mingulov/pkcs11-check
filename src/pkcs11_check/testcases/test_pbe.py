@@ -73,6 +73,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import assert_correct
 
 # CKK_GENERIC_SECRET is the raw integer value 0x10; CKK_SHA_1_HMAC is 0x28.
 # Some modules (NSS) return CKK_GENERIC_SECRET for CKM_PBA_SHA1_WITH_SHA1_HMAC keys
@@ -303,7 +304,14 @@ class TestLegacyPBEVariants:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
-            assert attrs[CKA_KEY_TYPE] == case.key_type
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=case.key_type,
+                label=f"{case.mechanism_name}:CKA_KEY_TYPE readback",
+                operation="C_GenerateKey",
+                mechanism=case.mechanism_name,
+                kind="metadata",
+            )
             if case.iv_len is not None:
                 iv = mech.buffer_bytes("init_vector")
                 assert len(iv) == case.iv_len
@@ -336,7 +344,14 @@ class TestPBESHA1DES3:
         )[0]
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
-            assert attrs[CKA_KEY_TYPE] == CKK_DES3
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=CKK_DES3,
+                label="CKM_PBE_SHA1_DES3_EDE_CBC:CKA_KEY_TYPE readback",
+                operation="C_GenerateKey",
+                mechanism="CKM_PBE_SHA1_DES3_EDE_CBC",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
 
@@ -388,7 +403,13 @@ class TestPBESHA1DES3:
         try:
             v1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])[CKA_VALUE]
-            assert v1 == v2, "PBE_SHA1_DES3_EDE_CBC must be deterministic"
+            assert_correct(
+                actual=v1,
+                expected=v2,
+                label="CKM_PBE_SHA1_DES3_EDE_CBC:C_GenerateKey determinism",
+                operation="C_GenerateKey",
+                mechanism="CKM_PBE_SHA1_DES3_EDE_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, h1)
             destroy_quietly(rs.raw, rs.sh, h2)
@@ -476,7 +497,14 @@ class TestPBESHA1DES2:
         )[0]
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
-            assert attrs[CKA_KEY_TYPE] == CKK_DES2
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=CKK_DES2,
+                label="CKM_PBE_SHA1_DES2_EDE_CBC:CKA_KEY_TYPE readback",
+                operation="C_GenerateKey",
+                mechanism="CKM_PBE_SHA1_DES2_EDE_CBC",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
 
@@ -528,7 +556,13 @@ class TestPBESHA1DES2:
         try:
             v1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])[CKA_VALUE]
-            assert v1 == v2, "PBE_SHA1_DES2_EDE_CBC must be deterministic"
+            assert_correct(
+                actual=v1,
+                expected=v2,
+                label="CKM_PBE_SHA1_DES2_EDE_CBC:C_GenerateKey determinism",
+                operation="C_GenerateKey",
+                mechanism="CKM_PBE_SHA1_DES2_EDE_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, h1)
             destroy_quietly(rs.raw, rs.sh, h2)
@@ -617,8 +651,13 @@ class TestPBASHA1:
                         f"CKK_SHA_1_HMAC (0x28) for CKM_PBA_SHA1_WITH_SHA1_HMAC key generation"
                     ),
                 )
-            assert attrs[CKA_KEY_TYPE] == CKK_SHA_1_HMAC, (
-                f"Expected CKK_SHA_1_HMAC (0x28), got 0x{actual_key_type:02x}"
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=CKK_SHA_1_HMAC,
+                label="CKM_PBA_SHA1_WITH_SHA1_HMAC:CKA_KEY_TYPE readback",
+                operation="C_GenerateKey",
+                mechanism="CKM_PBA_SHA1_WITH_SHA1_HMAC",
+                kind="metadata",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
@@ -652,7 +691,13 @@ class TestPBASHA1:
         try:
             v1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])[CKA_VALUE]
-            assert v1 == v2
+            assert_correct(
+                actual=v1,
+                expected=v2,
+                label="CKM_PBA_SHA1_WITH_SHA1_HMAC:C_GenerateKey determinism",
+                operation="C_GenerateKey",
+                mechanism="CKM_PBA_SHA1_WITH_SHA1_HMAC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, h1)
             destroy_quietly(rs.raw, rs.sh, h2)
@@ -763,7 +808,13 @@ class TestPKCS5PBKD2:
         try:
             v1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])[CKA_VALUE]
-            assert v1 == v2, "PBKDF2 must be deterministic"
+            assert_correct(
+                actual=v1,
+                expected=v2,
+                label="CKM_PKCS5_PBKD2:C_GenerateKey determinism",
+                operation="C_GenerateKey",
+                mechanism="CKM_PKCS5_PBKD2",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, h1)
             destroy_quietly(rs.raw, rs.sh, h2)
@@ -874,7 +925,14 @@ class TestPKCS5PBKD2:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE, CKA_VALUE])
-            assert attrs[CKA_KEY_TYPE] == CKK_AES
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=CKK_AES,
+                label="CKM_PKCS5_PBKD2:CKA_KEY_TYPE readback",
+                operation="C_GenerateKey",
+                mechanism="CKM_PKCS5_PBKD2",
+                kind="metadata",
+            )
             assert len(attrs[CKA_VALUE]) == 32
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
