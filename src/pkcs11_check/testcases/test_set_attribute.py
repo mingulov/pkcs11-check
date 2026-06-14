@@ -34,6 +34,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     classify_negative_rv,
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
@@ -129,7 +130,13 @@ class TestSetAttributePositive:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LABEL])
-            assert attrs[CKA_LABEL] == "before"
+            assert_correct(
+                actual=attrs[CKA_LABEL],
+                expected="before",
+                label="CKA_LABEL readback after create",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
 
             set_attributes(rs.raw, rs.sh, key, {CKA_LABEL: "after"})
 
@@ -152,7 +159,13 @@ class TestSetAttributePositive:
         try:
             set_attributes(rs.raw, rs.sh, key, {CKA_ID: b"\xaa\xbb"})
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_ID])
-            assert attrs[CKA_ID] == b"\xaa\xbb"
+            assert_correct(
+                actual=attrs[CKA_ID],
+                expected=b"\xaa\xbb",
+                label="CKA_ID readback after C_SetAttributeValue",
+                operation="C_SetAttributeValue",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 

@@ -40,7 +40,11 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_OK,
 )
-from pkcs11_check.testcases.conftest import AES_KEYGEN_RUNTIME_REJECT_RVS, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    assert_correct,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.security
 
@@ -457,6 +461,12 @@ class TestAutopadding:
                 ct,
                 mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="AES_CBC_PAD:decrypt(encrypt(pt)) roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_CBC_PAD",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

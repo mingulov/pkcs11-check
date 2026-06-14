@@ -49,7 +49,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._attribute_values import require_bool_attr, require_ulong_attr
-from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, is_known_error
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    gen_aes_key_or_xfail,
+    is_known_error,
+)
 
 pytestmark = [pytest.mark.security]
 
@@ -421,7 +425,13 @@ class TestKeyGenMechanism:
                 pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
             mech = attrs[CKA_KEY_GEN_MECHANISM]
             mech_val = require_ulong_attr(mech, "CKA_KEY_GEN_MECHANISM")
-            assert mech_val == CKM_AES_KEY_GEN, f"Expected CKM_AES_KEY_GEN, got {mech_val}"
+            assert_correct(
+                actual=mech_val,
+                expected=CKM_AES_KEY_GEN,
+                label="AES:CKA_KEY_GEN_MECHANISM readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
@@ -443,8 +453,12 @@ class TestKeyGenMechanism:
                     pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
                 mech = attrs[CKA_KEY_GEN_MECHANISM]
                 mech_val = require_ulong_attr(mech, "CKA_KEY_GEN_MECHANISM")
-                assert mech_val == CKM_RSA_PKCS_KEY_PAIR_GEN, (
-                    f"Expected CKM_RSA_PKCS_KEY_PAIR_GEN, got {mech_val}"
+                assert_correct(
+                    actual=mech_val,
+                    expected=CKM_RSA_PKCS_KEY_PAIR_GEN,
+                    label="RSA:CKA_KEY_GEN_MECHANISM readback",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
                 )
             except AssertionError as e:
                 if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
@@ -580,8 +594,13 @@ class TestCheckValue:
             plaintext = b"\x00" * 16
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, plaintext)
             expected_kcv = ct[:3]
-            assert kcv == expected_kcv, (
-                f"KCV mismatch: got {kcv.hex()}, expected {expected_kcv.hex()}"
+            assert_correct(
+                actual=kcv,
+                expected=expected_kcv,
+                label="AES:CKA_CHECK_VALUE vs AES-ECB(zeros)[:3]",
+                operation="C_GetAttributeValue",
+                mechanism="CKM_AES_ECB",
+                kind="crypto",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -765,8 +784,20 @@ class TestDateAttributes:
             except AssertionError as e:
                 pytest.skip(f"Module does not expose date attributes: {e}")
 
-            assert sd == "20260101", f"Expected 20260101, got {sd}"
-            assert ed == "20271231", f"Expected 20271231, got {ed}"
+            assert_correct(
+                actual=sd,
+                expected="20260101",
+                label="CKA_START_DATE readback after create",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=ed,
+                expected="20271231",
+                label="CKA_END_DATE readback after create",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
