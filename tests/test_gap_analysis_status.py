@@ -2042,7 +2042,7 @@ def test_gap_analysis_marks_unknown_ckr_classification_as_fixed() -> None:
     helper_tests = _read("tests/test_classification_helpers.py")
     doc = GAP_DOC.read_text(encoding="utf-8")
 
-    assert "_xfail_or_fail_unexpected_clean_rv" in conftest
+    assert "_classify_unexpected_clean_rv" in conftest
     assert "is_standard_ckr(rv)" in conftest
     assert "is_vendor_defined_ckr(rv)" in conftest
     assert "undefined CK_RV" in conftest

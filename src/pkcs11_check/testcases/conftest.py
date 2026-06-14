@@ -857,15 +857,6 @@ def _classify_unexpected_clean_rv(
     )
 
 
-def _xfail_or_fail_unexpected_clean_rv(
-    rv: int,
-    expected_rvs: tuple[Any, ...] | set[Any] | frozenset[Any],
-    *,
-    label: str,
-) -> None:
-    _classify_unexpected_clean_rv(rv, expected_rvs, label=label)
-
-
 def reject_or_classify(
     exc: BaseException | None,
     expected_rvs: tuple[Any, ...] | set[Any] | frozenset[Any],
