@@ -1,0 +1,131 @@
+"""Tests for tools.report.extract — grouping at-source classification findings."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from tools.report.extract import extract_groups
+
+
+def _classification(**over: object) -> dict[str, object]:
+    """Build a serialized Classification dict (schema mirrors classification.py)."""
+    rec: dict[str, object] = {
+        "reason": "accepted_invalid",
+        "outcome": "fail",
+        "severity": "CRITICAL",
+        "kind": "crypto",
+        "label": "RSA:decrypt",
+        "summary": "RSA:decrypt: expected reject, got CKR_OK",
+        "operation": "C_Decrypt",
+        "mechanism": "CKM_RSA_PKCS",
+        "expected_ckr": ["CKR_ENCRYPTED_DATA_INVALID"],
+        "actual_ckr": "CKR_OK",
+        "spec_ref": "PKCS#11 v3.2 §6.13",
+        "source": "wycheproof",
+        "vector_id": None,
+        "detail": None,
+        "schema": 1,
+    }
+    rec.update(over)
+    return rec
+
+
+def _test_report(nodeid: str, records: list[dict[str, object]]) -> dict[str, object]:
+    """A pytest-reportlog call-phase TestReport line."""
+    return {
+        "$report_type": "TestReport",
+        "when": "call",
+        "nodeid": nodeid,
+        "outcome": "failed",
+        "user_properties": [["pkcs11_classification", records]],
+    }
+
+
+def test_two_records_same_key_merge_into_one_group(tmp_path: Path) -> None:
+    path = tmp_path / "report.jsonl"
+    r1 = _classification(vector_id="tc101")
+    r2 = _classification(vector_id="tc202")
+    lines = [
+        _test_report("tests/test_rsa.py::test_a", [r1]),
+        _test_report("tests/test_rsa.py::test_b", [r2]),
+    ]
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+
+    groups = extract_groups(path, crashes=[])
+
+    assert len(groups) == 1
+    grp = groups[0]
+    assert grp["count"] == 2
+    assert grp["test_file"] == "tests/test_rsa.py"
+    assert "tc101" in grp["vector_ids"]
+    assert "tc202" in grp["vector_ids"]
+    assert grp["severity"] == "CRITICAL"
+    assert grp["reason"] == "accepted_invalid"
+    assert grp["kind"] == "crypto"
+    assert grp["mechanism"] == "CKM_RSA_PKCS"
+    assert grp["operation"] == "C_Decrypt"
+    assert grp["expected_ckr"] == ["CKR_ENCRYPTED_DATA_INVALID"]
+    assert grp["actual_ckr"] == "CKR_OK"
+    assert grp["outcome"] == "fail"
+    assert "wycheproof" in grp["sources"]
+    assert len(grp["nodeids"]) == 2
+
+
+def test_distinct_keys_make_distinct_groups(tmp_path: Path) -> None:
+    path = tmp_path / "report.jsonl"
+    a = _classification(mechanism="CKM_RSA_PKCS")
+    b = _classification(mechanism="CKM_AES_GCM", actual_ckr="CKR_OK")
+    lines = [
+        _test_report("tests/test_x.py::t1", [a]),
+        _test_report("tests/test_x.py::t2", [b]),
+    ]
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+
+    groups = extract_groups(path, crashes=[])
+    assert len(groups) == 2
+
+
+def test_crashes_are_merged_as_findings(tmp_path: Path) -> None:
+    path = tmp_path / "report.jsonl"
+    path.write_text(json.dumps(_test_report("tests/test_x.py::t1", [_classification()])) + "\n")
+    crash = {
+        "schema": 1,
+        "reason": "crash",
+        "outcome": "fail",
+        "severity": "HIGH",
+        "kind": None,
+        "label": "tests/test_overflow.py",
+        "summary": "tests/test_overflow.py: process crashed",
+        "operation": None,
+        "mechanism": None,
+        "expected_ckr": None,
+        "actual_ckr": None,
+        "spec_ref": "",
+        "source": None,
+        "vector_id": None,
+        "detail": {"signal": "SIGSEGV", "returncode": -11},
+    }
+    groups = extract_groups(path, crashes=[crash])
+    reasons = {g["reason"] for g in groups}
+    assert "crash" in reasons
+    crash_grp = next(g for g in groups if g["reason"] == "crash")
+    assert crash_grp["count"] == 1
+    assert crash_grp["test_file"] == "tests/test_overflow.py"
+
+
+def test_non_call_phase_reports_ignored(tmp_path: Path) -> None:
+    path = tmp_path / "report.jsonl"
+    setup = {
+        "$report_type": "TestReport",
+        "when": "setup",
+        "nodeid": "tests/test_x.py::t1",
+        "outcome": "passed",
+        "user_properties": [["pkcs11_classification", [_classification()]]],
+    }
+    call = _test_report("tests/test_x.py::t1", [_classification()])
+    path.write_text(json.dumps(setup) + "\n" + json.dumps(call) + "\n")
+
+    groups = extract_groups(path, crashes=[])
+    assert len(groups) == 1
+    assert groups[0]["count"] == 1
