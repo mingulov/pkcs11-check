@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import (
@@ -367,7 +368,14 @@ class TestECMQVDerive:
                     CKM_ECMQV_DERIVE,
                 )
             except AssertionError:
-                pytest.xfail("ECMQV derive not operational: wrong param structure expected")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_ECMQV_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_ECMQV_DERIVE",
+                    summary="ECMQV derive not operational: wrong param structure expected",
+                )
             else:
                 # Unlikely to succeed, but if it does, verify and clean up
                 val = _read_value(rs, shared)
@@ -486,7 +494,14 @@ class TestXEdDSA:
                     mech_param=xeddsa_param,
                 )
             except AssertionError:
-                pytest.xfail("XEdDSA sign not operational")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_XEDDSA:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_XEDDSA",
+                    summary="XEdDSA sign not operational",
+                )
                 raise  # unreachable
             else:
                 # Corrupt the signature

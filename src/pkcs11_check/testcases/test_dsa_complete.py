@@ -17,6 +17,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     PackedMechanism,
     _mech_struct,
@@ -699,7 +700,14 @@ class TestDSAPrehash:
                     label,
                 )
                 if result is True:
-                    pytest.fail(f"CKM_{mech_name_str} accepted {case_name} signature")
+                    classify(
+                        "accepted_invalid",
+                        kind="crypto",
+                        label=f"CKM_{mech_name_str} {case_name} signature",
+                        operation="C_Verify",
+                        mechanism=f"CKM_{mech_name_str}",
+                        summary=f"CKM_{mech_name_str} accepted {case_name} signature",
+                    )
                 assert result is False
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

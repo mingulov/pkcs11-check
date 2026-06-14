@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -79,7 +80,13 @@ def _encrypt_or_xfail(
         return encrypt_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
         if is_known_error(exc, {CKR_MECHANISM_INVALID}):
-            pytest.xfail(f"Mechanism advertised but rejected at use: {exc}")
+            classify(
+                "not_operational",
+                kind="crypto",
+                label="SEED:C_Encrypt",
+                operation="C_Encrypt",
+                summary=f"Mechanism advertised but rejected at use: {exc}",
+            )
         raise
 
 
@@ -97,7 +104,13 @@ def _sign_or_xfail(
         return sign_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
         if is_known_error(exc, {CKR_MECHANISM_INVALID}):
-            pytest.xfail(f"Mechanism advertised but rejected at use: {exc}")
+            classify(
+                "not_operational",
+                kind="crypto",
+                label="SEED:C_Sign",
+                operation="C_Sign",
+                summary=f"Mechanism advertised but rejected at use: {exc}",
+            )
         raise
 
 

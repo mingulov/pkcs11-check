@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_ecdh
@@ -112,7 +113,14 @@ class TestECDHKnownAnswer:
                     mech_param=ecdh_param,
                 )
             except AssertionError as exc:
-                pytest.xfail(f"ECDH derivation failed -- mechanism advertised but rejected: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_ECDH1_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_ECDH1_DERIVE",
+                    summary=f"ECDH derivation failed -- mechanism advertised but rejected: {exc}",
+                )
 
             p11_secret = read_attributes(rs.raw, rs.sh, derived_h, [CKA_VALUE])[CKA_VALUE]
 
@@ -194,7 +202,14 @@ class TestECDHKnownAnswer:
                     mech_param=ecdh_ba,
                 )
             except AssertionError as exc:
-                pytest.xfail(f"ECDH derivation failed -- mechanism advertised but rejected: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_ECDH1_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_ECDH1_DERIVE",
+                    summary=f"ECDH derivation failed -- mechanism advertised but rejected: {exc}",
+                )
 
             secret_ab = read_attributes(rs.raw, rs.sh, key_ab, [CKA_VALUE])[CKA_VALUE]
             secret_ba = read_attributes(rs.raw, rs.sh, key_ba, [CKA_VALUE])[CKA_VALUE]
