@@ -54,7 +54,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
-from pkcs11_check.testcases.conftest import import_secret_key_negotiated, is_known_error
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    import_secret_key_negotiated,
+    is_known_error,
+)
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -251,6 +255,12 @@ def test_acvp_hmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) ->
     truncated = mac[:mac_len_bytes]
     expected = vec["mac_expected"]
 
-    assert truncated == expected, (
-        f"HMAC mismatch for {vec_id}: got {truncated.hex()}, expected {expected.hex()}"
+    assert_correct(
+        actual=truncated,
+        expected=expected,
+        label=f"{vec['mech_display']}:C_Sign KAT {vec_id}",
+        operation="C_Sign",
+        mechanism=vec["mech_display"],
+        source=vec.get("_source"),
+        vector_id=vec.get("_vector_id"),
     )

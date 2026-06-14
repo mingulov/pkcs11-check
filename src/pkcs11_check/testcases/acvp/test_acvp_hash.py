@@ -48,7 +48,7 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_NOT_LOGGED_IN,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import assert_correct, xfail_if_known_ckr
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -249,8 +249,14 @@ def test_acvp_hash(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) ->
             summary=f"Digest failed for {vec_id}: {e}",
         )
 
-    assert digest == expected_md, (
-        f"{vec_id}: digest mismatch\n  expected: {expected_md.hex()}\n  got:      {digest.hex()}"
+    assert_correct(
+        actual=digest,
+        expected=expected_md,
+        label=f"{mech_name}:C_Digest KAT {vec_id}",
+        operation="C_Digest",
+        mechanism=mech_name,
+        source=vec.get("_source"),
+        vector_id=vec.get("_vector_id"),
     )
 
 
@@ -278,8 +284,14 @@ def _run_acvp_shake_vector(rs: Any, vec_id: str, vec: dict[str, Any]) -> None:
         xfail_if_known_ckr(exc, _SHAKE_RUNTIME_REJECT_RVS, f"{vec_id} XOF not operational")
 
     digest = bytes(output)
-    assert digest == expected_md, (
-        f"{vec_id}: SHAKE XOF mismatch\n  expected: {expected_md.hex()}\n  got:      {digest.hex()}"
+    assert_correct(
+        actual=digest,
+        expected=expected_md,
+        label=f"{vec.get('mech_name', 'SHAKE')}:C_DigestXof KAT {vec_id}",
+        operation="C_DigestXof",
+        mechanism=vec.get("mech_name"),
+        source=vec.get("_source"),
+        vector_id=vec.get("_vector_id"),
     )
 
 

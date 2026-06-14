@@ -22,6 +22,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA3_512,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
+from pkcs11_check.testcases.conftest import assert_correct
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -124,6 +125,12 @@ def test_acvp_sha3(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) ->
             summary=f"SHA-3 digest failed for {vec_id}: {e}",
         )
 
-    assert digest == expected_md, (
-        f"{vec_id}: digest mismatch\n  expected: {expected_md.hex()}\n  got:      {digest.hex()}"
+    assert_correct(
+        actual=digest,
+        expected=expected_md,
+        label=f"{mech_name_str}:C_Digest KAT {vec_id}",
+        operation="C_Digest",
+        mechanism=mech_name_str,
+        source=vec.get("_source"),
+        vector_id=vec.get("_vector_id"),
     )

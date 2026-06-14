@@ -38,7 +38,7 @@ from pkcs11_check.testcases._operability import (
     probe_operability,
     xfail_vacuous_reject,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 
 # GCM-SIV is not a standard PKCS#11 mechanism; use vendor extension if available
 CKM_AES_GCM_SIV = CKM(0x80000100, "CKM_AES_GCM_SIV")
@@ -234,12 +234,23 @@ def run_gcm_encrypt_test(
         ct_got = result[: len(result) - tag_bytes]
         tag_got = result[len(result) - tag_bytes :]
 
-        assert ct_got == vec["ct_expected"], (
-            f"{vec_id}: ciphertext mismatch: got {ct_got.hex()}, "
-            f"expected {vec['ct_expected'].hex()}"
+        assert_correct(
+            actual=ct_got,
+            expected=vec["ct_expected"],
+            label=f"AES-GCM:C_Encrypt KAT {vec_id} (ciphertext)",
+            operation="C_Encrypt",
+            mechanism="CKM_AES_GCM",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
-        assert tag_got == vec["tag_expected"], (
-            f"{vec_id}: tag mismatch: got {tag_got.hex()}, expected {vec['tag_expected'].hex()}"
+        assert_correct(
+            actual=tag_got,
+            expected=vec["tag_expected"],
+            label=f"AES-GCM:C_Encrypt KAT {vec_id} (tag)",
+            operation="C_Encrypt",
+            mechanism="CKM_AES_GCM",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
     finally:
         if key:
@@ -331,8 +342,14 @@ def run_gcm_decrypt_test(
             )
 
         if test_passed:
-            assert pt == vec["pt_expected"], (
-                f"{vec_id}: plaintext mismatch: got {pt.hex()}, expected {vec['pt_expected'].hex()}"
+            assert_correct(
+                actual=pt,
+                expected=vec["pt_expected"],
+                label=f"AES-GCM:C_Decrypt KAT {vec_id}",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_GCM",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
         else:
             fail_as(
@@ -430,12 +447,24 @@ def run_ccm_encrypt_test(
             else ct_expected
         )
 
-        assert ct_got == expected_ct, (
-            f"{vec_id}: ciphertext mismatch: got {ct_got.hex()}, expected {expected_ct.hex()}"
+        assert_correct(
+            actual=ct_got,
+            expected=expected_ct,
+            label=f"AES-CCM:C_Encrypt KAT {vec_id} (ciphertext)",
+            operation="C_Encrypt",
+            mechanism="CKM_AES_CCM",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
         if expected_tag:
-            assert tag_got == expected_tag, (
-                f"{vec_id}: tag mismatch: got {tag_got.hex()}, expected {expected_tag.hex()}"
+            assert_correct(
+                actual=tag_got,
+                expected=expected_tag,
+                label=f"AES-CCM:C_Encrypt KAT {vec_id} (tag)",
+                operation="C_Encrypt",
+                mechanism="CKM_AES_CCM",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
     finally:
         if key:
@@ -530,8 +559,14 @@ def run_ccm_decrypt_test(
             )
 
         if test_passed:
-            assert pt == vec["pt_expected"], (
-                f"{vec_id}: plaintext mismatch: got {pt.hex()}, expected {vec['pt_expected'].hex()}"
+            assert_correct(
+                actual=pt,
+                expected=vec["pt_expected"],
+                label=f"AES-CCM:C_Decrypt KAT {vec_id}",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_CCM",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
         else:
             fail_as(

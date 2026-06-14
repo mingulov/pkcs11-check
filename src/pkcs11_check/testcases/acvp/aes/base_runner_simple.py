@@ -44,7 +44,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OPERATION_ACTIVE,
     CKR_OPERATION_NOT_INITIALIZED,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 
 _AES_RUNTIME_REJECT_RVS = (
     CKR_DEVICE_ERROR,
@@ -170,9 +170,15 @@ def run_simple_encrypt_test(
         if payload_bits is not None and payload_bits % 8 != 0:
             ct = _cfb1_mask(ct, payload_bits)
             expected = _cfb1_mask(expected, payload_bits)
-        assert ct == expected, (
-            f"{vec_id}: ciphertext mismatch: got {ct.hex()}, expected {expected.hex()}"
-            + (f" (payloadLen={payload_bits} bits)" if payload_bits is not None else "")
+        assert_correct(
+            actual=ct,
+            expected=expected,
+            label=f"{mech_name}:C_Encrypt KAT {vec_id}"
+            + (f" (payloadLen={payload_bits} bits)" if payload_bits is not None else ""),
+            operation="C_Encrypt",
+            mechanism=mech_name,
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
     finally:
         if key:
@@ -237,9 +243,15 @@ def run_simple_decrypt_test(
         if payload_bits is not None and payload_bits % 8 != 0:
             pt = _cfb1_mask(pt, payload_bits)
             expected = _cfb1_mask(expected, payload_bits)
-        assert pt == expected, (
-            f"{vec_id}: plaintext mismatch: got {pt.hex()}, expected {expected.hex()}"
-            + (f" (payloadLen={payload_bits} bits)" if payload_bits is not None else "")
+        assert_correct(
+            actual=pt,
+            expected=expected,
+            label=f"{mech_name}:C_Decrypt KAT {vec_id}"
+            + (f" (payloadLen={payload_bits} bits)" if payload_bits is not None else ""),
+            operation="C_Decrypt",
+            mechanism=mech_name,
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
     finally:
         if key:
@@ -499,10 +511,17 @@ def run_multiblock_encrypt_test(
                         )
 
             assert ct is not None
-            assert ct == block["ct_expected"], (
-                f"{vec_id}: block {block['block_index']} ciphertext mismatch "
-                f"after {_MCT_ITERATIONS} MCT iterations: "
-                f"got {ct.hex()}, expected {block['ct_expected'].hex()}"
+            assert_correct(
+                actual=ct,
+                expected=block["ct_expected"],
+                label=(
+                    f"{mech_name}:C_Encrypt MCT KAT {vec_id} block {block['block_index']} "
+                    f"({_MCT_ITERATIONS} iterations)"
+                ),
+                operation="C_Encrypt",
+                mechanism=mech_name,
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
         finally:
             if key_handle:
@@ -617,10 +636,17 @@ def run_multiblock_decrypt_test(
                         )
 
             assert pt is not None
-            assert pt == block["pt_expected"], (
-                f"{vec_id}: block {block['block_index']} plaintext mismatch "
-                f"after {_MCT_ITERATIONS} MCT iterations: "
-                f"got {pt.hex()}, expected {block['pt_expected'].hex()}"
+            assert_correct(
+                actual=pt,
+                expected=block["pt_expected"],
+                label=(
+                    f"{mech_name}:C_Decrypt MCT KAT {vec_id} block {block['block_index']} "
+                    f"({_MCT_ITERATIONS} iterations)"
+                ),
+                operation="C_Decrypt",
+                mechanism=mech_name,
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
         finally:
             if key_handle:

@@ -33,6 +33,7 @@ from pkcs11_check.testcases._operability import (
     probe_operability,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
+from pkcs11_check.testcases.conftest import assert_correct
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 REQUIRED_MECHANISMS = ["AES_XTS"]
@@ -260,8 +261,14 @@ def test_acvp_aes_xts_encrypt(p11_module_session: Any, vec_id: str, vec: dict[st
                 exc, result=_xts_operability(rs, "encrypt"), label="AES_XTS encrypt"
             )
 
-        assert ct == vec["ct_expected"], (
-            f"{vec_id}: ciphertext mismatch: got {ct.hex()}, expected {vec['ct_expected'].hex()}"
+        assert_correct(
+            actual=ct,
+            expected=vec["ct_expected"],
+            label=f"AES-XTS:C_Encrypt KAT {vec_id}",
+            operation="C_Encrypt",
+            mechanism="CKM_AES_XTS",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
     finally:
         if key:
@@ -313,8 +320,14 @@ def test_acvp_aes_xts_decrypt(p11_module_session: Any, vec_id: str, vec: dict[st
                 exc, result=_xts_operability(rs, "decrypt"), label="AES_XTS decrypt"
             )
 
-        assert pt == vec["pt_expected"], (
-            f"{vec_id}: plaintext mismatch: got {pt.hex()}, expected {vec['pt_expected'].hex()}"
+        assert_correct(
+            actual=pt,
+            expected=vec["pt_expected"],
+            label=f"AES-XTS:C_Decrypt KAT {vec_id}",
+            operation="C_Decrypt",
+            mechanism="CKM_AES_XTS",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
     finally:
         if key:

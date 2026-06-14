@@ -35,7 +35,7 @@ from pkcs11_check.testcases._operability import (
     classify_kat_clean_error,
 )
 from pkcs11_check.testcases.acvp.aes.base import _import_aes_key, _load_vectors
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 
 # ---------------------------------------------------------------------------
 # Vector loading
@@ -322,10 +322,14 @@ def run_cbc_cs_encrypt_test(p11_module_session: Any, vec_id: str, vec: dict[str,
         except AssertionError as exc:
             _handle_cts_error(rs, exc, vec_id, "encrypt")
 
-        assert ct == vec["ct_expected"], (
-            f"{vec_id}: ciphertext mismatch.\n"
-            f"  got:      {ct.hex()}\n"
-            f"  expected: {vec['ct_expected'].hex()}"
+        assert_correct(
+            actual=ct,
+            expected=vec["ct_expected"],
+            label=f"AES-CTS:C_Encrypt KAT {vec_id}",
+            operation="C_Encrypt",
+            mechanism="CKM_AES_CTS",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
     finally:
         if key:
@@ -354,10 +358,14 @@ def run_cbc_cs_decrypt_test(p11_module_session: Any, vec_id: str, vec: dict[str,
         except AssertionError as exc:
             _handle_cts_error(rs, exc, vec_id, "decrypt")
 
-        assert pt == vec["pt_expected"], (
-            f"{vec_id}: plaintext mismatch.\n"
-            f"  got:      {pt.hex()}\n"
-            f"  expected: {vec['pt_expected'].hex()}"
+        assert_correct(
+            actual=pt,
+            expected=vec["pt_expected"],
+            label=f"AES-CTS:C_Decrypt KAT {vec_id}",
+            operation="C_Decrypt",
+            mechanism="CKM_AES_CTS",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
     finally:
         if key:

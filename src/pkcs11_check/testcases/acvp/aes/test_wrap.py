@@ -43,7 +43,7 @@ from pkcs11_check.testcases._operability import (
     xfail_vacuous_reject,
 )
 from pkcs11_check.testcases.acvp.aes.base import _import_aes_key, _load_vectors
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 
 # CKR errors that indicate the module correctly rejected invalid ciphertext
 # during unwrap integrity checking.  OpenSSL-backed modules often return
@@ -277,10 +277,14 @@ def test_acvp_aes_kw_unwrap(p11_module_session: Any, vec_id: str, vec: dict[str,
             )
 
         if test_passed:
-            assert pt == vec["pt_expected"], (
-                f"{vec_id}: unwrap mismatch:\n"
-                f"  got:      {_hex(pt)}\n"
-                f"  expected: {_hex(vec['pt_expected'])}"
+            assert_correct(
+                actual=pt,
+                expected=vec["pt_expected"],
+                label=f"AES-KW:C_Decrypt KAT {vec_id} (unwrap)",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_KEY_WRAP",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
         else:
             fail_as(
@@ -429,10 +433,14 @@ def test_acvp_aes_kwp_unwrap(p11_module_session: Any, vec_id: str, vec: dict[str
             )
 
         if test_passed:
-            assert pt == vec["pt_expected"], (
-                f"{vec_id}: KWP unwrap mismatch:\n"
-                f"  got:      {_hex(pt)}\n"
-                f"  expected: {_hex(vec['pt_expected'])}"
+            assert_correct(
+                actual=pt,
+                expected=vec["pt_expected"],
+                label=f"AES-KWP:C_Decrypt KAT {vec_id} (unwrap)",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_KEY_WRAP_KWP",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
         else:
             fail_as(

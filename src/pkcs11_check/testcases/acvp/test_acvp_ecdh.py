@@ -55,6 +55,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     classify_lifecycle_effect,
     is_known_error,
     xfail_if_known_ckr,
@@ -380,10 +381,14 @@ def test_acvp_ecdh_shared_secret(
             # Extract the X coordinate if we got a full point
             shared_secret = shared_secret[: len(expected)]
 
-        assert shared_secret == expected, (
-            f"{vec_id}: Shared secret mismatch\n"
-            f"  Expected: {expected.hex()[:32]}...\n"
-            f"  Got:      {shared_secret.hex()[:32]}..."
+        assert_correct(
+            actual=shared_secret,
+            expected=expected,
+            label=f"ECDH:C_DeriveKey KAT {vec_id}",
+            operation="C_DeriveKey",
+            mechanism="CKM_ECDH1_DERIVE",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
     finally:
         destroy_quietly(rs.raw, rs.sh, derived_key)
