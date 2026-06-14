@@ -40,6 +40,7 @@ import pytest
 from pkcs11_check.classification import classify
 from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 from pkcs11_check.testcases._raw_subprocess import run_raw_script
+from pkcs11_check.testcases.conftest import assert_correct
 
 pytestmark = pytest.mark.full
 
@@ -382,15 +383,17 @@ class TestDigestEncryptUpdate:
         digest_ref = lines_map["DIGEST_REF"]
         digest_dual = lines_map["DIGEST_DUAL"]
 
-        assert ct_dual == ct_ref, (
-            f"DigestEncryptUpdate ciphertext mismatch:\n"
-            f"  expected (separate encrypt) = {ct_ref!r}\n"
-            f"  got (dual-function)          = {ct_dual!r}"
+        assert_correct(
+            actual=ct_dual,
+            expected=ct_ref,
+            label="C_DigestEncryptUpdate:ciphertext vs separate encrypt",
+            operation="C_DigestEncryptUpdate",
         )
-        assert digest_dual == digest_ref, (
-            f"DigestEncryptUpdate digest mismatch:\n"
-            f"  expected (hashlib SHA-256) = {digest_ref!r}\n"
-            f"  got (dual-function)        = {digest_dual!r}"
+        assert_correct(
+            actual=digest_dual,
+            expected=digest_ref,
+            label="C_DigestEncryptUpdate:digest vs reference SHA-256",
+            operation="C_DigestEncryptUpdate",
         )
 
 
@@ -584,13 +587,15 @@ class TestDecryptDigestUpdate:
         recovered = lines_map["RECOVERED"]
         digest_dual = lines_map["DIGEST_DUAL"]
 
-        assert recovered == pt_ref, (
-            f"DecryptDigestUpdate plaintext recovery mismatch:\n"
-            f"  expected = {pt_ref!r}\n"
-            f"  got      = {recovered!r}"
+        assert_correct(
+            actual=recovered,
+            expected=pt_ref,
+            label="C_DecryptDigestUpdate:recovered plaintext vs reference",
+            operation="C_DecryptDigestUpdate",
         )
-        assert digest_dual == digest_ref, (
-            f"DecryptDigestUpdate digest mismatch:\n"
-            f"  expected (hashlib SHA-256 of plaintext) = {digest_ref!r}\n"
-            f"  got (dual-function digest)               = {digest_dual!r}"
+        assert_correct(
+            actual=digest_dual,
+            expected=digest_ref,
+            label="C_DecryptDigestUpdate:digest vs reference SHA-256",
+            operation="C_DecryptDigestUpdate",
         )

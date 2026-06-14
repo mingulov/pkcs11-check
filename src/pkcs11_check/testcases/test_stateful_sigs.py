@@ -69,7 +69,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, reject_or_classify
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    is_known_error,
+    reject_or_classify,
+)
 
 pytestmark = [pytest.mark.pqc]
 
@@ -288,8 +292,20 @@ class TestHSSKeyGeneration:
         try:
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])
-            assert pub_attrs[CKA_KEY_TYPE] == CKK_HSS
-            assert priv_attrs[CKA_KEY_TYPE] == CKK_HSS
+            assert_correct(
+                actual=pub_attrs[CKA_KEY_TYPE],
+                expected=CKK_HSS,
+                label="HSS:public CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_attrs[CKA_KEY_TYPE],
+                expected=CKK_HSS,
+                label="HSS:private CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -301,8 +317,20 @@ class TestHSSKeyGeneration:
         try:
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])
-            assert pub_attrs[CKA_CLASS] == CKO_PUBLIC_KEY
-            assert priv_attrs[CKA_CLASS] == CKO_PRIVATE_KEY
+            assert_correct(
+                actual=pub_attrs[CKA_CLASS],
+                expected=CKO_PUBLIC_KEY,
+                label="HSS:public CKA_CLASS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_attrs[CKA_CLASS],
+                expected=CKO_PRIVATE_KEY,
+                label="HSS:private CKA_CLASS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -387,8 +415,20 @@ class TestXMSSKeyGeneration:
         try:
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])
-            assert pub_attrs[CKA_KEY_TYPE] == CKK_XMSS
-            assert priv_attrs[CKA_KEY_TYPE] == CKK_XMSS
+            assert_correct(
+                actual=pub_attrs[CKA_KEY_TYPE],
+                expected=CKK_XMSS,
+                label="XMSS:public CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_attrs[CKA_KEY_TYPE],
+                expected=CKK_XMSS,
+                label="XMSS:private CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -400,8 +440,20 @@ class TestXMSSKeyGeneration:
         try:
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])
-            assert pub_attrs[CKA_CLASS] == CKO_PUBLIC_KEY
-            assert priv_attrs[CKA_CLASS] == CKO_PRIVATE_KEY
+            assert_correct(
+                actual=pub_attrs[CKA_CLASS],
+                expected=CKO_PUBLIC_KEY,
+                label="XMSS:public CKA_CLASS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_attrs[CKA_CLASS],
+                expected=CKO_PRIVATE_KEY,
+                label="XMSS:private CKA_CLASS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -486,8 +538,20 @@ class TestXMSSMTKeyGeneration:
         try:
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])
-            assert pub_attrs[CKA_KEY_TYPE] == CKK_XMSSMT
-            assert priv_attrs[CKA_KEY_TYPE] == CKK_XMSSMT
+            assert_correct(
+                actual=pub_attrs[CKA_KEY_TYPE],
+                expected=CKK_XMSSMT,
+                label="XMSSMT:public CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_attrs[CKA_KEY_TYPE],
+                expected=CKK_XMSSMT,
+                label="XMSSMT:private CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -499,8 +563,20 @@ class TestXMSSMTKeyGeneration:
         try:
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])
-            assert pub_attrs[CKA_CLASS] == CKO_PUBLIC_KEY
-            assert priv_attrs[CKA_CLASS] == CKO_PRIVATE_KEY
+            assert_correct(
+                actual=pub_attrs[CKA_CLASS],
+                expected=CKO_PUBLIC_KEY,
+                label="XMSSMT:public CKA_CLASS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_attrs[CKA_CLASS],
+                expected=CKO_PRIVATE_KEY,
+                label="XMSSMT:private CKA_CLASS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             _destroy_pair(rs, pub, priv)
 

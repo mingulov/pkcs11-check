@@ -46,6 +46,7 @@ from pkcs11_check.testcases._capability_claims import claim_refusal_passes
 from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     import_rsa_private_key_negotiated,
     import_rsa_public_key_negotiated,
     import_secret_key_negotiated,
@@ -398,9 +399,13 @@ def _run_asymmetric_sign_kat(
                     if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:kat-sign"):
                         return True
                 expected = bytes.fromhex(vec["signature_hex"])
-                assert sig == expected, (
-                    f"KAT sign mismatch for {vec.get('id', '?')}: "
-                    f"got {sig.hex()!r}, expected {expected.hex()!r}"
+                assert_correct(
+                    actual=sig,
+                    expected=expected,
+                    label=f"{entry.mech_name}:KAT deterministic sign",
+                    operation="C_Sign",
+                    mechanism=f"CKM_{entry.mech_name}",
+                    vector_id=str(vec.get("id", "?")),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_key)
@@ -506,9 +511,13 @@ class TestMechSignKAT:
                     if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:kat-sign"):
                         return
                 expected = bytes.fromhex(mac_hex)
-                assert mac == expected, (
-                    f"KAT MAC mismatch for {vec.get('id', '?')}: "
-                    f"got {mac.hex()!r}, expected {expected.hex()!r}"
+                assert_correct(
+                    actual=mac,
+                    expected=expected,
+                    label=f"{entry.mech_name}:KAT MAC",
+                    operation="C_Sign",
+                    mechanism=f"CKM_{entry.mech_name}",
+                    vector_id=str(vec.get("id", "?")),
                 )
             finally:
                 destroy_quietly(rs.raw, rs.sh, key)

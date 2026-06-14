@@ -44,7 +44,7 @@ from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import CKM_RSA_X_509, CKR_FUNCTION_NOT_SUPPORTED
 from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 from pkcs11_check.testcases._raw_subprocess import run_raw_script
-from pkcs11_check.testcases.conftest import KEYPAIR_RUNTIME_REJECT_RVS
+from pkcs11_check.testcases.conftest import KEYPAIR_RUNTIME_REJECT_RVS, assert_correct
 
 pytestmark = pytest.mark.full
 
@@ -416,10 +416,12 @@ class TestSignRecover:
 
         original = lines_map["ORIGINAL"]
         recovered = lines_map["RECOVERED"]
-        assert recovered == original, (
-            f"Verify-recover round-trip mismatch:\n"
-            f"  original  = {original!r}\n"
-            f"  recovered = {recovered!r}"
+        assert_correct(
+            actual=recovered,
+            expected=original,
+            label="CKM_RSA_X_509:Sign/VerifyRecover round-trip",
+            operation="C_VerifyRecover",
+            mechanism="CKM_RSA_X_509",
         )
 
     def test_sign_recover_wrong_data_length(self, p11_config: Any, p11_module: Any) -> None:

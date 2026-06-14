@@ -48,6 +48,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    assert_correct,
     xfail_if_known_ckr,
 )
 
@@ -136,8 +137,20 @@ class TestMLDSAKeyGeneration:
         try:
             pub_cls = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])[CKA_CLASS]
             priv_cls = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])[CKA_CLASS]
-            assert pub_cls == CKO_PUBLIC_KEY
-            assert priv_cls == CKO_PRIVATE_KEY
+            assert_correct(
+                actual=pub_cls,
+                expected=CKO_PUBLIC_KEY,
+                label="ML_DSA:public CKA_CLASS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_cls,
+                expected=CKO_PRIVATE_KEY,
+                label="ML_DSA:private CKA_CLASS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -150,8 +163,20 @@ class TestMLDSAKeyGeneration:
         try:
             pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert pub_kt == CKK_ML_DSA
-            assert priv_kt == CKK_ML_DSA
+            assert_correct(
+                actual=pub_kt,
+                expected=CKK_ML_DSA,
+                label="ML_DSA:public CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_kt,
+                expected=CKK_ML_DSA,
+                label="ML_DSA:private CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -401,8 +426,20 @@ class TestSLHDSAKeyGeneration:
         try:
             pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert pub_kt == CKK_SLH_DSA
-            assert priv_kt == CKK_SLH_DSA
+            assert_correct(
+                actual=pub_kt,
+                expected=CKK_SLH_DSA,
+                label="SLH_DSA:public CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_kt,
+                expected=CKK_SLH_DSA,
+                label="SLH_DSA:private CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
