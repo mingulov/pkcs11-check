@@ -25,6 +25,14 @@
 #   docker compose -f docker/docker-compose.test.yml run test-pkcs11-mock
 
 x-common: &common
+  # No network at RUN time for EVERY target (existing + new). The suite makes
+  # zero outbound calls: test vectors are mounted read-only and artifacts go to
+  # a mounted volume, so a module that shipped hidden telemetry cannot phone
+  # home. `network_mode: none` still provides the loopback interface, so
+  # localhost-only helper daemons (bouncyhsm's HTTP server, tpm2's swtpm /
+  # tpm2-abrmd) keep working. Build-time network (git clone / curl / cargo /
+  # apt) is a separate phase and is unaffected by this.
+  network_mode: none
   volumes:
     - ../artifacts:/artifacts
     - ${PKCS11_CHECK_HOST_DATA_DIR:-../data}:/app/data:ro
