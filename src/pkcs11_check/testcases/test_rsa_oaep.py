@@ -12,6 +12,7 @@ import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_oaep
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -235,7 +236,15 @@ class TestRSAOAEPCrossVerify:
             oaep = _oaep_sha1()
             rv = rs.raw.C_DecryptInit(rs.sh, oaep.byref(), priv)
             if rv != CKR_OK:
-                pytest.xfail(f"OAEP param mismatch between module and cryptography: {ckr_name(rv)}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_OAEP:C_DecryptInit",
+                    operation="C_DecryptInit",
+                    mechanism="CKM_RSA_PKCS_OAEP",
+                    actual=rv,
+                    summary=f"OAEP param mismatch between module and cryptography: {ckr_name(rv)}",
+                )
             import ctypes
             from ctypes import byref
 
@@ -245,11 +254,27 @@ class TestRSAOAEPCrossVerify:
             out_len = CK_ULONG(0)
             rv = rs.raw.C_Decrypt(rs.sh, in_buf, len(ct), None, byref(out_len))
             if rv != CKR_OK:
-                pytest.xfail(f"OAEP param mismatch between module and cryptography: {ckr_name(rv)}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_OAEP:C_Decrypt (length query)",
+                    operation="C_Decrypt",
+                    mechanism="CKM_RSA_PKCS_OAEP",
+                    actual=rv,
+                    summary=f"OAEP param mismatch between module and cryptography: {ckr_name(rv)}",
+                )
             out_buf = (ctypes.c_ubyte * out_len.value)()
             rv = rs.raw.C_Decrypt(rs.sh, in_buf, len(ct), out_buf, byref(out_len))
             if rv != CKR_OK:
-                pytest.xfail(f"OAEP param mismatch between module and cryptography: {ckr_name(rv)}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_OAEP:C_Decrypt",
+                    operation="C_Decrypt",
+                    mechanism="CKM_RSA_PKCS_OAEP",
+                    actual=rv,
+                    summary=f"OAEP param mismatch between module and cryptography: {ckr_name(rv)}",
+                )
             pt = bytes(out_buf[: out_len.value])
             assert pt == plaintext
         finally:
@@ -298,7 +323,14 @@ class TestRSAOAEPCrossVerify:
                 return  # Failed as expected
             pt = bytes(out_buf[: out_len.value])
             if pt == b"wrong key test":
-                pytest.fail("Decryption with wrong key should fail")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_OAEP:wrong-key decrypt",
+                    operation="C_Decrypt",
+                    mechanism="CKM_RSA_PKCS_OAEP",
+                    summary="Decryption with wrong key should fail",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub1)
             destroy_quietly(rs.raw, rs.sh, priv1)

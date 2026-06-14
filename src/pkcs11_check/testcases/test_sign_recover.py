@@ -32,6 +32,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -205,11 +206,23 @@ def _handle_subprocess_failure(returncode: int, stdout: str, stderr: str) -> Non
             except ValueError:
                 rv = None
             if rv is not None and rv in KEYPAIR_RUNTIME_REJECT_RVS:
-                pytest.xfail(f"RSA_PKCS_KEY_PAIR_GEN keypair setup rejected: {ckr_name(rv)}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="RSA_PKCS_KEY_PAIR_GEN:keypair setup",
+                    operation="C_GenerateKeyPair",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    actual=rv,
+                    summary=f"RSA_PKCS_KEY_PAIR_GEN keypair setup rejected: {ckr_name(rv)}",
+                )
     else:
         detail = f"stdout={stdout!r} stderr={stderr!r}"
 
-    pytest.fail(f"Subprocess failed: {detail}")
+    classify(
+        "crash",
+        label="sign-recover subprocess",
+        summary=f"Subprocess failed: {detail}",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -471,9 +484,16 @@ class TestSignRecover:
         # for CKM_RSA_X_509 but we don't fail on it; we just note it.
         result = lines_map["RESULT"]
         if result == "ACCEPTED_SHORT_DATA":
-            pytest.xfail(
-                "Module accepted short data for CKM_RSA_X_509 C_SignRecover - "
-                "non-standard behaviour (spec requires CKR_DATA_LEN_RANGE)"
+            classify(
+                "honest_deviation",
+                kind="crypto",
+                label="CKM_RSA_X_509:C_SignRecover short data",
+                operation="C_SignRecover",
+                mechanism="CKM_RSA_X_509",
+                summary=(
+                    "Module accepted short data for CKM_RSA_X_509 C_SignRecover - "
+                    "non-standard behaviour (spec requires CKR_DATA_LEN_RANGE)"
+                ),
             )
 
 
@@ -540,11 +560,18 @@ class TestSignRecoverRecipes:
             valid, recovered = verify_recover_single(rs.raw, rs.sh, pub, CKM_RSA_X_509, sig)
             assert valid is True
             if recovered != data:
-                pytest.xfail(
-                    f"Module C_VerifyRecover returned wrong data: "
-                    f"recovered[0]={recovered[0] if recovered else 'empty'!r}, "
-                    f"expected[0]={data[0]!r} -- "
-                    f"CKM_RSA_X_509 C_VerifyRecover implementation bug"
+                classify(
+                    "honest_deviation",
+                    kind="crypto",
+                    label="CKM_RSA_X_509:C_VerifyRecover recovered data",
+                    operation="C_VerifyRecover",
+                    mechanism="CKM_RSA_X_509",
+                    summary=(
+                        f"Module C_VerifyRecover returned wrong data: "
+                        f"recovered[0]={recovered[0] if recovered else 'empty'!r}, "
+                        f"expected[0]={data[0]!r} -- "
+                        f"CKM_RSA_X_509 C_VerifyRecover implementation bug"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -564,10 +591,17 @@ class TestSignRecoverRecipes:
             bad_sig = b"\x00" * 256
             valid, recovered = verify_recover_single(rs.raw, rs.sh, pub, CKM_RSA_X_509, bad_sig)
             if valid is True or recovered != b"":
-                pytest.xfail(
-                    f"Module C_VerifyRecover accepted invalid all-zero signature: "
-                    f"valid={valid}, recovered={recovered!r} -- "
-                    f"the signature block is not validated in C_VerifyRecover"
+                classify(
+                    "honest_deviation",
+                    kind="crypto",
+                    label="CKM_RSA_X_509:C_VerifyRecover invalid signature",
+                    operation="C_VerifyRecover",
+                    mechanism="CKM_RSA_X_509",
+                    summary=(
+                        f"Module C_VerifyRecover accepted invalid all-zero signature: "
+                        f"valid={valid}, recovered={recovered!r} -- "
+                        f"the signature block is not validated in C_VerifyRecover"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
