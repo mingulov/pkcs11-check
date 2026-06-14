@@ -18,23 +18,19 @@ The fast syntax/generated-subprocess gate covers ordinary Python syntax under
 used by crash-survival tests. It does not replace provider runs; it prevents
 broken local test code from being counted as provider evidence.
 
-## Local builds
+## Running the suite against a module
 
 ```bash
-bash local-builds/build.sh kryoptic           # build token
-bash local-builds/test.sh kryoptic            # run full suite (~5 min)
-bash local-builds/test.sh kryoptic -k test_encrypt -v  # specific tests
-bash local-builds/test.sh softhsm2            # system SoftHSM2
-bash local-builds/reset.sh kryoptic           # reset token data
+uv run pkcs11-check test --p11-module /path/to/module.so --p11-pin 1234
 ```
 
-### Test profiles
+### Test profiles (marker selection)
 
 ```bash
-bash local-builds/test.sh softhsm2 -m smoke                              # 27 tests, ~5s
-bash local-builds/test.sh softhsm2 -m "not (wycheproof or acvp or cctv or stress or fuzz or slow)"  # ~2300 tests, ~30s
-bash local-builds/test.sh softhsm2 -m "wycheproof or acvp or cctv"       # ~72K vectors only
-bash local-builds/test.sh softhsm2                                        # full: ~75K tests, ~5min
+uv run pkcs11-check test --p11-module <so> -m smoke                              # ~27 tests, ~5s
+uv run pkcs11-check test --p11-module <so> -m "not (wycheproof or acvp or cctv or stress or fuzz or slow)"  # ~2300 tests, ~30s
+uv run pkcs11-check test --p11-module <so> -m "wycheproof or acvp or cctv"       # ~72K vectors only
+uv run pkcs11-check test --p11-module <so>                                        # full: ~75K tests
 ```
 
 ### Fast vs full: long-running test cases (`slow`)
@@ -54,20 +50,6 @@ uv run pkcs11-check test -m <module>               # full: everything (default)
 `--skip-slow`/`--only-slow` compose with `--marker` (e.g. `--marker acvp
 --skip-slow` → `-m "(acvp) and (not slow)"`). The full profile still runs every
 case — `slow` is a *selection* profile, never a way to hide a finding.
-
-### Available providers
-
-OpenSSL 4.0.0 preferred / 3.6.2 fallback, Kryoptic 1.5.1+PQC, SoftHSM2 2.7.0, OpenCryptoki 3.27.0, NSS softoken, pkcs11-mock 2.0.0, tpm2-pkcs11 1.10.0, BouncyHSM 2.1.1, wolfPKCS11 2.0.0-stable/master, corePKCS11 3.6.4, OP-TEE PKCS#11 4.10.0 QEMU target, swtpm 0.10.1, libtpms 0.10.2
-
-### Worktree Kryoptic testing
-
-Kryoptic requires OpenSSL 3.5.0+. In worktrees, use the pre-built module:
-
-```bash
-LD_LIBRARY_PATH="$PWD/local-builds/openssl/install/lib64" \
-P11TEST_MODULE="$PWD/local-builds/kryoptic/lib/libkryoptic_pkcs11.so" \
-P11TEST_PIN=1234 uv run python -m pytest src/pkcs11_check/testcases/<test_file>.py -v
-```
 
 ## Test vector data
 
@@ -100,7 +82,7 @@ JSON path sets `PKCS11_CHECK_REPORT_LOG` so the plugin writes one).
 ```bash
 # Single provider (bare paths; --provider names it; --results-json adds crash findings):
 uv run python -m tools.report --report-log /path/report.jsonl \
-    --results-json /path/results.json --provider <name> --out docs/findings/<dir>
+    --results-json /path/results.json --provider <name> --out <dir>
 
 # Multi-provider (repeat NAME=path; writes _index.md + _universal.md too):
 uv run python -m tools.report \
@@ -113,47 +95,9 @@ form), `--out` (output directory). Writes `<provider>.md` + `<provider>.jsonl` p
 `_index.md` + `_universal.md` when more than one provider is given. See
 [../tools/report/README.md](../tools/report/README.md).
 
-## Docker testing
+## Provider builds & the Docker test matrix
 
-```bash
-bash docker/test.sh softhsm2
-bash docker/test.sh softhsm2-generated-iv --match generated_iv -- src/pkcs11_check/testcases/test_aead.py
-bash docker/test.sh opencryptoki
-bash docker/test.sh wolfpkcs11 -- src/pkcs11_check/testcases/test_interface.py
-bash docker/test.sh wolfpkcs11-master -- src/pkcs11_check/testcases/test_interface.py
-bash docker/test.sh corepkcs11 -- src/pkcs11_check/testcases/test_interface.py
-bash docker/test.sh corepkcs11-main -- src/pkcs11_check/testcases/test_interface.py
-bash docker/test.sh optee-pkcs11 -- src/pkcs11_check/testcases/test_interface.py
-bash docker/test.sh optee-pkcs11-master -- src/pkcs11_check/testcases/test_interface.py
-bash docker/test.sh nss --timeout 30 -- src/pkcs11_check/testcases/test_interface.py
-docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2
-docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2-generated-iv
-uv run python docker/test_pool.py --dry-run wolfpkcs11 wolfpkcs11-master corepkcs11 corepkcs11-main
-uv run python docker/test_pool.py --dry-run --heavy
-uv run python docker/test_pool.py --dry-run --all-heavy
-uv run python docker/test_pool.py --duration-artifacts-dir artifacts3 --coverage-baseline-artifacts-dir artifacts3 bouncyhsm:16
-uv run python docker/test_pool.py -j 3 optee-pkcs11:3
-```
-
-For speed experiments, `--duration-artifacts-dir` is only provider-local
-scheduling history. Pair it with `--coverage-baseline-artifacts-dir` when the
-candidate pool run must fail if it loses mechanism coverage states relative to
-that same provider's baseline pooled artifact.
-
-`optee-pkcs11` is a heavy/manual Docker target. The OP-TEE `qemu_v8` tree is
-built into the Docker image once; runtime runs boot the prebuilt QEMU/kernel/rootfs
-with fresh shared storage and artifacts, so changing shard counts does not
-rebuild OP-TEE. It is callable by name and through `bash docker/test-all.sh
---heavy` or `uv run python docker/test_pool.py --heavy`, but it is intentionally
-excluded from default Docker runs and ordinary `--all`. `optee-pkcs11-master`
-tracks the OP-TEE manifest `master` branch and is included only by `--all-heavy`
-or when named explicitly. For a full OP-TEE release pool run, `optee-pkcs11:3 -j
-3` splits the test files into three independent QEMU containers. The Expect
-wrapper treats boot/setup panics as target bring-up failures, but once
-`pkcs11-check` is running it waits for the runner's exit marker instead of
-aborting on OP-TEE TA panic text or on an outer whole-suite timer; per-test and
-per-file outcomes stay owned by `pkcs11-check`. Set
-`PKCS11_CHECK_OPTEE_USE_MAKE_CHECK=1` only when debugging the upstream OP-TEE
-`make check` path itself.
-
-See [docker-artifacts.md](docker-artifacts.md) for the runner contract and artifact layout.
+Local provider builds (`local-builds/`), the Docker target matrix
+(`docker/` + the pooled `test_pool.py` runner), and result-comparison tooling live in
+the **development workspace** (`pkcs11-check-ws`), not in this repo. See the workspace
+docs for building providers and running the Docker conformance matrix.
