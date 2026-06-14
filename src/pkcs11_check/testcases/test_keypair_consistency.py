@@ -28,6 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKA_PUBLIC_EXPONENT,
     CKK_EC,
 )
+from pkcs11_check.testcases.conftest import assert_correct
 
 pytestmark = pytest.mark.keymgmt
 
@@ -130,8 +131,20 @@ class TestECKeypairConsistency:
         try:
             pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert pub_kt == CKK_EC
-            assert priv_kt == CKK_EC
+            assert_correct(
+                actual=pub_kt,
+                expected=CKK_EC,
+                label="EC:public CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_kt,
+                expected=CKK_EC,
+                label="EC:private CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

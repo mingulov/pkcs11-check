@@ -37,7 +37,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._attribute_values import require_bool_attr, require_ulong_attr
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     gen_keypair_for_mech,
@@ -127,9 +127,13 @@ class TestKeyAttributes:
                     actual_kt = require_ulong_attr(
                         actual, f"{entry.mech_name} {label} CKA_KEY_TYPE"
                     )
-                    assert actual_kt == expected_kt, (
-                        f"{entry.mech_name} {label} key: CKA_KEY_TYPE "
-                        f"0x{actual_kt:08x} != expected 0x{expected_kt:08x}"
+                    assert_correct(
+                        actual=actual_kt,
+                        expected=expected_kt,
+                        label=f"{entry.mech_name}:{label} CKA_KEY_TYPE readback",
+                        operation="C_GetAttributeValue",
+                        mechanism=f"CKM_{entry.mech_name}",
+                        kind="metadata",
                     )
             finally:
                 destroy_quietly(rs.raw, rs.sh, pub)
@@ -140,9 +144,13 @@ class TestKeyAttributes:
                 actual = _read_attr_safe(rs, key, CKA_KEY_TYPE, "CKA_KEY_TYPE")
                 if actual is not None:
                     actual_kt = require_ulong_attr(actual, f"{entry.mech_name} CKA_KEY_TYPE")
-                    assert actual_kt == expected_kt, (
-                        f"{entry.mech_name}: CKA_KEY_TYPE "
-                        f"0x{actual_kt:08x} != expected 0x{expected_kt:08x}"
+                    assert_correct(
+                        actual=actual_kt,
+                        expected=expected_kt,
+                        label=f"{entry.mech_name}:CKA_KEY_TYPE readback",
+                        operation="C_GetAttributeValue",
+                        mechanism=f"CKM_{entry.mech_name}",
+                        kind="metadata",
                     )
             finally:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -275,19 +283,25 @@ class TestKeyAttributes:
                     pub_class_value = require_ulong_attr(
                         pub_class, f"{entry.mech_name} public CKA_CLASS"
                     )
-                    assert pub_class_value == int(CKO_PUBLIC_KEY), (
-                        f"{entry.mech_name} public key: CKA_CLASS "
-                        f"0x{pub_class_value:08x} != CKO_PUBLIC_KEY "
-                        f"0x{int(CKO_PUBLIC_KEY):08x}"
+                    assert_correct(
+                        actual=pub_class_value,
+                        expected=int(CKO_PUBLIC_KEY),
+                        label=f"{entry.mech_name}:public CKA_CLASS readback",
+                        operation="C_GetAttributeValue",
+                        mechanism=f"CKM_{entry.mech_name}",
+                        kind="metadata",
                     )
                 if priv_class is not None:
                     priv_class_value = require_ulong_attr(
                         priv_class, f"{entry.mech_name} private CKA_CLASS"
                     )
-                    assert priv_class_value == int(CKO_PRIVATE_KEY), (
-                        f"{entry.mech_name} private key: CKA_CLASS "
-                        f"0x{priv_class_value:08x} != CKO_PRIVATE_KEY "
-                        f"0x{int(CKO_PRIVATE_KEY):08x}"
+                    assert_correct(
+                        actual=priv_class_value,
+                        expected=int(CKO_PRIVATE_KEY),
+                        label=f"{entry.mech_name}:private CKA_CLASS readback",
+                        operation="C_GetAttributeValue",
+                        mechanism=f"CKM_{entry.mech_name}",
+                        kind="metadata",
                     )
             finally:
                 destroy_quietly(rs.raw, rs.sh, pub)
@@ -298,10 +312,13 @@ class TestKeyAttributes:
                 cls = _read_attr_safe(rs, key, CKA_CLASS, "CKA_CLASS")
                 if cls is not None:
                     cls_value = require_ulong_attr(cls, f"{entry.mech_name} CKA_CLASS")
-                    assert cls_value == int(CKO_SECRET_KEY), (
-                        f"{entry.mech_name}: CKA_CLASS "
-                        f"0x{cls_value:08x} != CKO_SECRET_KEY "
-                        f"0x{int(CKO_SECRET_KEY):08x}"
+                    assert_correct(
+                        actual=cls_value,
+                        expected=int(CKO_SECRET_KEY),
+                        label=f"{entry.mech_name}:CKA_CLASS readback",
+                        operation="C_GetAttributeValue",
+                        mechanism=f"CKM_{entry.mech_name}",
+                        kind="metadata",
                     )
             finally:
                 destroy_quietly(rs.raw, rs.sh, key)
