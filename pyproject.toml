@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Denis Mingulov", email = "denis@mingulov.com" }
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 license = "MIT OR Apache-2.0"
 license-files = ["LICENSE-APACHE", "LICENSE-MIT", "THIRD_PARTY_LICENSES.md"]
 classifiers = [
@@ -15,6 +15,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Security :: Cryptography",
     "Topic :: Software Development :: Testing",
@@ -79,7 +80,7 @@ packages = ["src/pkcs11_check"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py313"
+target-version = "py312"
 exclude = [
     "src/pkcs11_check/testcases/data/",
     "src/pkcs11_check/raw/metadata_std.py",
@@ -100,7 +101,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 "src/pkcs11_check/testcases/ckr/_ckr_spec.py" = ["N812"]  # classification imported as C is intentional
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.12"
 strict = true
 packages = ["pkcs11_check"]
 mypy_path = "src"
@@ -116,7 +117,7 @@ ignore_errors = true
 
 [tool.pyright]
 typeCheckingMode = "basic"
-pythonVersion = "3.13"
+pythonVersion = "3.12"
 pythonPlatform = "Linux"
 reportMissingImports = false
 reportAttributeAccessIssue = false

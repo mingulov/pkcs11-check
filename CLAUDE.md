@@ -4,7 +4,7 @@ CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pyte
 
 ## Quick Reference
 
-- **Language:** Python 3.13+
+- **Language:** Python 3.12+ (floor is 3.12: PEP 695 generics + `type` statements; no 3.13-only features)
 - **Package manager:** uv
 - **Build backend:** hatchling (src/ layout)
 - **CLI framework:** typer + rich
