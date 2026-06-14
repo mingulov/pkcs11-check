@@ -36,9 +36,12 @@ content split (which targets/docs move where) is a **separate, later spec**.
    - *Contrast:* the sibling `pkcs11-proxy-ng-ws` uses a submodule; we deliberately do
      **not** replicate that here.
 
-2. **Memory home = workspace root.** All current memory + session history is copied to
-   the `…-pkcs11-check-ws` project key. Sessions are opened at the workspace root going
-   forward; the inner repo's memory key stays empty (matches the proxy-ws precedent).
+2. **Memory home = workspace root.** Sessions are opened at the workspace root going
+   forward, so memory must live at the `…-pkcs11-check-ws` key. The accumulated memory
+   from the old key is **bulk-copied** into the ws key (`cp -a`), overwriting the seeded
+   stub `MEMORY.md` (user confirmed this is fine). The seeded `user-identity.md` has no
+   old-key counterpart so it survives; a one-line index entry is added for it to the
+   merged `MEMORY.md` so it isn't orphaned.
 
 3. **Scope = relocation first, split later.** Low-risk, reversible move now; the content
    split gets its own brainstorm → spec → plan cycle.
@@ -51,13 +54,17 @@ content split (which targets/docs move where) is a **separate, later spec**.
 - `.venv` is **not** portable — console-script shebangs hardcode
   `/home/user/src/m/pkcs11-check/.venv/bin/python`; must rebuild with `uv sync`.
 - Convention: `pkcs11-proxy-ng-ws` workspace repo default branch is `main`.
-- Memory at old key is ~212K + 345 session transcripts; `…-pkcs11-check-ws` key does
-  not yet exist.
+- **Workspace repo already cloned** at `/home/user/src/m/pkcs11-check-ws` (remote
+  `git@github.com:mingulov/pkcs11-check-ws.git`, branch `main`); only a stub `README.md`
+  (83 B) tracked, plus an empty untracked `pkcs11-check/` placeholder dir.
+- **Memory key already seeded**: the `…-pkcs11-check-ws` key holds a fresh `MEMORY.md` +
+  `user-identity.md` (identity `denis@mingulov.com`). The old `…-pkcs11-check` key still
+  holds 37 accumulated memory files (~212K) + 345 session transcripts.
 
 ## Target layout
 
 ```
-/home/user/src/m/pkcs11-check-ws/            ← NEW workspace git repo (branch: main, local-only)
+/home/user/src/m/pkcs11-check-ws/            ← workspace git repo (cloned; origin pkcs11-check-ws.git, branch main)
 ├── .gitignore                               ← ignores /pkcs11-check/, .venv, caches, artifacts, .worktrees
 ├── README.md                                ← full workspace orientation (content below)
 ├── CLAUDE.md                                ← workspace agent guide (real file; content below)
@@ -69,20 +76,24 @@ content split (which targets/docs move where) is a **separate, later spec**.
 
 ## Execution runbook (ordered)
 
-The repo move does not touch `~/.claude/`, so the current session stays stable throughout.
+The workspace repo is **already cloned** at `/home/user/src/m/pkcs11-check-ws` (remote
+`pkcs11-check-ws.git`, branch `main`, stub `README.md` tracked, empty `pkcs11-check/`
+placeholder). The repo move does not touch `~/.claude/`, so the current session stays
+stable throughout.
 
-1. **Create workspace skeleton** (paths absolute):
-   - `mkdir -p /home/user/src/m/pkcs11-check-ws`
-   - `git -C /home/user/src/m/pkcs11-check-ws init -b main`
-   - Write `.gitignore`, `README.md`, `CLAUDE.md` (contents below); create
-     `AGENTS.md` as a symlink → `CLAUDE.md`.
-   - `git -C /home/user/src/m/pkcs11-check-ws add -A && git -C … commit -m "chore: init pkcs11-check workspace"`
-2. **Relocate memory (copy, then clean up later):**
-   - `mkdir -p ~/.claude/projects/-home-user-src-m-pkcs11-check-ws`
+1. **Fill in the workspace skeleton** (clone already exists — do NOT re-init):
+   - Overwrite `README.md` with the full content below; write `.gitignore` and `CLAUDE.md`;
+     `ln -s CLAUDE.md AGENTS.md`.
+   - `git -C /home/user/src/m/pkcs11-check-ws add README.md CLAUDE.md AGENTS.md .gitignore`
+   - `git -C … commit -m "chore: workspace skeleton (README, CLAUDE.md, AGENTS, gitignore)"`
+   - Push to `origin/main` only with explicit user consent (outward-facing).
+2. **Relocate memory (bulk-copy; clobber confirmed fine):**
    - `cp -a ~/.claude/projects/-home-user-src-m-pkcs11-check/. ~/.claude/projects/-home-user-src-m-pkcs11-check-ws/`
-   - Leaves the old key intact for now (live session undisturbed); it is deleted only
-     after the user confirms the new location works.
-3. **Move the framework repo:**
+   - Overwrites the seeded stub `MEMORY.md`; the seeded `user-identity.md` survives (no
+     old-key counterpart) — add a one-line index entry for it to `MEMORY.md`.
+   - Old key left intact for now; deleted only after the user confirms the new location works.
+3. **Move the framework repo into place:**
+   - `rmdir /home/user/src/m/pkcs11-check-ws/pkcs11-check` (remove the empty placeholder)
    - `mv /home/user/src/m/pkcs11-check /home/user/src/m/pkcs11-check-ws/pkcs11-check`
      (atomic rename, same filesystem).
 4. **Rebuild the venv** in the new location:
@@ -111,8 +122,11 @@ The repo move does not touch `~/.claude/`, so the current session stays stable t
 
 ## Rollback
 
-Reverse step 3 (`mv … back`), `uv sync`, and remove the new workspace dir + the copied
-`…-pkcs11-check-ws` memory key. Nothing in the framework repo's git state was modified.
+Reverse step 3 (`mv` back to `/home/user/src/m/pkcs11-check`, restore the empty
+`pkcs11-check/` placeholder), `uv sync`. Revert the step-1 skeleton commit in the
+workspace clone (do **not** delete the clone). Remove the bulk-copied files from the
+`…-pkcs11-check-ws` memory key (restoring the seeded stub). Nothing in the framework
+repo's git state was modified.
 
 ## Out of scope → next spec (Phase 2: content split)
 
@@ -212,8 +226,8 @@ when a session is opened at the workspace root.
 - `pkcs11-check/` — the test framework, an **independent git repo** (remote
   `github.com/mingulov/pkcs11-check`). It is **gitignored** by this workspace and is
   **not** a submodule. Work against its live checkout (any branch / worktree).
-- This workspace repo (branch `main`, local-only for now) holds development docs, plans,
-  findings, specs, and Docker test-target / pool tooling.
+- This workspace repo (branch `main`, remote `github.com/mingulov/pkcs11-check-ws`) holds
+  development docs, plans, findings, specs, and Docker test-target / pool tooling.
 
 ## Rules
 
