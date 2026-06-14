@@ -4,8 +4,15 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 from types import ModuleType
+
+COMPOSE_FILE = Path(__file__).resolve().parents[1] / "docker" / "docker-compose.test.yml"
+
+
+def _compose_text() -> str:
+    return COMPOSE_FILE.read_text(encoding="utf-8")
 
 
 def _load_test_pool() -> ModuleType:
@@ -126,3 +133,36 @@ def test_duration_oracle_absent_when_provider_has_no_prior_results(tmp_path: Pat
     pool = _load_test_pool()
 
     assert pool.duration_oracle_for_provider(tmp_path, "bouncyhsm") is None
+
+
+def test_compose_x_common_anchor_isolates_the_network() -> None:
+    """Security invariant: the shared x-common anchor declares network_mode: none, so
+    every target that merges it runs with no external network at run time."""
+    compose = _compose_text()
+    assert "x-common: &common" in compose
+    anchor = compose.split("x-common: &common", 1)[1].split("\nservices:", 1)[0]
+    assert "network_mode: none" in anchor, (
+        "x-common must declare 'network_mode: none' so all targets run without network"
+    )
+
+
+def test_every_compose_service_is_network_isolated() -> None:
+    """No test container may get the network at run time (a module shipping hidden
+    telemetry cannot phone home). Each service must either merge the isolated x-common
+    anchor or declare network_mode: none itself. This auto-covers every new target and
+    fails if a future service silently opts out."""
+    compose = _compose_text()
+    lines = compose.splitlines()
+    headers = [
+        (i, m.group(1))
+        for i, line in enumerate(lines)
+        if (m := re.match(r"  (test-[a-z0-9-]+):\s*$", line))
+    ]
+    assert headers, "no test-* services found in docker-compose.test.yml"
+    for idx, (start, name) in enumerate(headers):
+        end = headers[idx + 1][0] if idx + 1 < len(headers) else len(lines)
+        block = "\n".join(lines[start:end])
+        isolated = "<<: *common" in block or "network_mode: none" in block
+        assert isolated, (
+            f"service {name} is not network-isolated (needs <<: *common or network_mode: none)"
+        )
