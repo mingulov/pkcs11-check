@@ -31,6 +31,7 @@ ALL_PROVIDERS=(
     opencryptoki opencryptoki-master
     wolfpkcs11 wolfpkcs11-master
     corepkcs11 corepkcs11-main
+    craton-hsm
     tpm2
     pkcs11-mock
     bouncyhsm

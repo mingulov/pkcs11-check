@@ -103,6 +103,9 @@ VARIANT_PROVIDERS = [
     "opencryptoki-master",
     "wolfpkcs11-master",
     "corepkcs11-main",
+    # craton-hsm-core has no release tags — only ever a main build (cold build may be
+    # skipped on failure), so it lives with the other dev/variant images.
+    "craton-hsm",
 ]
 # Heavy/manual providers are runnable through the pool, but not included in
 # default or normal --all sweeps.
