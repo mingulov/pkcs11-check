@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
 )
@@ -105,7 +106,13 @@ class TestPrivateAttribute:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 v3.1 Sec.4.9.2: default CKA_PRIVATE is True for secret keys",
                 )
-                pytest.xfail("Module defaults CKA_PRIVATE=False for secret keys (spec violation)")
+                classify(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_PRIVATE default (secret key)",
+                    spec_ref="PKCS#11 v3.1 Sec.4.9.2",
+                    summary="Module defaults CKA_PRIVATE=False for secret keys (spec violation)",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -242,11 +249,18 @@ class TestModifiableAttribute:
                     ComplianceLevel.CRITICAL,
                     reference="PKCS#11 v3.1 Sec.4.1.2",
                 )
-                pytest.fail(
-                    "SECURITY: module silently ignored CKA_MODIFIABLE=False "
-                    "at create time (read-back returned True) — would have "
-                    "skipped the SetAttribute test and hidden a real "
-                    "conformance bug. Lying-module pattern."
+                classify(
+                    "self_contradiction",
+                    kind="policy",
+                    label="CKA_MODIFIABLE=False enforcement (create-time)",
+                    operation="C_CreateObject",
+                    spec_ref="PKCS#11 v3.1 Sec.4.1.2",
+                    summary=(
+                        "SECURITY: module silently ignored CKA_MODIFIABLE=False "
+                        "at create time (read-back returned True) — would have "
+                        "skipped the SetAttribute test and hidden a real "
+                        "conformance bug. Lying-module pattern."
+                    ),
                 )
 
             try:
@@ -273,10 +287,17 @@ class TestModifiableAttribute:
                 ComplianceLevel.CRITICAL,
                 reference="PKCS#11 v3.1 Sec.4.1.2",
             )
-            pytest.fail(
-                "SECURITY: module accepted C_SetAttributeValue on a "
-                "CKA_MODIFIABLE=False key — attribute mutability "
-                "constraint silently ignored"
+            classify(
+                "self_contradiction",
+                kind="policy",
+                label="CKA_MODIFIABLE=False enforcement (C_SetAttributeValue)",
+                operation="C_SetAttributeValue",
+                spec_ref="PKCS#11 v3.1 Sec.4.1.2",
+                summary=(
+                    "SECURITY: module accepted C_SetAttributeValue on a "
+                    "CKA_MODIFIABLE=False key — attribute mutability "
+                    "constraint silently ignored"
+                ),
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
@@ -433,9 +454,16 @@ class TestCopyObject:
                 reference="PKCS#11 v3.1 Sec.4.1.2: CKA_COPYABLE=False must prevent copy",
             )
             destroy_quietly(rs.raw, rs.sh, copied_h)
-            pytest.fail(
-                "SECURITY: module copied a CKA_COPYABLE=False key — "
-                "copy-prohibition silently ignored"
+            classify(
+                "self_contradiction",
+                kind="policy",
+                label="CKA_COPYABLE=False enforcement (C_CopyObject)",
+                operation="C_CopyObject",
+                spec_ref="PKCS#11 v3.1 Sec.4.1.2",
+                summary=(
+                    "SECURITY: module copied a CKA_COPYABLE=False key — "
+                    "copy-prohibition silently ignored"
+                ),
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)

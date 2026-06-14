@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.bootstrap import close_session_quietly, login_user
 from pkcs11_check.raw.bootstrap import open_session as _raw_open_session
 from pkcs11_check.raw.pack import attr_bytes, attr_ulong, template
@@ -468,7 +469,13 @@ class TestCrossSessionModification:
                             "PKCS#11 spec does not mandate mutability of CKA_VALUE post-creation",
                             ComplianceLevel.VENDOR,
                         )
-                        pytest.xfail("Module treats CKA_VALUE as read-only after object creation")
+                        xfail_as(
+                            "honest_deviation",
+                            kind="metadata",
+                            label="CKA_VALUE mutability (C_SetAttributeValue on CKO_DATA)",
+                            operation="C_SetAttributeValue",
+                            summary=("Module treats CKA_VALUE as read-only after object creation"),
+                        )
                     raise
 
                 sh_b = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
