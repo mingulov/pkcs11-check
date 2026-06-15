@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from cryptography.exceptions import InvalidSignature, InvalidTag
+from cryptography.exceptions import InvalidSignature, InvalidTag, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -172,3 +172,33 @@ def build_gcm_fidelity(
             else f"tag {actual_bits}-bit vs requested {requested_tag_bits}-bit ({strength})"
         ),
     )
+
+
+def recover_oaep_params(
+    priv: rsa.RSAPrivateKey,
+    ciphertext: bytes,
+    expected_plaintext: bytes,
+    candidate_alg_hashes: tuple[hashes.HashAlgorithm, ...],
+    candidate_mgf_hashes: tuple[hashes.HashAlgorithm, ...],
+    candidate_labels: tuple[bytes | None, ...],
+) -> tuple[hashes.HashAlgorithm, hashes.HashAlgorithm, bytes | None] | None:
+    """Return (oaep_hash, mgf_hash, label) whose local decrypt yields the expected
+    plaintext, or None if no candidate combination recovers it.
+
+    Tries the product of the candidate families. A combination cryptography cannot
+    perform raises UnsupportedAlgorithm; one that simply does not decrypt raises
+    ValueError -- both are EXPECTED for a non-matching combination, so only those two
+    specific exceptions are skipped (any other exception propagates as a real bug).
+    None => the module's OAEP params are not interpretable from our candidate set ->
+    caller marks interpretable=False.
+    """
+    for alg in candidate_alg_hashes:
+        for mgf in candidate_mgf_hashes:
+            for label in candidate_labels:
+                pad = padding.OAEP(mgf=padding.MGF1(mgf), algorithm=alg, label=label)
+                try:
+                    if priv.decrypt(ciphertext, pad) == expected_plaintext:
+                        return (alg, mgf, label)
+                except (ValueError, UnsupportedAlgorithm):
+                    continue
+    return None

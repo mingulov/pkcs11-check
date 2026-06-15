@@ -18,6 +18,7 @@ from pkcs11_check.testcases._param_fidelity import (
     FidelityResult,
     build_gcm_fidelity,
     classify_fidelity,
+    recover_oaep_params,
     recover_pss_salt_len,
 )
 
@@ -149,3 +150,40 @@ def test_build_gcm_fidelity_uninterpretable_layout() -> None:
     out = b"\x00" * (len(pt) + 31)  # implausible 31-byte trailer -> non-append layout
     r = build_gcm_fidelity(key, nonce, aad, pt, out, requested_tag_bits=96)
     assert not r.interpretable and not r.valid
+
+
+_OAEP_HASHES = (hashes.SHA1(), hashes.SHA256(), hashes.SHA384(), hashes.SHA512())
+
+
+def test_recover_oaep_params_matched_hash_and_label() -> None:
+    k = rsa.generate_private_key(65537, 2048)
+    pt = b"oaep fidelity"
+    ct = k.public_key().encrypt(
+        pt, padding.OAEP(mgf=padding.MGF1(hashes.SHA384()), algorithm=hashes.SHA384(), label=b"L")
+    )
+    got = recover_oaep_params(k, ct, pt, _OAEP_HASHES, _OAEP_HASHES, (b"L", None))
+    assert got is not None
+    alg, mgf, label = got
+    assert alg.name == "sha384" and mgf.name == "sha384" and label == b"L"
+
+
+def test_recover_oaep_params_distinct_mgf() -> None:
+    k = rsa.generate_private_key(65537, 2048)
+    pt = b"oaep fidelity"
+    ct = k.public_key().encrypt(
+        pt, padding.OAEP(mgf=padding.MGF1(hashes.SHA1()), algorithm=hashes.SHA256(), label=None)
+    )
+    got = recover_oaep_params(k, ct, pt, _OAEP_HASHES, _OAEP_HASHES, (None,))
+    assert got is not None
+    alg, mgf, _ = got
+    assert alg.name == "sha256" and mgf.name == "sha1"
+
+
+def test_recover_oaep_params_none_when_unrecoverable() -> None:
+    k = rsa.generate_private_key(65537, 2048)
+    pt = b"oaep fidelity"
+    ct = k.public_key().encrypt(
+        pt, padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=b"X")
+    )
+    # Candidate labels exclude b"X" -> cannot recover.
+    assert recover_oaep_params(k, ct, pt, _OAEP_HASHES, _OAEP_HASHES, (None, b"Y")) is None
