@@ -460,7 +460,7 @@ class TestConcurrentSessionLogin:
             key_h = gen_aes_key_or_xfail(
                 rs,
                 attrs={
-                    CKA_TOKEN: False,
+                    CKA_TOKEN: True,
                     CKA_PRIVATE: True,
                     CKA_LABEL: label,
                 },

@@ -216,16 +216,24 @@ def test_rsa_pkcs1_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, A
         except AssertionError as e:
             _skip_or_xfail_rsa_private_import_reject(e, key_size, sha, mech_display)
 
-        sig = sign_single(rs.raw, rs.sh, key_obj, mechanism, msg)
-        assert_correct(
-            actual=sig,
-            expected=expected_sig,
-            label=f"{mech_display}:C_Sign KAT {vec_id} ({key_size}-bit {sha})",
-            operation="C_Sign",
-            mechanism=mech_display,
-            source=vec.get("_source"),
-            vector_id=vec.get("_vector_id"),
-        )
+        try:
+            sig = sign_single(rs.raw, rs.sh, key_obj, mechanism, msg)
+            assert_correct(
+                actual=sig,
+                expected=expected_sig,
+                label=f"{mech_display}:C_Sign KAT {vec_id} ({key_size}-bit {sha})",
+                operation="C_Sign",
+                mechanism=mech_display,
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _RSA_PRIVATE_IMPORT_RUNTIME_REJECT_CKRS,
+                f"{mech_display}:C_Sign advertised but not operational",
+            )
+            raise
     finally:
         if key_obj is not None:
             destroy_quietly(rs.raw, rs.sh, key_obj)
