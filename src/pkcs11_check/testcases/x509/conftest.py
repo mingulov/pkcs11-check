@@ -97,17 +97,54 @@ def _canonical_self_signed_cert_der() -> bytes:
     return cert.public_bytes(_ser.Encoding.DER)
 
 
+@functools.cache
+def _san_only_cert_der() -> bytes:
+    """A subject-less X.509 cert (RFC 5280 4.1.2.6): EMPTY subject DN, NON-empty issuer,
+    and a critical subjectAltName. Only the subject is empty -- the non-empty issuer
+    isolates the subject-less variable. Signed by its own key (not a valid PKI chain;
+    irrelevant to a storage test)."""
+    import datetime as _dt
+
+    from cryptography import x509 as cx509
+    from cryptography.hazmat.primitives import hashes as _hashes
+    from cryptography.hazmat.primitives import serialization as _ser
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+    from cryptography.x509.oid import NameOID as _NameOID
+
+    key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    issuer = cx509.Name([cx509.NameAttribute(_NameOID.COMMON_NAME, "p11chk-test-issuer")])
+    cert = (
+        cx509.CertificateBuilder()
+        .subject_name(cx509.Name([]))  # empty subject DN; identity is in the SAN
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(cx509.random_serial_number())
+        .not_valid_before(_dt.datetime(2020, 1, 1))
+        .not_valid_after(_dt.datetime(2040, 1, 1))
+        .add_extension(
+            cx509.SubjectAlternativeName([cx509.RFC822Name("p11chk@example.com")]),
+            critical=True,
+        )
+        .sign(key, _hashes.SHA256())
+    )
+    return cert.public_bytes(_ser.Encoding.DER)
+
+
+def _minimal_cert_template(der: bytes) -> dict[int, Any]:
+    """A spec-INCOMPLETE cert template that OMITS the mandatory CKA_SUBJECT (CKA_VALUE only).
+    Per certificate_objects.md, CKA_SUBJECT footnote ^1^ MUST be specified at creation, so a
+    conformant module rejects this with CKR_TEMPLATE_INCOMPLETE. Used by the negative
+    conformance test and as the probe's last-resort fallback."""
+    return {CKA_CLASS: CKO_CERTIFICATE, CKA_CERTIFICATE_TYPE: CKC_X_509, CKA_VALUE: der}
+
+
 def cert_storage_templates(der: bytes) -> list[tuple[str, dict[int, Any]]]:
-    """The canonical + edge-case cert templates — single source of truth shared by the
-    capability probe and the characterization suite (x509/test_cert_storage.py)."""
-    minimal: dict[int, Any] = {
-        CKA_CLASS: CKO_CERTIFICATE,
-        CKA_CERTIFICATE_TYPE: CKC_X_509,
-        CKA_VALUE: der,
-    }
+    """The spec-complete (CKA_SUBJECT present) cert templates -- single source of truth
+    shared by the capability probe and the characterization suite. The spec-incomplete
+    omit-CKA_SUBJECT template is NOT here; it is a negative case (_minimal_cert_template)."""
     full = _build_cert_template(der)  # adds SUBJECT/ISSUER/SERIAL (+ v3.0 PUBLIC_KEY_INFO)
+    san_only = _build_cert_template(_san_only_cert_der())  # CKA_SUBJECT present = empty Name
     return [
-        ("minimal", minimal),
         ("full", full),
         ("full+label", {**full, CKA_LABEL: b"p11chk-cert"}),
         ("full+id", {**full, CKA_ID: b"\x01\x02\x03\x04"}),
@@ -115,6 +152,7 @@ def cert_storage_templates(der: bytes) -> list[tuple[str, dict[int, Any]]]:
         ("full+token", {**full, CKA_TOKEN: True}),
         ("full+trusted_false", {**full, CKA_TRUSTED: False}),
         ("full+category", {**full, CKA_CERTIFICATE_CATEGORY: 0}),
+        ("san_only_empty_subject", san_only),
     ]
 
 
@@ -135,16 +173,21 @@ def attempt_store_cert(rs: Any, template: dict[int, Any]) -> tuple[int | None, i
 
 def cert_storage_supported(rs: Any) -> bool:
     """Cached behavioral probe: can the module store ANY certificate object? Tries every
-    cert_storage_templates() shape; True on first success, False ONLY if all are cleanly
-    refused (exhaustive — guards against false-skip). Non-refusal CKR propagates."""
+    cert_storage_templates() shape, then the spec-incomplete omit-CKA_SUBJECT minimal
+    template as a last-resort fallback (a module that only accepts the minimal template --
+    which import_cert_raw also tries first -- is still detected as supported). True on first
+    success, False ONLY if all are cleanly refused (exhaustive). Non-refusal CKR propagates."""
     cached = _CERT_STORAGE_SUPPORTED.get(rs.slot_id)
     if cached is not None:
         return cached
 
     from pkcs11_check.raw.recipes import destroy_quietly as _destroy_quietly
 
+    der = _canonical_self_signed_cert_der()
+    candidates = [tmpl for _n, tmpl in cert_storage_templates(der)]
+    candidates.append(_minimal_cert_template(der))  # last-resort fallback
     supported = False
-    for _name, tmpl in cert_storage_templates(_canonical_self_signed_cert_der()):
+    for tmpl in candidates:
         handle, _rv = attempt_store_cert(rs, tmpl)
         if handle is not None:
             _destroy_quietly(rs.raw, rs.sh, handle)
