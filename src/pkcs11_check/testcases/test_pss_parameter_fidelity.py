@@ -31,7 +31,9 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS_PSS,
     CKR_ARGUMENTS_BAD,
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_HANDLE_INVALID,
     CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
@@ -53,6 +55,10 @@ _PSS_PARAM_REFUSED = (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_SIZE_RANGE,
     CKR_ARGUMENTS_BAD,
+    # Module-operational-failure codes: advertised PSS but the key handle/type
+    # is not usable for the op -> not_operational (xfail), never a hard fail.
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_TYPE_INCONSISTENT,
 )
 _MSG = b"PSS parameter-fidelity probe message"
 

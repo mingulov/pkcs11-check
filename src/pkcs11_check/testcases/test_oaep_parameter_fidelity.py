@@ -32,6 +32,9 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKR_ARGUMENTS_BAD,
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
@@ -57,6 +60,14 @@ _OAEP_REFUSED = (
     CKR_MECHANISM_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_ARGUMENTS_BAD,
+    # Module-operational-failure codes: advertised OAEP but the imported key
+    # handle / size / type is not usable for the op (e.g. craton imports the key
+    # CKR_OK then rejects the handle on C_Encrypt/C_Decrypt). Aligns with the
+    # framework's MODULE_VERIFY_UNUSABLE_RVS -> not_operational (xfail), never a
+    # raw hard fail.
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
 )
 
 

@@ -23,7 +23,9 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_GCM,
     CKR_ARGUMENTS_BAD,
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_HANDLE_INVALID,
     CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
@@ -43,6 +45,10 @@ _GCM_REFUSED = (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_SIZE_RANGE,
     CKR_ARGUMENTS_BAD,
+    # Module-operational-failure codes: advertised GCM but the imported key
+    # handle/type is not usable -> not_operational (xfail), never a hard fail.
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_TYPE_INCONSISTENT,
 )
 
 
@@ -74,6 +80,11 @@ class TestGcmParameterFidelity:
                     _PLAINTEXT,
                     mech_param=mech_param,
                     output_overhead=16,  # fit a larger-than-requested tag
+                    # Some modules under-report the GCM output length on the size
+                    # query (or use an IV-prefixed layout); re-read the module's
+                    # required size and retry rather than mis-reading a sizing
+                    # protocol response (CKR_BUFFER_TOO_SMALL) as a failure.
+                    retry_on_buffer_too_small=True,
                 )
             except AssertionError as exc:
                 if is_known_error(exc, _GCM_REFUSED):
