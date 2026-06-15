@@ -140,6 +140,33 @@ def skip_unless_mechanism(rs: Any, name: str) -> None:
         pytest.skip(f"{name} not supported")
 
 
+def skip_unless_mechanism_flag(rs: Any, mechanism: str | int, flag: int) -> None:
+    """Skip the test unless *mechanism* advertises *flag* in C_GetMechanismInfo.
+
+    A missing operation flag is the module declaring it does not expose that
+    operation for that mechanism -- a genuine capability absence, the one
+    sanctioned skip category. The metadata deviation itself is recorded once by
+    test_mech_flags.py::test_expected_flags_present (see the resilience spec).
+    """
+    if rs.has_mechanism_flag(mechanism, flag):
+        return
+    from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
+    from pkcs11_check.raw.types_std import CKF_DECRYPT, CKF_ENCRYPT, CKF_SIGN, CKF_VERIFY
+
+    name = (
+        MECHANISM_NAMES.get(int(mechanism), str(mechanism))
+        if isinstance(mechanism, int)
+        else mechanism
+    )
+    flag_names = {
+        int(CKF_VERIFY): "CKF_VERIFY",
+        int(CKF_SIGN): "CKF_SIGN",
+        int(CKF_ENCRYPT): "CKF_ENCRYPT",
+        int(CKF_DECRYPT): "CKF_DECRYPT",
+    }
+    pytest.skip(f"Mechanism {name} lacks required capability {flag_names.get(flag, hex(flag))}")
+
+
 def require_operational_aes_keygen(rs: Any) -> None:
     """Skip or xfail when AES_KEY_GEN cannot provide setup keys for a test."""
     if not rs.has_mechanism("AES_KEY_GEN"):

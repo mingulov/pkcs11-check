@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from pkcs11_check import fixtures
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKF_SIGN, CKF_VERIFY, CKM_RSA_PKCS
@@ -64,3 +66,18 @@ def test_result_is_cached(monkeypatch):
     rs.has_mechanism_flag("RSA_PKCS", int(CKF_VERIFY))
     rs.has_mechanism_flag("RSA_PKCS", int(CKF_SIGN))
     assert calls["n"] == 1  # second call served from _MECH_INFO_CACHE
+
+
+def test_skip_helper_skips_when_flag_absent(monkeypatch):
+    from pkcs11_check.testcases.conftest import skip_unless_mechanism_flag
+
+    rs, _ = _session(monkeypatch, flags=int(CKF_SIGN))  # no CKF_VERIFY
+    with pytest.raises(pytest.skip.Exception):
+        skip_unless_mechanism_flag(rs, "RSA_PKCS", int(CKF_VERIFY))
+
+
+def test_skip_helper_passes_when_flag_present(monkeypatch):
+    from pkcs11_check.testcases.conftest import skip_unless_mechanism_flag
+
+    rs, _ = _session(monkeypatch, flags=int(CKF_VERIFY))
+    skip_unless_mechanism_flag(rs, "RSA_PKCS", int(CKF_VERIFY))  # no raise
