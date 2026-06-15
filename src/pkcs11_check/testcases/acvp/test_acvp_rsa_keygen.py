@@ -151,6 +151,7 @@ class TestRsaKeyGen:
 
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported by module")
+        require_keygen_key_size(rs, "RSA_PKCS_KEY_PAIR_GEN", modulo, label=vec_id)
         skip_duplicate_pkcs11_input(vec, "RSA KeyGen")
 
         pub_key = priv_key = 0
@@ -194,7 +195,7 @@ class TestRsaKeyGen:
         except AssertionError as exc:
             if is_known_error(exc, _RSA_KEYGEN_CAPABILITY_CKRS):
                 pytest.skip(f"RSA {modulo}-bit key attribute query failed: {exc}")
-            if is_known_error(exc, {CKR_MECHANISM_INVALID}):
+            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_FUNCTION_NOT_SUPPORTED}):
                 classify(
                     "not_operational",
                     kind="crypto",
@@ -255,7 +256,7 @@ class TestRsaKeyGenBySize:
         except AssertionError as exc:
             if is_known_error(exc, _RSA_KEYGEN_CAPABILITY_CKRS):
                 pytest.skip(f"RSA {bits}-bit not supported by this module")
-            if is_known_error(exc, {CKR_MECHANISM_INVALID}):
+            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_FUNCTION_NOT_SUPPORTED}):
                 classify(
                     "not_operational",
                     kind="crypto",
