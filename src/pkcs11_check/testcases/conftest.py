@@ -36,6 +36,7 @@ from pkcs11_check.raw.types_std import (
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_CURVE_NOT_SUPPORTED,
@@ -321,6 +322,7 @@ IMPORT_STORAGE_SHAPE_REJECTS: tuple[int, ...] = (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_ATTRIBUTE_READ_ONLY,
 )
 
 # Benign policy attributes a storage variant may DROP on a clean shape reject
