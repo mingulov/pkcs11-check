@@ -54,6 +54,24 @@ def test_skip_helper_skips_when_unsupported(monkeypatch):
         x509conftest.skip_unless_cert_storage(rs)
 
 
+def test_probe_minimal_fallback_detects_support(monkeypatch):
+    from pkcs11_check.raw.types_std import CKA_SUBJECT
+    from pkcs11_check.testcases.x509 import conftest as x509c
+
+    # A module that refuses every spec-complete (CKA_SUBJECT-bearing) template but accepts
+    # the omit-SUBJECT minimal one -> probe still reports supported via the fallback.
+    def fake_create_object(raw, sh, tmpl):
+        if CKA_SUBJECT in tmpl:
+            raise CkrAssertionError("refuse", int(CKR_KEY_HANDLE_INVALID))
+        return 7
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.create_object", fake_create_object)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", lambda *a, **k: None)
+    x509c._CERT_STORAGE_SUPPORTED.clear()
+    rs = type("RS", (), {"raw": object(), "sh": 0, "slot_id": 0})()
+    assert x509c.cert_storage_supported(rs) is True
+
+
 def test_templates_have_subject_and_minimal_does_not():
     from pkcs11_check.raw.types_std import CKA_SUBJECT
     from pkcs11_check.testcases.x509 import conftest as x509c

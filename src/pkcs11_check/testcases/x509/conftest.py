@@ -173,16 +173,21 @@ def attempt_store_cert(rs: Any, template: dict[int, Any]) -> tuple[int | None, i
 
 def cert_storage_supported(rs: Any) -> bool:
     """Cached behavioral probe: can the module store ANY certificate object? Tries every
-    cert_storage_templates() shape; True on first success, False ONLY if all are cleanly
-    refused (exhaustive — guards against false-skip). Non-refusal CKR propagates."""
+    cert_storage_templates() shape, then the spec-incomplete omit-CKA_SUBJECT minimal
+    template as a last-resort fallback (a module that only accepts the minimal template --
+    which import_cert_raw also tries first -- is still detected as supported). True on first
+    success, False ONLY if all are cleanly refused (exhaustive). Non-refusal CKR propagates."""
     cached = _CERT_STORAGE_SUPPORTED.get(rs.slot_id)
     if cached is not None:
         return cached
 
     from pkcs11_check.raw.recipes import destroy_quietly as _destroy_quietly
 
+    der = _canonical_self_signed_cert_der()
+    candidates = [tmpl for _n, tmpl in cert_storage_templates(der)]
+    candidates.append(_minimal_cert_template(der))  # last-resort fallback
     supported = False
-    for _name, tmpl in cert_storage_templates(_canonical_self_signed_cert_der()):
+    for tmpl in candidates:
         handle, _rv = attempt_store_cert(rs, tmpl)
         if handle is not None:
             _destroy_quietly(rs.raw, rs.sh, handle)
