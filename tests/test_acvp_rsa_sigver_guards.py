@@ -34,6 +34,9 @@ class _Session:
     def has_mechanism(self, _name: str) -> bool:
         return True
 
+    def has_mechanism_flag(self, _mech: object, _flag: int) -> bool:
+        return True
+
 
 def _valid_vectors(mech_name: str) -> list[tuple[str, dict[str, Any]]]:
     hits = [

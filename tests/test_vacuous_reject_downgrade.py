@@ -36,7 +36,9 @@ def _fresh_cache() -> None:
 
 
 def _rs() -> SimpleNamespace:
-    return SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
+    return SimpleNamespace(
+        raw=object(), sh=1, has_mechanism=lambda name: True, has_mechanism_flag=lambda _m, _f: True
+    )
 
 
 def _vec_invalid_gcm() -> dict[str, Any]:
@@ -349,7 +351,9 @@ def test_sigver_invalid_reject_on_dead_mech_xfails(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(rsa, "verify_single", verify_dispatch)
     monkeypatch.setattr(rsa, "destroy_quietly", lambda *a, **k: None)
     monkeypatch.setattr(rsa, "_PKCS15_VER", _canonical_sigver_pkcs15_ver())
-    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
+    rs = SimpleNamespace(
+        raw=object(), sh=1, has_mechanism=lambda name: True, has_mechanism_flag=lambda _m, _f: True
+    )
     with pytest.raises(pytest.xfail.Exception, match="vacuous reject"):
         rsa.TestRsaSigVer().test_rsa_pkcs15_verify(rs, "tc-inv", _invalid_sigver_vec())
 
@@ -387,7 +391,9 @@ def test_sigver_invalid_reject_on_inconclusive_probe_passes(
     monkeypatch.setattr(rsa, "verify_single", verify_reject)
     monkeypatch.setattr(rsa, "destroy_quietly", lambda *a, **k: None)
     monkeypatch.setattr(rsa, "_PKCS15_VER", _canonical_sigver_pkcs15_ver())
-    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
+    rs = SimpleNamespace(
+        raw=object(), sh=1, has_mechanism=lambda name: True, has_mechanism_flag=lambda _m, _f: True
+    )
     # Hard-fail on downgrade leak so CI cannot silently swallow a regression.
     try:
         rsa.TestRsaSigVer().test_rsa_pkcs15_verify(rs, "tc-inv", _invalid_sigver_vec())
@@ -445,7 +451,9 @@ def test_pss_invalid_reject_on_dead_combo_xfails(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(pss, "sign_single", refuse_combo_sign)
     monkeypatch.setattr(pss, "destroy_quietly", lambda *a, **k: None)
     monkeypatch.setattr(pss, "mech_pss", lambda *a, **k: object())
-    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
+    rs = SimpleNamespace(
+        raw=object(), sh=1, has_mechanism=lambda name: True, has_mechanism_flag=lambda _m, _f: True
+    )
     with pytest.raises(pytest.xfail.Exception, match="vacuous reject"):
         pss.test_rsa_pss(rs, "tc-inv", _pss_vec_invalid())
 
@@ -476,7 +484,9 @@ def test_pss_invalid_reject_on_inconclusive_combo_passes(
     monkeypatch.setattr(pss, "gen_rsa_keypair", refuse_keygen)
     monkeypatch.setattr(pss, "destroy_quietly", lambda *a, **k: None)
     monkeypatch.setattr(pss, "mech_pss", lambda *a, **k: object())
-    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
+    rs = SimpleNamespace(
+        raw=object(), sh=1, has_mechanism=lambda name: True, has_mechanism_flag=lambda _m, _f: True
+    )
     # Hard-fail on downgrade leak so CI cannot silently swallow a regression.
     try:
         pss.test_rsa_pss(rs, "tc-inv", _pss_vec_invalid())
@@ -506,7 +516,9 @@ def test_pss_invalid_verify_false_on_dead_combo_xfails(monkeypatch: pytest.Monke
     monkeypatch.setattr(pss, "sign_single", refuse_combo_sign)
     monkeypatch.setattr(pss, "destroy_quietly", lambda *a, **k: None)
     monkeypatch.setattr(pss, "mech_pss", lambda *a, **k: object())
-    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
+    rs = SimpleNamespace(
+        raw=object(), sh=1, has_mechanism=lambda name: True, has_mechanism_flag=lambda _m, _f: True
+    )
     with pytest.raises(pytest.xfail.Exception, match="vacuous reject"):
         pss.test_rsa_pss(rs, "tc-inv", _pss_vec_invalid())
 
@@ -561,7 +573,9 @@ def test_pss_acceptable_reject_on_dead_combo_passes(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(pss, "sign_single", refuse_combo_sign)
     monkeypatch.setattr(pss, "destroy_quietly", lambda *a, **k: None)
     monkeypatch.setattr(pss, "mech_pss", lambda *a, **k: object())
-    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
+    rs = SimpleNamespace(
+        raw=object(), sh=1, has_mechanism=lambda name: True, has_mechanism_flag=lambda _m, _f: True
+    )
     # Must return normally (no xfail) -- acceptable-vector rejection is a genuine
     # honest deviation regardless of the combo probe verdict.
     try:

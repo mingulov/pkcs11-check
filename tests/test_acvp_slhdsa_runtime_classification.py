@@ -17,7 +17,12 @@ from pkcs11_check.testcases.acvp import test_acvp_slhdsa
 
 
 def _session() -> SimpleNamespace:
-    return SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SLH_DSA")
+    return SimpleNamespace(
+        raw=object(),
+        sh=1,
+        has_mechanism=lambda name: name == "SLH_DSA",
+        has_mechanism_flag=lambda _m, _f: True,
+    )
 
 
 def _device_error(*_args: Any, **_kwargs: Any) -> int:

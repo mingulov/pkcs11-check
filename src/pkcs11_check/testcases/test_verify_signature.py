@@ -22,6 +22,7 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_BYTE_PTR,
+    CKF_VERIFY,
     CKM_RSA_PKCS,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_HANDLE_INVALID,
@@ -33,7 +34,11 @@ from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
     SIGNATURE_REJECT_RVS,
 )
-from pkcs11_check.testcases.conftest import classify_negative_rv, is_known_error
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    is_known_error,
+    skip_unless_mechanism_flag,
+)
 
 pytestmark = pytest.mark.full
 
@@ -60,6 +65,7 @@ class TestVerifySignatureRoundtrip:
         self._skip_unless_available(rs)
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
+        skip_unless_mechanism_flag(rs, CKM_RSA_PKCS, int(CKF_VERIFY))
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             data = b"VerifySignature single-shot test data"
@@ -83,6 +89,7 @@ class TestVerifySignatureRoundtrip:
         self._skip_unless_available(rs)
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
+        skip_unless_mechanism_flag(rs, CKM_RSA_PKCS, int(CKF_VERIFY))
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             chunks = [b"chunk one ", b"chunk two ", b"chunk three"]
@@ -113,6 +120,7 @@ class TestVerifySignatureRoundtrip:
         self._skip_unless_available(rs)
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
+        skip_unless_mechanism_flag(rs, CKM_RSA_PKCS, int(CKF_VERIFY))
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             data = b"original data"
@@ -165,6 +173,7 @@ class TestVerifySignatureRoundtrip:
         self._skip_unless_available(rs)
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
+        skip_unless_mechanism_flag(rs, CKM_RSA_PKCS, int(CKF_VERIFY))
         pub1, priv1 = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         pub2, priv2 = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:

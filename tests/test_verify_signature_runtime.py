@@ -53,6 +53,7 @@ def test_verify_signature_multipart_uses_single_shot_signature_setup(
         raw=raw,
         sh=1,
         has_mechanism=lambda name: name == "RSA_PKCS",
+        has_mechanism_flag=lambda _m, _f: True,
     )
     monkeypatch.setattr(test_verify_signature, "gen_rsa_keypair", lambda *_args: (10, 11))
     monkeypatch.setattr(test_verify_signature, "destroy_quietly", lambda *_args: None)
@@ -77,6 +78,7 @@ def test_verify_signature_wrong_sig_device_error_is_xfail(
         raw=raw,
         sh=1,
         has_mechanism=lambda name: name == "RSA_PKCS",
+        has_mechanism_flag=lambda _m, _f: True,
     )
     monkeypatch.setattr(test_verify_signature, "gen_rsa_keypair", lambda *_args: (10, 11))
     monkeypatch.setattr(test_verify_signature, "destroy_quietly", lambda *_args: None)

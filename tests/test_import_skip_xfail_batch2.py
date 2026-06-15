@@ -62,7 +62,9 @@ def _raiser(exc: BaseException) -> Any:
 
 
 def _session() -> SimpleNamespace:
-    return SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
+    return SimpleNamespace(
+        raw=object(), sh=1, has_mechanism=lambda _name: True, has_mechanism_flag=lambda _m, _f: True
+    )
 
 
 # ===========================================================================

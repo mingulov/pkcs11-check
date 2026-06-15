@@ -45,6 +45,7 @@ def test_acvp_eddsa_sigver_import_runtime_failure_is_xfail(
             "raw": object(),
             "sh": 1,
             "has_mechanism": lambda self, name: name == "EDDSA",
+            "has_mechanism_flag": lambda self, _mech, _flag: True,
         },
     )()
     vec = {

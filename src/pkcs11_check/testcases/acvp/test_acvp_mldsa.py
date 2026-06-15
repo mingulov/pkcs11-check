@@ -33,6 +33,7 @@ from pkcs11_check.raw.types_std import (
     CKA_PARAMETER_SET,
     CKA_SIGN,
     CKA_VERIFY,
+    CKF_VERIFY,
     CKK_ML_DSA,
     CKM_ML_DSA_KEY_PAIR_GEN,
     CKP_ML_DSA_44,
@@ -58,7 +59,11 @@ from pkcs11_check.testcases.acvp._mldsa_helpers import (
     load_mldsa_sigver_vectors,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    is_known_error,
+    skip_unless_mechanism_flag,
+    xfail_if_known_ckr,
+)
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp, pytest.mark.pqc]
 
@@ -301,6 +306,7 @@ class TestMlDsaSigVer:
         # Pure ML-DSA uses CKM_ML_DSA, Hash-ML-DSA uses hash-specific mechanisms
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} mechanism not supported by module")
+        skip_unless_mechanism_flag(rs, mech_name, int(CKF_VERIFY))
 
         pub_key = 0
         try:

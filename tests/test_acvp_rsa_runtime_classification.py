@@ -19,7 +19,9 @@ from pkcs11_check.testcases.acvp import test_acvp_rsa
 
 
 def _session() -> SimpleNamespace:
-    return SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
+    return SimpleNamespace(
+        raw=object(), sh=1, has_mechanism=lambda _name: True, has_mechanism_flag=lambda _m, _f: True
+    )
 
 
 def _pkcs15_vec(*, expected_pass: bool = True) -> dict[str, Any]:

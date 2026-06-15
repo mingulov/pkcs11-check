@@ -32,7 +32,9 @@ def _session(*, init_rv: int = 0, verify_rv: int = 0) -> SimpleNamespace:
         C_VerifySignatureInit=lambda *_a, **_k: int(init_rv),
         C_VerifySignature=lambda *_a, **_k: int(verify_rv),
     )
-    return SimpleNamespace(raw=raw, sh=1, has_mechanism=lambda n: True)
+    return SimpleNamespace(
+        raw=raw, sh=1, has_mechanism=lambda n: True, has_mechanism_flag=lambda _m, _f: True
+    )
 
 
 # --- wrong-signature guard (verify-time) ---------------------------------
