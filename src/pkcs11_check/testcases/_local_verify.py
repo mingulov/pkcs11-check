@@ -99,7 +99,7 @@ def rsa_pss_local_any_salt(
 # MUST be complete: an out-of-set but valid MGF would recover as None and let the
 # caller false-accuse a crypto break (wrong_result) -- the opposite of the intent.
 _PSS_MGF_CANDIDATES: tuple[hashes.HashAlgorithm, ...] = (
-    hashes.SHA1(),
+    hashes.SHA1(),  # nosec B303
     hashes.SHA224(),
     hashes.SHA256(),
     hashes.SHA384(),

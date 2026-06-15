@@ -75,7 +75,11 @@ def test_rsa_pss_local_recover_mgf_detects_substituted_mgf() -> None:
     # (SHA-256) fails, but recover finds the actual MGF1 hash -> honest_deviation.
     k = rsa.generate_private_key(65537, 2048)
     msg = b"m"
-    sig = k.sign(msg, padding.PSS(mgf=padding.MGF1(hashes.SHA1()), salt_length=32), hashes.SHA256())
+    sig = k.sign(
+        msg,
+        padding.PSS(mgf=padding.MGF1(hashes.SHA1()), salt_length=32),  # nosec B303
+        hashes.SHA256(),
+    )
     assert (
         rsa_pss_local_any_salt(k.public_key(), msg, sig, hashes.SHA256(), hashes.SHA256()) is False
     )

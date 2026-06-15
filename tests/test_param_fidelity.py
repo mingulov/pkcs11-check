@@ -152,7 +152,7 @@ def test_build_gcm_fidelity_uninterpretable_layout() -> None:
     assert not r.interpretable and not r.valid
 
 
-_OAEP_HASHES = (hashes.SHA1(), hashes.SHA256(), hashes.SHA384(), hashes.SHA512())
+_OAEP_HASHES = (hashes.SHA1(), hashes.SHA256(), hashes.SHA384(), hashes.SHA512())  # nosec B303
 
 
 def test_recover_oaep_params_matched_hash_and_label() -> None:
@@ -171,7 +171,12 @@ def test_recover_oaep_params_distinct_mgf() -> None:
     k = rsa.generate_private_key(65537, 2048)
     pt = b"oaep fidelity"
     ct = k.public_key().encrypt(
-        pt, padding.OAEP(mgf=padding.MGF1(hashes.SHA1()), algorithm=hashes.SHA256(), label=None)
+        pt,
+        padding.OAEP(
+            mgf=padding.MGF1(hashes.SHA1()),  # nosec B303
+            algorithm=hashes.SHA256(),
+            label=None,
+        ),
     )
     got = recover_oaep_params(k, ct, pt, _OAEP_HASHES, _OAEP_HASHES, (None,))
     assert got is not None

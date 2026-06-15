@@ -51,7 +51,7 @@ pytestmark = pytest.mark.crossverify
 
 _PLAINTEXT = b"OAEP parameter-fidelity probe"
 _LABEL = b"fidelity"
-_OAEP_HASHES = (hashes.SHA1(), hashes.SHA256(), hashes.SHA384(), hashes.SHA512())
+_OAEP_HASHES = (hashes.SHA1(), hashes.SHA256(), hashes.SHA384(), hashes.SHA512())  # nosec B303
 _OAEP_REFUSED = (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_MECHANISM_INVALID,
