@@ -38,16 +38,21 @@ from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
     CKA_CLASS,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
     CKA_LABEL,
     CKA_MODULUS_BITS,
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKA_VALUE,
+    CKK_AES,
     CKM_AES_CBC,
     CKM_AES_ECB,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS,
+    CKO_SECRET_KEY,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_LEN_RANGE,
     CKR_MECHANISM_INVALID,
@@ -154,6 +159,55 @@ class TestCKRTemplateCompliance:
                 summary="Should have raised for RSA size 0",
             )
         _check_ckr("C_GenerateKeyPair(RSA, 0)", CKR_ATTRIBUTE_VALUE_INVALID, rv)
+
+    def test_create_object_with_read_write_policy_attrs(self, p11_raw_session: Any) -> None:
+        """Spec permits CKA_SENSITIVE=False / CKA_EXTRACTABLE=True at creation.
+
+        Un-negotiated, canonical probe. Rejecting these as
+        CKR_ATTRIBUTE_READ_ONLY (craton-hsm one-way guards) is a policy
+        deviation, recorded once here so the crypto suite's negotiated path does
+        not hide it.
+        """
+        rs = p11_raw_session
+        tmpl = template(
+            attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_AES),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, True),
+            attr_bytes(CKA_VALUE, b"\x00" * 16),
+        )
+        handle = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, handle.value)
+            return  # spec-conformant accept -> pass
+        if rv == CKR_ATTRIBUTE_READ_ONLY:
+            classify(
+                "honest_deviation",
+                kind="policy",
+                label="C_CreateObject:read-write-policy-attrs",
+                operation="C_CreateObject",
+                expected=[CKR_OK],
+                actual=rv,
+                summary=(
+                    "C_CreateObject rejected spec-permitted CKA_SENSITIVE=False/"
+                    "CKA_EXTRACTABLE=True with CKR_ATTRIBUTE_READ_ONLY"
+                ),
+            )
+        else:
+            classify(
+                "not_operational",
+                kind="policy",
+                label="C_CreateObject:read-write-policy-attrs",
+                operation="C_CreateObject",
+                expected=[CKR_OK],
+                actual=rv,
+                summary=(
+                    f"C_CreateObject rejected spec-permitted policy attrs with "
+                    f"unexpected {ckr_name(rv)}"
+                ),
+            )
 
 
 class TestCKRMechanismCompliance:
