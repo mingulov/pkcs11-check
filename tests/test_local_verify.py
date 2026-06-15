@@ -6,6 +6,7 @@ from pkcs11_check.testcases._local_verify import (
     rsa_pkcs15_local,
     rsa_pss_local,
     rsa_pss_local_any_salt,
+    rsa_pss_local_recover_mgf,
 )
 
 
@@ -65,6 +66,44 @@ def test_rsa_pss_local_any_salt_accepts_unrequested_salt() -> None:
     assert (
         rsa_pss_local_any_salt(k.public_key(), msg, bad, hashes.SHA256(), hashes.SHA256()) is False
     )
+
+
+def test_rsa_pss_local_recover_mgf_detects_substituted_mgf() -> None:
+    # A module that produces a VALID PSS signature whose MGF1 hash differs from
+    # the requested one (here MGF1-SHA1 while the message digest is SHA-256) must
+    # NOT be accused of a crypto break. any-salt verify with the requested MGF
+    # (SHA-256) fails, but recover finds the actual MGF1 hash -> honest_deviation.
+    k = rsa.generate_private_key(65537, 2048)
+    msg = b"m"
+    sig = k.sign(msg, padding.PSS(mgf=padding.MGF1(hashes.SHA1()), salt_length=32), hashes.SHA256())
+    assert (
+        rsa_pss_local_any_salt(k.public_key(), msg, sig, hashes.SHA256(), hashes.SHA256()) is False
+    )
+    recovered = rsa_pss_local_recover_mgf(k.public_key(), msg, sig, hashes.SHA256())
+    assert recovered is not None
+    assert recovered.name == "sha1"
+
+
+def test_rsa_pss_local_recover_mgf_returns_requested_when_honored() -> None:
+    k = rsa.generate_private_key(65537, 2048)
+    msg = b"m"
+    sig = k.sign(
+        msg, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=32), hashes.SHA256()
+    )
+    recovered = rsa_pss_local_recover_mgf(k.public_key(), msg, sig, hashes.SHA256())
+    assert recovered is not None
+    assert recovered.name == "sha256"
+
+
+def test_rsa_pss_local_recover_mgf_none_for_invalid_signature() -> None:
+    # A genuinely invalid signature verifies under NO standard MGF -> None, so the
+    # caller still reports wrong_result (a real crypto break is never masked).
+    k = rsa.generate_private_key(65537, 2048)
+    msg = b"m"
+    bad = k.sign(
+        b"other", padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=32), hashes.SHA256()
+    )
+    assert rsa_pss_local_recover_mgf(k.public_key(), msg, bad, hashes.SHA256()) is None
 
 
 def test_ecdsa_local_p256_raw_sig() -> None:
