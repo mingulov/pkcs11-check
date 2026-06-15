@@ -52,3 +52,18 @@ def test_skip_helper_skips_when_unsupported(monkeypatch):
     rs, _ = _fake_module(monkeypatch, accept_on=None, raise_rv=int(CKR_KEY_HANDLE_INVALID))
     with pytest.raises(pytest.skip.Exception):
         x509conftest.skip_unless_cert_storage(rs)
+
+
+def test_templates_have_subject_and_minimal_does_not():
+    from pkcs11_check.raw.types_std import CKA_SUBJECT
+    from pkcs11_check.testcases.x509 import conftest as x509c
+
+    der = x509c._canonical_self_signed_cert_der()
+    names = [n for n, _t in x509c.cert_storage_templates(der)]
+    assert "minimal" not in names  # minimal is now a negative case, not a positive template
+    assert "san_only_empty_subject" in names
+    for _n, tmpl in x509c.cert_storage_templates(der):
+        assert CKA_SUBJECT in tmpl  # every positive template carries CKA_SUBJECT
+    san = dict(x509c.cert_storage_templates(der))["san_only_empty_subject"]
+    assert san[CKA_SUBJECT] == bytes.fromhex("3000")  # CKA_SUBJECT present = empty Name
+    assert CKA_SUBJECT not in x509c._minimal_cert_template(der)  # negative template omits it
