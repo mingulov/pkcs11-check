@@ -320,6 +320,12 @@ _CKM_ALIAS_MAP: dict[int, list[str]] | None = None
 # The mechanism list is a slot property that does not change between tests.
 _MECHANISM_CACHE: frozenset[str] | None = None
 
+# Per-(slot, mechanism) cache of C_GetMechanismInfo results, mirroring
+# _MECHANISM_CACHE: module-level, populated once, reused across the per-test
+# RawSession instances within a subprocess. Cold again in the next file's
+# subprocess (per-file isolation), which is correct.
+_MECH_INFO_CACHE: dict[tuple[int, int], dict[str, int]] = {}
+
 
 def _get_ckm_aliases(types_std_mod: Any, mech_int: int) -> list[str]:
     """Return alias CKM names for a mechanism value (empty if no aliases)."""
@@ -386,6 +392,40 @@ class RawSession:
     def has_mechanism(self, name: str) -> bool:
         """Check if a mechanism is supported by name (prefix-optional)."""
         return name in self.mechanisms
+
+    def has_mechanism_flag(self, mechanism: str | int, flag: int) -> bool:
+        """True if C_GetMechanismInfo reports *flag* set for *mechanism*.
+
+        *mechanism* is a CKM int or a name (with or without the ``CKM_`` prefix).
+        Returns ``False`` (never raises) when the mechanism is not advertised, the
+        name is unknown, or ``C_GetMechanismInfo`` errors -- a module that lists a
+        mechanism but rejects the info query is treated as "flag absent", so this
+        can never crash test setup. Result is memoized in ``_MECH_INFO_CACHE``.
+        """
+        if isinstance(mechanism, str):
+            if not self.has_mechanism(mechanism):
+                return False
+            from pkcs11_check.raw import types_std
+
+            name = mechanism if mechanism.startswith("CKM_") else "CKM_" + mechanism
+            mech_int_opt = getattr(types_std, name, None)
+            if mech_int_opt is None:
+                return False
+            mech_int = int(mech_int_opt)
+        else:
+            mech_int = int(mechanism)
+
+        key = (self.slot_id, mech_int)
+        if key not in _MECH_INFO_CACHE:
+            from pkcs11_check.raw.recipes import get_mechanism_info
+            from pkcs11_check.raw.rv import CkrAssertionError
+
+            try:
+                _MECH_INFO_CACHE[key] = get_mechanism_info(self.raw, self.slot_id, mech_int)
+            except CkrAssertionError:
+                return False
+
+        return bool(_MECH_INFO_CACHE[key]["flags"] & flag)
 
     def generate_random(self, bits: int) -> bytes:
         """Generate random bytes via C_GenerateRandom.
