@@ -12,6 +12,8 @@ from __future__ import annotations
 from typing import Any, cast
 
 import pytest
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
@@ -36,12 +38,18 @@ from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_HOST_MEMORY,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._ec_export import (
+    coord_len_for_curve,
+    read_ec_public_key_or_xfail,
+)
+from pkcs11_check.testcases._local_verify import ecdsa_local, verify_roundtrip
 from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.acvp._duplicates import (
@@ -51,6 +59,7 @@ from pkcs11_check.testcases.acvp._duplicates import (
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 from pkcs11_check.testcases.conftest import (
     is_known_error,
+    require_keygen_key_size,
     skip_unless_mechanism_flag,
     xfail_if_known_ckr,
 )
@@ -75,6 +84,28 @@ _CURVE_MAP: dict[str, tuple[str, int]] = {
     "P-256": ("secp256r1", 32),
     "P-384": ("secp384r1", 48),
     "P-521": ("secp521r1", 66),
+}
+
+# ACVP curve name -> cryptography EllipticCurve class (for the local oracle).
+_CURVE_TO_CRYPTO: dict[str, type[ec.EllipticCurve]] = {
+    "P-256": ec.SECP256R1,
+    "P-384": ec.SECP384R1,
+    "P-521": ec.SECP521R1,
+}
+
+# ACVP curve name -> curve FIELD SIZE IN BITS, the unit EC_KEY_PAIR_GEN's
+# advertised C_GetMechanismInfo min/max range is expressed in. This is
+# cryptography's ``curve.key_size`` (P-521 -> 521), NOT coord_len*8 (66*8=528),
+# which would wrongly skip P-521 on a module advertising max=521.
+_CURVE_FIELD_BITS: dict[str, int] = {name: cls().key_size for name, cls in _CURVE_TO_CRYPTO.items()}
+
+# ACVP hashAlg string -> cryptography HashAlgorithm class. The CKM_ECDSA_SHA*
+# mechanism hashes the message internally, so the oracle hashes the same
+# message internally and they match. ECDSA vectors only ever use SHA2 here.
+_ACVP_HASH_TO_CRYPTO: dict[str, type[hashes.HashAlgorithm]] = {
+    "SHA2-256": hashes.SHA256,
+    "SHA2-384": hashes.SHA384,
+    "SHA2-512": hashes.SHA512,
 }
 
 _EC_CAPABILITY_REJECT_RVS = (
@@ -105,6 +136,7 @@ _EC_PUBLIC_IMPORT_UNSUPPORTED_RVS = (
 
 _EC_RUNTIME_FAILURE_RVS = (
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_DEVICE_ERROR,
     CKR_HOST_MEMORY,
 )
@@ -345,22 +377,45 @@ class TestEcdsaKeyGen:
         rs = p11_module_session
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("EC_KEY_PAIR_GEN not supported by module")
+        require_keygen_key_size(
+            rs, "EC_KEY_PAIR_GEN", _CURVE_FIELD_BITS[vec["curve"]], label=vec_id
+        )
         skip_duplicate_pkcs11_input(vec, "ECDSA KeyGen")
         pub_key = priv_key = 0
+        msg = b"ACVP keygen test"
         try:
-            pub_key, priv_key = gen_ec_keypair(
-                rs.raw,
-                rs.sh,
-                curve_oid=vec["ec_params"],
-                public_attrs={CKA_VERIFY: True},
-                private_attrs={CKA_SIGN: True},
+            try:
+                pub_key, priv_key = gen_ec_keypair(
+                    rs.raw,
+                    rs.sh,
+                    curve_oid=vec["ec_params"],
+                    public_attrs={CKA_VERIFY: True},
+                    private_attrs={CKA_SIGN: True},
+                )
+                assert pub_key != 0, f"{vec_id}: Public key handle is zero"
+                assert priv_key != 0, f"{vec_id}: Private key handle is zero"
+                sig = sign_single(rs.raw, rs.sh, priv_key, CKM_ECDSA_SHA256, msg)
+            except AssertionError as exc:
+                _handle_unsupported_curve(exc, vec["curve"])
+                return
+
+            # CKM_ECDSA_SHA256 hashes the message internally -> oracle uses SHA256.
+            curve = _CURVE_TO_CRYPTO[vec["curve"]]()
+            verify_roundtrip(
+                rs,
+                mechanism=CKM_ECDSA_SHA256,
+                data=msg,
+                signature=sig,
+                local=lambda: ecdsa_local(
+                    read_ec_public_key_or_xfail(rs, pub_key, curve),
+                    msg,
+                    sig,
+                    hashes.SHA256(),
+                    coord_len_for_curve(curve),
+                ),
+                module_pub_handle=pub_key,
+                label=vec_id,
             )
-            assert pub_key != 0, f"{vec_id}: Public key handle is zero"
-            assert priv_key != 0, f"{vec_id}: Private key handle is zero"
-            sig = sign_single(rs.raw, rs.sh, priv_key, CKM_ECDSA_SHA256, b"ACVP keygen test")
-            assert verify_single(rs.raw, rs.sh, pub_key, CKM_ECDSA_SHA256, b"ACVP keygen test", sig)
-        except AssertionError as exc:
-            _handle_unsupported_curve(exc, vec["curve"])
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
             destroy_quietly(rs.raw, rs.sh, priv_key)
@@ -379,21 +434,43 @@ class TestEcdsaSigGen:
         mech_int: CKM = cast(CKM, vec["mech_int"])
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} not supported by module")
+        require_keygen_key_size(
+            rs, "EC_KEY_PAIR_GEN", _CURVE_FIELD_BITS[vec["curve"]], label=vec_id
+        )
         pub_key = priv_key = 0
         try:
-            pub_key, priv_key = gen_ec_keypair(
-                rs.raw,
-                rs.sh,
-                curve_oid=vec["ec_params"],
-                public_attrs={CKA_VERIFY: True},
-                private_attrs={CKA_SIGN: True},
+            try:
+                pub_key, priv_key = gen_ec_keypair(
+                    rs.raw,
+                    rs.sh,
+                    curve_oid=vec["ec_params"],
+                    public_attrs={CKA_VERIFY: True},
+                    private_attrs={CKA_SIGN: True},
+                )
+                sig = sign_single(rs.raw, rs.sh, priv_key, mech_int, vec["msg"])
+            except AssertionError as exc:
+                _handle_unsupported_curve(exc, vec["curve"])
+                return
+
+            # mech_int (CKM_ECDSA_SHA*) hashes the message internally -> oracle
+            # hashes the same message with the matching SHA2 hash.
+            curve = _CURVE_TO_CRYPTO[vec["curve"]]()
+            hash_alg = _ACVP_HASH_TO_CRYPTO[vec["hash_alg"]]()
+            verify_roundtrip(
+                rs,
+                mechanism=mech_int,
+                data=vec["msg"],
+                signature=sig,
+                local=lambda: ecdsa_local(
+                    read_ec_public_key_or_xfail(rs, pub_key, curve),
+                    vec["msg"],
+                    sig,
+                    hash_alg,
+                    coord_len_for_curve(curve),
+                ),
+                module_pub_handle=pub_key,
+                label=vec_id,
             )
-            sig = sign_single(rs.raw, rs.sh, priv_key, mech_int, vec["msg"])
-            assert verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["msg"], sig), (
-                f"{vec_id}: Roundtrip verification failed"
-            )
-        except AssertionError as exc:
-            _handle_unsupported_curve(exc, vec["curve"])
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
             destroy_quietly(rs.raw, rs.sh, priv_key)

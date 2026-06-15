@@ -36,7 +36,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
 )
 from pkcs11_check.testcases._error_tuples import KEY_SIZE_ERRORS, TEMPLATE_ERRORS
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, is_known_error
 
 pytestmark = pytest.mark.security
 
@@ -278,6 +278,6 @@ class TestDuplicateAttributes:
     def test_create_key_normal(self, p11_raw_session: Any) -> None:
         """Baseline: normal AES key generation works."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="attribute-fuzz AES-256 baseline")
         assert key != 0
         destroy_quietly(rs.raw, rs.sh, key)

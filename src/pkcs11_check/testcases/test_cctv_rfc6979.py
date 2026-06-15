@@ -42,6 +42,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
@@ -107,6 +108,11 @@ _CCTV_ECDSA_RUNTIME_REJECT_CKRS = (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
+    # Module-verify-unusable codes (a module that advertises ECDSA verify but
+    # cannot use the imported key handle / size for C_Verify) -> not_operational,
+    # matching the shared sigver classification (signature_rejected_or_xfail).
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,

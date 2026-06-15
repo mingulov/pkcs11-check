@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import NoReturn
 
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -13,6 +14,8 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
@@ -21,6 +24,17 @@ from pkcs11_check.raw.types_std import (
     CKR_SIGNATURE_LEN_RANGE,
 )
 from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+
+# CK_RVs that mean the module CANNOT run C_Verify for this (mechanism, key) at
+# all -- the verify capability is absent, so this is an "advertised but not
+# operational" deviation.  CANONICAL source; _local_verify.py re-exports this.
+MODULE_VERIFY_UNUSABLE_RVS = (
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_MECHANISM_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+)
 
 SIGNATURE_REJECT_RVS = (
     CKR_SIGNATURE_INVALID,
@@ -95,7 +109,18 @@ def signature_rejected_or_xfail(exc: AssertionError, label: str) -> bool:
     Clean PKCS#11 signature-reject CKRs are ordinary vector passes. Generic
     failure CKRs still mean the provider did not accept the invalid signature,
     but they are not clean conformance and must be reported as xfail evidence.
+
+    When the module cannot attempt C_Verify at all (MODULE_VERIFY_UNUSABLE_RVS),
+    the verify capability is absent -- classified as ``not_operational``
+    (lifecycle) before the reject-vs-xfail handling below.
     """
+    if is_known_error(exc, MODULE_VERIFY_UNUSABLE_RVS):
+        xfail_as(
+            "not_operational",
+            kind="lifecycle",
+            label=label,
+            summary=f"{label}: module C_Verify not operational: {exc}",
+        )
     if is_known_error(exc, SIGNATURE_REJECT_RVS):
         return False
     xfail_if_known_ckr(

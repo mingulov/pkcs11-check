@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives import hashes
 
 from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.raw.pack_mechanisms import mech_pss
@@ -36,12 +37,19 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+)
+from pkcs11_check.testcases._local_verify import (
+    rsa_pkcs15_local,
+    rsa_pss_local,
+    rsa_pss_local_any_salt,
+    verify_roundtrip,
 )
 from pkcs11_check.testcases._operability import (
     Operability,
@@ -50,6 +58,7 @@ from pkcs11_check.testcases._operability import (
     probe_operability,
     xfail_vacuous_reject,
 )
+from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 from pkcs11_check.testcases.acvp.rsa.base_loader import (
@@ -61,6 +70,7 @@ from pkcs11_check.testcases.acvp.rsa.base_loader import (
 from pkcs11_check.testcases.conftest import (
     import_rsa_public_key_negotiated,
     is_known_error,
+    require_keygen_key_size,
     skip_unless_mechanism_flag,
     xfail_if_known_ckr,
 )
@@ -101,6 +111,26 @@ _RSA_SIGGEN_RUNTIME_REJECT_RVS = (
     CKR_MECHANISM_PARAM_INVALID,
 )
 
+# ACVP hashAlg string -> cryptography HashAlgorithm class for the local oracle.
+# The signing mechanism (CKM_SHA*_RSA_PKCS / ..._PSS) hashes the message
+# internally, so the oracle hashes the same message internally -- they match.
+_ACVP_HASH_TO_CRYPTO: dict[str, type[hashes.HashAlgorithm]] = {
+    "SHA-1": hashes.SHA1,
+    "SHA2-224": hashes.SHA224,
+    "SHA2-256": hashes.SHA256,
+    "SHA2-384": hashes.SHA384,
+    "SHA2-512": hashes.SHA512,
+    "SHA3-224": hashes.SHA3_224,
+    "SHA3-256": hashes.SHA3_256,
+    "SHA3-384": hashes.SHA3_384,
+    "SHA3-512": hashes.SHA3_512,
+}
+
+
+def _crypto_hash_for(hash_alg: str) -> hashes.HashAlgorithm:
+    """Map an ACVP hashAlg string to a cryptography HashAlgorithm instance."""
+    return _ACVP_HASH_TO_CRYPTO[hash_alg]()
+
 
 def _skip_rsa_public_import_reject(exc: AssertionError, *, mech_name: str) -> None:
     """Xfail RSA SigVer vectors when the negotiated public key import is refused.
@@ -131,7 +161,7 @@ def _skip_or_xfail_rsa_siggen_keygen_reject(exc: AssertionError, key_bits: int) 
         pytest.skip(f"RSA {key_bits}-bit key generation failed: {exc}")
     xfail_if_known_ckr(
         exc,
-        (CKR_MECHANISM_INVALID,),
+        (CKR_MECHANISM_INVALID, CKR_FUNCTION_NOT_SUPPORTED),
         "CKM_RSA_PKCS_KEY_PAIR_GEN advertised but keygen failed",
     )
 
@@ -162,6 +192,7 @@ class TestRsaPkcs15:
             pytest.skip(f"{mech_name} not supported")
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported by module")
+        require_keygen_key_size(rs, "RSA_PKCS_KEY_PAIR_GEN", key_bits, label=vec_id)
 
         pub_key = priv_key = 0
         try:
@@ -178,10 +209,24 @@ class TestRsaPkcs15:
 
             try:
                 sig = sign_single(rs.raw, rs.sh, priv_key, mech_int, vec["message"])
-                verified = verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["message"], sig)
             except AssertionError as exc:
                 _xfail_rsa_siggen_runtime_reject(exc, mech_name)
-            assert verified
+
+            hash_alg = _crypto_hash_for(vec["hash_alg"])
+
+            def _local() -> bool:
+                pub = read_rsa_public_key_or_xfail(rs, pub_key)
+                return rsa_pkcs15_local(pub, vec["message"], sig, hash_alg)
+
+            verify_roundtrip(
+                rs,
+                mechanism=mech_int,
+                data=vec["message"],
+                signature=sig,
+                local=_local,
+                module_pub_handle=pub_key,
+                label=vec_id,
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
             destroy_quietly(rs.raw, rs.sh, priv_key)
@@ -207,6 +252,7 @@ class TestRsaPss:
             pytest.skip(f"{mech_name} not supported")
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported by module")
+        require_keygen_key_size(rs, "RSA_PKCS_KEY_PAIR_GEN", key_bits, label=vec_id)
 
         pub_key = priv_key = 0
         try:
@@ -226,18 +272,44 @@ class TestRsaPss:
                 sig = sign_single(
                     rs.raw, rs.sh, priv_key, mech_int, vec["message"], mech_param=mech_param
                 )
-                verified = verify_single(
-                    rs.raw,
-                    rs.sh,
-                    pub_key,
-                    mech_int,
-                    vec["message"],
-                    sig,
-                    mech_param=mech_param,
-                )
             except AssertionError as exc:
                 _xfail_rsa_siggen_runtime_reject(exc, mech_name)
-            assert verified
+
+            # MGF1 mask uses the same hash as the signature (ACVP expresses only
+            # mgf1-with-message-hash for PKCS#11), so mgf_hash == hash_alg here.
+            hash_alg = _crypto_hash_for(vec["hash_alg"])
+
+            def _local() -> bool:
+                pub = read_rsa_public_key_or_xfail(rs, pub_key)
+                if rsa_pss_local(pub, vec["message"], sig, hash_alg, hash_alg, salt_len):
+                    return True
+                # Exact salt failed: is it still a valid PSS signature with a
+                # different salt? If so the module produced sound crypto but did
+                # not honor the requested saltLen -> honest_deviation (logged),
+                # NOT a wrong_result. Only a signature invalid under ANY salt is
+                # a real crypto break.
+                if rsa_pss_local_any_salt(pub, vec["message"], sig, hash_alg, hash_alg):
+                    xfail_as(
+                        "honest_deviation",
+                        kind="metadata",
+                        label=vec_id,
+                        summary=(
+                            f"{vec_id}: valid RSA-PSS signature but module did not honor "
+                            f"requested saltLen={salt_len}"
+                        ),
+                    )
+                return False
+
+            verify_roundtrip(
+                rs,
+                mechanism=mech_int,
+                data=vec["message"],
+                signature=sig,
+                local=_local,
+                module_pub_handle=pub_key,
+                mech_param=mech_param,
+                label=vec_id,
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
             destroy_quietly(rs.raw, rs.sh, priv_key)
