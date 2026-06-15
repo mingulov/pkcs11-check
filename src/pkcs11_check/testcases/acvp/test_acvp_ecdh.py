@@ -21,7 +21,6 @@ from pkcs11_check.raw.pack_mechanisms import mech_ecdh
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
-    import_ec_private_key,
     import_ec_public_key,
     read_attributes,
 )
@@ -57,6 +56,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     classify_lifecycle_effect,
+    import_ec_private_key_negotiated,
     is_known_error,
     xfail_if_known_ckr,
 )
@@ -313,9 +313,8 @@ def test_acvp_ecdh_shared_secret(
 
     try:
         try:
-            priv_key = import_ec_private_key(
-                rs.raw,
-                rs.sh,
+            priv_key = import_ec_private_key_negotiated(
+                rs,
                 ec_params=ec_params,
                 value=vec["private_key"],
                 key_type=int(CKK_EC),

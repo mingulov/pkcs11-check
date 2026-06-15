@@ -35,6 +35,7 @@ from pkcs11_check.testcases.x509.conftest import (
     get_unique_limbo_certs,
     get_unique_limbo_crls,
     load_limbo_testcases,
+    skip_unless_cert_storage,
 )
 
 pytestmark = [
@@ -68,6 +69,7 @@ def test_exhaustive_cert_import_no_crash(
     object size.  This catches ASN.1 parser crashes that a bare import misses.
     """
     rs = p11_module_session
+    skip_unless_cert_storage(rs)
     try:
         h = create_object(
             rs.raw,

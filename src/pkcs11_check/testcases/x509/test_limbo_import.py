@@ -35,6 +35,7 @@ from pkcs11_check.testcases.x509.conftest import (
     import_cert_raw,
     load_limbo_testcases,
     pem_to_der,
+    skip_unless_cert_storage,
 )
 
 pytestmark = [
@@ -129,6 +130,7 @@ class TestLimboCertImport:
     ) -> None:
         """Import peer certificate using raw CKA_VALUE."""
         rs = p11_module_session
+        skip_unless_cert_storage(rs)
         der = pem_to_der(tc["peer_certificate"])
         if not der:
             pytest.skip("Failed to decode peer certificate PEM")
@@ -209,6 +211,7 @@ class TestLimboCertImport:
     ) -> None:
         """Import trusted CA certificates from a limbo testcase."""
         rs = p11_module_session
+        skip_unless_cert_storage(rs)
         for i, pem in enumerate(tc["trusted_certs"]):
             der = pem_to_der(pem)
             if not der:
@@ -277,6 +280,7 @@ def test_import_limbo_failure_cert_raw(
 ) -> None:
     """Raw import of x509-limbo FAILURE certs."""
     rs = p11_module_session
+    skip_unless_cert_storage(rs)
     der = pem_to_der(tc["peer_certificate"])
     if not der:
         pytest.skip("Failed to decode PEM")

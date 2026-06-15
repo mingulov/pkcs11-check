@@ -12,7 +12,6 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
-    import_secret_key,
 )
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
@@ -38,7 +37,11 @@ from pkcs11_check.testcases._operability import (
     probe_operability,
     xfail_vacuous_reject,
 )
-from pkcs11_check.testcases.conftest import assert_correct, is_known_error
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    import_secret_key_negotiated,
+    is_known_error,
+)
 
 # GCM-SIV is not a standard PKCS#11 mechanism; use vendor extension if available
 CKM_AES_GCM_SIV = CKM(0x80000100, "CKM_AES_GCM_SIV")
@@ -157,13 +160,7 @@ def _import_aes_key(
         attrs[CKA_WRAP] = True
     if unwrap:
         attrs[CKA_UNWRAP] = True
-    return import_secret_key(
-        rs.raw,
-        rs.sh,
-        CKK_AES,
-        key_bytes,
-        attrs=attrs,
-    )
+    return import_secret_key_negotiated(rs, int(CKK_AES), key_bytes, attrs=attrs)
 
 
 def run_gcm_encrypt_test(

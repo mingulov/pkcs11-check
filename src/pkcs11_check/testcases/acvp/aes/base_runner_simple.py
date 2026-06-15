@@ -16,7 +16,6 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
-    import_secret_key,
     to_ubyte_buf,
 )
 from pkcs11_check.raw.rv import expect_rv
@@ -44,7 +43,11 @@ from pkcs11_check.raw.types_std import (
     CKR_OPERATION_ACTIVE,
     CKR_OPERATION_NOT_INITIALIZED,
 )
-from pkcs11_check.testcases.conftest import assert_correct, is_known_error
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    import_secret_key_negotiated,
+    is_known_error,
+)
 
 _AES_RUNTIME_REJECT_RVS = (
     CKR_DEVICE_ERROR,
@@ -101,13 +104,7 @@ def _import_aes_key(
         attrs[CKA_WRAP] = True
     if unwrap:
         attrs[CKA_UNWRAP] = True
-    return import_secret_key(
-        rs.raw,
-        rs.sh,
-        CKK_AES,
-        key_bytes,
-        attrs=attrs,
-    )
+    return import_secret_key_negotiated(rs, int(CKK_AES), key_bytes, attrs=attrs)
 
 
 def run_simple_encrypt_test(

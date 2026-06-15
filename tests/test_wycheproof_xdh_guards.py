@@ -41,7 +41,7 @@ def test_duplicate_xdh_container_vector_is_skipped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """ASN/PEM/JWK duplicates should not rerun identical PKCS#11 inputs."""
-    monkeypatch.setattr(xdh, "import_ec_private_key", _fail_if_duplicate_called)
+    monkeypatch.setattr(xdh, "import_ec_private_key_negotiated", _fail_if_duplicate_called)
     vec_id = "x25519_asn_test.json:tc1-valid"
     vec = next(vec for candidate_id, vec in xdh._ALL_XDH_VECTORS if candidate_id == vec_id)
 
@@ -53,7 +53,7 @@ def test_invalid_xdh_public_decode_is_accepted_rejection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Malformed invalid public vectors should not become capability skips."""
-    monkeypatch.setattr(xdh, "import_ec_private_key", _fail_if_called)
+    monkeypatch.setattr(xdh, "import_ec_private_key_negotiated", _fail_if_called)
     vec = next(
         vec
         for vec_id, vec in xdh._ALL_XDH_VECTORS
@@ -111,7 +111,7 @@ def test_invalid_xdh_public_length_success_is_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Malformed public bytes must fail if a provider derives anyway."""
-    monkeypatch.setattr(xdh, "import_ec_private_key", _handle)
+    monkeypatch.setattr(xdh, "import_ec_private_key_negotiated", _handle)
     monkeypatch.setattr(xdh, "derive_key", _handle)
     monkeypatch.setattr(xdh, "read_attributes", _read_zeros)
     monkeypatch.setattr(xdh, "destroy_quietly", lambda *_args: None)
@@ -151,7 +151,7 @@ def test_invalid_xdh_correct_length_success_is_reported(
         "flags": ["SyntheticRuntimeGuard"],
     }
 
-    monkeypatch.setattr(xdh, "import_ec_private_key", _handle)
+    monkeypatch.setattr(xdh, "import_ec_private_key_negotiated", _handle)
     monkeypatch.setattr(xdh, "derive_key", _handle)
     monkeypatch.setattr(xdh, "read_attributes", _read_zeros)
     monkeypatch.setattr(xdh, "destroy_quietly", lambda *_args: None)
@@ -164,7 +164,7 @@ def test_valid_xdh_derive_runtime_reject_is_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Valid-vector derive CKRs are advertised-but-not-operational evidence."""
-    monkeypatch.setattr(xdh, "import_ec_private_key", _handle)
+    monkeypatch.setattr(xdh, "import_ec_private_key_negotiated", _handle)
     monkeypatch.setattr(xdh, "derive_key", _raise_device_error)
     monkeypatch.setattr(xdh, "destroy_quietly", lambda *_args: None)
 

@@ -44,9 +44,16 @@ from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 from pkcs11_check.testcases.x509.conftest import (
     _build_cert_template,
     import_cert_object,
+    skip_unless_cert_storage,
 )
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
+
+
+@pytest.fixture(autouse=True)
+def _require_cert_storage(p11_raw_session: Any) -> None:
+    """Skip the entire file when the module cannot store CKO_CERTIFICATE objects."""
+    skip_unless_cert_storage(p11_raw_session)
 
 
 @pytest.fixture(scope="module")
