@@ -20,29 +20,14 @@ from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.pack import PackedMechanism
 from pkcs11_check.raw.recipes import verify_single
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import (
-    CKM,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_KEY_HANDLE_INVALID,
-    CKR_KEY_SIZE_RANGE,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-)
+from pkcs11_check.raw.types_std import CKM
 from pkcs11_check.testcases._ec_export import MalformedSignature as MalformedSignature  # re-export
 from pkcs11_check.testcases._ec_export import split_raw_ecdsa
-from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
-
-# CK_RVs that mean the module CANNOT run C_Verify for this (mechanism, key) at all
-# -- the verify capability is absent, so the module's own real result already
-# stands (-> pass here). The verify-capability finding is owned by a separate
-# test (test_verify_operability.py). This tuple is the CANONICAL source; other
-# tasks import it from here.
-_MODULE_VERIFY_UNUSABLE_RVS = (
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_KEY_HANDLE_INVALID,
-    CKR_MECHANISM_INVALID,
-    CKR_KEY_SIZE_RANGE,
-    CKR_KEY_TYPE_INCONSISTENT,
+from pkcs11_check.testcases._signature_policy import (
+    MODULE_VERIFY_UNUSABLE_RVS as _MODULE_VERIFY_UNUSABLE_RVS,
+)
+from pkcs11_check.testcases._signature_policy import (
+    signature_rejected_or_xfail,
 )
 
 
