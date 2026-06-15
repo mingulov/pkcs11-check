@@ -9,12 +9,41 @@ They are intentionally strict:
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa, utils
 
+from pkcs11_check.classification import fail_as, xfail_as
+from pkcs11_check.raw.pack import PackedMechanism
+from pkcs11_check.raw.recipes import verify_single
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import (
+    CKM,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+)
 from pkcs11_check.testcases._ec_export import MalformedSignature as MalformedSignature  # re-export
 from pkcs11_check.testcases._ec_export import split_raw_ecdsa
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
+
+# CK_RVs that mean the module CANNOT run C_Verify for this (mechanism, key) at all
+# -- the verify capability is absent, so the module's own real result already
+# stands (-> pass here). The verify-capability finding is owned by a separate
+# test (test_verify_operability.py). This tuple is the CANONICAL source; other
+# tasks import it from here.
+_MODULE_VERIFY_UNUSABLE_RVS = (
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_MECHANISM_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+)
 
 
 def rsa_pkcs15_local(
@@ -77,3 +106,82 @@ def ecdsa_local(
         return True
     except InvalidSignature:
         return False
+
+
+def verify_roundtrip(
+    rs: Any,
+    *,
+    mechanism: CKM | int,
+    data: bytes,
+    signature: bytes,
+    local: Callable[[], bool],
+    module_pub_handle: int,
+    mech_param: PackedMechanism | None = None,
+    label: str,
+) -> None:
+    """Judge a ROUNDTRIP signature: local oracle is the always-run authority.
+
+    *local* is a no-arg callable returning True iff the local python-cryptography
+    oracle accepts the module-produced *signature*. *module_pub_handle* is the
+    handle the module's own C_Verify should use; *verify_single* runs that verify.
+
+    Outcomes:
+
+    1. *local* raises :class:`MalformedSignature` -> xfail ``nonspec_reject`` (a
+       malformed signature WIDTH is never a crypto fail).
+    2. *local* returns False -> fail ``wrong_result`` (kind=crypto): the module's
+       OWN signature is invalid by cross-verify -- a real crypto break.
+    3. module C_Verify raises :class:`CkrAssertionError`:
+       - rv in :data:`_MODULE_VERIFY_UNUSABLE_RVS` -> ``return`` (pass): the module
+         cannot verify here, so its real result stands; the verify-capability
+         finding belongs to a separate test.
+       - otherwise -> :func:`signature_rejected_or_xfail` (-> xfail for
+         OPERATION_ACTIVE / PARAM_INVALID / etc.) and ``return``. NEVER re-raise.
+    4. module C_Verify returns False (and *local* accepted) -> fail
+       ``self_contradiction`` (kind=crypto): the module rejected a signature the
+       local oracle accepts as valid.
+    5. local valid AND module valid -> ``return`` (pass).
+    """
+    try:
+        local_ok = local()
+    except MalformedSignature as exc:
+        xfail_as(
+            "nonspec_reject",
+            kind="metadata",
+            label=label,
+            summary=f"{label}: module signature has non-spec width: {exc}",
+        )
+
+    if not local_ok:
+        fail_as(
+            "wrong_result",
+            kind="crypto",
+            label=label,
+            summary=f"{label}: module signature INVALID by local cross-verify",
+        )
+
+    try:
+        mod_ok = verify_single(
+            rs.raw,
+            rs.sh,
+            module_pub_handle,
+            mechanism,
+            data,
+            signature,
+            mech_param=mech_param,
+        )
+    except CkrAssertionError as exc:
+        if getattr(exc, "rv", None) in _MODULE_VERIFY_UNUSABLE_RVS:
+            return
+        signature_rejected_or_xfail(exc, label)
+        return
+
+    if not mod_ok:
+        fail_as(
+            "self_contradiction",
+            kind="crypto",
+            label=label,
+            summary=(
+                f"{label}: module C_Verify rejected a signature local cross-verify accepts as valid"
+            ),
+        )
