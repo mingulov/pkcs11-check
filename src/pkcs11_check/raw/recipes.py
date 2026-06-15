@@ -298,7 +298,7 @@ def _two_call_output(
     # Standard two-call pattern: query size with NULL, then allocate and call again.
     out_len = CK_ULONG(0)
     rv = fn(*args, None, byref(out_len))
-    expect_rv(rv, CKR_OK)
+    expect_rv(rv, CKR_OK, CKR_BUFFER_TOO_SMALL)
     size = out_len.value
     out_buf = (ctypes.c_ubyte * size)()
     out_len = CK_ULONG(size)
