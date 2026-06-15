@@ -11,9 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from cryptography.exceptions import InvalidSignature
+from cryptography.exceptions import InvalidSignature, InvalidTag
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from pkcs11_check.classification import fail_as, xfail_as
 
@@ -113,3 +114,61 @@ def recover_pss_salt_len(
         except InvalidSignature:
             continue
     return None
+
+
+def build_gcm_fidelity(
+    aes_key: bytes,
+    nonce: bytes,
+    aad: bytes,
+    plaintext: bytes,
+    module_output: bytes,
+    requested_tag_bits: int,
+) -> FidelityResult:
+    """Interpret AES-GCM module output (ciphertext||tag) and check tag-length fidelity.
+
+    Uses the low-level Cipher/modes.GCM API (the AESGCM convenience class is fixed
+    at a 16-byte tag and cannot verify shorter tags). A trailer that is not a
+    plausible tag length (4..16 bytes) or fails to decrypt is treated as a
+    non-append / unparseable layout -> interpretable=False -> not_operational
+    (spec G4); genuine GCM corruption stays covered by test_aead cross-verify.
+    """
+    tag_len = len(module_output) - len(plaintext)
+    base = {"tag_bits": requested_tag_bits}
+    if tag_len < 4 or tag_len > 16:
+        return FidelityResult(
+            valid=False,
+            conforms=False,
+            interpretable=False,
+            requested=base,
+            actual={"tag_len_bytes": tag_len},
+            detail=f"implausible GCM tag length {tag_len} bytes (non-append layout?)",
+        )
+    ct, tag = module_output[:-tag_len], module_output[-tag_len:]
+    dec = Cipher(algorithms.AES(aes_key), modes.GCM(nonce, tag, min_tag_length=tag_len)).decryptor()
+    if aad:
+        dec.authenticate_additional_data(aad)
+    try:
+        recovered = dec.update(ct) + dec.finalize()
+    except InvalidTag:
+        return FidelityResult(
+            valid=False,
+            conforms=False,
+            interpretable=False,
+            requested=base,
+            actual={"tag_bits": tag_len * 8},
+            detail=f"GCM output did not authenticate at tag_len={tag_len} (non-append layout?)",
+        )
+    actual_bits = tag_len * 8
+    strength = "weaker auth" if actual_bits < requested_tag_bits else "stronger auth"
+    return FidelityResult(
+        valid=(recovered == plaintext),
+        conforms=(actual_bits == requested_tag_bits),
+        interpretable=True,
+        requested=base,
+        actual={"tag_bits": actual_bits},
+        detail=(
+            "GCM tag length honored"
+            if actual_bits == requested_tag_bits
+            else f"tag {actual_bits}-bit vs requested {requested_tag_bits}-bit ({strength})"
+        ),
+    )

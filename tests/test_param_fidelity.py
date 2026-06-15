@@ -11,10 +11,12 @@ import pytest
 from _pytest.outcomes import Failed, XFailed
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from pkcs11_check.classification import clear, get_records
 from pkcs11_check.testcases._param_fidelity import (
     FidelityResult,
+    build_gcm_fidelity,
     classify_fidelity,
     recover_pss_salt_len,
 )
@@ -106,3 +108,44 @@ def test_recover_pss_salt_len_none_for_invalid() -> None:
         b"other", padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=32), hashes.SHA256()
     )
     assert recover_pss_salt_len(k.public_key(), b"m", sig, hashes.SHA256(), hashes.SHA256()) is None
+
+
+def _gcm_module_output(
+    key: bytes, nonce: bytes, aad: bytes, plaintext: bytes, tag_len: int
+) -> bytes:
+    enc = Cipher(algorithms.AES(key), modes.GCM(nonce)).encryptor()
+    if aad:
+        enc.authenticate_additional_data(aad)
+    ct = enc.update(plaintext) + enc.finalize()
+    return ct + enc.tag[:tag_len]
+
+
+def test_build_gcm_fidelity_conforms() -> None:
+    key = bytes(range(32))
+    nonce = bytes(range(12))
+    aad = b"a"
+    pt = b"gcm body!!"
+    out = _gcm_module_output(key, nonce, aad, pt, 12)  # 96-bit tag, as requested
+    r = build_gcm_fidelity(key, nonce, aad, pt, out, requested_tag_bits=96)
+    assert r.valid and r.conforms and r.interpretable
+
+
+def test_build_gcm_fidelity_tag_length_deviation() -> None:
+    key = bytes(range(32))
+    nonce = bytes(range(12))
+    aad = b"a"
+    pt = b"gcm body!!"
+    out = _gcm_module_output(key, nonce, aad, pt, 16)  # module produced 128-bit tag
+    r = build_gcm_fidelity(key, nonce, aad, pt, out, requested_tag_bits=96)
+    assert r.valid and not r.conforms and r.interpretable
+    assert r.actual["tag_bits"] == 128
+
+
+def test_build_gcm_fidelity_uninterpretable_layout() -> None:
+    key = bytes(range(32))
+    nonce = bytes(range(12))
+    aad = b"a"
+    pt = b"gcm body!!"
+    out = b"\x00" * (len(pt) + 31)  # implausible 31-byte trailer -> non-append layout
+    r = build_gcm_fidelity(key, nonce, aad, pt, out, requested_tag_bits=96)
+    assert not r.interpretable and not r.valid
