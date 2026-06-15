@@ -11,6 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
 from pkcs11_check.classification import fail_as, xfail_as
 
 
@@ -83,3 +87,29 @@ def classify_fidelity(
             f"{label}: requested {result.requested}, module used {result.actual} ({result.detail})"
         ),
     )
+
+
+def recover_pss_salt_len(
+    pub: rsa.RSAPublicKey,
+    data: bytes,
+    sig: bytes,
+    mgf_hash: hashes.HashAlgorithm,
+    digest: hashes.HashAlgorithm,
+) -> int | None:
+    """Return the exact PSS salt length under which *sig* verifies, or None.
+
+    Scans 0 .. emLen-hLen-2 (the maximum legal PSS salt, spec G8) using the
+    already-recovered *mgf_hash* and the message *digest*. emLen = ceil((modBits-1)/8).
+    """
+    em_len = (pub.key_size + 6) // 8  # ceil((key_size-1)/8)
+    max_salt = em_len - digest.digest_size - 2
+    if max_salt < 0:
+        return None
+    for salt_len in range(0, max_salt + 1):
+        pad = padding.PSS(mgf=padding.MGF1(mgf_hash), salt_length=salt_len)
+        try:
+            pub.verify(sig, data, pad, digest)
+            return salt_len
+        except InvalidSignature:
+            continue
+    return None
