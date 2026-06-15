@@ -82,8 +82,10 @@ def classify_fidelity(
         label=label,
         operation=operation,
         mechanism=mechanism,
-        expected=result.requested,
-        actual=result.actual,
+        # The probed parameters are structured data, not CKR codes -- carry them in
+        # ``detail`` (``expected``/``actual`` are routed through ckr_name and would
+        # mangle a dict). The human-readable form is already in ``summary``.
+        detail={"requested": result.requested, "actual": result.actual},
         summary=(
             f"{label}: requested {result.requested}, module used {result.actual} ({result.detail})"
         ),
@@ -95,21 +97,22 @@ def recover_pss_salt_len(
     data: bytes,
     sig: bytes,
     mgf_hash: hashes.HashAlgorithm,
-    digest: hashes.HashAlgorithm,
+    hash_alg: hashes.HashAlgorithm,
 ) -> int | None:
     """Return the exact PSS salt length under which *sig* verifies, or None.
 
     Scans 0 .. emLen-hLen-2 (the maximum legal PSS salt, spec G8) using the
-    already-recovered *mgf_hash* and the message *digest*. emLen = ceil((modBits-1)/8).
+    already-recovered *mgf_hash* and the message digest *hash_alg* (named to match
+    ``_local_verify.rsa_pss_local``). emLen = ceil((modBits-1)/8).
     """
     em_len = (pub.key_size + 6) // 8  # ceil((key_size-1)/8)
-    max_salt = em_len - digest.digest_size - 2
+    max_salt = em_len - hash_alg.digest_size - 2
     if max_salt < 0:
         return None
     for salt_len in range(0, max_salt + 1):
         pad = padding.PSS(mgf=padding.MGF1(mgf_hash), salt_length=salt_len)
         try:
-            pub.verify(sig, data, pad, digest)
+            pub.verify(sig, data, pad, hash_alg)
             return salt_len
         except InvalidSignature:
             continue
@@ -160,6 +163,11 @@ def build_gcm_fidelity(
         )
     actual_bits = tag_len * 8
     strength = "weaker auth" if actual_bits < requested_tag_bits else "stronger auth"
+    # ``valid`` is True whenever decryption authenticated (no InvalidTag above): GCM's
+    # AEAD guarantee means an authentic tag implies recovered == plaintext, so the
+    # ``valid=False, interpretable=True`` path that would route to wrong_result is
+    # effectively unreachable here. GCM correctness is owned by test_aead cross-verify;
+    # this probe only judges tag-length fidelity.
     return FidelityResult(
         valid=(recovered == plaintext),
         conforms=(actual_bits == requested_tag_bits),
