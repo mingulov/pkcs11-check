@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives import hashes
 
 from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.raw.pack_mechanisms import mech_pss
@@ -43,6 +44,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._local_verify import (
+    rsa_pkcs15_local,
+    rsa_pss_local,
+    verify_roundtrip,
+)
 from pkcs11_check.testcases._operability import (
     Operability,
     OperabilityResult,
@@ -50,6 +56,7 @@ from pkcs11_check.testcases._operability import (
     probe_operability,
     xfail_vacuous_reject,
 )
+from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 from pkcs11_check.testcases.acvp.rsa.base_loader import (
@@ -100,6 +107,26 @@ _RSA_SIGGEN_RUNTIME_REJECT_RVS = (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
+
+# ACVP hashAlg string -> cryptography HashAlgorithm class for the local oracle.
+# The signing mechanism (CKM_SHA*_RSA_PKCS / ..._PSS) hashes the message
+# internally, so the oracle hashes the same message internally -- they match.
+_ACVP_HASH_TO_CRYPTO: dict[str, type[hashes.HashAlgorithm]] = {
+    "SHA-1": hashes.SHA1,
+    "SHA2-224": hashes.SHA224,
+    "SHA2-256": hashes.SHA256,
+    "SHA2-384": hashes.SHA384,
+    "SHA2-512": hashes.SHA512,
+    "SHA3-224": hashes.SHA3_224,
+    "SHA3-256": hashes.SHA3_256,
+    "SHA3-384": hashes.SHA3_384,
+    "SHA3-512": hashes.SHA3_512,
+}
+
+
+def _crypto_hash_for(hash_alg: str) -> hashes.HashAlgorithm:
+    """Map an ACVP hashAlg string to a cryptography HashAlgorithm instance."""
+    return _ACVP_HASH_TO_CRYPTO[hash_alg]()
 
 
 def _skip_rsa_public_import_reject(exc: AssertionError, *, mech_name: str) -> None:
@@ -178,10 +205,24 @@ class TestRsaPkcs15:
 
             try:
                 sig = sign_single(rs.raw, rs.sh, priv_key, mech_int, vec["message"])
-                verified = verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["message"], sig)
             except AssertionError as exc:
                 _xfail_rsa_siggen_runtime_reject(exc, mech_name)
-            assert verified
+
+            hash_alg = _crypto_hash_for(vec["hash_alg"])
+
+            def _local() -> bool:
+                pub = read_rsa_public_key_or_xfail(rs, pub_key)
+                return rsa_pkcs15_local(pub, vec["message"], sig, hash_alg)
+
+            verify_roundtrip(
+                rs,
+                mechanism=mech_int,
+                data=vec["message"],
+                signature=sig,
+                local=_local,
+                module_pub_handle=pub_key,
+                label=vec_id,
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
             destroy_quietly(rs.raw, rs.sh, priv_key)
@@ -226,18 +267,27 @@ class TestRsaPss:
                 sig = sign_single(
                     rs.raw, rs.sh, priv_key, mech_int, vec["message"], mech_param=mech_param
                 )
-                verified = verify_single(
-                    rs.raw,
-                    rs.sh,
-                    pub_key,
-                    mech_int,
-                    vec["message"],
-                    sig,
-                    mech_param=mech_param,
-                )
             except AssertionError as exc:
                 _xfail_rsa_siggen_runtime_reject(exc, mech_name)
-            assert verified
+
+            # MGF1 mask uses the same hash as the signature (ACVP expresses only
+            # mgf1-with-message-hash for PKCS#11), so mgf_hash == hash_alg here.
+            hash_alg = _crypto_hash_for(vec["hash_alg"])
+
+            def _local() -> bool:
+                pub = read_rsa_public_key_or_xfail(rs, pub_key)
+                return rsa_pss_local(pub, vec["message"], sig, hash_alg, hash_alg, salt_len)
+
+            verify_roundtrip(
+                rs,
+                mechanism=mech_int,
+                data=vec["message"],
+                signature=sig,
+                local=_local,
+                module_pub_handle=pub_key,
+                mech_param=mech_param,
+                label=vec_id,
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
             destroy_quietly(rs.raw, rs.sh, priv_key)
