@@ -91,6 +91,43 @@ def rsa_pss_local_any_salt(
         return False
 
 
+# Standard MGF1 hashes a PKCS#11 module might use for RSA-PSS. The message digest
+# is intrinsic to the signing mechanism (CKM_SHA*_RSA_PKCS_PSS) and is never varied;
+# only the MGF1 hash is probed, since that is the parameter a module can silently
+# substitute while still producing a cryptographically valid signature.
+_PSS_MGF_CANDIDATES: tuple[hashes.HashAlgorithm, ...] = (
+    hashes.SHA1(),
+    hashes.SHA224(),
+    hashes.SHA256(),
+    hashes.SHA384(),
+    hashes.SHA512(),
+)
+
+
+def rsa_pss_local_recover_mgf(
+    pub: rsa.RSAPublicKey,
+    data: bytes,
+    sig: bytes,
+    hash_alg: hashes.HashAlgorithm,
+) -> hashes.HashAlgorithm | None:
+    """Return the MGF1 hash under which *sig* verifies as RSA-PSS (any salt), or None.
+
+    Tries each standard MGF1 hash (:data:`_PSS_MGF_CANDIDATES`) with ``PSS.AUTO``
+    salt. Used to tell a module that produced a VALID PSS signature with a
+    non-requested MGF1 hash (an honest_deviation) apart from one whose signature
+    is invalid under EVERY standard MGF (a real wrong_result, never masked).
+    *hash_alg* is the message digest, intrinsic to the mechanism and never varied.
+    """
+    for mgf_hash in _PSS_MGF_CANDIDATES:
+        pss_pad = padding.PSS(mgf=padding.MGF1(mgf_hash), salt_length=padding.PSS.AUTO)
+        try:
+            pub.verify(sig, data, pss_pad, hash_alg)
+            return mgf_hash
+        except InvalidSignature:
+            continue
+    return None
+
+
 def ecdsa_local(
     pub: ec.EllipticCurvePublicKey,
     data: bytes,

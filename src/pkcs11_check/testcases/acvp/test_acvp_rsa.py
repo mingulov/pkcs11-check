@@ -49,6 +49,7 @@ from pkcs11_check.testcases._local_verify import (
     rsa_pkcs15_local,
     rsa_pss_local,
     rsa_pss_local_any_salt,
+    rsa_pss_local_recover_mgf,
     verify_roundtrip,
 )
 from pkcs11_check.testcases._operability import (
@@ -283,11 +284,13 @@ class TestRsaPss:
                 pub = read_rsa_public_key_or_xfail(rs, pub_key)
                 if rsa_pss_local(pub, vec["message"], sig, hash_alg, hash_alg, salt_len):
                     return True
-                # Exact salt failed: is it still a valid PSS signature with a
-                # different salt? If so the module produced sound crypto but did
-                # not honor the requested saltLen -> honest_deviation (logged),
-                # NOT a wrong_result. Only a signature invalid under ANY salt is
-                # a real crypto break.
+                # Exact (requested salt + requested MGF=hash) failed. Before
+                # declaring a crypto break, check whether the signature is a VALID
+                # PSS signature under a non-requested PARAMETER -- the module
+                # produced sound crypto but did not honor what was asked
+                # (honest_deviation, logged), NOT a wrong_result. Only a signature
+                # invalid under EVERY standard (salt, MGF) combination is a real
+                # crypto break.
                 if rsa_pss_local_any_salt(pub, vec["message"], sig, hash_alg, hash_alg):
                     xfail_as(
                         "honest_deviation",
@@ -296,6 +299,17 @@ class TestRsaPss:
                         summary=(
                             f"{vec_id}: valid RSA-PSS signature but module did not honor "
                             f"requested saltLen={salt_len}"
+                        ),
+                    )
+                recovered_mgf = rsa_pss_local_recover_mgf(pub, vec["message"], sig, hash_alg)
+                if recovered_mgf is not None:
+                    xfail_as(
+                        "honest_deviation",
+                        kind="metadata",
+                        label=vec_id,
+                        summary=(
+                            f"{vec_id}: valid RSA-PSS signature but module used "
+                            f"MGF1-{recovered_mgf.name} not requested MGF1-{hash_alg.name}"
                         ),
                     )
                 return False
