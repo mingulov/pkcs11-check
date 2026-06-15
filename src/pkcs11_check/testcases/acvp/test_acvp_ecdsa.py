@@ -26,6 +26,7 @@ from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_VERIFY,
+    CKF_VERIFY,
     CKM,
     CKM_ECDSA_SHA256,
     CKM_ECDSA_SHA384,
@@ -48,7 +49,11 @@ from pkcs11_check.testcases.acvp._duplicates import (
     skip_duplicate_pkcs11_input,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    is_known_error,
+    skip_unless_mechanism_flag,
+    xfail_if_known_ckr,
+)
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -267,6 +272,7 @@ def test_acvp_ecdsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, 
     mech_name: str = vec["mech_name"]
     if not rs.has_mechanism(mech_name):
         pytest.skip(f"{mech_name} not supported by module")
+    skip_unless_mechanism_flag(rs, mech_int, int(CKF_VERIFY))
     pub_key = 0
     try:
         try:

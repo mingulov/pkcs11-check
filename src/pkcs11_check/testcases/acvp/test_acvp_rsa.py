@@ -32,6 +32,7 @@ from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_VERIFY,
+    CKF_VERIFY,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
@@ -60,6 +61,7 @@ from pkcs11_check.testcases.acvp.rsa.base_loader import (
 from pkcs11_check.testcases.conftest import (
     import_rsa_public_key_negotiated,
     is_known_error,
+    skip_unless_mechanism_flag,
     xfail_if_known_ckr,
 )
 
@@ -312,6 +314,7 @@ class TestRsaSigVer:
 
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} not supported")
+        skip_unless_mechanism_flag(rs, mech_int, int(CKF_VERIFY))
 
         pub_key = 0
         try:
@@ -401,6 +404,7 @@ class TestRsaSigVer:
 
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} not supported")
+        skip_unless_mechanism_flag(rs, mech_int, int(CKF_VERIFY))
 
         pub_key = 0
         try:

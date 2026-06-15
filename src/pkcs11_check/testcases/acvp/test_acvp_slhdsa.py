@@ -24,6 +24,7 @@ from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_VERIFY,
+    CKF_VERIFY,
     CKK_SLH_DSA,
     CKM_SLH_DSA,
     CKP_SLH_DSA_SHA2_128F,
@@ -54,7 +55,11 @@ from pkcs11_check.testcases._signature_policy import (
     signature_rejected_or_xfail,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    is_known_error,
+    skip_unless_mechanism_flag,
+    xfail_if_known_ckr,
+)
 
 pytestmark = [pytest.mark.pqc, pytest.mark.kat, pytest.mark.acvp]
 
@@ -334,6 +339,7 @@ def test_slhdsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
     rs = p11_module_session
     if not rs.has_mechanism("SLH_DSA"):
         pytest.skip("SLH_DSA not supported")
+    skip_unless_mechanism_flag(rs, CKM_SLH_DSA, int(CKF_VERIFY))
 
     param_set: int = vec["param_set"]
 

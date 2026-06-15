@@ -31,6 +31,7 @@ from pkcs11_check.raw.types_std import (
     CKA_EC_PARAMS,
     CKA_SIGN,
     CKA_VERIFY,
+    CKF_VERIFY,
     CKK_EC_EDWARDS,
     CKM_EC_EDWARDS_KEY_PAIR_GEN,
     CKM_EDDSA,
@@ -64,7 +65,11 @@ from pkcs11_check.testcases.acvp._eddsa_helpers import (
     load_eddsa_sigver_vectors,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    is_known_error,
+    skip_unless_mechanism_flag,
+    xfail_if_known_ckr,
+)
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -249,6 +254,7 @@ class TestEdDsaKeyVer:
         rs = p11_module_session
         if not rs.has_mechanism("EDDSA"):
             pytest.skip("EDDSA mechanism not supported by module")
+        skip_unless_mechanism_flag(rs, CKM_EDDSA, int(CKF_VERIFY))
 
         pub_key = 0
         try:
@@ -328,6 +334,7 @@ def test_acvp_eddsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, 
     rs = p11_module_session
     if not rs.has_mechanism("EDDSA"):
         pytest.skip("EDDSA mechanism not supported by module")
+    skip_unless_mechanism_flag(rs, CKM_EDDSA, int(CKF_VERIFY))
 
     pub_key = 0
     try:

@@ -19,12 +19,17 @@ from pkcs11_check.raw.recipes import (
 )
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
+    CKF_VERIFY,
     CKM_AES_ECB,
     CKM_SHA256_RSA_PKCS,
     CKR_OK,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_VERIFY, assert_ckr
-from pkcs11_check.testcases.conftest import classify_lifecycle_effect, gen_aes_key_or_xfail
+from pkcs11_check.testcases.conftest import (
+    classify_lifecycle_effect,
+    gen_aes_key_or_xfail,
+    skip_unless_mechanism_flag,
+)
 
 pytestmark = pytest.mark.access
 
@@ -94,6 +99,7 @@ class TestVerifyErrors:
     def test_signature_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Tampered RSA signature -> CKR_SIGNATURE_INVALID."""
         rs = p11_raw_session
+        skip_unless_mechanism_flag(rs, CKM_SHA256_RSA_PKCS, int(CKF_VERIFY))
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             data = b"CKR compliance test data"
@@ -138,6 +144,7 @@ class TestVerifyErrors:
     def test_signature_wrong_length(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """RSA signature with wrong length -> CKR_SIGNATURE_LEN_RANGE."""
         rs = p11_raw_session
+        skip_unless_mechanism_flag(rs, CKM_SHA256_RSA_PKCS, int(CKF_VERIFY))
         pub, _priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             exp = CKR_VERIFY["signature_len_range"]
