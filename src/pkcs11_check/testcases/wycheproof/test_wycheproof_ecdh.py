@@ -16,7 +16,6 @@ from pkcs11_check.raw.pack import mech_ecdh
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
-    import_ec_private_key,
     read_attributes,
 )
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
@@ -48,7 +47,12 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._operability import not_operational_reason
-from pkcs11_check.testcases.conftest import assert_correct, is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    import_ec_private_key_negotiated,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 from pkcs11_check.testcases.wycheproof._key_decoders import (
     decode_ec_private_scalar,
     decode_ec_public_point,
@@ -270,9 +274,8 @@ def test_ecdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
 
     # Import EC private key
     try:
-        priv_key = import_ec_private_key(
-            rs.raw,
-            rs.sh,
+        priv_key = import_ec_private_key_negotiated(
+            rs,
             ec_params=oid,
             value=private_scalar,
             attrs={CKA_DERIVE: True},
