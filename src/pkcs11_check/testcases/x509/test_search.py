@@ -22,6 +22,7 @@ from pkcs11_check.testcases.x509.conftest import (
     import_cert_object,
     load_limbo_testcases,
     pem_to_der,
+    skip_unless_cert_storage,
 )
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
@@ -72,6 +73,7 @@ class TestCertificateSearchExtended:
     ) -> None:
         """If the module extracts attributes, verify search works."""
         rs = p11_raw_session
+        skip_unless_cert_storage(rs)
         der = pem_to_der(tc["peer_certificate"])
         if not der:
             pytest.skip("Failed to decode peer certificate")

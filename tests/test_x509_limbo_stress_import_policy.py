@@ -101,6 +101,7 @@ def test_cert_stress_allows_pkcs11_import_reject(monkeypatch: pytest.MonkeyPatch
         raise AssertionError("CKR_ATTRIBUTE_VALUE_INVALID")
 
     monkeypatch.setattr(test_limbo_stress, "create_object", reject_create_object)
+    monkeypatch.setattr(test_limbo_stress, "skip_unless_cert_storage", lambda _rs: None)
 
     test_limbo_stress.test_exhaustive_cert_import_no_crash(
         "case",
@@ -119,6 +120,7 @@ def test_cert_stress_does_not_swallow_python_import_errors(
         raise ValueError("broken test harness")
 
     monkeypatch.setattr(test_limbo_stress, "create_object", broken_create_object)
+    monkeypatch.setattr(test_limbo_stress, "skip_unless_cert_storage", lambda _rs: None)
 
     with pytest.raises(ValueError, match="broken test harness"):
         test_limbo_stress.test_exhaustive_cert_import_no_crash(
