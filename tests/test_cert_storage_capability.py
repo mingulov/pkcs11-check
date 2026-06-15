@@ -85,3 +85,39 @@ def test_templates_have_subject_and_minimal_does_not():
     san = dict(x509c.cert_storage_templates(der))["san_only_empty_subject"]
     assert san[CKA_SUBJECT] == bytes.fromhex("3000")  # CKA_SUBJECT present = empty Name
     assert CKA_SUBJECT not in x509c._minimal_cert_template(der)  # negative template omits it
+
+
+def test_negative_subject_verdict_mapping(monkeypatch):
+    from pkcs11_check.raw.types_std import CKR_ATTRIBUTE_VALUE_INVALID, CKR_TEMPLATE_INCOMPLETE
+    from pkcs11_check.testcases.x509 import test_cert_storage as suite
+
+    calls: list[str] = []
+    monkeypatch.setattr(suite, "classify", lambda reason, **kw: calls.append(reason))
+    monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", lambda *a, **k: None)
+    rs = type("RS", (), {"raw": object(), "sh": 0})()
+
+    def _raise(rv):
+        def f(raw, sh, tmpl):
+            raise CkrAssertionError("refuse", rv)
+
+        return f
+
+    # accepted -> honest_deviation (stored a cert omitting mandatory CKA_SUBJECT)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.create_object", lambda raw, sh, tmpl: 7)
+    suite.test_cert_storage_requires_subject(rs)
+    assert calls == ["honest_deviation"]
+
+    # rejected CKR_TEMPLATE_INCOMPLETE -> pass (no classify)
+    calls.clear()
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.create_object", _raise(int(CKR_TEMPLATE_INCOMPLETE))
+    )
+    suite.test_cert_storage_requires_subject(rs)
+    assert calls == []
+
+    # rejected with another clean code -> nonspec_reject
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.create_object", _raise(int(CKR_ATTRIBUTE_VALUE_INVALID))
+    )
+    suite.test_cert_storage_requires_subject(rs)
+    assert calls == ["nonspec_reject"]
