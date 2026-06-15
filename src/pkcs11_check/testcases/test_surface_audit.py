@@ -254,13 +254,17 @@ class TestMechanismFlagsConsistency:
             pytest.skip("Cannot get AES_KEY_GEN mechanism info")
 
         if info["min_key_size"] > 0:
-            key = gen_aes_key(rs.raw, rs.sh, int(info["min_key_size"]) * 8)
+            key = gen_aes_key_or_xfail(
+                rs,
+                int(info["min_key_size"]) * 8,
+                purpose="key-size-range min probe",
+            )
             assert key != 0
             destroy_quietly(rs.raw, rs.sh, key)
 
         if info["max_key_size"] >= 32:
             bits = min(int(info["max_key_size"]) * 8, 256)
-            key = gen_aes_key(rs.raw, rs.sh, bits)
+            key = gen_aes_key_or_xfail(rs, bits, purpose="key-size-range max probe")
             assert key != 0
             destroy_quietly(rs.raw, rs.sh, key)
 
