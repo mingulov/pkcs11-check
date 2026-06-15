@@ -69,6 +69,28 @@ def rsa_pss_local(
         return False
 
 
+def rsa_pss_local_any_salt(
+    pub: rsa.RSAPublicKey,
+    data: bytes,
+    sig: bytes,
+    hash_alg: hashes.HashAlgorithm,
+    mgf_hash: hashes.HashAlgorithm,
+) -> bool:
+    """Verify RSA-PSS accepting ANY salt length (``PSS.AUTO``).
+
+    Answers "is this a cryptographically valid PSS signature for this key+message,
+    regardless of salt length". Used to tell a module that produced a VALID PSS
+    signature but did not honor the requested ``saltLen`` (an honest_deviation)
+    apart from one that produced a genuinely INVALID signature (wrong_result).
+    """
+    pss_pad = padding.PSS(mgf=padding.MGF1(mgf_hash), salt_length=padding.PSS.AUTO)
+    try:
+        pub.verify(sig, data, pss_pad, hash_alg)
+        return True
+    except InvalidSignature:
+        return False
+
+
 def ecdsa_local(
     pub: ec.EllipticCurvePublicKey,
     data: bytes,
