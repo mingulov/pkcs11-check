@@ -50,6 +50,11 @@ _LIMBO_FILE = X509_LIMBO_DIR / "limbo.json"
 
 # Clean cert-storage refusal codes: the module is declaring it won't store this shape.
 # Anything else (or a crash) is NOT a clean refusal -> propagate as a real finding.
+# CKR_KEY_HANDLE_INVALID is the broadest entry: it is non-spec for a no-input-handle
+# C_CreateObject, but some modules (nethsm) use it to mean "I don't store cert objects".
+# It is still a *clean* refusal (recorded once per template as xfail by test_cert_storage,
+# which flags it as non-spec); the gate skips only when EVERY template refuses, so a single
+# odd code never triggers a false-skip.
 _CERT_STORAGE_REFUSAL_CKRS: tuple[int, ...] = (
     int(CKR_KEY_HANDLE_INVALID),
     int(CKR_TEMPLATE_INCOMPLETE),
@@ -60,7 +65,9 @@ _CERT_STORAGE_REFUSAL_CKRS: tuple[int, ...] = (
     int(CKR_ARGUMENTS_BAD),
 )
 
-_CERT_STORAGE_SUPPORTED: dict[int, bool] = {}  # slot_id -> can store a cert object
+# slot_id -> can store a cert object. Process-global per slot (cert-storage capability is
+# stable for a slot across a run), mirroring the _IMPORT_SHAPE_WINNERS cache convention.
+_CERT_STORAGE_SUPPORTED: dict[int, bool] = {}
 
 
 @functools.cache
