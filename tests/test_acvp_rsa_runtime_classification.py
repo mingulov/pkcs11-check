@@ -20,8 +20,30 @@ from pkcs11_check.testcases.acvp import test_acvp_rsa
 
 def _session() -> SimpleNamespace:
     return SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda _name: True, has_mechanism_flag=lambda _m, _f: True
+        raw=object(),
+        sh=1,
+        slot_id=0,
+        has_mechanism=lambda _name: True,
+        has_mechanism_flag=lambda _m, _f: True,
     )
+
+
+@pytest.fixture(autouse=True)
+def _advertise_keygen_in_range(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the require_keygen_key_size gate see an in-range advertised size.
+
+    These tests stub a module that advertises every mechanism (has_mechanism
+    True) and force a specific keygen/sign/import reject; the new ACVP key-size
+    gate must pass through to that reject rather than short-circuit on a stub
+    C_GetMechanismInfo that has no real range. A wide [512, 16384] range keeps
+    the 2048-bit vectors in range so the downstream classification under test
+    still runs.
+    """
+
+    def _fake(_raw: object, _slot: int, _mech: int) -> dict[str, int]:
+        return {"min_key_size": 512, "max_key_size": 16384, "flags": 0}
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.get_mechanism_info", _fake)
 
 
 def _pkcs15_vec(*, expected_pass: bool = True) -> dict[str, Any]:

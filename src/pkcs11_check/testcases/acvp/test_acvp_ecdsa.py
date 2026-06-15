@@ -38,6 +38,7 @@ from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_HOST_MEMORY,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
@@ -58,6 +59,7 @@ from pkcs11_check.testcases.acvp._duplicates import (
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 from pkcs11_check.testcases.conftest import (
     is_known_error,
+    require_keygen_key_size,
     skip_unless_mechanism_flag,
     xfail_if_known_ckr,
 )
@@ -90,6 +92,12 @@ _CURVE_TO_CRYPTO: dict[str, type[ec.EllipticCurve]] = {
     "P-384": ec.SECP384R1,
     "P-521": ec.SECP521R1,
 }
+
+# ACVP curve name -> curve FIELD SIZE IN BITS, the unit EC_KEY_PAIR_GEN's
+# advertised C_GetMechanismInfo min/max range is expressed in. This is
+# cryptography's ``curve.key_size`` (P-521 -> 521), NOT coord_len*8 (66*8=528),
+# which would wrongly skip P-521 on a module advertising max=521.
+_CURVE_FIELD_BITS: dict[str, int] = {name: cls().key_size for name, cls in _CURVE_TO_CRYPTO.items()}
 
 # ACVP hashAlg string -> cryptography HashAlgorithm class. The CKM_ECDSA_SHA*
 # mechanism hashes the message internally, so the oracle hashes the same
@@ -128,6 +136,7 @@ _EC_PUBLIC_IMPORT_UNSUPPORTED_RVS = (
 
 _EC_RUNTIME_FAILURE_RVS = (
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_DEVICE_ERROR,
     CKR_HOST_MEMORY,
 )
@@ -368,6 +377,9 @@ class TestEcdsaKeyGen:
         rs = p11_module_session
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("EC_KEY_PAIR_GEN not supported by module")
+        require_keygen_key_size(
+            rs, "EC_KEY_PAIR_GEN", _CURVE_FIELD_BITS[vec["curve"]], label=vec_id
+        )
         skip_duplicate_pkcs11_input(vec, "ECDSA KeyGen")
         pub_key = priv_key = 0
         msg = b"ACVP keygen test"
@@ -422,6 +434,9 @@ class TestEcdsaSigGen:
         mech_int: CKM = cast(CKM, vec["mech_int"])
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} not supported by module")
+        require_keygen_key_size(
+            rs, "EC_KEY_PAIR_GEN", _CURVE_FIELD_BITS[vec["curve"]], label=vec_id
+        )
         pub_key = priv_key = 0
         try:
             try:

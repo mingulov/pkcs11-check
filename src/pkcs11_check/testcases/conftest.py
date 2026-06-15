@@ -168,6 +168,55 @@ def skip_unless_mechanism_flag(rs: Any, mechanism: str | int, flag: int) -> None
     pytest.skip(f"Mechanism {name} lacks required capability {flag_names.get(flag, hex(flag))}")
 
 
+def keygen_key_size_supported(rs: Any, keygen_mech: str | int, bits: int) -> bool:
+    """True iff the module advertises *keygen_mech* with min<=bits<=max.
+
+    Reads ``C_GetMechanismInfo`` (via the merged ``get_mechanism_info`` recipe).
+    *bits* is the key-size unit the mechanism's min/max range is expressed in:
+    RSA modulus bits for ``*_RSA_*KEY_PAIR_GEN``; EC curve field bits (==
+    ``cryptography`` ``curve.key_size``, e.g. P-521 -> 521, NOT coord_len*8) for
+    ``EC_KEY_PAIR_GEN`` / ``ECDSA_KEY_PAIR_GEN``. Never raises: returns ``False``
+    when the mechanism is not advertised, its name is unknown, or the info query
+    errors -- so it can safely gate test setup.
+    """
+    if not rs.has_mechanism(keygen_mech):
+        return False
+    from pkcs11_check.raw.recipes import get_mechanism_info
+
+    # Resolve a name -> CKM int exactly as has_mechanism_flag does.
+    if isinstance(keygen_mech, str):
+        from pkcs11_check.raw import types_std
+
+        name = keygen_mech if keygen_mech.startswith("CKM_") else "CKM_" + keygen_mech
+        mech_int_opt = getattr(types_std, name, None)
+        if mech_int_opt is None:
+            return False
+        mech_int = int(mech_int_opt)
+    else:
+        mech_int = int(keygen_mech)
+
+    try:
+        info = get_mechanism_info(rs.raw, rs.slot_id, mech_int)
+    except CkrAssertionError:
+        return False
+    return info["min_key_size"] <= bits <= info["max_key_size"]
+
+
+def require_keygen_key_size(rs: Any, keygen_mech: str | int, bits: int, *, label: str) -> None:
+    """Skip when *bits* is outside *keygen_mech*'s advertised key-size range.
+
+    A size outside the module's advertised ``C_GetMechanismInfo`` min/max for the
+    keygen mechanism is a genuine capability absence -- the one sanctioned skip
+    category -- so the ACVP suite does not hard-fail a module (e.g. jcardsim,
+    RSA_PKCS_KEY_PAIR_GEN min=max=2048) for refusing a size it never claimed to
+    support. An in-range size that still cannot keygen is handled downstream as a
+    ``not_operational`` xfail by the keygen-reject guards, not here.
+    """
+    if keygen_key_size_supported(rs, keygen_mech, bits):
+        return
+    pytest.skip(f"{label}: key size {bits} outside advertised range for {keygen_mech}")
+
+
 def require_operational_aes_keygen(rs: Any) -> None:
     """Skip or xfail when AES_KEY_GEN cannot provide setup keys for a test."""
     if not rs.has_mechanism("AES_KEY_GEN"):

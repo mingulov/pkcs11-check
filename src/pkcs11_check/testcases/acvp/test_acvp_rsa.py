@@ -37,6 +37,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
@@ -68,6 +69,7 @@ from pkcs11_check.testcases.acvp.rsa.base_loader import (
 from pkcs11_check.testcases.conftest import (
     import_rsa_public_key_negotiated,
     is_known_error,
+    require_keygen_key_size,
     skip_unless_mechanism_flag,
     xfail_if_known_ckr,
 )
@@ -158,7 +160,7 @@ def _skip_or_xfail_rsa_siggen_keygen_reject(exc: AssertionError, key_bits: int) 
         pytest.skip(f"RSA {key_bits}-bit key generation failed: {exc}")
     xfail_if_known_ckr(
         exc,
-        (CKR_MECHANISM_INVALID,),
+        (CKR_MECHANISM_INVALID, CKR_FUNCTION_NOT_SUPPORTED),
         "CKM_RSA_PKCS_KEY_PAIR_GEN advertised but keygen failed",
     )
 
@@ -189,6 +191,7 @@ class TestRsaPkcs15:
             pytest.skip(f"{mech_name} not supported")
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported by module")
+        require_keygen_key_size(rs, "RSA_PKCS_KEY_PAIR_GEN", key_bits, label=vec_id)
 
         pub_key = priv_key = 0
         try:
@@ -248,6 +251,7 @@ class TestRsaPss:
             pytest.skip(f"{mech_name} not supported")
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported by module")
+        require_keygen_key_size(rs, "RSA_PKCS_KEY_PAIR_GEN", key_bits, label=vec_id)
 
         pub_key = priv_key = 0
         try:
