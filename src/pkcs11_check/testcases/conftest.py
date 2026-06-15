@@ -573,6 +573,35 @@ def import_ec_public_key_negotiated(
     return create_object_negotiated(rs, base, purpose=purpose)
 
 
+def import_ec_private_key_negotiated(
+    rs: Any,
+    *,
+    ec_params: bytes,
+    value: bytes,
+    key_type: int = int(CKK_EC),
+    attrs: Mapping[Any, Any] | None = None,
+    purpose: str = "EC private key import",
+) -> int:
+    """Import an EC/Edwards/Montgomery private key, negotiating storage-shape template
+    requirements. Same canonical template as ``raw.recipes.import_ec_private_key``; on a
+    clean storage-shape reject it retries via ``create_object_negotiated`` variants
+    (and inherits the per-shape winner cache)."""
+    from pkcs11_check.raw.types_std import CKO_PRIVATE_KEY
+
+    base: dict[Any, Any] = {
+        CKA_CLASS: CKO_PRIVATE_KEY,
+        CKA_KEY_TYPE: key_type,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_EC_PARAMS: ec_params,
+        CKA_VALUE: value,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object_negotiated(rs, base, purpose=purpose)
+
+
 def gen_rsa_keypair_or_xfail(
     rs: Any,
     bits: int = 2048,
