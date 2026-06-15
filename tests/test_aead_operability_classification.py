@@ -63,7 +63,7 @@ def _expected_canonical_ccm_ct() -> bytes:
 
 def test_ccm_wholly_non_operational_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
     """bouncyhsm shape: vector AND canonical return CKR_GENERAL_ERROR."""
-    monkeypatch.setattr(runner, "import_secret_key", lambda *a, **k: 7)
+    monkeypatch.setattr(runner, "import_secret_key_negotiated", lambda *a, **k: 7)
     monkeypatch.setattr(runner, "destroy_quietly", lambda *a, **k: None)
 
     def _general_error(*_a: Any, **_k: Any) -> bytes:
@@ -79,7 +79,7 @@ def test_ccm_param_shape_reject_on_operational_mech_xfails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """kryoptic shape: canonical 13B-nonce CCM works; 7B-nonce vector rejected."""
-    monkeypatch.setattr(runner, "import_secret_key", lambda *a, **k: 7)
+    monkeypatch.setattr(runner, "import_secret_key_negotiated", lambda *a, **k: 7)
     monkeypatch.setattr(runner, "destroy_quietly", lambda *a, **k: None)
     canonical_ct = _expected_canonical_ccm_ct()
 
@@ -102,7 +102,7 @@ def test_ccm_vector_clean_error_on_operational_mech_is_recorded_deviation(
     """Canonical works; a vector cleanly erroring with GENERAL_ERROR is an
     honest deviation (model positive-op row): xfail, with the operational
     canonical recorded in the reason. Wrong OUTPUT (asserts) still fails."""
-    monkeypatch.setattr(runner, "import_secret_key", lambda *a, **k: 7)
+    monkeypatch.setattr(runner, "import_secret_key_negotiated", lambda *a, **k: 7)
     monkeypatch.setattr(runner, "destroy_quietly", lambda *a, **k: None)
     canonical_ct = _expected_canonical_ccm_ct()
 
@@ -124,7 +124,7 @@ def test_ccm_broken_import_path_is_inconclusive(monkeypatch: pytest.MonkeyPatch)
     def _no_import(*_a: Any, **_k: Any) -> int:
         raise CkrAssertionError("Unexpected CK_RV CKR_ARGUMENTS_BAD", int(CKR_ARGUMENTS_BAD))
 
-    monkeypatch.setattr(runner, "import_secret_key", _no_import)
+    monkeypatch.setattr(runner, "import_secret_key_negotiated", _no_import)
     monkeypatch.setattr(runner, "destroy_quietly", lambda *a, **k: None)
 
     # The vector op itself cannot run either (import fails first), so the
@@ -142,7 +142,7 @@ def test_gcm_decrypt_valid_tag_rejection_with_dead_mechanism_xfails(
     is 'advertised but not operational'."""
     from pkcs11_check.raw.types_std import CKR_ENCRYPTED_DATA_INVALID
 
-    monkeypatch.setattr(runner, "import_secret_key", lambda *a, **k: 7)
+    monkeypatch.setattr(runner, "import_secret_key_negotiated", lambda *a, **k: 7)
     monkeypatch.setattr(runner, "destroy_quietly", lambda *a, **k: None)
 
     def _decrypt(*_a: Any, **_k: Any) -> bytes:
@@ -181,7 +181,7 @@ def test_gcm_decrypt_invalid_tag_rejection_on_dead_mech_xfails(
     """
     from pkcs11_check.raw.types_std import CKR_ENCRYPTED_DATA_INVALID
 
-    monkeypatch.setattr(runner, "import_secret_key", lambda *a, **k: 7)
+    monkeypatch.setattr(runner, "import_secret_key_negotiated", lambda *a, **k: 7)
     monkeypatch.setattr(runner, "destroy_quietly", lambda *a, **k: None)
 
     def _decrypt(*_a: Any, **_k: Any) -> bytes:
