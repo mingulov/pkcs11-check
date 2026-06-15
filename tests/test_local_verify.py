@@ -95,6 +95,24 @@ def test_rsa_pss_local_recover_mgf_returns_requested_when_honored() -> None:
     assert recovered.name == "sha256"
 
 
+def test_rsa_pss_local_recover_mgf_covers_sha3_family() -> None:
+    # The MGF1 hash family in PKCS#11 (CKG_MGF1_*) includes the SHA3 hashes. A
+    # module that legitimately signs PSS with MGF1-SHA3-256 produces a VALID
+    # signature; recover must find it (not return None) so the caller never
+    # false-accuses a crypto break for an out-of-(SHA2)-family but valid MGF.
+    k = rsa.generate_private_key(65537, 2048)
+    msg = b"m"
+    sig = k.sign(
+        msg, padding.PSS(mgf=padding.MGF1(hashes.SHA3_256()), salt_length=32), hashes.SHA256()
+    )
+    assert (
+        rsa_pss_local_any_salt(k.public_key(), msg, sig, hashes.SHA256(), hashes.SHA256()) is False
+    )
+    recovered = rsa_pss_local_recover_mgf(k.public_key(), msg, sig, hashes.SHA256())
+    assert recovered is not None
+    assert recovered.name == "sha3-256"
+
+
 def test_rsa_pss_local_recover_mgf_none_for_invalid_signature() -> None:
     # A genuinely invalid signature verifies under NO standard MGF -> None, so the
     # caller still reports wrong_result (a real crypto break is never masked).

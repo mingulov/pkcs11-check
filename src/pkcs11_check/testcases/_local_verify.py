@@ -91,16 +91,23 @@ def rsa_pss_local_any_salt(
         return False
 
 
-# Standard MGF1 hashes a PKCS#11 module might use for RSA-PSS. The message digest
+# The COMPLETE MGF1 hash family a PKCS#11 module may use for RSA-PSS -- exactly
+# the CKG_MGF1_* enum (SHA1/224/256/384/512 + the SHA3 family). The message digest
 # is intrinsic to the signing mechanism (CKM_SHA*_RSA_PKCS_PSS) and is never varied;
 # only the MGF1 hash is probed, since that is the parameter a module can silently
-# substitute while still producing a cryptographically valid signature.
+# substitute while still producing a cryptographically valid signature. The set
+# MUST be complete: an out-of-set but valid MGF would recover as None and let the
+# caller false-accuse a crypto break (wrong_result) -- the opposite of the intent.
 _PSS_MGF_CANDIDATES: tuple[hashes.HashAlgorithm, ...] = (
     hashes.SHA1(),
     hashes.SHA224(),
     hashes.SHA256(),
     hashes.SHA384(),
     hashes.SHA512(),
+    hashes.SHA3_224(),
+    hashes.SHA3_256(),
+    hashes.SHA3_384(),
+    hashes.SHA3_512(),
 )
 
 
