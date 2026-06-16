@@ -60,6 +60,7 @@ from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_ec_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
+    skip_unless_create_object_supported,
     skip_unless_mechanism,
     unwrap_key_for_mechanism_roundtrip,
     xfail_if_known_ckr,
@@ -104,6 +105,10 @@ def _decrypt_or_xfail(rs: Any, key: int, data: bytes) -> bytes:
 
 
 class TestKeyImport:
+    @pytest.fixture(autouse=True)
+    def _skip_if_no_create_object(self, p11_raw_session: Any) -> None:
+        skip_unless_create_object_supported(p11_raw_session)
+
     def test_import_aes_key(self, p11_raw_session: Any) -> None:
         """Import raw AES key material and verify attributes."""
         rs = p11_raw_session
@@ -273,6 +278,7 @@ class TestKeyWrapUnwrap:
     def test_wrap_unwrap_roundtrip(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Wrap and unwrap a key, verify material is preserved."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         if not rs.has_mechanism("AES_KEY_WRAP"):
             pytest.skip("CKM_AES_KEY_WRAP not supported")
         key_bytes = bytes(range(16))

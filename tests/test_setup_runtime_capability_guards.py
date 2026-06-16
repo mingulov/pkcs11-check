@@ -814,6 +814,9 @@ def test_access_levels_data_object_setup_reject_is_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(test_access_levels, "create_object", _raise_attribute_value_invalid)
+    monkeypatch.setattr(
+        test_access_levels, "skip_unless_create_object_supported", lambda *_a, **_k: None
+    )
     rs = _session_with_mechanisms()
 
     with pytest.raises(pytest.xfail.Exception, match="data object setup rejected"):
@@ -1431,6 +1434,9 @@ def test_object_visibility_data_object_setup_reject_is_xfail(
         else "create_object"
     )
     monkeypatch.setattr(test_object_visibility, create_attr, _raise_attribute_value_invalid)
+    monkeypatch.setattr(
+        test_object_visibility, "skip_unless_create_object_supported", lambda *_a, **_k: None
+    )
     rs = _session_with_mechanisms()
 
     with pytest.raises(pytest.xfail.Exception, match="data object setup rejected"):

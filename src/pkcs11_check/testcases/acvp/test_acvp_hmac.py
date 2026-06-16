@@ -58,6 +58,7 @@ from pkcs11_check.testcases.conftest import (
     assert_correct,
     import_secret_key_negotiated,
     is_known_error,
+    skip_unless_create_object_supported,
 )
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
@@ -245,6 +246,7 @@ def test_acvp_hmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) ->
     standard SHA-2 and SHA-3 algorithms with truncated output (macLen in bits).
     """
     rs = p11_module_session
+    skip_unless_create_object_supported(rs)
     if not rs.has_mechanism(vec["mech_display"]):
         pytest.skip(f"{vec['mech_display']} not supported by module")
 

@@ -43,6 +43,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     assert_correct,
+    skip_unless_create_object_supported,
     xfail_if_known_ckr,
 )
 
@@ -277,6 +278,7 @@ class TestLocalFlag:
     def test_imported_key_is_not_local(self, p11_raw_session: Any) -> None:
         """Imported keys have LOCAL=False."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         key = import_secret_key(
             rs.raw,
             rs.sh,

@@ -38,6 +38,7 @@ from pkcs11_check.testcases.conftest import (
     assert_correct,
     import_rsa_private_key_negotiated,
     import_rsa_public_key_negotiated,
+    skip_unless_create_object_supported,
     skip_unless_mechanism,
     xfail_if_known_ckr,
 )
@@ -82,6 +83,10 @@ def _export_rsa_components(
 
 class TestRSAPublicKeyImport:
     """Test importing RSA public keys from components."""
+
+    @pytest.fixture(autouse=True)
+    def _skip_if_no_create_object(self, p11_raw_session: Any) -> None:
+        skip_unless_create_object_supported(p11_raw_session)
 
     def test_import_rsa_public_key(self, p11_raw_session: Any) -> None:
         """Import RSA public key from modulus + exponent."""
