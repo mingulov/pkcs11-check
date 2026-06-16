@@ -9,10 +9,13 @@ import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from pkcs11_check.raw.types_std import CKF_SIGN
 from pkcs11_check.testcases import test_ec_curves as mod
 
 
-def test_ecdsa_test_skips_when_ecdsa_not_in_range(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ecdsa_gate_uses_skip_unless_capability_with_ckf_sign(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[tuple[Any, ...]] = []
 
     def _skip_unless(rs: Any, mechanism: int, **kw: Any) -> None:
@@ -26,4 +29,4 @@ def test_ecdsa_test_skips_when_ecdsa_not_in_range(monkeypatch: pytest.MonkeyPatc
         mod.TestECDSACrossVerify().test_ecdsa_sign_p11_verify_crypto(
             rs, "secp256r1", 32, ec.SECP256R1(), hashes.SHA256()
         )
-    assert calls and calls[0][1].get("operation") is not None
+    assert calls and calls[0][1].get("operation") == CKF_SIGN
