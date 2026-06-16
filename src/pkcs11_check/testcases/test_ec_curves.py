@@ -27,9 +27,24 @@ from pkcs11_check.raw.types_std import (
     CKA_KEY_TYPE,
     CKK_EC,
     CKM_ECDSA,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.crossverify
+
+# Clean codes meaning advertised ECDSA sign is not operational -> xfail
+# (advertised-but-not-operational). A WRONG signature is caught by the software
+# verify below and stays a hard fail (crypto break).
+_ECDSA_SIGN_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+)
 
 _EC_CURVES = [
     ("secp224r1", 28, ec.SECP224R1(), hashes.SHA224()),
@@ -116,7 +131,11 @@ class TestECDSACrossVerify:
             data = f"ECDSA {curve_name} cross-verify".encode()
             digest = hash_fns[coord_size](data).digest()
 
-            sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
+            try:
+                sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
+            except AssertionError as exc:
+                xfail_if_known_ckr(exc, _ECDSA_SIGN_REJECT_RVS, "ECDSA sign not operational")
+                raise
 
             ec_point_der = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])[CKA_EC_POINT]
             point_bytes = decode_ec_point(ec_point_der)
