@@ -125,6 +125,95 @@ HMAC_OP_RUNTIME_REJECT_RVS = (
     CKR_MECHANISM_INVALID,
 )
 
+# CKO_DATA C_CreateObject rejection codes returned by modules that do not
+# implement free-form data-object storage (architectural absence — network/HSM
+# tokens accept only key/certificate objects). PKCS#11 v3.2 §6.4 permits a
+# token to decline support for an object class. A setup site hitting one of
+# these -> xfail (advertised-but-not-operational class); a test whose purpose
+# is to assert CKO_DATA semantics should skip instead (genuine capability
+# absence) via skip_if_data_objects_unsupported.
+CKO_DATA_NOT_SUPPORTED_RVS: tuple[int, ...] = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
+)
+
+
+def skip_unless_create_object_supported(rs: Any) -> None:
+    """Skip unless the module implements ``C_CreateObject``.
+
+    Cloud-KMS proxies (kmsp11) and other read-only modules do not implement
+    object creation at all — every ``C_CreateObject`` returns
+    ``CKR_FUNCTION_NOT_SUPPORTED``. Probing this once at the top of an
+    object-creation/import test lets the suite skip cleanly (genuine capability
+    absence) instead of cascading FNS into every dependent assertion.
+    """
+    from ctypes import byref
+
+    from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE
+
+    handle = CK_OBJECT_HANDLE(0)
+    # Minimal probe template: an empty attribute list. Modules that implement
+    # C_CreateObject will reject this with a template error (CKR_TEMPLATE_INCOMPLETE,
+    # CKR_ATTRIBUTE_TYPE_INVALID, CKR_ARGUMENTS_BAD); modules that do not implement
+    # the function at all return CKR_FUNCTION_NOT_SUPPORTED. Only the FNS case skips.
+    rv = rs.raw.C_CreateObject(rs.sh, None, 0, byref(handle))
+    if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+        pytest.skip("Module does not implement C_CreateObject")
+
+
+def skip_unless_generate_random_supported(rs: Any) -> None:
+    """Skip unless the module implements ``C_GenerateRandom``.
+
+    Several modules' RNG is non-operational: ``C_GenerateRandom`` returns
+    ``CKR_FUNCTION_FAILED`` (cryptech, corepkcs11) or ``CKR_FUNCTION_NOT_SUPPORTED``.
+    Probe once at the top of an RNG-dependent test so a non-operational RNG
+    surfaces as a clean skip rather than cascading into statistical/protocol
+    tests that assume randomness is available.
+    """
+    from pkcs11_check.raw.types_std import CK_BYTE
+
+    probe = (CK_BYTE * 16)()
+    rv = rs.raw.C_GenerateRandom(rs.sh, probe, 16)
+    if rv in (int(CKR_FUNCTION_FAILED), int(CKR_FUNCTION_NOT_SUPPORTED)):
+        pytest.skip(f"Module RNG not operational: {ckr_name(rv)}")
+
+
+def skip_if_data_objects_unsupported(rs: Any) -> None:
+    """Skip the current test if the module rejects CKO_DATA C_CreateObject.
+
+    Use at the top of tests that exercise CKO_DATA semantics: a module that
+    does not implement the data-object storage class rejects every create
+    (5+ providers including nethsm/corepkcs11/tpm2/wolfpkcs11/craton-hsm);
+    this is a genuine capability absence (PKCS#11 v3.2 §6.4) and the right
+    harness classification is ``skip``, not ``xfail``. Probe-style: tries a
+    minimal CKO_DATA create and skips if it sees a CKO_DATA_NOT_SUPPORTED_RVS
+    code; otherwise destroys the probe object and continues.
+    """
+    from pkcs11_check.raw.recipes import create_object, destroy_quietly
+    from pkcs11_check.raw.types_std import CKO_DATA
+
+    handle = 0
+    try:
+        handle = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: b"p11chk-cko-data-probe",
+                CKA_VALUE: b"probe",
+                CKA_TOKEN: False,
+            },
+        )
+    except CkrAssertionError as exc:
+        if exc.rv in CKO_DATA_NOT_SUPPORTED_RVS:
+            pytest.skip(
+                f"Module does not support CKO_DATA storage: {ckr_name(exc.rv)}"
+            )
+        raise
+    finally:
+        if handle:
+            destroy_quietly(rs.raw, rs.sh, handle)
+
 
 def needs_mechanism(name: str) -> Callable[[Any], Any]:
     """Decorator that skips the test if the mechanism is not supported."""
@@ -251,26 +340,38 @@ def gen_aes_key_or_xfail(
     *,
     purpose: str = "setup",
     sh: int | None = None,
+    mechanism: int | None = None,
+    mechanism_label: str = "AES_KEY_GEN",
 ) -> int:
     """Generate an AES key, xfail-ing explicit setup rejection CKRs.
 
     ``sh`` overrides the session the key is generated in (defaults to ``rs.sh``);
     a few setup sites generate the key in a freshly opened session on the same
     token, where the advertised-but-not-operational reject is identical.
+
+    ``mechanism`` overrides the keygen mechanism (defaults to ``CKM_AES_KEY_GEN``);
+    used by tests that exercise CKM_GENERIC_SECRET_KEY_GEN via the same code path.
+    The xfail tuple is the same — the advertised-but-not-operational reject set
+    is identical across AES-class keygen mechanisms.
     """
-    if not rs.has_mechanism("AES_KEY_GEN"):
-        pytest.skip("AES_KEY_GEN not supported by module")
+    if not rs.has_mechanism(mechanism_label):
+        pytest.skip(f"{mechanism_label} not supported by module")
 
     from pkcs11_check.raw.recipes import gen_aes_key
+    from pkcs11_check.raw.types_std import CKM_AES_KEY_GEN
 
     session = rs.sh if sh is None else sh
+    mech = CKM_AES_KEY_GEN if mechanism is None else mechanism
+    kwargs: dict[str, Any] = {"attrs": attrs}
+    if mechanism is not None:
+        kwargs["mechanism"] = mech
     try:
-        return gen_aes_key(rs.raw, session, bits, attrs=attrs)
+        return gen_aes_key(rs.raw, session, bits, **kwargs)
     except AssertionError as exc:
         xfail_if_known_ckr(
             exc,
             AES_KEYGEN_RUNTIME_REJECT_RVS,
-            f"AES_KEY_GEN advertised but AES-{bits} key generation for {purpose} "
+            f"{mechanism_label} advertised but {bits}-bit key generation for {purpose} "
             "is not operational",
         )
     raise

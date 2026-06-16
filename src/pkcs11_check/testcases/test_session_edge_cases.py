@@ -200,12 +200,12 @@ class TestSoftHSM2IssueRegressions:
 
     def test_rsa_keygen_minimum_size(self, p11_raw_session: Any) -> None:
         """Generate RSA with various sizes - verify minimum is enforced."""
-        from pkcs11_check.raw.recipes import gen_rsa_keypair
-
         rs = p11_raw_session
 
         # Very small RSA should be rejected
         try:
+            from pkcs11_check.raw.recipes import gen_rsa_keypair
+
             pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 512)
             # If accepted, that's a policy choice
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -214,7 +214,9 @@ class TestSoftHSM2IssueRegressions:
             pass  # Correct to reject small RSA
 
         # Standard size should work
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail
+
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             assert pub != 0
         finally:

@@ -32,7 +32,10 @@ from pkcs11_check.raw.types_std import (
     CKO_DATA,
     CKR_ARGUMENTS_BAD,
 )
-from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    skip_if_data_objects_unsupported,
+)
 
 pytestmark = pytest.mark.security
 
@@ -47,6 +50,7 @@ class TestLargeDataObjects:
     def test_1mb_data_object(self, p11_raw_session: Any) -> None:
         """Create and read back a 1MB CKO_DATA object."""
         rs = p11_raw_session
+        skip_if_data_objects_unsupported(rs)
         label = _unique_label()
         big_data = b"\xab" * (1024 * 1024)  # 1MB
 
@@ -71,6 +75,7 @@ class TestLargeDataObjects:
     def test_100kb_data_object(self, p11_raw_session: Any) -> None:
         """Create and read back a 100KB CKO_DATA object."""
         rs = p11_raw_session
+        skip_if_data_objects_unsupported(rs)
         label = _unique_label()
         data = bytes(range(256)) * 400  # 102,400 bytes
 

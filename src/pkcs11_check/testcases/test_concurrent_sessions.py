@@ -45,6 +45,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
+    skip_if_data_objects_unsupported,
     skip_if_token_write_protected,
 )
 
@@ -250,6 +251,7 @@ class TestConcurrentDataObjects:
         """CKO_DATA with TOKEN=True visible in concurrent session."""
         rs = p11_raw_session
         skip_if_token_write_protected(rs.raw, rs.slot_id)
+        skip_if_data_objects_unsupported(rs)
         label = _unique_label("data")
 
         obj = create_object(

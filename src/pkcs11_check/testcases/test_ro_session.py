@@ -46,6 +46,7 @@ from pkcs11_check.testcases.conftest import (
     get_pin_bytes,
     is_known_error,
     skip_if_token_write_protected,
+    skip_unless_mechanism,
 )
 
 pytestmark = pytest.mark.access
@@ -70,6 +71,7 @@ class TestROSessionOperations:
     def test_digest_in_ro_session(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Digest works in R/O session (no key needed)."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA256")
         pin_bytes = get_pin_bytes(p11_config)
         ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         if pin_bytes is not None:

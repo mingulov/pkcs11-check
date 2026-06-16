@@ -72,6 +72,8 @@ from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     get_pin_bytes,
     is_known_error,
+    skip_unless_generate_random_supported,
+    skip_unless_mechanism,
     xfail_if_known_ckr,
 )
 
@@ -694,6 +696,7 @@ class TestLogoutEffects:
         if pin_bytes is None:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
+        skip_unless_generate_random_supported(rs)
         flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
@@ -893,6 +896,7 @@ class TestROvsRWSessionState:
     def test_ro_session_can_digest(self, p11_raw_session: Any, p11_config: Any) -> None:
         """R/O session can perform digest (no key needed)."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA256")
         flags = CKF_SERIAL_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
@@ -1084,6 +1088,7 @@ class TestLoginTypeSpecificity:
     def test_digest_without_login(self, p11_raw_session: Any, p11_config: Any) -> None:
         """C_Digest works in public state (no login required)."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA256")
         flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:

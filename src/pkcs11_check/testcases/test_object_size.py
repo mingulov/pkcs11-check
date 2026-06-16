@@ -31,6 +31,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     gen_rsa_keypair_or_xfail,
     require_operational_aes_keygen,
+    skip_if_data_objects_unsupported,
     xfail_if_known_ckr,
 )
 
@@ -118,6 +119,7 @@ class TestObjectSize:
     def test_data_object_size_scales(self, p11_raw_session: Any) -> None:
         """Larger CKO_DATA objects should report larger sizes."""
         rs = p11_raw_session
+        skip_if_data_objects_unsupported(rs)
         small = create_object(
             rs.raw,
             rs.sh,

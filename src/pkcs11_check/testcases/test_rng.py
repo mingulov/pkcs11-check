@@ -12,7 +12,20 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases.conftest import skip_unless_generate_random_supported
+
 pytestmark = pytest.mark.security
+
+
+@pytest.fixture(autouse=True)
+def _skip_if_rng_not_operational(p11_session: Any) -> None:
+    """Skip every RNG test when C_GenerateRandom is advertised-but-not-operational.
+
+    cryptech/corepkcs11 return CKR_FUNCTION_FAILED; some proxies return
+    CKR_FUNCTION_NOT_SUPPORTED. Probing once avoids cascading the rejection
+    into every statistical check.
+    """
+    skip_unless_generate_random_supported(p11_session)
 
 
 class TestRNGBasic:

@@ -17,7 +17,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
     gen_rsa_keypair,
-    import_secret_key,
     read_attributes,
     set_attributes,
     sign_single,
@@ -52,6 +51,8 @@ from pkcs11_check.testcases._attribute_values import require_bool_attr, require_
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
+    import_secret_key_negotiated,
     is_known_error,
 )
 
@@ -445,7 +446,7 @@ class TestKeyGenMechanism:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
 
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_GEN_MECHANISM])
@@ -472,9 +473,8 @@ class TestKeyGenMechanism:
         """Imported key CKA_KEY_GEN_MECHANISM should be CK_UNAVAILABLE_INFORMATION."""
         rs = p11_raw_session
         key_material = bytes(range(16))  # 128-bit AES
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_material,
             attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
@@ -572,9 +572,8 @@ class TestCheckValue:
 
         # Known 128-bit AES key
         key_material = b"\x00" * 16
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_material,
             attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
@@ -609,16 +608,14 @@ class TestCheckValue:
         """Two keys with identical material should have the same CKA_CHECK_VALUE."""
         rs = p11_raw_session
         key_material = b"\xab" * 16
-        key1 = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key1 = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_material,
             attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
         )
-        key2 = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key2 = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_material,
             attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
@@ -658,7 +655,7 @@ class TestAlwaysAuthenticate:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
 
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_ALWAYS_AUTHENTICATE])
             if CKA_ALWAYS_AUTHENTICATE not in attrs:

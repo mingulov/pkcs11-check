@@ -13,9 +13,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.recipes import (
-    create_object,
     destroy_quietly,
-    gen_aes_key,
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
@@ -35,7 +33,11 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_HMAC,
     CKO_SECRET_KEY,
 )
-from pkcs11_check.testcases.conftest import hmac_sign_or_xfail
+from pkcs11_check.testcases.conftest import (
+    create_object_negotiated,
+    gen_aes_key_or_xfail,
+    hmac_sign_or_xfail,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -50,11 +52,11 @@ class TestGenericSecretKeyGen:
             pytest.skip("CKM_GENERIC_SECRET_KEY_GEN not supported")
 
         for bits in [128, 256, 512]:
-            key = gen_aes_key(
-                rs.raw,
-                rs.sh,
+            key = gen_aes_key_or_xfail(
+                rs,
                 bits,
                 mechanism=CKM_GENERIC_SECRET_KEY_GEN,
+                mechanism_label="GENERIC_SECRET_KEY_GEN",
                 attrs={
                     CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                     CKA_SENSITIVE: False,
@@ -75,22 +77,22 @@ class TestGenericSecretKeyGen:
         if not rs.has_mechanism("GENERIC_SECRET_KEY_GEN"):
             pytest.skip("CKM_GENERIC_SECRET_KEY_GEN not supported")
 
-        k1 = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        k1 = gen_aes_key_or_xfail(
+            rs,
             256,
             mechanism=CKM_GENERIC_SECRET_KEY_GEN,
+            mechanism_label="GENERIC_SECRET_KEY_GEN",
             attrs={
                 CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                 CKA_SENSITIVE: False,
                 CKA_EXTRACTABLE: True,
             },
         )
-        k2 = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        k2 = gen_aes_key_or_xfail(
+            rs,
             256,
             mechanism=CKM_GENERIC_SECRET_KEY_GEN,
+            mechanism_label="GENERIC_SECRET_KEY_GEN",
             attrs={
                 CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                 CKA_SENSITIVE: False,
@@ -117,9 +119,8 @@ class TestGenericSecretHMAC:
         key_bytes = b"hmac-test-key-for-generic-secret"
         data = b"HMAC with generic secret key"
 
-        key_h = create_object(
-            rs.raw,
-            rs.sh,
+        key_h = create_object_negotiated(
+            rs,
             {
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_SHA256_HMAC,
@@ -145,9 +146,8 @@ class TestGenericSecretHMAC:
         key_bytes = bytes(range(64))
         data = b"HMAC-SHA512 cross-verification test data"
 
-        key_h = create_object(
-            rs.raw,
-            rs.sh,
+        key_h = create_object_negotiated(
+            rs,
             {
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_SHA512_HMAC,
