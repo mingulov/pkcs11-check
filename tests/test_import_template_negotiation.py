@@ -325,9 +325,7 @@ def test_ec_import_coherence_defect_is_fail_not_xfail(
     monkeypatch.setattr(coherence, "import_ec_public_key_negotiated", lambda *a, **k: 7)
     monkeypatch.setattr(coherence, "ec_public_key_binding_defect", lambda *_a: "silently rebound")
     monkeypatch.setattr(coherence, "destroy_quietly", lambda *_a: None)
-    monkeypatch.setattr(
-        coherence, "skip_unless_create_object_supported", lambda *_a, **_k: None
-    )
+    monkeypatch.setattr(coherence, "skip_unless_create_object_supported", lambda *_a, **_k: None)
 
     with pytest.raises(pytest.fail.Exception, match="self-contradiction"):
         coherence.test_ec_public_key_import_is_coherent(_Rs(), "secp256k1")
@@ -351,9 +349,7 @@ def test_ec_import_coherence_clean_reject_is_skip(monkeypatch: pytest.MonkeyPatc
         return 0
 
     monkeypatch.setattr(coherence, "import_ec_public_key_negotiated", _reject)
-    monkeypatch.setattr(
-        coherence, "skip_unless_create_object_supported", lambda *_a, **_k: None
-    )
+    monkeypatch.setattr(coherence, "skip_unless_create_object_supported", lambda *_a, **_k: None)
 
     with pytest.raises(pytest.skip.Exception, match="cleanly rejects"):
         coherence.test_ec_public_key_import_is_coherent(_Rs(), "secp256k1")
