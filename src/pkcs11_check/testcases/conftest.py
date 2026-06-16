@@ -565,13 +565,23 @@ def create_object_negotiated(
         try:
             return attempt(variants[cached])
         except _CkrError as exc:
+            if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
+                pytest.skip("Module does not implement C_CreateObject")
             if exc.rv not in IMPORT_STORAGE_SHAPE_REJECTS:
                 raise
             # The learned winner stopped working: re-learn from canonical.
 
-    result, idx = negotiate_request(
-        attempt, variants, label=purpose, shape_rejects=IMPORT_STORAGE_SHAPE_REJECTS
-    )
+    try:
+        result, idx = negotiate_request(
+            attempt, variants, label=purpose, shape_rejects=IMPORT_STORAGE_SHAPE_REJECTS
+        )
+    except _CkrError as exc:
+        # No C_CreateObject at all (Cloud-KMS proxy / no-import provider, e.g.
+        # kmsp11): every import setup site routes here, so skip uniformly rather
+        # than hard-failing each. Capability absent -> skip (genuine), not xfail.
+        if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
+            pytest.skip("Module does not implement C_CreateObject")
+        raise
     _IMPORT_SHAPE_WINNERS[shape_key] = idx
     return result
 
