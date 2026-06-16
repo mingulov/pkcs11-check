@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any
 
@@ -21,7 +22,7 @@ from pkcs11_check.testcases._capability import Capability, capability_for
 
 
 @pytest.fixture(autouse=True)
-def _clear_cache() -> Any:
+def _clear_cache() -> Iterator[None]:
     _capability.reset_capability_cache()
     yield
     _capability.reset_capability_cache()
@@ -87,3 +88,26 @@ def test_info_error_is_in_range_never_gates_out(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(_capability, "get_mechanism_info", _boom)
     assert capability_for(rs, CKM_RSA_PKCS, key_size=2048) is Capability.IN_RANGE
+
+
+def test_both_params_omitted_is_in_range(monkeypatch: pytest.MonkeyPatch) -> None:
+    rs = _rs({"CKM_RSA_PKCS", "RSA_PKCS"})
+    _patch_info(monkeypatch, {"min_key_size": 2048, "max_key_size": 4096, "flags": int(CKF_SIGN)})
+    result = capability_for(rs, CKM_RSA_PKCS)
+    assert result is Capability.IN_RANGE
+
+
+def test_inclusive_boundary_key_sizes_are_in_range(monkeypatch: pytest.MonkeyPatch) -> None:
+    rs = _rs({"CKM_RSA_PKCS", "RSA_PKCS"})
+    _patch_info(monkeypatch, {"min_key_size": 2048, "max_key_size": 4096, "flags": int(CKF_SIGN)})
+    result_min = capability_for(rs, CKM_RSA_PKCS, key_size=2048)
+    assert result_min is Capability.IN_RANGE
+    result_max = capability_for(rs, CKM_RSA_PKCS, key_size=4096)
+    assert result_max is Capability.IN_RANGE
+
+
+def test_above_max_key_size_is_out_of_range(monkeypatch: pytest.MonkeyPatch) -> None:
+    rs = _rs({"CKM_RSA_PKCS", "RSA_PKCS"})
+    _patch_info(monkeypatch, {"min_key_size": 2048, "max_key_size": 4096, "flags": int(CKF_SIGN)})
+    result = capability_for(rs, CKM_RSA_PKCS, key_size=8192)
+    assert result is Capability.OUT_OF_RANGE
