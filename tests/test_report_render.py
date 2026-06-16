@@ -122,3 +122,29 @@ def test_unclassified_collapsed_to_single_line() -> None:
     # exactly one count line mentioning unclassified + the count
     count_lines = [ln for ln in unc_lines if "37" in ln]
     assert len(count_lines) == 1
+
+
+def test_undeclared_capability_appears_in_xfail_breakdown() -> None:
+    """undeclared_capability xfail must appear in the per-reason breakdown section."""
+    xfail = _group(
+        reason="undeclared_capability",
+        outcome="xfail",
+        severity="LOW",
+        kind=None,
+        operation="C_Sign",
+        mechanism="CKM_ECDSA",
+        expected_ckr=None,
+        actual_ckr="CKR_FUNCTION_NOT_SUPPORTED",
+        summary="mechanism advertised but capability not declared",
+        count=15,
+    )
+    out = render_provider("p", [xfail])
+
+    # the xfail section header must be present
+    assert "deviations" in out
+
+    # the count line for undeclared_capability must appear with the count
+    reason_lines = [ln for ln in out.splitlines() if "undeclared_capability" in ln]
+    assert reason_lines, "undeclared_capability not found in rendered output"
+    count_lines = [ln for ln in reason_lines if "15" in ln]
+    assert count_lines, "undeclared_capability count line with [15] not found"
