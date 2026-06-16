@@ -1,11 +1,16 @@
 """Over-delivery probe (@security): does the module perform operations OUTSIDE
 its advertised boundaries?
 
-Provider-general; no provider identity. For each advertised RSA/EC/AES mechanism
-this deliberately attempts work outside its CK_MECHANISM_INFO box and asserts a
+Provider-general; no provider identity. For an advertised mechanism this
+deliberately attempts work outside its CK_MECHANISM_INFO box and asserts a
 refusal. Performing a below-min/weak op is a security downgrade (fail); performing
 a stronger-than-advertised op is benign over-advertisement (xfail). A clean refusal
 is the conformant pass; a crash is the finding.
+
+Current live coverage is the RSA below-min case; the EC curve-boundary and AES
+short-key cases (and other families) are a planned expansion — the pure verdict
+helper ``classify_boundary_outcome`` already covers every ``BoundaryCase``, so
+adding them is wiring only. See docs/findings/2026-06-16-capability-boundary-followups.md.
 
 Runs under the framework's per-file subprocess isolation, so a crash on an
 out-of-range input is captured as the finding, not a run-killer.
