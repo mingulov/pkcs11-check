@@ -58,6 +58,7 @@ from pkcs11_check.testcases.conftest import (
     assert_correct,
     extract_ec_point,
     import_secret_key_negotiated,
+    skip_unless_create_object_supported,
 )
 
 pytestmark = pytest.mark.interop
@@ -263,6 +264,10 @@ class TestECDSAInterop:
 class TestAESInterop:
     """AES key interop - import key from raw bytes, use in both."""
 
+    @pytest.fixture(autouse=True)
+    def _skip_if_no_create_object(self, p11_raw_session: Any) -> None:
+        skip_unless_create_object_supported(p11_raw_session)
+
     def test_aes_ecb_encrypt_p11_decrypt_crypto(self, p11_raw_session: Any) -> None:
         """Import AES key, encrypt in P11, decrypt in crypto."""
         rs = p11_raw_session
@@ -394,6 +399,10 @@ class TestAESInterop:
 
 class TestHMACInterop:
     """HMAC interop between PKCS#11 and cryptography."""
+
+    @pytest.fixture(autouse=True)
+    def _skip_if_no_create_object(self, p11_raw_session: Any) -> None:
+        skip_unless_create_object_supported(p11_raw_session)
 
     def test_hmac_sha256_interop(self, p11_raw_session: Any) -> None:
         """Compute HMAC-SHA256 in both, compare."""

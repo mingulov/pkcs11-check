@@ -27,6 +27,7 @@ from pkcs11_check.testcases.conftest import (
     ec_public_key_binding_defect,
     import_ec_public_key_negotiated,
     is_known_error,
+    skip_unless_create_object_supported,
 )
 from pkcs11_check.testcases.wycheproof.test_wycheproof_ecdsa import (
     _CURVE_UNSUPPORTED_CKRS,
@@ -53,6 +54,7 @@ def test_ec_public_key_import_is_coherent(p11_module_session: Any, curve: str) -
     """If C_CreateObject claims CKR_OK for an EC public key, the object must be
     coherent: attribute readback works and CKA_EC_PARAMS round-trips."""
     rs = p11_module_session
+    skip_unless_create_object_supported(rs)
     if not rs.has_mechanism("ECDSA"):
         pytest.skip("ECDSA not supported by module")
 

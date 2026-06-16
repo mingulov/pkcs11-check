@@ -52,6 +52,7 @@ from pkcs11_check.testcases.conftest import (
     get_pin_bytes,
     is_known_error,
     skip_if_token_write_protected,
+    skip_unless_create_object_supported,
     xfail_if_known_ckr,
 )
 
@@ -124,6 +125,9 @@ def _create_data_obj(
     modifiable: bool | None = None,
 ) -> int:
     """Create a CKO_DATA object."""
+    from types import SimpleNamespace
+
+    skip_unless_create_object_supported(SimpleNamespace(raw=raw, sh=sh))
     attrs: dict[int, Any] = {
         CKA_CLASS: CKO_DATA,
         CKA_LABEL: label,

@@ -100,6 +100,7 @@ from pkcs11_check.testcases.conftest import (
     is_known_error,
     reject_or_classify,
     require_operational_aes_keygen,
+    skip_unless_create_object_supported,
     xfail_if_known_ckr,
 )
 
@@ -196,6 +197,7 @@ def _gen_access_aes_key(rs: Any, sh: int, *, attrs: dict[Any, Any] | None = None
 
 def _create_access_data_object(rs: Any, sh: int, attrs: dict[Any, Any]) -> int:
     """Create a setup data object for access-level visibility tests."""
+    skip_unless_create_object_supported(rs)
     try:
         return create_object(rs.raw, sh, attrs)
     except AssertionError as exc:
@@ -1567,6 +1569,7 @@ class TestPublicSessionRestrictions:
     ) -> None:
         """Public session may create CKA_PRIVATE=False data objects."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Clear login
@@ -1626,6 +1629,7 @@ class TestPublicSessionRestrictions:
         pin_bytes = get_pin_bytes(p11_config)
         if pin_bytes is None:
             pytest.skip("No PIN configured; cannot establish an unauthenticated session")
+        skip_unless_create_object_supported(rs)
         flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
         label = f"pub-create-priv-{id(self)}"
 

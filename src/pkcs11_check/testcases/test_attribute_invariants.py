@@ -60,7 +60,10 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases._attribute_values import require_ulong_attr
-from pkcs11_check.testcases.conftest import require_operational_aes_keygen
+from pkcs11_check.testcases.conftest import (
+    require_operational_aes_keygen,
+    skip_unless_create_object_supported,
+)
 
 pytestmark = pytest.mark.security
 
@@ -310,6 +313,7 @@ class TestDerivedAttributeInvariants:
     ) -> None:
         """An imported AES key must not report a generation mechanism."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         key = import_secret_key(
             rs.raw,
             rs.sh,

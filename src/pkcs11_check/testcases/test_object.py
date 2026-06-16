@@ -48,6 +48,7 @@ from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_ec_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
+    skip_unless_create_object_supported,
     skip_unless_mechanism,
     xfail_if_known_ckr,
 )
@@ -255,6 +256,7 @@ class TestKeyImportExport:
     def test_import_rsa_public_key(self, p11_raw_session: Any) -> None:
         """Import an RSA public key from modulus + exponent."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
@@ -294,6 +296,7 @@ class TestKeyImportExport:
     def test_imported_key_verifies_signature(self, p11_raw_session: Any) -> None:
         """Sign with generated key, verify with imported copy of pubkey."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
         pub, priv = gen_rsa_keypair_or_xfail(
             rs,

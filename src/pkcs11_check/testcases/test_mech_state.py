@@ -57,6 +57,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     gen_aes_key_or_xfail,
+    skip_unless_create_object_supported,
     xfail_if_known_ckr,
 )
 
@@ -249,6 +250,7 @@ class TestSignState:
     def test_sign_single_part_output_call_terminates(self, p11_raw_session: RawSession) -> None:
         """Successful two-call C_Sign must terminate before a new C_SignInit."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         if not rs.has_mechanism("SHA256_HMAC"):
             pytest.skip("CKM_SHA256_HMAC not supported")
 

@@ -90,6 +90,7 @@ from pkcs11_check.testcases.conftest import (
     reject_or_classify,
     require_operational_aes_keygen,
     skip_if_token_write_protected,
+    skip_unless_create_object_supported,
     xfail_if_known_ckr,
 )
 
@@ -386,6 +387,7 @@ class TestROSessionObjectsAllowed:
     ) -> None:
         """C_CreateObject with CKA_TOKEN=False in RO session succeeds."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         pin_bytes = get_pin_bytes(p11_config)
         ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
@@ -792,6 +794,7 @@ class TestROWrapUnwrapRestrictions:
         """Unwrap with TOKEN=True template in RO session must fail."""
         rs = p11_raw_session
         skip_if_token_write_protected(rs.raw, rs.slot_id)
+        skip_unless_create_object_supported(rs)
         if not rs.has_mechanism("AES_KEY_WRAP"):
             if not rs.has_mechanism("AES_CBC_PAD"):
                 pytest.skip("No AES wrap mechanism supported")
@@ -868,6 +871,7 @@ class TestROWrapUnwrapRestrictions:
         """Unwrap with TOKEN=False template in RO session succeeds."""
         rs = p11_raw_session
         skip_if_token_write_protected(rs.raw, rs.slot_id)
+        skip_unless_create_object_supported(rs)
         if not rs.has_mechanism("AES_KEY_WRAP"):
             if not rs.has_mechanism("AES_CBC_PAD"):
                 pytest.skip("No AES wrap mechanism supported")

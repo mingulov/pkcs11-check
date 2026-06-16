@@ -41,6 +41,9 @@ def test_imported_key_missing_local_readback_is_xfail(
     monkeypatch.setattr(test_key_flags, "read_attributes", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(test_key_flags, "_read_bool_attr_safe", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(test_key_flags, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(
+        test_key_flags, "skip_unless_create_object_supported", lambda *_args, **_kwargs: None
+    )
 
     with pytest.raises(pytest.xfail.Exception, match="CKA_LOCAL"):
         test_key_flags.TestLocalFlag().test_imported_key_is_not_local(_session())

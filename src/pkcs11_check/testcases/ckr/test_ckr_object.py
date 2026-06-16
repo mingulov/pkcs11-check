@@ -60,6 +60,7 @@ from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     classify_policy_enforcement,
     gen_aes_key_or_xfail,
+    skip_unless_create_object_supported,
 )
 
 pytestmark = pytest.mark.access
@@ -67,6 +68,10 @@ pytestmark = pytest.mark.access
 
 class TestCreateObjectErrors:
     """Error conditions for C_CreateObject (Sec.5.7.1)."""
+
+    @pytest.fixture(autouse=True)
+    def _skip_if_no_create_object(self, p11_raw_session: Any) -> None:
+        skip_unless_create_object_supported(p11_raw_session)
 
     def test_missing_class(self, p11_raw_session: Any) -> None:
         """Missing CKA_CLASS -> CKR_TEMPLATE_INCOMPLETE."""
@@ -348,6 +353,7 @@ class TestSetAttributeErrors:
     def test_set_readonly_class(self, p11_raw_session: Any) -> None:
         """Setting CKA_CLASS -> CKR_ATTRIBUTE_READ_ONLY."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         handle = create_object(
             rs.raw,
             rs.sh,
@@ -432,6 +438,7 @@ class TestCopyObjectErrors:
     def test_copy_token_bool_overlong_length(self, p11_raw_session: Any) -> None:
         """C_CopyObject must reject CK_ULONG-sized CKA_TOKEN template value."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         source = create_object(
             rs.raw,
             rs.sh,
@@ -486,6 +493,7 @@ class TestFindObjectsErrors:
     ) -> None:
         """C_FindObjectsInit(NULL_PTR, 0) is a valid match-all search."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         handle = create_object(
             rs.raw,
             rs.sh,
@@ -570,6 +578,7 @@ class TestFindObjectsErrors:
     def test_find_by_class(self, p11_raw_session: Any) -> None:
         """FindObjects with CKA_CLASS filter works correctly."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         handle = create_object(
             rs.raw,
             rs.sh,

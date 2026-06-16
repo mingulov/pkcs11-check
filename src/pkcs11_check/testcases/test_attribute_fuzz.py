@@ -36,7 +36,11 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
 )
 from pkcs11_check.testcases._error_tuples import KEY_SIZE_ERRORS, TEMPLATE_ERRORS
-from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, is_known_error
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    is_known_error,
+    skip_unless_create_object_supported,
+)
 
 pytestmark = pytest.mark.security
 
@@ -51,6 +55,10 @@ def _is_key_size_error(e: BaseException) -> bool:
 
 class TestMalformedAttributes:
     """Test that malformed attribute values are rejected gracefully."""
+
+    @pytest.fixture(autouse=True)
+    def _skip_if_no_create_object(self, p11_raw_session: Any) -> None:
+        skip_unless_create_object_supported(p11_raw_session)
 
     def test_invalid_class_value(self, p11_raw_session: Any) -> None:
         """CKA_CLASS with invalid value must be rejected, not crash."""
@@ -226,6 +234,10 @@ class TestMalformedAttributes:
 
 class TestLargeAttributes:
     """Test with oversized attribute values."""
+
+    @pytest.fixture(autouse=True)
+    def _skip_if_no_create_object(self, p11_raw_session: Any) -> None:
+        skip_unless_create_object_supported(p11_raw_session)
 
     def test_large_label(self, p11_raw_session: Any) -> None:
         """Very long CKA_LABEL (10KB) - must not crash."""

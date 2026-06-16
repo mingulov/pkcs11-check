@@ -85,6 +85,9 @@ def test_sign_termination_check_fails_when_single_part_call_leaves_state_active(
 ) -> None:
     monkeypatch.setattr(test_mech_state, "import_secret_key", lambda *_args, **_kwargs: 42)
     monkeypatch.setattr(test_mech_state, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(
+        test_mech_state, "skip_unless_create_object_supported", lambda *_args, **_kwargs: None
+    )
 
     with pytest.raises(AssertionError, match="successful C_Sign"):
         test_mech_state.TestSignState().test_sign_single_part_output_call_terminates(

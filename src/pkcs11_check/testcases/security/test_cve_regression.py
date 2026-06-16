@@ -94,6 +94,7 @@ from pkcs11_check.testcases.conftest import (
     get_pin_bytes,
     is_known_error,
     reject_or_classify,
+    skip_unless_create_object_supported,
     skip_unless_mechanism,
     xfail_if_known_ckr,
 )
@@ -211,6 +212,7 @@ class TestCKATrusted:
     def test_create_trusted_data_object(self, p11_raw_session: Any) -> None:
         """CKA_TRUSTED on data object - accept or reject, not crash."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         try:
             obj = create_object(
                 rs.raw,
@@ -729,6 +731,7 @@ class TestInvalidECCurve:
     def test_import_ec_key_with_bad_oid(self, p11_raw_session: Any) -> None:
         """EC key with invalid curve OID must be rejected, not accepted."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         bad_oid = bytes([0x06, 0x05, 0xDE, 0xAD, 0xBE, 0xEF, 0x00])
         fake_point = b"\x04" + b"\x01" * 64  # Fake uncompressed point
 

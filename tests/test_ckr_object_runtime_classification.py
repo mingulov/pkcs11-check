@@ -185,6 +185,9 @@ def _run_setattr(monkeypatch: pytest.MonkeyPatch, *, setattr_rv: int, changed: b
     monkeypatch.setattr(test_ckr_object, "create_object", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ckr_object, "destroy_quietly", lambda *_a, **_k: None)
     monkeypatch.setattr(
+        test_ckr_object, "skip_unless_create_object_supported", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
         test_ckr_object,
         "read_attributes",
         lambda *_a, **_k: {CKA_CLASS: CKO_SECRET_KEY if changed else CKO_DATA},

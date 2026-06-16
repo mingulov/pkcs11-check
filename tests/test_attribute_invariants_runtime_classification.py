@@ -199,6 +199,9 @@ def _run_imported_aes_origin(
     _setup(monkeypatch, values)
     monkeypatch.setattr(tai, "import_secret_key", lambda *_a, **_k: 1, raising=False)
     monkeypatch.setattr(tai, "_read_ulong_attr_state", lambda *_a: keygen_state, raising=False)
+    monkeypatch.setattr(
+        tai, "skip_unless_create_object_supported", lambda *_a, **_k: None, raising=False
+    )
     tai.TestDerivedAttributeInvariants().test_imported_aes_key_reports_not_local_no_key_gen_mechanism(
         _session()
     )
