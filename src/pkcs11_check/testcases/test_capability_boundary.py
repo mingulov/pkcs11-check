@@ -19,9 +19,10 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import fail_as, xfail_as
-from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair
+from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair, get_mechanism_info
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
+    CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
@@ -31,6 +32,23 @@ from pkcs11_check.raw.types_std import (
 )
 
 pytestmark = pytest.mark.security
+
+# RSA moduli are multiples of 8 bits; 512 is the smallest gen_rsa_keypair can
+# meaningfully attempt. Returns a size STRICTLY below the module's advertised
+# minimum (and >= 512), or None when no valid smaller size exists (so the probe
+# is inconclusive and must skip -- never a false pass or false fail).
+_RSA_HARD_FLOOR = 512
+
+
+def rsa_probe_size_below_min(advertised_min: int) -> int | None:
+    """A valid RSA modulus size strictly below ``advertised_min``, or None."""
+    if advertised_min == 0 or advertised_min <= _RSA_HARD_FLOOR:
+        return None
+    candidate = advertised_min - 8  # one RSA step (8 bits) below the floor
+    if candidate < _RSA_HARD_FLOOR:
+        candidate = _RSA_HARD_FLOOR
+    return candidate
+
 
 # Refusal codes that count as the module ENFORCING its advertised boundary.
 _ENFORCED_REFUSAL_RVS: frozenset[int] = frozenset(
@@ -66,6 +84,9 @@ def classify_boundary_outcome(
     ``weak`` marks the security-relevant direction (below-min, or a known-weak
     unadvertised mechanism). Returns None (= pass) on an enforced refusal;
     otherwise raises the pytest verdict.
+
+    ``performed`` and ``refusal`` are mutually exclusive: a real caller either
+    got handles back (performed) or caught a CkrAssertionError (refusal).
     """
     if not performed:
         rv = getattr(refusal, "rv", None)
@@ -102,14 +123,23 @@ class TestRSAKeySizeBoundary:
 
     def test_rsa_below_min_is_refused(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
-        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN") and not rs.has_mechanism("RSA_PKCS"):
-            pytest.skip("RSA keygen not advertised")
-        # 512-bit RSA is weaker than any modern advertised min; expect refusal.
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not advertised")
+        try:
+            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS_KEY_PAIR_GEN)
+        except CkrAssertionError:
+            pytest.skip("C_GetMechanismInfo failed for RSA keygen -- cannot determine floor")
+        probe_size = rsa_probe_size_below_min(int(info["min_key_size"]))
+        if probe_size is None:
+            pytest.skip(
+                f"advertised RSA min={info['min_key_size']}: no valid size strictly below it"
+            )
+        # probe_size is genuinely below the module's OWN advertised minimum -> weak.
         performed = False
         refusal: CkrAssertionError | None = None
         pub = priv = 0
         try:
-            pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 512)
+            pub, priv = gen_rsa_keypair(rs.raw, rs.sh, probe_size)
             performed = True
         except CkrAssertionError as exc:
             refusal = exc

@@ -10,6 +10,7 @@ from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR, CKR_KEY_SIZE_RANGE
 from pkcs11_check.testcases.test_capability_boundary import (
     BoundaryCase,
     classify_boundary_outcome,
+    rsa_probe_size_below_min,
 )
 
 
@@ -62,3 +63,18 @@ def test_performed_unadvertised_benign_is_xfail() -> None:
         classify_boundary_outcome(
             BoundaryCase.UNADVERTISED_MECH, performed=True, refusal=None, weak=False
         )
+
+
+@pytest.mark.parametrize(
+    "advertised_min,expected",
+    [
+        (0, None),  # no range enforced -> inconclusive
+        (512, None),  # already at the hard floor -> no smaller valid size
+        (256, None),  # below the hard floor -> inconclusive
+        (1024, 1016),  # one 8-bit step below
+        (2048, 2040),
+        (516, 512),  # clamp to the hard floor, still strictly below 516
+    ],
+)
+def test_rsa_probe_size_below_min(advertised_min: int, expected: int | None) -> None:
+    assert rsa_probe_size_below_min(advertised_min) == expected
