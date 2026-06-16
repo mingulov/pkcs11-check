@@ -25,12 +25,13 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.types_std import (
     CKA_EC_POINT,
     CKA_KEY_TYPE,
+    CKF_SIGN,
     CKK_EC,
     CKM_ECDSA,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import skip_unless_capability, xfail_if_known_ckr
 
 pytestmark = pytest.mark.crossverify
 
@@ -121,8 +122,7 @@ class TestECDSACrossVerify:
     ) -> None:
         """ECDSA sign with PKCS#11, verify with cryptography."""
         rs = p11_raw_session
-        if not rs.has_mechanism("ECDSA"):
-            pytest.skip("CKM_ECDSA not supported")
+        skip_unless_capability(rs, CKM_ECDSA, operation=CKF_SIGN)
 
         hash_fns = {28: hashlib.sha224, 32: hashlib.sha256, 48: hashlib.sha384, 66: hashlib.sha512}
 
