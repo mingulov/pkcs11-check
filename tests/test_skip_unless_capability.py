@@ -16,6 +16,7 @@ from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
 )
 from pkcs11_check.testcases import _capability
 from pkcs11_check.testcases import conftest as ct
@@ -66,6 +67,14 @@ def test_in_range_fns_routes_to_xfail() -> None:
 
 def test_in_range_key_size_range_routes_to_xfail() -> None:
     exc = CkrAssertionError("Unexpected CK_RV CKR_KEY_SIZE_RANGE", int(CKR_KEY_SIZE_RANGE))
+    with pytest.raises(XFailed):
+        ct.route_in_range_not_operational(
+            exc, label="RSA_PKCS:sign", mechanism="RSA_PKCS", key_size=3072, operation="C_Sign"
+        )
+
+
+def test_in_range_mechanism_invalid_routes_to_xfail() -> None:
+    exc = CkrAssertionError("Unexpected CK_RV CKR_MECHANISM_INVALID", int(CKR_MECHANISM_INVALID))
     with pytest.raises(XFailed):
         ct.route_in_range_not_operational(
             exc, label="RSA_PKCS:sign", mechanism="RSA_PKCS", key_size=3072, operation="C_Sign"

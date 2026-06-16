@@ -1328,11 +1328,12 @@ def assert_correct(
 # In-range advertised op that then refuses: the module advertised this exact
 # size/mech and then said it cannot do it. Narrow on purpose -- GENERAL_ERROR /
 # DEVICE_ERROR / wrong-output / crash are excluded and stay hard findings
-# (DEVICE_ERROR can mask a kryoptic crypto failure). Mirrors _DIGEST_OP_REJECT_RVS.
+# (DEVICE_ERROR can mask a kryoptic crypto failure). Same narrow-explicit-reject-set
+# pattern as _DIGEST_OP_REJECT_RVS (test_sha3/test_crossverify).
 _IN_RANGE_NOT_OPERATIONAL_RVS: tuple[int, ...] = (
-    int(CKR_FUNCTION_NOT_SUPPORTED),
-    int(CKR_KEY_SIZE_RANGE),
-    int(CKR_MECHANISM_INVALID),
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
 )
 
 
@@ -1351,7 +1352,7 @@ def skip_unless_capability(
     if verdict is Capability.IN_RANGE:
         return
     pytest.skip(
-        f"{ckm_name(int(mechanism))} not advertised for "
+        f"{ckm_name(mechanism)} not advertised for "
         f"(key_size={key_size}, operation={operation}): {verdict.value}"
     )
 
