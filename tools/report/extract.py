@@ -108,6 +108,7 @@ def _new_group(rec: dict[str, Any], test_file: str) -> dict[str, Any]:
         "actual_ckr": rec.get("actual_ckr"),
         "spec_ref": rec.get("spec_ref", ""),
         "summary": rec.get("summary", ""),
+        "detail": rec.get("detail"),
         "count": 0,
         "nodeids": [],
         "vector_ids": [],
@@ -151,7 +152,7 @@ def extract_groups(
     Returns a list of group dicts, each with ``count``, sample ``nodeids``,
     sorted unique ``vector_ids`` (capped, with a ``+N`` overflow marker),
     ``sources``, and first-member metadata
-    (severity/summary/spec_ref/reason/kind/operation/mechanism/expected_ckr/actual_ckr).
+    (severity/summary/spec_ref/reason/kind/operation/mechanism/expected_ckr/actual_ckr/detail).
     """
     path = Path(report_jsonl_path)
     groups: OrderedDict[GroupKey, dict[str, Any]] = OrderedDict()

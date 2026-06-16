@@ -27,6 +27,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from tools.report.capability import capability_audit, render_capability_section
 from tools.report.correlate import correlate, enrich
 from tools.report.extract import extract_groups
 from tools.report.render import render_provider
@@ -130,6 +131,9 @@ def _write_provider(
     pass_count: int | None = None,
 ) -> None:
     md = render_provider(provider, groups, pass_count=pass_count)
+    # render_provider ends with a single trailing newline; the "\n" join yields
+    # one blank line before the appended "## capability audit" heading.
+    md = md + "\n" + render_capability_section(capability_audit(groups))
     (out_dir / f"{provider}.md").write_text(md)
     with (out_dir / f"{provider}.jsonl").open("w") as fh:
         for group in groups:

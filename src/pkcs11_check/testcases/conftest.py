@@ -17,6 +17,7 @@ import pytest
 if TYPE_CHECKING:
     from pkcs11_check.raw.recipes import RSAUsage
 
+from pkcs11_check.raw.api import ckm_name
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
@@ -58,7 +59,9 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._capability import Capability, capability_for
 from pkcs11_check.testcases._error_tuples import MECH_PARAM_UNSUPPORTED_ERRORS
+from pkcs11_check.testcases._operability import not_operational_reason
 
 AES_KEYGEN_RUNTIME_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
@@ -1319,4 +1322,64 @@ def assert_correct(
         source=source,
         vector_id=vector_id,
         summary=f"{label}: output does not match known answer",
+    )
+
+
+# In-range advertised op that then refuses: the module advertised this exact
+# size/mech and then said it cannot do it. Narrow on purpose -- GENERAL_ERROR /
+# DEVICE_ERROR / wrong-output / crash are excluded and stay hard findings
+# (DEVICE_ERROR can mask a kryoptic crypto failure). Same narrow-explicit-reject-set
+# pattern as _DIGEST_OP_REJECT_RVS (test_sha3/test_crossverify).
+_IN_RANGE_NOT_OPERATIONAL_RVS: tuple[int, ...] = (
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+)
+
+
+def skip_unless_capability(
+    rs: Any,
+    mechanism: int,
+    *,
+    key_size: int | None = None,
+    operation: int | None = None,
+) -> None:
+    """Skip a functional test when the (mechanism, key_size, operation) is not
+    advertised IN_RANGE. Judged per (key_size, operation): a multi-size caller
+    invokes this per size, so in-range sizes still run -- no wholesale skip.
+    """
+    verdict = capability_for(rs, mechanism, key_size=key_size, operation=operation)
+    if verdict is Capability.IN_RANGE:
+        return
+    pytest.skip(
+        f"{ckm_name(mechanism)} not advertised for "
+        f"(key_size={key_size}, operation={operation}): {verdict.value}"
+    )
+
+
+def route_in_range_not_operational(
+    exc: BaseException,
+    *,
+    label: str,
+    mechanism: str,
+    key_size: int | None,
+    operation: str | None,
+) -> None:
+    """For an IN_RANGE op that then cleanly refused: route FNS/KEY_SIZE_RANGE/
+    MECHANISM_INVALID to the advertised-but-not-operational xfail, carrying the
+    capability verdict for the report audit. Any other code re-raises (finding).
+    """
+    rv = getattr(exc, "rv", None)
+    if rv is None or rv not in _IN_RANGE_NOT_OPERATIONAL_RVS:
+        raise exc
+    from pkcs11_check import classification as C
+
+    C.classify(
+        "not_operational",
+        label=not_operational_reason(label, ckr_name(rv)),
+        operation=operation,
+        mechanism=mechanism,
+        actual=rv,
+        summary=f"{label}: advertised IN_RANGE but not operational ({ckr_name(rv)})",
+        detail={"capability_verdict": "IN_RANGE", "key_size": key_size},
     )

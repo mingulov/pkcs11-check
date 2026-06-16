@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
-_XFAIL_REASONS = ("not_operational", "nonspec_reject", "honest_deviation")
+_XFAIL_REASONS = ("not_operational", "nonspec_reject", "honest_deviation", "undeclared_capability")
 
 # Severity sections in the order they are rendered, with marker + label.
 _FAIL_SECTIONS: list[tuple[str, str]] = [

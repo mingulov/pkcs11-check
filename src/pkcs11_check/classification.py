@@ -41,6 +41,7 @@ _REASON_OUTCOME: dict[str, Outcome] = {
     "not_operational": "xfail",
     "nonspec_reject": "xfail",
     "honest_deviation": "xfail",
+    "undeclared_capability": "xfail",  # over-advertised: performed more than advertised, benign
     "sanctioned_refusal": "pass",
     "unclassified": "fail",
 }
@@ -53,7 +54,7 @@ def _severity(reason: str, kind: str | None) -> Severity:
         return "CRITICAL" if kind in ("crypto", "policy") else "HIGH"
     if reason in ("oracle", "crash", "unclassified"):
         return "HIGH"
-    if reason in ("not_operational", "nonspec_reject", "honest_deviation"):
+    if reason in ("not_operational", "nonspec_reject", "honest_deviation", "undeclared_capability"):
         return "LOW"
     if reason == "sanctioned_refusal":
         return "INFO"

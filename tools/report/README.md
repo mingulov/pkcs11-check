@@ -49,7 +49,7 @@ Each finding is one serialized `pkcs11_check.classification.Classification` (`sc
 
 | field | meaning |
 |---|---|
-| `reason` | one of the 9 reasons (`wrong_result`, `accepted_invalid`, `self_contradiction`, `oracle`, `crash`, `not_operational`, `nonspec_reject`, `honest_deviation`, `sanctioned_refusal`) plus the reserved `unclassified` runtime-gate marker |
+| `reason` | one of the 10 reasons (`wrong_result`, `accepted_invalid`, `self_contradiction`, `oracle`, `crash`, `not_operational`, `nonspec_reject`, `honest_deviation`, `undeclared_capability`, `sanctioned_refusal`) plus the reserved `unclassified` runtime-gate marker |
 | `outcome` | `pass` / `xfail` / `fail`, derived from `reason` |
 | `severity` | `CRITICAL` / `HIGH` / `MEDIUM` / `LOW` / `INFO`, derived from `(reason, kind)` |
 | `kind` | `crypto`=A / `policy`=B / `lifecycle`=C / `metadata`=D (or `null`) |
