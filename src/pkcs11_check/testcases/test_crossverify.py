@@ -51,6 +51,8 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_RSA_PKCS,
     CKM_SHA_1,
     CKM_SHA_1_HMAC,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
@@ -321,6 +323,33 @@ class TestECDSACrossVerify:
             destroy_quietly(rs.raw, rs.sh, priv)
 
 
+# Clean codes a module may return from C_Digest when it advertises the SHA
+# mechanism but standalone digest is not operational (cryptech SHA224 ->
+# CKR_FUNCTION_FAILED; modules exposing SHA* only for composite sign).
+# CKR_ARGUMENTS_BAD is deliberately EXCLUDED: an ARGUMENTS_BAD reject of an
+# empty-message digest (wolfpkcs11/bouncyhsm) is a real PROVIDER_BUG (empty digest
+# is well-defined) and must stay a hard fail, as must any wrong digest output.
+_DIGEST_OP_REJECT_RVS = (
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+)
+
+
+def _assert_digest_matches(rs: Any, mech: int, data: bytes, expected: bytes) -> None:
+    """Produce a PKCS#11 digest and compare to the reference.
+
+    The produce leg is xfailed on a clean advertised-but-not-operational reject
+    (_DIGEST_OP_REJECT_RVS); a wrong digest value stays a hard fail.
+    """
+    try:
+        actual = digest_single(rs.raw, rs.sh, mech, data)
+    except AssertionError as exc:
+        xfail_if_known_ckr(exc, _DIGEST_OP_REJECT_RVS, f"digest {mech:#x}")
+        raise
+    assert actual == expected
+
+
 class TestDigestCrossVerify:
     """Verify PKCS#11 digests match Python hashlib."""
 
@@ -328,45 +357,44 @@ class TestDigestCrossVerify:
         rs = p11_raw_session
         _require_mechanisms(rs, "SHA256")
         data = b"digest cross-verification data"
-        assert digest_single(rs.raw, rs.sh, CKM_SHA256, data) == hashlib.sha256(data).digest()
+        _assert_digest_matches(rs, CKM_SHA256, data, hashlib.sha256(data).digest())
 
     def test_sha512(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         _require_mechanisms(rs, "SHA512")
         data = b"sha512 cross-verify"
-        assert digest_single(rs.raw, rs.sh, CKM_SHA512, data) == hashlib.sha512(data).digest()
+        _assert_digest_matches(rs, CKM_SHA512, data, hashlib.sha512(data).digest())
 
     def test_sha384(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         _require_mechanisms(rs, "SHA384")
         data = b"sha384 cross-verify"
-        assert digest_single(rs.raw, rs.sh, CKM_SHA384, data) == hashlib.sha384(data).digest()
+        _assert_digest_matches(rs, CKM_SHA384, data, hashlib.sha384(data).digest())
 
     def test_sha1(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         _require_mechanisms(rs, "SHA_1")
         data = b"sha1 cross-verify"
-        assert (
-            digest_single(rs.raw, rs.sh, CKM_SHA_1, data)
-            == hashlib.sha1(data, usedforsecurity=False).digest()
+        _assert_digest_matches(
+            rs, CKM_SHA_1, data, hashlib.sha1(data, usedforsecurity=False).digest()
         )
 
     def test_sha256_empty(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         _require_mechanisms(rs, "SHA256")
-        assert digest_single(rs.raw, rs.sh, CKM_SHA256, b"") == hashlib.sha256(b"").digest()
+        _assert_digest_matches(rs, CKM_SHA256, b"", hashlib.sha256(b"").digest())
 
     def test_sha256_large(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         _require_mechanisms(rs, "SHA256")
         data = b"X" * 100_000
-        assert digest_single(rs.raw, rs.sh, CKM_SHA256, data) == hashlib.sha256(data).digest()
+        _assert_digest_matches(rs, CKM_SHA256, data, hashlib.sha256(data).digest())
 
     def test_sha224(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         _require_mechanisms(rs, "SHA224")
         data = b"sha224 cross-verify"
-        assert digest_single(rs.raw, rs.sh, CKM_SHA224, data) == hashlib.sha224(data).digest()
+        _assert_digest_matches(rs, CKM_SHA224, data, hashlib.sha224(data).digest())
 
 
 class TestHMACCrossVerify:
