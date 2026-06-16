@@ -60,6 +60,7 @@ from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_ec_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
+    import_secret_key_negotiated,
     skip_unless_create_object_supported,
     skip_unless_mechanism,
     unwrap_key_for_mechanism_roundtrip,
@@ -136,9 +137,8 @@ class TestKeyImport:
         rs = p11_raw_session
         skip_unless_mechanism(rs, "AES_ECB")
         key_bytes = bytes(range(32))
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -283,9 +283,8 @@ class TestKeyWrapUnwrap:
             pytest.skip("CKM_AES_KEY_WRAP not supported")
         key_bytes = bytes(range(16))
         wrapping_key = _aes_keymgmt_key(rs, attrs={CKA_WRAP: True, CKA_UNWRAP: True})
-        target = import_secret_key(
-            rs.raw,
-            rs.sh,
+        target = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={

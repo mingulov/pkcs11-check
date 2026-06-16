@@ -24,7 +24,6 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
-    import_secret_key,
 )
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
@@ -34,6 +33,7 @@ from pkcs11_check.raw.types_std import (
     CKM,
 )
 from pkcs11_check.testcases._capability_claims import claim_refusal_passes
+from pkcs11_check.testcases.conftest import import_secret_key_negotiated
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     build_params_from_vector,
@@ -131,9 +131,8 @@ class TestMechEncryptKAT:
             key_bytes = bytes.fromhex(key_hex)
             if config.key_type is None:
                 continue
-            key = import_secret_key(
-                rs.raw,
-                rs.sh,
+            key = import_secret_key_negotiated(
+                rs,
                 CKK(int(config.key_type)),
                 key_bytes,
                 attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},

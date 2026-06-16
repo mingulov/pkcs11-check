@@ -24,7 +24,6 @@ from pkcs11_check.raw.recipes import (
     digest_single,
     encrypt_single,
     generate_random,
-    import_secret_key,
     read_attributes,
     sign_single,
     verify_single,
@@ -56,6 +55,7 @@ from pkcs11_check.testcases.conftest import (
     assert_correct,
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
+    import_secret_key_negotiated,
     is_known_error,
     skip_unless_mechanism,
     unwrap_key_for_mechanism_roundtrip,
@@ -172,9 +172,8 @@ class TestRoundTripInvariants:
             purpose="AES key-wrap metamorphic invariant",
         )
         key_bytes = bytes(range(16))
-        original = import_secret_key(
-            rs.raw,
-            rs.sh,
+        original = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={

@@ -60,6 +60,7 @@ from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_r
 from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
 from pkcs11_check.testcases.conftest import (
     gen_rsa_keypair_or_xfail,
+    import_secret_key_negotiated,
     is_known_error,
     xfail_if_known_ckr,
 )
@@ -84,9 +85,8 @@ def _import_aes_key_raw(rs: Any, key_bytes: bytes, *allowed_mechanisms: int) -> 
     }
     if allowed_mechanisms:
         attrs[CKA_ALLOWED_MECHANISMS] = [int(mech) for mech in allowed_mechanisms]
-    return import_secret_key(
-        rs.raw,
-        rs.sh,
+    return import_secret_key_negotiated(
+        rs,
         CKK_AES,
         key_bytes,
         attrs=attrs,

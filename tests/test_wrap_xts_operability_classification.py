@@ -140,7 +140,10 @@ def test_kw_unwrap_invalid_reject_on_live_mech_passes(monkeypatch: pytest.Monkey
 
 
 def test_xts_encrypt_wholly_non_operational_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The canonical operability probe still uses raw import_secret_key; the test
+    # body uses the negotiated variant. Stub both so whichever path runs is covered.
     monkeypatch.setattr(xts, "import_secret_key", lambda *a, **k: 7)
+    monkeypatch.setattr(xts, "import_secret_key_negotiated", lambda *a, **k: 7)
     monkeypatch.setattr(xts, "destroy_quietly", lambda *a, **k: None)
     monkeypatch.setattr(xts, "encrypt_single", _general_error)
 

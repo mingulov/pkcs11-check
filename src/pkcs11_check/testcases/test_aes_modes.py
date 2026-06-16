@@ -18,7 +18,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
     generate_random,
-    import_secret_key,
     read_attributes,
     sign_single,
     verify_single,
@@ -63,6 +62,7 @@ from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     assert_correct,
     classify_negative_rv,
+    import_secret_key_negotiated,
     is_known_error,
     require_operational_aes_keygen,
     unwrap_key_for_mechanism_roundtrip,
@@ -950,9 +950,8 @@ class TestAESKeyWrapPKCS7:
         import os
 
         key_bytes = os.urandom(24)  # 192-bit key
-        target = import_secret_key(
-            rs.raw,
-            rs.sh,
+        target = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -1031,9 +1030,8 @@ class TestAESKeyWrapPKCS7:
         import os
 
         key_bytes = os.urandom(16)
-        target = import_secret_key(
-            rs.raw,
-            rs.sh,
+        target = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={

@@ -2146,7 +2146,7 @@ def test_crossverify_aes_import_sets_allowed_mechanism(
         captured["attrs"] = attrs
         return 1
 
-    monkeypatch.setattr(test_crossverify, "import_secret_key", _capture_import)
+    monkeypatch.setattr(test_crossverify, "import_secret_key_negotiated", _capture_import)
 
     key = test_crossverify._import_aes_key_raw(rs, bytes(range(16)), test_crossverify.CKM_AES_ECB)
 
@@ -2601,7 +2601,7 @@ def test_kdf_hmac_as_kdf_xfail_when_advertised_hmac_sign_rejects_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(raw_recipes, "sign_single", _raise_general_error)
-    monkeypatch.setattr(test_kdf, "import_secret_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_kdf, "import_secret_key_negotiated", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_kdf, "destroy_quietly", lambda *_a, **_k: None)
     rs = _session_with_mechanisms("SHA256_HMAC")
 
@@ -2613,7 +2613,7 @@ def test_kdf_hmac_sha512_xfail_when_advertised_hmac_sign_rejects_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(raw_recipes, "sign_single", _raise_general_error)
-    monkeypatch.setattr(test_kdf, "import_secret_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_kdf, "import_secret_key_negotiated", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_kdf, "destroy_quietly", lambda *_a, **_k: None)
     rs = _session_with_mechanisms("SHA512_HMAC")
 
@@ -2630,7 +2630,7 @@ def test_kdf_hmac_as_kdf_skips_when_sha256_hmac_not_advertised(
         raise AssertionError("sign_single should not run when SHA256_HMAC is not advertised")
 
     monkeypatch.setattr(raw_recipes, "sign_single", _unexpected_sign)
-    monkeypatch.setattr(test_kdf, "import_secret_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_kdf, "import_secret_key_negotiated", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_kdf, "destroy_quietly", lambda *_a, **_k: None)
     rs = _session_with_mechanisms()  # SHA256_HMAC absent
 
@@ -2647,7 +2647,7 @@ def test_kdf_hmac_sha512_skips_when_sha512_hmac_not_advertised(
         raise AssertionError("sign_single should not run when SHA512_HMAC is not advertised")
 
     monkeypatch.setattr(raw_recipes, "sign_single", _unexpected_sign)
-    monkeypatch.setattr(test_kdf, "import_secret_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_kdf, "import_secret_key_negotiated", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_kdf, "destroy_quietly", lambda *_a, **_k: None)
     rs = _session_with_mechanisms()  # SHA512_HMAC absent
 
@@ -2665,7 +2665,7 @@ def test_kdf_hmac_as_kdf_wrong_mac_is_hard_fail(
         return b"\xff" * 32
 
     monkeypatch.setattr(raw_recipes, "sign_single", _sign_wrong_mac)
-    monkeypatch.setattr(test_kdf, "import_secret_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_kdf, "import_secret_key_negotiated", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_kdf, "destroy_quietly", lambda *_a, **_k: None)
     rs = _session_with_mechanisms("SHA256_HMAC")
 

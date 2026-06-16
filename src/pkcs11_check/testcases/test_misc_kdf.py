@@ -18,7 +18,6 @@ from pkcs11_check.raw.pack import mech_bytes, mech_string_data
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
-    import_secret_key,
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
@@ -47,7 +46,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import assert_correct, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    import_secret_key_negotiated,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -79,9 +82,8 @@ _DERIVE_ATTRS = {
 
 def _import_generic_secret(rs: Any, value: bytes) -> int:
     """Import ``value`` as a GENERIC_SECRET key with DERIVE=True."""
-    return import_secret_key(
-        rs.raw,
-        rs.sh,
+    return import_secret_key_negotiated(
+        rs,
         CKK_GENERIC_SECRET,
         value,
         attrs={

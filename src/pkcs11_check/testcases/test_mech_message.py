@@ -1099,7 +1099,7 @@ class TestMessageEncrypt:
             mech_gcm_message,
             mech_gcm_message_generated_iv,
         )
-        from pkcs11_check.raw.recipes import destroy_quietly, get_mechanism_info, import_secret_key
+        from pkcs11_check.raw.recipes import destroy_quietly, get_mechanism_info
         from pkcs11_check.raw.types_std import (
             CK_ULONG,
             CKA_DECRYPT,
@@ -1127,9 +1127,8 @@ class TestMessageEncrypt:
         )
 
         key_bytes = bytes(range(32))
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={CKA_TOKEN: False, CKA_ENCRYPT: True, CKA_DECRYPT: True},
@@ -1220,7 +1219,7 @@ class TestMessageEncrypt:
 
         from pkcs11_check.compliance import ComplianceLevel, note
         from pkcs11_check.raw.pack_mechanisms import mech_ccm, mech_ccm_message_generated_nonce
-        from pkcs11_check.raw.recipes import destroy_quietly, get_mechanism_info, import_secret_key
+        from pkcs11_check.raw.recipes import destroy_quietly, get_mechanism_info
         from pkcs11_check.raw.types_std import (
             CK_ULONG,
             CKA_DECRYPT,
@@ -1250,9 +1249,8 @@ class TestMessageEncrypt:
         key_bytes = bytes(range(16))
         plaintext = b"generated nonce through message API"
         aad = b"message-generated-ccm-aad"
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={CKA_TOKEN: False, CKA_ENCRYPT: True, CKA_DECRYPT: True},

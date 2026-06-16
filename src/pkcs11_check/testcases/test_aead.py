@@ -17,7 +17,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
     generate_random,
-    import_secret_key,
 )
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
@@ -28,6 +27,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
+    import_secret_key_negotiated,
     skip_if_mech_param_unsupported,
 )
 
@@ -36,9 +36,8 @@ pytestmark = pytest.mark.crossverify
 
 def _import_aes(rs: Any, key_bytes: bytes) -> int:
     """Import an AES key with encrypt/decrypt for the raw session."""
-    return import_secret_key(
-        rs.raw,
-        rs.sh,
+    return import_secret_key_negotiated(
+        rs,
         CKK_AES,
         key_bytes,
         attrs={

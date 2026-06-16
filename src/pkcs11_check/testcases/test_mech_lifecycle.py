@@ -35,7 +35,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     encrypt_single,
-    import_secret_key,
     pack_attrs,
     read_attributes,
     sign_single,
@@ -84,6 +83,7 @@ from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_ec_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
+    import_secret_key_negotiated,
     xfail_if_known_ckr,
 )
 
@@ -543,9 +543,8 @@ class TestExportReimportAES:
             ct = encrypt_single(rs.raw, rs.sh, key1, CKM_AES_ECB, plaintext)
 
             # Re-import the raw bytes
-            key2 = import_secret_key(
-                rs.raw,
-                rs.sh,
+            key2 = import_secret_key_negotiated(
+                rs,
                 CKK_AES,
                 key_bytes,
                 attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},

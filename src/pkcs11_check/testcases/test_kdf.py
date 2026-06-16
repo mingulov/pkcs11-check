@@ -20,7 +20,6 @@ from pkcs11_check.raw.pack import mech_ecdh, mech_hkdf
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
-    import_secret_key,
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
@@ -60,6 +59,7 @@ from pkcs11_check.testcases.conftest import (
     assert_correct,
     gen_ec_keypair_or_xfail,
     hmac_sign_or_xfail,
+    import_secret_key_negotiated,
     xfail_if_known_ckr,
 )
 
@@ -76,9 +76,8 @@ _DERIVE_ERROR_RVS = {
 
 def _import_generic_secret(rs: Any, value: bytes, derive: bool = True) -> int:
     """Import a GENERIC_SECRET key with DERIVE=True."""
-    return import_secret_key(
-        rs.raw,
-        rs.sh,
+    return import_secret_key_negotiated(
+        rs,
         CKK_GENERIC_SECRET,
         value,
         attrs={
@@ -109,9 +108,8 @@ class TestKeyDeriveSoftware:
         key_bytes = bytes(range(32))
         data = b"KDF input data for derivation"
 
-        p11_key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        p11_key = import_secret_key_negotiated(
+            rs,
             CKK_SHA256_HMAC,
             key_bytes,
             attrs={
@@ -139,9 +137,8 @@ class TestKeyDeriveSoftware:
         key_bytes = bytes(range(64))
         data = b"HMAC-SHA512 KDF test"
 
-        p11_key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        p11_key = import_secret_key_negotiated(
+            rs,
             CKK_SHA512_HMAC,
             key_bytes,
             attrs={

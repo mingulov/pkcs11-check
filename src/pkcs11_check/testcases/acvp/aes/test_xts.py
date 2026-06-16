@@ -33,7 +33,7 @@ from pkcs11_check.testcases._operability import (
     probe_operability,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
-from pkcs11_check.testcases.conftest import assert_correct
+from pkcs11_check.testcases.conftest import assert_correct, import_secret_key_negotiated
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 REQUIRED_MECHANISMS = ["AES_XTS"]
@@ -230,9 +230,8 @@ def test_acvp_aes_xts_encrypt(p11_module_session: Any, vec_id: str, vec: dict[st
     chunks = _xts_data_unit_chunks(vec["pt"], vec)
     key = 0
     try:
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES_XTS,
             vec["key"],
             attrs={
@@ -289,9 +288,8 @@ def test_acvp_aes_xts_decrypt(p11_module_session: Any, vec_id: str, vec: dict[st
     chunks = _xts_data_unit_chunks(vec["ct"], vec)
     key = 0
     try:
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES_XTS,
             vec["key"],
             attrs={

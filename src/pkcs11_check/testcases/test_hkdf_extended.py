@@ -19,7 +19,6 @@ from pkcs11_check.raw.pack import mech_hkdf, mech_simple
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
-    import_secret_key,
     read_attributes,
 )
 from pkcs11_check.raw.rv import expect_rv
@@ -53,7 +52,12 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import assert_correct, is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    import_secret_key_negotiated,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -111,9 +115,8 @@ def _gen_hkdf_key(rs: Any, key_type: int, bits: int = 256) -> int:
 def _create_base_key(rs: Any) -> int:
     """Create a GENERIC_SECRET key suitable for HKDF derivation."""
     ikm = bytes(range(32))
-    return import_secret_key(
-        rs.raw,
-        rs.sh,
+    return import_secret_key_negotiated(
+        rs,
         CKK_GENERIC_SECRET,
         ikm,
         attrs={

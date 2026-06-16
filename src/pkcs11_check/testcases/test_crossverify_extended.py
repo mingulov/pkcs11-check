@@ -22,7 +22,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
     gen_rsa_keypair,
-    import_secret_key,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
@@ -50,6 +49,7 @@ from pkcs11_check.testcases._rsa_export import (
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     assert_correct,
+    import_secret_key_negotiated,
     xfail_if_known_ckr,
 )
 
@@ -67,9 +67,8 @@ def _import_aes_key_raw(rs: Any, key_bytes: bytes, *allowed_mechanisms: int) -> 
     }
     if allowed_mechanisms:
         attrs[CKA_ALLOWED_MECHANISMS] = [int(mech) for mech in allowed_mechanisms]
-    return import_secret_key(
-        rs.raw,
-        rs.sh,
+    return import_secret_key_negotiated(
+        rs,
         CKK_AES,
         key_bytes,
         attrs=attrs,

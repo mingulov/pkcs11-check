@@ -61,7 +61,7 @@ def test_mechanism_kat_encrypt_general_error_is_xfail(
         ],
     )
     monkeypatch.setattr(mech_encrypt, "build_params_from_vector", lambda *_args: None)
-    monkeypatch.setattr(mech_encrypt, "import_secret_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(mech_encrypt, "import_secret_key_negotiated", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(mech_encrypt, "encrypt_single", _raise_general_error)
     monkeypatch.setattr(mech_encrypt, "destroy_quietly", lambda *_args: None)
 
@@ -99,7 +99,7 @@ def test_mechanism_kat_aead_encrypt_uses_tag_overhead_retry(
         ],
     )
     monkeypatch.setattr(mech_encrypt, "build_params_from_vector", lambda *_args: None)
-    monkeypatch.setattr(mech_encrypt, "import_secret_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(mech_encrypt, "import_secret_key_negotiated", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(mech_encrypt, "encrypt_single", _encrypt)
     monkeypatch.setattr(mech_encrypt, "destroy_quietly", lambda *_args: None)
 
