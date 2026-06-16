@@ -295,9 +295,16 @@ pytest outcome. See the design spec
 
 - The A/B/C/D self-contradiction classes are now the canonical machine field **`kind`**:
   `crypto`=A, `policy`=B, `lifecycle`=C, `metadata`=D.
-- The runtime **reason** vocabulary is the 9 reasons: `wrong_result`, `accepted_invalid`,
+- The runtime **reason** vocabulary is the 10 reasons: `wrong_result`, `accepted_invalid`,
   `self_contradiction`, `oracle`, `crash` (→ fail); `not_operational`, `nonspec_reject`,
-  `honest_deviation` (→ xfail); `sanctioned_refusal` (→ pass). (`unclassified` is a reserved
-  runtime-gate marker, never emitted by a test.)
+  `honest_deviation`, `undeclared_capability` (→ xfail); `sanctioned_refusal` (→ pass).
+  (`unclassified` is a reserved runtime-gate marker, never emitted by a test.)
+  - `undeclared_capability` (xfail, kind=metadata) — the module **performed** an operation /
+    key size / mechanism it did **not** advertise, in a benign direction (stronger-than-advertised
+    key size, or an unadvertised mechanism that is not in the known-weak set). The advertised
+    boundary is inaccurate metadata, but no weak crypto was accepted, so this is a recorded
+    deviation, not a `fail`. The security-relevant direction (below-min/weak, or a known-weak
+    unadvertised mechanism) is `self_contradiction` → `fail`. This is the over-advertised mirror
+    of `not_operational`.
 - **Severity** is derived centrally from `(reason, kind)` in `classification.derive_verdict` —
   the single source of truth, replacing per-site severity choices.

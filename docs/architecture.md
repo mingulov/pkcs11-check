@@ -212,7 +212,8 @@ fails. The existing `classify_*` / `assert_ckr` helpers now route through this s
 
 - **outcome** ∈ {`pass`, `xfail`, `fail`}
 - **reason** ∈ {`wrong_result`, `accepted_invalid`, `self_contradiction`, `oracle`, `crash` (→ fail);
-  `not_operational`, `nonspec_reject`, `honest_deviation` (→ xfail); `sanctioned_refusal` (→ pass)}
+  `not_operational`, `nonspec_reject`, `honest_deviation`, `undeclared_capability` (→ xfail);
+  `sanctioned_refusal` (→ pass)}
 - **kind** ∈ {`crypto`, `policy`, `lifecycle`, `metadata`} — the canonical machine field for the
   self-contradiction class
 - **severity** is *derived* from `(reason, kind)` in `classification.derive_verdict` — the single
