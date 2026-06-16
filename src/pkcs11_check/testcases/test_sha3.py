@@ -18,19 +18,19 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA3_512,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
 )
 from pkcs11_check.testcases.conftest import assert_correct, xfail_if_known_ckr
 
-# Clean codes meaning the advertised SHA-3 mechanism is not operational for
-# standalone C_Digest -> xfail (advertised-but-not-operational). CKR_ARGUMENTS_BAD
-# is excluded: an ARGUMENTS_BAD reject of an empty-message digest is a real
-# PROVIDER_BUG (empty digest is well-defined) and must stay a hard fail, as must a
-# wrong digest value (the assert_correct comparison).
+# Unambiguous "advertised SHA-3 mechanism is not operational for standalone
+# C_Digest" codes -> xfail (flag for investigation). NARROW on purpose:
+# - CKR_ARGUMENTS_BAD excluded: ARGUMENTS_BAD on an empty-message digest is a real
+#   PROVIDER_BUG (empty digest is well-defined) -> stays a hard fail.
+# - CKR_GENERAL_ERROR/CKR_DEVICE_ERROR excluded: catch-alls that may mask a real
+#   failure -> stay a hard fail to be investigated, not quietly downgraded.
+# A wrong digest value is independently caught by the assert_correct comparison.
 _DIGEST_OP_REJECT_RVS = (
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
 )
 
 

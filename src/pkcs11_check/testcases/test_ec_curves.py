@@ -27,23 +27,23 @@ from pkcs11_check.raw.types_std import (
     CKA_KEY_TYPE,
     CKK_EC,
     CKM_ECDSA,
-    CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
 )
 from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.crossverify
 
-# Clean codes meaning advertised ECDSA sign is not operational -> xfail
-# (advertised-but-not-operational). A WRONG signature is caught by the software
-# verify below and stays a hard fail (crypto break).
+# Unambiguous "advertised ECDSA sign is not operational" codes -> xfail (flag for
+# investigation). Deliberately NARROW: only FUNCTION_NOT_SUPPORTED (function/mech
+# absent) and FUNCTION_FAILED. CKR_GENERAL_ERROR / CKR_DEVICE_ERROR are NOT here --
+# they are catch-alls that may mask a real signing failure (kryoptic returns
+# DEVICE_ERROR on a crypto/OpenSSL failure), so they stay a hard FAIL to be
+# investigated rather than quietly downgraded. A WRONG signature is independently
+# caught by the software verify below (crypto break -> fail).
 _ECDSA_SIGN_REJECT_RVS = (
-    CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
 )
 
 _EC_CURVES = [
