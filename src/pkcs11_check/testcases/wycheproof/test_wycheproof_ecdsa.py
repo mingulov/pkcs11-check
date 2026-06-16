@@ -373,6 +373,12 @@ def test_ecdsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
             purpose=f"wycheproof ECDSA {curve} public key import",
         )
     except AssertionError as exc:
+        if is_known_error(exc, {CKR_FUNCTION_NOT_SUPPORTED}):
+            # No C_CreateObject at all (Cloud-KMS proxy / no-import provider,
+            # e.g. kmsp11): the KAT public key cannot be seeded. Capability
+            # absent -> skip, NOT xfail: the verify path is never exercised, so
+            # we cannot assert it is non-operational.
+            pytest.skip("Module does not implement C_CreateObject; cannot seed KAT key")
         if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):
             # Genuine capability absence: this specific curve is not supported
             # (CKR_CURVE_NOT_SUPPORTED / CKR_DOMAIN_PARAMS_INVALID). Skip stays.
