@@ -56,6 +56,7 @@ from pkcs11_check.testcases.conftest import (
     get_pin_bytes,
     is_known_error,
     require_operational_aes_keygen,
+    skip_if_data_objects_unsupported,
     skip_if_token_write_protected,
     xfail_if_known_ckr,
 )
@@ -128,6 +129,7 @@ class TestPrivateAttribute:
         label = f"pub-visible-{id(self)}"
 
         # Create a non-private data object (logged in)
+        skip_if_data_objects_unsupported(rs)
         obj_h = create_object(
             rs.raw,
             rs.sh,

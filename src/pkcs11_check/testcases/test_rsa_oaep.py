@@ -90,8 +90,13 @@ class TestRSAOAEPRoundtrip:
         plaintext = b"RSA-OAEP roundtrip"
         oaep = _oaep_sha1()
         try:
-            ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, plaintext, mech_param=oaep)
-            pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct, mech_param=oaep)
+            try:
+                ct = encrypt_single(
+                    rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, plaintext, mech_param=oaep
+                )
+                pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct, mech_param=oaep)
+            except AssertionError as exc:
+                _xfail_if_oaep_runtime_reject(exc, "RSA-OAEP SHA-1 roundtrip")
             assert_correct(
                 actual=pt,
                 expected=plaintext,
@@ -115,22 +120,25 @@ class TestRSAOAEPRoundtrip:
         plaintext = b"OAEP randomness"
         oaep = _oaep_sha1()
         try:
-            ct1 = encrypt_single(
-                rs.raw,
-                rs.sh,
-                pub,
-                CKM_RSA_PKCS_OAEP,
-                plaintext,
-                mech_param=oaep,
-            )
-            ct2 = encrypt_single(
-                rs.raw,
-                rs.sh,
-                pub,
-                CKM_RSA_PKCS_OAEP,
-                plaintext,
-                mech_param=oaep,
-            )
+            try:
+                ct1 = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_RSA_PKCS_OAEP,
+                    plaintext,
+                    mech_param=oaep,
+                )
+                ct2 = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_RSA_PKCS_OAEP,
+                    plaintext,
+                    mech_param=oaep,
+                )
+            except AssertionError as exc:
+                _xfail_if_oaep_runtime_reject(exc, "RSA-OAEP SHA-1 randomized")
             if ct1 == ct2:
                 classify(
                     "wrong_result",
@@ -170,8 +178,11 @@ class TestRSAOAEPRoundtrip:
         )
         oaep = _oaep_sha1()
         try:
-            ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, b"", mech_param=oaep)
-            pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct, mech_param=oaep)
+            try:
+                ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, b"", mech_param=oaep)
+                pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct, mech_param=oaep)
+            except AssertionError as exc:
+                _xfail_if_oaep_runtime_reject(exc, "RSA-OAEP SHA-1 empty-plaintext")
             assert_correct(
                 actual=pt,
                 expected=b"",
@@ -198,15 +209,18 @@ class TestRSAOAEPRoundtrip:
         plaintext = b"\xab" * 190  # Safe under 214-byte limit
         oaep = _oaep_sha1()
         try:
-            ct = encrypt_single(
-                rs.raw,
-                rs.sh,
-                pub,
-                CKM_RSA_PKCS_OAEP,
-                plaintext,
-                mech_param=oaep,
-            )
-            pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct, mech_param=oaep)
+            try:
+                ct = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_RSA_PKCS_OAEP,
+                    plaintext,
+                    mech_param=oaep,
+                )
+                pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct, mech_param=oaep)
+            except AssertionError as exc:
+                _xfail_if_oaep_runtime_reject(exc, "RSA-OAEP SHA-1 max-plaintext")
             assert_correct(
                 actual=pt,
                 expected=plaintext,
@@ -229,16 +243,19 @@ class TestRSAOAEPRoundtrip:
         )
         oaep = _oaep_sha1()
         try:
-            for pt_len in [1, 16, 100, 190]:
-                ct = encrypt_single(
-                    rs.raw,
-                    rs.sh,
-                    pub,
-                    CKM_RSA_PKCS_OAEP,
-                    b"\x00" * pt_len,
-                    mech_param=oaep,
-                )
-                assert len(ct) == 256
+            try:
+                for pt_len in [1, 16, 100, 190]:
+                    ct = encrypt_single(
+                        rs.raw,
+                        rs.sh,
+                        pub,
+                        CKM_RSA_PKCS_OAEP,
+                        b"\x00" * pt_len,
+                        mech_param=oaep,
+                    )
+                    assert len(ct) == 256
+            except AssertionError as exc:
+                _xfail_if_oaep_runtime_reject(exc, "RSA-OAEP SHA-1 ciphertext-size")
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

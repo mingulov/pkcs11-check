@@ -23,7 +23,6 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     gen_ec_keypair,
     gen_rsa_keypair,
-    import_secret_key,
     read_attributes,
     sign_single,
 )
@@ -55,7 +54,11 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_reject
 from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
 from pkcs11_check.testcases._signature_policy import xfail_if_op_not_operational
-from pkcs11_check.testcases.conftest import assert_correct, extract_ec_point
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    extract_ec_point,
+    import_secret_key_negotiated,
+)
 
 pytestmark = pytest.mark.interop
 
@@ -267,9 +270,8 @@ class TestAESInterop:
         key_bytes = bytes(range(32))
         plaintext = b"AES interop test"  # 16 bytes
 
-        key_h = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key_h = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -314,9 +316,8 @@ class TestAESInterop:
         enc = cipher.encryptor()
         ct = enc.update(plaintext) + enc.finalize()
 
-        key_h = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key_h = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -352,9 +353,8 @@ class TestAESInterop:
         plaintext = b"GCM interop test data!!"
         nonce = b"\x00" * 12
 
-        key_h = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key_h = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -403,9 +403,8 @@ class TestHMACInterop:
         data = b"HMAC interop test data"
 
         # PKCS#11
-        key_h = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key_h = import_secret_key_negotiated(
+            rs,
             CKK_GENERIC_SECRET,
             key_bytes,
             attrs={
@@ -445,9 +444,8 @@ class TestHMACInterop:
         key_bytes = b"secret key for hmac!!"  # >= 20 bytes for SHA-1 HMAC
         data = b"message to authenticate"
 
-        key_h = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key_h = import_secret_key_negotiated(
+            rs,
             CKK_GENERIC_SECRET,
             key_bytes,
             attrs={

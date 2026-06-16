@@ -274,7 +274,9 @@ def test_generic_secret_hmac_runtime_general_error_is_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(raw_recipes, "sign_single", _raise_general_error)
-    monkeypatch.setattr(test_generic_secret, "create_object", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(
+        test_generic_secret, "create_object_negotiated", lambda *_args, **_kwargs: 1
+    )
     monkeypatch.setattr(test_generic_secret, "destroy_quietly", lambda *_args: None)
     rs = _session_with_mechanisms("SHA256_HMAC")
 
@@ -935,7 +937,7 @@ def test_legacy_ro_session_extra_session_capacity_reject_is_skip(
         "_raw_open_session" if hasattr(test_ro_session, "_raw_open_session") else "raw_open_session"
     )
     monkeypatch.setattr(test_ro_session, open_attr, _open_session_limit)
-    rs = SimpleNamespace(raw=object(), slot_id=1)
+    rs = SimpleNamespace(raw=object(), slot_id=1, has_mechanism=lambda _name: True)
 
     with pytest.raises(pytest.skip.Exception, match="additional session"):
         test_ro_session.TestROSessionOperations().test_digest_in_ro_session(
@@ -1799,7 +1801,7 @@ def test_key_gen_mechanism_malformed_ulong_is_xfail(
 
     monkeypatch.setattr(
         test_attribute_enforcement,
-        "import_secret_key",
+        "import_secret_key_negotiated",
         lambda *_args, **_kwargs: 1,
     )
     monkeypatch.setattr(
@@ -1927,7 +1929,7 @@ def test_attribute_enforcement_always_auth_malformed_bool_is_xfail(
 
     monkeypatch.setattr(
         test_attribute_enforcement,
-        "gen_rsa_keypair",
+        "gen_rsa_keypair_or_xfail",
         lambda *_args, **_kwargs: (1, 2),
     )
     monkeypatch.setattr(

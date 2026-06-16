@@ -18,7 +18,6 @@ from pkcs11_check.raw.pack import attr_bytes, attr_ulong, mech_pss, mech_simple,
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_aes_key,
-    gen_ec_keypair,
     read_attributes,
     sign_single,
     verify_single,
@@ -62,6 +61,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import (
+    gen_ec_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
     skip_unless_mechanism,
     xfail_if_known_ckr,
@@ -267,7 +267,7 @@ class TestECDSASignature:
         if not rs.has_mechanism("ECDSA"):
             pytest.skip("CKM_ECDSA not supported")
         curve_oid = encode_named_curve_parameters("secp256r1")
-        pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
+        pub, priv = gen_ec_keypair_or_xfail(rs, curve_oid)
         try:
             assert pub != 0
             assert priv != 0
@@ -281,10 +281,17 @@ class TestECDSASignature:
         if not rs.has_mechanism("ECDSA"):
             pytest.skip("CKM_ECDSA not supported")
         curve_oid = encode_named_curve_parameters("secp256r1")
-        pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
+        pub, priv = gen_ec_keypair_or_xfail(rs, curve_oid)
         try:
             digest = hashlib.sha256(b"ECDSA test data").digest()
-            sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
+            try:
+                sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _SIGN_OPERATION_REJECT_RVS,
+                    "ECDSA advertised but sign is not operational",
+                )
             assert len(sig) > 0
             assert verify_single(rs.raw, rs.sh, pub, CKM_ECDSA, digest, sig) is True
         finally:
@@ -297,11 +304,18 @@ class TestECDSASignature:
         if not rs.has_mechanism("ECDSA"):
             pytest.skip("CKM_ECDSA not supported")
         curve_oid = encode_named_curve_parameters("secp256r1")
-        pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
+        pub, priv = gen_ec_keypair_or_xfail(rs, curve_oid)
         try:
             digest = hashlib.sha256(b"original").digest()
             wrong_digest = hashlib.sha256(b"tampered").digest()
-            sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
+            try:
+                sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _SIGN_OPERATION_REJECT_RVS,
+                    "ECDSA advertised but sign is not operational",
+                )
             _assert_invalid_signature_rejected(
                 lambda: verify_single(rs.raw, rs.sh, pub, CKM_ECDSA, wrong_digest, sig),
                 "ECDSA wrong-digest verification",
@@ -317,7 +331,7 @@ class TestECDSASignature:
         if not rs.has_mechanism("ECDSA"):
             pytest.skip("CKM_ECDSA not supported")
         curve_oid = encode_named_curve_parameters(curve)
-        pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
+        pub, priv = gen_ec_keypair_or_xfail(rs, curve_oid)
         try:
             digest = hashlib.sha256(b"multi-curve test").digest()
             sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
@@ -332,7 +346,7 @@ class TestECDSASignature:
         if not rs.has_mechanism("ECDSA"):
             pytest.skip("CKM_ECDSA not supported")
         curve_oid = encode_named_curve_parameters("secp256r1")
-        pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
+        pub, priv = gen_ec_keypair_or_xfail(rs, curve_oid)
         try:
             digest = hashlib.sha256(b"nonce test").digest()
             sig1 = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)

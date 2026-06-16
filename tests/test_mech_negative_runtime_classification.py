@@ -31,7 +31,7 @@ def test_negative_aes_setup_runtime_reject_is_xfail() -> None:
 
     with pytest.raises(
         pytest.xfail.Exception,
-        match="AES_KEY_GEN advertised but AES-256 key generation",
+        match="AES_KEY_GEN advertised but 256-bit key generation",
     ):
         test_mech_negative.TestWrongKeyType().test_rsa_pkcs_with_aes_key_rejected(
             cast(RawSession, rs)

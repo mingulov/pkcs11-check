@@ -528,7 +528,7 @@ class TestROCAFingerprint:
     def test_rsa_modulus_not_roca(self, p11_raw_session: Any) -> None:
         """Generated RSA-2048 modulus should not have ROCA fingerprint."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = _gen_cve_rsa_keypair_or_xfail(rs, 2048)
         try:
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS])
             modulus = attrs[CKA_MODULUS]
@@ -695,7 +695,7 @@ class TestBoundaryLengthCrypto:
     def test_rsa_encrypt_boundary(self, p11_raw_session: Any) -> None:
         """RSA-PKCS encrypt with empty and max-length data."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = _gen_cve_rsa_keypair_or_xfail(rs, 2048)
         try:
             # Empty data - some modules reject
             try:

@@ -78,6 +78,9 @@ class TestResourceExhaustion:
         Tracked in docs/module-issues.md under NSS.
         """
         rs = p11_raw_session
+        from pkcs11_check.testcases.conftest import skip_unless_generate_random_supported
+
+        skip_unless_generate_random_supported(rs)
         try:
             data = generate_random(rs.raw, rs.sh, 1024 * 1024)
             assert len(data) == 1024 * 1024
