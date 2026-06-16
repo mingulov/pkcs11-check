@@ -10,9 +10,12 @@ from __future__ import annotations
 import functools
 import itertools
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if TYPE_CHECKING:
+    from pkcs11_check.raw.recipes import RSAUsage
 
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
@@ -206,9 +209,7 @@ def skip_if_data_objects_unsupported(rs: Any) -> None:
         )
     except CkrAssertionError as exc:
         if exc.rv in CKO_DATA_NOT_SUPPORTED_RVS:
-            pytest.skip(
-                f"Module does not support CKO_DATA storage: {ckr_name(exc.rv)}"
-            )
+            pytest.skip(f"Module does not support CKO_DATA storage: {ckr_name(exc.rv)}")
         raise
     finally:
         if handle:
@@ -761,20 +762,34 @@ def import_ec_private_key_negotiated(
 def gen_rsa_keypair_or_xfail(
     rs: Any,
     bits: int = 2048,
+    *,
+    usage: RSAUsage | None = None,
     public_attrs: Mapping[Any, Any] | None = None,
     private_attrs: Mapping[Any, Any] | None = None,
 ) -> tuple[int, int]:
-    """Generate an RSA keypair, xfail-ing explicit setup rejection CKRs."""
+    """Generate an RSA keypair, xfail-ing explicit setup rejection CKRs.
+
+    ``usage`` declares the key's purpose (default: multi-purpose sign+decrypt).
+    Pass ``RSAUsage.SIGN`` / ``RSAUsage.DECRYPT`` so single-purpose providers
+    (Cloud-KMS-class) generate a usable key and the test actually runs, instead
+    of the multi-purpose template being rejected and the whole test xfailing.
+    A provider that genuinely cannot satisfy the requested single purpose still
+    routes to xfail via KEYPAIR_RUNTIME_REJECT_RVS (provider-general).
+    """
     if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
         pytest.skip("RSA_PKCS_KEY_PAIR_GEN not supported by module")
 
-    from pkcs11_check.raw.recipes import gen_rsa_keypair
+    from pkcs11_check.raw.recipes import RSAUsage, gen_rsa_keypair
+
+    if usage is None:
+        usage = RSAUsage.SIGN | RSAUsage.DECRYPT
 
     try:
         return gen_rsa_keypair(
             rs.raw,
             rs.sh,
             bits,
+            usage=usage,
             public_attrs=public_attrs,
             private_attrs=private_attrs,
         )

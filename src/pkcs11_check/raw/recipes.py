@@ -10,6 +10,7 @@ import ctypes
 import sys
 from collections.abc import Callable, Mapping
 from ctypes import byref
+from enum import Flag, auto
 from typing import Any
 
 from .api import RawPKCS11
@@ -424,20 +425,56 @@ def gen_keypair(
     return pub_handle.value, priv_handle.value
 
 
+class RSAUsage(Flag):
+    """Declared purpose of an RSA key pair, mapped to capability attributes.
+
+    Purpose is a *crypto-visible* attribute: it changes what the key is and
+    which operation may use it, so it must be declared explicitly by the caller
+    rather than inferred or silently negotiated. Single-purpose providers
+    (Cloud-KMS-class, e.g. kmsp11) back keys that are sign-only XOR decrypt-only
+    and reject the multi-purpose combination with CKR_TEMPLATE_INCONSISTENT;
+    pass ``RSAUsage.SIGN`` or ``RSAUsage.DECRYPT`` to target them.
+    """
+
+    SIGN = auto()  # private CKA_SIGN / public CKA_VERIFY
+    DECRYPT = auto()  # private CKA_DECRYPT / public CKA_ENCRYPT
+
+
+def rsa_usage_attrs(usage: RSAUsage) -> tuple[dict[CKA, Any], dict[CKA, Any]]:
+    """Map an RSAUsage to ``(public_attrs, private_attrs)`` capability flags."""
+    pub: dict[CKA, Any] = {}
+    priv: dict[CKA, Any] = {}
+    if RSAUsage.SIGN in usage:
+        priv[CKA_SIGN] = True
+        pub[CKA_VERIFY] = True
+    if RSAUsage.DECRYPT in usage:
+        priv[CKA_DECRYPT] = True
+        pub[CKA_ENCRYPT] = True
+    return pub, priv
+
+
 def gen_rsa_keypair(
     raw: RawPKCS11,
     session: int,
     bits: int = 2048,
+    *,
+    usage: RSAUsage = RSAUsage.SIGN | RSAUsage.DECRYPT,
     public_attrs: Mapping[Any, Any] | None = None,
     private_attrs: Mapping[Any, Any] | None = None,
 ) -> tuple[int, int]:
-    """Generate an RSA key pair. Returns (pub_handle, priv_handle)."""
+    """Generate an RSA key pair. Returns (pub_handle, priv_handle).
+
+    ``usage`` declares the key's purpose (default: multi-purpose sign+decrypt,
+    preserving legacy behaviour). Pass ``RSAUsage.SIGN`` / ``RSAUsage.DECRYPT``
+    for a single-purpose key on Cloud-KMS-class providers. ``public_attrs`` /
+    ``private_attrs`` remain an explicit per-attribute override (escape hatch).
+    """
+    pub_caps, priv_caps = rsa_usage_attrs(usage)
     _pub_defaults: dict[CKA, Any] = {
-        CKA_VERIFY: True,
-        CKA_ENCRYPT: True,
+        **pub_caps,
         CKA_PUBLIC_EXPONENT: b"\x01\x00\x01",  # 65537, required by NSS
     }
-    _priv_defaults: dict[CKA, Any] = {CKA_SIGN: True, CKA_DECRYPT: True}
+    _priv_defaults: dict[CKA, Any] = {**priv_caps}
     if public_attrs:
         _pub_defaults.update(public_attrs)
     if private_attrs:
