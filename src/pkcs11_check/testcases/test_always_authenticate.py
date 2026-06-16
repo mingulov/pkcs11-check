@@ -38,6 +38,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKM_SHA256_RSA_PKCS,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
@@ -55,11 +56,12 @@ pytestmark = [pytest.mark.access]
 # at keygen" — skip gracefully rather than failing.
 _KEYGEN_ATTR_SKIP_RVS: frozenset[int] = frozenset(
     {
-        int(CKR_TEMPLATE_INCONSISTENT),
-        int(CKR_ATTRIBUTE_TYPE_INVALID),
-        int(CKR_ATTRIBUTE_VALUE_INVALID),
-        int(CKR_FUNCTION_NOT_SUPPORTED),
-        int(CKR_ARGUMENTS_BAD),
+        CKR_TEMPLATE_INCONSISTENT,
+        CKR_ATTRIBUTE_TYPE_INVALID,
+        CKR_ATTRIBUTE_VALUE_INVALID,
+        CKR_ATTRIBUTE_READ_ONLY,
+        CKR_FUNCTION_NOT_SUPPORTED,
+        CKR_ARGUMENTS_BAD,
     }
 )
 

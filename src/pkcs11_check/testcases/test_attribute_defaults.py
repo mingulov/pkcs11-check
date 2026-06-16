@@ -39,7 +39,11 @@ from pkcs11_check.raw.types_std import (
     CKO_DATA,
 )
 from pkcs11_check.testcases._attribute_values import require_bool_attr
-from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
+    skip_if_data_objects_unsupported,
+)
 
 pytestmark = [pytest.mark.object]
 
@@ -334,6 +338,7 @@ class TestDataObjectDefaults:
     def data_obj(self, p11_raw_session: Any) -> Any:
         """Create a CKO_DATA object with minimal template."""
         rs = p11_raw_session
+        skip_if_data_objects_unsupported(rs)
         h = create_object(
             rs.raw,
             rs.sh,
