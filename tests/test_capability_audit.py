@@ -27,4 +27,13 @@ def test_counts_in_range_contradictions() -> None:
 def test_render_section_mentions_contradictions() -> None:
     md = render_capability_section(capability_audit([_group("not_operational", 4, "IN_RANGE")]))
     assert "capability audit" in md.lower()
-    assert "4" in md
+    assert "**4**" in md
+    assert "claimed" in md.lower()
+
+
+def test_empty_groups_render_cleanly() -> None:
+    audit = capability_audit([])
+    assert audit == {"not_operational_total": 0, "claimed_refused": 0}
+    md = render_capability_section(audit)
+    assert "capability audit" in md.lower()
+    assert "**0**" in md

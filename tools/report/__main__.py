@@ -131,6 +131,8 @@ def _write_provider(
     pass_count: int | None = None,
 ) -> None:
     md = render_provider(provider, groups, pass_count=pass_count)
+    # render_provider ends with a single trailing newline; the "\n" join yields
+    # one blank line before the appended "## capability audit" heading.
     md = md + "\n" + render_capability_section(capability_audit(groups))
     (out_dir / f"{provider}.md").write_text(md)
     with (out_dir / f"{provider}.jsonl").open("w") as fh:
