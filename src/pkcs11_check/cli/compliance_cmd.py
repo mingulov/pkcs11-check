@@ -89,6 +89,11 @@ def _print_summary(report: dict[str, object]) -> None:
         style_map = {
             "PASS": "green",
             "FAIL": "red",
+            "ERROR": "red",
+            "CRASHED": "red",
+            "TIMEOUT": "red",
+            "XFAIL": "yellow",
+            "XPASS": "yellow",
             "SKIP": "yellow",
             "NOT_TESTED": "dim",
         }

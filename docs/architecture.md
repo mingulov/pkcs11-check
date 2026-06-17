@@ -63,14 +63,17 @@ Fuzz: Hypothesis property tests, attribute template fuzzer
 See [test-universe.md](test-universe.md) for the current collected product-test
 counts by group and the AES-CTS single-provider maximum.
 
-## Docker test matrix (14 targets)
+## Docker test matrix
 
 - `test-softhsm2` / `test-softhsm2-generated-iv` / `test-softhsm2-main` — SoftHSM2 2.7.0 / generated-IV simulator / main
-- `test-kryoptic` / `test-kryoptic-main` / `test-kryoptic-fips` — Kryoptic v1.5.0 / main / FIPS
+- `test-kryoptic` / `test-kryoptic-main` / `test-kryoptic-fips` — Kryoptic v1.5.1 / main / FIPS
 - `test-nss` / `test-nss-pqc` / `test-nss-main` — Fedora NSS packages / NSS official source tags / NSS source tip
 - `test-opencryptoki` / `test-opencryptoki-master` — OpenCryptoki 3.27.0 / master
+- `test-wolfpkcs11` / `test-wolfpkcs11-master` — wolfPKCS11 v2.0.0-stable / master with PKCS#11 v3.2 ML-DSA/ML-KEM enabled
+- `test-corepkcs11` — corePKCS11 v3.6.4 MbedTLS software mock with a test adapter
+- `test-optee-pkcs11` — OP-TEE 4.10.0 `qemu_v8` heavy/manual target running in guest Linux against `libckteec.so`
 - `test-tpm2` — source-built tpm2-pkcs11 1.10.0 + swtpm
-- `test-bouncyhsm` — BouncyHSM 2.1.0
+- `test-bouncyhsm` — BouncyHSM 2.1.1
 - `test-pkcs11-mock` — pkcs11-mock v2.0.0 stub
 
 ## Key design decisions
@@ -79,7 +82,7 @@ counts by group and the AES-CTS single-provider maximum.
 - `pkcs11-check test` defaults to `--isolation auto`; explicit `--isolation none` is the unsafe fast path
 - **Provider/proxy-restart recovery (bounded wait-and-reconnect):** when a *proxied* provider crashes and pkcs11-proxy-ng restarts it, the surviving client module returns a connection-lost CK_RV for the whole restart window (`CKR_CRYPTOKI_NOT_INITIALIZED`, a stale `CKR_SESSION_HANDLE_INVALID` / `CKR_SESSION_CLOSED`, or a transport `CKR_DEVICE_ERROR` / `CKR_DEVICE_REMOVED`) — or a transport `OSError`. A restart is **not instantaneous**, so the session fixtures (`fixtures._open_or_reinit`, used by `p11_session`/`p11_raw_session` bootstrap and the `p11_module_session` health-check reopen) bridge it with a **bounded wait-and-reconnect loop**: reconnect (`C_Finalize` + `C_Initialize`), re-open + re-login, capped exponential backoff between attempts, until the provider returns or a time **and** attempt budget is exhausted (`_RECONNECT_*` constants in `fixtures.py` — no CLI/env knob by design). It is applied **only at the fixture open/login layer**, never inside a test-body assertion path, because those same codes are legitimate negative-test outcomes (e.g. kryoptic returns `CKR_DEVICE_ERROR` for a rejected signature — see [module-issues.md](module-issues.md)). The crash-triggering test still records its own real result; recovery only un-cascades *subsequent* tests, and every reconnect is surfaced (`UserWarning` + `reinit_count` → report.jsonl). The loop is bounded so a genuinely dead provider fails as a finding, never hangs. For a directly-loaded module a provider crash is a real SIGSEGV handled by `--isolation auto` instead (see CLAUDE.md execution model). Regression: `tests/test_reinit_recovery.py` (fakes) + `testcases/test_reinitialize.py::test_harness_recovers_lost_init_at_bootstrap` (real module).
 - `p11_session` fixture does explicit `login()` / `logout()` per test to avoid `UserAlreadyLoggedIn` cascading
-- Tests auto-skip when interface version doesn't support them (@pytest.mark.requires_v30)
+- Tests auto-skip on absent capability: `@pytest.mark.needs_function("C_X")` skips when the module lacks a v3.x function (`C_EncapsulateKey`, `C_*Message*`, `C_LoginUser`, `C_SessionCancel`, ...); in-test `rs.has_mechanism(...)` skips when a mechanism is absent. Interface version is reporting-only — see [docs/capability-gating-design-2026-06-09.md](capability-gating-design-2026-06-09.md).
 - Mechanism availability checked at runtime via `rs.has_mechanism(name)` on `RawSession`
 - PQC tests always provide `CKA_PARAMETER_SET` (ML-KEM-768, ML-DSA-65, SLH-DSA-SHA2-128s defaults)
 - PIN tests marked `@destructive` to prevent token lockout (OpenCryptoki, TPM)
@@ -110,6 +113,9 @@ class TestExample:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 ```
+
+> When the AES key is a **fixture** (not the test's subject), prefer
+> `gen_aes_key_or_xfail(rs, 256)` over the raw recipe — see "Classification & setup helpers" below.
 
 ### Key fixtures
 
@@ -144,6 +150,103 @@ Compliance notes for above-spec behavior:
 from pkcs11_check.compliance import ComplianceLevel, note
 note("Module does X above spec Y", ComplianceLevel.VENDOR)
 ```
+
+### Classification & advertised-but-not-operational helpers
+
+The classification model (CLAUDE.md "Test-outcome classification model"; full rules in
+[classification-model-design.md](classification-model-design.md)) is enforced through shared
+helpers — **use these instead of hand-rolling per-CKR allowlists or bare `pytest.skip`/`xfail`**:
+
+- **Setup keys via the `_or_xfail` helpers, not the raw recipes** (`testcases/conftest.py`):
+  `gen_aes_key_or_xfail(rs, bits, *, attrs=None, sh=None)`,
+  `gen_rsa_keypair_or_xfail`, `gen_ec_keypair_or_xfail`, `hmac_sign_or_xfail`. Each prechecks
+  `has_mechanism` (→ `skip` when the mechanism is genuinely absent) and, when the mechanism is
+  advertised but `C_GenerateKey`/the op cleanly refuses, `xfail`s "advertised but not operational"
+  instead of hard-failing. Raw `gen_aes_key`/`gen_rsa_keypair` (from `raw.recipes`) are only for
+  sites whose subject *is* keygen (e.g. `test_mech_keygen`, key-size-range tests).
+- **Claim layer for `test_mech_*` op refusals:** `claim_refusal_passes(exc, rs, *, probe_key)`
+  (`testcases/_capability_claims.py`) — a clean op refusal classifies as pass+note for the
+  spec-sanctioned `CKR_OPERATION_NOT_VALIDATED`, else `xfail` via `not_operational_reason`; non-CKR
+  propagates. No per-CKR allowlists.
+- **Operability probes** (`testcases/_operability.py`): `probe_operability(key, fn)` caches a
+  canonical KAT verdict per (mechanism, direction) — `OPERATIONAL` / `NOT_OPERATIONAL` /
+  `INCONCLUSIVE` (staging failed) / `WRONG_OUTPUT`. `classify_kat_clean_error(...)` and
+  `xfail_vacuous_reject(result, *, label)` (a negative-vector "rejection" on a NOT_OPERATIONAL
+  mechanism never evaluated its input → xfail, not pass) consume it. `not_operational_reason`
+  gives the shared wording so KAT-vector xfails group with the per-(mech,op) claim signal.
+- **Negative-op classification** (`testcases/conftest.py` / `ckr/_ckr_spec.py`):
+  `reject_or_classify(exc, expected_rvs, *, label)` / `classify_negative_rv(...)` (rejection with
+  the expected spec CKR = pass, some other clean code = xfail, accepted-invalid = fail);
+  `assert_ckr()` (3-way) for table-driven sites; `classify_policy_enforcement` (policy) /
+  `classify_lifecycle_effect` (lifecycle) for self-contradiction checks.
+
+**Import-skip rule:** a *negotiated* import that fails for all storage shapes on a module that
+*advertises* the mechanism is "advertised but not operational" → `xfail`, never `skip`. Use the
+`import_*_negotiated` helpers (`testcases/conftest.py`); skip is only for genuinely-absent
+capability. See [findings/import-skip-audit.md](findings/import-skip-audit.md).
+
+## At-source test-outcome classification
+
+Tests emit a structured *classification* at the decision point — the moment a test decides what the
+module did — instead of flattening the verdict into a free-text `pytest.fail`/`pytest.xfail` string.
+Design spec: [superpowers/specs/2026-06-13-at-source-classification-design.md](superpowers/specs/2026-06-13-at-source-classification-design.md);
+plan: [superpowers/plans/2026-06-13-at-source-classification.md](superpowers/plans/2026-06-13-at-source-classification.md).
+
+### Emission API (`pkcs11_check.classification`)
+
+```python
+from pkcs11_check import classification as C
+C.classify(reason, *, kind=…, label, operation, mechanism, expected, actual,
+           spec_ref, source, vector_id, summary, detail)
+```
+
+`classify()` builds the `Classification` record, stores it in the per-test collector, and **then
+raises the implied pytest outcome** (`pytest.fail` for a fail reason, `pytest.xfail` for an xfail
+reason; a pass reason returns normally). Thin typed wrappers `fail_as(reason, **kw)` and
+`xfail_as(reason, **kw)` (both `-> NoReturn`) guard that the reason matches the intended outcome.
+KAT output equality is checked with `assert_correct(*, actual, expected, label, …)`
+(`testcases/conftest.py`): equal values pass; a mismatch emits a `wrong_result`/`crypto` record and
+fails. The existing `classify_*` / `assert_ckr` helpers now route through this same machinery.
+
+### The model
+
+- **outcome** ∈ {`pass`, `xfail`, `fail`}
+- **reason** ∈ {`wrong_result`, `accepted_invalid`, `self_contradiction`, `oracle`, `crash` (→ fail);
+  `not_operational`, `nonspec_reject`, `honest_deviation`, `undeclared_capability` (→ xfail);
+  `sanctioned_refusal` (→ pass)}
+- **kind** ∈ {`crypto`, `policy`, `lifecycle`, `metadata`} — the canonical machine field for the
+  self-contradiction class
+- **severity** is *derived* from `(reason, kind)` in `classification.derive_verdict` — the single
+  source of truth for the outcome/severity table (no per-site severity literals)
+
+### Transport to `report.jsonl`
+
+Each emission rides to `report.jsonl` on the pytest `user_properties` key `pkcs11_classification`
+(the same mechanism used by compliance notes and rv-trace). `plugin.py`
+(`_attach_classification_to_report`) attaches the serialized records to the call-phase report and
+clears the collector on teardown. **Crashes** are converted runner-side via
+`core/file_runner.crash_classification` because the crashed process is dead and cannot self-emit.
+Spec references come from the central `pkcs11_check.spec_refs.lookup` table (OASIS PKCS#11 v3.2;
+precise sections only when confirmed against the local mirror, otherwise a truthful coarse form —
+never fabricated).
+
+### Gates
+
+- **Static gate** ([../tests/test_no_raw_xfail_fail.py](../tests/test_no_raw_xfail_fail.py)) forbids
+  raw `pytest.xfail(`/`pytest.fail(` under `testcases/` (outside the sanctioned `conftest.py` /
+  `_ckr_spec.py`), forbids any test emitting the reserved `unclassified` reason, and asserts the
+  migration allowlist is now empty — so the gate is fully hard.
+- **Runtime gate** (plugin): any testcase that ends as fail/xfail without an emitted record gets a
+  synthetic `reason="unclassified"` record auto-injected, so coverage is always 100% and the
+  remaining bare-assert tail shows up as a visible backlog rather than silently uncovered.
+
+### Report generator (`tools/report/`)
+
+Rolls the records up into per-provider reports: `<provider>.md` (compact, severity-first, grouped by
+`kind`) + `<provider>.jsonl` (one enriched group per line); with more than one
+provider it also writes `_index.md` (counts table + top themes) and `_universal.md` (cross-provider
+correlation). See [../tools/report/README.md](../tools/report/README.md) and
+[commands.md](commands.md) for invocation.
 
 ## PKCS#11 Specification
 

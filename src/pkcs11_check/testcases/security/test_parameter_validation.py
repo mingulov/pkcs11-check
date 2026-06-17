@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
@@ -32,6 +33,7 @@ from pkcs11_check.raw.recipes import (
     import_secret_key,
     read_attributes,
     sign_single,
+    verify_single,
 )
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
@@ -79,7 +81,12 @@ from pkcs11_check.testcases._subprocess_preamble import (
     run_with_coverage,
     subprocess_session_preamble,
 )
-from pkcs11_check.testcases.conftest import is_known_error, reject_or_classify
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    is_known_error,
+    reject_or_classify,
+    xfail_if_known_ckr,
+)
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess_per_test]
@@ -141,7 +148,7 @@ class TestGcmTagSize:
             pt = b"A" * 32
             mech = mech_gcm(CKM_AES_GCM, iv, tag_bits=tag_bits)
             overhead = tag_bits // 8 if tag_bits > 0 else 0
-            # Type-A crypto-correctness: a sub-96-bit tag forges authentication;
+            # crypto-correctness: a sub-96-bit tag forges authentication;
             # accepting it is a break (fail), an expected reject is pass, another
             # clean reject is xfail.
             reject_exc: AssertionError | None = None
@@ -161,6 +168,7 @@ class TestGcmTagSize:
                 reject_exc,
                 _WEAK_PARAM_REJECT_RVS,
                 label=f"AES-GCM with {tag_bits}-bit tag (below NIST 96-bit minimum)",
+                kind="crypto",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -193,7 +201,7 @@ class TestGcmIvWeakness:
         try:
             pt = b"B" * 32
             mech = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
-            # Type-A crypto-correctness: an empty/short GCM IV undermines the
+            # crypto-correctness: an empty/short GCM IV undermines the
             # uniqueness guarantee; accepting it is a break (fail).
             reject_exc: AssertionError | None = None
             try:
@@ -248,7 +256,7 @@ class TestGcmIvReuse:
                 mech_param=mech1,
                 output_overhead=16,
             )
-            # Second encrypt with SAME key + SAME IV. Type-A crypto-correctness:
+            # Second encrypt with SAME key + SAME IV. crypto-correctness:
             # IV reuse with the same GCM key breaks confidentiality and
             # authenticity; accepting the second encrypt is a break (fail).
             mech2 = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
@@ -326,7 +334,7 @@ key = gen_aes_key(raw, sh, 256)
 """
             + _GCM_NULL_AAD_PARAMS_SNIPPET
             + """mech = CK_MECHANISM()
-mech.mechanism = int(CKM_AES_GCM)
+mech.mechanism = CKM_AES_GCM
 mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
 mech.ulParameterLen = ctypes.sizeof(params)
 try:
@@ -358,8 +366,14 @@ _PSS_SALT_LENGTHS = [
 class TestPssSaltLength:
     """Probe RSA-PSS salt length edge cases.
 
-    sLen=0 makes PSS deterministic (same message always produces same signature),
-    weakening the scheme. sLen > (modLen/8 - hashLen - 2) is invalid per RFC 8017.
+    sLen=0 makes PSS deterministic, but it is a STANDARDIZED variant (RFC 8017
+    §9.1 / FIPS 186-5) that yields correct, verifiable, non-forgeable signatures
+    -- accepting it is NOT a crypto-correctness break. So a module that signs
+    sLen=0 and the signature verifies is correct (pass); one that cleanly
+    declines deterministic PSS is exercising a policy choice (xfail); only a
+    module that accepts sLen=0 yet produces a signature that does NOT verify has
+    a real break (fail). (sLen > modLen/8 - hLen - 2 IS invalid and is covered
+    by test_pss_excessive_salt_length.)
     """
 
     @pytest.mark.parametrize("salt_len", _PSS_SALT_LENGTHS)
@@ -389,11 +403,13 @@ class TestPssSaltLength:
                 salt_len=salt_len,
             )
             data = b"PSS salt length test"
-            # Type-A crypto-correctness: sLen=0 collapses PSS to a deterministic
-            # scheme, removing its security margin; accepting it is a break (fail).
-            reject_exc: AssertionError | None = None
+            # sLen=0 is a VALID deterministic PSS variant (RFC 8017 §9.1 /
+            # FIPS 186-5). The finding is NOT "the module accepted it" -- that is
+            # correct -- but only "the module produced a signature that does not
+            # verify". Sign, then verify the result with the same sLen.
+            signature: bytes | None = None
             try:
-                sign_single(
+                signature = sign_single(
                     rs.raw,
                     rs.sh,
                     priv,
@@ -402,12 +418,39 @@ class TestPssSaltLength:
                     mech_param=pss,
                 )
             except AssertionError as exc:
-                reject_exc = exc
-            reject_or_classify(
-                reject_exc,
-                _WEAK_PARAM_REJECT_RVS,
-                label=f"RSA-PSS with sLen={salt_len} (deterministic signatures)",
+                # A module/policy may decline deterministic PSS with a clean
+                # reject -- a recorded capability/policy deviation, not a finding.
+                xfail_if_known_ckr(
+                    exc,
+                    _WEAK_PARAM_REJECT_RVS,
+                    f"RSA-PSS sLen={salt_len} (deterministic, RFC 8017 §9.1) declined by module",
+                )
+                raise
+            pss_verify = mech_pss(
+                CKM_SHA256_RSA_PKCS_PSS,
+                hash_mech=CKM_SHA256,
+                mgf=CKG_MGF1_SHA256,
+                salt_len=salt_len,
             )
+            verified = verify_single(
+                rs.raw,
+                rs.sh,
+                pub,
+                CKM_SHA256_RSA_PKCS_PSS,
+                data,
+                signature,
+                mech_param=pss_verify,
+            )
+            if not verified:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label=f"RSA-PSS sLen={salt_len} deterministic signature",
+                    operation="C_Sign",
+                    mechanism="CKM_SHA256_RSA_PKCS_PSS",
+                    summary=f"RSA-PSS sLen={salt_len}: module accepted the deterministic-PSS sign "
+                    f"operation but the produced signature does not verify (invalid signature)",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -487,7 +530,7 @@ class TestXtsKeyValidation:
         # 256-bit key = 128-bit data key + 128-bit tweak key (identical)
         half = b"\xaa" * 16
         key_material = half + half  # Both halves identical
-        # Type-A crypto-correctness: identical XTS key halves degenerate the
+        # crypto-correctness: identical XTS key halves degenerate the
         # construction to ECB-like behavior (NIST SP 800-38E forbids it).
         # Rejecting at import is a spec-correct rejection (pass). If import is
         # accepted, the encrypt must reject -- accepting the encrypt is a break.
@@ -542,7 +585,7 @@ _WEAK_RSA_EXPONENTS = [
 
 # Cryptographically invalid public exponents (no usable RSA key exists): e=0
 # (no inverse), e=1 (identity -- no encryption), and even exponents e=2/e=4
-# (no inverse modulo phi(n)). Accepting one of these is a Type-A
+# (no inverse modulo phi(n)). Accepting one of these is a
 # crypto-correctness break (fail). e=3 is a valid (if low) odd exponent that a
 # conformant module may legitimately accept, so it stays a posture note.
 _CRYPTO_INVALID_RSA_EXPONENTS = {0, 1, 2, 4}
@@ -578,7 +621,7 @@ class TestRsaExponent:
             reject_exc = exc
 
         if exponent in _CRYPTO_INVALID_RSA_EXPONENTS:
-            # Type-A crypto-correctness: no usable RSA key exists for this
+            # crypto-correctness: no usable RSA key exists for this
             # exponent; acceptance is a break (fail).
             try:
                 reject_or_classify(
@@ -653,7 +696,7 @@ class TestEcPointValidation:
 
             invalid_point = self._craft_invalid_point(raw_point, point_type)
 
-            # Type-A crypto-correctness: deriving a shared secret from an
+            # crypto-correctness: deriving a shared secret from an
             # off-curve / infinity / truncated public point enables an
             # invalid-curve attack that can leak the private key (NIST SP
             # 800-56A requires full public-key validation). Accepting the
@@ -857,7 +900,7 @@ class TestCbcIvAllZeros:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CBC"):
             pytest.skip("AES_CBC not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             zero_iv = b"\x00" * 16  # 128-bit all-zero IV
             pt = b"D" * 16  # Single AES block
@@ -896,7 +939,7 @@ class TestEcbPatternLeakage:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("AES_ECB not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             # Two identical 16-byte blocks
             block = b"E" * 16

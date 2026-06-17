@@ -11,37 +11,74 @@ Phase 4.1: High-priority mechanism roundtrip tests for:
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.pack import mech_simple
+from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
+from pkcs11_check.raw.pack import attr_ulong, mech_kmac, mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     gen_aes_key,
-    unwrap_key,
+    gen_keypair,
+    import_secret_key,
+    sign_single,
+    to_ubyte_buf,
+    verify_single,
     wrap_key,
 )
-from pkcs11_check.raw.rv import expect_rv
+from pkcs11_check.raw.rv import CkrAssertionError, expect_rv
 from pkcs11_check.raw.types_std import (
+    CK_BYTE,
     CKA_CLASS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
+    CKA_PARAMETER_SET,
     CKA_SENSITIVE,
+    CKA_SIGN,
     CKA_TOKEN,
     CKA_UNWRAP,
+    CKA_VERIFY,
     CKA_WRAP,
     CKK_AES,
+    CKK_GENERIC_SECRET,
     CKM,
     CKM_AES_KEY_WRAP_KWP,
+    CKM_ML_DSA_EXTERNAL_MU,
+    CKM_ML_DSA_KEY_PAIR_GEN,
     CKM_SHA512_224,
     CKM_SHA512_256,
     CKO_SECRET_KEY,
+    CKP_ML_DSA_65,
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_DEVICE_MEMORY,
+    CKR_DEVICE_REMOVED,
+    CKR_FUNCTION_CANCELED,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_HOST_MEMORY,
     CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_OPERATION_ACTIVE,
+    CKR_OPERATION_NOT_INITIALIZED,
+    CKR_PENDING,
+    CKR_SESSION_CLOSED,
+    CKR_SESSION_HANDLE_INVALID,
+    CKR_USER_NOT_LOGGED_IN,
+)
+from pkcs11_check.testcases.conftest import (
+    CIPHER_OP_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    unwrap_key_for_mechanism_roundtrip,
+    xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.full
@@ -50,66 +87,193 @@ _CKM_SHAKE_128 = CKM(0x00000418, "CKM_SHAKE_128")
 _CKM_SHAKE_256 = CKM(0x00000419, "CKM_SHAKE_256")
 
 
+@dataclass(frozen=True)
+class _ShakeXofCase:
+    name: str
+    mechanism: CKM
+    reference_factory: Callable[[bytes], Any]
+    single_output_len: int
+    extract_len: int
+    final_len: int
+
+    @property
+    def mechanism_label(self) -> str:
+        return f"CKM_{self.name}"
+
+    def reference(self, data: bytes, output_len: int) -> bytes:
+        return bytes(self.reference_factory(data).digest(output_len))
+
+
+_SHAKE_XOF_CASES = (
+    _ShakeXofCase("SHAKE_128", _CKM_SHAKE_128, hashlib.shake_128, 32, 13, 19),
+    _ShakeXofCase("SHAKE_256", _CKM_SHAKE_256, hashlib.shake_256, 64, 23, 41),
+)
+_SHAKE_XOF_CASE_BY_NAME = {case.name: case for case in _SHAKE_XOF_CASES}
+
+_XOF_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_DEVICE_MEMORY,
+    CKR_DEVICE_REMOVED,
+    CKR_FUNCTION_CANCELED,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_HOST_MEMORY,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_OPERATION_ACTIVE,
+    CKR_OPERATION_NOT_INITIALIZED,
+    CKR_PENDING,
+    CKR_SESSION_CLOSED,
+    CKR_SESSION_HANDLE_INVALID,
+    CKR_USER_NOT_LOGGED_IN,
+)
+
+
+def _require_xof_support(rs: Any, case: _ShakeXofCase, function_names: tuple[str, ...]) -> None:
+    if not rs.has_mechanism(case.name):
+        pytest.skip(f"{case.mechanism_label} not supported")
+    for function_name in function_names:
+        if not hasattr(rs.raw, function_name):
+            pytest.skip(f"{function_name} not available in this raw binding")
+
+
+def _expect_xof_ok(rv: int, case: _ShakeXofCase, operation: str) -> None:
+    try:
+        expect_rv(rv, CKR_OK, context=f"{case.mechanism_label} {operation}")
+    except CkrAssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _XOF_RUNTIME_REJECT_RVS,
+            f"{case.mechanism_label} {operation} not operational",
+        )
+
+
+def _shake_xof_single_shot_matches_reference(
+    rs: Any,
+    case: _ShakeXofCase,
+    data: bytes,
+    output_len: int,
+) -> None:
+    mech = mech_simple(case.mechanism)
+    _expect_xof_ok(
+        rs.raw.C_DigestXofInit(rs.sh, mech.byref()),
+        case,
+        "XOF init",
+    )
+
+    data_buf = to_ubyte_buf(data)
+    output = (CK_BYTE * output_len)()
+    _expect_xof_ok(
+        rs.raw.C_DigestXof(rs.sh, data_buf, len(data), output, output_len),
+        case,
+        "XOF single-shot",
+    )
+
+    actual = bytes(output)
+    expected = case.reference(data, output_len)
+    assert actual == expected, f"{case.mechanism_label} XOF single-shot mismatch"
+
+
+def _shake_xof_multipart_matches_reference(
+    rs: Any,
+    case: _ShakeXofCase,
+    data_parts: tuple[bytes, ...],
+    *,
+    extract_len: int,
+    final_len: int,
+) -> None:
+    mech = mech_simple(case.mechanism)
+    _expect_xof_ok(
+        rs.raw.C_DigestXofInit(rs.sh, mech.byref()),
+        case,
+        "XOF init",
+    )
+
+    for part in data_parts:
+        part_buf = to_ubyte_buf(part)
+        _expect_xof_ok(
+            rs.raw.C_DigestXofUpdate(rs.sh, part_buf, len(part)),
+            case,
+            "XOF update",
+        )
+
+    extract_output = (CK_BYTE * extract_len)()
+    _expect_xof_ok(
+        rs.raw.C_DigestXofExtract(rs.sh, extract_output, extract_len),
+        case,
+        "XOF extract",
+    )
+
+    final_output = (CK_BYTE * final_len)()
+    _expect_xof_ok(
+        rs.raw.C_DigestXofFinal(rs.sh, final_output, final_len),
+        case,
+        "XOF final",
+    )
+
+    actual = bytes(extract_output) + bytes(final_output)
+    expected = case.reference(b"".join(data_parts), extract_len + final_len)
+    assert actual == expected, f"{case.mechanism_label} XOF multipart mismatch"
+
+
 class TestSHAKEDigest:
     """CKM_SHAKE_128 and CKM_SHAKE_256 XOF digest via C_DigestXof functions.
 
-    SHAKE is an extendable-output function. Per PKCS#11 v3.1 working draft,
-    it requires C_DigestXofInit/C_DigestXofUpdate/C_DigestXofExtract/
-    C_DigestXofFinal which are not yet in the published stable headers.
-
-    Most current modules do not expose SHAKE as a standalone digest mechanism.
-    Tests skip cleanly when the functions or mechanism are unavailable.
+    SHAKE is an extendable-output function. The tests verify both the
+    single-shot path (C_DigestXof) and multipart absorb/squeeze path
+    (C_DigestXofUpdate/C_DigestXofExtract/C_DigestXofFinal) against Python's
+    hashlib SHAKE implementations.
     """
 
-    def test_shake_128_availability(self, p11_raw_session: Any) -> None:
+    @pytest.mark.needs_function("C_DigestXofInit")
+    @pytest.mark.needs_function("C_DigestXof")
+    @pytest.mark.parametrize("case", _SHAKE_XOF_CASES, ids=lambda case: case.name)
+    def test_single_shot_matches_hashlib(
+        self,
+        p11_raw_session: Any,
+        case: _ShakeXofCase,
+    ) -> None:
         rs = p11_raw_session
-        if not rs.has_mechanism("SHAKE_128"):
-            pytest.skip("CKM_SHAKE_128 not supported")
-        has_xof = hasattr(rs.raw, "C_DigestXofInit")
-        if not has_xof:
-            pytest.skip("C_DigestXofInit not available in this raw binding")
+        _require_xof_support(rs, case, ("C_DigestXofInit", "C_DigestXof"))
 
-    def test_shake_128_xof_init(self, p11_raw_session: Any) -> None:
-        rs = p11_raw_session
-        if not rs.has_mechanism("SHAKE_128"):
-            pytest.skip("CKM_SHAKE_128 not supported")
-        if not hasattr(rs.raw, "C_DigestXofInit"):
-            pytest.skip("C_DigestXofInit not available in this raw binding")
-        try:
-            mech = mech_simple(_CKM_SHAKE_128)
-            rv = rs.raw.C_DigestXofInit(rs.sh, mech.byref())
-            expect_rv(rv, CKR_OK, CKR_MECHANISM_INVALID)
-        except (AttributeError, TypeError):
-            pytest.skip("C_DigestXofInit call failed")
-            return
-        if rv == CKR_MECHANISM_INVALID:
-            pytest.xfail("CKM_SHAKE_128 mechanism rejected by module")
-            return
+        _shake_xof_single_shot_matches_reference(
+            rs,
+            case,
+            b"pkcs11-check SHAKE XOF single-shot KAT",
+            case.single_output_len,
+        )
 
-    def test_shake_256_availability(self, p11_raw_session: Any) -> None:
+    @pytest.mark.needs_function("C_DigestXofInit")
+    @pytest.mark.needs_function("C_DigestXofUpdate")
+    @pytest.mark.needs_function("C_DigestXofExtract")
+    @pytest.mark.needs_function("C_DigestXofFinal")
+    @pytest.mark.parametrize("case", _SHAKE_XOF_CASES, ids=lambda case: case.name)
+    def test_multipart_matches_hashlib(
+        self,
+        p11_raw_session: Any,
+        case: _ShakeXofCase,
+    ) -> None:
         rs = p11_raw_session
-        if not rs.has_mechanism("SHAKE_256"):
-            pytest.skip("CKM_SHAKE_256 not supported")
-        has_xof = hasattr(rs.raw, "C_DigestXofInit")
-        if not has_xof:
-            pytest.skip("C_DigestXofInit not available in this raw binding")
+        _require_xof_support(
+            rs,
+            case,
+            (
+                "C_DigestXofInit",
+                "C_DigestXofUpdate",
+                "C_DigestXofExtract",
+                "C_DigestXofFinal",
+            ),
+        )
 
-    def test_shake_256_xof_init(self, p11_raw_session: Any) -> None:
-        rs = p11_raw_session
-        if not rs.has_mechanism("SHAKE_256"):
-            pytest.skip("CKM_SHAKE_256 not supported")
-        if not hasattr(rs.raw, "C_DigestXofInit"):
-            pytest.skip("C_DigestXofInit not available in this raw binding")
-        try:
-            mech = mech_simple(_CKM_SHAKE_256)
-            rv = rs.raw.C_DigestXofInit(rs.sh, mech.byref())
-            expect_rv(rv, CKR_OK, CKR_MECHANISM_INVALID)
-        except (AttributeError, TypeError):
-            pytest.skip("C_DigestXofInit call failed")
-            return
-        if rv == CKR_MECHANISM_INVALID:
-            pytest.xfail("CKM_SHAKE_256 mechanism rejected by module")
-            return
+        _shake_xof_multipart_matches_reference(
+            rs,
+            case,
+            (b"pkcs11-check ", b"SHAKE XOF ", b"multipart KAT"),
+            extract_len=case.extract_len,
+            final_len=case.final_len,
+        )
 
 
 class TestSHA512Truncated:
@@ -173,7 +337,7 @@ class TestSHA512Truncated:
 class TestAESKeyWrapKWP:
     """CKM_AES_KEY_WRAP_KWP -- AES Key Wrap with Padding (NIST SP 800-38F)."""
 
-    def test_wrap_unwrap_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_wrap_unwrap_roundtrip(self, p11_raw_session: Any, p11_config: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP_KWP"):
             pytest.skip("CKM_AES_KEY_WRAP_KWP not supported")
@@ -209,12 +373,12 @@ class TestAESKeyWrapKWP:
             )
             assert len(wrapped) > 0, "wrap_key returned empty output"
 
-            unwrapped_h = unwrap_key(
-                rs.raw,
-                rs.sh,
-                wrapping_key,
-                wrapped,
-                CKM_AES_KEY_WRAP_KWP,
+            unwrapped_h = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=wrapping_key,
+                wrapped_key=wrapped,
+                mechanism=CKM_AES_KEY_WRAP_KWP,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
@@ -223,6 +387,7 @@ class TestAESKeyWrapKWP:
                     CKA_TOKEN: False,
                     CKA_ENCRYPT: True,
                 },
+                purpose="AES-KWP wrap/unwrap roundtrip",
             )
         finally:
             if unwrapped_h:
@@ -230,7 +395,7 @@ class TestAESKeyWrapKWP:
             destroy_quietly(rs.raw, rs.sh, target_key)
             destroy_quietly(rs.raw, rs.sh, wrapping_key)
 
-    def test_wrap_unwrap_256bit_key(self, p11_raw_session: Any) -> None:
+    def test_wrap_unwrap_256bit_key(self, p11_raw_session: Any, p11_config: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP_KWP"):
             pytest.skip("CKM_AES_KEY_WRAP_KWP not supported")
@@ -264,12 +429,12 @@ class TestAESKeyWrapKWP:
             )
             assert len(wrapped) > 0
 
-            unwrapped_h = unwrap_key(
-                rs.raw,
-                rs.sh,
-                wrapping_key,
-                wrapped,
-                CKM_AES_KEY_WRAP_KWP,
+            unwrapped_h = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=wrapping_key,
+                wrapped_key=wrapped,
+                mechanism=CKM_AES_KEY_WRAP_KWP,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
@@ -277,6 +442,7 @@ class TestAESKeyWrapKWP:
                     CKA_SENSITIVE: False,
                     CKA_TOKEN: False,
                 },
+                purpose="AES-KWP 256-bit wrap/unwrap roundtrip",
             )
         finally:
             if unwrapped_h:
@@ -295,66 +461,251 @@ class TestKMAC:
     Most current modules do not yet support KMAC. Tests skip cleanly.
     """
 
-    @pytest.mark.requires_v32
+    def _mechanism_or_skip(self, name: str) -> CKM:
+        ckm_name = f"CKM_{name}"
+        for mechanism_id, mechanism_name in MECHANISM_NAMES.items():
+            if mechanism_name == ckm_name:
+                return CKM(mechanism_id, ckm_name)
+        pytest.skip(f"{ckm_name} numeric value not available in standard metadata")
+
+    def _run_roundtrip(self, rs: Any, name: str, mac_len: int) -> None:
+        if not rs.has_mechanism(name):
+            pytest.skip(f"CKM_{name} not supported")
+        mechanism = self._mechanism_or_skip(name)
+        key = 0
+        try:
+            try:
+                key = import_secret_key(
+                    rs.raw,
+                    rs.sh,
+                    CKK_GENERIC_SECRET,
+                    bytes(range(32)),
+                    {
+                        CKA_SIGN: True,
+                        CKA_VERIFY: True,
+                        CKA_TOKEN: False,
+                    },
+                )
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    f"CKM_{name} KMAC key import not operational",
+                )
+
+            data = b"pkcs11-check KMAC parameterized signing"
+            customization = b"pkcs11-check"
+            try:
+                signature = sign_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    mechanism,
+                    data,
+                    mech_param=mech_kmac(
+                        mechanism,
+                        key_handle=key,
+                        mac_len=mac_len,
+                        customization=customization,
+                    ),
+                    output_size_hint=mac_len,
+                )
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    f"CKM_{name} KMAC sign not operational",
+                )
+
+            assert len(signature) == mac_len, f"CKM_{name} returned wrong KMAC length"
+
+            try:
+                assert verify_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    mechanism,
+                    data,
+                    signature,
+                    mech_param=mech_kmac(
+                        mechanism,
+                        key_handle=key,
+                        mac_len=mac_len,
+                        customization=customization,
+                    ),
+                ), f"CKM_{name} rejected its own KMAC signature"
+
+                tampered = signature[:-1] + bytes([signature[-1] ^ 0x01])
+                assert not verify_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    mechanism,
+                    data,
+                    tampered,
+                    mech_param=mech_kmac(
+                        mechanism,
+                        key_handle=key,
+                        mac_len=mac_len,
+                        customization=customization,
+                    ),
+                ), f"CKM_{name} verified a tampered KMAC signature"
+
+                tampered_data = data + b"!"
+                assert not verify_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    mechanism,
+                    tampered_data,
+                    signature,
+                    mech_param=mech_kmac(
+                        mechanism,
+                        key_handle=key,
+                        mac_len=mac_len,
+                        customization=customization,
+                    ),
+                ), f"CKM_{name} verified a KMAC signature over tampered data"
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    f"CKM_{name} KMAC verify not operational",
+                )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
     def test_kmac_128_availability(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("KMAC_128"):
             pytest.skip("CKM_KMAC_128 not supported")
 
-    @pytest.mark.requires_v32
     def test_kmac_256_availability(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("KMAC_256"):
             pytest.skip("CKM_KMAC_256 not supported")
 
-    @pytest.mark.requires_v32
     def test_kmac_128_sign_roundtrip(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
-        if not rs.has_mechanism("KMAC_128"):
-            pytest.skip("CKM_KMAC_128 not supported")
-        pytest.skip(
-            "CKM_KMAC_128 requires CK_KMAC_PARAMS mechanism parameter "
-            "not yet available in pkcs11_check.raw bindings"
-        )
+        self._run_roundtrip(rs, "KMAC_128", 32)
 
-    @pytest.mark.requires_v32
     def test_kmac_256_sign_roundtrip(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
-        if not rs.has_mechanism("KMAC_256"):
-            pytest.skip("CKM_KMAC_256 not supported")
-        pytest.skip(
-            "CKM_KMAC_256 requires CK_KMAC_PARAMS mechanism parameter "
-            "not yet available in pkcs11_check.raw bindings"
+        self._run_roundtrip(rs, "KMAC_256", 64)
+
+    def test_kmac_128_short_output_roundtrip(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        self._run_roundtrip(rs, "KMAC_128", 16)
+
+    def test_kmac_256_short_output_roundtrip(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        self._run_roundtrip(rs, "KMAC_256", 32)
+
+
+_EXTERNAL_MU_SAMPLE = bytes(range(64))
+
+
+def _generate_external_mu_mldsa_keypair(rs: Any) -> tuple[int, int]:
+    return gen_keypair(
+        rs.raw,
+        rs.sh,
+        mechanism=int(CKM_ML_DSA_KEY_PAIR_GEN),
+        pub_base=[attr_ulong(CKA_PARAMETER_SET, CKP_ML_DSA_65)],
+        priv_base=[],
+        public_attrs={
+            CKA_VERIFY: True,
+            CKA_TOKEN: False,
+        },
+        private_attrs={
+            CKA_SIGN: True,
+            CKA_TOKEN: False,
+        },
+        pub_skip={CKA_PARAMETER_SET},
+    )
+
+
+def _external_mu_sign_verify_roundtrip(rs: Any) -> None:
+    pub_key = 0
+    priv_key = 0
+    try:
+        try:
+            pub_key, priv_key = _generate_external_mu_mldsa_keypair(rs)
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                KEYPAIR_RUNTIME_REJECT_RVS,
+                "CKM_ML_DSA_KEY_PAIR_GEN for ExternalMu not operational",
+            )
+
+        try:
+            signature = sign_single(
+                rs.raw,
+                rs.sh,
+                priv_key,
+                int(CKM_ML_DSA_EXTERNAL_MU),
+                _EXTERNAL_MU_SAMPLE,
+            )
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                CIPHER_OP_RUNTIME_REJECT_RVS,
+                "CKM_ML_DSA_EXTERNAL_MU sign not operational",
+            )
+
+        assert len(signature) > 0, "CKM_ML_DSA_EXTERNAL_MU returned an empty signature"
+        verified = verify_single(
+            rs.raw,
+            rs.sh,
+            pub_key,
+            int(CKM_ML_DSA_EXTERNAL_MU),
+            _EXTERNAL_MU_SAMPLE,
+            signature,
         )
+        assert verified is True, "CKM_ML_DSA_EXTERNAL_MU verify rejected a fresh signature"
+
+        tampered_mu = _EXTERNAL_MU_SAMPLE[:-1] + bytes([_EXTERNAL_MU_SAMPLE[-1] ^ 0x01])
+        try:
+            tampered_verified = verify_single(
+                rs.raw,
+                rs.sh,
+                pub_key,
+                int(CKM_ML_DSA_EXTERNAL_MU),
+                tampered_mu,
+                signature,
+            )
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                CIPHER_OP_RUNTIME_REJECT_RVS,
+                "tampered CKM_ML_DSA_EXTERNAL_MU rejected with non-spec CKR",
+            )
+        else:
+            assert not tampered_verified, "CKM_ML_DSA_EXTERNAL_MU verified a tampered mu"
+    finally:
+        if pub_key:
+            destroy_quietly(rs.raw, rs.sh, pub_key)
+        if priv_key:
+            destroy_quietly(rs.raw, rs.sh, priv_key)
 
 
 class TestMLDSAExternalMU:
-    """CKM_ML_DSA_EXTERNAL_MU -- External message update PQC sign (v3.2).
+    """CKM_ML_DSA_EXTERNAL_MU -- ExternalMu PQC sign/verify (v3.2 draft).
 
     ExternalMu-ML-DSA accepts a precomputed 64-byte message representative mu
     instead of hashing the message on-token. The mu value is normally computed
-    by step 6 of algorithm 7 in FIPS-204.
-
-    Since CKM_ML_DSA_EXTERNAL_MU and its constant are not yet in the stable
-    published PKCS#11 headers (only in working draft), and no CKM constant
-    exists in pkcs11_check.raw.types_std, we test mechanism availability and
-    document the limitation.
+    by FIPS 204 algorithms 7/8 and supplied directly to single-part sign/verify.
     """
 
-    @pytest.mark.requires_v32
     def test_external_mu_availability(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("ML_DSA_EXTERNAL_MU"):
             pytest.skip("CKM_ML_DSA_EXTERNAL_MU not supported")
 
-    @pytest.mark.requires_v32
     def test_external_mu_sign_verify_with_dummy_mu(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("ML_DSA_EXTERNAL_MU"):
             pytest.skip("CKM_ML_DSA_EXTERNAL_MU not supported")
-        if not rs.has_mechanism("ML_DSA"):
-            pytest.skip("CKM_ML_DSA keygen not supported for EXTERNAL_MU test")
-        pytest.skip(
-            "CKM_ML_DSA_EXTERNAL_MU constant (0x00000020) not yet in "
-            "pkcs11_check.raw.types_std -- awaiting published PKCS#11 header"
-        )
+        if not rs.has_mechanism("ML_DSA_KEY_PAIR_GEN"):
+            pytest.skip("CKM_ML_DSA_KEY_PAIR_GEN not supported for EXTERNAL_MU test")
+
+        _external_mu_sign_verify_roundtrip(rs)

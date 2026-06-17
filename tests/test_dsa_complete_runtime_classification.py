@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
+import ctypes
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR
+from pkcs11_check.raw.types_std import (
+    CK_DSA_PARAMETER_GEN_PARAM,
+    CKM_DSA_PROBABILISTIC_PARAMETER_GEN,
+    CKM_DSA_SHA1,
+    CKM_DSA_SHA224,
+    CKM_DSA_SHA256,
+    CKM_SHA256,
+    CKR_DEVICE_ERROR,
+    CKR_GENERAL_ERROR,
+    CKR_OK,
+    CKR_SIGNATURE_INVALID,
+)
 from pkcs11_check.testcases import test_dsa_complete
 
 
@@ -21,6 +33,22 @@ def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
     )
 
 
+def test_dsa_complete_module_preserves_sign_and_slow_marks() -> None:
+    mark = test_dsa_complete.pytestmark
+    marks = mark if isinstance(mark, list) else [mark]
+
+    assert {item.mark.name for item in marks} == {"sign", "slow"}
+
+
+def test_dsa_complete_prehash_matrix_includes_sha224() -> None:
+    mechanisms: set[int] = set()
+    for param in test_dsa_complete._DSA_HASH_MECHS:
+        mechanisms.add(int(cast(Any, param.values[1])))
+
+    assert int(CKM_DSA_SHA1) in mechanisms
+    assert int(CKM_DSA_SHA224) in mechanisms
+
+
 def test_dsa_parameter_gen_runtime_reject_is_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -28,15 +56,31 @@ def test_dsa_parameter_gen_runtime_reject_is_xfail(
         raise CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
 
     rs = _session_with_mechanisms("DSA_PARAMETER_GEN")
+    module = cast(Any, test_dsa_complete)
     monkeypatch.setattr(test_dsa_complete, "_generate_dsa_params", _param_gen_reject)
     monkeypatch.setattr(
-        test_dsa_complete.pytest,
+        module.pytest,
         "skip",
         lambda message: pytest.fail(f"unexpected skip: {message}"),
     )
 
     with pytest.raises(pytest.xfail.Exception, match="DSA_PARAMETER_GEN advertised"):
         test_dsa_complete.TestDSAParameterGen().test_parameter_gen(rs)
+
+
+def test_dsa_parameter_gen_param_mech_owns_seed_buffer() -> None:
+    packed = test_dsa_complete._dsa_parameter_gen_param_mech(
+        CKM_DSA_PROBABILISTIC_PARAMETER_GEN,
+        seed_len=32,
+    )
+
+    assert packed.ck.mechanism == CKM_DSA_PROBABILISTIC_PARAMETER_GEN
+    assert packed.ck.ulParameterLen == ctypes.sizeof(CK_DSA_PARAMETER_GEN_PARAM)
+    assert isinstance(packed.params, CK_DSA_PARAMETER_GEN_PARAM)
+    assert packed.params.hash == CKM_SHA256
+    assert packed.params.pSeed is not None
+    assert packed.params.ulSeedLen == 32
+    assert packed.buffer_bytes("seed") == b"\x00" * 32
 
 
 def test_dsa_keypair_from_generated_params_runtime_reject_is_xfail(
@@ -46,14 +90,181 @@ def test_dsa_keypair_from_generated_params_runtime_reject_is_xfail(
         raise CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
 
     rs = _session_with_mechanisms("DSA_PARAMETER_GEN", "DSA_KEY_PAIR_GEN")
+    module = cast(Any, test_dsa_complete)
     monkeypatch.setattr(test_dsa_complete, "_generate_dsa_params", lambda *_args: 10)
     monkeypatch.setattr(test_dsa_complete, "_gen_dsa_keypair_from_params", _keypair_reject)
     monkeypatch.setattr(test_dsa_complete, "destroy_quietly", lambda *_args: None)
     monkeypatch.setattr(
-        test_dsa_complete.pytest,
+        module.pytest,
         "skip",
         lambda message: pytest.fail(f"unexpected skip: {message}"),
     )
 
     with pytest.raises(pytest.xfail.Exception, match="DSA_KEY_PAIR_GEN advertised"):
         test_dsa_complete.TestDSAParameterGen().test_parameter_gen_and_keypair(rs)
+
+
+def test_raw_dsa_wrong_length_digest_acceptance_is_hard_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _sign_init(*_args: Any) -> int:
+        return int(CKR_OK)
+
+    def _sign(*_args: Any) -> int:
+        out_len = _args[4]
+        out_len._obj.value = 40
+        return int(CKR_OK)
+
+    rs = SimpleNamespace(
+        raw=SimpleNamespace(C_SignInit=_sign_init, C_Sign=_sign),
+        sh=1,
+        has_mechanism=lambda name: name == "DSA",
+    )
+    monkeypatch.setattr(test_dsa_complete, "_generate_dsa_keypair", lambda _rs: (10, 11, 12))
+    monkeypatch.setattr(test_dsa_complete, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(BaseException) as excinfo:
+        test_dsa_complete.TestDSARaw().test_raw_dsa_wrong_length_digest(rs)
+
+    assert type(excinfo.value) is pytest.fail.Exception
+    assert "CKM_DSA wrong-length digest: accepted invalid" in str(excinfo.value)
+
+
+def test_dsa_prehash_sign_clean_refusal_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _sign_reject(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))
+
+    rs = _session_with_mechanisms("DSA_SHA1")
+    monkeypatch.setattr(test_dsa_complete, "_generate_dsa_keypair", lambda _rs: (10, 11, 12))
+    monkeypatch.setattr(test_dsa_complete, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(test_dsa_complete, "sign_single", _sign_reject)
+
+    with pytest.raises(pytest.xfail.Exception, match="not operational"):
+        test_dsa_complete.TestDSAPrehash().test_sign_verify_roundtrip(
+            rs,
+            "DSA_SHA1",
+            CKM_DSA_SHA1,
+        )
+
+
+def test_dsa_prehash_tampered_data_clean_signature_reject_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _verify_reject(*_args: Any, **_kwargs: Any) -> bool:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SIGNATURE_INVALID",
+            int(CKR_SIGNATURE_INVALID),
+        )
+
+    rs = _session_with_mechanisms("DSA_SHA1")
+    monkeypatch.setattr(test_dsa_complete, "_generate_dsa_keypair", lambda _rs: (10, 11, 12))
+    monkeypatch.setattr(test_dsa_complete, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(test_dsa_complete, "sign_single", lambda *_args, **_kwargs: b"sig")
+    monkeypatch.setattr(test_dsa_complete, "verify_single", _verify_reject)
+
+    test_dsa_complete.TestDSAPrehash().test_tampered_data_fails(
+        rs,
+        "DSA_SHA1",
+        CKM_DSA_SHA1,
+    )
+
+
+def test_dsa_prehash_wrong_signature_lengths_use_reject_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[int, bytes, bytes, str]] = []
+
+    def _verify_rejects(
+        _rs: Any,
+        _pub: int,
+        mechanism: int,
+        data: bytes,
+        signature: bytes,
+        label: str,
+    ) -> bool:
+        calls.append((mechanism, data, signature, label))
+        return False
+
+    rs = _session_with_mechanisms("DSA_SHA1")
+    monkeypatch.setattr(test_dsa_complete, "_generate_dsa_keypair", lambda _rs: (10, 11, 12))
+    monkeypatch.setattr(test_dsa_complete, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(
+        test_dsa_complete,
+        "_dsa_sign_or_xfail",
+        lambda *_args, **_kwargs: b"s" * 40,
+    )
+    monkeypatch.setattr(
+        test_dsa_complete,
+        "_dsa_invalid_verify_rejected_or_xfail",
+        _verify_rejects,
+    )
+
+    test_dsa_complete.TestDSAPrehash()._wrong_signature_lengths_fail(
+        rs,
+        "DSA_SHA1",
+        CKM_DSA_SHA1,
+    )
+
+    assert calls == [
+        (
+            CKM_DSA_SHA1,
+            b"DSA prehash wrong signature length",
+            b"s" * 39,
+            "CKM_DSA_SHA1 wrong-length signature",
+        ),
+        (
+            CKM_DSA_SHA1,
+            b"DSA prehash wrong signature length",
+            b"s" * 40 + b"\x00",
+            "CKM_DSA_SHA1 overlong signature",
+        ),
+    ]
+
+
+def test_dsa_prehash_multipart_uses_streaming_sign_and_verify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, int, tuple[bytes, ...], bytes | None, str | None]] = []
+
+    def _sign_multipart(
+        _raw: object,
+        _sh: int,
+        key: int,
+        mechanism: int,
+        chunks: tuple[bytes, ...],
+    ) -> bytes:
+        calls.append(("sign", mechanism, chunks, None, f"key={key}"))
+        return b"signature"
+
+    def _verify_multipart(
+        _raw: object,
+        _sh: int,
+        key: int,
+        mechanism: int,
+        chunks: tuple[bytes, ...],
+        signature: bytes,
+    ) -> bool:
+        calls.append(("verify", mechanism, chunks, signature, f"key={key}"))
+        return True
+
+    rs = _session_with_mechanisms("DSA_SHA256")
+    monkeypatch.setattr(test_dsa_complete, "_generate_dsa_keypair", lambda _rs: (10, 11, 12))
+    monkeypatch.setattr(test_dsa_complete, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(test_dsa_complete, "sign_multipart", _sign_multipart)
+    monkeypatch.setattr(test_dsa_complete, "verify_multipart", _verify_multipart)
+
+    test_dsa_complete.TestDSAPrehash()._multipart_sign_verify_roundtrip(
+        rs,
+        "DSA_SHA256",
+        CKM_DSA_SHA256,
+    )
+
+    chunks = (
+        b"DSA prehash multipart ",
+        b"sign/verify ",
+        b"test data",
+    )
+    assert calls == [
+        ("sign", CKM_DSA_SHA256, chunks, None, "key=12"),
+        ("verify", CKM_DSA_SHA256, chunks, b"signature", "key=11"),
+    ]

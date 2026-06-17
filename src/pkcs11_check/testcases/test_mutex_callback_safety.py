@@ -27,6 +27,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, fail_as
 from pkcs11_check.raw.types_std import CKR_OK
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 
@@ -122,14 +123,24 @@ class TestMutexCallbackErrorHandling:
         # diverse modules.  We're primarily checking for "no crash".
         rv_lines = [line for line in stdout.splitlines() if line.startswith("RV=")]
         if not rv_lines:
-            pytest.fail(f"No RV produced — subprocess exited abnormally.  Stderr: {stderr!r}")
+            fail_as(
+                "crash",
+                label="C_Initialize with failing CreateMutex callback",
+                summary=f"No RV produced — subprocess exited abnormally.  Stderr: {stderr!r}",
+            )
         rv = int(rv_lines[0][len("RV=") :], 16)
         if rv == CKR_OK:
-            pytest.xfail(
-                "Module returned CKR_OK despite CreateMutex callback "
-                "returning CKR_GENERAL_ERROR.  Module may be ignoring "
-                "caller-side mutex errors — data-race risk in concurrent "
-                "use.  Non-compliant but not a crash."
+            classify(
+                "honest_deviation",
+                kind="lifecycle",
+                label="CreateMutex callback returning CKR_GENERAL_ERROR",
+                operation="C_Initialize",
+                summary=(
+                    "Module returned CKR_OK despite CreateMutex callback "
+                    "returning CKR_GENERAL_ERROR.  Module may be ignoring "
+                    "caller-side mutex errors — data-race risk in concurrent "
+                    "use.  Non-compliant but not a crash."
+                ),
             )
 
     def test_lock_mutex_callback_returning_general_error_during_call(self, p11_config: Any) -> None:
@@ -199,7 +210,11 @@ class TestMutexCallbackErrorHandling:
         # If init failed (module wouldn't use app callbacks), that's fine.
         init_lines = [ln for ln in stdout.splitlines() if ln.startswith("INIT_RV=")]
         if not init_lines:
-            pytest.fail(f"No INIT_RV produced. Stderr: {stderr!r}")
+            fail_as(
+                "crash",
+                label="LockMutex callback returning CKR_GENERAL_ERROR during C_GetInfo",
+                summary=f"No INIT_RV produced. Stderr: {stderr!r}",
+            )
         init_rv = int(init_lines[0].split("=")[1], 16)
         if init_rv != CKR_OK:
             pytest.skip(

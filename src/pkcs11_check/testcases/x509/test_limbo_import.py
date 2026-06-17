@@ -10,10 +10,12 @@ the module parse the cert itself.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
 from pkcs11_check.raw.types_std import (
@@ -28,16 +30,36 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
     CKR_USER_NOT_LOGGED_IN,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 from pkcs11_check.testcases.x509.conftest import (
     import_cert_raw,
     load_limbo_testcases,
     pem_to_der,
+    skip_unless_cert_storage,
 )
 
-pytestmark = [pytest.mark.cert, pytest.mark.object]
+pytestmark = [
+    pytest.mark.cert,
+    pytest.mark.object,
+    pytest.mark.module_session_fast,
+]
 
 _all_cases = load_limbo_testcases()
+
+
+def _portable_label(raw_label: str) -> str:
+    """CKA_LABEL within the 32-byte floor common to embedded object stores.
+
+    corePKCS11 caps labels at pkcs11configMAX_LABEL_LENGTH (32) and rejects
+    longer ones with CKR_DATA_LEN_RANGE before looking at the certificate at
+    all (493 limbo vectors hard-failed on the label, not the DER). The label
+    is the harness's own bookkeeping, so send a deterministic short form for
+    long testcase ids; modules with roomier stores see identical behavior for
+    ids that already fit.
+    """
+    if len(raw_label.encode()) <= 32:
+        return raw_label
+    return "limbo-" + hashlib.sha256(raw_label.encode()).hexdigest()[:16]
 
 
 def _build_testcase_sample(
@@ -103,11 +125,12 @@ class TestLimboCertImport:
     def test_import_peer_cert(
         self,
         tc: dict[str, Any],
-        p11_raw_session: Any,
+        p11_module_session: Any,
         limbo_available: Any,
     ) -> None:
         """Import peer certificate using raw CKA_VALUE."""
-        rs = p11_raw_session
+        rs = p11_module_session
+        skip_unless_cert_storage(rs)
         der = pem_to_der(tc["peer_certificate"])
         if not der:
             pytest.skip("Failed to decode peer certificate PEM")
@@ -119,7 +142,7 @@ class TestLimboCertImport:
                 rs.sh,
                 der,
                 extra_attrs={
-                    CKA_LABEL: tc["id"],
+                    CKA_LABEL: _portable_label(tc["id"]),
                     CKA_TOKEN: False,
                 },
             )
@@ -127,7 +150,13 @@ class TestLimboCertImport:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_LABEL])
             label = attrs[CKA_LABEL]
             if label != "Pkcs11Interop":
-                assert label == tc["id"]
+                assert_correct(
+                    actual=label,
+                    expected=_portable_label(tc["id"]),
+                    label="X509:CKA_LABEL round-trips on raw cert import",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
 
             if needed_attrs:
                 note(
@@ -155,8 +184,13 @@ class TestLimboCertImport:
                     # Phase 5 P1a: a clean CKR rejection of a Limbo-valid cert is
                     # provider-incompleteness (stricter than required for storage)
                     # -> xfail, not a hard fail. Non-CKR errors re-raise below.
-                    pytest.xfail(
-                        f"module cleanly rejected a Limbo-valid cert {tc['id']} on raw import: {e}"
+                    classify(
+                        "not_operational",
+                        kind="metadata",
+                        summary=(
+                            f"module cleanly rejected a Limbo-valid cert"
+                            f" {tc['id']} on raw import: {e}"
+                        ),
                     )
             else:
                 raise
@@ -172,17 +206,18 @@ class TestLimboCertImport:
     def test_import_trusted_certs(
         self,
         tc: dict[str, Any],
-        p11_raw_session: Any,
+        p11_module_session: Any,
         limbo_available: Any,
     ) -> None:
         """Import trusted CA certificates from a limbo testcase."""
-        rs = p11_raw_session
+        rs = p11_module_session
+        skip_unless_cert_storage(rs)
         for i, pem in enumerate(tc["trusted_certs"]):
             der = pem_to_der(pem)
             if not der:
                 continue
 
-            label = f"{tc['id']}-ca-{i}"
+            label = _portable_label(f"{tc['id']}-ca-{i}")
             h = None
             try:
                 try:
@@ -240,11 +275,12 @@ class TestLimboCertImport:
 @pytest.mark.parametrize("tc", _failure_sample, ids=lambda tc: tc["id"])
 def test_import_limbo_failure_cert_raw(
     tc: dict[str, Any],
-    p11_raw_session: Any,
+    p11_module_session: Any,
     limbo_available: Any,
 ) -> None:
     """Raw import of x509-limbo FAILURE certs."""
-    rs = p11_raw_session
+    rs = p11_module_session
+    skip_unless_cert_storage(rs)
     der = pem_to_der(tc["peer_certificate"])
     if not der:
         pytest.skip("Failed to decode PEM")
@@ -256,7 +292,7 @@ def test_import_limbo_failure_cert_raw(
             rs.sh,
             der,
             extra_attrs={
-                CKA_LABEL: tc["id"],
+                CKA_LABEL: _portable_label(tc["id"]),
                 CKA_TOKEN: False,
             },
         )
@@ -270,10 +306,14 @@ def test_import_limbo_failure_cert_raw(
         attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
         stored_value = attrs[CKA_VALUE]
         if stored_value != der:
-            pytest.fail(
-                f"{tc['id']}: module stored modified cert bytes - "
-                f"CKA_VALUE mismatch ({len(stored_value)}B stored "
-                f"vs {len(der)}B sent)"
+            classify(
+                "self_contradiction",
+                kind="metadata",
+                summary=(
+                    f"{tc['id']}: module stored modified cert bytes - "
+                    f"CKA_VALUE mismatch ({len(stored_value)}B stored "
+                    f"vs {len(der)}B sent)"
+                ),
             )
 
     except AssertionError as e:

@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_oaep
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -112,15 +113,25 @@ def _read_rsa_public_numbers_or_xfail(
     n_bytes = attrs[CKA_MODULUS]
     e_bytes = attrs[CKA_PUBLIC_EXPONENT]
     if not isinstance(n_bytes, bytes) or not isinstance(e_bytes, bytes):
-        pytest.xfail("unusable RSA public modulus/exponent: attributes are not bytes")
+        classify(
+            "not_operational",
+            kind="crypto",
+            label="RSA public-number readback",
+            operation="C_GenerateKeyPair",
+            summary="unusable RSA public modulus/exponent: attributes are not bytes",
+        )
 
     n = int.from_bytes(n_bytes, "big")
     e = int.from_bytes(e_bytes, "big")
     k = (n.bit_length() + 7) // 8
     if n < 3 or e < 3 or k < min_modulus_bytes:
-        pytest.xfail(
-            "unusable RSA public modulus/exponent: generated key attributes "
-            f"cannot support structured padding-oracle probes (n_bits={n.bit_length()}, e={e})"
+        classify(
+            "not_operational",
+            kind="crypto",
+            label="RSA public-number readback",
+            operation="C_GenerateKeyPair",
+            summary="unusable RSA public modulus/exponent: generated key attributes "
+            f"cannot support structured padding-oracle probes (n_bits={n.bit_length()}, e={e})",
         )
 
     return n, e, k
@@ -155,9 +166,15 @@ class TestRSAPaddingOracle:
 
             # All errors should be the same type - if not, there's a potential oracle
             if len(error_types) > 1:
-                pytest.fail(
-                    f"SECURITY: RSA PKCS#1 v1.5 returns different error codes "
-                    f"for invalid ciphertexts: {error_types}"
+                classify(
+                    "oracle",
+                    kind="crypto",
+                    label="RSA PKCS#1 v1.5 padding oracle",
+                    operation="C_Decrypt",
+                    mechanism="CKM_RSA_PKCS",
+                    summary="SECURITY: RSA PKCS#1 v1.5 returns different error codes "
+                    f"for invalid ciphertexts: {error_types}",
+                    detail={"channel": "error_code", "codes": sorted(error_types)},
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -201,14 +218,20 @@ class TestRSAPaddingOracle:
                     f"ciphertexts ({error_types}), enabling padding oracle attack "
                     f"(Manger 2001 / Bleichenbacher-style)",
                     ComplianceLevel.CRITICAL,
-                    reference="Manger (2001); PKCS#11 v3.1 Sec.6.1.8: implementations "
+                    reference="Manger (2001); PKCS#11 v3.2: implementations "
                     "SHOULD return CKR_ENCRYPTED_DATA_INVALID uniformly",
                 )
-                pytest.fail(
-                    f"SECURITY: RSA-OAEP padding oracle — non-uniform error codes: "
+                classify(
+                    "oracle",
+                    kind="crypto",
+                    label="RSA-OAEP padding oracle (Manger 2001)",
+                    operation="C_Decrypt",
+                    mechanism="CKM_RSA_PKCS_OAEP",
+                    summary="SECURITY: RSA-OAEP padding oracle — non-uniform error codes: "
                     f"{error_types} (Manger 2001 attack vector). Distinct CKRs "
                     f"on invalid ciphertexts let an attacker partition decryption "
-                    f"failures into categories — exactly the Manger leak channel."
+                    f"failures into categories — exactly the Manger leak channel.",
+                    detail={"channel": "error_code", "codes": sorted(error_types)},
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -291,11 +314,21 @@ class TestRSAPaddingOracle:
                     "Against Protocols Based on the RSA Encryption Standard "
                     "PKCS #1' (CRYPTO 1998); RFC 3218",
                 )
-                pytest.fail(
-                    f"SECURITY: RSA PKCS#1 v1.5 Bleichenbacher 1998 oracle — "
+                classify(
+                    "oracle",
+                    kind="crypto",
+                    label="RSA PKCS#1 v1.5 Bleichenbacher 1998 oracle",
+                    operation="C_Decrypt",
+                    mechanism="CKM_RSA_PKCS",
+                    summary="SECURITY: RSA PKCS#1 v1.5 Bleichenbacher 1998 oracle — "
                     f"cat-1 errors {cat1_errors} != cat-2 errors {cat2_errors}. "
                     f"An attacker who can submit chosen ciphertexts can "
-                    f"recover the plaintext via roughly 2^20 oracle queries."
+                    f"recover the plaintext via roughly 2^20 oracle queries.",
+                    detail={
+                        "channel": "error_code",
+                        "cat1": sorted(cat1_errors),
+                        "cat2": sorted(cat2_errors),
+                    },
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -387,12 +420,22 @@ class TestRSAPaddingOracle:
                     "Optimal Asymmetric Encryption Padding (OAEP) as "
                     "Standardized in PKCS #1 v2.0' (CRYPTO 2001)",
                 )
-                pytest.fail(
-                    f"SECURITY: RSA-OAEP Manger 2001 padding oracle — "
+                classify(
+                    "oracle",
+                    kind="crypto",
+                    label="RSA-OAEP Manger 2001 padding oracle",
+                    operation="C_Decrypt",
+                    mechanism="CKM_RSA_PKCS_OAEP",
+                    summary="SECURITY: RSA-OAEP Manger 2001 padding oracle — "
                     f"cat-1 errors {cat1_errors} != cat-2 errors {cat2_errors}. "
                     f"An attacker who can submit chosen ciphertexts can "
                     f"recover the plaintext via roughly k * log2(k) "
-                    f"oracle queries."
+                    f"oracle queries.",
+                    detail={
+                        "channel": "error_code",
+                        "cat1": sorted(cat1_errors),
+                        "cat2": sorted(cat2_errors),
+                    },
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -456,9 +499,19 @@ class TestAESPaddingOracle:
             )
 
             if error_last_byte and error_middle_byte and error_last_byte != error_middle_byte:
-                pytest.fail(
-                    f"SECURITY: AES-CBC padding oracle - last byte error "
-                    f"({error_last_byte}) differs from middle byte ({error_middle_byte})"
+                classify(
+                    "oracle",
+                    kind="crypto",
+                    label="AES-CBC-PAD padding oracle",
+                    operation="C_Decrypt",
+                    mechanism="CKM_AES_CBC_PAD",
+                    summary="SECURITY: AES-CBC padding oracle - last byte error "
+                    f"({error_last_byte}) differs from middle byte ({error_middle_byte})",
+                    detail={
+                        "channel": "error_code",
+                        "last_byte": error_last_byte,
+                        "middle_byte": error_middle_byte,
+                    },
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -579,14 +632,20 @@ class TestAESPaddingOracle:
                     "Padding' (EUROCRYPT 2002); POODLE (CVE-2014-3566); "
                     "RFC 7366 (encrypt-then-MAC mitigation)",
                 )
-                pytest.fail(
-                    f"SECURITY: AES-CBC-PAD padding oracle (Vaudenay 2002) — "
+                classify(
+                    "oracle",
+                    kind="crypto",
+                    label="AES-CBC-PAD padding oracle (Vaudenay 2002)",
+                    operation="C_Decrypt",
+                    mechanism="CKM_AES_CBC_PAD",
+                    summary="SECURITY: AES-CBC-PAD padding oracle (Vaudenay 2002) — "
                     f"distinct outcomes {dict(tally)} across {trials * 16} "
                     f"corruption probes. An attacker with chosen-ciphertext "
                     f"access can recover plaintext byte-by-byte via ~256 "
                     f"oracle queries per byte. Mitigation is application-"
                     f"level: use AES-GCM or encrypt-then-MAC instead of "
-                    f"bare CBC-PAD."
+                    f"bare CBC-PAD.",
+                    detail={"channel": "error_code", "outcomes": dict(tally)},
                 )
 
             # Single-outcome path: surface the *kind* of single outcome.
@@ -605,14 +664,19 @@ class TestAESPaddingOracle:
                     f"unchecked malleability allows direct plaintext "
                     f"manipulation).",
                     ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.5.4: padding validation "
-                    "expected on padded mechanisms",
+                    reference="PKCS#11 v3.2: padding validation expected on padded mechanisms",
                 )
-                pytest.fail(
-                    "SECURITY: AES-CBC-PAD silently accepts every bit-"
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="AES-CBC-PAD unchecked malleability",
+                    operation="C_Decrypt",
+                    mechanism="CKM_AES_CBC_PAD",
+                    summary="SECURITY: AES-CBC-PAD silently accepts every bit-"
                     "flipped ciphertext (CKR_OK with mismatched "
                     "plaintext) — no padding validation at all. CT "
-                    "malleability is unchecked."
+                    "malleability is unchecked.",
+                    detail={"outcome": "CKR_OK_DIFFERENT", "probes": trials * 16},
                 )
         finally:
             for k in keys:
@@ -672,9 +736,15 @@ class TestTimingBasic:
             if valid_avg > 0 and invalid_avg > 0:
                 ratio = max(valid_avg, invalid_avg) / min(valid_avg, invalid_avg)
                 if ratio > 3.0:
-                    pytest.fail(
-                        f"TIMING: RSA decrypt timing ratio {ratio:.1f}x "
-                        f"(valid={valid_avg * 1000:.2f}ms, invalid={invalid_avg * 1000:.2f}ms)"
+                    classify(
+                        "oracle",
+                        kind="crypto",
+                        label="RSA decrypt timing oracle",
+                        operation="C_Decrypt",
+                        mechanism="CKM_RSA_PKCS",
+                        summary=f"TIMING: RSA decrypt timing ratio {ratio:.1f}x "
+                        f"(valid={valid_avg * 1000:.2f}ms, invalid={invalid_avg * 1000:.2f}ms)",
+                        detail={"channel": "timing", "ratio": round(ratio, 2)},
                     )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -738,9 +808,14 @@ class TestTimingBasic:
                     )
                 except AssertionError as exc:
                     _abort_decrypt_operation(rs.raw, rs.sh)
-                    pytest.fail(
-                        f"Valid CBC-PAD decrypt failed unexpectedly "
-                        f"({exc}) — timing comparison invalid"
+                    classify(
+                        "not_operational",
+                        kind="crypto",
+                        label="AES-CBC-PAD valid decrypt",
+                        operation="C_Decrypt",
+                        mechanism="CKM_AES_CBC_PAD",
+                        summary=f"Valid CBC-PAD decrypt failed unexpectedly "
+                        f"({exc}) — timing comparison invalid",
                     )
                 valid_times.append(time.perf_counter() - start)
 
@@ -784,10 +859,15 @@ class TestTimingBasic:
                         # the test is comparing. Other (non-padding) CKRs
                         # indicate broken decrypt and would skew timing.
                         if "CKR_OK" not in msg:
-                            pytest.fail(
-                                f"Unexpected non-padding error on bit-"
+                            classify(
+                                "nonspec_reject",
+                                label="AES-CBC-PAD corrupted decrypt",
+                                operation="C_Decrypt",
+                                mechanism="CKM_AES_CBC_PAD",
+                                expected=invalid_path_codes,
+                                summary=f"Unexpected non-padding error on bit-"
                                 f"flipped CBC-PAD decrypt: {exc} — timing "
-                                f"comparison invalid"
+                                f"comparison invalid",
                             )
                     invalid_times.append(elapsed)
                 else:
@@ -808,12 +888,18 @@ class TestTimingBasic:
                         reference="Al Fardan & Paterson 'Lucky Thirteen' "
                         "(IEEE S&P 2013, CVE-2013-0169)",
                     )
-                    pytest.fail(
-                        f"TIMING: AES-CBC-PAD valid vs invalid timing "
+                    classify(
+                        "oracle",
+                        kind="crypto",
+                        label="AES-CBC-PAD Lucky13 timing oracle",
+                        operation="C_Decrypt",
+                        mechanism="CKM_AES_CBC_PAD",
+                        summary=f"TIMING: AES-CBC-PAD valid vs invalid timing "
                         f"ratio {ratio:.1f}x "
                         f"(valid={valid_avg * 1000:.2f}ms, "
                         f"invalid={invalid_avg * 1000:.2f}ms) — "
-                        f"Lucky13-class oracle."
+                        f"Lucky13-class oracle.",
+                        detail={"channel": "timing", "ratio": round(ratio, 2)},
                     )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

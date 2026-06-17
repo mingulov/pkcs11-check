@@ -24,7 +24,7 @@ from pkcs11_check.raw.pack import (
     mech_simple,
     template,
 )
-from pkcs11_check.raw.recipes import gen_aes_key, get_session_info
+from pkcs11_check.raw.recipes import get_session_info
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
@@ -43,7 +43,7 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_NOT_LOGGED_IN,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes, is_known_error
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, get_pin_bytes, is_known_error
 
 pytestmark = pytest.mark.access
 
@@ -101,7 +101,7 @@ class TestSessionInfo:
         if pin_bytes is not None:
             login_user(rs.raw, test_sh, CKU_USER, pin_bytes)
         try:
-            key_h = gen_aes_key(rs.raw, test_sh, 128)
+            key_h = gen_aes_key_or_xfail(rs, 128, sh=test_sh)
             assert key_h != 0
             rs.raw.C_DestroyObject(test_sh, key_h)
         finally:
@@ -119,7 +119,7 @@ class TestSessionInfo:
             login_user(rs.raw, test_sh, CKU_USER, pin_bytes)
         try:
             # Session (non-token) object must succeed on RO session
-            session_key_h = gen_aes_key(rs.raw, test_sh, 128)
+            session_key_h = gen_aes_key_or_xfail(rs, 128, sh=test_sh)
             assert session_key_h != 0
             rs.raw.C_DestroyObject(test_sh, session_key_h)
 

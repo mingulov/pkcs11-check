@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_bool,
     attr_ulong,
@@ -38,7 +39,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_KEM, assert_ckr
 
-pytestmark = [pytest.mark.access, pytest.mark.pqc, pytest.mark.requires_v32]
+pytestmark = [pytest.mark.access, pytest.mark.pqc]
 
 
 def _generate_ml_kem_keypair(raw: Any, sh: int) -> tuple[int, int]:
@@ -74,6 +75,7 @@ def _generate_ml_kem_keypair(raw: Any, sh: int) -> tuple[int, int]:
     return pub.value, priv.value
 
 
+@pytest.mark.needs_function("C_EncapsulateKey")
 class TestEncapsulateKeyErrors:
     """Error conditions for C_EncapsulateKey (Sec.5.14.7)."""
 
@@ -102,7 +104,14 @@ class TestEncapsulateKeyErrors:
             )
             if rv == CKR_OK:
                 destroy_quietly(rs.raw, rs.sh, secret.value)
-                pytest.fail("Should have rejected AES_ECB as encapsulate mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_EncapsulateKey:AES-mechanism",
+                    operation="C_EncapsulateKey",
+                    actual=rv,
+                    summary="Should have rejected AES_ECB as encapsulate mechanism",
+                )
             assert_ckr(CKR_KEM["encap_mechanism_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -133,13 +142,22 @@ class TestEncapsulateKeyErrors:
             )
             if rv == CKR_OK:
                 destroy_quietly(rs.raw, rs.sh, secret.value)
-                pytest.fail("Should have rejected RSA key with ML-KEM mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_EncapsulateKey:key-type-inconsistent",
+                    operation="C_EncapsulateKey",
+                    mechanism="CKM_ML_KEM",
+                    actual=rv,
+                    summary="Should have rejected RSA key with ML-KEM mechanism",
+                )
             assert_ckr(CKR_KEM["encap_key_type_inconsistent"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, _priv)
 
 
+@pytest.mark.needs_function("C_DecapsulateKey")
 class TestDecapsulateKeyErrors:
     """Error conditions for C_DecapsulateKey (Sec.5.14.8)."""
 
@@ -166,7 +184,14 @@ class TestDecapsulateKeyErrors:
             )
             if rv == CKR_OK:
                 destroy_quietly(rs.raw, rs.sh, secret.value)
-                pytest.fail("Should have rejected AES_ECB as decapsulate mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_DecapsulateKey:AES-mechanism",
+                    operation="C_DecapsulateKey",
+                    actual=rv,
+                    summary="Should have rejected AES_ECB as decapsulate mechanism",
+                )
             assert_ckr(CKR_KEM["decap_mechanism_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, _pub)
@@ -199,7 +224,15 @@ class TestDecapsulateKeyErrors:
                 destroy_quietly(rs.raw, rs.sh, secret.value)
                 # ML-KEM implicit rejection: may produce a key (spec allows this)
                 if not exp.allow_success:
-                    pytest.fail("Should have rejected garbage ciphertext")
+                    classify(
+                        "accepted_invalid",
+                        kind="crypto",
+                        label="C_DecapsulateKey:garbage-ciphertext",
+                        operation="C_DecapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                        actual=rv,
+                        summary="Should have rejected garbage ciphertext",
+                    )
             else:
                 assert_ckr(exp, rv, ckr_strict)
         finally:

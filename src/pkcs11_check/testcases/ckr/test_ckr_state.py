@@ -1,6 +1,6 @@
 """CKR compliance tests for C_GetOperationState and C_SetOperationState.
 
-Source: PKCS#11 v3.1 Sec.5.6.5-5.6.6.
+Source: PKCS#11 v3.2-5.6.6.
 """
 
 from __future__ import annotations

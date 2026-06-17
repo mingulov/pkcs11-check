@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -52,7 +53,7 @@ def _destroy_object(raw: Any, sh: int, handle: int) -> None:
 
 
 def _assert_destroyed_handle_error(rv: int, operation: str) -> None:
-    # Type-C use-after-destroy 3-way classification. The object was already
+    # lifecycle use-after-destroy 3-way classification. The object was already
     # destroyed (the prior C_DestroyObject was asserted to return CKR_OK), so
     # the operation must reject the stale handle:
     #   CKR_OK              -> fail (use-after-destroy: the op succeeded),
@@ -72,7 +73,13 @@ def _assert_read_destroyed_handle_fails(rs: Any, key: int) -> None:
         if is_known_error(exc, HANDLE_ERRORS):
             return
         raise
-    pytest.fail("C_GetAttributeValue succeeded with destroyed handle")
+    classify(
+        "self_contradiction",
+        kind="lifecycle",
+        label="C_GetAttributeValue on a destroyed object handle (use-after-destroy)",
+        operation="C_GetAttributeValue",
+        summary="C_GetAttributeValue succeeded with destroyed handle",
+    )
 
 
 class TestHandleReuseAfterDestroy:

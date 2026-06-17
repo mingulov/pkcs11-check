@@ -30,6 +30,7 @@ def _run(monkeypatch: pytest.MonkeyPatch, exc: BaseException) -> None:
     monkeypatch.setattr(tli, "pem_to_der", lambda _pem: b"der")
     monkeypatch.setattr(tli, "import_cert_raw", _raise_import)
     monkeypatch.setattr(tli, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(tli, "skip_unless_cert_storage", lambda _rs: None)
     tc = {"id": "tc-valid", "peer_certificate": "pem", "expected_result": "SUCCESS"}
     tli.TestLimboCertImport().test_import_peer_cert(tc, _RawSession(), object())
 

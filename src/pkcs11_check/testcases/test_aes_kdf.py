@@ -16,7 +16,6 @@ from pkcs11_check.raw.pack import mech_string_data
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
-    import_secret_key,
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
@@ -33,6 +32,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB_ENCRYPT_DATA,
     CKO_SECRET_KEY,
 )
+from pkcs11_check.testcases.conftest import import_secret_key_negotiated
 
 pytestmark = pytest.mark.keymgmt
 
@@ -82,9 +82,8 @@ def _mech_cbc_encrypt_data(iv: bytes, data: bytes) -> Any:
 
 def _create_base_key(rs: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> int:
     """Create an AES base key suitable for derivation."""
-    return import_secret_key(
-        rs.raw,
-        rs.sh,
+    return import_secret_key_negotiated(
+        rs,
         CKK_AES,
         key_bytes,
         attrs={

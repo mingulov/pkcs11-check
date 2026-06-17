@@ -20,6 +20,7 @@ from pkcs11_check.raw.recipes import (
     digest_single,
     digest_single_with_key,
     gen_aes_key,
+    import_secret_key,
     read_attributes,
 )
 from pkcs11_check.raw.rv import expect_rv
@@ -28,6 +29,7 @@ from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
     CKA_SENSITIVE,
     CKA_VALUE,
+    CKK_AES,
     CKM_SHA224,
     CKM_SHA256,
     CKM_SHA384,
@@ -39,12 +41,15 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_INDIGESTIBLE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
 )
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
+    assert_correct,
     is_known_error,
     xfail_if_known_ckr,
 )
@@ -60,6 +65,13 @@ _DIGEST_RUNTIME_REJECT_RVS = (
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+)
+
+_DIGEST_KEY_PROTECTED_REJECT_RVS = (
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_INDIGESTIBLE,
 )
 
 
@@ -159,7 +171,13 @@ class TestDigestProperties:
         data = b"deterministic test"
         d1 = _digest_or_xfail(rs, CKM_SHA256, data)
         d2 = _digest_or_xfail(rs, CKM_SHA256, data)
-        assert d1 == d2
+        assert_correct(
+            actual=d1,
+            expected=d2,
+            label="CKM_SHA256:C_Digest determinism",
+            operation="C_Digest",
+            mechanism="CKM_SHA256",
+        )
 
     def test_sha256_different_input_different_digest(self, p11_raw_session: Any) -> None:
         """Different inputs produce different digests."""
@@ -172,13 +190,25 @@ class TestDigestProperties:
         """Digest of empty data produces known SHA-256 hash of empty string."""
         rs = p11_raw_session
         digest = _digest_or_xfail(rs, CKM_SHA256, b"")
-        assert digest.hex() == hashlib.sha256(b"").hexdigest()
+        assert_correct(
+            actual=digest.hex(),
+            expected=hashlib.sha256(b"").hexdigest(),
+            label="CKM_SHA256:C_Digest KAT (empty)",
+            operation="C_Digest",
+            mechanism="CKM_SHA256",
+        )
 
     def test_sha1_empty_data(self, p11_raw_session: Any) -> None:
         """SHA-1 of empty string matches known value."""
         rs = p11_raw_session
         digest = _digest_or_xfail(rs, CKM_SHA_1, b"")
-        assert digest.hex() == hashlib.sha1(b"", usedforsecurity=False).hexdigest()
+        assert_correct(
+            actual=digest.hex(),
+            expected=hashlib.sha1(b"", usedforsecurity=False).hexdigest(),
+            label="CKM_SHA_1:C_Digest KAT (empty)",
+            operation="C_Digest",
+            mechanism="CKM_SHA_1",
+        )
 
     def test_digest_large_data(self, p11_raw_session: Any) -> None:
         """Digest of 1 MiB data succeeds and matches hashlib."""
@@ -186,7 +216,13 @@ class TestDigestProperties:
         data = b"\xab" * (1024 * 1024)
         p11_digest = _digest_or_xfail(rs, CKM_SHA256, data)
         expected = hashlib.sha256(data).digest()
-        assert p11_digest == expected
+        assert_correct(
+            actual=p11_digest,
+            expected=expected,
+            label="CKM_SHA256:C_Digest KAT (1 MiB)",
+            operation="C_Digest",
+            mechanism="CKM_SHA256",
+        )
 
 
 class TestDigestCrossVerify:
@@ -209,7 +245,13 @@ class TestDigestCrossVerify:
         data = b"cross-verification test data for digest operations"
         p11_digest = _digest_or_xfail(rs, mechanism, data)
         expected = hashlib.new(hashlib_name, data).digest()
-        assert p11_digest == expected
+        assert_correct(
+            actual=p11_digest,
+            expected=expected,
+            label=f"{hashlib_name}:C_Digest KAT (cross-verify)",
+            operation="C_Digest",
+            mechanism=hashlib_name,
+        )
 
     @pytest.mark.parametrize(
         "mechanism,hashlib_name",
@@ -227,7 +269,13 @@ class TestDigestCrossVerify:
         data = bytes(range(256))
         p11_digest = _digest_or_xfail(rs, mechanism, data)
         expected = hashlib.new(hashlib_name, data).digest()
-        assert p11_digest == expected
+        assert_correct(
+            actual=p11_digest,
+            expected=expected,
+            label=f"{hashlib_name}:C_Digest KAT (binary data)",
+            operation="C_Digest",
+            mechanism=hashlib_name,
+        )
 
 
 class TestDigestKey:
@@ -252,7 +300,13 @@ class TestDigestKey:
             key_bytes = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(key_bytes, bytes)
             ref_digest = hashlib.sha256(key_bytes).digest()
-            assert p11_digest == ref_digest
+            assert_correct(
+                actual=p11_digest,
+                expected=ref_digest,
+                label="CKM_SHA256:C_DigestKey KAT (AES-128)",
+                operation="C_DigestKey",
+                mechanism="CKM_SHA256",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -288,7 +342,13 @@ class TestDigestKey:
             key_bytes = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(key_bytes, bytes)
             ref_digest = hashlib.sha256(data_prefix + key_bytes).digest()
-            assert p11_digest == ref_digest
+            assert_correct(
+                actual=p11_digest,
+                expected=ref_digest,
+                label="CKM_SHA256:C_DigestKey KAT (data + key)",
+                operation="C_DigestKey",
+                mechanism="CKM_SHA256",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -303,6 +363,59 @@ class TestDigestKey:
             key_bytes = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(key_bytes, bytes)
             ref_digest = hashlib.sha256(key_bytes).digest()
-            assert p11_digest == ref_digest
+            assert_correct(
+                actual=p11_digest,
+                expected=ref_digest,
+                label="CKM_SHA256:C_DigestKey KAT (AES-256)",
+                operation="C_DigestKey",
+                mechanism="CKM_SHA256",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_digest_key_sensitive_non_extractable_imported_key(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """DigestKey may use protected key material without exposing CKA_VALUE."""
+        rs = p11_raw_session
+        _require_digest_mechanism(rs, CKM_SHA256)
+        secret = bytes.fromhex("07192a3b4c5d6e7f8091a2b3c4d5e6f7")
+        try:
+            key = import_secret_key(
+                rs.raw,
+                rs.sh,
+                CKK_AES,
+                secret,
+                attrs={CKA_SENSITIVE: True, CKA_EXTRACTABLE: False},
+            )
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _DIGEST_RUNTIME_REJECT_RVS,
+                "C_CreateObject rejected protected AES key setup for C_DigestKey",
+            )
+            raise
+
+        try:
+            try:
+                p11_digest = digest_single_with_key(rs.raw, rs.sh, CKM_SHA256, key)
+            except NotImplementedError:
+                pytest.skip("C_DigestKey not supported by this module")
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _DIGEST_KEY_PROTECTED_REJECT_RVS,
+                    "SHA256 C_DigestKey rejected a protected AES key",
+                )
+                raise
+            expected = hashlib.sha256(secret).digest()
+            assert_correct(
+                actual=p11_digest,
+                expected=expected,
+                label="CKM_SHA256:C_DigestKey KAT (protected key)",
+                operation="C_DigestKey",
+                mechanism="CKM_SHA256",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

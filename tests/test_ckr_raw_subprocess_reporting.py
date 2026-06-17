@@ -416,7 +416,7 @@ def test_ckr_dual_encrypt_wrapper_xfails_advertised_aes_setup_reject(
     monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
     rs = _session_with_mechanisms("AES_KEY_GEN")
 
-    with pytest.raises(pytest.xfail.Exception, match="AES-128 key generation"):
+    with pytest.raises(pytest.xfail.Exception, match="128-bit key generation"):
         test_ckr_dual.TestOperationStateWrapper().test_encrypt_twice_succeeds(rs)
 
 
@@ -441,7 +441,7 @@ def test_ckr_dual_sign_then_encrypt_xfails_advertised_aes_setup_reject(
     monkeypatch.setattr(test_ckr_dual, "destroy_quietly", lambda *_args, **_kwargs: None)
     rs = _session_with_mechanisms("AES_KEY_GEN", "RSA_PKCS_KEY_PAIR_GEN")
 
-    with pytest.raises(pytest.xfail.Exception, match="AES-128 key generation"):
+    with pytest.raises(pytest.xfail.Exception, match="128-bit key generation"):
         test_ckr_dual.TestOperationStateWrapper().test_sign_then_encrypt(rs)
 
 

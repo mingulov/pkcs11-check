@@ -17,7 +17,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
     gen_aes_key,
-    gen_rsa_keypair,
     generate_random,
     read_attributes,
 )
@@ -34,8 +33,10 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS_OAEP,
     CKM_SHA_1,
 )
+from pkcs11_check.testcases._signature_policy import xfail_if_op_not_operational
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
+    gen_rsa_keypair_or_xfail,
     require_operational_aes_keygen,
     xfail_if_known_ckr,
 )
@@ -247,17 +248,22 @@ class TestRSAEncryption:
     def test_rsa_pkcs_roundtrip(self, p11_raw_session: Any) -> None:
         """RSA PKCS#1 v1.5 encrypt/decrypt roundtrip."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
             private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
             plaintext = b"RSA roundtrip test"
-            ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS, plaintext)
-            pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, ct)
+            try:
+                ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS, plaintext)
+                pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, ct)
+            except AssertionError as exc:
+                # FIPS restricts RSA PKCS#1 v1.5 key transport -> CKR_DEVICE_ERROR
+                # on the private-key decrypt: advertised but not operational, not
+                # a break.
+                xfail_if_op_not_operational(exc, "CKM_RSA_PKCS")
             assert pt == plaintext
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -266,9 +272,8 @@ class TestRSAEncryption:
     def test_rsa_oaep_roundtrip(self, p11_raw_session: Any) -> None:
         """RSA-OAEP encrypt/decrypt roundtrip."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
             private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
@@ -304,9 +309,8 @@ class TestRSAEncryption:
     def test_rsa_ciphertext_is_random(self, p11_raw_session: Any) -> None:
         """RSA-OAEP should produce different ciphertexts for same plaintext."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
             private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},

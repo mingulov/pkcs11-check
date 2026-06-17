@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -35,7 +36,11 @@ from pkcs11_check.raw.types_std import (
     CKM_BLOWFISH_KEY_GEN,
     CKR_OK,
 )
-from pkcs11_check.testcases.conftest import CIPHER_OP_RUNTIME_REJECT_RVS, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    CIPHER_OP_RUNTIME_REJECT_RVS,
+    assert_correct,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.full
 
@@ -134,7 +139,15 @@ class TestBlowfishEncryption:
                 _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_BLOWFISH_CBC, iv),
             )
-            assert ct != _TWO_BLOCKS
+            if ct == _TWO_BLOCKS:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_BLOWFISH_CBC:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_BLOWFISH_CBC",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -143,7 +156,13 @@ class TestBlowfishEncryption:
                 ct,
                 mech_param=mech_bytes(CKM_BLOWFISH_CBC, iv),
             )
-            assert pt == _TWO_BLOCKS
+            assert_correct(
+                actual=pt,
+                expected=_TWO_BLOCKS,
+                label="CKM_BLOWFISH_CBC:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_BLOWFISH_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -179,7 +198,16 @@ class TestBlowfishEncryption:
                 _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_BLOWFISH_CBC, iv2),
             )
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_BLOWFISH_CBC:encrypt IV independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_BLOWFISH_CBC",
+                    summary="different IVs (same key) produced identical CBC "
+                    "ciphertext -- IV ignored",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -208,7 +236,15 @@ class TestBlowfishEncryption:
                 plaintext,
                 mech_param=mech_bytes(CKM_BLOWFISH_CBC_PAD, iv),
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_BLOWFISH_CBC_PAD:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_BLOWFISH_CBC_PAD",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             # Ciphertext is padded to 8-byte block boundary
             assert len(ct) % 8 == 0
             pt = decrypt_single(
@@ -219,7 +255,13 @@ class TestBlowfishEncryption:
                 ct,
                 mech_param=mech_bytes(CKM_BLOWFISH_CBC_PAD, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_BLOWFISH_CBC_PAD:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_BLOWFISH_CBC_PAD",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -252,7 +294,15 @@ class TestBlowfishEncryption:
                 plaintext,
                 mech_param=mech_bytes(CKM_BLOWFISH_CBC_PAD, iv),
             )
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_BLOWFISH_CBC_PAD:encrypt key independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_BLOWFISH_CBC_PAD",
+                    summary="different keys produced identical CBC-PAD ciphertext -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)

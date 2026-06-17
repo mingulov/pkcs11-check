@@ -12,6 +12,7 @@ import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_oaep
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -40,7 +41,11 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
-from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    gen_rsa_keypair_or_xfail,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.crossverify
 
@@ -85,9 +90,20 @@ class TestRSAOAEPRoundtrip:
         plaintext = b"RSA-OAEP roundtrip"
         oaep = _oaep_sha1()
         try:
-            ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, plaintext, mech_param=oaep)
-            pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct, mech_param=oaep)
-            assert pt == plaintext
+            try:
+                ct = encrypt_single(
+                    rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, plaintext, mech_param=oaep
+                )
+                pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct, mech_param=oaep)
+            except AssertionError as exc:
+                _xfail_if_oaep_runtime_reject(exc, "RSA-OAEP SHA-1 roundtrip")
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_RSA_PKCS_OAEP:decrypt roundtrip (SHA-1)",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS_OAEP",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -104,30 +120,48 @@ class TestRSAOAEPRoundtrip:
         plaintext = b"OAEP randomness"
         oaep = _oaep_sha1()
         try:
-            ct1 = encrypt_single(
-                rs.raw,
-                rs.sh,
-                pub,
-                CKM_RSA_PKCS_OAEP,
-                plaintext,
-                mech_param=oaep,
+            try:
+                ct1 = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_RSA_PKCS_OAEP,
+                    plaintext,
+                    mech_param=oaep,
+                )
+                ct2 = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_RSA_PKCS_OAEP,
+                    plaintext,
+                    mech_param=oaep,
+                )
+            except AssertionError as exc:
+                _xfail_if_oaep_runtime_reject(exc, "RSA-OAEP SHA-1 randomized")
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_OAEP:encrypt randomization",
+                    operation="C_Encrypt",
+                    mechanism="CKM_RSA_PKCS_OAEP",
+                    summary="two OAEP encryptions of the same plaintext are identical -- "
+                    "padding is not randomized",
+                )
+            assert_correct(
+                actual=decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct1, mech_param=oaep),
+                expected=plaintext,
+                label="CKM_RSA_PKCS_OAEP:decrypt ct1 roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS_OAEP",
             )
-            ct2 = encrypt_single(
-                rs.raw,
-                rs.sh,
-                pub,
-                CKM_RSA_PKCS_OAEP,
-                plaintext,
-                mech_param=oaep,
-            )
-            assert ct1 != ct2
-            assert (
-                decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct1, mech_param=oaep)
-                == plaintext
-            )
-            assert (
-                decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct2, mech_param=oaep)
-                == plaintext
+            assert_correct(
+                actual=decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct2, mech_param=oaep),
+                expected=plaintext,
+                label="CKM_RSA_PKCS_OAEP:decrypt ct2 roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS_OAEP",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -144,9 +178,18 @@ class TestRSAOAEPRoundtrip:
         )
         oaep = _oaep_sha1()
         try:
-            ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, b"", mech_param=oaep)
-            pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct, mech_param=oaep)
-            assert pt == b""
+            try:
+                ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, b"", mech_param=oaep)
+                pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct, mech_param=oaep)
+            except AssertionError as exc:
+                _xfail_if_oaep_runtime_reject(exc, "RSA-OAEP SHA-1 empty-plaintext")
+            assert_correct(
+                actual=pt,
+                expected=b"",
+                label="CKM_RSA_PKCS_OAEP:decrypt empty-plaintext roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS_OAEP",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -166,16 +209,25 @@ class TestRSAOAEPRoundtrip:
         plaintext = b"\xab" * 190  # Safe under 214-byte limit
         oaep = _oaep_sha1()
         try:
-            ct = encrypt_single(
-                rs.raw,
-                rs.sh,
-                pub,
-                CKM_RSA_PKCS_OAEP,
-                plaintext,
-                mech_param=oaep,
+            try:
+                ct = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_RSA_PKCS_OAEP,
+                    plaintext,
+                    mech_param=oaep,
+                )
+                pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct, mech_param=oaep)
+            except AssertionError as exc:
+                _xfail_if_oaep_runtime_reject(exc, "RSA-OAEP SHA-1 max-plaintext")
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_RSA_PKCS_OAEP:decrypt max-plaintext roundtrip (SHA-1)",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS_OAEP",
             )
-            pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct, mech_param=oaep)
-            assert pt == plaintext
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -191,16 +243,19 @@ class TestRSAOAEPRoundtrip:
         )
         oaep = _oaep_sha1()
         try:
-            for pt_len in [1, 16, 100, 190]:
-                ct = encrypt_single(
-                    rs.raw,
-                    rs.sh,
-                    pub,
-                    CKM_RSA_PKCS_OAEP,
-                    b"\x00" * pt_len,
-                    mech_param=oaep,
-                )
-                assert len(ct) == 256
+            try:
+                for pt_len in [1, 16, 100, 190]:
+                    ct = encrypt_single(
+                        rs.raw,
+                        rs.sh,
+                        pub,
+                        CKM_RSA_PKCS_OAEP,
+                        b"\x00" * pt_len,
+                        mech_param=oaep,
+                    )
+                    assert len(ct) == 256
+            except AssertionError as exc:
+                _xfail_if_oaep_runtime_reject(exc, "RSA-OAEP SHA-1 ciphertext-size")
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -235,7 +290,15 @@ class TestRSAOAEPCrossVerify:
             oaep = _oaep_sha1()
             rv = rs.raw.C_DecryptInit(rs.sh, oaep.byref(), priv)
             if rv != CKR_OK:
-                pytest.xfail(f"OAEP param mismatch between module and cryptography: {ckr_name(rv)}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_OAEP:C_DecryptInit",
+                    operation="C_DecryptInit",
+                    mechanism="CKM_RSA_PKCS_OAEP",
+                    actual=rv,
+                    summary=f"OAEP param mismatch between module and cryptography: {ckr_name(rv)}",
+                )
             import ctypes
             from ctypes import byref
 
@@ -245,13 +308,35 @@ class TestRSAOAEPCrossVerify:
             out_len = CK_ULONG(0)
             rv = rs.raw.C_Decrypt(rs.sh, in_buf, len(ct), None, byref(out_len))
             if rv != CKR_OK:
-                pytest.xfail(f"OAEP param mismatch between module and cryptography: {ckr_name(rv)}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_OAEP:C_Decrypt (length query)",
+                    operation="C_Decrypt",
+                    mechanism="CKM_RSA_PKCS_OAEP",
+                    actual=rv,
+                    summary=f"OAEP param mismatch between module and cryptography: {ckr_name(rv)}",
+                )
             out_buf = (ctypes.c_ubyte * out_len.value)()
             rv = rs.raw.C_Decrypt(rs.sh, in_buf, len(ct), out_buf, byref(out_len))
             if rv != CKR_OK:
-                pytest.xfail(f"OAEP param mismatch between module and cryptography: {ckr_name(rv)}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_OAEP:C_Decrypt",
+                    operation="C_Decrypt",
+                    mechanism="CKM_RSA_PKCS_OAEP",
+                    actual=rv,
+                    summary=f"OAEP param mismatch between module and cryptography: {ckr_name(rv)}",
+                )
             pt = bytes(out_buf[: out_len.value])
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_RSA_PKCS_OAEP:decrypt of cryptography-lib ciphertext",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS_OAEP",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -298,7 +383,14 @@ class TestRSAOAEPCrossVerify:
                 return  # Failed as expected
             pt = bytes(out_buf[: out_len.value])
             if pt == b"wrong key test":
-                pytest.fail("Decryption with wrong key should fail")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_OAEP:wrong-key decrypt",
+                    operation="C_Decrypt",
+                    mechanism="CKM_RSA_PKCS_OAEP",
+                    summary="Decryption with wrong key should fail",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub1)
             destroy_quietly(rs.raw, rs.sh, priv1)
@@ -340,7 +432,13 @@ class TestRSAOAEPHashCombos:
                 )
             except AssertionError as exc:
                 _xfail_if_oaep_runtime_reject(exc, "RSA-OAEP SHA-384/MGF1-SHA384")
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_RSA_PKCS_OAEP:decrypt roundtrip (SHA-384)",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS_OAEP",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -377,7 +475,13 @@ class TestRSAOAEPHashCombos:
                 )
             except AssertionError as exc:
                 _xfail_if_oaep_runtime_reject(exc, "RSA-OAEP SHA-512/MGF1-SHA512")
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_RSA_PKCS_OAEP:decrypt roundtrip (SHA-512)",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS_OAEP",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

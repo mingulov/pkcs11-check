@@ -8,6 +8,7 @@ import pytest
 
 from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
 from pkcs11_check.raw.recipes import generate_random, get_mechanism_list
+from pkcs11_check.testcases.conftest import skip_unless_generate_random_supported
 
 pytestmark = pytest.mark.smoke
 
@@ -21,6 +22,7 @@ class TestSessionManagement:
     def test_generate_random(self, p11_raw_session: Any) -> None:
         """Generate random bytes via the session."""
         rs = p11_raw_session
+        skip_unless_generate_random_supported(rs)
         random_bytes = generate_random(rs.raw, rs.sh, 32)
         assert len(random_bytes) == 32
         assert random_bytes != bytes(32)
@@ -28,6 +30,7 @@ class TestSessionManagement:
     def test_generate_random_different_each_time(self, p11_raw_session: Any) -> None:
         """Two random generations should differ."""
         rs = p11_raw_session
+        skip_unless_generate_random_supported(rs)
         r1 = generate_random(rs.raw, rs.sh, 32)
         r2 = generate_random(rs.raw, rs.sh, 32)
         assert r1 != r2

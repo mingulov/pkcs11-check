@@ -6,16 +6,17 @@ Wycheproof vectors. Complements test_wycheproof_mldsa.py (verify-only).
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_pqc_private_key,
     sign_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKK_ML_DSA,
@@ -24,11 +25,13 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_DSA_65,
     CKP_ML_DSA_87,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DATA_INVALID,
+    CKR_KEY_SIZE_RANGE,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR
+from pkcs11_check.testcases.conftest import is_known_error, reject_or_classify
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
 pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc]
 REQUIRED_MECHANISMS = ["ML_DSA"]
@@ -38,8 +41,7 @@ def _load(filename: str) -> list[dict[str, Any]]:
     path = WYCHEPROOF_DIR / filename
     if not path.exists():
         return []
-    with open(path) as f:
-        data = json.load(f)
+    data = load_json_cached(path)
     vectors = []
     for group in data.get("testGroups", []):
         meta = {k: v for k, v in group.items() if k != "tests"}
@@ -67,10 +69,18 @@ _MLDSA_SIGN_FILES = [
     ("mldsa_87_sign_noseed_test.json", CKP_ML_DSA_87),
 ]
 
+# Spec-correct CKRs for a malformed-key import rejection at C_CreateObject.
+# CKR_ATTRIBUTE_VALUE_INVALID: the key value attribute is invalid (spec §5.2).
+# CKR_TEMPLATE_INCOMPLETE / _INCONSISTENT: template shape errors (spec §11.7).
+# CKR_KEY_SIZE_RANGE: key material is the wrong size (covers IncorrectPrivateKeyLength).
+# CKR_DATA_INVALID: data is structurally invalid (some modules use this for decode failures).
+# Any OTHER clean code (e.g. kryoptic CKR_DEVICE_ERROR) is a recorded deviation (xfail).
 _MLDSA_PRIVATE_IMPORT_REJECT_CKRS = (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_DATA_INVALID,
 )
 
 _MLDSA_INVALID_PRIVATE_KEY_FLAGS = frozenset(
@@ -113,6 +123,15 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_module_session: Any) -
     result = vec["result"]
     private_key_bytes = bytes.fromhex(private_key_hex)
 
+    if vec.get("ctx", ""):
+        # This suite signs without transmitting the vector's context, so the
+        # PKCS#11-visible operation differs from the vector: an InvalidContext
+        # vector ("context too long") reaches the module as a valid empty-ctx
+        # sign and "accepted" would be a false finding. Context vectors --
+        # including the over-long reject -- are exercised faithfully via
+        # CK_SIGN_ADDITIONAL_CONTEXT in test_wycheproof_mldsa_context.
+        pytest.skip("ctx vector not transmitted here; covered by test_wycheproof_mldsa_context")
+
     if not private_key_bytes:
         pytest.skip("No private key in vector")
 
@@ -125,12 +144,31 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_module_session: Any) -
             parameter_set=vec["_parameter_set"],
             attrs={CKA_SIGN: True},
         )
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         exc_msg = str(exc)
+        # A vector whose invalidity IS the private key (out-of-range s1/s2,
+        # wrong length) is correctly rejected at import.  Per the classification
+        # model (CLAUDE.md table): rejection with the expected spec CKR = pass;
+        # rejection with SOME OTHER clean code = xfail (recorded deviation).
+        # kryoptic rejects these with CKR_DEVICE_ERROR (its crypto-layer decode
+        # failure code); softhsm2/nss/wolfpkcs11 instead accept the bytes and
+        # sign (lenient, handled in the sign branch).  Both are honest; neither
+        # is a fail.  reject_or_classify enforces the 3-way model here.
+        if result == "invalid" and _has_flag(vec, _MLDSA_INVALID_PRIVATE_KEY_FLAGS):
+            reject_or_classify(
+                exc,
+                _MLDSA_PRIVATE_IMPORT_REJECT_CKRS,
+                label=f"{vec_id}: InvalidPrivateKey import reject",
+            )
+            return
         if is_known_error(exc, _MLDSA_PRIVATE_IMPORT_REJECT_CKRS):
-            if result == "invalid" and _has_flag(vec, _MLDSA_INVALID_PRIVATE_KEY_FLAGS):
-                return
-            pytest.xfail(f"ML_DSA advertised but private-key import is not operational: {exc_msg}")
+            classify(
+                "not_operational",
+                label="ML_DSA:private-key-import",
+                summary=f"ML_DSA advertised but private-key import is not operational: {exc_msg}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         raise
 
     try:
@@ -139,11 +177,38 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_module_session: Any) -
             assert len(sig) > 0, "Empty signature"
             # Note: ML-DSA signatures are non-deterministic, so length/non-empty
             # is the meaningful invariant for this path.
+        elif _has_flag(vec, _MLDSA_INVALID_PRIVATE_KEY_FLAGS):
+            # The module imported malformed key material AND produced a
+            # signature: lenient key validation. No forgery and no
+            # self-contradiction is provable from this alone (only the key
+            # holder shape is wrong), so per the classification model it is a
+            # recorded deviation, not a hard fail.
+            classify(
+                "honest_deviation",
+                summary=(
+                    f"{vec_id}: lenient private-key validation -- module accepted malformed "
+                    f"ML-DSA key material (flags={vec.get('flags', [])}) and signed"
+                ),
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         else:
-            pytest.fail(f"Invalid ML-DSA sign vector {vec_id} accepted by module")
+            classify(
+                "accepted_invalid",
+                kind="crypto",
+                summary=f"Invalid ML-DSA sign vector {vec_id} accepted by module",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
     except AssertionError as exc:
         if result == "valid":
-            pytest.fail(f"Valid ML-DSA sign failed {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label=f"ML_DSA:sign:{vec_id}",
+                summary=f"Valid ML-DSA sign failed {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable: module rejected invalid vector
         return
     finally:

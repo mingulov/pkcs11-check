@@ -41,6 +41,7 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_TYPE_INVALID,
     CKU_USER,
 )
+from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail
 
 pytestmark = pytest.mark.security
 
@@ -201,9 +202,8 @@ class TestDeprecatedMechanismOperation:
         if key_type == "RSA":
             if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
                 pytest.skip("RSA keygen not supported")
-            pub, priv = gen_rsa_keypair(
-                rs.raw,
-                rs.sh,
+            pub, priv = gen_rsa_keypair_or_xfail(
+                rs,
                 2048,
                 private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
                 public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},

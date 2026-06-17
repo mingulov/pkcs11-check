@@ -20,10 +20,7 @@ from pkcs11_check.raw.pack import mech_ecdh, mech_hkdf
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
-    gen_ec_keypair,
-    import_secret_key,
     read_attributes,
-    sign_single,
 )
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
@@ -58,7 +55,13 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    gen_ec_keypair_or_xfail,
+    hmac_sign_or_xfail,
+    import_secret_key_negotiated,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -73,9 +76,8 @@ _DERIVE_ERROR_RVS = {
 
 def _import_generic_secret(rs: Any, value: bytes, derive: bool = True) -> int:
     """Import a GENERIC_SECRET key with DERIVE=True."""
-    return import_secret_key(
-        rs.raw,
-        rs.sh,
+    return import_secret_key_negotiated(
+        rs,
         CKK_GENERIC_SECRET,
         value,
         attrs={
@@ -106,9 +108,8 @@ class TestKeyDeriveSoftware:
         key_bytes = bytes(range(32))
         data = b"KDF input data for derivation"
 
-        p11_key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        p11_key = import_secret_key_negotiated(
+            rs,
             CKK_SHA256_HMAC,
             key_bytes,
             attrs={
@@ -118,9 +119,15 @@ class TestKeyDeriveSoftware:
             },
         )
         try:
-            p11_mac = sign_single(rs.raw, rs.sh, p11_key, CKM_SHA256_HMAC, data)
+            p11_mac = hmac_sign_or_xfail(rs, p11_key, CKM_SHA256_HMAC, data, label="SHA256_HMAC")
             py_mac = hmac_mod.new(key_bytes, data, hashlib.sha256).digest()
-            assert p11_mac == py_mac
+            assert_correct(
+                actual=p11_mac,
+                expected=py_mac,
+                label="CKM_SHA256_HMAC:C_Sign KAT (HMAC-as-KDF)",
+                operation="C_Sign",
+                mechanism="CKM_SHA256_HMAC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, p11_key)
 
@@ -130,9 +137,8 @@ class TestKeyDeriveSoftware:
         key_bytes = bytes(range(64))
         data = b"HMAC-SHA512 KDF test"
 
-        p11_key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        p11_key = import_secret_key_negotiated(
+            rs,
             CKK_SHA512_HMAC,
             key_bytes,
             attrs={
@@ -142,14 +148,19 @@ class TestKeyDeriveSoftware:
             },
         )
         try:
-            p11_mac = sign_single(rs.raw, rs.sh, p11_key, CKM_SHA512_HMAC, data)
+            p11_mac = hmac_sign_or_xfail(rs, p11_key, CKM_SHA512_HMAC, data, label="SHA512_HMAC")
             py_mac = hmac_mod.new(key_bytes, data, hashlib.sha512).digest()
-            assert p11_mac == py_mac
+            assert_correct(
+                actual=p11_mac,
+                expected=py_mac,
+                label="CKM_SHA512_HMAC:C_Sign KAT (HMAC-as-KDF)",
+                operation="C_Sign",
+                mechanism="CKM_SHA512_HMAC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, p11_key)
 
 
-@pytest.mark.requires_v30
 class TestHKDF:
     """HKDF tests - requires CKM_HKDF_DERIVE (PKCS#11 v3.0+)."""
 
@@ -205,9 +216,8 @@ class TestECDHDerive:
 
     def _generate_ec_keypair(self, rs: Any) -> tuple[int, int]:
         curve_oid = encode_named_curve_parameters("secp256r1")
-        return gen_ec_keypair(
-            rs.raw,
-            rs.sh,
+        return gen_ec_keypair_or_xfail(
+            rs,
             curve_oid,
             private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
         )
@@ -278,7 +288,13 @@ class TestECDHDerive:
 
             val_ab = read_attributes(rs.raw, rs.sh, shared_ab, [CKA_VALUE])[CKA_VALUE]
             val_ba = read_attributes(rs.raw, rs.sh, shared_ba, [CKA_VALUE])[CKA_VALUE]
-            assert val_ab == val_ba
+            assert_correct(
+                actual=val_ab,
+                expected=val_ba,
+                label="CKM_ECDH1_DERIVE:shared-secret agreement (A*B == B*A)",
+                operation="C_DeriveKey",
+                mechanism="CKM_ECDH1_DERIVE",
+            )
         finally:
             for h in (pub_a, priv_a, pub_b, priv_b):
                 destroy_quietly(rs.raw, rs.sh, h)
@@ -434,7 +450,13 @@ class TestSHA3ShakeKeyDerive:
                 )
             v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
-            assert v1 == v2, "Same base key and mechanism must produce same derived key"
+            assert_correct(
+                actual=v1,
+                expected=v2,
+                label=f"{mech_name}:C_DeriveKey determinism",
+                operation="C_DeriveKey",
+                mechanism=f"CKM_{mech_name}",
+            )
         finally:
             if d1:
                 destroy_quietly(rs.raw, rs.sh, d1)

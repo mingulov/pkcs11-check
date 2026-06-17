@@ -70,7 +70,7 @@ def test_rv_trace_captures_exact_sequence() -> None:
     )
     raw.enable_rv_trace()
 
-    raw.C_EncryptInit(7, _mech(int(CKM_AES_CBC)), 3)
+    raw.C_EncryptInit(7, _mech(CKM_AES_CBC), 3)
     raw.C_Logout(7)
     raw.C_GetSessionInfo(7, None)
 
@@ -112,8 +112,8 @@ def test_rv_trace_never_leaks_secret_material() -> None:
     plaintext = b"PLAINTEXT-BBBB"
 
     raw.C_Login(7, 1, pin, len(pin))
-    raw.C_GenerateKey(7, _mech(int(CKM_AES_CBC)), key_material, len(key_material), _len_ptr())
-    raw.C_EncryptInit(7, _mech(int(CKM_AES_CBC)), 5)
+    raw.C_GenerateKey(7, _mech(CKM_AES_CBC), key_material, len(key_material), _len_ptr())
+    raw.C_EncryptInit(7, _mech(CKM_AES_CBC), 5)
     raw.C_Encrypt(7, plaintext, len(plaintext), None, _len_ptr())
 
     blob = json.dumps(raw.rv_trace)
@@ -131,7 +131,7 @@ def test_single_rv_change_is_localized() -> None:
     def build(sign_rv: int) -> list[dict[str, Any]]:
         raw = _stub_raw({"C_EncryptInit": lambda *a: 0, "C_Sign": lambda *a: sign_rv})
         raw.enable_rv_trace()
-        raw.C_EncryptInit(7, _mech(int(CKM_AES_CBC)), 3)
+        raw.C_EncryptInit(7, _mech(CKM_AES_CBC), 3)
         raw.C_Sign(7, b"x", 1, None, _len_ptr())
         return raw.rv_trace
 
@@ -681,7 +681,7 @@ def test_out_len_absent_for_derive_key_handle() -> None:
     """C_DeriveKey's last arg is a key HANDLE, not a length — never read as out_len."""
     raw = _stub_raw({"C_DeriveKey": lambda *a: 0})
     raw.enable_rv_trace()
-    raw.C_DeriveKey(7, _mech(int(CKM_AES_CBC)), 1, 0, byref(CK_ULONG(4242)))
+    raw.C_DeriveKey(7, _mech(CKM_AES_CBC), 1, 0, byref(CK_ULONG(4242)))
     e = raw.rv_trace[0]
     assert e["mech"] == int(CKM_AES_CBC)  # mechanism still captured
     assert "out_len" not in e  # the 4242 handle must NOT be mislabeled
@@ -736,7 +736,7 @@ def test_mech_params_recorded_for_stacked_mechanism() -> None:
     raw = _stub_raw({"C_EncryptInit": lambda *a: 0})
     raw.enable_rv_trace()
     ck = CK_MECHANISM()
-    ck.mechanism = int(CKM_RSA_PKCS_OAEP)
+    ck.mechanism = CKM_RSA_PKCS_OAEP
     pm = PackedMechanism(ck, sub_mechanisms={"hashAlg": int(CKM_SHA256)})
 
     raw.C_EncryptInit(7, pm.byref(), 5)
@@ -749,7 +749,7 @@ def test_mech_params_recorded_for_stacked_mechanism() -> None:
 def test_mech_params_absent_for_simple_mechanism() -> None:
     raw = _stub_raw({"C_EncryptInit": lambda *a: 0})
     raw.enable_rv_trace()
-    raw.C_EncryptInit(7, _mech(int(CKM_AES_CBC)), 5)  # plain CK_MECHANISM, no sub-params
+    raw.C_EncryptInit(7, _mech(CKM_AES_CBC), 5)  # plain CK_MECHANISM, no sub-params
     assert "mech_params" not in raw.rv_trace[0]
 
 
@@ -763,7 +763,7 @@ def test_crash_journal_records_completed_calls(tmp_path: Path) -> None:
     raw = _stub_raw({"C_EncryptInit": lambda *a: 0, "C_GetSessionInfo": lambda *a: 0})
     raw._journal = rawapi._RvTraceJournal(str(jpath))
 
-    raw.C_EncryptInit(7, _mech(int(CKM_AES_CBC)), 5)
+    raw.C_EncryptInit(7, _mech(CKM_AES_CBC), 5)
     raw.C_GetSessionInfo(7, None)
 
     done, incomplete = rawapi.read_crash_journal(jpath)
@@ -820,7 +820,7 @@ def test_trace_survives_reportlog_serialization_unchanged() -> None:
     raw = _stub_raw({"C_EncryptInit": lambda *a: 0, "C_Sign": lambda *a: 0})
     raw.enable_rv_trace()
     ck = CK_MECHANISM()
-    ck.mechanism = int(CKM_RSA_PKCS_OAEP)
+    ck.mechanism = CKM_RSA_PKCS_OAEP
     pm = PackedMechanism(ck, sub_mechanisms={"hashAlg": int(CKM_SHA256)})
     raw.C_EncryptInit(7, pm.byref(), 5)
     raw.C_Sign(7, b"data", 4, None, byref(CK_ULONG(48)))

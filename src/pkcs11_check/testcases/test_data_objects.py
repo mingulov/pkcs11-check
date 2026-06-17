@@ -40,11 +40,24 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     get_pin_bytes,
     is_known_error,
+    skip_if_data_objects_unsupported,
     skip_if_token_write_protected,
     xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.keymgmt
+
+
+@pytest.fixture(autouse=True)
+def _skip_if_no_data_objects(p11_raw_session: Any) -> None:
+    """Skip every CKO_DATA test when the module lacks data-object storage.
+
+    Five-plus providers (nethsm, corepkcs11, tpm2, wolfpkcs11, craton-hsm) do
+    not implement CKO_DATA; for them every test in this file is a genuine
+    capability absence (PKCS#11 v3.2 §6.4) and the right classification is
+    ``skip``, not ``xfail``.
+    """
+    skip_if_data_objects_unsupported(p11_raw_session)
 
 
 def _unique_label(prefix: str = "data") -> str:

@@ -6,20 +6,23 @@ SHA-1/SHA-224/SHA-256/SHA-384/SHA-512 and varying salt lengths.
 
 from __future__ import annotations
 
-import json
 from typing import Any, NoReturn
 
 import pytest
+from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_pss
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_rsa_keypair,
     generate_random,
-    import_rsa_public_key,
     sign_single,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_TOKEN,
@@ -60,16 +63,28 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OPERATION_ACTIVE,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._operability import (
+    Operability,
+    OperabilityResult,
+    not_operational_reason,
+    probe_operability,
+    xfail_vacuous_reject,
+)
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    import_rsa_public_key_negotiated,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 
 pytestmark = pytest.mark.wycheproof
 
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
 
 # Cache of RSA key sizes (in bits) that the module rejected on import.
 # Populated on first failure; subsequent tests with the same key size skip
@@ -91,82 +106,81 @@ _RSA_PSS_RUNTIME_REJECT_CKRS = (
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    # Collateral of a stale verify op the provider leaked after a prior
+    # reject (spec violation, reported as a FAIL by
+    # test_operation_termination.py): the poisoned C_*Init never evaluated
+    # THIS vector's signature, so it is a clean non-evaluating reject.
+    CKR_OPERATION_ACTIVE,
 )
-
-# Cache of (mech, hash_mech, mgf, salt_len) tuples we have already probed
-# for "advertised but not operational". True = a fresh-key sign+verify
-# roundtrip with these PSS params succeeded; False = the same provider
-# could not produce a verifying signature for itself with this combo, so
-# rejecting a known-valid Wycheproof sig with the same combo is the same
-# class of deviation (classification model: xfail, not fail).
-_PSS_COMBO_OPERATIONAL: dict[tuple[int, int, int, int], bool] = {}
 
 # Canned message for the operational probe -- arbitrary content.
 _PSS_PROBE_MESSAGE = b"pkcs11-check PSS combo operational probe"
 
 
-def _pss_combo_operational(
+def _pss_combo_operability(
     rs: Any, mechanism: int, hash_mech: int, mgf: int, salt_len: int
-) -> bool:
-    """Self-roundtrip probe: is this (mech, hash, mgf, salt_len) operational?
+) -> OperabilityResult:
+    """Self-roundtrip probe for a (mech, hash, mgf, sLen) PSS combo.
 
-    On the first call for a given combo, generates a fresh RSA-2048 keypair
-    and attempts a sign+verify roundtrip with the PSS params. Returns True
-    if verification succeeds, False on any rejection / verify-False / setup
-    failure. Result is cached per-combo for the rest of the run.
+    Keypair generation is staging (plain RSA keygen, no PSS involved) -- its
+    refusal is INCONCLUSIVE, not mechanism evidence (so the vacuous-reject
+    downgrade never fires without combo evidence). A canonical PSS sign/verify
+    refusal (CkrAssertionError) or verify-False IS combo evidence ->
+    NOT_OPERATIONAL; a verifying self-roundtrip -> OPERATIONAL. Cached per combo
+    via probe_operability.
 
-    The classification model uses this to distinguish:
-    - real provider bug (combo operational, but rejects a known-valid sig
-      from the test vector) -> hard ``fail``;
-    - advertised-but-not-operational combo (provider's own sig also fails
-      to verify with the same params) -> ``xfail``.
+    Module errors surface as CkrAssertionError (gen_rsa_keypair / sign_single /
+    verify_single all route through expect_rv); a plain AssertionError is a
+    harness bug and propagates uncached. ``mech_pss`` packing errors are
+    harness-side (ctypes) and likewise propagate.
     """
-    key = (mechanism, hash_mech, mgf, salt_len)
-    cached = _PSS_COMBO_OPERATIONAL.get(key)
-    if cached is not None:
-        return cached
-    operational = _probe_pss_combo(rs, mechanism, hash_mech, mgf, salt_len)
-    _PSS_COMBO_OPERATIONAL[key] = operational
-    return operational
 
+    def probe() -> OperabilityResult:
+        pub = priv = 0
+        try:
+            try:
+                pub, priv = gen_rsa_keypair(
+                    rs.raw,
+                    rs.sh,
+                    2048,
+                    private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+                    public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+                )
+            except CkrAssertionError as exc:
+                return OperabilityResult(
+                    Operability.INCONCLUSIVE, f"RSA-2048 keypair staging failed: {exc}"
+                )
+            pss_param = mech_pss(mechanism, hash_mech=hash_mech, mgf=mgf, salt_len=salt_len)
+            try:
+                sig = sign_single(
+                    rs.raw, rs.sh, priv, mechanism, _PSS_PROBE_MESSAGE, mech_param=pss_param
+                )
+            except CkrAssertionError as exc:
+                return OperabilityResult(
+                    Operability.NOT_OPERATIONAL, f"canonical PSS sign rejected: {exc}"
+                )
+            try:
+                ok = verify_single(
+                    rs.raw, rs.sh, pub, mechanism, _PSS_PROBE_MESSAGE, sig, mech_param=pss_param
+                )
+            except CkrAssertionError as exc:
+                return OperabilityResult(
+                    Operability.NOT_OPERATIONAL, f"canonical PSS verify rejected: {exc}"
+                )
+            if not ok:
+                return OperabilityResult(
+                    Operability.NOT_OPERATIONAL, "own PSS signature verifies False"
+                )
+            return OperabilityResult(Operability.OPERATIONAL, "self-roundtrip OK")
+        finally:
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+            if pub:
+                destroy_quietly(rs.raw, rs.sh, pub)
 
-def _probe_pss_combo(rs: Any, mechanism: int, hash_mech: int, mgf: int, salt_len: int) -> bool:
-    pub = priv = 0
-    try:
-        try:
-            pub, priv = gen_rsa_keypair(
-                rs.raw,
-                rs.sh,
-                2048,
-                private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
-                public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
-            )
-        except AssertionError:
-            return False
-        pss_param = mech_pss(mechanism, hash_mech=hash_mech, mgf=mgf, salt_len=salt_len)
-        try:
-            sig = sign_single(
-                rs.raw, rs.sh, priv, mechanism, _PSS_PROBE_MESSAGE, mech_param=pss_param
-            )
-        except AssertionError:
-            return False
-        try:
-            return verify_single(
-                rs.raw,
-                rs.sh,
-                pub,
-                mechanism,
-                _PSS_PROBE_MESSAGE,
-                sig,
-                mech_param=pss_param,
-            )
-        except AssertionError:
-            return False
-    finally:
-        if priv:
-            destroy_quietly(rs.raw, rs.sh, priv)
-        if pub:
-            destroy_quietly(rs.raw, rs.sh, pub)
+    return probe_operability(
+        f"RSA_PSS:{mechanism:#x}:{hash_mech:#x}:{mgf:#x}:{salt_len}:sign-verify", probe
+    )
 
 
 _RsaPssFingerprint = tuple[int, int, int, int, bytes, bytes, bytes, bytes]
@@ -280,8 +294,7 @@ def _load_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         for group in data["testGroups"]:
             sha = group.get("sha", "")
             mgf_sha = group.get("mgfSha", sha)
@@ -319,6 +332,51 @@ def _xfail_if_rsa_pss_runtime_reject(exc: AssertionError, label: str) -> NoRetur
     raise exc
 
 
+_CRYPTOGRAPHY_HASHES: dict[str, type[hashes.HashAlgorithm]] = {
+    "SHA-1": hashes.SHA1,
+    "SHA-224": hashes.SHA224,
+    "SHA-256": hashes.SHA256,
+    "SHA-384": hashes.SHA384,
+    "SHA-512": hashes.SHA512,
+    "SHA3-224": hashes.SHA3_224,
+    "SHA3-256": hashes.SHA3_256,
+    "SHA3-384": hashes.SHA3_384,
+    "SHA3-512": hashes.SHA3_512,
+}
+
+
+def _pss_valid_under_auto_salt(
+    n: bytes, e: bytes, msg: bytes, sig: bytes, sha: str, mgf_sha: str
+) -> bool | None:
+    """Reference RSA-PSS verification with the salt length recovered from the signature.
+
+    Discriminates the two acceptance classes of a Wycheproof "invalid" PSS
+    vector: a GENUINE signature re-signed with a different salt length than
+    the declared ``sLen`` (only producible with the private key; True) versus
+    a modified/garbage signature whose acceptance is a padding-check bypass
+    (False). Pure public-key math -- the provider is not involved. None when
+    the reference backend cannot represent the combo; callers keep the strict
+    hard-fail then (a real finding is never masked).
+    """
+    hash_cls = _CRYPTOGRAPHY_HASHES.get(sha)
+    mgf_cls = _CRYPTOGRAPHY_HASHES.get(mgf_sha)
+    if hash_cls is None or mgf_cls is None:
+        return None
+    try:
+        pub = rsa.RSAPublicNumbers(int.from_bytes(e, "big"), int.from_bytes(n, "big")).public_key()
+        pub.verify(
+            sig,
+            msg,
+            padding.PSS(mgf=padding.MGF1(mgf_cls()), salt_length=padding.PSS.AUTO),
+            hash_cls(),
+        )
+        return True
+    except InvalidSignature:
+        return False
+    except (UnsupportedAlgorithm, ValueError, TypeError):
+        return None
+
+
 @pytest.mark.parametrize("vec_id,vec", _ALL_PSS_VECTORS, ids=[v[0] for v in _ALL_PSS_VECTORS])
 def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA-PSS signature verification from Wycheproof vectors."""
@@ -351,54 +409,140 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     key_bits = len(modulus) * 8
 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
-        pytest.skip(f"RSA {key_bits}-bit keys not supported (cached)")
+        classify(
+            "not_operational",
+            summary=not_operational_reason(
+                f"{name}:key-import",
+                f"RSA {key_bits}-bit key import refused (cached)",
+            ),
+        )
 
     try:
-        pub_key = import_rsa_public_key(
-            rs.raw,
-            rs.sh,
+        pub_key = import_rsa_public_key_negotiated(
+            rs,
             n=modulus,
             e=exponent,
             attrs={CKA_VERIFY: True},
         )
     except AssertionError as exc:
-        exc_msg = str(exc)
+        if not isinstance(exc, CkrAssertionError):
+            raise
         # Only cache permanent key-size rejections, not transient errors.
         if is_known_error(exc, _RSA_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
             _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
-        pytest.skip(f"Cannot import RSA {key_bits}-bit public key: {exc_msg}")
+        classify(
+            "not_operational",
+            summary=not_operational_reason(
+                f"{name}:key-import",
+                f"RSA {key_bits}-bit: {ckr_name(exc.rv)}",
+            ),
+        )
 
     # Build PSS params
     pss_param = mech_pss(mechanism, hash_mech=hash_mech, mgf=mgf, salt_len=s_len)
 
+    verified: bool | None = None
     try:
         verified = verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig, mech_param=pss_param)
-        if result == "invalid":
-            if verified:
-                pytest.fail(f"Invalid RSA-PSS sig {vec_id} accepted by module")
-            return
-        if result == "valid" and not verified:
-            if not _pss_combo_operational(rs, mechanism, hash_mech, mgf, s_len):
-                pytest.xfail(
-                    f"Valid {vec_id} rejected; sign+verify roundtrip with "
-                    f"the same (mech, hash, mgf, sLen={s_len}) also fails "
-                    "-- advertised but not operational"
-                )
-            pytest.fail(f"Valid RSA-PSS sig {vec_id} rejected by module")
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_rsa_pss_runtime_reject(exc, vec_id)
-            sha = vec.get("_sha", "unknown")
-            mgf_sha = vec.get("_mgf_sha", "unknown")
-            flags = vec.get("flags", [])
-            flags_str = ", ".join(flags) if flags else "none"
-            pytest.fail(
-                f"Valid RSA-PSS sig {vec_id} rejected (sLen={s_len}, "
-                f"sha={sha}, mgf={mgf_sha}, flags=[{flags_str}]): {exc}"
-            )
+        # result != "valid": a clean refusal of a non-valid vector. Returning
+        # False = clean signature reject; on a NOT_OPERATIONAL combo that reject
+        # is vacuous only for "invalid" vectors (the signature was never
+        # evaluated) -> xfail.  "acceptable" vectors cleanly refused are a
+        # legitimate honest deviation regardless of the combo probe verdict --
+        # xfail/re-raise paths inside signature_rejected_or_xfail never reach
+        # the downgrade line below.
         signature_rejected_or_xfail(exc, vec_id)
+        if result == "invalid":
+            xfail_vacuous_reject(
+                _pss_combo_operability(rs, mechanism, hash_mech, mgf, s_len),
+                label=f"{vec_id}: invalid-PSS reject",
+            )
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, pub_key)
+
+    # --- outcome classification (probe calls must live here, outside the
+    # narrow try/except above, so plain AssertionErrors from the probe are
+    # never re-caught and misrouted through _xfail_if_rsa_pss_runtime_reject) ---
+    if result == "invalid":
+        if verified:
+            # Discriminate the acceptance class with a reference auto-salt
+            # verification (pure public-key math): a GENUINE signature whose
+            # salt length merely differs from the declared sLen is only
+            # producible with the private key -- accepting it is salt-length
+            # policy leniency (the verifier recovers the salt, RFC 8017),
+            # an honest deviation, not a forgery. Anything else that
+            # verifies is a padding-check bypass and stays a hard fail.
+            if (
+                _pss_valid_under_auto_salt(
+                    modulus, exponent, msg, sig, vec["_sha"], vec["_mgf_sha"]
+                )
+                is True
+            ):
+                classify(
+                    "honest_deviation",
+                    label=vec_id,
+                    summary=(
+                        f"{vec_id}: accepted a genuine PSS signature whose salt length "
+                        f"differs from the declared sLen={s_len} -- salt-length policy "
+                        "not enforced (not forgeable without the private key)"
+                    ),
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
+            classify(
+                "accepted_invalid",
+                kind="crypto",
+                label=vec_id,
+                summary=f"Invalid RSA-PSS sig {vec_id} accepted by module",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
+        # The invalid vector was rejected -- genuine only if the (mech, hash,
+        # mgf, sLen) combo actually signs+verifies. A combo that is
+        # NOT_OPERATIONAL refuses everything, so the signature was never
+        # evaluated -> vacuous reject (xfail). INCONCLUSIVE (keypair staging
+        # refused, no combo evidence) leaves the legacy pass untouched.
+        xfail_vacuous_reject(
+            _pss_combo_operability(rs, mechanism, hash_mech, mgf, s_len),
+            label=f"{vec_id}: invalid-PSS reject",
+        )
+        return
+    if result == "valid" and not verified:
+        combo = _pss_combo_operability(rs, mechanism, hash_mech, mgf, s_len)
+        if combo.status is Operability.NOT_OPERATIONAL:
+            classify(
+                "not_operational",
+                label=vec_id,
+                summary=(
+                    f"Valid {vec_id} rejected; sign+verify roundtrip with the same "
+                    f"(mech, hash, mgf, sLen={s_len}) is not operational ({combo.detail}) "
+                    "-- advertised but not operational"
+                ),
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
+        if combo.status is Operability.INCONCLUSIVE:
+            classify(
+                "honest_deviation",
+                label=vec_id,
+                summary=(
+                    f"Valid {vec_id} rejected; PSS combo probe inconclusive ({combo.detail}) "
+                    "-- cannot distinguish deviation from module bug, recorded as xfail"
+                ),
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
+        classify(
+            "wrong_result",
+            kind="crypto",
+            label=vec_id,
+            summary=f"Valid RSA-PSS sig {vec_id} rejected by module",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
     generate_random(rs.raw, rs.sh, 64)

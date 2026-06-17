@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
+
+from pkcs11_check.testcases.data import load_json_cached
 
 _VECTOR_DIR = Path(__file__).parent / "data" / "mechanism_vectors"
 
@@ -14,7 +15,7 @@ def load_vectors(filename: str) -> list[dict[str, Any]]:
     path = _VECTOR_DIR / filename
     if not path.exists():
         return []
-    data: dict[str, Any] = json.loads(path.read_text())
+    data: dict[str, Any] = load_json_cached(path)
     result: list[dict[str, Any]] = data.get("vectors", [])
     return result
 

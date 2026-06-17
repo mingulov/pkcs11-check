@@ -29,6 +29,10 @@ _FAULT_PROXY_PATHS = [
     Path(__file__).parents[4] / "local-builds" / "fault-proxy" / "fault-proxy.so",
     Path("/usr/lib/pkcs11/fault-proxy.so"),
 ]
+# Explicit override (set by the workspace harness/conftest to ws/local-builds/...).
+_env_proxy = os.environ.get("P11TEST_FAULT_PROXY_SO")
+if _env_proxy:
+    _FAULT_PROXY_PATHS.insert(0, Path(_env_proxy))
 
 _PROXY_PATH = next((p for p in _FAULT_PROXY_PATHS if p.exists()), None)
 

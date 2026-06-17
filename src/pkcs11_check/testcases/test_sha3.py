@@ -16,7 +16,32 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA3_256,
     CKM_SHA3_384,
     CKM_SHA3_512,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
 )
+from pkcs11_check.testcases.conftest import assert_correct, xfail_if_known_ckr
+
+# Unambiguous "advertised SHA-3 mechanism is not operational for standalone
+# C_Digest" codes -> xfail (flag for investigation). NARROW on purpose:
+# - CKR_ARGUMENTS_BAD excluded: ARGUMENTS_BAD on an empty-message digest is a real
+#   PROVIDER_BUG (empty digest is well-defined) -> stays a hard fail.
+# - CKR_GENERAL_ERROR/CKR_DEVICE_ERROR excluded: catch-alls that may mask a real
+#   failure -> stay a hard fail to be investigated, not quietly downgraded.
+# A wrong digest value is independently caught by the assert_correct comparison.
+_DIGEST_OP_REJECT_RVS = (
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+)
+
+
+def _digest_or_xfail(rs: Any, mechanism: Any, data: bytes, label: str) -> bytes:
+    """Produce a SHA-3 digest; xfail on a clean not-operational reject."""
+    try:
+        return digest_single(rs.raw, rs.sh, mechanism, data)
+    except AssertionError as exc:
+        xfail_if_known_ckr(exc, _DIGEST_OP_REJECT_RVS, f"{label}: digest not operational")
+        raise
+
 
 pytestmark = pytest.mark.crossverify
 
@@ -51,11 +76,17 @@ class TestSHA3Digest:
             pytest.skip("SHA-3 not supported by this module")
 
         data = b"abc"
-        p11_digest = digest_single(rs.raw, rs.sh, mechanism, data)
+        p11_digest = _digest_or_xfail(rs, mechanism, data, name)
         py_digest = hash_fn(data).digest()
 
         assert len(p11_digest) == digest_len
-        assert p11_digest == py_digest
+        assert_correct(
+            actual=p11_digest,
+            expected=py_digest,
+            label=f"{name}:C_Digest KAT (abc)",
+            operation="C_Digest",
+            mechanism=name,
+        )
 
     @pytest.mark.parametrize(
         "name,mechanism,hash_fn,digest_len",
@@ -75,11 +106,17 @@ class TestSHA3Digest:
         if not rs.has_mechanism("SHA3_256"):
             pytest.skip("SHA-3 not supported by this module")
 
-        p11_digest = digest_single(rs.raw, rs.sh, mechanism, b"")
+        p11_digest = _digest_or_xfail(rs, mechanism, b"", name)
         py_digest = hash_fn(b"").digest()
 
         assert len(p11_digest) == digest_len
-        assert p11_digest == py_digest
+        assert_correct(
+            actual=p11_digest,
+            expected=py_digest,
+            label=f"{name}:C_Digest KAT (empty)",
+            operation="C_Digest",
+            mechanism=name,
+        )
 
     @pytest.mark.parametrize(
         "name,mechanism,hash_fn,digest_len",
@@ -100,7 +137,13 @@ class TestSHA3Digest:
             pytest.skip("SHA-3 not supported by this module")
 
         data = b"X" * 10240
-        p11_digest = digest_single(rs.raw, rs.sh, mechanism, data)
+        p11_digest = _digest_or_xfail(rs, mechanism, data, name)
         py_digest = hash_fn(data).digest()
 
-        assert p11_digest == py_digest
+        assert_correct(
+            actual=p11_digest,
+            expected=py_digest,
+            label=f"{name}:C_Digest KAT (10KB)",
+            operation="C_Digest",
+            mechanism=name,
+        )

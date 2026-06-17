@@ -48,10 +48,12 @@ def _patch_gcm(monkeypatch: pytest.MonkeyPatch, *, decrypt_result: Any) -> None:
 
 def test_gcm_wrong_plaintext_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_gcm(monkeypatch, decrypt_result=b"WRONG-plaintext-not-matching")
-    # The mismatch surfaces as a hard assertion failure (not skip / not xfail).
-    with pytest.raises(AssertionError, match="differs from the cryptography") as ei:
+    # The mismatch surfaces as a hard failure (not skip / not xfail). The assert
+    # was migrated to assert_correct(), so it now raises Failed via classify()
+    # rather than a bare AssertionError.
+    with pytest.raises(Failed, match="does not match known answer") as ei:
         tcv.TestAESGCMCrossVerify().test_aes_gcm_decrypt_crossverify(_RawSession())
-    assert not isinstance(ei.value, (XFailed, Failed))
+    assert not isinstance(ei.value, XFailed)
 
 
 def test_gcm_clean_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:

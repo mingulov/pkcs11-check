@@ -1,4 +1,4 @@
-"""C_GetSessionValidationFlags tests -- v3.0+ session validation bitmask."""
+"""C_GetSessionValidationFlags tests -- v3.2 session validation bitmask."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED, CKR_OK
 
-pytestmark = [pytest.mark.requires_v30]
+pytestmark = [pytest.mark.needs_function("C_GetSessionValidationFlags")]
 
 
 class TestSessionValidationFlags:

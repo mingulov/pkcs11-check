@@ -42,7 +42,10 @@ from pkcs11_check.raw.types_std import (
     CKM_HASH_ML_DSA_SHAKE128,
     CKM_HASH_ML_DSA_SHAKE256,
     CKM_ML_DSA_KEY_PAIR_GEN,
+    CKM_SHA3_256,
     CKM_SHA256,
+    CKM_SHA384,
+    CKM_SHA512,
     CKP_ML_DSA_65,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
@@ -118,17 +121,30 @@ class TestHashMLDSAGeneric:
     that specifies which hash algorithm to use.
     """
 
-    def test_mechanism_available(self, p11_raw_session: Any) -> None:
+    def test_mechanism_available(self, p11_module_session: Any) -> None:
         """Check that CKM_HASH_ML_DSA is advertised by the module."""
-        _skip_if_no(p11_raw_session, "HASH_ML_DSA")
+        _skip_if_no(p11_module_session, "HASH_ML_DSA")
 
-    def test_sign_verify_roundtrip(self, p11_raw_session: Any) -> None:
-        """CKM_HASH_ML_DSA sign + verify with CK_HASH_SIGN_ADDITIONAL_CONTEXT (SHA-256)."""
-        rs = p11_raw_session
+    # Exercise the provider's hash-dispatch branch in the generic prehash path
+    # across the SHA-2 sizes and the SHA-3 family, not just SHA-256.
+    @pytest.mark.parametrize(
+        "hash_name,hash_mech",
+        [
+            ("SHA-256", CKM_SHA256),
+            ("SHA-384", CKM_SHA384),
+            ("SHA-512", CKM_SHA512),
+            ("SHA3-256", CKM_SHA3_256),
+        ],
+    )
+    def test_sign_verify_roundtrip(
+        self, p11_module_session: Any, hash_name: str, hash_mech: int
+    ) -> None:
+        """CKM_HASH_ML_DSA sign + verify with CK_HASH_SIGN_ADDITIONAL_CONTEXT."""
+        rs = p11_module_session
         _skip_if_no(rs, "HASH_ML_DSA")
         _skip_if_no(rs, "ML_DSA")  # need keygen
 
-        mech_param = mech_hash_sign_context(CKM_HASH_ML_DSA, hash_mech=int(CKM_SHA256))
+        mech_param = mech_hash_sign_context(CKM_HASH_ML_DSA, hash_mech=hash_mech)
         pub, priv = _generate_ml_dsa_keypair(rs)
         try:
             try:
@@ -136,7 +152,11 @@ class TestHashMLDSAGeneric:
                     rs.raw, rs.sh, priv, CKM_HASH_ML_DSA, _MESSAGE, mech_param=mech_param
                 )
             except AssertionError as exc:
-                xfail_if_known_ckr(exc, _SIGN_ERROR_CKRS, "CKM_HASH_ML_DSA sign not operational")
+                xfail_if_known_ckr(
+                    exc,
+                    _SIGN_ERROR_CKRS,
+                    f"CKM_HASH_ML_DSA sign not operational ({hash_name})",
+                )
                 raise
             assert isinstance(sig, bytes) and len(sig) > 0
             result = verify_single(
@@ -158,14 +178,14 @@ class TestHashMLDSAVariants:
     """
 
     @pytest.mark.parametrize("mech_attr", _VARIANT_NAMES)
-    def test_mechanism_available(self, p11_raw_session: Any, mech_attr: str) -> None:
+    def test_mechanism_available(self, p11_module_session: Any, mech_attr: str) -> None:
         """Check that the hash-specific HASH_ML_DSA variant is advertised."""
-        _skip_if_no(p11_raw_session, mech_attr)
+        _skip_if_no(p11_module_session, mech_attr)
 
     @pytest.mark.parametrize("mech_attr", _VARIANT_NAMES)
-    def test_sign_verify_roundtrip(self, p11_raw_session: Any, mech_attr: str) -> None:
+    def test_sign_verify_roundtrip(self, p11_module_session: Any, mech_attr: str) -> None:
         """Sign + verify round-trip with CKM_HASH_ML_DSA_{hash}."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no(rs, mech_attr)
         _skip_if_no(rs, "ML_DSA")  # need keygen
 
@@ -185,9 +205,9 @@ class TestHashMLDSAVariants:
             destroy_quietly(rs.raw, rs.sh, priv)
 
     @pytest.mark.parametrize("mech_attr", _VARIANT_NAMES)
-    def test_tampered_message_fails(self, p11_raw_session: Any, mech_attr: str) -> None:
+    def test_tampered_message_fails(self, p11_module_session: Any, mech_attr: str) -> None:
         """Tampered message must fail verification for CKM_HASH_ML_DSA_{hash}."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no(rs, mech_attr)
         _skip_if_no(rs, "ML_DSA")
 
@@ -218,9 +238,9 @@ class TestHashMLDSAVariants:
             destroy_quietly(rs.raw, rs.sh, priv)
 
     @pytest.mark.parametrize("mech_attr", _VARIANT_NAMES)
-    def test_empty_message(self, p11_raw_session: Any, mech_attr: str) -> None:
+    def test_empty_message(self, p11_module_session: Any, mech_attr: str) -> None:
         """Sign/verify with an empty message (hash variants hash on-token)."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no(rs, mech_attr)
         _skip_if_no(rs, "ML_DSA")
 

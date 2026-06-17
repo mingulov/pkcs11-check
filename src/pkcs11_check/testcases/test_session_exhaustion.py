@@ -17,12 +17,12 @@ from pkcs11_check.raw.bootstrap import (
 from pkcs11_check.raw.bootstrap import (
     open_session as raw_open_session,
 )
-from pkcs11_check.raw.recipes import gen_aes_key
 from pkcs11_check.raw.types_std import (
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKU_USER,
 )
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail
 
 pytestmark = pytest.mark.security
 
@@ -75,7 +75,7 @@ class TestSessionExhaustion:
                 pin.encode("utf-8"),
             )
         try:
-            key = gen_aes_key(rs.raw, recovery, 128)
+            key = gen_aes_key_or_xfail(rs, 128, sh=recovery)
             assert key != 0
         finally:
             close_session_quietly(rs.raw, recovery)

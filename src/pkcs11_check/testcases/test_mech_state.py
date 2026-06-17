@@ -6,7 +6,7 @@ Tests verify that the module correctly enforces PKCS#11 operation state:
 - C_Sign, C_Verify, C_Digest: same patterns
 - C_DecryptFinal without C_DecryptInit -> CKR_OPERATION_NOT_INITIALIZED
 
-Source: PKCS#11 v3.1 Section 5 -- each function description lists
+Source: PKCS#11 v3.2 -- each function description lists
 CKR_OPERATION_NOT_INITIALIZED and CKR_OPERATION_ACTIVE as valid return values.
 
 These tests are NOT parametrized -- they use hard-coded AES and SHA-256 mechanisms
@@ -25,7 +25,6 @@ from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    gen_aes_key,
     import_secret_key,
     to_ubyte_buf,
 )
@@ -55,9 +54,15 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import classify_negative_rv, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    gen_aes_key_or_xfail,
+    skip_unless_create_object_supported,
+    xfail_if_known_ckr,
+)
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.state_machine]
+
 
 # Single-session operation-state guards (op-without-init, double-init) are
 # classified 3-way via classify_negative_rv: CKR_OK -> fail, the spec-preferred
@@ -68,8 +73,9 @@ pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.state_machine]
 # CKR_GENERAL_ERROR are EXPLICITLY NOT accepted here: a module that crashes or
 # panics during cross-session probing and recovers with one of those codes is
 # exhibiting exactly the state-confusion bug class the test is meant to catch.
-# If a real module legitimately needs a fallback, register it as a quirk in
-# `_module_quirks.py` and call `quirk_extras(...)` instead of widening this set.
+# If a real module legitimately needs a different clean code here, the 3-way
+# negative classifier records it as an xfail (a noted deviation) -- never widen
+# this set to mask it.
 _CROSS_SESSION_NOT_INIT_RVCS: frozenset[int] = frozenset(
     {
         CKR_OPERATION_NOT_INITIALIZED,
@@ -136,7 +142,7 @@ class TestEncryptState:
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES keygen not supported")
 
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv1 = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
@@ -244,6 +250,7 @@ class TestSignState:
     def test_sign_single_part_output_call_terminates(self, p11_raw_session: RawSession) -> None:
         """Successful two-call C_Sign must terminate before a new C_SignInit."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         if not rs.has_mechanism("SHA256_HMAC"):
             pytest.skip("CKM_SHA256_HMAC not supported")
 
@@ -464,7 +471,7 @@ class TestMultiPartCrossSession:
     A multi-part state initialised in session A must NOT be accessible from
     session B. A module that lets session B continue session A's
     operation has a state-confusion bug — multi-part state is per-session
-    per the spec (PKCS#11 v3.1 Sec.5.6, Sec.5.10.1).
+    per the spec (PKCS#11 v3.2).
     """
 
     def test_encrypt_update_from_other_session(self, p11_raw_session: RawSession) -> None:
@@ -482,7 +489,7 @@ class TestMultiPartCrossSession:
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
 
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         sh_b = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
 
         try:
@@ -563,7 +570,7 @@ class TestZeroDataFinal:
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
 
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv1 = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)

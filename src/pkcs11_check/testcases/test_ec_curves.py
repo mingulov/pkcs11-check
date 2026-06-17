@@ -25,11 +25,27 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.types_std import (
     CKA_EC_POINT,
     CKA_KEY_TYPE,
+    CKF_SIGN,
     CKK_EC,
     CKM_ECDSA,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
 )
+from pkcs11_check.testcases.conftest import skip_unless_capability, xfail_if_known_ckr
 
 pytestmark = pytest.mark.crossverify
+
+# Unambiguous "advertised ECDSA sign is not operational" codes -> xfail (flag for
+# investigation). Deliberately NARROW: only FUNCTION_NOT_SUPPORTED (function/mech
+# absent) and FUNCTION_FAILED. CKR_GENERAL_ERROR / CKR_DEVICE_ERROR are NOT here --
+# they are catch-alls that may mask a real signing failure (kryoptic returns
+# DEVICE_ERROR on a crypto/OpenSSL failure), so they stay a hard FAIL to be
+# investigated rather than quietly downgraded. A WRONG signature is independently
+# caught by the software verify below (crypto break -> fail).
+_ECDSA_SIGN_REJECT_RVS = (
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+)
 
 _EC_CURVES = [
     ("secp224r1", 28, ec.SECP224R1(), hashes.SHA224()),
@@ -106,8 +122,7 @@ class TestECDSACrossVerify:
     ) -> None:
         """ECDSA sign with PKCS#11, verify with cryptography."""
         rs = p11_raw_session
-        if not rs.has_mechanism("ECDSA"):
-            pytest.skip("CKM_ECDSA not supported")
+        skip_unless_capability(rs, CKM_ECDSA, operation=CKF_SIGN)
 
         hash_fns = {28: hashlib.sha224, 32: hashlib.sha256, 48: hashlib.sha384, 66: hashlib.sha512}
 
@@ -116,7 +131,11 @@ class TestECDSACrossVerify:
             data = f"ECDSA {curve_name} cross-verify".encode()
             digest = hash_fns[coord_size](data).digest()
 
-            sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
+            try:
+                sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
+            except AssertionError as exc:
+                xfail_if_known_ckr(exc, _ECDSA_SIGN_REJECT_RVS, "ECDSA sign not operational")
+                raise
 
             ec_point_der = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])[CKA_EC_POINT]
             point_bytes = decode_ec_point(ec_point_der)

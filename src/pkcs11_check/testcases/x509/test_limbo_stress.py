@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     create_object,
     destroy_quietly,
@@ -34,9 +35,14 @@ from pkcs11_check.testcases.x509.conftest import (
     get_unique_limbo_certs,
     get_unique_limbo_crls,
     load_limbo_testcases,
+    skip_unless_cert_storage,
 )
 
-pytestmark = [pytest.mark.stress, pytest.mark.security]
+pytestmark = [
+    pytest.mark.stress,
+    pytest.mark.security,
+    pytest.mark.module_session_fast,
+]
 
 _CERT_CAP = 1000  # Enough diversity for crash-probing; full set is ~30K.
 
@@ -53,7 +59,7 @@ _all_crls = get_unique_limbo_crls(_all_cases)
 def test_exhaustive_cert_import_no_crash(
     tc_id: str,
     der_bytes: bytes,
-    p11_raw_session: Any,
+    p11_module_session: Any,
     limbo_available: Any,
 ) -> None:
     """Import every unique cert from Limbo - must not crash module.
@@ -62,7 +68,8 @@ def test_exhaustive_cert_import_no_crash(
     back computed attributes (SUBJECT, ISSUER, SERIAL_NUMBER) and querying
     object size.  This catches ASN.1 parser crashes that a bare import misses.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
+    skip_unless_cert_storage(rs)
     try:
         h = create_object(
             rs.raw,
@@ -85,9 +92,13 @@ def test_exhaustive_cert_import_no_crash(
             attrs = {}  # CKR error reading VALUE is acceptable
         stored = attrs.get(CKA_VALUE, b"")
         if isinstance(stored, bytes) and stored and stored != der_bytes:
-            pytest.fail(
-                f"{tc_id}: CKA_VALUE round-trip mismatch "
-                f"(stored {len(stored)}B vs original {len(der_bytes)}B)"
+            classify(
+                "self_contradiction",
+                kind="metadata",
+                summary=(
+                    f"{tc_id}: CKA_VALUE round-trip mismatch "
+                    f"(stored {len(stored)}B vs original {len(der_bytes)}B)"
+                ),
             )
 
         # Force the module to parse the DER by reading computed attributes.
@@ -114,7 +125,7 @@ def test_exhaustive_cert_import_no_crash(
 def test_exhaustive_crl_import_no_crash(
     tc_id: str,
     der_bytes: bytes,
-    p11_raw_session: Any,
+    p11_module_session: Any,
     limbo_available: Any,
 ) -> None:
     """Import every unique CRL from Limbo - must not crash module.
@@ -123,7 +134,7 @@ def test_exhaustive_crl_import_no_crash(
     to force any lazy parsing.  CRLs may not have SUBJECT/ISSUER attributes,
     so we read CKA_VALUE (round-trip) and CKA_CLASS.
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     try:
         # Use a generic class value for CRL
         crl_class = 0x00000004
@@ -146,9 +157,13 @@ def test_exhaustive_crl_import_no_crash(
             attrs = {}  # CKR error reading VALUE is acceptable
         stored = attrs.get(CKA_VALUE, b"")
         if isinstance(stored, bytes) and stored and stored != der_bytes:
-            pytest.fail(
-                f"{tc_id}: CRL CKA_VALUE round-trip mismatch "
-                f"(stored {len(stored)}B vs original {len(der_bytes)}B)"
+            classify(
+                "self_contradiction",
+                kind="metadata",
+                summary=(
+                    f"{tc_id}: CRL CKA_VALUE round-trip mismatch "
+                    f"(stored {len(stored)}B vs original {len(der_bytes)}B)"
+                ),
             )
 
         try:

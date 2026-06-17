@@ -1,0 +1,23 @@
+{
+  "mechanism": "CKM_TWOFISH_CBC",
+  "family": "twofish_cbc",
+  "key_type": "CKK_TWOFISH",
+  "source": "Bruce Schneier Twofish ECB intermediate value test, replayed as single-block CBC with zero IV",
+  "source_url": "https://www.schneier.com/wp-content/uploads/2015/12/ecb_ival.txt",
+  "vectors": [
+    {
+      "id": "twofish_cbc_zero_iv_key128_block0",
+      "type": "positive",
+      "mechanism_name": "CKM_TWOFISH_CBC",
+      "key_type": "symmetric",
+      "key_bits": 128,
+      "key_hex": "00000000000000000000000000000000",
+      "params": {
+        "source": "Bruce Schneier Twofish ECB intermediate value test, replayed as single-block CBC with zero IV",
+        "iv_hex": "00000000000000000000000000000000"
+      },
+      "plaintext_hex": "00000000000000000000000000000000",
+      "ciphertext_hex": "9f589f5cf6122c32b6bfec2f2ae8c35a"
+    }
+  ]
+}

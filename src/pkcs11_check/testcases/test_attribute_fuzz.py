@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     create_object,
     destroy_quietly,
@@ -35,7 +36,11 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
 )
 from pkcs11_check.testcases._error_tuples import KEY_SIZE_ERRORS, TEMPLATE_ERRORS
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    is_known_error,
+    skip_unless_create_object_supported,
+)
 
 pytestmark = pytest.mark.security
 
@@ -51,6 +56,10 @@ def _is_key_size_error(e: BaseException) -> bool:
 class TestMalformedAttributes:
     """Test that malformed attribute values are rejected gracefully."""
 
+    @pytest.fixture(autouse=True)
+    def _skip_if_no_create_object(self, p11_raw_session: Any) -> None:
+        skip_unless_create_object_supported(p11_raw_session)
+
     def test_invalid_class_value(self, p11_raw_session: Any) -> None:
         """CKA_CLASS with invalid value must be rejected, not crash."""
         rs = p11_raw_session
@@ -64,7 +73,13 @@ class TestMalformedAttributes:
                 },
             )
             destroy_quietly(rs.raw, rs.sh, h)
-            pytest.fail("Module accepted invalid CKA_CLASS value 0xDEADBEEF")
+            classify(
+                "accepted_invalid",
+                kind="metadata",
+                label="C_CreateObject:invalid CKA_CLASS",
+                operation="C_CreateObject",
+                summary="Module accepted invalid CKA_CLASS value 0xDEADBEEF",
+            )
         except AssertionError as e:
             if _is_template_error(e):
                 pass  # Correct rejection
@@ -123,7 +138,13 @@ class TestMalformedAttributes:
             pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 0)
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
-            pytest.fail("Module accepted RSA key size 0")
+            classify(
+                "accepted_invalid",
+                kind="crypto",
+                label="C_GenerateKeyPair:RSA key size 0",
+                operation="C_GenerateKeyPair",
+                summary="Module accepted RSA key size 0",
+            )
         except AssertionError as e:
             if _is_key_size_error(e):
                 pass  # Correct rejection
@@ -156,7 +177,13 @@ class TestMalformedAttributes:
                 },
             )
             destroy_quietly(rs.raw, rs.sh, h)
-            pytest.fail("Module accepted object without CKA_CLASS")
+            classify(
+                "accepted_invalid",
+                kind="metadata",
+                label="C_CreateObject:missing CKA_CLASS",
+                operation="C_CreateObject",
+                summary="Module accepted object without CKA_CLASS",
+            )
         except AssertionError as e:
             if _is_template_error(e):
                 pass  # Correct rejection
@@ -207,6 +234,10 @@ class TestMalformedAttributes:
 
 class TestLargeAttributes:
     """Test with oversized attribute values."""
+
+    @pytest.fixture(autouse=True)
+    def _skip_if_no_create_object(self, p11_raw_session: Any) -> None:
+        skip_unless_create_object_supported(p11_raw_session)
 
     def test_large_label(self, p11_raw_session: Any) -> None:
         """Very long CKA_LABEL (10KB) - must not crash."""
@@ -259,6 +290,6 @@ class TestDuplicateAttributes:
     def test_create_key_normal(self, p11_raw_session: Any) -> None:
         """Baseline: normal AES key generation works."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="attribute-fuzz AES-256 baseline")
         assert key != 0
         destroy_quietly(rs.raw, rs.sh, key)

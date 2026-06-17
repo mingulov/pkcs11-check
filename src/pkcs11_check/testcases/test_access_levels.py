@@ -8,11 +8,12 @@ enforcement at the access-level boundary.
 
 from __future__ import annotations
 
-from ctypes import byref
+from ctypes import byref, c_ubyte
 from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
     login_user,
@@ -94,9 +95,12 @@ from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
     classify_negative_rv,
+    classify_policy_enforcement,
     get_pin_bytes,
     is_known_error,
+    reject_or_classify,
     require_operational_aes_keygen,
+    skip_unless_create_object_supported,
     xfail_if_known_ckr,
 )
 
@@ -115,6 +119,13 @@ _TRUSTED_SETATTR_REJECT_RVS = (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_USER_NOT_LOGGED_IN,
+)
+
+_WRAP_WITH_TRUSTED_SETATTR_REJECT_RVS = (
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
 )
 
 _ALWAYS_AUTH_TEMPLATE_REJECT_RVS = (
@@ -186,6 +197,7 @@ def _gen_access_aes_key(rs: Any, sh: int, *, attrs: dict[Any, Any] | None = None
 
 def _create_access_data_object(rs: Any, sh: int, attrs: dict[Any, Any]) -> int:
     """Create a setup data object for access-level visibility tests."""
+    skip_unless_create_object_supported(rs)
     try:
         return create_object(rs.raw, sh, attrs)
     except AssertionError as exc:
@@ -807,7 +819,7 @@ class TestTrustedAttribute:
     def test_user_cannot_set_trusted(self, p11_raw_session: Any) -> None:
         """USER session must not be able to gen a key with CKA_TRUSTED=True.
 
-        Per PKCS#11 v3.1 Sec.4.7, only the SO can mark a key as TRUSTED.
+        Per PKCS#11 v3.2, only the SO can mark a key as TRUSTED.
         A USER session creating a TRUSTED=True key bypasses the SO trust
         boundary used by CKA_WRAP_WITH_TRUSTED to gate sensitive wraps.
         """
@@ -835,7 +847,7 @@ class TestTrustedAttribute:
             note(
                 "USER session can create CKA_TRUSTED=True key (should require SO)",
                 ComplianceLevel.CRITICAL,
-                reference="PKCS#11 v3.1 Sec.4.7: CKA_TRUSTED set by SO only",
+                reference="PKCS#11 v3.2: CKA_TRUSTED set by SO only",
             )
             # Read back to confirm the violation rather than just trust the
             # gen success — some modules silently drop the attribute.
@@ -846,10 +858,16 @@ class TestTrustedAttribute:
                     return  # Module doesn't expose CKA_TRUSTED
                 raise
             if attrs.get(CKA_TRUSTED) is True:
-                pytest.fail(
-                    "SECURITY: USER session created and was granted "
-                    "CKA_TRUSTED=True on a freshly-generated key — "
-                    "trust boundary breached"
+                fail_as(
+                    "self_contradiction",
+                    kind="policy",
+                    label="USER:create-CKA_TRUSTED",
+                    operation="C_GenerateKey",
+                    summary=(
+                        "SECURITY: USER session created and was granted "
+                        "CKA_TRUSTED=True on a freshly-generated key — "
+                        "trust boundary breached"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
@@ -901,15 +919,79 @@ class TestTrustedAttribute:
                     "USER session escalated CKA_TRUSTED=False → True via "
                     "C_SetAttributeValue (should require SO)",
                     ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.4.7: CKA_TRUSTED set by SO only",
+                    reference="PKCS#11 v3.2: CKA_TRUSTED set by SO only",
                 )
-                pytest.fail(
-                    "SECURITY: USER session escalated a key's CKA_TRUSTED "
-                    "from False to True via C_SetAttributeValue — trust "
-                    "boundary breached, opens CKA_WRAP_WITH_TRUSTED bypass"
+                fail_as(
+                    "self_contradiction",
+                    kind="policy",
+                    label="USER:setattr-CKA_TRUSTED",
+                    operation="C_SetAttributeValue",
+                    summary=(
+                        "SECURITY: USER session escalated a key's CKA_TRUSTED "
+                        "from False to True via C_SetAttributeValue — trust "
+                        "boundary breached, opens CKA_WRAP_WITH_TRUSTED bypass"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
+
+    def test_wrap_with_trusted_cannot_be_cleared_once_true(self, p11_raw_session: Any) -> None:
+        """CKA_WRAP_WITH_TRUSTED can only move toward stricter wrapping policy."""
+        rs = p11_raw_session
+        try:
+            target_h = _gen_access_aes_key(
+                rs,
+                rs.sh,
+                attrs={
+                    CKA_WRAP_WITH_TRUSTED: True,
+                    CKA_TOKEN: False,
+                },
+            )
+        except AssertionError as exc:
+            pytest.skip(f"CKA_WRAP_WITH_TRUSTED not supported: {exc}")
+            return
+
+        try:
+            try:
+                attrs = read_attributes(rs.raw, rs.sh, target_h, [CKA_WRAP_WITH_TRUSTED])
+            except AssertionError as exc:
+                if is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                    pytest.skip(f"Module does not expose CKA_WRAP_WITH_TRUSTED: {exc}")
+                raise
+            if attrs.get(CKA_WRAP_WITH_TRUSTED) is not True:
+                pytest.skip("Module did not honour CKA_WRAP_WITH_TRUSTED=True")
+
+            try:
+                set_attributes(rs.raw, rs.sh, target_h, {CKA_WRAP_WITH_TRUSTED: False})
+            except AssertionError as exc:
+                if is_known_error(exc, _WRAP_WITH_TRUSTED_SETATTR_REJECT_RVS):
+                    return
+                raise
+
+            after = read_attributes(rs.raw, rs.sh, target_h, [CKA_WRAP_WITH_TRUSTED])
+            if after.get(CKA_WRAP_WITH_TRUSTED) is False:
+                fail_as(
+                    "self_contradiction",
+                    kind="policy",
+                    label="CKA_WRAP_WITH_TRUSTED:downgrade",
+                    operation="C_SetAttributeValue",
+                    summary=(
+                        "SECURITY: CKA_WRAP_WITH_TRUSTED downgraded from True to False "
+                        "via C_SetAttributeValue"
+                    ),
+                )
+            xfail_as(
+                "honest_deviation",
+                kind="lifecycle",
+                label="CKA_WRAP_WITH_TRUSTED:setattr-noop",
+                operation="C_SetAttributeValue",
+                summary=(
+                    "C_SetAttributeValue returned CKR_OK for CKA_WRAP_WITH_TRUSTED "
+                    "True->False but left the stricter value unchanged"
+                ),
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, target_h)
 
     def test_wrap_with_trusted_rejects_untrusted(self, p11_raw_session: Any) -> None:
         """Without CKA_TRUSTED, wrapping a CKA_WRAP_WITH_TRUSTED key fails."""
@@ -957,29 +1039,28 @@ class TestTrustedAttribute:
                 mech = mech_bytes(wrap_mech, b"\x00" * 16)
             else:
                 pytest.skip("No AES wrap mechanism available")
+            # Drive the full wrap (size query, then a real output buffer) so a
+            # module that enforces the WRAP_WITH_TRUSTED policy only on the actual
+            # wrap is exercised, not just the size query.
             out_len = CK_ULONG(0)
             rv = rs.raw.C_WrapKey(rs.sh, mech.byref(), wrapper_h, target_h, None, byref(out_len))
+            if rv == CKR_OK and out_len.value:
+                buf = (c_ubyte * out_len.value)()
+                rv = rs.raw.C_WrapKey(rs.sh, mech.byref(), wrapper_h, target_h, buf, byref(out_len))
             if rv == CKR_OK:
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    "C_WrapKey returned CKR_OK when wrapping a CKA_WRAP_WITH_TRUSTED key "
-                    "with an untrusted (non-CKA_TRUSTED) wrapping key -- "
-                    "module does not enforce CKA_WRAP_WITH_TRUSTED",
-                    ComplianceLevel.NOT_RECOMMENDED,
-                    reference="PKCS#11 spec CKA_WRAP_WITH_TRUSTED, CKA_TRUSTED",
-                )
-                pytest.xfail(
-                    "Module does not enforce CKA_WRAP_WITH_TRUSTED -- "
-                    "C_WrapKey returned CKR_OK with an untrusted wrapping key "
-                    "(expected CKR_ACTION_PROHIBITED, CKR_KEY_NOT_WRAPPABLE, "
-                    "or CKR_FUNCTION_FAILED)"
+                # policy: the target read back CKA_WRAP_WITH_TRUSTED=True (verified
+                # above), yet an untrusted (non-CKA_TRUSTED) wrapping key wrapped
+                # it -- the module claimed the protection then violated it.
+                classify_policy_enforcement(
+                    claimed=True,
+                    violated=True,
+                    label="C_WrapKey of a CKA_WRAP_WITH_TRUSTED key with an untrusted "
+                    "wrapping key (PKCS#11 requires CKR_KEY_NOT_WRAPPABLE)",
                 )
             classify_negative_rv(
                 rv,
                 (CKR_ACTION_PROHIBITED, CKR_KEY_NOT_WRAPPABLE),
-                label="C_WrapKey of a CKA_WRAP_WITH_TRUSTED key with an untrusted "
-                "wrapping key (CKR_OK is handled above as a noted non-enforcement)",
+                label="C_WrapKey of a CKA_WRAP_WITH_TRUSTED key with an untrusted wrapping key",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, wrapper_h)
@@ -1419,41 +1500,68 @@ class TestPublicSessionRestrictions:
     def test_public_cannot_create_private_token_object(
         self, p11_raw_session: Any, p11_config: Any
     ) -> None:
-        """Public session (no login) cannot create CKA_PRIVATE=True token objects."""
-        rs = p11_raw_session
-        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
+        """Public session (no login) must not create CKA_PRIVATE=True token objects.
 
-        # Clear login
+        PKCS#11: private objects require an authenticated (logged-in) session, so
+        C_GenerateKey for a private object from a public session must return
+        CKR_USER_NOT_LOGGED_IN. A module that creates a usable private object
+        without authentication has claimed the protection (CKA_PRIVATE=True reads
+        back) then violated it -- a policy self-contradiction, not a soft note.
+        """
+        rs = p11_raw_session
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
+            pytest.skip("No PIN configured; cannot establish an unauthenticated session")
+        require_operational_aes_keygen(rs)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
+        label = f"pub-no-create-priv-{id(self)}"
+
+        # Clear application-wide (token-wide) login so the probe session is public.
         pre_sh = _open_access_session_or_skip(rs, flags_rw)
         rs.raw.C_Logout(pre_sh)
         close_session_quietly(rs.raw, pre_sh)
 
         s1 = _open_access_session_or_skip(rs, flags_rw)
+        created = None
         try:
             try:
-                key_h = gen_aes_key(
+                created = gen_aes_key(
                     rs.raw,
                     s1,
                     128,
                     attrs={
                         CKA_TOKEN: True,
                         CKA_PRIVATE: True,
-                        CKA_LABEL: "public-no-create",
+                        CKA_LABEL: label,
                     },
                 )
-                # If it succeeded, some modules don't enforce this
-                destroy_quietly(rs.raw, s1, key_h)
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    "Public session created CKA_PRIVATE=True token object without login",
-                    ComplianceLevel.NOT_RECOMMENDED,
-                    reference="PKCS#11 spec: private token objects require login",
+            except AssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (CKR_USER_NOT_LOGGED_IN,),
+                    label="C_GenerateKey CKA_PRIVATE=True token object in a public "
+                    "(unauthenticated) session",
                 )
-            except AssertionError:
-                # Expected: public session cannot create private objects
-                pass
+                return
+            # Created without login -- policy claim/effect check: claimed is that
+            # the object reads back CKA_PRIVATE=True; violated is that it exists at
+            # all (created by an unauthenticated session).
+            priv = read_attributes(rs.raw, s1, created, [CKA_PRIVATE]).get(CKA_PRIVATE)
+            classify_policy_enforcement(
+                claimed=priv is True,
+                violated=True,
+                label="public (unauthenticated) session created a CKA_PRIVATE=True "
+                "token object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
+            )
         finally:
+            # Restore login so the created object can be cleaned up and later tests
+            # in this file see authenticated state again.
+            _login_user_raw(rs.raw, s1, pin_bytes)
+            if created is not None:
+                destroy_quietly(rs.raw, s1, created)
+            else:
+                for h in find_objects(rs.raw, s1, template_from_dict({CKA_LABEL: label})):
+                    destroy_quietly(rs.raw, s1, h)
             close_session_quietly(rs.raw, s1)
 
     def test_public_can_create_non_private_data(
@@ -1461,6 +1569,7 @@ class TestPublicSessionRestrictions:
     ) -> None:
         """Public session may create CKA_PRIVATE=False data objects."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Clear login
@@ -1504,4 +1613,64 @@ class TestPublicSessionRestrictions:
             for h in find_objects(rs.raw, s1, tmpl):
                 destroy_quietly(rs.raw, s1, h)
         finally:
+            close_session_quietly(rs.raw, s1)
+
+    def test_public_create_private_session_object_rejected(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
+        """Public session must not C_CreateObject a CKA_PRIVATE=True object.
+
+        Complements the C_GenerateKey path: the private-object login rule applies
+        to direct object creation and to session (not only token) objects.
+        Expected CKR_USER_NOT_LOGGED_IN; creating a usable private object without
+        authentication is a policy self-contradiction, not a soft note.
+        """
+        rs = p11_raw_session
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
+            pytest.skip("No PIN configured; cannot establish an unauthenticated session")
+        skip_unless_create_object_supported(rs)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
+        label = f"pub-create-priv-{id(self)}"
+
+        # Clear application-wide (token-wide) login so the probe session is public.
+        pre_sh = _open_access_session_or_skip(rs, flags_rw)
+        rs.raw.C_Logout(pre_sh)
+        close_session_quietly(rs.raw, pre_sh)
+
+        s1 = _open_access_session_or_skip(rs, flags_rw)
+        created = None
+        try:
+            try:
+                created = create_object(
+                    rs.raw,
+                    s1,
+                    {
+                        CKA_CLASS: CKO_DATA,
+                        CKA_LABEL: label,
+                        CKA_VALUE: b"private-no-login",
+                        CKA_TOKEN: False,
+                        CKA_PRIVATE: True,
+                    },
+                )
+            except AssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (CKR_USER_NOT_LOGGED_IN,),
+                    label="C_CreateObject CKA_PRIVATE=True session object in a public "
+                    "(unauthenticated) session",
+                )
+                return
+            # Created without login -- policy claim/effect check.
+            priv = read_attributes(rs.raw, s1, created, [CKA_PRIVATE]).get(CKA_PRIVATE)
+            classify_policy_enforcement(
+                claimed=priv is True,
+                violated=True,
+                label="public (unauthenticated) session created a CKA_PRIVATE=True "
+                "session object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
+            )
+        finally:
+            # Session objects are discarded on close; destroy first if it exists.
+            if created is not None:
+                destroy_quietly(rs.raw, s1, created)
             close_session_quietly(rs.raw, s1)

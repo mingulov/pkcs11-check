@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -28,7 +29,10 @@ from pkcs11_check.raw.types_std import (
     CKM_ECDSA_SHA3_512,
     CKM_ECDSA_SHA224,
 )
-from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
+from pkcs11_check.testcases._signature_policy import (
+    signature_rejected_or_xfail,
+    xfail_if_op_not_operational,
+)
 
 pytestmark = pytest.mark.sign
 
@@ -61,7 +65,12 @@ class TestECDSAPrehash:
         pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
         try:
             data = b"ECDSA prehash roundtrip test data"
-            signature = sign_single(rs.raw, rs.sh, priv, mech, data)
+            try:
+                signature = sign_single(rs.raw, rs.sh, priv, mech, data)
+            except AssertionError as exc:
+                # Advertised but the sign refused at runtime (e.g. FIPS-deprecated
+                # SHA-1 -> CKR_DEVICE_ERROR): not operational, not a break.
+                xfail_if_op_not_operational(exc, f"CKM_{mech_name}")
             assert len(signature) > 0
 
             result = verify_single(rs.raw, rs.sh, pub, mech, data, signature)
@@ -88,7 +97,10 @@ class TestECDSAPrehash:
             original = b"original message for ECDSA"
             tampered = b"tampered message for ECDSA"
 
-            sig = sign_single(rs.raw, rs.sh, priv, mech, original)
+            try:
+                sig = sign_single(rs.raw, rs.sh, priv, mech, original)
+            except AssertionError as exc:
+                xfail_if_op_not_operational(exc, f"CKM_{mech_name}")
             try:
                 result = verify_single(rs.raw, rs.sh, pub, mech, tampered, sig)
             except AssertionError as exc:
@@ -116,9 +128,21 @@ class TestECDSAPrehash:
         pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
         try:
             data = b"nonce uniqueness test for ECDSA prehash"
-            sig1 = sign_single(rs.raw, rs.sh, priv, mech, data)
+            try:
+                sig1 = sign_single(rs.raw, rs.sh, priv, mech, data)
+            except AssertionError as exc:
+                xfail_if_op_not_operational(exc, f"CKM_{mech_name}")
             sig2 = sign_single(rs.raw, rs.sh, priv, mech, data)
-            assert sig1 != sig2, f"CKM_{mech_name}: two ECDSA signatures should differ (random k)"
+            if sig1 == sig2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label=f"CKM_{mech_name}:sign nonce uniqueness",
+                    operation="C_Sign",
+                    mechanism=f"CKM_{mech_name}",
+                    summary="two ECDSA signatures of the same data are identical -- "
+                    "nonce (k) reuse leaks the private key",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

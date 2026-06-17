@@ -78,7 +78,7 @@ import ctypes
 from pkcs11_check.raw.types_std import CK_MECHANISM, CK_ULONG, CKM_RSA_PKCS
 
 mech = CK_MECHANISM()
-mech.mechanism = int(CKM_RSA_PKCS)
+mech.mechanism = CKM_RSA_PKCS
 mech.pParameter = None
 mech.ulParameterLen = 0
 rv = raw.C_DecryptInit(sh, ctypes.byref(mech), priv)
@@ -100,14 +100,14 @@ from pkcs11_check.raw.types_std import (
 )
 
 params = CK_RSA_PKCS_OAEP_PARAMS()
-params.hashAlg = int(CKM_SHA256)
-params.mgf = int(CKG_MGF1_SHA256)
+params.hashAlg = CKM_SHA256
+params.mgf = CKG_MGF1_SHA256
 params.source = 0
 params.pSourceData = None
 params.ulSourceDataLen = 0
 
 mech = CK_MECHANISM()
-mech.mechanism = int(CKM_RSA_PKCS_OAEP)
+mech.mechanism = CKM_RSA_PKCS_OAEP
 mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
 mech.ulParameterLen = ctypes.sizeof(params)
 
@@ -175,7 +175,7 @@ class TestRsaPkcsDecryptErrorPaths:
     sized relative to the actual modulus, and calls C_DecryptInit + C_Decrypt.
     The module must return a CKR error, not crash.
 
-    PKCS#11 v3.1 Sec. 6.1: modules must validate ciphertext length and
+    PKCS#11 v3.2: modules must validate ciphertext length and
     format before performing any decryption. Crashes are bugs.
     """
 
@@ -281,7 +281,7 @@ class TestRsaOaepDecryptErrorPaths:
     Each test generates a fresh RSA 2048-bit keypair and crafts malformed
     OAEP input. The module must return a CKR error, not crash.
 
-    PKCS#11 v3.1 Sec. 6.1: OAEP ciphertext validation must not cause
+    PKCS#11 v3.2: OAEP ciphertext validation must not cause
     heap overflow or undefined behaviour on invalid input.
     """
 
@@ -334,7 +334,7 @@ class TestRsaVerifyCorruptedSignature:
     C_VerifyInit + C_Verify. The module must return CKR_SIGNATURE_INVALID
     or CKR_SIGNATURE_LEN_RANGE cleanly.
 
-    PKCS#11 v3.1 Sec. 6.3: C_Verify must validate the signature and return
+    PKCS#11 v3.2: C_Verify must validate the signature and return
     CKR_SIGNATURE_INVALID for a non-matching signature -- never crash.
     """
 
@@ -376,7 +376,7 @@ try:
     # Attempt verify with corrupted signature
     data = b"test data for verification"
     mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_SHA256_RSA_PKCS)
+    mech.mechanism = CKM_SHA256_RSA_PKCS
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_VerifyInit(sh, ctypes.byref(mech), pub)

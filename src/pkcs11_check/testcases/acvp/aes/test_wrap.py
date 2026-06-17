@@ -17,12 +17,14 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKM_AES_KEY_WRAP,
     CKM_AES_KEY_WRAP_KWP,
@@ -31,12 +33,17 @@ from pkcs11_check.raw.types_std import (
     CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
     CKR_WRAPPED_KEY_INVALID,
 )
+from pkcs11_check.testcases._operability import (
+    Operability,
+    OperabilityResult,
+    classify_kat_clean_error,
+    probe_operability,
+    xfail_vacuous_reject,
+)
 from pkcs11_check.testcases.acvp.aes.base import _import_aes_key, _load_vectors
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 
 # CKR errors that indicate the module correctly rejected invalid ciphertext
 # during unwrap integrity checking.  OpenSSL-backed modules often return
@@ -52,6 +59,78 @@ _UNWRAP_REJECT_RVS = {
 }
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
+
+# --- Canonical operability probe (triage H2) ---------------------------------
+# One canonical RFC 3394/5649 known answer per (mechanism, direction) per
+# process decides how clean vector errors classify (testcases/_operability.py).
+# Expected outputs come from `cryptography.keywrap` (spec-derived truth).
+PROBE_KEK = bytes(range(16))
+PROBE_KW_PT = bytes(range(16))
+PROBE_KWP_PT = bytes(range(20))
+
+
+def _probe_expected_ct(mech_name: str) -> bytes:
+    from cryptography.hazmat.primitives.keywrap import (
+        aes_key_wrap,
+        aes_key_wrap_with_padding,
+    )
+
+    if mech_name == "AES_KEY_WRAP":
+        return aes_key_wrap(PROBE_KEK, PROBE_KW_PT)
+    return aes_key_wrap_with_padding(PROBE_KEK, PROBE_KWP_PT)
+
+
+def _canonical_wrap_probe(rs: Any, mech_name: str, direction: str) -> OperabilityResult:
+    mech = CKM_AES_KEY_WRAP if mech_name == "AES_KEY_WRAP" else CKM_AES_KEY_WRAP_KWP
+    pt = PROBE_KW_PT if mech_name == "AES_KEY_WRAP" else PROBE_KWP_PT
+    expected_ct = _probe_expected_ct(mech_name)
+    key = 0
+    try:
+        try:
+            key = _import_aes_key(rs, PROBE_KEK, encrypt=True, decrypt=True)
+        except CkrAssertionError as exc:
+            return OperabilityResult(
+                Operability.INCONCLUSIVE, f"canonical {mech_name} key import failed: {exc}"
+            )
+        try:
+            if direction == "encrypt":
+                got = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    mech,
+                    pt,
+                    mech_param=mech_simple(mech),
+                    output_overhead=16,
+                )
+                want = expected_ct
+            else:
+                got = decrypt_single(
+                    rs.raw, rs.sh, key, mech, expected_ct, mech_param=mech_simple(mech)
+                )
+                want = pt
+        except CkrAssertionError as exc:
+            return OperabilityResult(
+                Operability.NOT_OPERATIONAL,
+                f"canonical {mech_name} {direction} rejected: {exc}",
+            )
+        if got != want:
+            return OperabilityResult(
+                Operability.WRONG_OUTPUT,
+                f"canonical {mech_name} {direction} output mismatch: "
+                f"got {got.hex()}, want {want.hex()}",
+            )
+        return OperabilityResult(Operability.OPERATIONAL, f"canonical {mech_name} {direction} OK")
+    finally:
+        if key:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+
+def _wrap_operability(rs: Any, mech_name: str, direction: str) -> OperabilityResult:
+    return probe_operability(
+        f"{mech_name}:{direction}", lambda: _canonical_wrap_probe(rs, mech_name, direction)
+    )
+
 
 _MAX_HEX_BYTES = 128  # max bytes to show in mismatch messages
 
@@ -131,9 +210,11 @@ def test_acvp_aes_kw_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, A
             f"  expected: {_hex(vec['ct_expected'])}"
         )
     except AssertionError as exc:
-        if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-            pytest.xfail(f"AES_KEY_WRAP advertised but C_Encrypt is not operational: {exc}")
-        raise
+        classify_kat_clean_error(
+            exc,
+            result=_wrap_operability(rs, "AES_KEY_WRAP", "encrypt"),
+            label="AES_KEY_WRAP C_Encrypt",
+        )
     finally:
         if key:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -161,23 +242,59 @@ def test_acvp_aes_kw_unwrap(p11_module_session: Any, vec_id: str, vec: dict[str,
                 mech_param=mech,
             )
         except AssertionError as exc:
-            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-                pytest.xfail(f"AES_KEY_WRAP advertised but C_Decrypt is not operational: {exc}")
-            if is_known_error(exc, _UNWRAP_REJECT_RVS):
+            if isinstance(exc, CkrAssertionError) and is_known_error(exc, _UNWRAP_REJECT_RVS):
                 if not test_passed:
+                    xfail_vacuous_reject(
+                        _wrap_operability(rs, "AES_KEY_WRAP", "decrypt"),
+                        label=f"{vec_id}: AES_KEY_WRAP invalid-ciphertext reject",
+                    )
                     return  # module correctly rejected invalid ciphertext
-                pytest.fail(f"{vec_id}: valid KW vector rejected: {exc}")
-                return
-            raise
+                result = _wrap_operability(rs, "AES_KEY_WRAP", "decrypt")
+                if result.status is Operability.NOT_OPERATIONAL:
+                    xfail_as(
+                        "not_operational",
+                        kind="crypto",
+                        label="AES_KEY_WRAP:decrypt",
+                        summary=(
+                            f"AES_KEY_WRAP advertised but C_Decrypt is not operational "
+                            f"({result.detail}); vector: {exc}"
+                        ),
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
+                    )
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="AES_KEY_WRAP:decrypt",
+                    summary=f"{vec_id}: valid KW vector rejected: {exc}",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
+            classify_kat_clean_error(
+                exc,
+                result=_wrap_operability(rs, "AES_KEY_WRAP", "decrypt"),
+                label="AES_KEY_WRAP C_Decrypt",
+            )
 
         if test_passed:
-            assert pt == vec["pt_expected"], (
-                f"{vec_id}: unwrap mismatch:\n"
-                f"  got:      {_hex(pt)}\n"
-                f"  expected: {_hex(vec['pt_expected'])}"
+            assert_correct(
+                actual=pt,
+                expected=vec["pt_expected"],
+                label=f"AES-KW:C_Decrypt KAT {vec_id} (unwrap)",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_KEY_WRAP",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
         else:
-            pytest.fail(f"{vec_id}: module accepted KW ciphertext with invalid integrity check")
+            fail_as(
+                "accepted_invalid",
+                kind="crypto",
+                label="AES_KEY_WRAP:decrypt",
+                summary=f"{vec_id}: module accepted KW ciphertext with invalid integrity check",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
     finally:
         if key:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -247,9 +364,11 @@ def test_acvp_aes_kwp_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, 
             f"  expected: {_hex(vec['ct_expected'])}"
         )
     except AssertionError as exc:
-        if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-            pytest.xfail(f"AES_KEY_WRAP_KWP advertised but C_Encrypt is not operational: {exc}")
-        raise
+        classify_kat_clean_error(
+            exc,
+            result=_wrap_operability(rs, "AES_KEY_WRAP_KWP", "encrypt"),
+            label="AES_KEY_WRAP_KWP C_Encrypt",
+        )
     finally:
         if key:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -279,23 +398,59 @@ def test_acvp_aes_kwp_unwrap(p11_module_session: Any, vec_id: str, vec: dict[str
                 mech_param=mech,
             )
         except AssertionError as exc:
-            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-                pytest.xfail(f"AES_KEY_WRAP_KWP advertised but C_Decrypt is not operational: {exc}")
-            if is_known_error(exc, _UNWRAP_REJECT_RVS):
+            if isinstance(exc, CkrAssertionError) and is_known_error(exc, _UNWRAP_REJECT_RVS):
                 if not test_passed:
+                    xfail_vacuous_reject(
+                        _wrap_operability(rs, "AES_KEY_WRAP_KWP", "decrypt"),
+                        label=f"{vec_id}: AES_KEY_WRAP_KWP invalid-ciphertext reject",
+                    )
                     return  # module correctly rejected invalid ciphertext
-                pytest.fail(f"{vec_id}: valid KWP vector rejected: {exc}")
-                return
-            raise
+                result = _wrap_operability(rs, "AES_KEY_WRAP_KWP", "decrypt")
+                if result.status is Operability.NOT_OPERATIONAL:
+                    xfail_as(
+                        "not_operational",
+                        kind="crypto",
+                        label="AES_KEY_WRAP_KWP:decrypt",
+                        summary=(
+                            f"AES_KEY_WRAP_KWP advertised but C_Decrypt is not operational "
+                            f"({result.detail}); vector: {exc}"
+                        ),
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
+                    )
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="AES_KEY_WRAP_KWP:decrypt",
+                    summary=f"{vec_id}: valid KWP vector rejected: {exc}",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
+            classify_kat_clean_error(
+                exc,
+                result=_wrap_operability(rs, "AES_KEY_WRAP_KWP", "decrypt"),
+                label="AES_KEY_WRAP_KWP C_Decrypt",
+            )
 
         if test_passed:
-            assert pt == vec["pt_expected"], (
-                f"{vec_id}: KWP unwrap mismatch:\n"
-                f"  got:      {_hex(pt)}\n"
-                f"  expected: {_hex(vec['pt_expected'])}"
+            assert_correct(
+                actual=pt,
+                expected=vec["pt_expected"],
+                label=f"AES-KWP:C_Decrypt KAT {vec_id} (unwrap)",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_KEY_WRAP_KWP",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
         else:
-            pytest.fail(f"{vec_id}: module accepted KWP ciphertext with invalid integrity check")
+            fail_as(
+                "accepted_invalid",
+                kind="crypto",
+                label="AES_KEY_WRAP_KWP:decrypt",
+                summary=f"{vec_id}: module accepted KWP ciphertext with invalid integrity check",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
     finally:
         if key:
             destroy_quietly(rs.raw, rs.sh, key)

@@ -10,6 +10,8 @@ import pytest
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
     CKR_DEVICE_ERROR,
     CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
@@ -78,8 +80,8 @@ def test_generic_wycheproof_skips_when_mechanism_missing(
 ) -> None:
     """Missing mechanisms are capability skips, not failed vector tests."""
     monkeypatch.setattr(wy, "import_secret_key", _fail_if_called)
-    monkeypatch.setattr(wy, "import_ec_public_key", _fail_if_called)
-    monkeypatch.setattr(wy, "import_rsa_public_key", _fail_if_called)
+    monkeypatch.setattr(wy, "import_ec_public_key_negotiated", _fail_if_called)
+    monkeypatch.setattr(wy, "import_rsa_public_key_negotiated", _fail_if_called)
 
     session = _NoMechanismSession()
     method = getattr(case_factory(), method_name)
@@ -90,25 +92,58 @@ def test_generic_wycheproof_skips_when_mechanism_missing(
     assert session.checked == [expected_mechanism]
 
 
-def test_generic_ecdsa_p384_skips_unsupported_curve_import(
+class _EcdsaSession(_NoMechanismSession):
+    def has_mechanism(self, name: str) -> bool:
+        self.checked.append(name)
+        return name == "ECDSA"
+
+
+def test_generic_ecdsa_p384_broad_import_reject_xfails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """P-384 import rejection is an unsupported-curve skip, not a vector failure."""
+    """Batch 3b (A13): a broad P-384 import reject -> xfail (advertised but not operational).
 
-    class _EcdsaSession(_NoMechanismSession):
-        def has_mechanism(self, name: str) -> bool:
-            self.checked.append(name)
-            return name == "ECDSA"
+    Reconciles the prior ``..._skips_unsupported_curve_import`` pin: ECDSA is
+    advertised, so a broad import-failure CKR is no longer a capability skip.
+    """
 
     def reject_curve(*_args: Any, **_kwargs: Any) -> int:
-        raise AssertionError("Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID; expected CKR_OK")
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID; expected CKR_OK",
+            int(CKR_ATTRIBUTE_VALUE_INVALID),
+        )
 
-    monkeypatch.setattr(wy, "import_ec_public_key", reject_curve)
+    monkeypatch.setattr(wy, "import_ec_public_key_negotiated", reject_curve)
+    monkeypatch.setattr(
+        wy.pytest, "skip", lambda message: pytest.fail(f"unexpected skip: {message}")
+    )
 
     session = _EcdsaSession()
     vec = wy._load_ecdsa_p384_vectors()[0]
 
-    with pytest.raises(pytest.skip.Exception, match="Cannot import EC public key"):
+    with pytest.raises(pytest.xfail.Exception, match="ECDSA:key-import"):
+        wy.TestECDSAP384Wycheproof().test_ecdsa_p384_sha384_verify(session, vec)
+
+    assert session.checked == ["ECDSA"]
+
+
+def test_generic_ecdsa_p384_curve_unsupported_still_skips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Batch 3b (A13): a curve-absence import CKR keeps the genuine-absence skip."""
+
+    def reject_curve(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_CURVE_NOT_SUPPORTED; expected CKR_OK",
+            int(CKR_CURVE_NOT_SUPPORTED),
+        )
+
+    monkeypatch.setattr(wy, "import_ec_public_key_negotiated", reject_curve)
+
+    session = _EcdsaSession()
+    vec = wy._load_ecdsa_p384_vectors()[0]
+
+    with pytest.raises(pytest.skip.Exception, match="Cannot import EC public key on this module"):
         wy.TestECDSAP384Wycheproof().test_ecdsa_p384_sha384_verify(session, vec)
 
     assert session.checked == ["ECDSA"]

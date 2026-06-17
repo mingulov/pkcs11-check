@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.testcases._eddsa_public_key import probe_eddsa_public_key_encodings
 
@@ -59,11 +60,25 @@ def test_eddsa_public_key_encoding_support(p11_raw_session: Any) -> None:
         return
 
     if support["der"]:
-        pytest.xfail(
-            "EdDSA verifies only with DER-wrapped CKA_EC_POINT; "
-            "PKCS#11 requires raw RFC 8032 public-key bytes for CKK_EC_EDWARDS"
+        classify(
+            "not_operational",
+            kind="crypto",
+            label="EDDSA:public-key-encoding",
+            operation="C_Verify",
+            mechanism="EDDSA",
+            summary=(
+                "EdDSA verifies only with DER-wrapped CKA_EC_POINT; "
+                "PKCS#11 requires raw RFC 8032 public-key bytes for CKK_EC_EDWARDS"
+            ),
         )
 
-    pytest.xfail(
-        "EdDSA cannot verify the RFC 8032 Ed25519 vector with raw or DER-wrapped CKA_EC_POINT"
+    classify(
+        "not_operational",
+        kind="crypto",
+        label="EDDSA:public-key-encoding",
+        operation="C_Verify",
+        mechanism="EDDSA",
+        summary=(
+            "EdDSA cannot verify the RFC 8032 Ed25519 vector with raw or DER-wrapped CKA_EC_POINT"
+        ),
     )

@@ -16,7 +16,6 @@ from pkcs11_check.raw.recipes import (
     create_object,
     destroy_quietly,
     find_objects,
-    gen_aes_key,
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
@@ -25,6 +24,10 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VALUE,
     CKO_DATA,
+)
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    skip_if_data_objects_unsupported,
 )
 
 pytestmark = pytest.mark.keymgmt
@@ -41,8 +44,8 @@ class TestDuplicateLabels:
         """Two AES keys with the same label - search returns both."""
         rs = p11_raw_session
         label = _unique_label()
-        k1 = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: label})
-        k2 = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: label})
+        k1 = gen_aes_key_or_xfail(rs, 128, attrs={CKA_LABEL: label})
+        k2 = gen_aes_key_or_xfail(rs, 256, attrs={CKA_LABEL: label})
         try:
             found = find_objects(rs.raw, rs.sh, template_from_dict({CKA_LABEL: label}))
             assert len(found) >= 2, f"Expected >=2 objects with label '{label}', got {len(found)}"
@@ -53,6 +56,7 @@ class TestDuplicateLabels:
     def test_data_objects_same_label(self, p11_raw_session: Any) -> None:
         """Two CKO_DATA objects with the same label - both findable."""
         rs = p11_raw_session
+        skip_if_data_objects_unsupported(rs)
         label = _unique_label()
         o1 = create_object(
             rs.raw,
@@ -94,8 +98,9 @@ class TestDuplicateLabels:
     def test_different_types_same_label(self, p11_raw_session: Any) -> None:
         """AES key and CKO_DATA with the same label - both findable."""
         rs = p11_raw_session
+        skip_if_data_objects_unsupported(rs)
         label = _unique_label()
-        k1 = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: label})
+        k1 = gen_aes_key_or_xfail(rs, 128, attrs={CKA_LABEL: label})
         o1 = create_object(
             rs.raw,
             rs.sh,
@@ -118,8 +123,8 @@ class TestDuplicateLabels:
         """Destroying one of two same-label objects leaves the other."""
         rs = p11_raw_session
         label = _unique_label()
-        k1 = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: label})
-        k2 = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: label})
+        k1 = gen_aes_key_or_xfail(rs, 128, attrs={CKA_LABEL: label})
+        k2 = gen_aes_key_or_xfail(rs, 256, attrs={CKA_LABEL: label})
         try:
             destroy_quietly(rs.raw, rs.sh, k1)
             found = find_objects(rs.raw, rs.sh, template_from_dict({CKA_LABEL: label}))

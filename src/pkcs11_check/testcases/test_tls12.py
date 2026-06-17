@@ -16,19 +16,23 @@ OASIS spec: tls_1.2_mechanisms.md
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import subprocess
 import sys
 import textwrap
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from ctypes import byref
 from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_ulong,
     mech_bytes,
+    mech_ssl3_key_mat,
     mech_ssl3_master_key_derive,
     mech_tls12_extended_master_key_derive,
     mech_tls12_key_mat,
@@ -71,6 +75,7 @@ from pkcs11_check.raw.types_std import (
     CKM_TLS12_MASTER_KEY_DERIVE,
     CKM_TLS12_MASTER_KEY_DERIVE_DH,
     CKM_TLS_KDF,
+    CKM_TLS_KEY_AND_MAC_DERIVE,
     CKM_TLS_MAC,
     CKM_TLS_MASTER_KEY_DERIVE,
     CKM_TLS_PRE_MASTER_KEY_GEN,
@@ -86,7 +91,12 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import destroy_returned_handles, is_known_error
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    destroy_returned_handles,
+    is_known_error,
+    reject_or_classify,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -108,6 +118,111 @@ _TLS_ERROR_RVS = {
     CKR_TEMPLATE_INCONSISTENT,
     CKR_DEVICE_ERROR,
 }
+
+_TLS_TEMPLATE_CONFLICT_REJECT_RVS = (
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+)
+
+
+def _tls12_prf_sha256(
+    secret: bytes,
+    label: bytes,
+    client_random: bytes,
+    server_random: bytes,
+    output_len: int,
+    *,
+    context_data: bytes | None = None,
+) -> bytes:
+    """Compute the TLS 1.2 PRF output used by CKM_TLS12_KDF tests."""
+    if output_len <= 0:
+        raise ValueError("output_len must be positive")
+    seed = label + client_random + server_random
+    if context_data is not None:
+        seed += len(context_data).to_bytes(2, "big") + context_data
+
+    output = b""
+    a_value = seed
+    while len(output) < output_len:
+        a_value = hmac.new(secret, a_value, hashlib.sha256).digest()
+        output += hmac.new(secret, a_value + seed, hashlib.sha256).digest()
+    return output[:output_len]
+
+
+def _p_hash(
+    secret: bytes,
+    seed: bytes,
+    output_len: int,
+    digestmod: Callable[[], Any],
+) -> bytes:
+    output = bytearray()
+    a_value = seed
+    while len(output) < output_len:
+        a_value = hmac.new(secret, a_value, digestmod).digest()
+        output.extend(hmac.new(secret, a_value + seed, digestmod).digest())
+    return bytes(output[:output_len])
+
+
+def _tls12_extended_master_secret_reference(
+    secret: bytes,
+    session_hash: bytes,
+    output_len: int,
+) -> bytes:
+    """Compute the RFC 7627 TLS 1.2 extended master secret PRF output."""
+    if output_len <= 0:
+        raise ValueError("output_len must be positive")
+    return _p_hash(
+        secret,
+        b"extended master secret" + session_hash,
+        output_len,
+        hashlib.sha256,
+    )
+
+
+def _tls12_master_secret_reference(
+    secret: bytes,
+    client_random: bytes,
+    server_random: bytes,
+    output_len: int,
+) -> bytes:
+    """Compute the TLS 1.2 master secret PRF output."""
+    return _tls12_prf_sha256(
+        secret,
+        b"master secret",
+        client_random,
+        server_random,
+        output_len,
+    )
+
+
+def _tls_prf_legacy_md5_sha1(
+    secret: bytes,
+    label: bytes,
+    client_random: bytes,
+    server_random: bytes,
+    output_len: int,
+) -> bytes:
+    """Compute the RFC 2246 TLS 1.0/1.1 PRF used by CKM_TLS_KDF + CKM_TLS_PRF."""
+    if output_len <= 0:
+        raise ValueError("output_len must be positive")
+
+    seed = label + client_random + server_random
+    split_len = (len(secret) + 1) // 2
+    s1 = secret[:split_len]
+    s2 = secret[len(secret) - split_len :]
+    md5_part = _p_hash(
+        s1,
+        seed,
+        output_len,
+        lambda: hashlib.md5(usedforsecurity=False),
+    )
+    sha1_part = _p_hash(
+        s2,
+        seed,
+        output_len,
+        lambda: hashlib.sha1(usedforsecurity=False),
+    )
+    return bytes(a ^ b for a, b in zip(md5_part, sha1_part, strict=True))
 
 
 def _create_generic_secret(
@@ -152,6 +267,47 @@ def _derive_key_material_to_params(
         None,
     )
     expect_rv(rv, CKR_OK)
+
+
+def _derive_tls_key_material_template_conflict(
+    rs: Any,
+    base_key: int,
+    mech: Any,
+    *,
+    label: str,
+) -> None:
+    """Verify TLS key material rejects template protection values that differ."""
+    exc: AssertionError | None = None
+    try:
+        _derive_key_material_to_params(
+            rs,
+            base_key,
+            {
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_SENSITIVE: True,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
+            },
+            mech,
+        )
+    except AssertionError as caught:
+        exc = caught
+    finally:
+        out = mech.key_mat_out
+        destroy_returned_handles(
+            rs,
+            out.hClientMacSecret,
+            out.hServerMacSecret,
+            out.hClientKey,
+            out.hServerKey,
+        )
+
+    reject_or_classify(
+        exc,
+        _TLS_TEMPLATE_CONFLICT_REJECT_RVS,
+        label=label,
+    )
 
 
 class TestTLS10PreMasterKeyGen:
@@ -203,7 +359,14 @@ class TestTLS10PreMasterKeyGen:
                 destroy_quietly(rs.raw, rs.sh, key.value)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
-                pytest.xfail(f"CKM_TLS_PRE_MASTER_KEY_GEN not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS_PRE_MASTER_KEY_GEN:C_GenerateKey",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_TLS_PRE_MASTER_KEY_GEN",
+                    summary=f"CKM_TLS_PRE_MASTER_KEY_GEN not operational: {exc}",
+                )
             raise
 
     def test_tls_master_key_derive_availability(self, p11_raw_session: Any) -> None:
@@ -244,11 +407,32 @@ class TestTLS10PreMasterKeyGen:
                 value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
+                expected = _tls_prf_legacy_md5_sha1(
+                    _PRE_MASTER_SECRET,
+                    b"master secret",
+                    _CLIENT_RANDOM,
+                    _SERVER_RANDOM,
+                    48,
+                )
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label="CKM_TLS_MASTER_KEY_DERIVE:C_DeriveKey KAT (TLS 1.0/1.1 master secret)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS_MASTER_KEY_DERIVE",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
-                pytest.xfail(f"CKM_TLS_MASTER_KEY_DERIVE not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS_MASTER_KEY_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS_MASTER_KEY_DERIVE",
+                    summary=f"CKM_TLS_MASTER_KEY_DERIVE not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pms)
@@ -257,6 +441,88 @@ class TestTLS10PreMasterKeyGen:
         """Probe whether CKM_TLS_KEY_AND_MAC_DERIVE is advertised."""
         if not p11_raw_session.has_mechanism("TLS_KEY_AND_MAC_DERIVE"):
             pytest.skip("CKM_TLS_KEY_AND_MAC_DERIVE not supported")
+
+    def test_tls_key_and_mac_derive(self, p11_raw_session: Any) -> None:
+        """Attempt CKM_TLS_KEY_AND_MAC_DERIVE with CK_SSL3_KEY_MAT_PARAMS."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("TLS_KEY_AND_MAC_DERIVE"):
+            pytest.skip("CKM_TLS_KEY_AND_MAC_DERIVE not supported")
+
+        master_secret = _create_tls_pms(rs)
+        try:
+            mech = mech_ssl3_key_mat(
+                CKM_TLS_KEY_AND_MAC_DERIVE,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                key_size_bits=128,
+            )
+            _derive_key_material_to_params(
+                rs,
+                master_secret,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_DERIVE: True,
+                    CKA_TOKEN: False,
+                },
+                mech=mech,
+            )
+            try:
+                out = mech.key_mat_out
+                assert out.hClientKey != 0
+                assert out.hServerKey != 0
+                assert any(mech.buffer_bytes("iv_client"))
+                assert any(mech.buffer_bytes("iv_server"))
+            finally:
+                out = mech.key_mat_out
+                destroy_returned_handles(
+                    rs,
+                    out.hClientMacSecret,
+                    out.hServerMacSecret,
+                    out.hClientKey,
+                    out.hServerKey,
+                )
+        except AssertionError as exc:
+            if is_known_error(exc, _TLS_ERROR_RVS):
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS_KEY_AND_MAC_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS_KEY_AND_MAC_DERIVE",
+                    summary=f"CKM_TLS_KEY_AND_MAC_DERIVE not operational: {exc}",
+                )
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master_secret)
+
+    def test_tls_key_and_mac_rejects_template_protection_conflict(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_TLS_KEY_AND_MAC_DERIVE rejects template protection overrides."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("TLS_KEY_AND_MAC_DERIVE"):
+            pytest.skip("CKM_TLS_KEY_AND_MAC_DERIVE not supported")
+
+        master_secret = _create_tls_pms(rs)
+        try:
+            mech = mech_ssl3_key_mat(
+                CKM_TLS_KEY_AND_MAC_DERIVE,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                key_size_bits=128,
+            )
+            _derive_tls_key_material_template_conflict(
+                rs,
+                master_secret,
+                mech,
+                label="CKM_TLS_KEY_AND_MAC_DERIVE template protection conflict",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master_secret)
 
     def test_tls_master_key_derive_dh_availability(self, p11_raw_session: Any) -> None:
         """Probe whether CKM_TLS_MASTER_KEY_DERIVE_DH is advertised."""
@@ -302,11 +568,32 @@ class TestTLS10PreMasterKeyGen:
                 value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48
+                expected = _tls_prf_legacy_md5_sha1(
+                    _PRE_MASTER_SECRET,
+                    b"master secret",
+                    _CLIENT_RANDOM,
+                    _SERVER_RANDOM,
+                    48,
+                )
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label="CKM_TLS_PRF:C_DeriveKey KAT",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS_PRF",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
-                pytest.xfail(f"CKM_TLS_PRF not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS_PRF:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS_PRF",
+                    summary=f"CKM_TLS_PRF not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pms)
@@ -354,11 +641,31 @@ class TestTLS12MasterKeyDerive:
                 value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
+                expected = _tls12_master_secret_reference(
+                    _PRE_MASTER_SECRET,
+                    _CLIENT_RANDOM,
+                    _SERVER_RANDOM,
+                    48,
+                )
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label="CKM_TLS12_MASTER_KEY_DERIVE:C_DeriveKey KAT (TLS 1.2 master secret)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_MASTER_KEY_DERIVE",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
-                pytest.xfail(f"CKM_TLS12_MASTER_KEY_DERIVE not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS12_MASTER_KEY_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_MASTER_KEY_DERIVE",
+                    summary=f"CKM_TLS12_MASTER_KEY_DERIVE not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pms)
@@ -403,11 +710,33 @@ class TestTLS12MasterKeyDerive:
                 value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
+                expected = _tls12_master_secret_reference(
+                    bytes(range(32)),
+                    _CLIENT_RANDOM,
+                    _SERVER_RANDOM,
+                    48,
+                )
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label=(
+                        "CKM_TLS12_MASTER_KEY_DERIVE_DH:C_DeriveKey KAT (TLS 1.2 master secret DH)"
+                    ),
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_MASTER_KEY_DERIVE_DH",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
-                pytest.xfail(f"CKM_TLS12_MASTER_KEY_DERIVE_DH not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS12_MASTER_KEY_DERIVE_DH:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_MASTER_KEY_DERIVE_DH",
+                    summary=f"CKM_TLS12_MASTER_KEY_DERIVE_DH not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, dh_pms)
@@ -466,8 +795,42 @@ class TestTLS12KeyAndMacDerive:
                 )
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
-                pytest.xfail(f"CKM_TLS12_KEY_AND_MAC_DERIVE not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS12_KEY_AND_MAC_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_KEY_AND_MAC_DERIVE",
+                    summary=f"CKM_TLS12_KEY_AND_MAC_DERIVE not operational: {exc}",
+                )
             raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master_secret)
+
+    def test_key_and_mac_rejects_template_protection_conflict(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_TLS12_KEY_AND_MAC_DERIVE rejects template protection overrides."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("TLS12_KEY_AND_MAC_DERIVE"):
+            pytest.skip("CKM_TLS12_KEY_AND_MAC_DERIVE not supported")
+
+        master_secret = _create_tls_pms(rs)
+        try:
+            mech = mech_tls12_key_mat(
+                CKM_TLS12_KEY_AND_MAC_DERIVE,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                hash_mech=CKM_SHA256,
+                key_size_bits=128,
+            )
+            _derive_tls_key_material_template_conflict(
+                rs,
+                master_secret,
+                mech,
+                label="CKM_TLS12_KEY_AND_MAC_DERIVE template protection conflict",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, master_secret)
 
@@ -520,8 +883,114 @@ class TestTLS12KeyAndMacDerive:
                 )
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
-                pytest.xfail(f"CKM_TLS12_KEY_SAFE_DERIVE not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS12_KEY_SAFE_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_KEY_SAFE_DERIVE",
+                    summary=f"CKM_TLS12_KEY_SAFE_DERIVE not operational: {exc}",
+                )
             raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master_secret)
+
+    def test_key_safe_derive_ignores_iv_size_request(self, p11_raw_session: Any) -> None:
+        """CKM_TLS12_KEY_SAFE_DERIVE must not return IV material."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("TLS12_KEY_SAFE_DERIVE"):
+            pytest.skip("CKM_TLS12_KEY_SAFE_DERIVE not supported")
+
+        master_secret = _create_tls_pms(rs)
+        try:
+            mech = mech_tls12_key_mat(
+                CKM_TLS12_KEY_SAFE_DERIVE,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                hash_mech=CKM_SHA256,
+                key_size_bits=128,
+                iv_size_bits=128,
+            )
+            client_sentinel = bytes([0xA5]) * 16
+            server_sentinel = bytes([0x5A]) * 16
+            client_storage, client_len = mech.buffer_storage("iv_client")
+            server_storage, server_len = mech.buffer_storage("iv_server")
+            assert client_len == len(client_sentinel)
+            assert server_len == len(server_sentinel)
+            for idx, value in enumerate(client_sentinel):
+                client_storage[idx] = value
+            for idx, value in enumerate(server_sentinel):
+                server_storage[idx] = value
+
+            try:
+                _derive_key_material_to_params(
+                    rs,
+                    master_secret,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_DERIVE: True,
+                        CKA_TOKEN: False,
+                    },
+                    mech=mech,
+                )
+                out = mech.key_mat_out
+                assert out.hClientKey != 0
+                assert out.hServerKey != 0
+                assert (
+                    mech.buffer_bytes("iv_client") == client_sentinel
+                    and mech.buffer_bytes("iv_server") == server_sentinel
+                ), "CKM_TLS12_KEY_SAFE_DERIVE wrote IV material despite key-safe semantics"
+            finally:
+                out = mech.key_mat_out
+                destroy_returned_handles(
+                    rs,
+                    out.hClientMacSecret,
+                    out.hServerMacSecret,
+                    out.hClientKey,
+                    out.hServerKey,
+                )
+        except AssertionError as exc:
+            if is_known_error(exc, _TLS_ERROR_RVS):
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS12_KEY_SAFE_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_KEY_SAFE_DERIVE",
+                    summary=f"CKM_TLS12_KEY_SAFE_DERIVE not operational: {exc}",
+                )
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master_secret)
+
+    def test_key_safe_rejects_template_protection_conflict(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """CKM_TLS12_KEY_SAFE_DERIVE rejects template protection overrides."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("TLS12_KEY_SAFE_DERIVE"):
+            pytest.skip("CKM_TLS12_KEY_SAFE_DERIVE not supported")
+
+        master_secret = _create_tls_pms(rs)
+        try:
+            mech = mech_tls12_key_mat(
+                CKM_TLS12_KEY_SAFE_DERIVE,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                hash_mech=CKM_SHA256,
+                key_size_bits=128,
+                iv_size_bits=0,
+            )
+            _derive_tls_key_material_template_conflict(
+                rs,
+                master_secret,
+                mech,
+                label="CKM_TLS12_KEY_SAFE_DERIVE template protection conflict",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, master_secret)
 
@@ -554,7 +1023,14 @@ class TestTLS12Mac:
             assert len(result) > 0
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
-                pytest.xfail(f"CKM_TLS12_MAC not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS12_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_TLS12_MAC",
+                    summary=f"CKM_TLS12_MAC not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, mac_key)
@@ -584,7 +1060,14 @@ class TestTLS12Mac:
             assert len(result) > 0
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
-                pytest.xfail(f"CKM_TLS_MAC not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_TLS_MAC",
+                    summary=f"CKM_TLS_MAC not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, mac_key)
@@ -632,12 +1115,98 @@ class TestTLS12KDF:
             try:
                 value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
-                assert len(value) == 32
+                expected = _tls12_prf_sha256(
+                    _PRE_MASTER_SECRET,
+                    b"key expansion",
+                    _CLIENT_RANDOM,
+                    _SERVER_RANDOM,
+                    32,
+                )
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label="CKM_TLS12_KDF:C_DeriveKey KAT",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_KDF",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
-                pytest.xfail(f"CKM_TLS12_KDF not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS12_KDF:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_KDF",
+                    summary=f"CKM_TLS12_KDF not operational: {exc}",
+                )
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, base_key)
+
+    def test_tls12_kdf_context_data_exact_vector(self, p11_raw_session: Any) -> None:
+        """CKM_TLS12_KDF includes RFC 5705 context data in the TLS 1.2 PRF seed."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("TLS12_KDF"):
+            pytest.skip("CKM_TLS12_KDF not supported")
+
+        base_key = _create_tls_pms(rs)
+        try:
+            mech = mech_tls_kdf(
+                CKM_TLS12_KDF,
+                prf_mechanism=CKM_SHA256,
+                label=b"key expansion",
+                client_random=_CLIENT_RANDOM,
+                server_random=_SERVER_RANDOM,
+                context_data=b"context-info",
+            )
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_TLS12_KDF,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 32,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_DERIVE: True,
+                    CKA_TOKEN: False,
+                },
+                mech_param=mech,
+            )
+            try:
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(value, bytes)
+                expected = _tls12_prf_sha256(
+                    _PRE_MASTER_SECRET,
+                    b"key expansion",
+                    _CLIENT_RANDOM,
+                    _SERVER_RANDOM,
+                    32,
+                    context_data=b"context-info",
+                )
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label="CKM_TLS12_KDF:C_DeriveKey KAT (context-data exact vector)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_KDF",
+                )
+            finally:
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            if is_known_error(exc, _TLS_ERROR_RVS):
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS12_KDF:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_KDF",
+                    summary=f"CKM_TLS12_KDF context-data exact vector not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
@@ -686,7 +1255,78 @@ class TestTLS12KDF:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
-                pytest.xfail(f"CKM_TLS_KDF not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS_KDF:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS_KDF",
+                    summary=f"CKM_TLS_KDF not operational: {exc}",
+                )
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, base_key)
+
+    def test_tls_kdf_tls10_prf_exact_vector(self, p11_raw_session: Any) -> None:
+        """CKM_TLS_KDF follows the RFC 2246 TLS1.0/1.1 PRF when prfMechanism is TLS_PRF."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("TLS_KDF"):
+            pytest.skip("CKM_TLS_KDF not supported")
+
+        base_key = _create_tls_pms(rs)
+        try:
+            mech = mech_tls_kdf(
+                CKM_TLS_KDF,
+                prf_mechanism=CKM_TLS_PRF,
+                label=b"key expansion",
+                client_random=_CLIENT_RANDOM,
+                server_random=_SERVER_RANDOM,
+            )
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_TLS_KDF,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 32,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_DERIVE: True,
+                    CKA_TOKEN: False,
+                },
+                mech_param=mech,
+            )
+            try:
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(value, bytes)
+                expected = _tls_prf_legacy_md5_sha1(
+                    _PRE_MASTER_SECRET,
+                    b"key expansion",
+                    _CLIENT_RANDOM,
+                    _SERVER_RANDOM,
+                    32,
+                )
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label="CKM_TLS_KDF:C_DeriveKey KAT (TLS 1.0/1.1 PRF exact vector)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS_KDF",
+                )
+            finally:
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            if is_known_error(exc, _TLS_ERROR_RVS):
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS_KDF:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS_KDF",
+                    summary=f"CKM_TLS_KDF TLS1.0/1.1 exact vector not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
@@ -738,11 +1378,33 @@ class TestTLS12Extended:
                 value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
+                expected = _tls12_extended_master_secret_reference(
+                    _PRE_MASTER_SECRET,
+                    session_hash,
+                    48,
+                )
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label=(
+                        "CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:C_DeriveKey KAT "
+                        "(extended master secret)"
+                    ),
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
-                pytest.xfail(f"CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
+                    summary=f"CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pms)
@@ -787,11 +1449,33 @@ class TestTLS12Extended:
                 value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
+                expected = _tls12_extended_master_secret_reference(
+                    bytes(range(32)),
+                    session_hash,
+                    48,
+                )
+                assert_correct(
+                    actual=value,
+                    expected=expected,
+                    label=(
+                        "CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH:C_DeriveKey KAT "
+                        "(extended master secret DH)"
+                    ),
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
-                pytest.xfail(f"CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH",
+                    summary=f"CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, dh_pms)
@@ -854,7 +1538,14 @@ class TestTLS12Extended:
                 destroy_quietly(rs.raw, rs.sh, derived_a)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
-                pytest.xfail(f"CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
+                    summary=f"CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pms)

@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.bootstrap import (
     login_user,
 )
@@ -88,10 +89,12 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    assert_correct,
     gen_aes_key_or_xfail,
     get_pin_bytes,
     is_known_error,
     reject_or_classify,
+    skip_unless_create_object_supported,
     skip_unless_mechanism,
     xfail_if_known_ckr,
 )
@@ -209,6 +212,7 @@ class TestCKATrusted:
     def test_create_trusted_data_object(self, p11_raw_session: Any) -> None:
         """CKA_TRUSTED on data object - accept or reject, not crash."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         try:
             obj = create_object(
                 rs.raw,
@@ -262,7 +266,15 @@ class TestCKADeriveOnEC:
             if "CKR_ATTRIBUTE_VALUE_INVALID" in err_str:
                 # Some modules reject CKA_DERIVE on EC keys (e.g. tpm2-pkcs11 #656);
                 # a clean non-spec rejection -> noted deviation, not a finding.
-                pytest.xfail("Module rejects CKA_DERIVE on EC (clean non-spec rejection)")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="EC keygen with CKA_DERIVE",
+                    operation="C_GenerateKeyPair",
+                    mechanism="CKM_EC_KEY_PAIR_GEN",
+                    expected=CKR_ATTRIBUTE_VALUE_INVALID,
+                    summary="Module rejects CKA_DERIVE on EC (clean non-spec rejection)",
+                )
             else:
                 raise
 
@@ -428,12 +440,18 @@ class TestTookanUnwrapAttrs:
                         "Module honoured CKA_SENSITIVE=False on unwrap of a "
                         "SENSITIVE=True key — Tookan sec.3.3 attack succeeded.",
                         ComplianceLevel.CRITICAL,
-                        reference="Tookan paper §3.3 / PKCS#11 v3.1 Sec.4.7",
+                        reference="Tookan paper §3.3 / PKCS#11 v3.2",
                     )
-                    pytest.fail(
-                        "SECURITY: Tookan §3.3 — unwrap with CKA_SENSITIVE=False "
+                    classify(
+                        "self_contradiction",
+                        kind="policy",
+                        label="Tookan unwrap sensitive downgrade",
+                        operation="C_UnwrapKey",
+                        mechanism="CKM_AES_KEY_WRAP",
+                        spec_ref="Tookan paper §3.3 / PKCS#11 v3.2",
+                        summary="SECURITY: Tookan §3.3 — unwrap with CKA_SENSITIVE=False "
                         "produced a non-sensitive copy of a SENSITIVE=True key. "
-                        "Sensitive-key boundary breached on unwrap."
+                        "Sensitive-key boundary breached on unwrap.",
                     )
                 # SENSITIVE preserved: correct behaviour (template ignored
                 # for security-downgrade).
@@ -512,7 +530,7 @@ class TestROCAFingerprint:
     def test_rsa_modulus_not_roca(self, p11_raw_session: Any) -> None:
         """Generated RSA-2048 modulus should not have ROCA fingerprint."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = _gen_cve_rsa_keypair_or_xfail(rs, 2048)
         try:
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS])
             modulus = attrs[CKA_MODULUS]
@@ -609,9 +627,15 @@ class TestECDSATimingBasic:
                     "sample CV is environment-sensitive (OS scheduling jitter "
                     "alone can push CV past 1.0 on shared runners).",
                 )
-                pytest.xfail(
-                    f"ECDSA timing CV={cv:.3f} -- informational, needs deeper "
-                    "Minerva analysis to confirm leak"
+                classify(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="ECDSA timing variance (Minerva sanity)",
+                    operation="C_Sign",
+                    mechanism="CKM_ECDSA",
+                    summary=f"ECDSA timing CV={cv:.3f} -- informational, needs deeper "
+                    "Minerva analysis to confirm leak",
+                    detail={"channel": "timing", "cv": round(cv, 3), "samples": 100},
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -640,7 +664,13 @@ class TestBoundaryLengthCrypto:
                     # Block-aligned - should work
                     ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, data)
                     pt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, ct)
-                    assert pt == data
+                    assert_correct(
+                        actual=pt,
+                        expected=data,
+                        label="AES_ECB:block-aligned decrypt(encrypt(pt)) roundtrip",
+                        operation="C_Decrypt",
+                        mechanism="CKM_AES_ECB",
+                    )
                 else:
                     # Non-aligned - should fail with proper CKR
                     try:
@@ -650,8 +680,16 @@ class TestBoundaryLengthCrypto:
                         pass  # Correct rejection via expect_rv
                     else:
                         if size > 0:
-                            pytest.fail(
-                                f"AES-ECB accepted non-block-aligned plaintext length {size}"
+                            classify(
+                                "accepted_invalid",
+                                kind="crypto",
+                                label="AES-ECB non-block-aligned plaintext",
+                                operation="C_Encrypt",
+                                mechanism="CKM_AES_ECB",
+                                actual="CKR_OK",
+                                expected=_DATA_ERROR_RVS,
+                                summary="AES-ECB accepted non-block-aligned plaintext "
+                                f"length {size}",
                             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -659,7 +697,7 @@ class TestBoundaryLengthCrypto:
     def test_rsa_encrypt_boundary(self, p11_raw_session: Any) -> None:
         """RSA-PKCS encrypt with empty and max-length data."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = _gen_cve_rsa_keypair_or_xfail(rs, 2048)
         try:
             # Empty data - some modules reject
             try:
@@ -693,13 +731,14 @@ class TestInvalidECCurve:
     def test_import_ec_key_with_bad_oid(self, p11_raw_session: Any) -> None:
         """EC key with invalid curve OID must be rejected, not accepted."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         bad_oid = bytes([0x06, 0x05, 0xDE, 0xAD, 0xBE, 0xEF, 0x00])
         fake_point = b"\x04" + b"\x01" * 64  # Fake uncompressed point
 
-        # Type-A crypto-correctness: importing an EC public key with an invalid /
+        # crypto-correctness: importing an EC public key with an invalid /
         # unknown curve OID and a bogus point is a cryptographic correctness break
         # (CVE-2021-3798 pattern). Acceptance -> fail; expected curve/param reject ->
-        # pass; another clean reject code -> xfail. No claim-check (Type A).
+        # pass; another clean reject code -> xfail. No claim-check (crypto).
         reject_exc: AssertionError | None = None
         try:
             obj = create_object(
@@ -722,6 +761,7 @@ class TestInvalidECCurve:
             reject_exc,
             _INVALID_EC_CURVE_REJECT_RVS,
             label="import EC public key with invalid curve OID",
+            kind="crypto",
         )
 
 

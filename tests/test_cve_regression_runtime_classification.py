@@ -37,6 +37,11 @@ def _run(monkeypatch: pytest.MonkeyPatch, *, accepted: bool, reject_rv: int = 0)
 
         monkeypatch.setattr(test_cve_regression, "create_object", _reject)
     monkeypatch.setattr(test_cve_regression, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        test_cve_regression,
+        "skip_unless_create_object_supported",
+        lambda *_a, **_k: None,
+    )
     test_cve_regression.TestInvalidECCurve().test_import_ec_key_with_bad_oid(_session())
 
 

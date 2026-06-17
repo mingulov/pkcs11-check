@@ -45,7 +45,7 @@ from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
 )
 # NULL mechanism pointer: acceptable CKR codes for operation-init functions
-# with cancellation semantics per OASIS PKCS#11 v3.1 Sec.5.2.
+# with cancellation semantics per OASIS PKCS#11 v3.2.
 # CKR_ARGUMENTS_BAD -- NULL pointer is bad argument
 # CKR_MECHANISM_INVALID -- NULL interpreted as invalid mechanism (NSS)
 # CKR_MECHANISM_PARAM_INVALID -- NULL mechanism params interpreted as invalid
@@ -112,7 +112,7 @@ if rv != CKR_OK:
     print(f"SETUP_XFAIL:C_GenerateKey for AES encrypt setup failed: {ckr_name(rv)}")
 else:
     # EncryptInit with NULL mechanism
-    # PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
+    # PKCS#11 v3.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
     rv = raw.C_EncryptInit(sh, null_pointer().pointer, key.value)
     print(f"CKR:0x{rv:08x}")
     assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"
@@ -138,7 +138,7 @@ rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, b
 if rv != CKR_OK:
     print(f"SETUP_XFAIL:C_GenerateKey for AES decrypt setup failed: {ckr_name(rv)}")
 else:
-    # PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
+    # PKCS#11 v3.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
     rv = raw.C_DecryptInit(sh, null_pointer().pointer, key.value)
     print(f"CKR:0x{rv:08x}")
     assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"
@@ -153,7 +153,7 @@ else:
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
-# PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
+# PKCS#11 v3.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
 rv = raw.C_SignInit(sh, null_pointer().pointer, 0)
 print(f"CKR:0x{rv:08x}")
 assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"
@@ -168,7 +168,7 @@ print("OK")
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
-# PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
+# PKCS#11 v3.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
 rv = raw.C_VerifyInit(sh, null_pointer().pointer, 0)
 print(f"CKR:0x{rv:08x}")
 assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"
@@ -235,7 +235,7 @@ print("OK")
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
-# PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
+# PKCS#11 v3.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
 key = ctypes.c_ulong(0)
 rv = raw.C_DeriveKey(sh, null_pointer().pointer, 0, None, 0, ctypes.byref(key))
 print(f"CKR:0x{rv:08x}")

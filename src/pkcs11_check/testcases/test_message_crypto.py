@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -32,7 +33,11 @@ from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
     SIGNATURE_REJECT_RVS,
 )
-from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    gen_aes_key_or_xfail,
+    xfail_if_known_ckr,
+)
 
 # Phase 6 P3: the v3.0 message functions are already gated by the function-list
 # capability check (_skip_unless_message_functions). Past that gate the op is
@@ -83,8 +88,6 @@ ALL_MESSAGE_FUNCS = (
     MESSAGE_ENCRYPT_FUNCS + MESSAGE_DECRYPT_FUNCS + MESSAGE_SIGN_FUNCS + MESSAGE_VERIFY_FUNCS
 )
 
-pytestmark = [pytest.mark.requires_v30]
-
 _MESSAGE_UNSUPPORTED_RVS = (CKR_FUNCTION_NOT_SUPPORTED,)
 
 _MESSAGE_ADVERTISED_REJECT_RVS = (
@@ -106,8 +109,18 @@ def _handle_message_rv(rv: int, context: str) -> None:
     if rv in _MESSAGE_UNSUPPORTED_RVS:
         pytest.skip(f"{context} not supported: {ckr_name(rv)}")
     if rv in _MESSAGE_ADVERTISED_REJECT_RVS:
-        pytest.xfail(f"{context} rejected advertised message operation: {ckr_name(rv)}")
-    pytest.fail(f"{context} returned unexpected CKR: {ckr_name(rv)}")
+        xfail_as(
+            "not_operational",
+            label=context,
+            actual=rv,
+            summary=f"{context} rejected advertised message operation: {ckr_name(rv)}",
+        )
+    xfail_as(
+        "not_operational",
+        label=context,
+        actual=rv,
+        summary=f"{context} returned unexpected CKR for advertised message op: {ckr_name(rv)}",
+    )
 
 
 def _message_sign(
@@ -163,8 +176,14 @@ def _message_verify(
         return True
     if not expect_valid:
         if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
-            pytest.xfail(
-                f"C_VerifyMessage rejected wrong signature with non-clean CKR: {ckr_name(rv)}"
+            xfail_as(
+                "nonspec_reject",
+                label="C_VerifyMessage:wrong-signature",
+                operation="C_VerifyMessage",
+                actual=rv,
+                summary=(
+                    f"C_VerifyMessage rejected wrong signature with non-clean CKR: {ckr_name(rv)}"
+                ),
             )
         return rv not in SIGNATURE_REJECT_RVS
     return False
@@ -205,6 +224,7 @@ def _message_sign_multipart(
     return bytes(sig_buf[: sig_len.value])
 
 
+@pytest.mark.needs_function("C_MessageEncryptInit")
 class TestMessageEncryptDecrypt:
     """Test message-based encrypt/decrypt lifecycle."""
 
@@ -255,7 +275,13 @@ class TestMessageEncryptDecrypt:
                     exc, _MESSAGE_OP_REJECT_RVS, "advertised message decrypt rejected (CKM_AES_CBC)"
                 )
                 raise
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="AES_CBC:message decrypt(encrypt(pt)) roundtrip",
+                operation="C_DecryptMessage",
+                mechanism="CKM_AES_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -341,7 +367,13 @@ class TestMessageEncryptDecrypt:
             if rv != CKR_OK:
                 _handle_message_rv(rv, "C_MessageDecryptFinal")
 
-            assert bytes(out_buf[: out_len.value]) == plaintext
+            assert_correct(
+                actual=bytes(out_buf[: out_len.value]),
+                expected=plaintext,
+                label="AES_CBC:message multipart decrypt roundtrip",
+                operation="C_DecryptMessageNext",
+                mechanism="CKM_AES_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -363,9 +395,26 @@ class TestMessageEncryptDecrypt:
                     exc, _MESSAGE_OP_REJECT_RVS, "advertised message encrypt rejected (CKM_AES_CBC)"
                 )
                 raise
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="AES_CBC:message encrypt produced plaintext (no-op)",
+                    operation="C_EncryptMessage",
+                    mechanism="CKM_AES_CBC",
+                    summary=(
+                        "AES_CBC: message-API ciphertext equals the plaintext -- "
+                        "encryption was a no-op (crypto break)"
+                    ),
+                )
             pt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_CBC, ct)
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="AES_CBC:message-encrypt standard-decrypt cross-verify",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -373,6 +422,7 @@ class TestMessageEncryptDecrypt:
 class TestMessageSignVerify:
     """Test message-based sign/verify lifecycle."""
 
+    @pytest.mark.needs_function("C_MessageSignInit")
     def test_message_sign_single(self, p11_raw_session: Any) -> None:
         """C_MessageSignInit + C_SignMessage -- single-shot sign."""
         rs = p11_raw_session
@@ -389,6 +439,7 @@ class TestMessageSignVerify:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
+    @pytest.mark.needs_function("C_MessageVerifyInit")
     def test_message_verify_single(self, p11_raw_session: Any) -> None:
         """C_MessageVerifyInit + C_VerifyMessage -- single-shot verify."""
         rs = p11_raw_session
@@ -405,6 +456,7 @@ class TestMessageSignVerify:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
+    @pytest.mark.needs_function("C_MessageSignInit")
     def test_message_sign_verify_roundtrip(self, p11_raw_session: Any) -> None:
         """Sign with message API, verify with standard C_Verify API (cross-verification)."""
         rs = p11_raw_session
@@ -420,6 +472,7 @@ class TestMessageSignVerify:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
+    @pytest.mark.needs_function("C_MessageSignInit")
     def test_message_sign_multipart(self, p11_raw_session: Any) -> None:
         """C_MessageSignInit + C_SignMessageBegin + C_SignMessageNext + C_MessageSignFinal."""
         rs = p11_raw_session
@@ -439,6 +492,7 @@ class TestMessageSignVerify:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
+    @pytest.mark.needs_function("C_MessageVerifyInit")
     def test_message_verify_bad_signature(self, p11_raw_session: Any) -> None:
         """C_VerifyMessage with wrong signature should fail."""
         rs = p11_raw_session
@@ -461,6 +515,7 @@ class TestMessageSignVerify:
 class TestMessageAvailability:
     """Verify message-based functions are present in v3.0+ modules."""
 
+    @pytest.mark.needs_function("C_MessageEncryptInit")
     def test_message_functions_available(self, p11_raw_session: Any) -> None:
         """All 20 message functions should be present on v3.0+ modules."""
         rs = p11_raw_session

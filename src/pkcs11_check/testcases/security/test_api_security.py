@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
 )
@@ -53,6 +54,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_NOT_WRAPPABLE,
+    CKR_KEY_UNEXTRACTABLE,
     CKR_MECHANISM_INVALID,
     CKR_SESSION_COUNT,
     CKR_TEMPLATE_INCOMPLETE,
@@ -98,6 +100,9 @@ _WRAP_DECRYPT_POLICY_BLOCK_RVS = (
     CKR_ACTION_PROHIBITED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_NOT_WRAPPABLE,
+    # Refusing to wrap a non-extractable target is itself a valid way to block
+    # the wrap-decrypt oracle (the secure outcome), not a test failure.
+    CKR_KEY_UNEXTRACTABLE,
 )
 
 _WRAP_DECRYPT_RUNTIME_REJECT_RVS = (
@@ -220,7 +225,7 @@ class TestWrapDecryptOracle:
         try:
             # The target is created PROTECTED (non-extractable + sensitive) so the
             # wrap-decrypt oracle, if it works, extracts material the module
-            # promised to protect -- a Type-B self-contradiction.
+            # promised to protect -- a policy self-contradiction.
             target_h = _gen_api_security_aes_key(
                 rs,
                 attrs={CKA_EXTRACTABLE: False, CKA_SENSITIVE: True},
@@ -239,7 +244,7 @@ class TestWrapDecryptOracle:
                         claimed=claimed,
                         violated=extracted,
                         label="wrap-decrypt oracle extracts a non-extractable/sensitive key "
-                        "(PKCS#11 v3.1 Sec.4.9.4: CKA_WRAP and CKA_DECRYPT should not both "
+                        "(PKCS#11 v3.2: CKA_WRAP and CKA_DECRYPT should not both "
                         "be True)",
                     )
                 except AssertionError as exc:
@@ -307,7 +312,13 @@ class TestAttributeEscalation:
         try:
             try:
                 set_attributes(rs.raw, rs.sh, key_h, {CKA_EXTRACTABLE: True})
-                pytest.fail("SECURITY: CKA_EXTRACTABLE escalated from False to True")
+                classify(
+                    "self_contradiction",
+                    kind="policy",
+                    label="CKA_EXTRACTABLE escalation via C_SetAttributeValue",
+                    operation="C_SetAttributeValue",
+                    summary="SECURITY: CKA_EXTRACTABLE escalated from False to True",
+                )
             except AssertionError as exc:
                 _return_if_policy_reject(exc, _ATTR_POLICY_REJECT_RVS)
         finally:
@@ -323,7 +334,13 @@ class TestAttributeEscalation:
         try:
             try:
                 set_attributes(rs.raw, rs.sh, key_h, {CKA_SENSITIVE: False})
-                pytest.fail("SECURITY: CKA_SENSITIVE downgraded from True to False")
+                classify(
+                    "self_contradiction",
+                    kind="policy",
+                    label="CKA_SENSITIVE downgrade via C_SetAttributeValue",
+                    operation="C_SetAttributeValue",
+                    summary="SECURITY: CKA_SENSITIVE downgraded from True to False",
+                )
             except AssertionError as exc:
                 _return_if_policy_reject(exc, _ATTR_POLICY_REJECT_RVS)
         finally:
@@ -345,7 +362,7 @@ class TestAttributeLaunderingViaCopy:
             attrs={CKA_EXTRACTABLE: False, CKA_COPYABLE: True},
         )
         try:
-            # Type-B claim/effect-check. claimed = the original key reads back
+            # policy claim/effect-check. claimed = the original key reads back
             # CKA_EXTRACTABLE=False (the module honored the protection); violated
             # = the escalated copy actually exposes CKA_VALUE.
             orig = read_attributes(rs.raw, rs.sh, key_h, [CKA_EXTRACTABLE])
@@ -359,7 +376,7 @@ class TestAttributeLaunderingViaCopy:
                         claimed=claimed,
                         violated=violated,
                         label="C_CopyObject escalates CKA_EXTRACTABLE False->True and exposes "
-                        "key material (PKCS#11 v3.1 Sec.4.9.4: CKA_EXTRACTABLE may only "
+                        "key material (PKCS#11 v3.2: CKA_EXTRACTABLE may only "
                         "change True->False on copy)",
                     )
                 finally:
@@ -382,8 +399,13 @@ class TestAttributeLaunderingViaCopy:
                 try:
                     attrs = read_attributes(rs.raw, rs.sh, copy_h, [CKA_VALUE])
                     if CKA_VALUE in attrs:
-                        pytest.fail(
-                            "SECURITY: Copy downgraded CKA_SENSITIVE, key material readable"
+                        classify(
+                            "self_contradiction",
+                            kind="policy",
+                            label="CKA_SENSITIVE downgrade via C_CopyObject",
+                            operation="C_CopyObject",
+                            summary="SECURITY: Copy downgraded CKA_SENSITIVE, "
+                            "key material readable",
                         )
                 finally:
                     destroy_quietly(rs.raw, rs.sh, copy_h)

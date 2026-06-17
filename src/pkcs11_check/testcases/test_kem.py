@@ -13,6 +13,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.pack import (
     attr_bytes,
     attr_ulong,
@@ -33,6 +34,7 @@ from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKA_CLASS,
     CKA_DECAPSULATE,
+    CKA_DERIVE,
     CKA_ENCAPSULATE,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -69,13 +71,14 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     classify_negative_rv,
     classify_policy_enforcement,
     is_known_error,
     xfail_if_known_ckr,
 )
 
-pytestmark = [pytest.mark.pqc, pytest.mark.keymgmt, pytest.mark.requires_v32]
+pytestmark = [pytest.mark.pqc, pytest.mark.keymgmt]
 
 # ML-KEM parameter set sizes (ciphertext, shared-secret bytes)
 _ML_KEM_CIPHERTEXT_SIZES = {
@@ -89,6 +92,13 @@ _PARAM_MAP = {
     "ML_KEM_768": CKP_ML_KEM_768,
     "ML_KEM_1024": CKP_ML_KEM_1024,
 }
+
+# FIPS 203: the ML-KEM shared secret is always 32 bytes for every parameter set.
+# PKCS#11 v3.2 says the KEM contributes CKA_VALUE but "other attributes required by the
+# key type must be specified in the template" — so the output template must declare
+# CKA_VALUE_LEN. Strict-but-conformant modules (opencryptoki) reject a template without it
+# (CKR_TEMPLATE_INCONSISTENT); lenient ones (kryoptic/nss) infer it. Always supply it.
+_ML_KEM_SHARED_SECRET_BYTES = 32
 
 _KEM_OPERATION_REJECT_RVS = (
     CKR_DEVICE_ERROR,
@@ -150,8 +160,16 @@ def _generate_ml_kem_keypair(
     )
 
 
-def _encap_attrs(key_type: int = CKK_AES, value_len: int | None = None) -> dict[int, Any]:
-    """Standard template for encapsulated key. Kryoptic mandates Class/KeyType."""
+def _encap_attrs(
+    key_type: int = CKK_AES, value_len: int | None = _ML_KEM_SHARED_SECRET_BYTES
+) -> dict[int, Any]:
+    """Standard template for an encapsulated/decapsulated key.
+
+    Declares CKA_CLASS/CKA_KEY_TYPE and, by default, CKA_VALUE_LEN=32 (the ML-KEM shared
+    secret size). The length is required by strict-but-conformant modules (opencryptoki)
+    per PKCS#11 v3.2; pass ``value_len`` to request a different size (AES-128/192) or
+    ``None`` to omit it deliberately.
+    """
     attrs: dict[int, Any] = {
         CKA_CLASS: CKO_SECRET_KEY,
         CKA_KEY_TYPE: key_type,
@@ -176,7 +194,7 @@ def _encapsulate_ml_kem_or_xfail(
 ) -> tuple[int, bytes]:
     try:
         return encapsulate_key(rs.raw, rs.sh, public_key, CKM_ML_KEM, attrs=attrs)
-    except NotImplementedError:
+    except (NotImplementedError, AttributeError):
         pytest.skip("encapsulate_key not available")
     except AssertionError as exc:
         _xfail_kem_operation_reject(exc, operation)
@@ -191,7 +209,7 @@ def _decapsulate_ml_kem_or_xfail(
 ) -> int:
     try:
         return decapsulate_key(rs.raw, rs.sh, private_key, CKM_ML_KEM, ciphertext, attrs=attrs)
-    except NotImplementedError:
+    except (NotImplementedError, AttributeError):
         pytest.skip("decapsulate_key not available")
     except AssertionError as exc:
         _xfail_kem_operation_reject(exc, operation)
@@ -200,13 +218,13 @@ def _decapsulate_ml_kem_or_xfail(
 class TestMLKEMKeyGeneration:
     """ML-KEM key pair generation tests."""
 
-    def test_ml_kem_available(self, p11_raw_session: Any) -> None:
+    def test_ml_kem_available(self, p11_module_session: Any) -> None:
         """Check that ML_KEM mechanism is available."""
-        _skip_if_no_ml_kem(p11_raw_session)
+        _skip_if_no_ml_kem(p11_module_session)
 
-    def test_ml_kem_keypair_gen(self, p11_raw_session: Any) -> None:
+    def test_ml_kem_keypair_gen(self, p11_module_session: Any) -> None:
         """Generate an ML-KEM key pair."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         try:
@@ -216,37 +234,88 @@ class TestMLKEMKeyGeneration:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_ml_kem_keypair_classes(self, p11_raw_session: Any) -> None:
+    def test_ml_kem_keypair_classes(self, p11_module_session: Any) -> None:
         """ML-KEM public key is PublicKey, private is PrivateKey."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         try:
             pub_cls = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])[CKA_CLASS]
             priv_cls = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])[CKA_CLASS]
-            assert pub_cls == CKO_PUBLIC_KEY
-            assert priv_cls == CKO_PRIVATE_KEY
+            assert_correct(
+                actual=pub_cls,
+                expected=CKO_PUBLIC_KEY,
+                label="CKM_ML_KEM_KEY_PAIR_GEN:public-key CKA_CLASS readback",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_cls,
+                expected=CKO_PRIVATE_KEY,
+                label="CKM_ML_KEM_KEY_PAIR_GEN:private-key CKA_CLASS readback",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_ml_kem_keypair_key_type(self, p11_raw_session: Any) -> None:
+    def test_ml_kem_keypair_key_type(self, p11_module_session: Any) -> None:
         """ML-KEM keys report correct key type."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         try:
             pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert pub_kt == CKK_ML_KEM
-            assert priv_kt == CKK_ML_KEM
+            assert_correct(
+                actual=pub_kt,
+                expected=CKK_ML_KEM,
+                label="CKM_ML_KEM_KEY_PAIR_GEN:public-key CKA_KEY_TYPE readback",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_kt,
+                expected=CKK_ML_KEM,
+                label="CKM_ML_KEM_KEY_PAIR_GEN:private-key CKA_KEY_TYPE readback",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_ml_kem_two_keypairs_distinct(self, p11_raw_session: Any) -> None:
+    def test_ml_kem_private_key_derive_false(self, p11_module_session: Any) -> None:
+        """Generated ML-KEM private keys must not claim CKA_DERIVE=True."""
+        rs = p11_module_session
+        _skip_if_no_ml_kem(rs)
+        pub, priv = _generate_ml_kem_keypair(rs)
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_DERIVE])
+            if CKA_DERIVE not in attrs:
+                classify(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="ML-KEM private key CKA_DERIVE",
+                    mechanism="CKM_ML_KEM",
+                    summary="ML-KEM private key does not expose CKA_DERIVE",
+                )
+            assert attrs[CKA_DERIVE] is False, (
+                "ML-KEM private key reported CKA_DERIVE=True; ML-KEM keys "
+                "encapsulate/decapsulate and must not be usable as derive keys"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_ml_kem_two_keypairs_distinct(self, p11_module_session: Any) -> None:
         """Two ML-KEM key pair generations produce distinct keys."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub_a, priv_a = _generate_ml_kem_keypair(rs)
         pub_b, priv_b = _generate_ml_kem_keypair(rs)
@@ -266,12 +335,13 @@ class TestMLKEMKeyGeneration:
 
 
 @pytest.mark.v32
+@pytest.mark.needs_function("C_EncapsulateKey")
 class TestMLKEMEncapsulateDecapsulate:
     """ML-KEM encapsulate/decapsulate round-trip tests."""
 
-    def test_encapsulate_returns_ciphertext_and_key(self, p11_raw_session: Any) -> None:
+    def test_encapsulate_returns_ciphertext_and_key(self, p11_module_session: Any) -> None:
         """C_EncapsulateKey returns a ciphertext and a secret key."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         shared = 0
@@ -291,9 +361,9 @@ class TestMLKEMEncapsulateDecapsulate:
             if shared:
                 destroy_quietly(rs.raw, rs.sh, shared)
 
-    def test_encapsulate_ciphertext_nonzero(self, p11_raw_session: Any) -> None:
+    def test_encapsulate_ciphertext_nonzero(self, p11_module_session: Any) -> None:
         """Ciphertext from encapsulate_key is non-trivially non-zero."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         shared = 0
@@ -311,9 +381,9 @@ class TestMLKEMEncapsulateDecapsulate:
             if shared:
                 destroy_quietly(rs.raw, rs.sh, shared)
 
-    def test_encapsulate_decapsulate_shared_secret_matches(self, p11_raw_session: Any) -> None:
+    def test_encapsulate_decapsulate_shared_secret_matches(self, p11_module_session: Any) -> None:
         """Encapsulated and decapsulated shared secrets match."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         encap_handle = 0
@@ -335,7 +405,13 @@ class TestMLKEMEncapsulateDecapsulate:
             # Both sides must produce the same shared secret
             encap_value = read_attributes(rs.raw, rs.sh, encap_handle, [CKA_VALUE])[CKA_VALUE]
             decap_value = read_attributes(rs.raw, rs.sh, decap_handle, [CKA_VALUE])[CKA_VALUE]
-            assert encap_value == decap_value, "Encapsulated and decapsulated secrets differ"
+            assert_correct(
+                actual=decap_value,
+                expected=encap_value,
+                label="CKM_ML_KEM:encapsulate/decapsulate shared-secret match",
+                operation="C_DecapsulateKey",
+                mechanism="CKM_ML_KEM",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -344,9 +420,11 @@ class TestMLKEMEncapsulateDecapsulate:
             if decap_handle:
                 destroy_quietly(rs.raw, rs.sh, decap_handle)
 
-    def test_two_encapsulations_produce_different_ciphertexts(self, p11_raw_session: Any) -> None:
+    def test_two_encapsulations_produce_different_ciphertexts(
+        self, p11_module_session: Any
+    ) -> None:
         """Separate encapsulation calls produce different ciphertexts (fresh randomness)."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         s1 = s2 = 0
@@ -363,7 +441,18 @@ class TestMLKEMEncapsulateDecapsulate:
                 _encap_attrs(),
                 "encapsulate",
             )
-            assert ct1 != ct2, "Two encapsulations produced identical ciphertexts (bad randomness)"
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_ML_KEM:encapsulation must use fresh randomness",
+                    operation="C_EncapsulateKey",
+                    mechanism="CKM_ML_KEM",
+                    summary=(
+                        "Two ML-KEM encapsulations against the same public key produced "
+                        "identical ciphertexts -- encapsulation randomness was reused"
+                    ),
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -372,9 +461,9 @@ class TestMLKEMEncapsulateDecapsulate:
             if s2:
                 destroy_quietly(rs.raw, rs.sh, s2)
 
-    def test_decapsulate_with_wrong_key_fails_or_differs(self, p11_raw_session: Any) -> None:
+    def test_decapsulate_with_wrong_key_fails_or_differs(self, p11_module_session: Any) -> None:
         """Decapsulating with a different private key produces a different (or no) secret."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub_a, priv_a = _generate_ml_kem_keypair(rs)
         pub_b, priv_b = _generate_ml_kem_keypair(rs)
@@ -425,6 +514,7 @@ class TestMLKEMEncapsulateDecapsulate:
 
 @pytest.mark.v32
 @pytest.mark.kat
+@pytest.mark.needs_function("C_EncapsulateKey")
 class TestMLKEMCiphertextSize:
     """Verify ciphertext sizes match FIPS 203 spec for each ML-KEM parameter set."""
 
@@ -438,12 +528,12 @@ class TestMLKEMCiphertextSize:
     )
     def test_ciphertext_size(
         self,
-        p11_raw_session: Any,
+        p11_module_session: Any,
         param_set: str,
         expected_ct_len: int,
     ) -> None:
         """Ciphertext size matches FIPS 203 for this ML-KEM parameter set."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         shared = 0
@@ -457,7 +547,14 @@ class TestMLKEMCiphertextSize:
 
             # We can only check size if the module uses the expected parameter set
             if len(ct) not in _ML_KEM_CIPHERTEXT_SIZES.values():
-                pytest.xfail(f"Unexpected ciphertext size {len(ct)} - may be non-standard")
+                classify(
+                    "honest_deviation",
+                    kind="crypto",
+                    label="ML-KEM ciphertext size",
+                    operation="C_EncapsulateKey",
+                    mechanism="CKM_ML_KEM",
+                    summary=f"Unexpected ciphertext size {len(ct)} - may be non-standard",
+                )
             # If size matches this parameter set, check it
             if len(ct) == expected_ct_len:
                 assert len(ct) == expected_ct_len
@@ -471,12 +568,13 @@ class TestMLKEMCiphertextSize:
 
 
 @pytest.mark.v32
+@pytest.mark.needs_function("C_EncapsulateKey")
 class TestMLKEMKeyDerivation:
     """ML-KEM encapsulation producing specific key types (AES-128, AES-256)."""
 
-    def test_encapsulate_produces_aes128_key(self, p11_raw_session: Any) -> None:
+    def test_encapsulate_produces_aes128_key(self, p11_module_session: Any) -> None:
         """encapsulate_key with key_type=AES and VALUE_LEN=16 produces AES-128."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         aes_handle = 0
@@ -496,7 +594,14 @@ class TestMLKEMKeyDerivation:
             )
             assert isinstance(ct, bytes) and len(ct) > 0
             kt = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert kt == CKK_AES
+            assert_correct(
+                actual=kt,
+                expected=CKK_AES,
+                label="CKM_ML_KEM:encapsulated AES-128 key CKA_KEY_TYPE readback",
+                operation="C_EncapsulateKey",
+                mechanism="CKM_ML_KEM",
+                kind="metadata",
+            )
             value = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(value, bytes)
             if len(value) != 16:
@@ -510,10 +615,18 @@ class TestMLKEMKeyDerivation:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 v3.2 Sec.5.14.8; FIPS 203",
                 )
-                pytest.xfail(
-                    f"Module ignores CKA_VALUE_LEN for ML-KEM KEM-derived keys: "
-                    f"requested 16 bytes, got {len(value)} bytes "
-                    f"(ML-KEM shared secret is always 32 bytes per FIPS 203)"
+                classify(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="ML-KEM encapsulate CKA_VALUE_LEN",
+                    operation="C_EncapsulateKey",
+                    mechanism="CKM_ML_KEM",
+                    spec_ref="PKCS#11 v3.2 Sec.5.14.8; FIPS 203",
+                    summary=(
+                        "Module ignores CKA_VALUE_LEN for ML-KEM KEM-derived keys: "
+                        f"requested 16 bytes, got {len(value)} bytes "
+                        "(ML-KEM shared secret is always 32 bytes per FIPS 203)"
+                    ),
                 )
             assert len(value) == 16, f"Expected 16-byte AES-128 key, got {len(value)} bytes"
         finally:
@@ -522,9 +635,9 @@ class TestMLKEMKeyDerivation:
             if aes_handle:
                 destroy_quietly(rs.raw, rs.sh, aes_handle)
 
-    def test_encapsulate_produces_aes256_key(self, p11_raw_session: Any) -> None:
+    def test_encapsulate_produces_aes256_key(self, p11_module_session: Any) -> None:
         """encapsulate_key with key_type=AES and VALUE_LEN=32 produces AES-256."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         aes_handle = 0
@@ -544,7 +657,14 @@ class TestMLKEMKeyDerivation:
             )
             assert isinstance(ct, bytes) and len(ct) > 0
             kt = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert kt == CKK_AES
+            assert_correct(
+                actual=kt,
+                expected=CKK_AES,
+                label="CKM_ML_KEM:encapsulated AES-256 key CKA_KEY_TYPE readback",
+                operation="C_EncapsulateKey",
+                mechanism="CKM_ML_KEM",
+                kind="metadata",
+            )
             value = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(value, bytes)
             assert len(value) == 32, f"Expected 32-byte AES-256 key, got {len(value)} bytes"
@@ -564,22 +684,28 @@ class TestMLKEMKeyDerivation:
     )
     def test_parameter_set_produces_correct_ciphertext_size(
         self,
-        p11_raw_session: Any,
+        p11_module_session: Any,
         param_set_name: str,
         expected_ct_len: int,
     ) -> None:
         """Requesting a specific ML-KEM parameter set produces the expected ciphertext size."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         param_set = _PARAM_MAP[param_set_name]
         try:
             pub, priv = _generate_ml_kem_keypair(rs, param_set=param_set)
         except (AssertionError, OSError):
-            pytest.xfail(
-                f"Module does not support CKA_PARAMETER_SET={param_set_name} - "
-                "may use a fixed parameter set"
+            xfail_as(
+                "not_operational",
+                kind="crypto",
+                label=f"ML-KEM keypair (CKA_PARAMETER_SET={param_set_name})",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                summary=(
+                    f"Module does not support CKA_PARAMETER_SET={param_set_name} - "
+                    "may use a fixed parameter set"
+                ),
             )
-            raise  # unreachable
         shared = 0
         try:
             shared, ct = _encapsulate_ml_kem_or_xfail(
@@ -599,13 +725,14 @@ class TestMLKEMKeyDerivation:
 
 
 @pytest.mark.v32
+@pytest.mark.needs_function("C_EncapsulateKey")
 class TestMLKEMDecapsulation:
     """ML-KEM decapsulation tests with various target templates."""
 
     @pytest.mark.parametrize("aes_len", [16, 24, 32])
-    def test_decapsulate_aes_key_sizes(self, p11_raw_session: Any, aes_len: int) -> None:
+    def test_decapsulate_aes_key_sizes(self, p11_module_session: Any, aes_len: int) -> None:
         """Decapsulate to AES keys of different sizes (128, 192, 256 bits)."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         encap_handle = 0
@@ -634,7 +761,13 @@ class TestMLKEMDecapsulation:
             # Some modules (Kryoptic) may always produce 32-byte shared secret
             assert len(dec_val) in (aes_len, 32)
             if len(dec_val) == aes_len:
-                assert enc_val == dec_val
+                assert_correct(
+                    actual=dec_val,
+                    expected=enc_val,
+                    label="CKM_ML_KEM:encapsulate/decapsulate AES-key match",
+                    operation="C_DecapsulateKey",
+                    mechanism="CKM_ML_KEM",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -643,9 +776,9 @@ class TestMLKEMDecapsulation:
             if decap_handle:
                 destroy_quietly(rs.raw, rs.sh, decap_handle)
 
-    def test_decapsulate_generic_secret(self, p11_raw_session: Any) -> None:
+    def test_decapsulate_generic_secret(self, p11_module_session: Any) -> None:
         """Decapsulate to CKK_GENERIC_SECRET (default 32 bytes for ML-KEM)."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         encap_handle = 0
@@ -675,9 +808,9 @@ class TestMLKEMDecapsulation:
             if decap_handle:
                 destroy_quietly(rs.raw, rs.sh, decap_handle)
 
-    def test_decapsulate_extractability_flags(self, p11_raw_session: Any) -> None:
+    def test_decapsulate_extractability_flags(self, p11_module_session: Any) -> None:
         """Decapsulate with specific security flags (if supported by provider)."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         encap_handle = 0
@@ -714,12 +847,13 @@ class TestMLKEMDecapsulation:
 
 
 @pytest.mark.v32
+@pytest.mark.needs_function("C_EncapsulateKey")
 class TestMLKEMNegative:
     """Negative tests for ML-KEM KEM operations."""
 
-    def test_decapsulate_with_invalid_attributes_in_template(self, p11_raw_session: Any) -> None:
+    def test_decapsulate_with_invalid_attributes_in_template(self, p11_module_session: Any) -> None:
         """Injecting prohibited attributes (like CKA_VALUE) should fail."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         encap_handle, ct = _encapsulate_ml_kem_or_xfail(
@@ -748,7 +882,7 @@ class TestMLKEMNegative:
             )
             if rv == CKR_OK and handle.value:
                 destroy_quietly(rs.raw, rs.sh, handle.value)
-            # Type-A crypto-correctness: accepting CKA_VALUE in the decapsulation
+            # crypto-correctness: accepting CKA_VALUE in the decapsulation
             # template lets the caller dictate the derived key's secret bytes
             # instead of deriving them -- a break for any provider -> fail; an
             # expected template reject -> pass; another clean reject -> xfail.
@@ -765,9 +899,9 @@ class TestMLKEMNegative:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_decapsulate_invalid_ciphertext_length(self, p11_raw_session: Any) -> None:
+    def test_decapsulate_invalid_ciphertext_length(self, p11_module_session: Any) -> None:
         """Off-by-one ciphertext length should fail."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         encap_handle, ct = _encapsulate_ml_kem_or_xfail(
@@ -802,14 +936,14 @@ class TestMLKEMNegative:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_decapsulate_missing_permission_flag(self, p11_raw_session: Any) -> None:
+    def test_decapsulate_missing_permission_flag(self, p11_module_session: Any) -> None:
         """Decapsulate fails if CKA_DECAPSULATE is False on private key.
 
         Spec (PKCS#11 v3.2 Sec.5.14.8): CKR_KEY_FUNCTION_NOT_PERMITTED when
         CKA_DECAPSULATE is False.  Some modules return CKR_BUFFER_TOO_SMALL if
         they validate output buffer availability before checking key permissions.
         """
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs, CKA_DECAPSULATE_OVERRIDE=False)
         try:
@@ -848,7 +982,7 @@ class TestMLKEMNegative:
                 )
                 return
 
-            # rv == CKR_OK -- Type-B claim/effect-check. The protection is only
+            # rv == CKR_OK -- policy claim/effect-check. The protection is only
             # claimed if the private key actually reads back CKA_DECAPSULATE=False
             # (a module that did not honor the flag at create has not claimed the
             # protection -> honest non-support -> xfail). If it was claimed and
@@ -865,38 +999,100 @@ class TestMLKEMNegative:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_encapsulate_missing_permission_flag(self, p11_raw_session: Any) -> None:
-        """Encapsulate fails if CKA_ENCAPSULATE is False on public key."""
-        rs = p11_raw_session
+    def test_encapsulate_missing_permission_flag(self, p11_module_session: Any) -> None:
+        """Encapsulate fails if CKA_ENCAPSULATE is False on public key.
+
+        Spec (PKCS#11 v3.2 Sec.5.14.7): CKR_KEY_FUNCTION_NOT_PERMITTED when
+        CKA_ENCAPSULATE is False.  Some modules validate output buffer
+        availability before checking key permissions and return
+        CKR_BUFFER_TOO_SMALL on the size-query call.
+
+        Mirrors ``test_decapsulate_missing_permission_flag``: a clean rejection
+        classifies 3-way, while a *full* successful encapsulation against a key
+        that reads back CKA_ENCAPSULATE=False is a policy self-contradiction and
+        must fail (not silently pass on CKR_OK).
+        """
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs, CKA_ENCAPSULATE_OVERRIDE=False)
+        handle = CK_OBJECT_HANDLE(0)
         try:
-            handle = CK_OBJECT_HANDLE(0)
-            ct_len = CK_ULONG(0)
             mech = mech_simple(CKM_ML_KEM)
             tmpl = template(
                 attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
                 attr_ulong(CKA_KEY_TYPE, CKK_AES),
             )
+            # Drive the FULL operation, not just the size query: a non-conformant
+            # size query (some modules answer CKR_BUFFER_TOO_SMALL to a NULL
+            # pCiphertext query instead of reporting the required length) must
+            # not mask whether the permission flag is actually enforced.  Use the
+            # queried length when the module reports one, else a buffer
+            # comfortably larger than the largest standard ML-KEM ciphertext so
+            # the permission check is reached on every module.
+            ct_len = CK_ULONG(0)
+            size_rv = rs.raw.C_EncapsulateKey(
+                rs.sh,
+                mech.byref(),
+                pub,
+                *template_ptr_count(tmpl),
+                None,  # pCiphertext (size query)
+                byref(ct_len),
+                byref(handle),
+            )
+            if size_rv == CKR_KEY_FUNCTION_NOT_PERMITTED:
+                # Permission enforced already at the size query: spec-correct.
+                classify_negative_rv(
+                    size_rv,
+                    (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                    label="encapsulate with CKA_ENCAPSULATE=False on public key "
+                    "(PKCS#11 v3.2 Sec.5.14.7 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+                )
+                return
+            buf_len = ct_len.value if (size_rv == CKR_OK and ct_len.value) else 4096
+            ct_buf = (ctypes.c_ubyte * buf_len)()
+            ct_len = CK_ULONG(buf_len)
             rv = rs.raw.C_EncapsulateKey(
                 rs.sh,
                 mech.byref(),
                 pub,
                 *template_ptr_count(tmpl),
-                None,  # pCiphertext (query for size)
+                ct_buf,
                 byref(ct_len),
                 byref(handle),
             )
-            # NSS-PQC checks buffer availability before permission flags and returns
-            # CKR_BUFFER_TOO_SMALL when pCiphertext=None is passed on the size-query call.
-            assert rv in (CKR_OK, CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_BUFFER_TOO_SMALL)
+            if rv == CKR_OK and handle.value:
+                destroy_quietly(rs.raw, rs.sh, handle.value)
+
+            if rv != CKR_OK:
+                # A rejection: the spec code passes, another clean code xfails.
+                classify_negative_rv(
+                    rv,
+                    (CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_BUFFER_TOO_SMALL),
+                    label="encapsulate with CKA_ENCAPSULATE=False on public key "
+                    "(PKCS#11 v3.2 Sec.5.14.7 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+                )
+                return
+
+            # rv == CKR_OK -- policy claim/effect-check. The protection is only
+            # claimed if the public key actually reads back CKA_ENCAPSULATE=False
+            # (a module that did not honor the flag at create has not claimed the
+            # protection -> honest non-support -> xfail). If it was claimed and
+            # encapsulation still succeeded, the module contradicted itself.
+            encap_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_ENCAPSULATE])
+            claimed = encap_attrs.get(CKA_ENCAPSULATE) is False
+            classify_policy_enforcement(
+                claimed=claimed,
+                violated=True,
+                label="encapsulate with CKA_ENCAPSULATE=False on public key "
+                "(PKCS#11 v3.2 Sec.5.14.7 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_kem_mechanisms_with_wrong_key_type(self, p11_raw_session: Any) -> None:
+    def test_kem_mechanisms_with_wrong_key_type(self, p11_module_session: Any) -> None:
         """ML-KEM mechanisms should reject RSA/other keys."""
-        rs = p11_raw_session
+        rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         from pkcs11_check.raw.recipes import gen_aes_key
 

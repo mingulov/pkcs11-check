@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.bootstrap import get_slot_ids
 from pkcs11_check.raw.recipes import generate_random, get_slot_info
 from pkcs11_check.raw.rv import expect_rv
@@ -149,10 +150,16 @@ class TestTokenFlags:
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="PKCS#11 spec CKF_USER_PIN_INITIALIZED",
             )
-            pytest.xfail(
-                f"Module does not set CKF_USER_PIN_INITIALIZED on this slot "
-                f"(flags=0x{info.flags:08x}) -- "
-                f"token does not report user PIN as initialized"
+            classify(
+                "honest_deviation",
+                kind="metadata",
+                label="CKF_USER_PIN_INITIALIZED",
+                operation="C_GetTokenInfo",
+                summary=(
+                    f"Module does not set CKF_USER_PIN_INITIALIZED on this slot "
+                    f"(flags=0x{info.flags:08x}) -- "
+                    f"token does not report user PIN as initialized"
+                ),
             )
         assert info.flags & CKF_USER_PIN_INITIALIZED, (
             f"CKF_USER_PIN_INITIALIZED must be set; flags=0x{info.flags:08x}"

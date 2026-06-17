@@ -24,7 +24,6 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
-    import_secret_key,
 )
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
@@ -32,19 +31,9 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKK,
     CKM,
-    CKR_ARGUMENTS_BAD,
-    CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_DEVICE_ERROR,
-    CKR_FUNCTION_FAILED,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_KEY_HANDLE_INVALID,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases._capability_claims import claim_refusal_passes
+from pkcs11_check.testcases.conftest import import_secret_key_negotiated
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     build_params_from_vector,
@@ -54,20 +43,6 @@ from pkcs11_check.testcases.mechanism_helpers import (
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.encrypt]
-
-_ENCRYPT_RUNTIME_REJECT_RVS = (
-    CKR_ARGUMENTS_BAD,
-    CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_DEVICE_ERROR,
-    CKR_FUNCTION_FAILED,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_KEY_HANDLE_INVALID,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
-)
 
 
 class TestMechEncryptRoundtrip:
@@ -100,11 +75,8 @@ class TestMechEncryptRoundtrip:
                     retry_on_buffer_too_small=config.auth_tag_included,
                 )
             except AssertionError as exc:
-                xfail_if_known_ckr(
-                    exc,
-                    _ENCRYPT_RUNTIME_REJECT_RVS,
-                    f"{entry.mech_name} advertised but encrypt is not operational",
-                )
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:encrypt"):
+                    return
             try:
                 pt = decrypt_single(
                     rs.raw,
@@ -115,11 +87,8 @@ class TestMechEncryptRoundtrip:
                     mech_param=mech_param,
                 )
             except AssertionError as exc:
-                xfail_if_known_ckr(
-                    exc,
-                    _ENCRYPT_RUNTIME_REJECT_RVS,
-                    f"{entry.mech_name} advertised but decrypt is not operational",
-                )
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:decrypt"):
+                    return
             if config.input_constraint == "raw_block":
                 expected = plaintext.lstrip(b"\x00")
                 actual = pt.lstrip(b"\x00")
@@ -162,9 +131,8 @@ class TestMechEncryptKAT:
             key_bytes = bytes.fromhex(key_hex)
             if config.key_type is None:
                 continue
-            key = import_secret_key(
-                rs.raw,
-                rs.sh,
+            key = import_secret_key_negotiated(
+                rs,
                 CKK(int(config.key_type)),
                 key_bytes,
                 attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
@@ -186,11 +154,8 @@ class TestMechEncryptKAT:
                         retry_on_buffer_too_small=config.auth_tag_included,
                     )
                 except AssertionError as exc:
-                    xfail_if_known_ckr(
-                        exc,
-                        _ENCRYPT_RUNTIME_REJECT_RVS,
-                        f"{entry.mech_name} advertised but KAT encrypt is not operational",
-                    )
+                    if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:encrypt"):
+                        return
                 expected_ct = bytes.fromhex(vec["ciphertext_hex"])
                 tag_hex = vec.get("tag_hex", "")
                 if tag_hex:

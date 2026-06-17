@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import (
     create_object,
@@ -165,7 +166,13 @@ _ADVERTISED_FUNCTION_UNAVAILABLE_RVS = {
 
 def _xfail_if_advertised_function_unavailable(rv: int, mechanism: str, purpose: str) -> None:
     if rv in _ADVERTISED_FUNCTION_UNAVAILABLE_RVS:
-        pytest.xfail(f"{mechanism} advertised but {purpose} is not operational: {ckr_name(rv)}")
+        classify(
+            "not_operational",
+            label=f"{mechanism}:{purpose}",
+            mechanism=mechanism,
+            actual=rv,
+            summary=f"{mechanism} advertised but {purpose} is not operational: {ckr_name(rv)}",
+        )
 
 
 class TestInvalidOperations:
@@ -282,7 +289,7 @@ class TestInvalidOperations:
                     sig_buf,
                     len(sig),
                 )
-                # Type-A crypto-correctness: a signature produced under one hash
+                # crypto-correctness: a signature produced under one hash
                 # mechanism that verifies under a different hash mechanism
                 # (CKR_OK) accepts a signature over the wrong message digest --
                 # a break for any provider -> fail; an expected reject -> pass;

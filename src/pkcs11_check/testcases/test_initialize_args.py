@@ -38,6 +38,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.types_std import CKR_ARGUMENTS_BAD, CKR_CANT_LOCK, CKR_OK
 from pkcs11_check.testcases.conftest import classify_negative_rv
 
@@ -118,7 +119,12 @@ class TestInitArgsMatrix:
             "init_args_ptr = None",
         )
         if rc < 0:
-            pytest.fail(f"C_Initialize(NULL) segfaulted (signal {-rc}). Stderr: {stderr}")
+            classify(
+                "crash",
+                label="C_Initialize(NULL)",
+                operation="C_Initialize",
+                summary=f"C_Initialize(NULL) segfaulted (signal {-rc}). Stderr: {stderr}",
+            )
         rv = _parse_rv(stdout)
         assert rv == CKR_OK, (
             f"C_Initialize(NULL) returned 0x{rv:08x}; expected CKR_OK.  "
@@ -138,7 +144,12 @@ class TestInitArgsMatrix:
             """,
         )
         if rc < 0:
-            pytest.fail(f"C_Initialize(empty struct) segfaulted (signal {-rc}). Stderr: {stderr}")
+            classify(
+                "crash",
+                label="C_Initialize(empty struct)",
+                operation="C_Initialize",
+                summary=f"C_Initialize(empty struct) segfaulted (signal {-rc}). Stderr: {stderr}",
+            )
         rv = _parse_rv(stdout)
         # Acceptable: CKR_OK (no-lock mode honored) or CKR_CANT_LOCK
         # (module insists on locking).  Not acceptable: segfault.
@@ -162,7 +173,12 @@ class TestInitArgsMatrix:
             """,
         )
         if rc < 0:
-            pytest.fail(f"C_Initialize(OS_LOCKING_OK) segfaulted (signal {-rc}). Stderr: {stderr}")
+            classify(
+                "crash",
+                label="C_Initialize(OS_LOCKING_OK)",
+                operation="C_Initialize",
+                summary=f"C_Initialize(OS_LOCKING_OK) segfaulted (signal {-rc}). Stderr: {stderr}",
+            )
         rv = _parse_rv(stdout)
         assert rv == CKR_OK, (
             f"C_Initialize(OS_LOCKING_OK) returned 0x{rv:08x}; "
@@ -203,10 +219,15 @@ class TestInitArgsMatrix:
             """,
         )
         if rc < 0:
-            pytest.fail(
-                f"C_Initialize(app callbacks) segfaulted (signal {-rc}). "
-                f"This is a real provider bug — supplied mutex callbacks "
-                f"must not crash the module.  Stderr: {stderr}"
+            classify(
+                "crash",
+                label="C_Initialize(app callbacks)",
+                operation="C_Initialize",
+                summary=(
+                    f"C_Initialize(app callbacks) segfaulted (signal {-rc}). "
+                    f"This is a real provider bug — supplied mutex callbacks "
+                    f"must not crash the module.  Stderr: {stderr}"
+                ),
             )
         rv = _parse_rv(stdout)
         # Spec permits CKR_OK (callbacks accepted) or CKR_CANT_LOCK
@@ -250,9 +271,14 @@ class TestInitArgsMatrix:
             """,
         )
         if rc < 0:
-            pytest.fail(
-                f"C_Initialize(callbacks + OS_LOCKING_OK) segfaulted "
-                f"(signal {-rc}). Stderr: {stderr}"
+            classify(
+                "crash",
+                label="C_Initialize(callbacks + OS_LOCKING_OK)",
+                operation="C_Initialize",
+                summary=(
+                    f"C_Initialize(callbacks + OS_LOCKING_OK) segfaulted "
+                    f"(signal {-rc}). Stderr: {stderr}"
+                ),
             )
         rv = _parse_rv(stdout)
         assert rv is not None
@@ -277,20 +303,31 @@ class TestInitArgsMatrix:
             """,
         )
         if rc < 0:
-            pytest.fail(
-                f"C_Initialize with non-NULL pReserved segfaulted "
-                f"(signal {-rc}) — module dereferenced reserved field. "
-                f"Stderr: {stderr}"
+            classify(
+                "crash",
+                label="C_Initialize(non-NULL pReserved)",
+                operation="C_Initialize",
+                summary=(
+                    f"C_Initialize with non-NULL pReserved segfaulted "
+                    f"(signal {-rc}) — module dereferenced reserved field. "
+                    f"Stderr: {stderr}"
+                ),
             )
         rv = _parse_rv(stdout)
         assert rv is not None, f"No RV produced. Stdout: {stdout!r} Stderr: {stderr!r}"
         # CKR_ARGUMENTS_BAD is the spec-mandated return.  Some
         # modules return CKR_OK ignoring the field; record but don't fail.
         if rv == CKR_OK:
-            pytest.xfail(
-                "Module accepts non-NULL pReserved (returns CKR_OK); spec "
-                "§5.4 requires CKR_ARGUMENTS_BAD.  Non-compliant but not "
-                "security-impacting."
+            classify(
+                "honest_deviation",
+                kind="metadata",
+                label="C_Initialize non-NULL pReserved accepted",
+                operation="C_Initialize",
+                summary=(
+                    "Module accepts non-NULL pReserved (returns CKR_OK); spec "
+                    "§5.4 requires CKR_ARGUMENTS_BAD.  Non-compliant but not "
+                    "security-impacting."
+                ),
             )
         classify_negative_rv(
             rv,
@@ -327,8 +364,14 @@ class TestInitArgsMatrix:
             """,
         )
         if rc < 0:
-            pytest.fail(
-                f"C_Initialize with partial callbacks segfaulted (signal {-rc}).  Stderr: {stderr}"
+            classify(
+                "crash",
+                label="C_Initialize(partial callbacks)",
+                operation="C_Initialize",
+                summary=(
+                    f"C_Initialize with partial callbacks segfaulted (signal {-rc}).  "
+                    f"Stderr: {stderr}"
+                ),
             )
         rv = _parse_rv(stdout)
         assert rv is not None, f"No RV produced. Stdout: {stdout!r} Stderr: {stderr!r}"
@@ -336,10 +379,16 @@ class TestInitArgsMatrix:
         # 3-of-4 (CKR_OK). That is honest non-compliance, not security-impacting
         # -- xfail (symmetric with the non-NULL pReserved sibling above).
         if rv == CKR_OK:
-            pytest.xfail(
-                "Module accepts partial (3-of-4) mutex callbacks (returns CKR_OK); "
-                "spec Sec.5.4 requires CKR_ARGUMENTS_BAD. Non-compliant but not "
-                "security-impacting."
+            classify(
+                "honest_deviation",
+                kind="metadata",
+                label="C_Initialize partial mutex callbacks accepted",
+                operation="C_Initialize",
+                summary=(
+                    "Module accepts partial (3-of-4) mutex callbacks (returns CKR_OK); "
+                    "spec Sec.5.4 requires CKR_ARGUMENTS_BAD. Non-compliant but not "
+                    "security-impacting."
+                ),
             )
         classify_negative_rv(
             rv,

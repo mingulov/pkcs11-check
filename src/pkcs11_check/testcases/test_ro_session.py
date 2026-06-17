@@ -22,7 +22,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     find_objects,
-    gen_aes_key,
     gen_rsa_keypair,
     sign_single,
     verify_single,
@@ -43,9 +42,11 @@ from pkcs11_check.raw.types_std import (
     CKU_USER,
 )
 from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
     get_pin_bytes,
     is_known_error,
     skip_if_token_write_protected,
+    skip_unless_mechanism,
 )
 
 pytestmark = pytest.mark.access
@@ -70,6 +71,7 @@ class TestROSessionOperations:
     def test_digest_in_ro_session(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Digest works in R/O session (no key needed)."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA256")
         pin_bytes = get_pin_bytes(p11_config)
         ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         if pin_bytes is not None:
@@ -84,7 +86,7 @@ class TestROSessionOperations:
         """Finding objects works in R/O session."""
         rs = p11_raw_session
         # Create a key in R/W session first
-        key_h = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: "ro-find-test"})
+        key_h = gen_aes_key_or_xfail(rs, 128, attrs={CKA_LABEL: "ro-find-test"})
 
         try:
             ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
@@ -142,7 +144,7 @@ class TestSessionObjectLifecycle:
         if pin_bytes is not None:
             login_user(rs.raw, s1, CKU_USER, pin_bytes)
         label = "session-lifecycle-test"
-        gen_aes_key(rs.raw, s1, 128, attrs={CKA_LABEL: label})
+        gen_aes_key_or_xfail(rs, 128, attrs={CKA_LABEL: label}, sh=s1)
         # Verify it exists in this session
         tmpl = template_from_dict({CKA_LABEL: label})
         found = find_objects(rs.raw, s1, tmpl)
@@ -171,7 +173,7 @@ class TestSessionObjectLifecycle:
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
             login_user(rs.raw, s1, CKU_USER, pin_bytes)
-        gen_aes_key(rs.raw, s1, 128, attrs={CKA_LABEL: label, CKA_TOKEN: True})
+        gen_aes_key_or_xfail(rs, 128, attrs={CKA_LABEL: label, CKA_TOKEN: True}, sh=s1)
         close_session_quietly(rs.raw, s1)
 
         # Session 2: token object should still exist

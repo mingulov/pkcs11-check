@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -43,7 +44,11 @@ from pkcs11_check.raw.types_std import (
     CKM_CAMELLIA_MAC_GENERAL,
     CKR_OK,
 )
-from pkcs11_check.testcases.conftest import CIPHER_OP_RUNTIME_REJECT_RVS, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    CIPHER_OP_RUNTIME_REJECT_RVS,
+    assert_correct,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.full
 
@@ -150,10 +155,24 @@ class TestCAMELLIAEncryption:
         )
         try:
             ct = _encrypt_or_xfail(rs.raw, rs.sh, key, CKM_CAMELLIA_ECB, _TWO_BLOCKS)
-            assert ct != _TWO_BLOCKS
+            if ct == _TWO_BLOCKS:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_CAMELLIA_ECB:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_CAMELLIA_ECB",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             assert len(ct) == len(_TWO_BLOCKS)
             pt = decrypt_single(rs.raw, rs.sh, key, CKM_CAMELLIA_ECB, ct)
-            assert pt == _TWO_BLOCKS
+            assert_correct(
+                actual=pt,
+                expected=_TWO_BLOCKS,
+                label="CKM_CAMELLIA_ECB:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_CAMELLIA_ECB",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -170,7 +189,15 @@ class TestCAMELLIAEncryption:
         try:
             ct1 = _encrypt_or_xfail(rs.raw, rs.sh, key1, CKM_CAMELLIA_ECB, _TWO_BLOCKS)
             ct2 = encrypt_single(rs.raw, rs.sh, key2, CKM_CAMELLIA_ECB, _TWO_BLOCKS)
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_CAMELLIA_ECB:encrypt key independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_CAMELLIA_ECB",
+                    summary="different keys produced identical ECB ciphertext -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -198,7 +225,15 @@ class TestCAMELLIAEncryption:
                 _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_CAMELLIA_CBC, iv),
             )
-            assert ct != _TWO_BLOCKS
+            if ct == _TWO_BLOCKS:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_CAMELLIA_CBC:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_CAMELLIA_CBC",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -207,7 +242,13 @@ class TestCAMELLIAEncryption:
                 ct,
                 mech_param=mech_bytes(CKM_CAMELLIA_CBC, iv),
             )
-            assert pt == _TWO_BLOCKS
+            assert_correct(
+                actual=pt,
+                expected=_TWO_BLOCKS,
+                label="CKM_CAMELLIA_CBC:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_CAMELLIA_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -243,7 +284,16 @@ class TestCAMELLIAEncryption:
                 _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_CAMELLIA_CBC, iv2),
             )
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_CAMELLIA_CBC:encrypt IV independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_CAMELLIA_CBC",
+                    summary="different IVs (same key) produced identical CBC "
+                    "ciphertext -- IV ignored",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -272,7 +322,15 @@ class TestCAMELLIAEncryption:
                 plaintext,
                 mech_param=mech_bytes(CKM_CAMELLIA_CBC_PAD, iv),
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_CAMELLIA_CBC_PAD:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_CAMELLIA_CBC_PAD",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             # Ciphertext is padded to block boundary
             assert len(ct) % 16 == 0
             pt = decrypt_single(
@@ -283,7 +341,13 @@ class TestCAMELLIAEncryption:
                 ct,
                 mech_param=mech_bytes(CKM_CAMELLIA_CBC_PAD, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_CAMELLIA_CBC_PAD:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_CAMELLIA_CBC_PAD",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -316,7 +380,15 @@ class TestCAMELLIAEncryption:
                 plaintext,
                 mech_param=mech_bytes(CKM_CAMELLIA_CBC_PAD, iv),
             )
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_CAMELLIA_CBC_PAD:encrypt key independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_CAMELLIA_CBC_PAD",
+                    summary="different keys produced identical CBC-PAD ciphertext -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -402,7 +474,15 @@ class TestCAMELLIAMAC:
         try:
             mac1 = _sign_or_xfail(rs.raw, rs.sh, key1, CKM_CAMELLIA_MAC, data)
             mac2 = sign_single(rs.raw, rs.sh, key2, CKM_CAMELLIA_MAC, data)
-            assert mac1 != mac2
+            if mac1 == mac2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_CAMELLIA_MAC:sign key independence",
+                    operation="C_Sign",
+                    mechanism="CKM_CAMELLIA_MAC",
+                    summary="different keys produced identical MAC -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -446,7 +526,15 @@ class TestCamelliaCTR:
                 plaintext,
                 mech_param=mech_ctr(CKM_CAMELLIA_CTR),
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_CAMELLIA_CTR:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_CAMELLIA_CTR",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             assert len(ct) == len(plaintext)
             pt = decrypt_single(
                 rs.raw,
@@ -456,7 +544,13 @@ class TestCamelliaCTR:
                 ct,
                 mech_param=mech_ctr(CKM_CAMELLIA_CTR),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_CAMELLIA_CTR:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_CAMELLIA_CTR",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 

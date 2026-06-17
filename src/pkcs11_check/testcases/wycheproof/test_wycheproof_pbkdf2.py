@@ -7,7 +7,6 @@ Skips on modules without PBKDF2 support (e.g., SoftHSM2).
 
 from __future__ import annotations
 
-import json
 from ctypes import byref
 from typing import Any, NoReturn
 
@@ -54,12 +53,12 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import assert_correct, reject_or_classify, xfail_if_known_ckr
 
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["PKCS5_PBKD2"]
 
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
 
 _PBKDF2_RUNTIME_REJECT_CKRS = (
     CKR_ARGUMENTS_BAD,
@@ -75,6 +74,7 @@ _PBKDF2_RUNTIME_REJECT_CKRS = (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+_PBKDF2_INVALID_PRF_REJECT_CKRS = (CKR_MECHANISM_PARAM_INVALID,)
 
 # Map Wycheproof file suffix to CKP_PKCS5_PBKD2_HMAC_* PRF constant
 _PRF_MAP: dict[str, int] = {
@@ -104,8 +104,7 @@ def _load_pbkdf2_vectors() -> list[tuple[str, dict[str, Any]]]:
         prf = _PRF_MAP.get(prf_name)
         if prf is None:
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         for group in data["testGroups"]:
             for test in group["tests"]:
                 test["_group"] = {k: v for k, v in group.items() if k != "tests"}
@@ -139,6 +138,48 @@ def _xfail_if_pbkdf2_runtime_reject(exc: AssertionError, label: str) -> NoReturn
         f"{label}: advertised PBKDF2 key derivation is not operational",
     )
     raise exc
+
+
+def test_pbkdf2_rejects_invalid_prf(p11_module_session: Any) -> None:
+    """CKM_PKCS5_PBKD2 rejects a PRF selector outside the CKP_* table."""
+    rs = p11_module_session
+    if not rs.has_mechanism("PKCS5_PBKD2"):
+        pytest.skip("PKCS5_PBKD2 not supported")
+
+    pbkdf2_param = mech_pbkdf2(
+        CKM_PKCS5_PBKD2,
+        salt=b"pbkcs11-check salt",
+        iterations=2,
+        prf=0,
+        password=b"pkcs11-check password",
+    )
+    derived = 0
+    exc: AssertionError | None = None
+    try:
+        try:
+            derived = _generate_key_with_mech(
+                rs.raw,
+                rs.sh,
+                pbkdf2_param,
+                {
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 32,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                },
+            )
+        except AssertionError as caught:
+            exc = caught
+        reject_or_classify(
+            exc,
+            _PBKDF2_INVALID_PRF_REJECT_CKRS,
+            label="PKCS5_PBKD2 invalid PRF selector",
+        )
+    finally:
+        if derived:
+            destroy_quietly(rs.raw, rs.sh, derived)
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_PBKDF2_VECTORS, ids=[v[0] for v in _ALL_PBKDF2_VECTORS])
@@ -190,12 +231,15 @@ def test_pbkdf2(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> No
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_pbkdf2_runtime_reject(exc, vec_id)
-            pytest.fail(f"PBKDF2 generate_key failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
 
     if result == "valid":
-        assert dk_actual == dk_expected, (
-            f"PBKDF2 output mismatch for {vec_id}: "
-            f"got {dk_actual.hex()[:20]}... expected {dk_expected.hex()[:20]}..."
+        assert_correct(
+            actual=dk_actual,
+            expected=dk_expected,
+            label=f"PBKDF2:C_DeriveKey KAT {vec_id}",
+            operation="C_DeriveKey",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )

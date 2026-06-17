@@ -17,6 +17,11 @@ from pkcs11_check.core.loader import P11Module, load_module
 from pkcs11_check.raw.api import RawPKCS11
 
 _RV_TRACE_TRUTHY = frozenset({"1", "true", "yes", "on"})
+MODULE_SESSION_CALL_FAILED_ATTR = "_pkcs11_module_session_call_failed"
+
+
+def _empty_module_session_health_metrics() -> dict[str, int | float]:
+    return {"checks": 0, "duration_s": 0.0}
 
 
 def _resolve_rv_trace(
@@ -157,7 +162,10 @@ _RECONNECT_INITIAL_DELAY_S = 0.1  # first backoff sleep
 _RECONNECT_MAX_DELAY_S = 2.0  # backoff cap
 
 
-def _restart_signature_rvs() -> frozenset[int]:
+def _restart_signature_rvs(
+    *,
+    include_ambiguous_general_error: bool = False,
+) -> frozenset[int]:
     """CK_RVs that, *at session bootstrap*, mean "the connection/session is gone".
 
     Recovery triggers ONLY at the fixture open/login layer, where these codes
@@ -170,25 +178,32 @@ def _restart_signature_rvs() -> frozenset[int]:
         CKR_CRYPTOKI_NOT_INITIALIZED,
         CKR_DEVICE_ERROR,
         CKR_DEVICE_REMOVED,
+        CKR_GENERAL_ERROR,
         CKR_SESSION_CLOSED,
         CKR_SESSION_HANDLE_INVALID,
     )
 
-    return frozenset(
-        int(rv)
-        for rv in (
-            CKR_CRYPTOKI_NOT_INITIALIZED,
-            CKR_SESSION_HANDLE_INVALID,
-            CKR_SESSION_CLOSED,
-            CKR_DEVICE_ERROR,
-            CKR_DEVICE_REMOVED,
-        )
-    )
+    values = [
+        CKR_CRYPTOKI_NOT_INITIALIZED,
+        CKR_SESSION_HANDLE_INVALID,
+        CKR_SESSION_CLOSED,
+        CKR_DEVICE_ERROR,
+        CKR_DEVICE_REMOVED,
+    ]
+    if include_ambiguous_general_error:
+        # CKR_GENERAL_ERROR is too broad to mean "dead provider" in normal
+        # operation or initial bootstrap. During a reopen after an already-held
+        # session became unhealthy, it is an ambiguous bootstrap symptom worth
+        # one bounded reconnect path before surfacing as a finding.
+        values.append(CKR_GENERAL_ERROR)
+    return frozenset(int(rv) for rv in values)
 
 
 def _open_or_reinit(
     p11_module: P11Module,
     p11_config: P11TestConfig,
+    *,
+    recover_ambiguous_bootstrap_general_error: bool = False,
 ) -> tuple[RawPKCS11, int, int, bool]:
     """Open a session; bridge a provider/proxy restart with a bounded wait loop.
 
@@ -203,10 +218,16 @@ def _open_or_reinit(
     infinite loop). Any *non*-restart CKR (e.g. a clean CKR_PIN_INCORRECT)
     propagates unchanged. The triggering test still records its own result; this
     only un-cascades the *subsequent* tests in the file.
+
+    ``CKR_GENERAL_ERROR`` is included only when explicitly requested by a caller
+    that is reopening after a previously healthy session became unusable. The
+    same CKR during initial bootstrap still propagates immediately.
     """
     from pkcs11_check.raw.rv import CkrAssertionError
 
-    restart_rvs = _restart_signature_rvs()
+    restart_rvs = _restart_signature_rvs(
+        include_ambiguous_general_error=recover_ambiguous_bootstrap_general_error
+    )
 
     def _is_restart(exc: BaseException) -> bool:
         # A transport failure (OSError) or a bootstrap-layer "connection gone"
@@ -299,6 +320,12 @@ _CKM_ALIAS_MAP: dict[int, list[str]] | None = None
 # The mechanism list is a slot property that does not change between tests.
 _MECHANISM_CACHE: frozenset[str] | None = None
 
+# Per-(slot, mechanism) cache of C_GetMechanismInfo results, mirroring
+# _MECHANISM_CACHE: module-level, populated once, reused across the per-test
+# RawSession instances within a subprocess. Cold again in the next file's
+# subprocess (per-file isolation), which is correct.
+_MECH_INFO_CACHE: dict[tuple[int, int], dict[str, int]] = {}
+
 
 def _get_ckm_aliases(types_std_mod: Any, mech_int: int) -> list[str]:
     """Return alias CKM names for a mechanism value (empty if no aliases)."""
@@ -321,6 +348,10 @@ class RawSession:
     slot_id: int
     _mechanisms: frozenset[str] | None = field(default=None, repr=False)
     bootstrap_call_counts: dict[str, int] = field(default_factory=dict, repr=False)
+    module_session_health_metrics: dict[str, int | float] = field(
+        default_factory=_empty_module_session_health_metrics,
+        repr=False,
+    )
 
     @property
     def mechanisms(self) -> frozenset[str]:
@@ -361,6 +392,40 @@ class RawSession:
     def has_mechanism(self, name: str) -> bool:
         """Check if a mechanism is supported by name (prefix-optional)."""
         return name in self.mechanisms
+
+    def has_mechanism_flag(self, mechanism: str | int, flag: int) -> bool:
+        """True if C_GetMechanismInfo reports *flag* set for *mechanism*.
+
+        *mechanism* is a CKM int or a name (with or without the ``CKM_`` prefix).
+        Returns ``False`` (never raises) when the mechanism is not advertised, the
+        name is unknown, or ``C_GetMechanismInfo`` errors -- a module that lists a
+        mechanism but rejects the info query is treated as "flag absent", so this
+        can never crash test setup. Result is memoized in ``_MECH_INFO_CACHE``.
+        """
+        if isinstance(mechanism, str):
+            if not self.has_mechanism(mechanism):
+                return False
+            from pkcs11_check.raw import types_std
+
+            name = mechanism if mechanism.startswith("CKM_") else "CKM_" + mechanism
+            mech_int_opt = getattr(types_std, name, None)
+            if mech_int_opt is None:
+                return False
+            mech_int = int(mech_int_opt)
+        else:
+            mech_int = int(mechanism)
+
+        key = (self.slot_id, mech_int)
+        if key not in _MECH_INFO_CACHE:
+            from pkcs11_check.raw.recipes import get_mechanism_info
+            from pkcs11_check.raw.rv import CkrAssertionError
+
+            try:
+                _MECH_INFO_CACHE[key] = get_mechanism_info(self.raw, self.slot_id, mech_int)
+            except CkrAssertionError:
+                return False
+
+        return bool(_MECH_INFO_CACHE[key]["flags"] & flag)
 
     def generate_random(self, bits: int) -> bytes:
         """Generate random bytes via C_GenerateRandom.
@@ -446,6 +511,9 @@ class _ModuleSessionHolder:
         self._logged_in: bool = False
         self._bootstrap_log: dict[str, int] = {}
         self._reopen_count: int = 0
+        self._health_check_required: bool = False
+        self._health_check_count: int = 0
+        self._health_check_duration_s: float = 0.0
 
     @property
     def raw(self) -> RawPKCS11:
@@ -456,7 +524,20 @@ class _ModuleSessionHolder:
         """Number of times the session was re-opened due to damage."""
         return self._reopen_count
 
-    def get_session(self) -> tuple[int, int, dict[str, int]]:
+    def require_health_check(self) -> None:
+        """Force a health check before the next shared-session handout."""
+        self._health_check_required = True
+
+    def consume_health_metrics_delta(self) -> dict[str, int | float]:
+        metrics = {
+            "checks": self._health_check_count,
+            "duration_s": self._health_check_duration_s,
+        }
+        self._health_check_count = 0
+        self._health_check_duration_s = 0.0
+        return metrics
+
+    def get_session(self, *, skip_health_check: bool = False) -> tuple[int, int, dict[str, int]]:
         """Return (sh, slot_id, bootstrap_log); reopen if damaged or if a prior test
         left an unclearable active operation (see recipes._init_or_recover)."""
         from pkcs11_check.raw.recipes import consume_session_reopen_request
@@ -465,8 +546,15 @@ class _ModuleSessionHolder:
         # cleared -- a short-circuit on the health check must not leave a stale
         # request that triggers a spurious reopen on a later handout.
         reopen_requested = consume_session_reopen_request()
-        if reopen_requested or not self._is_healthy():
+        if reopen_requested:
             self._reopen()
+            self._health_check_required = False
+        elif self._sh is None:
+            self._reopen()
+        elif self._health_check_required or not skip_health_check:
+            if not self._is_healthy():
+                self._reopen()
+            self._health_check_required = False
         assert self._sh is not None and self._slot_id is not None
         return self._sh, self._slot_id, dict(self._bootstrap_log)
 
@@ -478,10 +566,13 @@ class _ModuleSessionHolder:
         from pkcs11_check.raw.types_std import CK_SESSION_INFO, CKR_OK
 
         info = CK_SESSION_INFO()
+        start = time.monotonic()
         try:
             rv = self.raw.C_GetSessionInfo(self._sh, ctypes.byref(info))
         except (AttributeError, OSError, ctypes.ArgumentError):
+            self._record_health_check(time.monotonic() - start)
             return False
+        self._record_health_check(time.monotonic() - start)
         if rv != CKR_OK:
             return False
         if self._logged_in:
@@ -490,9 +581,18 @@ class _ModuleSessionHolder:
                 return False
         return True
 
+    def _record_health_check(self, duration_s: float) -> None:
+        self._health_check_count += 1
+        self._health_check_duration_s += max(duration_s, 0.0)
+
     def _reopen(self) -> None:
+        recover_general_error = self._sh is not None
         self._close()
-        raw, sh, slot_id, logged_in = _open_or_reinit(self._module, self._config)
+        raw, sh, slot_id, logged_in = _open_or_reinit(
+            self._module,
+            self._config,
+            recover_ambiguous_bootstrap_general_error=recover_general_error,
+        )
         self._sh = sh
         self._slot_id = slot_id
         self._logged_in = logged_in
@@ -531,6 +631,7 @@ def _p11_module_session_holder(
 def p11_module_session(
     _p11_module_session_holder: _ModuleSessionHolder,
     p11_config: P11TestConfig,
+    request: pytest.FixtureRequest,
 ) -> Generator[RawSession]:
     """Module-scoped PKCS#11 session with per-test counter reset.
 
@@ -556,9 +657,21 @@ def p11_module_session(
     login overhead.
     """
     holder = _p11_module_session_holder
-    sh, slot_id, bootstrap_log = holder.get_session()
+    fast_reuse = request.node.get_closest_marker("module_session_fast") is not None
+    sh, slot_id, bootstrap_log = holder.get_session(skip_health_check=fast_reuse)
+    health_metrics = holder.consume_health_metrics_delta()
     raw = holder.raw
     raw.reset_call_log()
     raw.reset_used_mechanisms()
     _apply_rv_trace(raw, p11_config)
-    yield RawSession(raw, sh, slot_id, bootstrap_call_counts=bootstrap_log)
+    try:
+        yield RawSession(
+            raw,
+            sh,
+            slot_id,
+            bootstrap_call_counts=bootstrap_log,
+            module_session_health_metrics=health_metrics,
+        )
+    finally:
+        if fast_reuse and getattr(request.node, MODULE_SESSION_CALL_FAILED_ATTR, False):
+            holder.require_health_check()

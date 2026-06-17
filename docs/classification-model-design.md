@@ -66,8 +66,13 @@ wrong-but-isolated metadata value is making an honest, provider-dependent choice
 
 ## Classification rules by test type
 
-The negative/security cases divide into four types. A and B were the original split;
+The negative/security cases divide into four kinds. A and B were the original split;
 C and D are the *same* self-contradiction principle applied to lifecycle and metadata.
+
+> **Historical note (retired aliases):** the A/B/C/D letters below are kept only as a
+> record of the original taxonomy. The canonical machine field is `kind`, whose values are
+> the keywords `crypto` (A), `policy` (B), `lifecycle` (C), and `metadata` (D). Code,
+> comments, and messages use those keywords — do not introduce the letters in new text.
 
 ### Type A — cryptographic correctness → `fail`
 
@@ -259,3 +264,47 @@ reports from this session.
 - P1b roundtrip-inconsistency-as-self-contradiction (defer; start with base rule).
 - Whether `assert_ckr()`'s DEFAULT vs strict compat modes survive the 3-way change or are
   superseded by `classify_rejection` (decide in Phase 1).
+
+## Refinements: advertised-capability honesty (2026-06-10)
+
+Spec basis (OASIS PKCS#11 v3.2): `C_GetMechanismList` lists mechanisms "supported by a token";
+`CK_MECHANISM_INFO.flags` claims per-operation support ("True if the mechanism can be used with
+C_SignInit"); `CKR_OPERATION_NOT_VALIDATED` is the sanctioned validation-policy refusal.
+
+1. **Claim layer (test_mech_*):** the registry roundtrip is the canonical operation for the
+   advertised capability. Clean refusal with CKR_OPERATION_NOT_VALIDATED → pass + note
+   (conformant policy refusal — does not contradict the advertisement). Any other clean CKR →
+   xfail via the shared `not_operational_reason` wording (no CKR allowlist; positive-op row).
+   Wrong output / crash / non-CKR unchanged (fail / propagate).
+2. **Vacuous negative-op reject:** with a canonical probe verdict of NOT_OPERATIONAL, an
+   invalid-input "rejection" asserts nothing (the module refuses everything) → xfail
+   "vacuous reject", not pass. OPERATIONAL, INCONCLUSIVE, and WRONG_OUTPUT verdicts leave
+   the pass untouched: OPERATIONAL rejections are genuine passes; INCONCLUSIVE (staging
+   failure, no mechanism evidence) keeps legacy rules; WRONG_OUTPUT surfaces as a finding.
+
+Both refinements are provider-general: discrimination is by return code, probe effect, and
+CKO_VALIDATION capability only.
+
+## Refinement (2026-06-14): at-source emission + reason vocabulary
+
+This does not rewrite the model above — it makes the verdict machine-recorded. Tests emit a
+structured `Classification` at the decision point via `pkcs11_check.classification.classify()`
+(and `fail_as`/`xfail_as`/`assert_correct`), which records the verdict then raises the implied
+pytest outcome. See the design spec
+[superpowers/specs/2026-06-13-at-source-classification-design.md](superpowers/specs/2026-06-13-at-source-classification-design.md).
+
+- The A/B/C/D self-contradiction classes are now the canonical machine field **`kind`**:
+  `crypto`=A, `policy`=B, `lifecycle`=C, `metadata`=D.
+- The runtime **reason** vocabulary is the 10 reasons: `wrong_result`, `accepted_invalid`,
+  `self_contradiction`, `oracle`, `crash` (→ fail); `not_operational`, `nonspec_reject`,
+  `honest_deviation`, `undeclared_capability` (→ xfail); `sanctioned_refusal` (→ pass).
+  (`unclassified` is a reserved runtime-gate marker, never emitted by a test.)
+  - `undeclared_capability` (xfail, kind=metadata) — the module **performed** an operation /
+    key size / mechanism it did **not** advertise, in a benign direction (stronger-than-advertised
+    key size, or an unadvertised mechanism that is not in the known-weak set). The advertised
+    boundary is inaccurate metadata, but no weak crypto was accepted, so this is a recorded
+    deviation, not a `fail`. The security-relevant direction (below-min/weak, or a known-weak
+    unadvertised mechanism) is `self_contradiction` → `fail`. This is the over-advertised mirror
+    of `not_operational`.
+- **Severity** is derived centrally from `(reason, kind)` in `classification.derive_verdict` —
+  the single source of truth, replacing per-site severity choices.

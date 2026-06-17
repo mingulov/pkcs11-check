@@ -40,9 +40,16 @@ from pkcs11_check.core.file_runner import (
     save_isolation_policy,
     save_run_state,
     units_remaining_for_resume,
+    validate_subprocess_per_test_expansion,
     write_isolated_json_report,
     write_report_jsonl,
 )
+
+
+def test_status_from_returncode_classifies_timeout_sentinel() -> None:
+    assert (
+        file_runner_mod._status_from_returncode(file_runner_mod._TIMEOUT_RETURN_CODE) == "timeout"
+    )
 
 
 def test_discover_pytest_units_from_directory(tmp_path: Path) -> None:
@@ -204,6 +211,21 @@ def test_discover_auto_isolation_units_expands_per_test_marked_files(
     )
 
     assert units == [f"{target}::test_one", f"{target}::test_two"]
+
+
+def test_validate_subprocess_per_test_expansion_rejects_file_unit(tmp_path: Path) -> None:
+    target = tmp_path / "test_marked.py"
+    target.write_text("def test_one():\n    assert True\n")
+    collected = [
+        CollectedPytestItem(
+            nodeid=f"{target}::test_one",
+            file_path=str(target),
+            markers=["subprocess_per_test"],
+        )
+    ]
+
+    with pytest.raises(ValueError, match="subprocess_per_test file was not expanded"):
+        validate_subprocess_per_test_expansion([str(target)], collected)
 
 
 def test_discover_auto_isolation_units_expands_policy_promoted_files(
@@ -1053,6 +1075,409 @@ def test_run_isolated_pytest_units_resume_json_rebuilds_artifacts_when_complete(
     assert quality["selection_findings"][0]["scenario"] == "encrypt_roundtrip"
 
 
+def test_run_isolated_pytest_units_resume_json_streams_complete_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen_cmds: list[list[str]] = []
+    units = ["test_a.py"]
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    state_file = tmp_path / "state.json"
+    results_path = tmp_path / "results.json"
+    report_jsonl_path = tmp_path / "report.jsonl"
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        seen_cmds.append(list(cmd))
+        return (0, "", "")
+
+    def load_all_forbidden(
+        _state_file: Path, _units: list[str]
+    ) -> dict[str, list[dict[str, object]]]:
+        pytest.fail("complete resume finalization must stream cached report-record shards")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(
+        file_runner_mod,
+        "_load_cached_report_records_by_unit",
+        load_all_forbidden,
+    )
+    save_run_state(
+        state_file,
+        FileRunState(
+            units=units,
+            fingerprint=build_state_fingerprint(units, pytest_args),
+            results=[FileRunResult("test_a.py", "passed", 0, 0.1)],
+        ),
+    )
+    _write_unit_report_record_cache(
+        state_file,
+        "test_a.py",
+        [
+            {
+                "$report_type": "TestReport",
+                "nodeid": "test_a.py::test_case",
+                "when": "call",
+                "outcome": "passed",
+            },
+            {
+                "$report_type": "SelectionReport",
+                "selection_coverage": {
+                    "encrypt_roundtrip": {
+                        "selected_mechanisms": ["CKM_AES_CBC"],
+                        "rejected_mechanisms": [],
+                        "rejected_reason_counts": {},
+                    }
+                },
+            },
+            {
+                "$report_type": "CoverageReport",
+                "function_coverage": {
+                    "available": 1,
+                    "called_names": ["C_Encrypt"],
+                    "uncalled_names": [],
+                    "called_counts": {"C_Encrypt": 1},
+                    "bootstrap_counts": {},
+                },
+                "mechanism_coverage": {
+                    "available": 1,
+                    "available_names": ["CKM_AES_CBC"],
+                    "invoked": 1,
+                    "invoked_names": ["CKM_AES_CBC"],
+                    "invoked_counts": {"CKM_AES_CBC": 1},
+                    "not_invoked": 0,
+                    "not_invoked_names": [],
+                    "invoked_detail": ["encrypt_roundtrip"],
+                    "invoked_detail_counts": {"encrypt_roundtrip": 1},
+                },
+            },
+        ],
+    )
+
+    exit_code = run_isolated_pytest_units(
+        units,
+        pytest_args,
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=IsolatedReportConfig(
+            "json",
+            results_path,
+            jsonl_path=report_jsonl_path,
+        ),
+        resume=True,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    assert seen_cmds == []
+    assert "test_a.py::test_case" in report_jsonl_path.read_text()
+    report = json.loads(results_path.read_text())
+    assert report["units"][0]["counts"]["passed"] == 1
+    coverage = json.loads((tmp_path / "coverage.json").read_text())
+    assert coverage["mechanism_coverage"]["invoked_names"] == ["CKM_AES_CBC"]
+
+
+def test_run_isolated_pytest_units_resume_json_streams_complete_existing_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen_cmds: list[list[str]] = []
+    units = ["test_a.py"]
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    state_file = tmp_path / "state.json"
+    results_path = tmp_path / "results.json"
+    report_jsonl_path = tmp_path / "report.jsonl"
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        seen_cmds.append(list(cmd))
+        return (0, "", "")
+
+    def extract_all_forbidden(
+        _jsonl_path: Path, *, candidate_targets: set[str]
+    ) -> dict[str, list[dict[str, object]]]:
+        del candidate_targets
+        pytest.fail("complete resume fallback must stream existing report records")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(
+        file_runner_mod,
+        "_extract_unit_report_records_from_jsonl",
+        extract_all_forbidden,
+    )
+    save_run_state(
+        state_file,
+        FileRunState(
+            units=units,
+            fingerprint=build_state_fingerprint(units, pytest_args),
+            results=[FileRunResult("test_a.py", "passed", 0, 0.1)],
+        ),
+    )
+    report_jsonl_path.write_text(
+        "\n".join(
+            [
+                _jsonl_line(nodeid="test_a.py::test_case", when="call", outcome="passed"),
+                json.dumps(
+                    {
+                        "$report_type": "SelectionReport",
+                        "selection_coverage": {
+                            "encrypt_roundtrip": {
+                                "selected_mechanisms": ["CKM_AES_CBC"],
+                                "rejected_mechanisms": [],
+                                "rejected_reason_counts": {},
+                            }
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "$report_type": "CoverageReport",
+                        "function_coverage": {
+                            "available": 1,
+                            "called_names": ["C_Encrypt"],
+                            "uncalled_names": [],
+                            "called_counts": {"C_Encrypt": 1},
+                            "bootstrap_counts": {},
+                        },
+                        "mechanism_coverage": {
+                            "available": 1,
+                            "available_names": ["CKM_AES_CBC"],
+                            "invoked": 1,
+                            "invoked_names": ["CKM_AES_CBC"],
+                            "invoked_counts": {"CKM_AES_CBC": 1},
+                            "not_invoked": 0,
+                            "not_invoked_names": [],
+                            "invoked_detail": ["encrypt_roundtrip"],
+                            "invoked_detail_counts": {"encrypt_roundtrip": 1},
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+
+    exit_code = run_isolated_pytest_units(
+        units,
+        pytest_args,
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=IsolatedReportConfig(
+            "json",
+            results_path,
+            jsonl_path=report_jsonl_path,
+        ),
+        resume=True,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    assert seen_cmds == []
+    report = json.loads(results_path.read_text())
+    assert report["units"][0]["counts"]["passed"] == 1
+    coverage = json.loads((tmp_path / "coverage.json").read_text())
+    assert coverage["mechanism_coverage"]["invoked_names"] == ["CKM_AES_CBC"]
+
+
+def test_run_isolated_pytest_units_resume_json_streams_partial_existing_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    units = ["test_a.py", "test_b.py"]
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    state_file = tmp_path / "state.json"
+    results_path = tmp_path / "results.json"
+    report_jsonl_path = tmp_path / "report.jsonl"
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        for i, arg in enumerate(cmd):
+            if arg == "--report-log" and i + 1 < len(cmd):
+                Path(cmd[i + 1]).write_text(
+                    "\n".join(
+                        [
+                            _jsonl_line(
+                                nodeid="test_b.py::test_new",
+                                when="call",
+                                outcome="passed",
+                            ),
+                            json.dumps(
+                                {
+                                    "$report_type": "SelectionReport",
+                                    "selection_coverage": {
+                                        "encrypt_roundtrip": {
+                                            "selected_mechanisms": ["CKM_AES_GCM"],
+                                            "rejected_mechanisms": [],
+                                            "rejected_reason_counts": {},
+                                        }
+                                    },
+                                }
+                            ),
+                            json.dumps(
+                                {
+                                    "$report_type": "CoverageReport",
+                                    "function_coverage": {
+                                        "available": 1,
+                                        "called_names": ["C_Encrypt"],
+                                        "uncalled_names": [],
+                                        "called_counts": {"C_Encrypt": 1},
+                                        "bootstrap_counts": {},
+                                    },
+                                    "mechanism_coverage": {
+                                        "available": 2,
+                                        "available_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+                                        "invoked": 1,
+                                        "invoked_names": ["CKM_AES_GCM"],
+                                        "invoked_counts": {"CKM_AES_GCM": 1},
+                                        "not_invoked": 1,
+                                        "not_invoked_names": ["CKM_AES_CBC"],
+                                        "invoked_detail": ["encrypt_roundtrip"],
+                                        "invoked_detail_counts": {"encrypt_roundtrip": 1},
+                                    },
+                                }
+                            ),
+                        ]
+                    )
+                    + "\n"
+                )
+                break
+        return (0, "", "")
+
+    def extract_all_forbidden(
+        _jsonl_path: Path, *, candidate_targets: set[str]
+    ) -> dict[str, list[dict[str, object]]]:
+        del candidate_targets
+        pytest.fail("partial resume fallback must stream existing report records")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(
+        file_runner_mod,
+        "_extract_unit_report_records_from_jsonl",
+        extract_all_forbidden,
+    )
+    save_run_state(
+        state_file,
+        FileRunState(
+            units=units,
+            fingerprint=build_state_fingerprint(units, pytest_args),
+            results=[FileRunResult("test_a.py", "passed", 0, 0.1)],
+        ),
+    )
+    report_jsonl_path.write_text(
+        "\n".join(
+            [
+                _jsonl_line(nodeid="test_a.py::test_old", when="call", outcome="passed"),
+                json.dumps(
+                    {
+                        "$report_type": "SelectionReport",
+                        "selection_coverage": {
+                            "encrypt_roundtrip": {
+                                "selected_mechanisms": ["CKM_AES_CBC"],
+                                "rejected_mechanisms": [],
+                                "rejected_reason_counts": {},
+                            }
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "$report_type": "CoverageReport",
+                        "function_coverage": {
+                            "available": 1,
+                            "called_names": ["C_Encrypt"],
+                            "uncalled_names": [],
+                            "called_counts": {"C_Encrypt": 1},
+                            "bootstrap_counts": {},
+                        },
+                        "mechanism_coverage": {
+                            "available": 2,
+                            "available_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+                            "invoked": 1,
+                            "invoked_names": ["CKM_AES_CBC"],
+                            "invoked_counts": {"CKM_AES_CBC": 1},
+                            "not_invoked": 1,
+                            "not_invoked_names": ["CKM_AES_GCM"],
+                            "invoked_detail": ["encrypt_roundtrip"],
+                            "invoked_detail_counts": {"encrypt_roundtrip": 1},
+                        },
+                    }
+                ),
+                _jsonl_line(nodeid="test_b.py::test_stale", when="call", outcome="failed"),
+                json.dumps(
+                    {
+                        "$report_type": "CoverageReport",
+                        "function_coverage": {
+                            "available": 1,
+                            "called_names": ["C_Encrypt"],
+                            "uncalled_names": [],
+                            "called_counts": {"C_Encrypt": 1},
+                            "bootstrap_counts": {},
+                        },
+                        "mechanism_coverage": {
+                            "available": 2,
+                            "available_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+                            "invoked": 1,
+                            "invoked_names": ["CKM_AES_CBC"],
+                            "invoked_counts": {"CKM_AES_CBC": 1},
+                            "not_invoked": 1,
+                            "not_invoked_names": ["CKM_AES_GCM"],
+                            "invoked_detail": ["encrypt_roundtrip"],
+                            "invoked_detail_counts": {"encrypt_roundtrip": 1},
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+
+    exit_code = run_isolated_pytest_units(
+        units,
+        pytest_args,
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=IsolatedReportConfig(
+            "json",
+            results_path,
+            jsonl_path=report_jsonl_path,
+        ),
+        resume=True,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    merged_report = report_jsonl_path.read_text()
+    assert "test_a.py::test_old" in merged_report
+    assert "test_b.py::test_new" in merged_report
+    assert "test_b.py::test_stale" not in merged_report
+    results = json.loads(results_path.read_text())
+    assert [unit["target"] for unit in results["units"]] == units
+    assert [unit["counts"]["passed"] for unit in results["units"]] == [1, 1]
+    coverage = json.loads((tmp_path / "coverage.json").read_text())
+    assert coverage["mechanism_coverage"]["invoked_names"] == ["CKM_AES_CBC", "CKM_AES_GCM"]
+
+
 def test_run_isolated_pytest_units_resume_json_uses_state_records_without_coverage_report(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1189,6 +1614,77 @@ def test_run_isolated_pytest_units_resume_json_uses_state_records_without_covera
     merged_jsonl = report_jsonl_path.read_text()
     assert "test_a.py::test_case" in merged_jsonl
     assert "test_b.py::test_case" in merged_jsonl
+
+
+def test_write_unit_report_record_cache_from_jsonl_paths_streams_sources(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state_file = tmp_path / "state.json"
+    first = tmp_path / "first.jsonl"
+    second = tmp_path / "second.jsonl"
+    first.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "test_a.py::test_one",
+                        "when": "call",
+                        "outcome": "passed",
+                    }
+                ),
+                "not json",
+            ]
+        )
+        + "\n"
+    )
+    second.write_text(
+        json.dumps(
+            {
+                "$report_type": "SelectionReport",
+                "selection_coverage": {
+                    "encrypt_roundtrip": {
+                        "selected_mechanisms": ["CKM_AES_CBC"],
+                        "rejected_mechanisms": [],
+                        "rejected_reason_counts": {},
+                    }
+                },
+            }
+        )
+        + "\n"
+    )
+
+    def load_all_forbidden(_path: Path) -> list[dict[str, object]]:
+        pytest.fail("cache writes from JSONL paths must stream records")
+
+    monkeypatch.setattr(file_runner_mod, "_load_report_log_records", load_all_forbidden)
+
+    file_runner_mod._write_unit_report_record_cache_from_jsonl_paths(
+        state_file,
+        "test_a.py",
+        [first, tmp_path / "missing.jsonl", second],
+    )
+
+    cache_text = file_runner_mod._report_record_cache_path(state_file, "test_a.py").read_text()
+    assert [json.loads(line) for line in cache_text.splitlines()] == [
+        {
+            "$report_type": "TestReport",
+            "nodeid": "test_a.py::test_one",
+            "when": "call",
+            "outcome": "passed",
+        },
+        {
+            "$report_type": "SelectionReport",
+            "selection_coverage": {
+                "encrypt_roundtrip": {
+                    "selected_mechanisms": ["CKM_AES_CBC"],
+                    "rejected_mechanisms": [],
+                    "rejected_reason_counts": {},
+                }
+            },
+        },
+    ]
 
 
 def test_run_isolated_pytest_units_resume_json_rebuilds_multi_unit_log_without_coverage(
@@ -2148,7 +2644,7 @@ def test_run_isolated_pytest_units_preserves_confirmed_crash_in_json_report_afte
     report = json.loads(results_path.read_text())
     unit = report["units"][0]
     assert unit["target"] == "test_a.py"
-    assert unit["status"] == "failed"
+    assert unit["status"] == "crashed"
     assert unit["counts"]["failed"] == 1
     assert unit["counts"]["crashed"] == 1
     assert unit["counts"]["error"] == 0
@@ -2158,6 +2654,96 @@ def test_run_isolated_pytest_units_preserves_confirmed_crash_in_json_report_afte
     assert report["summary"]["failed"] == 1
     assert report["summary"]["crashed"] == 1
     assert report["summary"]["error"] == 0
+
+
+def test_run_isolated_pytest_units_records_crash_confirmation_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    state_file = tmp_path / "state.json"
+    results_path = tmp_path / "results.json"
+    report_jsonl_path = tmp_path / "report.jsonl"
+    seen_file_runs = 0
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del timeout
+        target = cmd[3]
+        report_log_path: Path | None = None
+        for i, arg in enumerate(cmd):
+            if arg == "--report-log" and i + 1 < len(cmd):
+                report_log_path = Path(cmd[i + 1])
+                break
+
+        if target == "test_a.py":
+            if report_log_path is None:
+                raise AssertionError("expected report-log path for file run")
+            nonlocal seen_file_runs
+            seen_file_runs += 1
+            if seen_file_runs == 1:
+                report_log_path.write_text(
+                    "\n".join(
+                        [
+                            _jsonl_line(
+                                nodeid="test_a.py::test_done", when="setup", outcome="passed"
+                            ),
+                            _jsonl_line(
+                                nodeid="test_a.py::test_done", when="call", outcome="passed"
+                            ),
+                            _jsonl_line(
+                                nodeid="test_a.py::test_done", when="teardown", outcome="passed"
+                            ),
+                            _jsonl_line(
+                                nodeid="test_a.py::test_culprit", when="setup", outcome="passed"
+                            ),
+                        ]
+                    )
+                    + "\n"
+                )
+                return (-11, "fatal python error", "")
+
+            assert env is not None
+            assert "PKCS11_CHECK_DESELECT_FILE" in env
+            report_log_path.write_text(
+                _jsonl_line(nodeid="test_a.py::test_remaining", when="call", outcome="passed")
+                + "\n"
+            )
+            return (0, "", "")
+
+        if target == "test_a.py::test_culprit":
+            raise subprocess.TimeoutExpired(cmd, timeout=12)
+
+        raise AssertionError(f"unexpected target {target}")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+
+    exit_code = run_isolated_pytest_units(
+        ["test_a.py"],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_jsonl_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="mixed",
+    )
+
+    assert exit_code == 1
+    report = json.loads(results_path.read_text())
+    unit = report["units"][0]
+    assert unit["target"] == "test_a.py"
+    assert unit["status"] == "timeout"
+    assert unit["counts"]["timeout"] == 1
+    assert report["summary"]["timeout"] == 1
+    by_nodeid = {entry["nodeid"]: entry for entry in unit["tests"]}
+    culprit = by_nodeid["test_a.py::test_culprit"]
+    assert culprit["outcome"] == "timeout"
+    assert "confirmation timed out" in culprit["longrepr"]
 
 
 def test_run_isolated_pytest_units_preserves_file_crash_after_successful_retry(
@@ -2501,6 +3087,211 @@ def test_run_isolated_pytest_units_extracts_per_unit_details(
     report = json.loads(report_path.read_text())
     assert report["units"][0].get("counts") is not None
     assert report["units"][0]["counts"]["passed"] == 1
+
+
+def test_run_isolated_pytest_units_preserves_compliance_notes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen_cmds: list[list[str]] = []
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        seen_cmds.append(list(cmd))
+        for i, arg in enumerate(cmd):
+            if arg == "--report-log" and i + 1 < len(cmd):
+                jsonl_path = Path(cmd[i + 1])
+                jsonl_path.write_text(
+                    json.dumps(
+                        {
+                            "nodeid": "test_a.py::test_ok",
+                            "when": "call",
+                            "outcome": "passed",
+                            "duration": 0.1,
+                            "user_properties": [
+                                [
+                                    "pkcs11_compliance_notes",
+                                    [
+                                        {
+                                            "description": "validation policy accepted",
+                                            "level": "standard",
+                                            "reference": "PKCS#11 v3.2",
+                                            "test_id": "test_ok",
+                                            "nodeid": "test_a.py::test_ok",
+                                        }
+                                    ],
+                                ]
+                            ],
+                        }
+                    )
+                    + "\n"
+                )
+                break
+        return (0, "", "")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    report_path = tmp_path / "results.json"
+
+    exit_code = run_isolated_pytest_units(
+        ["test_a.py"],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    assert seen_cmds
+    report = json.loads(report_path.read_text())
+    assert report["units"][0]["compliance_notes"] == [
+        {
+            "description": "validation policy accepted",
+            "level": "standard",
+            "reference": "PKCS#11 v3.2",
+            "test_id": "test_ok",
+            "nodeid": "test_a.py::test_ok",
+        }
+    ]
+
+
+def test_run_isolated_pytest_units_preserves_real_subprocess_compliance_notes(
+    tmp_path: Path,
+) -> None:
+    testcases_dir = tmp_path / "src" / "pkcs11_check" / "testcases"
+    testcases_dir.mkdir(parents=True)
+    target = testcases_dir / "test_note.py"
+    target.write_text(
+        "\n".join(
+            [
+                "from pkcs11_check.compliance import ComplianceLevel, note",
+                "",
+                "def test_emits_note():",
+                "    note(",
+                "        'validation policy accepted',",
+                "        ComplianceLevel.STANDARD,",
+                "        reference='PKCS#11 v3.2',",
+                "        test_id='test_emits_note',",
+                "    )",
+                "",
+            ]
+        )
+    )
+    report_path = tmp_path / "results.json"
+    report_jsonl = tmp_path / "report.jsonl"
+
+    exit_code = run_isolated_pytest_units(
+        [str(target)],
+        ["--p11-module", "/tmp/mock-module.so"],
+        timeout=30,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path, jsonl_path=report_jsonl),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    report = json.loads(report_path.read_text())
+    expected_fields = {
+        "description": "validation policy accepted",
+        "level": "standard",
+        "reference": "PKCS#11 v3.2",
+        "test_id": "test_emits_note",
+    }
+    assert len(report["units"][0]["compliance_notes"]) == 1
+    unit_note = report["units"][0]["compliance_notes"][0]
+    for key, value in expected_fields.items():
+        assert unit_note[key] == value
+    assert unit_note["nodeid"].endswith("src/pkcs11_check/testcases/test_note.py::test_emits_note")
+    assert report_jsonl.exists()
+    report_records = [json.loads(line) for line in report_jsonl.read_text().splitlines()]
+    call_report = next(record for record in report_records if record.get("when") == "call")
+    assert ["pkcs11_compliance_notes", [unit_note]] in call_report["user_properties"]
+
+
+def test_run_isolated_pytest_units_does_not_retain_cached_report_records(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Large file-level report logs are cached on disk, not retained in state memory."""
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        unit = next((arg for arg in cmd if arg.startswith("test_")), "test_unknown.py")
+        for index, arg in enumerate(cmd):
+            if arg == "--report-log" and index + 1 < len(cmd):
+                jsonl_path = Path(cmd[index + 1])
+                jsonl_path.write_text(
+                    "\n".join(
+                        json.dumps(
+                            {
+                                "$report_type": "TestReport",
+                                "nodeid": f"{unit}::test_{case}",
+                                "when": "call",
+                                "outcome": "passed",
+                                "duration": 0.01,
+                            }
+                        )
+                        for case in range(10)
+                    )
+                    + "\n"
+                )
+                break
+        return (0, "", "")
+
+    seen_record_sizes: list[int] = []
+    real_save_run_state = file_runner_mod.save_run_state
+
+    def observing_save_run_state(path: Path, state: FileRunState) -> None:
+        seen_record_sizes.append(
+            sum(len(records) for records in state.report_records_by_unit.values())
+        )
+        real_save_run_state(path, state)
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(file_runner_mod, "save_run_state", observing_save_run_state)
+
+    report_path = tmp_path / "results.json"
+    state_file = tmp_path / "state.json"
+
+    exit_code = run_isolated_pytest_units(
+        ["test_a.py", "test_b.py"],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=IsolatedReportConfig(
+            "json",
+            report_path,
+            jsonl_path=tmp_path / "report.jsonl",
+        ),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    assert seen_record_sizes
+    assert max(seen_record_sizes) == 0
+    report = json.loads(report_path.read_text())
+    assert report["summary"]["passed"] == 20
+    assert len(_load_cached_report_records_by_unit(state_file, ["test_a.py", "test_b.py"])) == 2
 
 
 def test_run_isolated_pytest_units_writes_quality_report(
@@ -2977,6 +3768,119 @@ def test_write_isolated_json_report_preserves_crashed_test_unit(tmp_path: Path) 
     assert unit["tests"][0]["nodeid"] == "test_a.py::test_case"
     assert unit["tests"][0]["outcome"] == "crashed"
     assert unit["tests"][0]["stderr"] == "segmentation fault"
+
+
+def test_write_isolated_json_report_crash_status_wins_over_failed_count(
+    tmp_path: Path,
+) -> None:
+    state = FileRunState(
+        units=["test_a.py::test_bad", "test_a.py::test_crash"],
+        fingerprint="abc123",
+        results=[
+            FileRunResult("test_a.py::test_bad", "failed", 1, 0.2),
+            FileRunResult(
+                "test_a.py::test_crash",
+                "crashed",
+                -11,
+                0.4,
+                stderr="segmentation fault",
+            ),
+        ],
+    )
+    per_unit_details = {
+        "test_a.py::test_bad": {
+            "counts": {
+                "passed": 0,
+                "failed": 1,
+                "skipped": 0,
+                "xfailed": 0,
+                "xpassed": 0,
+                "error": 0,
+            },
+            "tests": [
+                {
+                    "nodeid": "test_a.py::test_bad",
+                    "outcome": "failed",
+                    "duration": 0.2,
+                    "longrepr": "assert False",
+                }
+            ],
+        }
+    }
+    report_path = tmp_path / "results.json"
+
+    write_isolated_json_report(report_path, state, per_unit_details=per_unit_details)
+
+    report = json.loads(report_path.read_text())
+    assert report["summary"]["failed"] == 1
+    assert report["summary"]["crashed"] == 1
+    unit = report["units"][0]
+    assert unit["target"] == "test_a.py"
+    assert unit["status"] == "crashed"
+    assert unit["counts"]["failed"] == 1
+    assert unit["counts"]["crashed"] == 1
+    outcomes = {record["nodeid"]: record["outcome"] for record in unit["tests"]}
+    assert outcomes == {
+        "test_a.py::test_bad": "failed",
+        "test_a.py::test_crash": "crashed",
+    }
+
+
+@pytest.mark.parametrize(
+    ("special_outcome", "expected_status"),
+    [("crashed", "crashed"), ("timeout", "timeout")],
+)
+def test_write_isolated_json_report_special_detail_status_wins_over_failed_file_result(
+    tmp_path: Path,
+    special_outcome: str,
+    expected_status: str,
+) -> None:
+    state = FileRunState(
+        units=["test_a.py"],
+        fingerprint="abc123",
+        results=[FileRunResult("test_a.py", "failed", 1, 0.2)],
+    )
+    counts = {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+    }
+    counts[special_outcome] = 1
+    per_unit_details = {
+        "test_a.py": {
+            "counts": counts,
+            "tests": [
+                {
+                    "nodeid": "test_a.py::test_bad",
+                    "outcome": "failed",
+                    "duration": 0.1,
+                    "longrepr": "assert False",
+                },
+                {
+                    "nodeid": f"test_a.py::test_{special_outcome}",
+                    "outcome": special_outcome,
+                    "duration": 0.1,
+                    "longrepr": special_outcome,
+                },
+            ],
+        }
+    }
+    report_path = tmp_path / "results.json"
+
+    write_isolated_json_report(report_path, state, per_unit_details=per_unit_details)
+
+    report = json.loads(report_path.read_text())
+    unit = report["units"][0]
+    assert unit["status"] == expected_status
+    assert unit["counts"]["failed"] == 1
+    assert unit["counts"][special_outcome] == 1
+    assert report["summary"]["failed"] == 1
+    assert report["summary"][special_outcome] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -3861,6 +4765,218 @@ def test_file_skip_counts_collected_tests_as_skipped(
     assert unit["file_skip"] is True
     assert unit["counts"]["skipped"] == 2
     assert unit["skip_reasons"] == {"AES_CCM not supported by module": 2}
+    quality = json.loads((tmp_path / "quality.json").read_text())
+    assert quality["file_skipped_units"] == [
+        {"target": str(test_file), "reason": "AES_CCM not supported by module"}
+    ]
+
+
+def test_mechanism_coverage_buckets_required_mechanisms_for_unit_outcomes(
+    tmp_path: Path,
+) -> None:
+    skipped_file = tmp_path / "test_skip.py"
+    skipped_file.write_text('REQUIRED_MECHANISMS = ["AES_CCM"]\ndef test_x(): pass\n')
+    crashed_file = tmp_path / "test_crash.py"
+    crashed_file.write_text('REQUIRED_MECHANISMS = ["HKDF_DERIVE"]\ndef test_x(): pass\n')
+    timeout_file = tmp_path / "test_timeout.py"
+    timeout_file.write_text('REQUIRED_MECHANISMS = ["CKM_ML_DSA"]\ndef test_x(): pass\n')
+    coverage = {
+        "mechanism_coverage": {
+            "available_names": ["CKM_AES_CCM", "CKM_HKDF_DERIVE", "CKM_ML_DSA"],
+            "invoked_names": [],
+            "not_invoked_names": ["CKM_AES_CCM", "CKM_HKDF_DERIVE", "CKM_ML_DSA"],
+            "skipped_by_capability_names": [],
+            "crashed_names": [],
+            "timeout_names": [],
+        }
+    }
+    state = FileRunState(
+        units=[str(skipped_file), str(crashed_file), str(timeout_file)],
+        fingerprint="fp",
+        results=[
+            FileRunResult(str(skipped_file), "passed", 0, 0.0),
+            FileRunResult(str(crashed_file), "crashed", -11, 1.0),
+            FileRunResult(str(timeout_file), "timeout", file_runner_mod._TIMEOUT_RETURN_CODE, 1.0),
+        ],
+    )
+
+    augmented = file_runner_mod._augment_mechanism_coverage_from_unit_outcomes(
+        coverage,
+        state,
+        per_unit_details={str(skipped_file): {"file_skip": True}},
+    )
+
+    mechanism_coverage = augmented["mechanism_coverage"]
+    assert mechanism_coverage["skipped_by_capability_names"] == ["CKM_AES_CCM"]
+    assert mechanism_coverage["crashed_names"] == ["CKM_HKDF_DERIVE"]
+    assert mechanism_coverage["timeout_names"] == ["CKM_ML_DSA"]
+
+
+def test_nodeid_unit_with_missing_required_mechanism_is_skipped_before_pytest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    test_file = tmp_path / "test_example.py"
+    test_file.write_text('REQUIRED_MECHANISMS = ["HKDF_DERIVE"]\ndef test_a(): pass\n')
+    nodeid = f"{test_file}::test_a"
+    report_path = tmp_path / "results.json"
+
+    monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"AES_CBC"})
+    monkeypatch.setattr(
+        file_runner_mod,
+        "collect_pytest_nodeids",
+        lambda targets, pytest_args, *, env=None: [nodeid],
+    )
+
+    def _unexpected_run(*_args: Any, **_kwargs: Any) -> tuple[int, str, str]:
+        pytest.fail("missing REQUIRED_MECHANISMS nodeid unit must not invoke pytest")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", _unexpected_run)
+
+    exit_code = run_isolated_pytest_units(
+        [nodeid],
+        ["--p11-manifest", str(tmp_path / "manifest.json")],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="mixed",
+    )
+
+    assert exit_code == 0
+    report = json.loads(report_path.read_text())
+    assert report["summary"]["skipped"] == 1
+    assert report["summary"]["total"] == 1
+    unit = report["units"][0]
+    assert unit["target"] == str(test_file)
+    assert unit["file_skip"] is True
+    assert unit["counts"]["skipped"] == 1
+    assert unit["skip_reasons"] == {"HKDF_DERIVE not supported by module": 1}
+
+
+def test_file_skip_for_any_missing_required_mechanism_counts_collected_tests(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    test_file = tmp_path / "test_example.py"
+    test_file.write_text(
+        'REQUIRED_MECHANISMS = ["ML_DSA", "ML_DSA_KEY_PAIR_GEN"]\n'
+        "def test_a(): pass\n"
+        "def test_b(): pass\n"
+    )
+    report_path = tmp_path / "results.json"
+    calls: list[list[str]] = []
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        calls.append(cmd)
+        return (0, "", "")
+
+    monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"ML_DSA"})
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(
+        file_runner_mod,
+        "collect_pytest_nodeids",
+        lambda targets, pytest_args, *, env=None: [
+            f"{test_file}::test_a",
+            f"{test_file}::test_b",
+        ],
+    )
+
+    exit_code = run_isolated_pytest_units(
+        [str(test_file)],
+        ["--p11-module", "/tmp/module.so", "--p11-manifest", str(tmp_path / "manifest.json")],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    assert calls == []
+    report = json.loads(report_path.read_text())
+    unit = report["units"][0]
+    assert unit["file_skip"] is True
+    assert unit["counts"]["skipped"] == 2
+    assert unit["skip_reasons"] == {"ML_DSA_KEY_PAIR_GEN not supported by module": 2}
+
+
+def test_file_skip_counts_survive_report_jsonl_merge(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    skipped_file = tmp_path / "test_skipped.py"
+    skipped_file.write_text(
+        'REQUIRED_MECHANISMS = ["EDDSA"]\ndef test_a(): pass\ndef test_b(): pass\n'
+    )
+    passed_file = tmp_path / "test_passed.py"
+    passed_file.write_text("def test_ok(): pass\n")
+    report_path = tmp_path / "results.json"
+    report_jsonl_path = tmp_path / "report.jsonl"
+
+    monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"AES_CBC"})
+    monkeypatch.setattr(
+        file_runner_mod,
+        "collect_pytest_nodeids",
+        lambda targets, pytest_args, *, env=None: [
+            f"{skipped_file}::test_a",
+            f"{skipped_file}::test_b",
+        ],
+    )
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        assert str(passed_file) in cmd
+        report_log_idx = cmd.index("--report-log")
+        unit_jsonl_path = Path(cmd[report_log_idx + 1])
+        unit_jsonl_path.write_text(
+            _jsonl_line(nodeid=f"{passed_file}::test_ok", outcome="passed") + "\n"
+        )
+        return (0, "", "")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+
+    exit_code = run_isolated_pytest_units(
+        [str(skipped_file), str(passed_file)],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path, jsonl_path=report_jsonl_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    report = json.loads(report_path.read_text())
+    assert report["summary"]["passed"] == 1
+    assert report["summary"]["skipped"] == 2
+    assert report["summary"]["total"] == 3
+    units = {unit["target"]: unit for unit in report["units"]}
+    skipped_unit = units[str(skipped_file)]
+    assert skipped_unit["file_skip"] is True
+    assert skipped_unit["counts"]["skipped"] == 2
+    assert skipped_unit["skip_reasons"] == {"EDDSA not supported by module": 2}
+    assert units[str(passed_file)]["counts"]["passed"] == 1
 
 
 def test_file_not_skipped_when_mechanism_present(tmp_path: Path) -> None:

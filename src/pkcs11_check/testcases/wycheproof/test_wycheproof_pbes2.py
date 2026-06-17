@@ -7,12 +7,12 @@ exercises the derived-key handoff into an actual decrypt operation.
 
 from __future__ import annotations
 
-import json
 from ctypes import byref
 from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     PackedMechanism,
     mech_bytes,
@@ -59,8 +59,8 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR
+from pkcs11_check.testcases.conftest import assert_correct, xfail_if_known_ckr
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["PKCS5_PBKD2"]
@@ -116,8 +116,7 @@ def _load_pbes2_vectors() -> list[tuple[str, dict[str, Any]]]:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         prf = _PRF_MAP[prf_name]
         for group in data["testGroups"]:
             for test in group["tests"]:
@@ -200,7 +199,6 @@ def test_pbes2_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_pbes2_runtime_reject(exc, vec_id, "key derivation")
-            pytest.fail(f"PBES2 key derivation failed for valid vector {vec_id}: {exc}")
         return
 
     try:
@@ -216,10 +214,22 @@ def test_pbes2_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
         destroy_quietly(rs.raw, rs.sh, key)
         if result == "valid":
             _xfail_if_pbes2_runtime_reject(exc, vec_id, "decrypt")
-            pytest.fail(f"PBES2 decrypt failed for valid vector {vec_id}: {exc}")
         return
 
     destroy_quietly(rs.raw, rs.sh, key)
     if result == "invalid":
-        pytest.fail(f"PBES2 decrypt {vec_id}: accepted invalid ciphertext")
-    assert plaintext == expected, f"PBES2 plaintext mismatch for {vec_id}"
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            summary=f"PBES2 decrypt {vec_id}: accepted invalid ciphertext",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
+    assert_correct(
+        actual=plaintext,
+        expected=expected,
+        label=f"PBES2:C_Decrypt KAT {vec_id}",
+        operation="C_Decrypt",
+        source=vec.get("_source"),
+        vector_id=vec.get("_vector_id"),
+    )

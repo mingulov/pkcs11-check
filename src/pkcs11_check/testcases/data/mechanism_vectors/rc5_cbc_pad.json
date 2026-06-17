@@ -1,0 +1,26 @@
+{
+  "mechanism": "CKM_RC5_CBC_PAD",
+  "family": "rc5_cbc_pad",
+  "key_type": "CKK_RC5",
+  "source": "RFC 2040 section 9.3 RC5_CBC_Pad; PKCS#7-compatible padding",
+  "source_url": "https://www.rfc-editor.org/rfc/rfc2040",
+  "vectors": [
+    {
+      "id": "rc5_cbc_pad_r8_key40_rfc2040_23bytes",
+      "type": "positive",
+      "mechanism_name": "CKM_RC5_CBC_PAD",
+      "key_type": "symmetric",
+      "key_bits": 40,
+      "key_hex": "0102030405",
+      "params": {
+        "source": "RFC 2040 section 9.3 RC5_CBC_Pad; PKCS#7-compatible padding",
+        "source_url": "https://www.rfc-editor.org/rfc/rfc2040",
+        "word_bits": 32,
+        "rounds": 8,
+        "iv_hex": "0000000000000000"
+      },
+      "plaintext_hex": "ffffffffffffffff7875dbf6738c647811223344556677",
+      "ciphertext_hex": "7875dbf6738c64787cb3f1df34f948117fd1a023a5bba217"
+    }
+  ]
+}

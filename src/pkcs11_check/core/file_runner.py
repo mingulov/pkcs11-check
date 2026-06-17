@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from functools import cache
 from pathlib import Path
@@ -47,6 +47,8 @@ _MAX_TIMEOUT_RETRIES = 3
 # a run that executed nothing must not report success. Maps to the contract's
 # "couldn't run" code 2 (docs/integration-contract.md), so CI gates on rc>=2.
 _NO_TESTS_COLLECTED_EXIT = 2
+# Match the conventional GNU timeout exit code; pytest itself uses only 0-5.
+_TIMEOUT_RETURN_CODE = 124
 _DISABLE_COLLECTION_PROBES_ENV = "PKCS11_CHECK_DISABLE_COLLECTION_PROBES"
 
 _FINGERPRINT_ENV_KEYS = ("BOUNCY_HSM_CFG_STRING", "SOFTHSM2_CONF", "P11TEST_PIN")
@@ -251,6 +253,37 @@ def _markers_by_file(items: list[CollectedPytestItem]) -> dict[str, set[str]]:
     return markers_by_file
 
 
+def validate_subprocess_per_test_expansion(
+    units: Sequence[str],
+    collected_items: Sequence[CollectedPytestItem],
+) -> None:
+    """Refuse file-level units for files marked ``subprocess_per_test``."""
+    marked_files = {
+        normalize_policy_file_key(item.file_path)
+        for item in collected_items
+        if "subprocess_per_test" in item.markers
+    }
+    if not marked_files:
+        return
+
+    bare_file_units: set[str] = set()
+    nodeid_units: set[str] = set()
+    for unit in units:
+        file_part = unit.split("::", 1)[0]
+        file_key = normalize_policy_file_key(file_part)
+        if "::" in unit:
+            nodeid_units.add(file_key)
+        else:
+            bare_file_units.add(file_key)
+
+    bad_files = sorted(file_key for file_key in marked_files if file_key in bare_file_units)
+    missing_nodeids = sorted(file_key for file_key in marked_files if file_key not in nodeid_units)
+    if bad_files or missing_nodeids:
+        affected = sorted(set(bad_files) | set(missing_nodeids))
+        msg = "subprocess_per_test file was not expanded to per-test units: " + ", ".join(affected)
+        raise ValueError(msg)
+
+
 def discover_auto_isolation_units(
     targets: list[str],
     default_root: Path,
@@ -325,6 +358,7 @@ def discover_auto_isolation_units(
             else:
                 units.append(file_unit)
 
+    validate_subprocess_per_test_expansion(units, collected_items)
     return units
 
 
@@ -412,18 +446,34 @@ def _group_results_by_file(
         file_results = groups[file_target]
         merged_counts: dict[str, int] = {key: 0 for key in _DETAIL_COUNT_KEYS}
         merged_tests: list[dict[str, Any]] = []
+        merged_compliance_notes: list[dict[str, Any]] = []
+        merged_skip_reasons: dict[str, int] = {}
+        file_skip = False
         for r in file_results:
-            detail = details.get(r.target, {})
+            detail = _copy_detail(details.get(r.target, {}))
             for key in merged_counts:
                 merged_counts[key] += detail.get("counts", {}).get(key, 0)
             merged_tests.extend(detail.get("tests", []))
-        out.append((file_target, file_results, {"counts": merged_counts, "tests": merged_tests}))
+            merged_compliance_notes.extend(detail.get("compliance_notes", []))
+            for reason, count in detail.get("skip_reasons", {}).items():
+                merged_skip_reasons[reason] = merged_skip_reasons.get(reason, 0) + count
+            if detail.get("file_skip"):
+                file_skip = True
+        merged_detail: dict[str, Any] = {"counts": merged_counts, "tests": merged_tests}
+        if merged_compliance_notes:
+            merged_detail["compliance_notes"] = merged_compliance_notes
+        if merged_skip_reasons:
+            merged_detail["skip_reasons"] = merged_skip_reasons
+        if file_skip:
+            merged_detail["file_skip"] = True
+        out.append((file_target, file_results, merged_detail))
     return out
 
 
 def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
     counts = {key: 0 for key in _DETAIL_COUNT_KEYS}
     tests: list[dict[str, Any]] = []
+    compliance_notes: list[dict[str, Any]] = []
     skip_reasons: dict[str, int] = {}
 
     if isinstance(detail, Mapping):
@@ -436,6 +486,11 @@ def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
         raw_tests = detail.get("tests")
         if isinstance(raw_tests, list):
             tests = [dict(item) for item in raw_tests if isinstance(item, Mapping)]
+        raw_compliance_notes = detail.get("compliance_notes")
+        if isinstance(raw_compliance_notes, list):
+            compliance_notes = [
+                dict(item) for item in raw_compliance_notes if isinstance(item, Mapping)
+            ]
         raw_skip_reasons = detail.get("skip_reasons")
         if isinstance(raw_skip_reasons, Mapping):
             skip_reasons = {
@@ -445,6 +500,8 @@ def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
             }
 
     copied: dict[str, Any] = {"counts": counts, "tests": tests}
+    if compliance_notes:
+        copied["compliance_notes"] = compliance_notes
     if skip_reasons:
         copied["skip_reasons"] = skip_reasons
     if isinstance(detail, Mapping) and detail.get("file_skip"):
@@ -557,10 +614,20 @@ def _merge_special_entries_into_detail(
 
 def _overall_unit_status(file_results: list[FileRunResult]) -> str:
     seen = {result.status for result in file_results}
-    for status in ("failed", "crashed", "timeout", "crash_limited", "passed", "empty", "escalated"):
+    for status in ("timeout", "crashed", "failed", "crash_limited", "passed", "empty", "escalated"):
         if status in seen:
             return status
     return file_results[0].status
+
+
+def _status_with_detail_counts(status: str, counts: Mapping[str, int] | None) -> str:
+    if not counts:
+        return status
+    if counts.get("timeout", 0) > 0:
+        return "timeout"
+    if counts.get("crashed", 0) > 0:
+        return "crashed"
+    return status
 
 
 def _merge_supplemental_special_details(
@@ -571,6 +638,9 @@ def _merge_supplemental_special_details(
 
     for unit, detail in supplemental_details.items():
         if not isinstance(detail, Mapping):
+            continue
+        if detail.get("file_skip") is True:
+            merged[unit] = _copy_detail(detail)
             continue
         raw_tests = detail.get("tests")
         if not isinstance(raw_tests, list):
@@ -586,6 +656,69 @@ def _merge_supplemental_special_details(
         merged[unit] = _merge_special_entries_into_detail(merged.get(unit), special_entries)
 
     return merged
+
+
+def _required_ckm_names_for_unit(unit: str) -> list[str]:
+    required = extract_required_mechanisms(unit.split("::", 1)[0])
+    if not required:
+        return []
+    return sorted(
+        name if name.startswith("CKM_") else f"CKM_{name}"
+        for name in required
+        if isinstance(name, str) and name
+    )
+
+
+def _mechanism_name_set(value: Any) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    return {str(name) for name in value if name is not None}
+
+
+def _augment_mechanism_coverage_from_unit_outcomes(
+    coverage: dict[str, Any] | None,
+    state: FileRunState,
+    *,
+    per_unit_details: Mapping[str, dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """Annotate coverage states for explicit per-file mechanism outcomes."""
+    if coverage is None:
+        return None
+    raw_mechanism_coverage = coverage.get("mechanism_coverage")
+    if not isinstance(raw_mechanism_coverage, Mapping):
+        return coverage
+
+    augmented = dict(coverage)
+    mechanism_coverage = dict(raw_mechanism_coverage)
+    augmented["mechanism_coverage"] = mechanism_coverage
+
+    bucket_names = {
+        "skipped_by_capability_names": _mechanism_name_set(
+            mechanism_coverage.get("skipped_by_capability_names")
+        ),
+        "crashed_names": _mechanism_name_set(mechanism_coverage.get("crashed_names")),
+        "timeout_names": _mechanism_name_set(mechanism_coverage.get("timeout_names")),
+    }
+
+    for unit, file_results, merged_detail in _group_results_by_file(
+        state.results,
+        dict(per_unit_details or {}),
+    ):
+        required_names = _required_ckm_names_for_unit(unit)
+        if not required_names:
+            continue
+        if merged_detail.get("file_skip") is True:
+            bucket_names["skipped_by_capability_names"].update(required_names)
+        status = _overall_unit_status(file_results)
+        if status == "crashed":
+            bucket_names["crashed_names"].update(required_names)
+        elif status == "timeout":
+            bucket_names["timeout_names"].update(required_names)
+
+    for key, names in bucket_names.items():
+        mechanism_coverage[key] = sorted(names)
+
+    return augmented
 
 
 def write_isolated_json_report(
@@ -636,6 +769,8 @@ def _build_isolated_json_payload(
             if (entry := _special_test_entry_from_result(result)) is not None
         ]
         detail = _merge_special_entries_into_detail(merged_detail, special_entries)
+        counts = detail.get("counts")
+        overall_status = _status_with_detail_counts(overall_status, counts)
         if overall_status in {"crashed", "timeout"} and not any(detail["counts"].values()):
             detail["counts"][overall_status] = 1
         duration = sum(r.duration_s for r in file_results)
@@ -657,7 +792,6 @@ def _build_isolated_json_payload(
         if stderr_parts:
             unit["stderr"] = "\n".join(stderr_parts)
 
-        counts = detail.get("counts")
         if counts and any(v > 0 for v in counts.values()):
             unit["counts"] = counts
             for key in summary:
@@ -665,6 +799,9 @@ def _build_isolated_json_payload(
         tests = detail.get("tests")
         if tests:
             unit["tests"] = tests
+        compliance_notes = detail.get("compliance_notes")
+        if compliance_notes:
+            unit["compliance_notes"] = compliance_notes
         sr = detail.get("skip_reasons")
         if sr:
             unit["skip_reasons"] = sr
@@ -814,11 +951,15 @@ def write_isolated_report(
 
 def _load_report_log_records(jsonl_path: Path) -> list[dict[str, Any]]:
     """Load parseable JSONL report-log records from disk (streamed line-by-line)."""
-    records: list[dict[str, Any]] = []
+    return list(_iter_report_log_records(jsonl_path))
+
+
+def _iter_report_log_records(jsonl_path: Path) -> Iterable[dict[str, Any]]:
+    """Yield parseable JSONL report-log records from disk line-by-line."""
     try:
         fh = jsonl_path.open(encoding="utf-8")
     except (FileNotFoundError, OSError):
-        return []
+        return
     with fh:
         for line in fh:
             line = line.strip()
@@ -829,8 +970,7 @@ def _load_report_log_records(jsonl_path: Path) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
             if isinstance(rec, dict):
-                records.append(rec)
-    return records
+                yield rec
 
 
 def _report_record_cache_dir(state_file: Path) -> Path:
@@ -852,6 +992,31 @@ def _write_unit_report_record_cache(
     cache_path.write_text("".join(json.dumps(record) + "\n" for record in records))
 
 
+def _write_unit_report_record_cache_from_jsonl_paths(
+    state_file: Path,
+    unit: str,
+    jsonl_paths: Sequence[Path],
+) -> None:
+    """Persist one unit's report-record cache by streaming source JSONL files."""
+    cache_path = _report_record_cache_path(state_file, unit)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = cache_path.with_suffix(".jsonl.tmp")
+    wrote = False
+    try:
+        with tmp_path.open("w", encoding="utf-8") as out_fh:
+            for jsonl_path in jsonl_paths:
+                for record in _iter_report_log_records(jsonl_path):
+                    out_fh.write(json.dumps(record) + "\n")
+                    wrote = True
+        if wrote:
+            tmp_path.replace(cache_path)
+        else:
+            tmp_path.unlink(missing_ok=True)
+            cache_path.unlink(missing_ok=True)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 def _delete_unit_report_record_cache(state_file: Path, unit: str) -> None:
     _report_record_cache_path(state_file, unit).unlink(missing_ok=True)
 
@@ -866,6 +1031,83 @@ def _load_cached_report_records_by_unit(
         if records:
             cached[unit] = records
     return cached
+
+
+def _ordered_report_record_units(
+    units: Sequence[str],
+    inline_records_by_unit: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> Iterable[str]:
+    seen: set[str] = set()
+    for unit in units:
+        seen.add(unit)
+        yield unit
+    for unit in sorted(inline_records_by_unit):
+        if unit not in seen:
+            yield unit
+
+
+def _iter_unit_report_record_source(
+    state_file: Path,
+    unit: str,
+    inline_records_by_unit: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> Iterable[Mapping[str, Any]]:
+    """Yield one unit's report records from its cache shard or inline fallback."""
+    cache_path = _report_record_cache_path(state_file, unit)
+    yielded_cache_record = False
+    if cache_path.exists():
+        for record in _iter_report_log_records(cache_path):
+            yielded_cache_record = True
+            yield record
+        if yielded_cache_record:
+            return
+
+    for inline_record in inline_records_by_unit.get(unit, []):
+        if isinstance(inline_record, Mapping):
+            yield inline_record
+
+
+def _write_report_jsonl_from_record_sources(
+    state_file: Path,
+    *,
+    units: Sequence[str],
+    inline_records_by_unit: Mapping[str, Sequence[Mapping[str, Any]]],
+    output_path: Path,
+) -> bool:
+    """Write merged report.jsonl from per-unit cache shards without loading all records."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_path.with_suffix(".jsonl.tmp")
+    wrote = False
+    try:
+        with tmp_path.open("w", encoding="utf-8") as out_fh:
+            for unit in _ordered_report_record_units(units, inline_records_by_unit):
+                for record in _iter_unit_report_record_source(
+                    state_file, unit, inline_records_by_unit
+                ):
+                    out_fh.write(json.dumps(record) + "\n")
+                    wrote = True
+        if wrote:
+            tmp_path.replace(output_path)
+        else:
+            tmp_path.unlink(missing_ok=True)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+    return wrote
+
+
+def _build_per_unit_details_from_record_sources(
+    state_file: Path,
+    *,
+    units: Sequence[str],
+    inline_records_by_unit: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> dict[str, dict[str, Any]]:
+    details: dict[str, dict[str, Any]] = {}
+    for unit in _ordered_report_record_units(units, inline_records_by_unit):
+        detail = _build_detail_from_report_records(
+            _iter_unit_report_record_source(state_file, unit, inline_records_by_unit)
+        )
+        if detail is not None:
+            details[unit] = detail
+    return details
 
 
 # The only consumer of these records is build_quality_audit(); it reads just
@@ -1017,14 +1259,37 @@ def _extract_unit_report_records_from_jsonl(
     candidate_targets: set[str],
 ) -> dict[str, list[dict[str, Any]]]:
     """Split a merged report.jsonl back into per-unit record chunks."""
-    records = _load_report_log_records(jsonl_path)
-    if not records:
-        return {}
+    records_by_unit: dict[str, list[dict[str, Any]]] = {}
+    for unit_target, records in _iter_unit_report_record_chunks_from_jsonl(
+        jsonl_path,
+        candidate_targets=candidate_targets,
+    ):
+        records_by_unit.setdefault(unit_target, []).extend(records)
+    return records_by_unit
 
-    chunks: list[list[dict[str, Any]]] = []
+
+def _iter_unit_report_record_chunks_from_jsonl(
+    jsonl_path: Path,
+    *,
+    candidate_targets: set[str],
+) -> Iterable[tuple[str, list[dict[str, Any]]]]:
+    """Yield per-unit record chunks from a merged report.jsonl without a full map."""
     current_chunk: list[dict[str, Any]] = []
     current_target: str | None = None
-    for record in records:
+
+    def pop_current_chunk() -> tuple[str, list[dict[str, Any]]] | None:
+        nonlocal current_chunk, current_target
+        if not current_chunk:
+            return None
+        unit_target = _infer_unit_target_from_records(current_chunk, candidate_targets)
+        chunk = current_chunk
+        current_chunk = []
+        current_target = None
+        if unit_target is not None:
+            return unit_target, chunk
+        return None
+
+    for record in _iter_report_log_records(jsonl_path):
         record_target = _unit_candidate_from_record(record, candidate_targets)
         if (
             current_chunk
@@ -1032,26 +1297,64 @@ def _extract_unit_report_records_from_jsonl(
             and record_target is not None
             and record_target != current_target
         ):
-            chunks.append(current_chunk)
-            current_chunk = []
-            current_target = None
+            chunk = pop_current_chunk()
+            if chunk is not None:
+                yield chunk
         current_chunk.append(record)
         if current_target is None and record_target is not None:
             current_target = record_target
         if record.get("$report_type") == "CoverageReport":
-            chunks.append(current_chunk)
-            current_chunk = []
-            current_target = None
-    if current_chunk:
-        chunks.append(current_chunk)
+            chunk = pop_current_chunk()
+            if chunk is not None:
+                yield chunk
 
-    records_by_unit: dict[str, list[dict[str, Any]]] = {}
-    for chunk in chunks:
-        unit_target = _infer_unit_target_from_records(chunk, candidate_targets)
-        if unit_target is None:
-            continue
-        records_by_unit.setdefault(unit_target, []).extend(chunk)
-    return records_by_unit
+    chunk = pop_current_chunk()
+    if chunk is not None:
+        yield chunk
+
+
+def _report_record_cache_has_records(state_file: Path, unit: str) -> bool:
+    for _record in _iter_report_log_records(_report_record_cache_path(state_file, unit)):
+        return True
+    return False
+
+
+def _seed_missing_report_record_caches_from_jsonl(
+    state_file: Path,
+    jsonl_path: Path,
+    *,
+    candidate_targets: set[str],
+    skip_units: Iterable[str] = (),
+) -> None:
+    """Populate absent per-unit cache shards by streaming an existing merged report."""
+    skip_unit_set = set(skip_units)
+    existing_cache_units: set[str] = set()
+    tmp_paths: dict[str, Path] = {}
+    try:
+        for unit, records in _iter_unit_report_record_chunks_from_jsonl(
+            jsonl_path,
+            candidate_targets=candidate_targets,
+        ):
+            if unit in skip_unit_set or unit in existing_cache_units:
+                continue
+            if unit not in tmp_paths and _report_record_cache_has_records(state_file, unit):
+                existing_cache_units.add(unit)
+                continue
+            cache_path = _report_record_cache_path(state_file, unit)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = tmp_paths.get(unit)
+            if tmp_path is None:
+                tmp_path = cache_path.with_suffix(".jsonl.resume.tmp")
+                tmp_path.unlink(missing_ok=True)
+                tmp_paths[unit] = tmp_path
+            with tmp_path.open("a", encoding="utf-8") as out_fh:
+                for record in records:
+                    out_fh.write(json.dumps(record) + "\n")
+        for unit, tmp_path in tmp_paths.items():
+            tmp_path.replace(_report_record_cache_path(state_file, unit))
+    finally:
+        for tmp_path in tmp_paths.values():
+            tmp_path.unlink(missing_ok=True)
 
 
 def _write_report_jsonl_from_record_map(
@@ -1080,13 +1383,45 @@ def _write_report_jsonl_from_record_map(
         tmp_path.unlink(missing_ok=True)
 
 
+_COMPLIANCE_NOTE_FIELDS = ("description", "level", "reference", "test_id", "nodeid")
+
+
+def _compliance_notes_from_user_properties(
+    user_properties: Any,
+    *,
+    nodeid: str,
+) -> list[dict[str, str]]:
+    if not isinstance(user_properties, list):
+        return []
+
+    notes: list[dict[str, str]] = []
+    for prop in user_properties:
+        if not isinstance(prop, (list, tuple)) or len(prop) != 2:
+            continue
+        name, value = prop
+        if name != "pkcs11_compliance_notes" or not isinstance(value, list):
+            continue
+        for raw_note in value:
+            if not isinstance(raw_note, Mapping):
+                continue
+            note = {
+                field: str(raw_note.get(field, ""))
+                for field in _COMPLIANCE_NOTE_FIELDS
+                if raw_note.get(field, "") not in (None, "")
+            }
+            if "nodeid" not in note and nodeid:
+                note["nodeid"] = nodeid
+            if note.get("description") and note.get("level"):
+                notes.append(note)
+    return notes
+
+
 def _build_detail_from_report_records(
-    records: Sequence[Mapping[str, Any]],
+    records: Iterable[Mapping[str, Any]],
+    *,
+    call_record_hook: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> dict[str, Any] | None:
     """Build per-unit detail payload from parsed report-log records."""
-    if not records:
-        return None
-
     counts: dict[str, int] = {
         "passed": 0,
         "failed": 0,
@@ -1098,6 +1433,8 @@ def _build_detail_from_report_records(
         "timeout": 0,
     }
     non_passing: list[dict[str, Any]] = []
+    compliance_notes: list[dict[str, str]] = []
+    seen_compliance_notes: set[tuple[tuple[str, str], ...]] = set()
     skip_reasons: dict[str, int] = {}
     seen_call: set[str] = set()
     setup_events: list[Mapping[str, Any]] = []
@@ -1125,6 +1462,8 @@ def _build_detail_from_report_records(
         if when == "call":
             seen_call.add(str(nodeid))
             call_events.append(rec)
+            if call_record_hook is not None:
+                call_record_hook(rec)
         elif when == "setup" and outcome in ("skipped", "failed", "error"):
             setup_events.append(rec)
 
@@ -1134,6 +1473,14 @@ def _build_detail_from_report_records(
         wasxfail = rec.get("wasxfail")
         mapped = _map_outcome(raw_outcome, wasxfail)
         counts[mapped] = counts.get(mapped, 0) + 1
+        for note in _compliance_notes_from_user_properties(
+            rec.get("user_properties"), nodeid=str(nodeid)
+        ):
+            key = tuple((field, note.get(field, "")) for field in _COMPLIANCE_NOTE_FIELDS)
+            if key in seen_compliance_notes:
+                continue
+            seen_compliance_notes.add(key)
+            compliance_notes.append(note)
 
         if mapped == "skipped":
             reason = _flatten_longrepr(rec.get("longrepr")) or "skipped"
@@ -1213,9 +1560,11 @@ def _build_detail_from_report_records(
             entry["longrepr"] = flat
         non_passing.append(entry)
 
-    if not any(counts.values()):
+    if not any(counts.values()) and not compliance_notes:
         return None
     result: dict[str, Any] = {"counts": counts, "tests": non_passing}
+    if compliance_notes:
+        result["compliance_notes"] = compliance_notes
     if skip_reasons:
         result["skip_reasons"] = skip_reasons
     return result
@@ -1246,9 +1595,20 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     all_invoked: set[str] = set()
     all_not_invoked: set[str] = set()
     all_available_mechs: set[str] = set()
+    all_advertised_mechs: set[str] = set()
+    all_selected_mechs: set[str] = set()
+    all_selection_rejected_mechs: set[str] = set()
+    all_attempted_mechs: set[str] = set()
+    all_accepted_mechs: set[str] = set()
+    all_rejected_cleanly_mechs: set[str] = set()
+    all_skipped_by_capability_mechs: set[str] = set()
+    all_crashed_mechs: set[str] = set()
+    all_timeout_mechs: set[str] = set()
     all_detail: set[str] = set()
     all_func_counts: Counter[str] = Counter()
     all_bootstrap_counts: Counter[str] = Counter()
+    all_module_session_health_checks = 0
+    all_module_session_health_duration_s = 0.0
     all_mech_counts: Counter[str] = Counter()
     all_detail_counts: Counter[str] = Counter()
     found = False
@@ -1277,10 +1637,25 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             all_uncalled.update(fc.get("uncalled_names", []))
             all_func_counts.update(fc.get("called_counts", {}))
             all_bootstrap_counts.update(fc.get("bootstrap_counts", {}))
+            module_session_health = fc.get("module_session_health", {})
+            if isinstance(module_session_health, dict):
+                all_module_session_health_checks += int(module_session_health.get("checks", 0) or 0)
+                all_module_session_health_duration_s += float(
+                    module_session_health.get("duration_s", 0.0) or 0.0
+                )
             mc = rec.get("mechanism_coverage", {})
             all_available_mechs.update(mc.get("available_names", []))
             all_invoked.update(mc.get("invoked_names", []))
             all_not_invoked.update(mc.get("not_invoked_names", []))
+            all_advertised_mechs.update(mc.get("advertised_names", mc.get("available_names", [])))
+            all_selected_mechs.update(mc.get("selected_names", []))
+            all_selection_rejected_mechs.update(mc.get("selection_rejected_names", []))
+            all_attempted_mechs.update(mc.get("attempted_names", mc.get("invoked_names", [])))
+            all_accepted_mechs.update(mc.get("accepted_names", []))
+            all_rejected_cleanly_mechs.update(mc.get("rejected_cleanly_names", []))
+            all_skipped_by_capability_mechs.update(mc.get("skipped_by_capability_names", []))
+            all_crashed_mechs.update(mc.get("crashed_names", []))
+            all_timeout_mechs.update(mc.get("timeout_names", []))
             all_detail.update(mc.get("invoked_detail", []))
             all_mech_counts.update(mc.get("invoked_counts", {}))
             all_detail_counts.update(mc.get("invoked_detail_counts", {}))
@@ -1297,11 +1672,19 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             "called_names": sorted(all_called),
             "called_counts": dict(all_func_counts),
             "bootstrap_counts": dict(all_bootstrap_counts),
+            "module_session_health": {
+                "checks": all_module_session_health_checks,
+                "duration_s": all_module_session_health_duration_s,
+            },
             "uncalled_names": merged_uncalled,
         },
         "mechanism_coverage": {
             "available": len(all_available_mechs),
             "available_names": sorted(all_available_mechs),
+            "advertised_names": sorted(all_advertised_mechs),
+            "selected_names": sorted(all_selected_mechs),
+            "selection_rejected_names": sorted(all_selection_rejected_mechs),
+            "attempted_names": sorted(all_attempted_mechs),
             "invoked": len(all_invoked),
             "invoked_names": sorted(all_invoked),
             "invoked_counts": dict(all_mech_counts),
@@ -1309,6 +1692,11 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             "not_invoked_names": merged_not_invoked,
             "invoked_detail": sorted(all_detail),
             "invoked_detail_counts": dict(all_detail_counts),
+            "accepted_names": sorted(all_accepted_mechs),
+            "rejected_cleanly_names": sorted(all_rejected_cleanly_mechs),
+            "skipped_by_capability_names": sorted(all_skipped_by_capability_mechs),
+            "crashed_names": sorted(all_crashed_mechs),
+            "timeout_names": sorted(all_timeout_mechs),
         },
     }
 
@@ -1319,10 +1707,24 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
     Groups tests by file and writes the unified JSON report.
     Used for ``--isolation none`` to produce consistent output.
     """
+    file_counts: dict[str, dict[str, int]] = {}
+
+    def _accumulate_file_count(rec: Mapping[str, Any]) -> None:
+        nodeid = str(rec.get("nodeid", ""))
+        file_part = nodeid.split("::")[0]
+        if not file_part:
+            return
+        if file_part not in file_counts:
+            file_counts[file_part] = {key: 0 for key in _DETAIL_COUNT_KEYS}
+        outcome = _map_outcome(rec.get("outcome", "passed"), rec.get("wasxfail"))
+        file_counts[file_part][outcome] = file_counts[file_part].get(outcome, 0) + 1
+
     # Parse the JSONL once: build the aggregate detail and the per-file counts
-    # from the same record set (records are already filtered to dicts).
-    records = _load_report_log_records(jsonl_path)
-    detail = _build_detail_from_report_records(records) if records else None
+    # from the same streaming record pass.
+    detail = _build_detail_from_report_records(
+        _iter_report_log_records(jsonl_path),
+        call_record_hook=_accumulate_file_count,
+    )
     if detail is None:
         return None
 
@@ -1332,21 +1734,21 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
         file_part = test.get("nodeid", "").split("::")[0]
         by_file.setdefault(file_part, []).append(test)
 
-    file_counts: dict[str, dict[str, int]] = {}
-    for rec in records:
-        if rec.get("$report_type") != "TestReport" or rec.get("when") != "call":
+    compliance_notes_by_file: dict[str, list[dict[str, Any]]] = {}
+    for note in detail.get("compliance_notes", []):
+        if not isinstance(note, Mapping):
             continue
-        nodeid = rec.get("nodeid", "")
-        file_part = nodeid.split("::")[0]
-        if file_part not in file_counts:
-            file_counts[file_part] = {key: 0 for key in _DETAIL_COUNT_KEYS}
-        outcome = _map_outcome(rec.get("outcome", "passed"), rec.get("wasxfail"))
-        file_counts[file_part][outcome] = file_counts[file_part].get(outcome, 0) + 1
+        file_part = str(note.get("nodeid", "")).split("::")[0]
+        if not file_part:
+            continue
+        compliance_notes_by_file.setdefault(file_part, []).append(dict(note))
 
     summary: dict[str, int] = {key: 0 for key in _DETAIL_COUNT_KEYS}
     units: list[dict[str, Any]] = []
 
-    for target in sorted(set(list(by_file.keys()) + list(file_counts.keys()))):
+    for target in sorted(
+        set(list(by_file.keys()) + list(file_counts.keys()) + list(compliance_notes_by_file.keys()))
+    ):
         counts = file_counts.get(target, {key: 0 for key in _DETAIL_COUNT_KEYS})
         for key in summary:
             summary[key] += counts.get(key, 0)
@@ -1363,6 +1765,9 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
         tests = by_file.get(target, [])
         if tests:
             unit["tests"] = tests
+        compliance_notes = compliance_notes_by_file.get(target, [])
+        if compliance_notes:
+            unit["compliance_notes"] = compliance_notes
         units.append(unit)
 
     summary["total"] = sum(summary.values())
@@ -1413,9 +1818,9 @@ def save_run_state(path: Path, state: FileRunState) -> None:
     them back from those shards. Embedding the records in state.json made the
     payload grow to hundreds of MB and turned the per-unit save into an O(n^2)
     re-serialization (~14 min on a full bouncyhsm round) for data that is never
-    the sole source of truth. The in-memory dict remains available as a
-    same-process fallback in the merge step; on resume the records are
-    reconstructed from the shards (and the prior report.jsonl).
+    the sole source of truth. The in-memory dict is retained only as a
+    legacy/debug inline-state fallback; normal runs reconstruct records from
+    the shards (and the prior report.jsonl on resume).
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     payload: dict[str, Any] = {
@@ -1675,9 +2080,56 @@ def _status_from_returncode(returncode: int) -> str:
         return "passed"
     if returncode == 5:
         return "empty"
+    if returncode == _TIMEOUT_RETURN_CODE:
+        return "timeout"
     if returncode < 0:
         return "crashed"
     return "failed"
+
+
+_CRASH_SIGNALS: dict[int, str] = {
+    -11: "SIGSEGV",
+    -6: "SIGABRT",
+    -5: "SIGTRAP",
+    -4: "SIGILL",
+    -8: "SIGFPE",
+    -7: "SIGBUS",
+}
+
+
+def crash_classification(
+    *,
+    returncode: int | None,
+    target: str,
+    timed_out: bool = False,
+) -> dict[str, object]:
+    """Build a Classification-shaped dict for a crashed/hung test unit (process is dead, so
+    this is produced runner/report-side, not via classify())."""
+    if timed_out:
+        detail: dict[str, object] = {"mode": "timeout"}
+    else:
+        signal = _CRASH_SIGNALS.get(
+            returncode,  # type: ignore[arg-type]
+            (f"signal{abs(returncode)}" if returncode else "unknown"),
+        )
+        detail = {"signal": signal, "returncode": returncode}
+    return {
+        "schema": 1,
+        "reason": "crash",
+        "outcome": "fail",
+        "severity": "HIGH",
+        "kind": None,
+        "label": target,
+        "summary": f"{target}: process crashed",
+        "operation": None,
+        "mechanism": None,
+        "expected_ckr": None,
+        "actual_ckr": None,
+        "spec_ref": "",
+        "source": None,
+        "vector_id": None,
+        "detail": detail,
+    }
 
 
 def _maybe_set_crash_journal(run_env: dict[str, str], unit: str) -> None:
@@ -1744,7 +2196,7 @@ def _map_outcome(raw_outcome: str, wasxfail: str | None) -> str:
 
 
 def _identify_crash_culprit_from_records(
-    records: list[dict[str, Any]],
+    records: Iterable[Mapping[str, Any]],
 ) -> tuple[str | None, list[str]]:
     """Identify crash culprit and completed tests from already-loaded records.
 
@@ -1757,17 +2209,29 @@ def _identify_crash_culprit_from_records(
     so a caller that also needs the per-test detail can parse the JSONL once
     and feed both this and ``_build_detail_from_report_records``.
     """
-    # Per-nodeid phase tracking, preserving insertion order.
     phases: dict[str, set[str]] = {}
     for rec in records:
-        if rec.get("$report_type", "TestReport") != "TestReport":
-            continue
-        nodeid: str = rec.get("nodeid", "")
-        when: str = rec.get("when", "")
-        if not nodeid or not when:
-            continue
-        phases.setdefault(nodeid, set()).add(when)
+        _record_crash_phase(phases, rec)
 
+    return _crash_culprit_from_phases(phases)
+
+
+def _record_crash_phase(
+    phases: dict[str, set[str]],
+    rec: Mapping[str, Any],
+) -> None:
+    """Track pytest phase progress for crash culprit identification."""
+    if rec.get("$report_type", "TestReport") != "TestReport":
+        return
+    nodeid: str = rec.get("nodeid", "")
+    when: str = rec.get("when", "")
+    if not nodeid or not when:
+        return
+    phases.setdefault(nodeid, set()).add(when)
+
+
+def _crash_culprit_from_phases(phases: Mapping[str, set[str]]) -> tuple[str | None, list[str]]:
+    """Return the unfinished setup node and completed tests from phase state."""
     completed: list[str] = []
     culprit: str | None = None
     for nid, ph in phases.items():
@@ -1784,7 +2248,7 @@ def _identify_crash_culprit(jsonl_path: Path) -> tuple[str | None, list[str]]:
 
     Thin path wrapper over :func:`_identify_crash_culprit_from_records`.
     """
-    return _identify_crash_culprit_from_records(_load_report_log_records(jsonl_path))
+    return _identify_crash_culprit_from_records(_iter_report_log_records(jsonl_path))
 
 
 def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
@@ -1794,10 +2258,51 @@ def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
     only non-passing entries (failed, xfailed, xpassed, error).
     Returns ``None`` if the file is missing or empty.
     """
-    records = _load_report_log_records(jsonl_path)
-    if not records:
-        return None
-    return _build_detail_from_report_records(records)
+    return _build_detail_from_report_records(_iter_report_log_records(jsonl_path))
+
+
+def _analyze_report_jsonl(
+    jsonl_path: Path,
+    *,
+    state_file: Path | None = None,
+    unit: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None, list[str]]:
+    """Stream a report JSONL once to build detail, crash progress, and optional cache."""
+    if (state_file is None) != (unit is None):
+        raise ValueError("state_file and unit must be provided together")
+
+    phases: dict[str, set[str]] = {}
+    cache_path = _report_record_cache_path(state_file, unit) if state_file and unit else None
+    tmp_path = cache_path.with_suffix(".jsonl.tmp") if cache_path is not None else None
+    wrote_cache = False
+
+    def iter_records(cache_fh: Any | None = None) -> Iterable[dict[str, Any]]:
+        nonlocal wrote_cache
+        for record in _iter_report_log_records(jsonl_path):
+            _record_crash_phase(phases, record)
+            if cache_fh is not None:
+                cache_fh.write(json.dumps(record) + "\n")
+                wrote_cache = True
+            yield record
+
+    if cache_path is None or tmp_path is None:
+        detail = _build_detail_from_report_records(iter_records())
+        culprit, completed = _crash_culprit_from_phases(phases)
+        return detail, culprit, completed
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with tmp_path.open("w", encoding="utf-8") as out_fh:
+            detail = _build_detail_from_report_records(iter_records(out_fh))
+        if wrote_cache:
+            tmp_path.replace(cache_path)
+        else:
+            tmp_path.unlink(missing_ok=True)
+            cache_path.unlink(missing_ok=True)
+        culprit, completed = _crash_culprit_from_phases(phases)
+        return detail, culprit, completed
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def _unit_timeout_seconds(
@@ -2236,7 +2741,6 @@ def run_isolated_pytest_units(
         )
 
     per_unit_details: dict[str, dict[str, Any]] = {}
-    report_records_by_unit: dict[str, list[dict[str, Any]]] = {}
     executed_units: set[str] = set()
     available_mechanisms = _load_available_mechanisms(pytest_args)
 
@@ -2245,35 +2749,42 @@ def run_isolated_pytest_units(
         if report_config is not None:
             coverage_data: dict[str, Any] | None = None
             quality_records: list[dict[str, Any]] = []
-            merged_report_records_by_unit = _load_cached_report_records_by_unit(
-                state_file, state.units
-            )
+            inline_report_records_by_unit: dict[str, Sequence[Mapping[str, Any]]] = {}
             for unit, records in state.report_records_by_unit.items():
-                merged_report_records_by_unit.setdefault(unit, records)
+                inline_report_records_by_unit.setdefault(unit, records)
             if (
                 resume
                 and report_config.jsonl_path is not None
                 and report_config.jsonl_path.exists()
             ):
                 candidate_targets = set(state.units) | {result.target for result in state.results}
-                parsed_report_records = _extract_unit_report_records_from_jsonl(
+                _seed_missing_report_record_caches_from_jsonl(
+                    state_file,
                     report_config.jsonl_path,
                     candidate_targets=candidate_targets,
+                    skip_units=inline_report_records_by_unit,
                 )
-                for unit, records in parsed_report_records.items():
-                    merged_report_records_by_unit.setdefault(unit, records)
-            merged_details = _build_per_unit_details_from_record_map(merged_report_records_by_unit)
+            merged_details = _build_per_unit_details_from_record_sources(
+                state_file,
+                units=state.units,
+                inline_records_by_unit=inline_report_records_by_unit,
+            )
             if report_config.jsonl_path is not None:
-                if merged_report_records_by_unit:
-                    _write_report_jsonl_from_record_map(
-                        merged_report_records_by_unit,
-                        units=state.units,
-                        output_path=report_config.jsonl_path,
-                    )
-                if report_config.jsonl_path.exists():
+                wrote_report_jsonl = _write_report_jsonl_from_record_sources(
+                    state_file,
+                    units=state.units,
+                    inline_records_by_unit=inline_report_records_by_unit,
+                    output_path=report_config.jsonl_path,
+                )
+                if wrote_report_jsonl or report_config.jsonl_path.exists():
                     coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
                     quality_records = extract_quality_report_records_from_jsonl(
                         report_config.jsonl_path
+                    )
+                    coverage_data = _augment_mechanism_coverage_from_unit_outcomes(
+                        coverage_data,
+                        state,
+                        per_unit_details=merged_details,
                     )
                     if coverage_data:
                         coverage_path = report_config.jsonl_path.parent / "coverage.json"
@@ -2315,9 +2826,9 @@ def run_isolated_pytest_units(
                 state.report_records_by_unit.pop(unit, None)
             console.print(f"[cyan][{index + 1}/{len(units)}][/cyan] {unit}")
 
-            # -- File-level mechanism skip --
+            # -- Static mechanism skip --
             if available_mechanisms is not None:
-                required = extract_required_mechanisms(unit)
+                required = extract_required_mechanisms(unit.split("::", 1)[0])
                 if required is not None:
                     missing = [m for m in required if m not in available_mechanisms]
                     if missing:
@@ -2387,16 +2898,16 @@ def run_isolated_pytest_units(
                 except subprocess.TimeoutExpired:
                     duration_s = time.monotonic() - start
                     if unit_jsonl_path is not None:
-                        unit_records = _load_report_log_records(unit_jsonl_path)
-                        if unit_records:
-                            report_records_by_unit[unit] = unit_records
-                            state.report_records_by_unit[unit] = unit_records
-                            if report_config is not None and report_config.jsonl_path is not None:
-                                _write_unit_report_record_cache(state_file, unit, unit_records)
+                        if report_config is not None and report_config.jsonl_path is not None:
+                            _write_unit_report_record_cache_from_jsonl_paths(
+                                state_file,
+                                unit,
+                                [unit_jsonl_path],
+                            )
                     result = FileRunResult(
                         target=unit,
                         status="timeout",
-                        returncode=124,
+                        returncode=_TIMEOUT_RETURN_CODE,
                         duration_s=duration_s,
                     )
                     _record_result(state, result)
@@ -2420,16 +2931,10 @@ def run_isolated_pytest_units(
 
                         try:
                             while retry_count < _MAX_TIMEOUT_RETRIES:
-                                # -- parse JSONL once for completed + culprit + detail --
+                                # Stream JSONL once for completed + culprit + detail.
                                 if to_iter_jsonl is not None:
-                                    iter_records = _load_report_log_records(to_iter_jsonl)
-                                    culprit, completed = _identify_crash_culprit_from_records(
-                                        iter_records
-                                    )
-                                    iter_detail = (
-                                        _build_detail_from_report_records(iter_records)
-                                        if iter_records
-                                        else None
+                                    iter_detail, culprit, completed = _analyze_report_jsonl(
+                                        to_iter_jsonl
                                     )
                                 else:
                                     culprit, completed = None, []
@@ -2479,7 +2984,7 @@ def run_isolated_pytest_units(
                                             timeout=_unit_timeout_seconds(timeout, "test"),
                                         )
                                     except subprocess.TimeoutExpired:
-                                        confirm_rc = 124
+                                        confirm_rc = _TIMEOUT_RETURN_CODE
                                         confirm_out = confirm_err = ""
                                     confirm_status = _status_from_returncode(confirm_rc)
                                     culprit_outcome = (
@@ -2559,7 +3064,7 @@ def run_isolated_pytest_units(
                                     retry_status = _status_from_returncode(retry_rc)
                                 except subprocess.TimeoutExpired:
                                     retry_status = "timeout"
-                                    retry_rc = 124
+                                    retry_rc = _TIMEOUT_RETURN_CODE
                                     retry_out = retry_err = ""
                                 retry_dur = time.monotonic() - retry_start
                                 total_retry_dur += retry_dur
@@ -2641,14 +3146,11 @@ def run_isolated_pytest_units(
                                 [unit_jsonl_path] if unit_jsonl_path else []
                             ) + to_retry_temps
                             if report_config is not None and report_config.jsonl_path is not None:
-                                to_aggr_records: list[dict[str, Any]] = []
-                                for tmp in all_iter_jsonls:
-                                    if not tmp.exists():
-                                        continue
-                                    to_aggr_records.extend(_load_report_log_records(tmp))
-                                report_records_by_unit[unit] = to_aggr_records
-                                state.report_records_by_unit[unit] = to_aggr_records
-                                _write_unit_report_record_cache(state_file, unit, to_aggr_records)
+                                _write_unit_report_record_cache_from_jsonl_paths(
+                                    state_file,
+                                    unit,
+                                    all_iter_jsonls,
+                                )
                                 save_run_state(state_file, state)
                             for tmp in all_iter_jsonls:
                                 tmp.unlink(missing_ok=True)
@@ -2679,7 +3181,7 @@ def run_isolated_pytest_units(
                                 FileRunResult(
                                     target=unit,
                                     status="escalated",
-                                    returncode=124,
+                                    returncode=_TIMEOUT_RETURN_CODE,
                                     duration_s=duration_s,
                                 ),
                             )
@@ -2726,17 +3228,14 @@ def run_isolated_pytest_units(
                 crash_jsonl_path: Path | None = unit_jsonl_path
                 detail: dict[str, Any] | None = None
                 if unit_jsonl_path is not None:
-                    unit_records = _load_report_log_records(unit_jsonl_path)
-                    report_records_by_unit[unit] = unit_records
-                    state.report_records_by_unit[unit] = unit_records
                     if report_config is not None and report_config.jsonl_path is not None:
-                        _write_unit_report_record_cache(state_file, unit, unit_records)
-                    # Reuse the records loaded just above rather than re-reading
-                    # and re-parsing the same JSONL — _read_jsonl_results is
-                    # _build_detail_from_report_records(_load_report_log_records())
-                    # so this is byte-identical but skips a full parse per unit
-                    # (~one per test file, every run). See review finding R7.
-                    detail = _build_detail_from_report_records(unit_records)
+                        detail, _culprit, _completed = _analyze_report_jsonl(
+                            unit_jsonl_path,
+                            state_file=state_file,
+                            unit=unit,
+                        )
+                    else:
+                        detail, _culprit, _completed = _analyze_report_jsonl(unit_jsonl_path)
                     if status not in ("crashed", "timeout"):
                         unit_jsonl_path.unlink(missing_ok=True)
                         crash_jsonl_path = None
@@ -2797,16 +3296,10 @@ def run_isolated_pytest_units(
 
                         try:
                             while True:
-                                # - read JSONL once for completed + culprit + detail --
+                                # Stream JSONL once for completed + culprit + detail.
                                 if iter_jsonl_path is not None:
-                                    iter_records = _load_report_log_records(iter_jsonl_path)
-                                    culprit, completed = _identify_crash_culprit_from_records(
-                                        iter_records
-                                    )
-                                    iter_detail = (
-                                        _build_detail_from_report_records(iter_records)
-                                        if iter_records
-                                        else None
+                                    iter_detail, culprit, completed = _analyze_report_jsonl(
+                                        iter_jsonl_path
                                     )
                                 else:
                                     culprit, completed = None, []
@@ -2842,18 +3335,27 @@ def run_isolated_pytest_units(
                                     console.print(
                                         f"[yellow]Confirming crash culprit:[/yellow] {culprit}"
                                     )
-                                    confirm_rc, confirm_out, confirm_err = _run_subprocess_tee(
-                                        [
-                                            sys.executable,
-                                            "-m",
-                                            "pytest",
-                                            culprit,
-                                            *pytest_args,
-                                        ],
-                                        env=env,
-                                        timeout=_unit_timeout_seconds(timeout, "test"),
-                                    )
-                                    confirm_status = _status_from_returncode(confirm_rc)
+                                    try:
+                                        confirm_rc, confirm_out, confirm_err = _run_subprocess_tee(
+                                            [
+                                                sys.executable,
+                                                "-m",
+                                                "pytest",
+                                                culprit,
+                                                *pytest_args,
+                                            ],
+                                            env=env,
+                                            timeout=_unit_timeout_seconds(timeout, "test"),
+                                        )
+                                        confirm_status = _status_from_returncode(confirm_rc)
+                                    except subprocess.TimeoutExpired:
+                                        confirm_rc = _TIMEOUT_RETURN_CODE
+                                        confirm_out = ""
+                                        confirm_err = (
+                                            "crash culprit confirmation timed out after "
+                                            f"{_unit_timeout_seconds(timeout, 'test')} seconds"
+                                        )
+                                        confirm_status = "timeout"
                                     # Record culprit as a standalone result
                                     if confirm_status in {"crashed", "timeout"}:
                                         culprit_outcome = confirm_status
@@ -2977,7 +3479,7 @@ def run_isolated_pytest_units(
                                     retry_status = _status_from_returncode(retry_rc)
                                 except subprocess.TimeoutExpired:
                                     retry_status = "timeout"
-                                    retry_rc = 124
+                                    retry_rc = _TIMEOUT_RETURN_CODE
                                     retry_out = retry_err = ""
                                 retry_dur = time.monotonic() - retry_start
                                 total_retry_dur += retry_dur
@@ -3005,7 +3507,7 @@ def run_isolated_pytest_units(
                                             final_returncode = returncode
                                         elif accumulated_detail["counts"].get("timeout", 0) > 0:
                                             final_status = "timeout"
-                                            final_returncode = 124
+                                            final_returncode = _TIMEOUT_RETURN_CODE
 
                                     keep = final_status != "passed" or (
                                         accumulated_detail is not None
@@ -3055,14 +3557,11 @@ def run_isolated_pytest_units(
                                 [crash_jsonl_path] if crash_jsonl_path else []
                             ) + retry_temp_files
                             if report_config is not None and report_config.jsonl_path is not None:
-                                unit_records = []
-                                for tmp in all_iter_jsonls:
-                                    if not tmp.exists():
-                                        continue
-                                    unit_records.extend(_load_report_log_records(tmp))
-                                report_records_by_unit[unit] = unit_records
-                                state.report_records_by_unit[unit] = unit_records
-                                _write_unit_report_record_cache(state_file, unit, unit_records)
+                                _write_unit_report_record_cache_from_jsonl_paths(
+                                    state_file,
+                                    unit,
+                                    all_iter_jsonls,
+                                )
                                 save_run_state(state_file, state)
                             for tmp in all_iter_jsonls:
                                 tmp.unlink(missing_ok=True)
@@ -3143,33 +3642,32 @@ def run_isolated_pytest_units(
         merged_details = dict(per_unit_details)
         if report_config is not None:
             if report_config.jsonl_path is not None:
-                merged_report_records_by_unit = _load_cached_report_records_by_unit(
-                    state_file, state.units
-                )
+                inline_report_records_by_unit = {}
                 for unit, records in state.report_records_by_unit.items():
-                    merged_report_records_by_unit.setdefault(unit, records)
+                    inline_report_records_by_unit.setdefault(unit, records)
                 if resume and report_config.jsonl_path.exists():
                     candidate_targets = set(state.units) | {
                         result.target for result in state.results
                     }
-                    parsed_report_records = _extract_unit_report_records_from_jsonl(
+                    for unit in executed_units:
+                        inline_report_records_by_unit.pop(unit, None)
+                    _seed_missing_report_record_caches_from_jsonl(
+                        state_file,
                         report_config.jsonl_path,
                         candidate_targets=candidate_targets,
+                        skip_units=set(inline_report_records_by_unit) | executed_units,
                     )
-                    for unit, records in parsed_report_records.items():
-                        merged_report_records_by_unit.setdefault(unit, records)
-                    for unit in executed_units:
-                        merged_report_records_by_unit.pop(unit, None)
-                    merged_report_records_by_unit.update(report_records_by_unit)
-                if merged_report_records_by_unit:
-                    _write_report_jsonl_from_record_map(
-                        merged_report_records_by_unit,
+                wrote_report_jsonl = _write_report_jsonl_from_record_sources(
+                    state_file,
+                    units=state.units,
+                    inline_records_by_unit=inline_report_records_by_unit,
+                    output_path=report_config.jsonl_path,
+                )
+                if wrote_report_jsonl or report_config.jsonl_path.exists():
+                    merged_details = _build_per_unit_details_from_record_sources(
+                        state_file,
                         units=state.units,
-                        output_path=report_config.jsonl_path,
-                    )
-                if report_config.jsonl_path.exists():
-                    merged_details = _build_per_unit_details_from_record_map(
-                        merged_report_records_by_unit
+                        inline_records_by_unit=inline_report_records_by_unit,
                     )
                     merged_details = _merge_supplemental_special_details(
                         merged_details,
@@ -3178,6 +3676,11 @@ def run_isolated_pytest_units(
                     coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
                     quality_records = extract_quality_report_records_from_jsonl(
                         report_config.jsonl_path
+                    )
+                    coverage_data = _augment_mechanism_coverage_from_unit_outcomes(
+                        coverage_data,
+                        state,
+                        per_unit_details=merged_details,
                     )
                 if coverage_data:
                     coverage_path = report_config.jsonl_path.parent / "coverage.json"

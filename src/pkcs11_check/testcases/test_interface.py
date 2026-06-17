@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.pack import mech_bytes
-from pkcs11_check.raw.recipes import decrypt_single, destroy_quietly, encrypt_single, gen_aes_key
+from pkcs11_check.raw.recipes import decrypt_single, destroy_quietly, encrypt_single
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -15,6 +15,7 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKM_AES_CBC_PAD,
 )
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail
 
 pytestmark = pytest.mark.smoke
 
@@ -50,20 +51,24 @@ class TestSlotEnumeration:
 
 
 @pytest.mark.v30
-@pytest.mark.requires_v30
 class TestInterfaceV30:
     """Tests that exercise PKCS#11 v3.0 interface features."""
 
     def test_v30_interface_negotiated(self, p11_interface_version: str) -> None:
         """Module has negotiated at least v3.0 interface."""
+        if p11_interface_version not in ("3.0", "3.1", "3.2"):
+            pytest.skip("module did not negotiate v3.0+")
         assert p11_interface_version in ("3.0", "3.1", "3.2"), (
             f"Expected v3.0+ but got v{p11_interface_version}"
         )
 
-    def test_v30_session_opens(self, p11_session: Any) -> None:
+    def test_v30_session_opens(self, p11_session: Any, p11_interface_version: str) -> None:
         """v3.0 module opens a session without error."""
+        if p11_interface_version not in ("3.0", "3.1", "3.2"):
+            pytest.skip("module did not negotiate v3.0+")
         assert p11_session is not None
 
+    @pytest.mark.needs_function("C_GetInterfaceList")
     def test_v30_get_interface_list(self, p11_module: Any) -> None:
         """C_GetInterfaceList returns at least one interface entry."""
         ifaces = p11_module.get_interface_list()
@@ -76,9 +81,10 @@ class TestInterfaceV30:
     def test_v30_encrypt_decrypt_aes(self, p11_raw_session: Any) -> None:
         """v3.0 AES encrypt/decrypt round-trip via v3.0 function list."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        if not rs.has_mechanism("CKM_AES_CBC_PAD"):
+            pytest.skip("CKM_AES_CBC_PAD not supported")
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={
                 CKA_ENCRYPT: True,
@@ -112,14 +118,17 @@ class TestInterfaceV30:
 
 
 @pytest.mark.v32
-@pytest.mark.requires_v32
 class TestInterfaceV32:
     """Tests that exercise PKCS#11 v3.2 interface features."""
 
     def test_v32_interface_negotiated(self, p11_interface_version: str) -> None:
         """Module has negotiated v3.2 interface."""
+        if p11_interface_version != "3.2":
+            pytest.skip("module did not negotiate v3.2")
         assert p11_interface_version == "3.2", f"Expected v3.2 but got v{p11_interface_version}"
 
-    def test_v32_session_opens(self, p11_session: Any) -> None:
+    def test_v32_session_opens(self, p11_session: Any, p11_interface_version: str) -> None:
         """v3.2 module opens a session without error."""
+        if p11_interface_version != "3.2":
+            pytest.skip("module did not negotiate v3.2")
         assert p11_session is not None

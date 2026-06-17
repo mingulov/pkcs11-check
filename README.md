@@ -20,17 +20,12 @@ git clone https://github.com/mingulov/pkcs11-check
 cd pkcs11-check
 uv sync
 
-# Run against SoftHSM2
-bash local-builds/build.sh softhsm2
-bash local-builds/test.sh softhsm2
-
-# Run against Kryoptic (v3.2 with PQC)
-bash local-builds/build.sh kryoptic
-bash local-builds/test.sh kryoptic
-
-# Run against system NSS
-bash local-builds/test.sh nss-softokn
+# Run against any PKCS#11 module you provide
+uv run pkcs11-check test --p11-module /path/to/module.so --p11-pin 1234
 ```
+
+(See "First run in 60 seconds" below for a complete SoftHSM2 example. Provider
+build recipes and the Docker test matrix live in the development workspace.)
 
 ### First run in 60 seconds (from PyPI)
 
@@ -84,12 +79,14 @@ Test categories:
 | Module | Version | Status |
 |--------|---------|--------|
 | SoftHSM2 | 2.7.0 | Full support |
-| Kryoptic | 1.5.0+PQC | Full support (v3.2) |
+| Kryoptic | 1.5.1+PQC | Full support (v3.2) |
 | NSS softokn | system | Crypto services (slot 0) |
 | OpenCryptoki | 3.27.0 | Docker only |
 | pkcs11-mock | 2.0.0 | Stub testing |
 | tpm2-pkcs11 | 1.10.0 | Hardware TPM |
-| BouncyHSM | 2.1.0 | Docker only |
+| BouncyHSM | 2.1.1 | Docker only |
+| wolfPKCS11 | 2.0.0-stable / master | Docker only |
+| corePKCS11 | 3.6.4 | Docker only |
 
 ## Known limitations in v0.1.0
 
@@ -111,9 +108,6 @@ src/pkcs11_check/
   plugin.py     — pytest plugin (markers, fixtures, collection)
   fixtures.py   — p11_session, p11_module, p11_config
   config.py     — four-layer config (CLI > env > TOML > defaults)
-
-local-builds/   — build scripts for soft token providers
-docker/         — Docker test targets
 ```
 
 ## Key features
@@ -130,11 +124,8 @@ docker/         — Docker test targets
 - `docs/module-issues.md` — per-module bugs and quirks
 - `docs/test-universe.md` — collected product-test counts by group
 - `docs/mechanism-output-parameters.md` — generated IV/nonce/tag output-parameter coverage
-- `docs/docker-provider-results.md` — current Docker provider source and result snapshot
-- `docs/todo.md` — public roadmap and known limitations
 - `docs/cve-regression.md` — CVE coverage tracker
 - `docs/file-isolation.md` — isolation runner design
-- `docs/docker-artifacts.md` — Docker test runner contract
 
 ## License
 

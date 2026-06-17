@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -43,7 +44,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_OK,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 
 pytestmark = pytest.mark.full
 
@@ -79,7 +80,13 @@ def _encrypt_or_xfail(
         return encrypt_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
         if is_known_error(exc, {CKR_MECHANISM_INVALID}):
-            pytest.xfail(f"Mechanism advertised but rejected at use: {exc}")
+            classify(
+                "not_operational",
+                kind="crypto",
+                label="SEED:C_Encrypt",
+                operation="C_Encrypt",
+                summary=f"Mechanism advertised but rejected at use: {exc}",
+            )
         raise
 
 
@@ -97,7 +104,13 @@ def _sign_or_xfail(
         return sign_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
         if is_known_error(exc, {CKR_MECHANISM_INVALID}):
-            pytest.xfail(f"Mechanism advertised but rejected at use: {exc}")
+            classify(
+                "not_operational",
+                kind="crypto",
+                label="SEED:C_Sign",
+                operation="C_Sign",
+                summary=f"Mechanism advertised but rejected at use: {exc}",
+            )
         raise
 
 
@@ -143,10 +156,24 @@ class TestSEEDEncryption:
         )
         try:
             ct = _encrypt_or_xfail(rs.raw, rs.sh, key, CKM_SEED_ECB, _TWO_BLOCKS)
-            assert ct != _TWO_BLOCKS
+            if ct == _TWO_BLOCKS:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_SEED_ECB:ciphertext must differ from plaintext",
+                    operation="C_Encrypt",
+                    mechanism="CKM_SEED_ECB",
+                    summary="CKM_SEED_ECB returned ciphertext equal to plaintext -- no-op",
+                )
             assert len(ct) == len(_TWO_BLOCKS)
             pt = decrypt_single(rs.raw, rs.sh, key, CKM_SEED_ECB, ct)
-            assert pt == _TWO_BLOCKS
+            assert_correct(
+                actual=pt,
+                expected=_TWO_BLOCKS,
+                label="CKM_SEED_ECB:encrypt/decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_SEED_ECB",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -163,7 +190,18 @@ class TestSEEDEncryption:
         try:
             ct1 = _encrypt_or_xfail(rs.raw, rs.sh, key1, CKM_SEED_ECB, _TWO_BLOCKS)
             ct2 = encrypt_single(rs.raw, rs.sh, key2, CKM_SEED_ECB, _TWO_BLOCKS)
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_SEED_ECB:key must affect output",
+                    operation="C_Encrypt",
+                    mechanism="CKM_SEED_ECB",
+                    summary=(
+                        "CKM_SEED_ECB produced identical ciphertext for two different keys "
+                        "over the same plaintext -- the key was ignored"
+                    ),
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -190,7 +228,15 @@ class TestSEEDEncryption:
                 _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_SEED_CBC, iv),
             )
-            assert ct != _TWO_BLOCKS
+            if ct == _TWO_BLOCKS:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_SEED_CBC:ciphertext must differ from plaintext",
+                    operation="C_Encrypt",
+                    mechanism="CKM_SEED_CBC",
+                    summary="CKM_SEED_CBC returned ciphertext equal to plaintext -- no-op",
+                )
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -199,7 +245,13 @@ class TestSEEDEncryption:
                 ct,
                 mech_param=mech_bytes(CKM_SEED_CBC, iv),
             )
-            assert pt == _TWO_BLOCKS
+            assert_correct(
+                actual=pt,
+                expected=_TWO_BLOCKS,
+                label="CKM_SEED_CBC:encrypt/decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_SEED_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -234,7 +286,18 @@ class TestSEEDEncryption:
                 _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_SEED_CBC, iv2),
             )
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_SEED_CBC:IV must affect output",
+                    operation="C_Encrypt",
+                    mechanism="CKM_SEED_CBC",
+                    summary=(
+                        "CKM_SEED_CBC produced identical ciphertext for two different IVs "
+                        "over the same plaintext/key -- the IV was ignored"
+                    ),
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -262,7 +325,15 @@ class TestSEEDEncryption:
                 plaintext,
                 mech_param=mech_bytes(CKM_SEED_CBC_PAD, iv),
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_SEED_CBC_PAD:ciphertext must differ from plaintext",
+                    operation="C_Encrypt",
+                    mechanism="CKM_SEED_CBC_PAD",
+                    summary="CKM_SEED_CBC_PAD returned ciphertext equal to plaintext -- no-op",
+                )
             # Ciphertext is padded to block boundary
             assert len(ct) % 16 == 0
             pt = decrypt_single(
@@ -273,7 +344,13 @@ class TestSEEDEncryption:
                 ct,
                 mech_param=mech_bytes(CKM_SEED_CBC_PAD, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_SEED_CBC_PAD:encrypt/decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_SEED_CBC_PAD",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -306,7 +383,18 @@ class TestSEEDEncryption:
                 plaintext,
                 mech_param=mech_bytes(CKM_SEED_CBC_PAD, iv),
             )
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_SEED_CBC_PAD:key must affect output",
+                    operation="C_Encrypt",
+                    mechanism="CKM_SEED_CBC_PAD",
+                    summary=(
+                        "CKM_SEED_CBC_PAD produced identical ciphertext for two different keys "
+                        "over the same plaintext/IV -- the key was ignored"
+                    ),
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -390,7 +478,18 @@ class TestSEEDMAC:
         try:
             mac1 = _sign_or_xfail(rs.raw, rs.sh, key1, CKM_SEED_MAC, data)
             mac2 = sign_single(rs.raw, rs.sh, key2, CKM_SEED_MAC, data)
-            assert mac1 != mac2
+            if mac1 == mac2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_SEED_MAC:key must affect output",
+                    operation="C_Sign",
+                    mechanism="CKM_SEED_MAC",
+                    summary=(
+                        "CKM_SEED_MAC produced identical MACs for two different keys "
+                        "over the same data -- the key was ignored"
+                    ),
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)

@@ -20,6 +20,7 @@ from pkcs11_check.core.test_selection import parse_disabled_nodeids
 
 # Re-export fixtures so pytest discovers them
 from pkcs11_check.fixtures import (  # noqa: F401
+    MODULE_SESSION_CALL_FAILED_ATTR,
     RawSession,
     _p11_module_session_holder,
     p11_config,
@@ -29,12 +30,17 @@ from pkcs11_check.fixtures import (  # noqa: F401
     p11_raw_session,
     p11_session,
 )
-from pkcs11_check.markers import MARKER_DEFINITIONS, should_skip_for_version
+from pkcs11_check.markers import MARKER_DEFINITIONS
 from pkcs11_check.raw.types_std import (
     CKF_DERIVE,
     CKF_DIGEST,
     CKF_GENERATE,
     CKF_GENERATE_KEY_PAIR,
+    CKF_MESSAGE_DECRYPT,
+    CKF_MESSAGE_ENCRYPT,
+    CKF_MESSAGE_SIGN,
+    CKF_MESSAGE_VERIFY,
+    CKR_OK,
 )
 from pkcs11_check.testcases._mock_gating import is_pkcs11_mock_target, should_skip_on_mock
 from pkcs11_check.testcases._subprocess_trace import (
@@ -67,6 +73,7 @@ _CUMULATIVE_MECHANISM_COUNTS: pytest.StashKey[Counter[int]] = pytest.StashKey()
 _CUMULATIVE_DETAIL_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
 _BOOTSTRAP_FUNCTION_COUNTS: pytest.StashKey[dict[str, int]] = pytest.StashKey()
 _BOOTSTRAP_COLLECTED: pytest.StashKey[bool] = pytest.StashKey()
+_MODULE_SESSION_HEALTH_METRICS: pytest.StashKey[dict[str, int | float]] = pytest.StashKey()
 _LAST_RV_TRACE: pytest.StashKey[list[dict[str, Any]]] = pytest.StashKey()
 
 _SCENARIO_BY_FIXTURE: dict[str, str] = {
@@ -81,6 +88,10 @@ _LEGACY_FLAG_BY_FIXTURE: dict[str, int] = {
     "mech_digest_entry": int(CKF_DIGEST),
     "mech_keygen_entry": int(CKF_GENERATE) | int(CKF_GENERATE_KEY_PAIR),
     "mech_derive_entry": int(CKF_DERIVE),
+    "mech_message_encrypt_entry": int(CKF_MESSAGE_ENCRYPT),
+    "mech_message_decrypt_entry": int(CKF_MESSAGE_DECRYPT),
+    "mech_message_sign_entry": int(CKF_MESSAGE_SIGN),
+    "mech_message_verify_entry": int(CKF_MESSAGE_VERIFY),
     "mech_any_entry": 0,
 }
 
@@ -185,6 +196,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.stash[_CUMULATIVE_DETAIL_COUNTS] = Counter()
     config.stash[_BOOTSTRAP_FUNCTION_COUNTS] = {}
     config.stash[_BOOTSTRAP_COLLECTED] = False
+    config.stash[_MODULE_SESSION_HEALTH_METRICS] = {"checks": 0, "duration_s": 0.0}
     config.stash[_LAST_RV_TRACE] = []
     config.stash[_SELECTION_TELEMETRY_KEY] = {}
     config.stash[_SELECTION_PARAM_CACHE_KEY] = {}
@@ -211,17 +223,16 @@ def _is_testcase_item(item: pytest.Item) -> bool:
 def _has_dynamic_markers(item: pytest.Item) -> bool:
     return any(
         item.get_closest_marker(marker_name)
-        for marker_name in ("requires_v30", "requires_v32", "needs_mechanism")
+        for marker_name in (
+            "needs_mechanism",
+            "needs_function",
+        )
     )
 
 
 def _manifest_failure_message(manifest: CapabilityManifest) -> str:
     detail = manifest.error or "unknown error"
     return f"PKCS#11 preflight {manifest.status}: {detail}"
-
-
-def _marker_version_label(marker_name: str) -> str:
-    return marker_name.removeprefix("requires_")
 
 
 def _ensure_manifest(config: pytest.Config) -> CapabilityManifest | None:
@@ -343,6 +354,63 @@ def _serialize_selection_telemetry(
     return selection_coverage
 
 
+def _name_set(value: Any) -> set[str]:
+    if not isinstance(value, (set, list, tuple)):
+        return set()
+    return {str(item) for item in value if item is not None}
+
+
+def _selection_state_names(telemetry: dict[str, dict[str, Any]]) -> tuple[set[str], set[str]]:
+    selected: set[str] = set()
+    rejected: set[str] = set()
+    for data in telemetry.values():
+        selected.update(_name_set(data.get("selected_mechanisms")))
+        rejected.update(_name_set(data.get("rejected_mechanisms")))
+    return selected, rejected
+
+
+def _reported_names_for_mechanism(
+    mechanism_id: int,
+    ckm_alias_map: dict[int, list[str]],
+    ckm_name_fn: Any,
+    advertised_names: set[str],
+) -> set[str]:
+    names = {ckm_name_fn(mechanism_id), *ckm_alias_map.get(mechanism_id, [])}
+    advertised_matches = names & advertised_names
+    if advertised_matches:
+        return advertised_matches
+    return {ckm_name_fn(mechanism_id)}
+
+
+def _mechanism_rv_state_names(
+    mechanism_rv_counts: Any,
+    ckm_alias_map: dict[int, list[str]],
+    ckm_name_fn: Any,
+    advertised_names: set[str],
+) -> tuple[set[str], set[str]]:
+    accepted: set[str] = set()
+    rejected_cleanly: set[str] = set()
+    if not isinstance(mechanism_rv_counts, dict):
+        return accepted, rejected_cleanly
+    for raw_mid, raw_counts in mechanism_rv_counts.items():
+        if not isinstance(raw_mid, int) or not isinstance(raw_counts, dict):
+            continue
+        names = _reported_names_for_mechanism(
+            raw_mid,
+            ckm_alias_map,
+            ckm_name_fn,
+            advertised_names,
+        )
+        for raw_rv, raw_count in raw_counts.items():
+            if not isinstance(raw_rv, int) or not isinstance(raw_count, int) or raw_count <= 0:
+                continue
+            if raw_rv == int(CKR_OK):
+                accepted.update(names)
+            else:
+                rejected_cleanly.update(names)
+    return accepted, rejected_cleanly
+
+
 def _selected_entries_for_scenario(
     catalog: Any,
     config: pytest.Config,
@@ -410,13 +478,11 @@ def _runtime_skip_reason(
     if manifest is None:
         return None
 
-    for marker_name in ("requires_v30", "requires_v32"):
-        if item.get_closest_marker(marker_name) and manifest.interface_version is not None:
-            if should_skip_for_version(marker_name, manifest.interface_version):
-                return (
-                    f"Requires {_marker_version_label(marker_name)}, "
-                    f"module has v{manifest.interface_version}"
-                )
+    function_marker = item.get_closest_marker("needs_function")
+    if function_marker and function_marker.args:
+        needed_fn = str(function_marker.args[0])
+        if needed_fn not in manifest.functions:
+            return f"Function {needed_fn} not present in module"
 
     if config.getoption("p11_skip_unsupported", default=True):
         marker = item.get_closest_marker("needs_mechanism")
@@ -680,23 +746,166 @@ def _attach_rv_trace_to_report(item: pytest.Item, report: Any) -> None:
     _remember_rv_trace(item, report)
 
 
+def _append_missing_compliance_notes(
+    user_properties: list[tuple[str, Any]], notes: list[dict[str, str]]
+) -> None:
+    if not notes:
+        return
+    for index, (existing_name, existing_value) in enumerate(user_properties):
+        if existing_name != "pkcs11_compliance_notes":
+            continue
+        if isinstance(existing_value, list):
+            existing_value.extend(notes)
+        else:
+            user_properties[index] = ("pkcs11_compliance_notes", notes)
+        return
+    user_properties.append(("pkcs11_compliance_notes", notes))
+
+
+def _attach_compliance_notes_to_report(item: pytest.Item, report: Any) -> None:
+    """Attach compliance notes to call reports before report-log serializes them."""
+    if not _is_testcase_item(item) or getattr(report, "when", None) != "call":
+        return
+    user_properties = getattr(report, "user_properties", None)
+    if not isinstance(user_properties, list):
+        return
+
+    from pkcs11_check.compliance import get_notes, serialize_notes
+
+    notes = serialize_notes(get_notes(), nodeid=str(getattr(item, "nodeid", "")))
+    _append_missing_compliance_notes(user_properties, notes)
+
+
+def _report_is_fail_or_xfail(report: Any) -> bool:
+    """True when a call report represents a hard fail or an imperative xfail.
+
+    ``pytest.fail()`` yields ``outcome == "failed"``; ``pytest.xfail()`` yields a
+    ``skipped`` report carrying a ``wasxfail`` attribute. Both are the un-migrated
+    raw-site shapes the unclassified gate must cover.
+    """
+    return (
+        getattr(report, "outcome", None) == "failed"
+        or getattr(report, "wasxfail", None) is not None
+    )
+
+
+def _synthetic_unclassified_record(item: pytest.Item, report: Any) -> Any:
+    """Build the synthetic ``unclassified`` record for a raw fail/xfail testcase.
+
+    A testcase that ends as fail/xfail without emitting a :func:`classify` record
+    is part of the un-migrated backlog; injecting one synthetic record keeps the
+    report 100% covered so the live ``unclassified`` count IS the migration backlog.
+    """
+    from pkcs11_check.classification import Classification
+
+    return Classification(
+        reason="unclassified",
+        outcome="fail",
+        severity="HIGH",
+        label=str(getattr(item, "nodeid", "")),
+        summary=_report_text(report) or "raw pytest.fail/xfail with no classification",
+        detail={"raw": True},
+    )
+
+
+def _attach_classification_to_report(item: pytest.Item, report: Any) -> None:
+    """Attach structured classifications before report-log serializes them.
+
+    Real emitted records always take precedence. When a testcase item ends as a
+    raw fail/xfail with no emitted record, a single synthetic ``unclassified``
+    record is injected so every testcase outcome stays covered (Phase 5.1 gate).
+    """
+    if getattr(report, "when", None) != "call":
+        return
+    from pkcs11_check.classification import get_records, serialize
+
+    collected = get_records()
+    if not collected and _is_testcase_item(item) and _report_is_fail_or_xfail(report):
+        collected = [_synthetic_unclassified_record(item, report)]
+    records = serialize(collected)
+    if not records:
+        return
+    props = list(getattr(report, "user_properties", []) or [])
+    props = [(k, v) for (k, v) in props if k != "pkcs11_classification"]
+    props.append(("pkcs11_classification", records))
+    report.user_properties = props
+
+
+def _convert_missing_function_to_skip(report: Any, call: pytest.CallInfo[Any]) -> None:
+    """A PKCS#11 function absent from the module's function list is a capability
+    gap, not a test error.
+
+    The function dispatcher (``raw/api.py``) raises
+    ``AttributeError("<C_Fn> not available in this module")`` when a test calls a
+    function the loaded module does not implement (common on minimal modules such
+    as corePKCS11). Per the classification model a genuinely-absent capability is
+    a ``skip``, so convert that specific uncaught error into a skip rather than
+    letting it surface as a hard error. Full modules expose all standard
+    functions, so this never fires for them.
+    """
+    if getattr(report, "when", None) not in ("setup", "call"):
+        return
+    if getattr(report, "outcome", None) != "failed":
+        return
+    excinfo = getattr(call, "excinfo", None)
+    if excinfo is None or not issubclass(excinfo.type, AttributeError):
+        return
+    message = str(excinfo.value)
+    if not message.endswith("not available in this module"):
+        return
+    report.outcome = "skipped"
+    lineno = item_location[1] if (item_location := getattr(report, "location", None)) else 0
+    report.longrepr = (str(getattr(report, "fspath", "")), (lineno or 0) + 1, f"Skipped: {message}")
+
+
+def _remember_module_session_call_outcome(item: pytest.Item, report: Any) -> None:
+    """Mark failed call phases so fast shared-session reuse checks before reuse."""
+    if getattr(report, "when", None) != "call":
+        return
+    if getattr(report, "outcome", None) == "failed":
+        setattr(item, MODULE_SESSION_CALL_FAILED_ATTR, True)
+
+
+def _accumulate_module_session_health_metrics(
+    total: dict[str, int | float],
+    delta: Any,
+) -> None:
+    if not isinstance(delta, dict):
+        return
+    total["checks"] = int(total.get("checks", 0)) + int(delta.get("checks", 0) or 0)
+    total["duration_s"] = float(total.get("duration_s", 0.0)) + float(
+        delta.get("duration_s", 0.0) or 0.0
+    )
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> Any:
     outcome = yield
     report = outcome.get_result()
+    _convert_missing_function_to_skip(report, call)
+    _remember_module_session_call_outcome(item, report)
     _attach_rv_trace_to_report(item, report)
+    _attach_compliance_notes_to_report(item, report)
+    _attach_classification_to_report(item, report)
 
 
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
-    """Clear compliance notes after each testcase item to prevent leakage."""
+    """Clear per-item state after each test to prevent cross-item leakage."""
+    if _is_testcase_item(item):
+        _drain_rv_trace(item)
+
+        from pkcs11_check.compliance import clear_notes
+
+        clear_notes()
+
+    # Classification records can originate from ANY test (attach is likewise ungated);
+    # clear unconditionally to prevent cross-item leakage.
+    from pkcs11_check.classification import clear as clear_classifications
+
+    clear_classifications()
+
     if not _is_testcase_item(item):
         return
-
-    _drain_rv_trace(item)
-
-    from pkcs11_check.compliance import clear_notes
-
-    clear_notes()
 
     session = getattr(item, "session", None)
     if session is None:
@@ -734,6 +943,16 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
                         if bootstrap:
                             session.config.stash[_BOOTSTRAP_FUNCTION_COUNTS] = dict(bootstrap)
                             session.config.stash[_BOOTSTRAP_COLLECTED] = True
+                except KeyError:
+                    pass
+                # Track reusable-session health-check overhead separately from
+                # test-body C_* calls so setup-bound provider runs are measurable.
+                try:
+                    health_metrics = session.config.stash[_MODULE_SESSION_HEALTH_METRICS]
+                    _accumulate_module_session_health_metrics(
+                        health_metrics,
+                        getattr(rs, "module_session_health_metrics", {}),
+                    )
                 except KeyError:
                     pass
                 # Collect mechanism names used by this session
@@ -848,6 +1067,18 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     invoked_names = sorted(invoked_names_set)
     available_set = set(mech_ckm)
     not_invoked = sorted(available_set - invoked_names_set)
+    attempted_names_set = set()
+    for mid in used_ids:
+        attempted_names_set.update(
+            _reported_names_for_mechanism(mid, ckm_alias_map, ckm_name, available_set)
+        )
+    selected_names_set, selection_rejected_names_set = _selection_state_names(selection_telemetry)
+    accepted_names_set, rejected_cleanly_names_set = _mechanism_rv_state_names(
+        getattr(raw, "mechanism_rv_counts", {}),
+        ckm_alias_map,
+        ckm_name,
+        available_set,
+    )
 
     # Stacked mechanism details
     detail_set = config.stash.get(_CUMULATIVE_MECHANISM_DETAILS, set())
@@ -858,6 +1089,10 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     mech_counts_raw = config.stash.get(_CUMULATIVE_MECHANISM_COUNTS, Counter())
     detail_counts = config.stash.get(_CUMULATIVE_DETAIL_COUNTS, Counter())
     bootstrap = config.stash.get(_BOOTSTRAP_FUNCTION_COUNTS, {})
+    module_session_health = config.stash.get(
+        _MODULE_SESSION_HEALTH_METRICS,
+        {"checks": 0, "duration_s": 0.0},
+    )
 
     # Resolve mechanism int IDs to names for JSON output
     mech_counts_named: dict[str, int] = {}
@@ -877,11 +1112,19 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             "called_names": called,
             "called_counts": dict(sorted(func_counts.items())),
             "bootstrap_counts": bootstrap,
+            "module_session_health": {
+                "checks": int(module_session_health.get("checks", 0)),
+                "duration_s": float(module_session_health.get("duration_s", 0.0)),
+            },
             "uncalled_names": uncalled,
         },
         "mechanism_coverage": {
             "available": len(mech_ckm),
             "available_names": mech_ckm,
+            "advertised_names": mech_ckm,
+            "selected_names": sorted(selected_names_set),
+            "selection_rejected_names": sorted(selection_rejected_names_set),
+            "attempted_names": sorted(attempted_names_set),
             "invoked": len(invoked_names),
             "invoked_names": invoked_names,
             "invoked_counts": dict(sorted(mech_counts_named.items())),
@@ -889,6 +1132,11 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             "not_invoked_names": not_invoked,
             "invoked_detail": stacked,
             "invoked_detail_counts": dict(sorted(detail_counts.items())),
+            "accepted_names": sorted(accepted_names_set),
+            "rejected_cleanly_names": sorted(rejected_cleanly_names_set),
+            "skipped_by_capability_names": [],
+            "crashed_names": [],
+            "timeout_names": [],
         },
     }
     config.stash[_COVERAGE_DATA] = coverage_data

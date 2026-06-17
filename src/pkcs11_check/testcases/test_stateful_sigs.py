@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_array,
     attr_bool,
@@ -68,7 +69,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, reject_or_classify
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    is_known_error,
+    reject_or_classify,
+)
 
 pytestmark = [pytest.mark.pqc]
 
@@ -213,7 +218,13 @@ def _try_keygen(gen_fn: Any, rs: Any, name: str) -> tuple[int, int]:
         return result
     except AssertionError as exc:
         if is_known_error(exc, _KEYGEN_ERROR_RVS):
-            pytest.xfail(f"{name} key generation failed: {exc}")
+            classify(
+                "not_operational",
+                kind="crypto",
+                label=f"{name}:C_GenerateKeyPair",
+                operation="C_GenerateKeyPair",
+                summary=f"{name} key generation failed: {exc}",
+            )
         raise
 
 
@@ -223,7 +234,13 @@ def _try_sign(rs: Any, priv: int, mech: int, name: str) -> bytes:
         return sign_single(rs.raw, rs.sh, priv, mech, _MESSAGE)
     except AssertionError as exc:
         if is_known_error(exc, _SIGN_ERROR_RVS):
-            pytest.xfail(f"{name} sign failed: {exc}")
+            classify(
+                "not_operational",
+                kind="crypto",
+                label=f"{name}:C_Sign",
+                operation="C_Sign",
+                summary=f"{name} sign failed: {exc}",
+            )
         raise
 
 
@@ -232,7 +249,15 @@ def _handle_tampered_verify_error(exc: BaseException) -> None:
     if is_known_error(exc, {CKR_SIGNATURE_INVALID}):
         return
     if is_known_error(exc, {CKR_DEVICE_ERROR}):
-        pytest.xfail("Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID")
+        classify(
+            "nonspec_reject",
+            kind="crypto",
+            label="tampered-signature verify",
+            operation="C_Verify",
+            expected=[CKR_SIGNATURE_INVALID],
+            actual=CKR_DEVICE_ERROR,
+            summary="Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID",
+        )
     raise exc
 
 
@@ -267,8 +292,20 @@ class TestHSSKeyGeneration:
         try:
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])
-            assert pub_attrs[CKA_KEY_TYPE] == CKK_HSS
-            assert priv_attrs[CKA_KEY_TYPE] == CKK_HSS
+            assert_correct(
+                actual=pub_attrs[CKA_KEY_TYPE],
+                expected=CKK_HSS,
+                label="HSS:public CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_attrs[CKA_KEY_TYPE],
+                expected=CKK_HSS,
+                label="HSS:private CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -280,8 +317,20 @@ class TestHSSKeyGeneration:
         try:
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])
-            assert pub_attrs[CKA_CLASS] == CKO_PUBLIC_KEY
-            assert priv_attrs[CKA_CLASS] == CKO_PRIVATE_KEY
+            assert_correct(
+                actual=pub_attrs[CKA_CLASS],
+                expected=CKO_PUBLIC_KEY,
+                label="HSS:public CKA_CLASS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_attrs[CKA_CLASS],
+                expected=CKO_PRIVATE_KEY,
+                label="HSS:private CKA_CLASS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -366,8 +415,20 @@ class TestXMSSKeyGeneration:
         try:
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])
-            assert pub_attrs[CKA_KEY_TYPE] == CKK_XMSS
-            assert priv_attrs[CKA_KEY_TYPE] == CKK_XMSS
+            assert_correct(
+                actual=pub_attrs[CKA_KEY_TYPE],
+                expected=CKK_XMSS,
+                label="XMSS:public CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_attrs[CKA_KEY_TYPE],
+                expected=CKK_XMSS,
+                label="XMSS:private CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -379,8 +440,20 @@ class TestXMSSKeyGeneration:
         try:
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])
-            assert pub_attrs[CKA_CLASS] == CKO_PUBLIC_KEY
-            assert priv_attrs[CKA_CLASS] == CKO_PRIVATE_KEY
+            assert_correct(
+                actual=pub_attrs[CKA_CLASS],
+                expected=CKO_PUBLIC_KEY,
+                label="XMSS:public CKA_CLASS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_attrs[CKA_CLASS],
+                expected=CKO_PRIVATE_KEY,
+                label="XMSS:private CKA_CLASS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -465,8 +538,20 @@ class TestXMSSMTKeyGeneration:
         try:
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])
-            assert pub_attrs[CKA_KEY_TYPE] == CKK_XMSSMT
-            assert priv_attrs[CKA_KEY_TYPE] == CKK_XMSSMT
+            assert_correct(
+                actual=pub_attrs[CKA_KEY_TYPE],
+                expected=CKK_XMSSMT,
+                label="XMSSMT:public CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_attrs[CKA_KEY_TYPE],
+                expected=CKK_XMSSMT,
+                label="XMSSMT:private CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -478,8 +563,20 @@ class TestXMSSMTKeyGeneration:
         try:
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])
-            assert pub_attrs[CKA_CLASS] == CKO_PUBLIC_KEY
-            assert priv_attrs[CKA_CLASS] == CKO_PRIVATE_KEY
+            assert_correct(
+                actual=pub_attrs[CKA_CLASS],
+                expected=CKO_PUBLIC_KEY,
+                label="XMSSMT:public CKA_CLASS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_attrs[CKA_CLASS],
+                expected=CKO_PRIVATE_KEY,
+                label="XMSSMT:private CKA_CLASS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -582,11 +679,18 @@ class TestHSSKeyExhaustion:
                     # If module exhausts earlier than expected (e.g. 16-leaf
                     # internal limit), still observe the spec-compliant CKR.
                     if rv in _EXHAUSTION_OK_RVS:
-                        pytest.xfail(
-                            f"Module exhausted HSS key at signature #{i + 1} "
-                            f"(expected at #33): {exc}.  This is the "
-                            f"spec-compliant return code; module may use a "
-                            f"smaller leaf budget than RFC 8554 LMS_SHA256_M32_H5."
+                        classify(
+                            "honest_deviation",
+                            kind="lifecycle",
+                            label="CKM_HSS:early key exhaustion",
+                            operation="C_Sign",
+                            mechanism="CKM_HSS",
+                            summary=(
+                                f"Module exhausted HSS key at signature #{i + 1} "
+                                f"(expected at #33): {exc}.  This is the "
+                                f"spec-compliant return code; module may use a "
+                                f"smaller leaf budget than RFC 8554 LMS_SHA256_M32_H5."
+                            ),
                         )
                     raise
                 assert isinstance(sig, bytes) and len(sig) > 0

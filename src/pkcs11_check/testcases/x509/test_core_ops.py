@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import attr_bytes, template
 from pkcs11_check.raw.recipes import (
     create_object,
@@ -39,13 +40,20 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 from pkcs11_check.testcases.x509.conftest import (
     _build_cert_template,
     import_cert_object,
+    skip_unless_cert_storage,
 )
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
+
+
+@pytest.fixture(autouse=True)
+def _require_cert_storage(p11_raw_session: Any) -> None:
+    """Skip the entire file when the module cannot store CKO_CERTIFICATE objects."""
+    skip_unless_cert_storage(p11_raw_session)
 
 
 @pytest.fixture(scope="module")
@@ -135,7 +143,13 @@ class TestCertificateImport:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_CERTIFICATE_TYPE])
-            assert attrs[CKA_CERTIFICATE_TYPE] == CKC_X_509
+            assert_correct(
+                actual=attrs[CKA_CERTIFICATE_TYPE],
+                expected=CKC_X_509,
+                label="X509:CKA_CERTIFICATE_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not support CKA_CERTIFICATE_TYPE")
@@ -203,7 +217,13 @@ class TestCertificateExtractFields:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
             val = attrs[CKA_VALUE]
             if val != b"Hello world!":  # pkcs11-mock
-                assert val == ca_cert_der
+                assert_correct(
+                    actual=val,
+                    expected=ca_cert_der,
+                    label="X509:CKA_VALUE matches imported DER",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
         except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not support reading CKA_VALUE")
@@ -326,7 +346,13 @@ class TestCertificateExtractFields:
                 h,
                 [CKA_SUBJECT, CKA_ISSUER],
             )
-            assert attrs[CKA_SUBJECT] == attrs[CKA_ISSUER]
+            assert_correct(
+                actual=attrs[CKA_SUBJECT],
+                expected=attrs[CKA_ISSUER],
+                label="X509:self-signed CA CKA_SUBJECT == CKA_ISSUER",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not extract Subject/Issuer")
@@ -418,14 +444,23 @@ class TestV30CertAttributes:
             if not is_known_error(exc, {CKR_ATTRIBUTE_VALUE_INVALID, CKR_ATTRIBUTE_TYPE_INVALID}):
                 raise
             if p11_interface_version < "3.0":
-                pytest.xfail(
-                    f"v2.40 module rejects CKA_{attr_name} - not required by spec (v3.0+ attribute)"
+                classify(
+                    "not_operational",
+                    kind="metadata",
+                    summary=(
+                        f"v2.40 module rejects CKA_{attr_name}"
+                        " - not required by spec (v3.0+ attribute)"
+                    ),
                 )
             else:
                 # Phase 5 P1a: a clean CKR rejection of a v3.0 attribute is
                 # advertised-but-not-operational provider-incompleteness -> xfail,
                 # not a hard fail (a lenient-but-conformant module may not yet
                 # accept the attribute). A non-CKR error already re-raised above.
-                pytest.xfail(
-                    f"v3.0+ module SHOULD accept CKA_{attr_name} but cleanly rejected it: {exc}"
+                classify(
+                    "not_operational",
+                    kind="metadata",
+                    summary=(
+                        f"v3.0+ module SHOULD accept CKA_{attr_name} but cleanly rejected it: {exc}"
+                    ),
                 )

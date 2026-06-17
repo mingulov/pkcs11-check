@@ -3,7 +3,7 @@
 Each test triggers a specific error condition and validates the CKR code
 against the OASIS PKCS#11 spec.
 
-Source: PKCS#11 v3.1 Sec.5.9.1 (C_DecryptInit), Sec.5.9.2 (C_Decrypt).
+Source: PKCS#11 v3.2 (C_DecryptInit, C_Decrypt).
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.pack import mech_bytes, mech_oaep, mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -72,7 +73,14 @@ class TestDecryptInitErrors:
             mech = mech_simple(CKM_SHA256)
             rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
             if rv == CKR_OK:
-                pytest.fail("Should have rejected SHA256 as decryption mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_DecryptInit:digest-mechanism",
+                    operation="C_DecryptInit",
+                    actual=rv,
+                    summary="Should have rejected SHA256 as decryption mechanism",
+                )
             assert_ckr(CKR_DECRYPT["init_mechanism_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -85,7 +93,14 @@ class TestDecryptInitErrors:
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
             if rv == CKR_OK:
-                pytest.fail("Should have rejected AES key with RSA mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_DecryptInit:key-type-inconsistent",
+                    operation="C_DecryptInit",
+                    actual=rv,
+                    summary="Should have rejected AES key with RSA mechanism",
+                )
             assert_ckr(CKR_DECRYPT["init_key_type_inconsistent"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -101,7 +116,15 @@ class TestDecryptInitErrors:
             mech = mech_bytes(CKM_AES_CBC, b"\x00" * 8)
             rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
             if rv == CKR_OK:
-                pytest.fail("Should have rejected 8-byte IV for AES-CBC")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_DecryptInit:AES-CBC-IV-length",
+                    operation="C_DecryptInit",
+                    mechanism="CKM_AES_CBC",
+                    actual=rv,
+                    summary="Should have rejected 8-byte IV for AES-CBC",
+                )
             assert_ckr(CKR_DECRYPT["init_mechanism_param_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -127,7 +150,15 @@ class TestDecryptDataErrors:
             out_buf = (ctypes.c_ubyte * (size + 16))()
             rv = rs.raw.C_Decrypt(rs.sh, data, size, out_buf, byref(out_len))
             if rv == CKR_OK:
-                pytest.fail(f"Should have rejected {size}-byte ECB ciphertext")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="C_Decrypt:AES-ECB-unaligned-ciphertext",
+                    operation="C_Decrypt",
+                    mechanism="CKM_AES_ECB",
+                    actual=rv,
+                    summary=f"Should have rejected {size}-byte ECB ciphertext",
+                )
             assert_ckr(CKR_DECRYPT["encrypted_data_len_range"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -169,7 +200,7 @@ class TestDecryptDataErrors:
             out_len = CK_ULONG(256)
             out_buf = (ctypes.c_ubyte * 256)()
             rv = rs.raw.C_Decrypt(rs.sh, data, 128, out_buf, byref(out_len))
-            # Type-A crypto-correctness: accepting a wrong-length RSA ciphertext
+            # crypto-correctness: accepting a wrong-length RSA ciphertext
             # (CKR_OK) is a break for any provider -> fail; an expected reject ->
             # pass; another clean reject code -> xfail (3-way assert_ckr).
             assert_ckr(exp, rv, ckr_strict)
@@ -209,18 +240,37 @@ class TestDecryptDataErrors:
             mech = mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA_1, mgf=CKG_MGF1_SHA1)
             rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), priv)
             if rv != CKR_OK:
-                if rv in _RSA_OAEP_RUNTIME_REJECT_RVS:
-                    pytest.xfail(
-                        "RSA_PKCS_OAEP advertised but SHA-1 OAEP params are not "
-                        f"operational: {ckr_name(rv)}"
-                    )
-                pytest.fail(f"C_DecryptInit(RSA_OAEP) failed unexpectedly: {ckr_name(rv)}")
+                # RSA_PKCS_OAEP is advertised but C_DecryptInit cleanly errored:
+                # advertised positive op not operational -> xfail (whether or not
+                # the code is in the known runtime-reject set).
+                operational = rv in _RSA_OAEP_RUNTIME_REJECT_RVS
+                detail = (
+                    "SHA-1 OAEP params are not operational"
+                    if operational
+                    else "C_DecryptInit(RSA_OAEP) failed unexpectedly"
+                )
+                xfail_as(
+                    "not_operational",
+                    label="RSA_PKCS_OAEP:decrypt-init",
+                    operation="C_DecryptInit",
+                    mechanism="CKM_RSA_PKCS_OAEP",
+                    actual=rv,
+                    summary=f"RSA_PKCS_OAEP advertised but {detail}: {ckr_name(rv)}",
+                )
             data = (ctypes.c_ubyte * 256)(*([0xEE] * 256))
             out_len = CK_ULONG(256)
             out_buf = (ctypes.c_ubyte * 256)()
             rv = rs.raw.C_Decrypt(rs.sh, data, 256, out_buf, byref(out_len))
             if rv == CKR_OK:
-                pytest.fail("Should have rejected garbage OAEP ciphertext")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="C_Decrypt:RSA-OAEP-garbage",
+                    operation="C_Decrypt",
+                    mechanism="CKM_RSA_PKCS_OAEP",
+                    actual=rv,
+                    summary="Should have rejected garbage OAEP ciphertext",
+                )
             assert_ckr(CKR_DECRYPT["rsa_oaep_garbage"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, _pub)
@@ -235,7 +285,7 @@ class TestDecryptDataErrors:
         mech = mech_simple(CKM_AES_ECB)
         rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
         if rv == CKR_OK:
-            # Type-C use-after-destroy: the destroy claimed success yet
+            # lifecycle use-after-destroy: the destroy claimed success yet
             # C_DecryptInit on the same handle still succeeded -> contradiction.
             classify_lifecycle_effect(
                 claimed_success=destroy_rv == CKR_OK,
@@ -260,7 +310,14 @@ class TestDecryptDataErrors:
             rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
             if rv == CKR_OK:
                 if not exp.allow_success:
-                    pytest.fail("Should have rejected key without CKA_DECRYPT")
+                    classify(
+                        "accepted_invalid",
+                        kind="policy",
+                        label="C_DecryptInit:CKA_DECRYPT-false",
+                        operation="C_DecryptInit",
+                        actual=rv,
+                        summary="Should have rejected key without CKA_DECRYPT",
+                    )
             else:
                 assert_ckr(exp, rv, ckr_strict)
         finally:

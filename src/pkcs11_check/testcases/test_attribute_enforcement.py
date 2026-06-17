@@ -12,11 +12,11 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
     gen_rsa_keypair,
-    import_secret_key,
     read_attributes,
     set_attributes,
     sign_single,
@@ -48,7 +48,13 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._attribute_values import require_bool_attr, require_ulong_attr
-from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, is_known_error
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
+    import_secret_key_negotiated,
+    is_known_error,
+)
 
 pytestmark = [pytest.mark.security]
 
@@ -107,8 +113,15 @@ class TestCopyableOneWay:
             # If it succeeded, check if the value actually changed
             attrs2 = read_attributes(rs.raw, rs.sh, key, [CKA_COPYABLE])
             if attrs2[CKA_COPYABLE] is True:
-                pytest.xfail(
-                    "SECURITY: CKA_COPYABLE escalated from False to True - one-way rule violated"
+                fail_as(
+                    "self_contradiction",
+                    kind="policy",
+                    label="CKA_COPYABLE:one-way-escalation",
+                    operation="C_SetAttributeValue",
+                    summary=(
+                        "SECURITY: CKA_COPYABLE escalated from False to True - "
+                        "one-way rule violated"
+                    ),
                 )
         except AssertionError as e:
             if _is_set_attr_error(e):
@@ -212,12 +225,18 @@ class TestDestroyable:
                 f"Module accepted CKA_DESTROYABLE=False at C_CreateObject "
                 f"but readback returns {val!r} — silent ignore at create time.",
                 ComplianceLevel.CRITICAL,
-                reference="PKCS#11 v3.1 Sec.4.1.2",
+                reference="PKCS#11 v3.2",
             )
-            pytest.fail(
-                "SECURITY: module silently ignored CKA_DESTROYABLE=False "
-                "at create time. Lying-module pattern hides the destroy "
-                "enforcement test."
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label="CKA_DESTROYABLE:silent-ignore-at-create",
+                operation="C_CreateObject",
+                summary=(
+                    "SECURITY: module silently ignored CKA_DESTROYABLE=False "
+                    "at create time. Lying-module pattern hides the destroy "
+                    "enforcement test."
+                ),
             )
 
         rv = rs.raw.C_DestroyObject(rs.sh, key)
@@ -231,12 +250,20 @@ class TestDestroyable:
             note(
                 "Module ignores CKA_DESTROYABLE=False -- C_DestroyObject succeeded",
                 ComplianceLevel.CRITICAL,
-                reference="PKCS#11 v3.1 Sec.4.1.2: CKA_DESTROYABLE=False must prevent destroy",
+                reference="PKCS#11 v3.2: CKA_DESTROYABLE=False must prevent destroy",
             )
-            pytest.fail(
-                "SECURITY: C_DestroyObject succeeded on CKA_DESTROYABLE=False "
-                "key — DESTROYABLE access control silently ignored "
-                "(expected CKR_ACTION_PROHIBITED)."
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label="CKA_DESTROYABLE:destroy-succeeded",
+                operation="C_DestroyObject",
+                actual=rv,
+                expected=[CKR_ACTION_PROHIBITED],
+                summary=(
+                    "SECURITY: C_DestroyObject succeeded on CKA_DESTROYABLE=False "
+                    "key — DESTROYABLE access control silently ignored "
+                    "(expected CKR_ACTION_PROHIBITED)."
+                ),
             )
         assert rv != CKR_OK, (
             "C_DestroyObject succeeded on CKA_DESTROYABLE=False key "
@@ -264,7 +291,7 @@ class TestDestroyable:
 class TestTokenAttributePromotion:
     """GAP-A5: session-object → token-object promotion via SetAttribute.
 
-    PKCS#11 v3.1 Sec.4.7 lists CKA_TOKEN as a Common Object Attribute
+    PKCS#11 v3.2 lists CKA_TOKEN as a Common Object Attribute
     with "R/W after creation" semantics — promotion IS allowed by the
     spec, but only by an authenticated user with R/W token access. The
     security concerns:
@@ -359,13 +386,19 @@ class TestTokenAttributePromotion:
                     f"caller believes object is now a token object but it "
                     f"isn't.",
                     ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.4.7 CKA_TOKEN R/W semantics",
+                    reference="PKCS#11 v3.2 CKA_TOKEN R/W semantics",
                 )
-                pytest.fail(
-                    "SECURITY: module silently ignored "
-                    "C_SetAttributeValue(CKA_TOKEN=True) — half-promoted "
-                    "state. Lying-module pattern at the persistence "
-                    "boundary."
+                fail_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label="CKA_TOKEN:setattr-half-promoted",
+                    operation="C_SetAttributeValue",
+                    summary=(
+                        "SECURITY: module silently ignored "
+                        "C_SetAttributeValue(CKA_TOKEN=True) — half-promoted "
+                        "state. Lying-module pattern at the persistence "
+                        "boundary."
+                    ),
                 )
             # CKR_OK + readback shows True: spec-conformant promotion.
             # Persistence verification (open new session, find object)
@@ -393,7 +426,13 @@ class TestKeyGenMechanism:
                 pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
             mech = attrs[CKA_KEY_GEN_MECHANISM]
             mech_val = require_ulong_attr(mech, "CKA_KEY_GEN_MECHANISM")
-            assert mech_val == CKM_AES_KEY_GEN, f"Expected CKM_AES_KEY_GEN, got {mech_val}"
+            assert_correct(
+                actual=mech_val,
+                expected=CKM_AES_KEY_GEN,
+                label="AES:CKA_KEY_GEN_MECHANISM readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
@@ -407,7 +446,7 @@ class TestKeyGenMechanism:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
 
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_GEN_MECHANISM])
@@ -415,8 +454,12 @@ class TestKeyGenMechanism:
                     pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
                 mech = attrs[CKA_KEY_GEN_MECHANISM]
                 mech_val = require_ulong_attr(mech, "CKA_KEY_GEN_MECHANISM")
-                assert mech_val == CKM_RSA_PKCS_KEY_PAIR_GEN, (
-                    f"Expected CKM_RSA_PKCS_KEY_PAIR_GEN, got {mech_val}"
+                assert_correct(
+                    actual=mech_val,
+                    expected=CKM_RSA_PKCS_KEY_PAIR_GEN,
+                    label="RSA:CKA_KEY_GEN_MECHANISM readback",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
                 )
             except AssertionError as e:
                 if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
@@ -430,9 +473,8 @@ class TestKeyGenMechanism:
         """Imported key CKA_KEY_GEN_MECHANISM should be CK_UNAVAILABLE_INFORMATION."""
         rs = p11_raw_session
         key_material = bytes(range(16))  # 128-bit AES
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_material,
             attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
@@ -483,7 +525,13 @@ class TestKeyGenMechanism:
                     key,
                     {CKA_KEY_GEN_MECHANISM: CKM_AES_KEY_GEN},
                 )
-                pytest.fail("Module accepted C_SetAttributeValue on CKA_KEY_GEN_MECHANISM")
+                fail_as(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="CKA_KEY_GEN_MECHANISM:read-only-write",
+                    operation="C_SetAttributeValue",
+                    summary="Module accepted C_SetAttributeValue on CKA_KEY_GEN_MECHANISM",
+                )
             except AssertionError:
                 pass  # Expected: module rejected the write
         finally:
@@ -524,9 +572,8 @@ class TestCheckValue:
 
         # Known 128-bit AES key
         key_material = b"\x00" * 16
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_material,
             attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
@@ -546,8 +593,13 @@ class TestCheckValue:
             plaintext = b"\x00" * 16
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, plaintext)
             expected_kcv = ct[:3]
-            assert kcv == expected_kcv, (
-                f"KCV mismatch: got {kcv.hex()}, expected {expected_kcv.hex()}"
+            assert_correct(
+                actual=kcv,
+                expected=expected_kcv,
+                label="AES:CKA_CHECK_VALUE vs AES-ECB(zeros)[:3]",
+                operation="C_GetAttributeValue",
+                mechanism="CKM_AES_ECB",
+                kind="crypto",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -556,16 +608,14 @@ class TestCheckValue:
         """Two keys with identical material should have the same CKA_CHECK_VALUE."""
         rs = p11_raw_session
         key_material = b"\xab" * 16
-        key1 = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key1 = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_material,
             attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
         )
-        key2 = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key2 = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_material,
             attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
@@ -605,7 +655,7 @@ class TestAlwaysAuthenticate:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
 
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_ALWAYS_AUTHENTICATE])
             if CKA_ALWAYS_AUTHENTICATE not in attrs:
@@ -731,8 +781,20 @@ class TestDateAttributes:
             except AssertionError as e:
                 pytest.skip(f"Module does not expose date attributes: {e}")
 
-            assert sd == "20260101", f"Expected 20260101, got {sd}"
-            assert ed == "20271231", f"Expected 20271231, got {ed}"
+            assert_correct(
+                actual=sd,
+                expected="20260101",
+                label="CKA_START_DATE readback after create",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=ed,
+                expected="20271231",
+                label="CKA_END_DATE readback after create",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 

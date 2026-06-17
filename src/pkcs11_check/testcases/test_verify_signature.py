@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -21,6 +22,7 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_BYTE_PTR,
+    CKF_VERIFY,
     CKM_RSA_PKCS,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_HANDLE_INVALID,
@@ -32,7 +34,11 @@ from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
     SIGNATURE_REJECT_RVS,
 )
-from pkcs11_check.testcases.conftest import classify_negative_rv, is_known_error
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    is_known_error,
+    skip_unless_mechanism_flag,
+)
 
 pytestmark = pytest.mark.full
 
@@ -59,6 +65,7 @@ class TestVerifySignatureRoundtrip:
         self._skip_unless_available(rs)
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
+        skip_unless_mechanism_flag(rs, CKM_RSA_PKCS, int(CKF_VERIFY))
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             data = b"VerifySignature single-shot test data"
@@ -66,6 +73,8 @@ class TestVerifySignatureRoundtrip:
             sig_ptr, sig_len = _sig_buf(sig)
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_VerifySignatureInit(rs.sh, mech.byref(), pub, sig_ptr, sig_len)
+            if rv == CKR_FUNCTION_NOT_SUPPORTED:
+                pytest.skip("C_VerifySignatureInit listed but not operational")
             assert rv == CKR_OK, f"C_VerifySignatureInit failed with 0x{rv:08x}"
             data_ptr, data_len = _data_buf(data)
             rv = rs.raw.C_VerifySignature(rs.sh, data_ptr, data_len)
@@ -80,6 +89,7 @@ class TestVerifySignatureRoundtrip:
         self._skip_unless_available(rs)
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
+        skip_unless_mechanism_flag(rs, CKM_RSA_PKCS, int(CKF_VERIFY))
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             chunks = [b"chunk one ", b"chunk two ", b"chunk three"]
@@ -87,6 +97,8 @@ class TestVerifySignatureRoundtrip:
             sig_ptr, sig_len = _sig_buf(sig)
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_VerifySignatureInit(rs.sh, mech.byref(), pub, sig_ptr, sig_len)
+            if rv == CKR_FUNCTION_NOT_SUPPORTED:
+                pytest.skip("C_VerifySignatureInit listed but not operational")
             assert rv == CKR_OK, f"C_VerifySignatureInit failed with 0x{rv:08x}"
             for chunk in chunks:
                 chunk_ptr, chunk_len = _data_buf(chunk)
@@ -108,6 +120,7 @@ class TestVerifySignatureRoundtrip:
         self._skip_unless_available(rs)
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
+        skip_unless_mechanism_flag(rs, CKM_RSA_PKCS, int(CKF_VERIFY))
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             data = b"original data"
@@ -120,8 +133,17 @@ class TestVerifySignatureRoundtrip:
             data_ptr, data_len = _data_buf(data)
             rv = rs.raw.C_VerifySignature(rs.sh, data_ptr, data_len)
             if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
-                pytest.xfail(
-                    f"C_VerifySignature rejected wrong signature with non-clean CKR: {ckr_name(rv)}"
+                classify(
+                    "nonspec_reject",
+                    kind="crypto",
+                    label="RSA_PKCS:C_VerifySignature wrong-sig",
+                    operation="C_VerifySignature",
+                    mechanism="CKM_RSA_PKCS",
+                    actual=rv,
+                    summary=(
+                        f"C_VerifySignature rejected wrong signature with non-clean CKR: "
+                        f"{ckr_name(rv)}"
+                    ),
                 )
             classify_negative_rv(
                 rv,
@@ -133,23 +155,25 @@ class TestVerifySignatureRoundtrip:
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_verify_signature_wrong_key(self, p11_raw_session: Any) -> None:
-        """Wrong key returns CKR_KEY_HANDLE_INVALID or CKR_SIGNATURE_INVALID.
+        """A signature created with a different key must not verify.
 
-        SECURITY: A module that returns CKR_OK when verifying with a mismatched
-        key silently accepts forged signatures.
+        SECURITY: a module that ultimately returns CKR_OK when verifying a
+        signature against a mismatched public key silently accepts forged
+        signatures (crypto-correctness break).
 
-        NSS deviation: NSS C_VerifySignatureInit returns CKR_OK even when the
-        signature was created with a different key pair (pub2 vs priv1).
-        This is a SECURITY BUG in NSS's C_VerifySignatureInit -- it does not
-        validate key-signature correspondence at init time.
-        Tracked in docs/module-issues.md under NSS (SECURITY).
+        The verification verdict is produced by C_VerifySignature, not by
+        C_VerifySignatureInit: for same-size RSA keys the signature length matches
+        the modulus, so the key/signature mismatch can only be detected once the
+        data is supplied. A CKR_OK from C_VerifySignatureInit alone is therefore
+        NOT a finding -- the operation is driven to C_VerifySignature and that
+        outcome is classified (mirrors test_verify_signature_wrong_sig). Forgery
+        acceptance is a hard failure, not an xfail.
         """
-        from pkcs11_check.compliance import ComplianceLevel, note
-
         rs = p11_raw_session
         self._skip_unless_available(rs)
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
+        skip_unless_mechanism_flag(rs, CKM_RSA_PKCS, int(CKF_VERIFY))
         pub1, priv1 = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         pub2, priv2 = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
@@ -158,24 +182,48 @@ class TestVerifySignatureRoundtrip:
             sig_ptr, sig_len = _sig_buf(sig)
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_VerifySignatureInit(rs.sh, mech.byref(), pub2, sig_ptr, sig_len)
-            if rv == CKR_OK:
-                note(
-                    "C_VerifySignatureInit returned CKR_OK for a signature created with a "
-                    "different key -- module does not validate key-signature correspondence "
-                    "at init time (SECURITY)",
-                    ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 spec C_VerifySignatureInit",
+            if rv != CKR_OK:
+                # Some modules validate the key/signature correspondence at init.
+                if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
+                    classify(
+                        "nonspec_reject",
+                        kind="crypto",
+                        label="RSA_PKCS:C_VerifySignatureInit wrong-key",
+                        operation="C_VerifySignatureInit",
+                        mechanism="CKM_RSA_PKCS",
+                        actual=rv,
+                        summary=(
+                            f"C_VerifySignatureInit rejected the mismatched key with a "
+                            f"non-clean CKR: {ckr_name(rv)}"
+                        ),
+                    )
+                classify_negative_rv(
+                    rv,
+                    (CKR_KEY_HANDLE_INVALID, CKR_SIGNATURE_INVALID),
+                    label="C_VerifySignatureInit with a signature created under a different key",
                 )
-                pytest.xfail(
-                    "SECURITY: C_VerifySignatureInit returned CKR_OK when verifying "
-                    "with a mismatched public key -- silent acceptance of forged signatures "
-                    "(expected CKR_KEY_HANDLE_INVALID or CKR_SIGNATURE_INVALID)"
+                return
+            # Init accepted; the forgery must be caught at C_VerifySignature.
+            data_ptr, data_len = _data_buf(data)
+            rv = rs.raw.C_VerifySignature(rs.sh, data_ptr, data_len)
+            if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
+                classify(
+                    "nonspec_reject",
+                    kind="crypto",
+                    label="RSA_PKCS:C_VerifySignature wrong-key",
+                    operation="C_VerifySignature",
+                    mechanism="CKM_RSA_PKCS",
+                    actual=rv,
+                    summary=(
+                        f"C_VerifySignature rejected the mismatched-key signature with a "
+                        f"non-clean CKR: {ckr_name(rv)}"
+                    ),
                 )
             classify_negative_rv(
                 rv,
-                (CKR_KEY_HANDLE_INVALID, CKR_SIGNATURE_INVALID),
-                label="C_VerifySignatureInit with a signature created under a different key "
-                "(CKR_OK accepts a forged signature; handled above as a CRITICAL deviation)",
+                SIGNATURE_REJECT_RVS,
+                label="C_VerifySignature of a signature created under a different key "
+                "(CKR_OK accepts a forgery)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub1)

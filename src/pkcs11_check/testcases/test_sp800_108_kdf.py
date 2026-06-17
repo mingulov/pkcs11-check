@@ -14,15 +14,17 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 from __future__ import annotations
 
 import ctypes
+import hashlib
+import hmac
 from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import PackedMechanism, PointerArg
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
-    import_secret_key,
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
@@ -59,7 +61,11 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    import_secret_key_negotiated,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -86,11 +92,70 @@ _DERIVE_ERROR_RVS = {
 }
 
 
+def _sp800_108_counter_hmac_sha256_reference(
+    base_key: bytes,
+    label: bytes,
+    context: bytes,
+    key_bits: int,
+) -> bytes:
+    """Compute SP800-108 counter-mode HMAC-SHA256 output for the test parameter order."""
+    if key_bits <= 0 or key_bits % 8 != 0:
+        raise ValueError("key_bits must be a positive multiple of 8")
+    wanted = key_bits // 8
+    fixed_input_suffix = label + b"\x00" + context + key_bits.to_bytes(4, "big")
+    output = b""
+    counter = 1
+    while len(output) < wanted:
+        data = counter.to_bytes(4, "big") + fixed_input_suffix
+        output += hmac.new(base_key, data, hashlib.sha256).digest()
+        counter += 1
+    return output[:wanted]
+
+
+def _sp800_108_feedback_hmac_sha256_reference(
+    base_key: bytes,
+    label: bytes,
+    context: bytes,
+    key_bits: int,
+    *,
+    iv: bytes = b"",
+) -> bytes:
+    """Compute SP800-108 feedback-mode HMAC-SHA256 for the test parameter order."""
+    if key_bits <= 0 or key_bits % 8 != 0:
+        raise ValueError("key_bits must be a positive multiple of 8")
+    wanted = key_bits // 8
+    fixed_input_suffix = label + b"\x00" + context + key_bits.to_bytes(4, "big")
+    output = b""
+    previous = iv
+    while len(output) < wanted:
+        previous = hmac.new(base_key, previous + fixed_input_suffix, hashlib.sha256).digest()
+        output += previous
+    return output[:wanted]
+
+
+def _sp800_108_double_pipeline_hmac_sha256_reference(
+    base_key: bytes,
+    label: bytes,
+    context: bytes,
+    key_bits: int,
+) -> bytes:
+    """Compute SP800-108 double-pipeline HMAC-SHA256 for the test parameter order."""
+    if key_bits <= 0 or key_bits % 8 != 0:
+        raise ValueError("key_bits must be a positive multiple of 8")
+    wanted = key_bits // 8
+    fixed_input = label + b"\x00" + context + key_bits.to_bytes(4, "big")
+    output = b""
+    previous_a = fixed_input
+    while len(output) < wanted:
+        previous_a = hmac.new(base_key, previous_a, hashlib.sha256).digest()
+        output += hmac.new(base_key, previous_a + fixed_input, hashlib.sha256).digest()
+    return output[:wanted]
+
+
 def _create_base_key(rs: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> int:
     """Create a GENERIC_SECRET base key suitable for derivation."""
-    return import_secret_key(
-        rs.raw,
-        rs.sh,
+    return import_secret_key_negotiated(
+        rs,
         CKK_GENERIC_SECRET,
         key_bytes,
         attrs={
@@ -189,19 +254,22 @@ def _build_counter_kdf_mech(
     p_label, ka2 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=label)
     keepalive.extend(ka2)
 
-    p_ctx, ka3 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=context)
+    p_sep, ka3 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=b"\x00")
     keepalive.extend(ka3)
 
-    dlf = _dkm_length_format()
-    p_dkm, ka4 = _make_prf_data_param(CK_SP800_108_DKM_LENGTH, struct=dlf)
+    p_ctx, ka4 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=context)
     keepalive.extend(ka4)
 
-    data_params = (CK_PRF_DATA_PARAM * 4)(p_iter, p_label, p_ctx, p_dkm)
+    dlf = _dkm_length_format()
+    p_dkm, ka5 = _make_prf_data_param(CK_SP800_108_DKM_LENGTH, struct=dlf)
+    keepalive.extend(ka5)
+
+    data_params = (CK_PRF_DATA_PARAM * 5)(p_iter, p_label, p_sep, p_ctx, p_dkm)
     keepalive.append(data_params)
 
     params = CK_SP800_108_KDF_PARAMS()
     params.prfType = CKM_SHA256_HMAC
-    params.ulNumberOfDataParams = 4
+    params.ulNumberOfDataParams = 5
     params.pDataParams = ctypes.cast(data_params, CK_VOID_PTR)
     params.ulAdditionalDerivedKeys = 0
     params.pAdditionalDerivedKeys = None
@@ -230,26 +298,28 @@ def _build_feedback_kdf_mech(
     """Build CKM_SP800_108_FEEDBACK_KDF mechanism."""
     keepalive: list[Any] = []
 
-    cf = _counter_format()
-    p_iter, ka1 = _make_prf_data_param(CK_SP800_108_ITERATION_VARIABLE, struct=cf)
+    p_iter, ka1 = _make_prf_data_param(CK_SP800_108_ITERATION_VARIABLE)
     keepalive.extend(ka1)
 
     p_label, ka2 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=label)
     keepalive.extend(ka2)
 
-    p_ctx, ka3 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=context)
+    p_sep, ka3 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=b"\x00")
     keepalive.extend(ka3)
 
-    dlf = _dkm_length_format()
-    p_dkm, ka4 = _make_prf_data_param(CK_SP800_108_DKM_LENGTH, struct=dlf)
+    p_ctx, ka4 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=context)
     keepalive.extend(ka4)
 
-    data_params = (CK_PRF_DATA_PARAM * 4)(p_iter, p_label, p_ctx, p_dkm)
+    dlf = _dkm_length_format()
+    p_dkm, ka5 = _make_prf_data_param(CK_SP800_108_DKM_LENGTH, struct=dlf)
+    keepalive.extend(ka5)
+
+    data_params = (CK_PRF_DATA_PARAM * 5)(p_iter, p_label, p_sep, p_ctx, p_dkm)
     keepalive.append(data_params)
 
     params = CK_SP800_108_FEEDBACK_KDF_PARAMS()
     params.prfType = CKM_SHA256_HMAC
-    params.ulNumberOfDataParams = 4
+    params.ulNumberOfDataParams = 5
     params.pDataParams = ctypes.cast(data_params, CK_VOID_PTR)
     if iv:
         iv_buf = (ctypes.c_ubyte * len(iv))(*iv)
@@ -285,26 +355,28 @@ def _build_double_pipeline_kdf_mech(
     """Build CKM_SP800_108_DOUBLE_PIPELINE_KDF mechanism."""
     keepalive: list[Any] = []
 
-    cf = _counter_format()
-    p_iter, ka1 = _make_prf_data_param(CK_SP800_108_ITERATION_VARIABLE, struct=cf)
+    p_iter, ka1 = _make_prf_data_param(CK_SP800_108_ITERATION_VARIABLE)
     keepalive.extend(ka1)
 
     p_label, ka2 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=label)
     keepalive.extend(ka2)
 
-    p_ctx, ka3 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=context)
+    p_sep, ka3 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=b"\x00")
     keepalive.extend(ka3)
 
-    dlf = _dkm_length_format()
-    p_dkm, ka4 = _make_prf_data_param(CK_SP800_108_DKM_LENGTH, struct=dlf)
+    p_ctx, ka4 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=context)
     keepalive.extend(ka4)
 
-    data_params = (CK_PRF_DATA_PARAM * 4)(p_iter, p_label, p_ctx, p_dkm)
+    dlf = _dkm_length_format()
+    p_dkm, ka5 = _make_prf_data_param(CK_SP800_108_DKM_LENGTH, struct=dlf)
+    keepalive.extend(ka5)
+
+    data_params = (CK_PRF_DATA_PARAM * 5)(p_iter, p_label, p_sep, p_ctx, p_dkm)
     keepalive.append(data_params)
 
     params = CK_SP800_108_KDF_PARAMS()
     params.prfType = CKM_SHA256_HMAC
-    params.ulNumberOfDataParams = 4
+    params.ulNumberOfDataParams = 5
     params.pDataParams = ctypes.cast(data_params, CK_VOID_PTR)
     params.ulAdditionalDerivedKeys = 0
     params.pAdditionalDerivedKeys = None
@@ -371,7 +443,16 @@ class TestSP800108CounterKDF:
             mp = _build_counter_kdf_mech()
             derived = _sp800_derive(rs, base_key, CKM_SP800_108_COUNTER_KDF, 128, mp)
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert len(val) == 16, f"Expected 16 bytes, got {len(val)}"
+            expected = _sp800_108_counter_hmac_sha256_reference(
+                _BASE_KEY_BYTES, _LABEL, _CONTEXT, 128
+            )
+            assert_correct(
+                actual=val,
+                expected=expected,
+                label="CKM_SP800_108_COUNTER_KDF:C_DeriveKey KAT (AES-128)",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_COUNTER_KDF",
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_COUNTER_KDF derivation not operational"
@@ -393,7 +474,16 @@ class TestSP800108CounterKDF:
             mp = _build_counter_kdf_mech()
             derived = _sp800_derive(rs, base_key, CKM_SP800_108_COUNTER_KDF, 256, mp)
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert len(val) == 32, f"Expected 32 bytes, got {len(val)}"
+            expected = _sp800_108_counter_hmac_sha256_reference(
+                _BASE_KEY_BYTES, _LABEL, _CONTEXT, 256
+            )
+            assert_correct(
+                actual=val,
+                expected=expected,
+                label="CKM_SP800_108_COUNTER_KDF:C_DeriveKey KAT (AES-256)",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_COUNTER_KDF",
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(
                 exc,
@@ -431,7 +521,13 @@ class TestSP800108CounterKDF:
             )
             v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
-            assert v1 == v2, "Deterministic KDF produced different outputs"
+            assert_correct(
+                actual=v1,
+                expected=v2,
+                label="CKM_SP800_108_COUNTER_KDF:C_DeriveKey determinism",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_COUNTER_KDF",
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_COUNTER_KDF derivation not operational"
@@ -545,7 +641,16 @@ class TestSP800108FeedbackKDF:
                 _build_feedback_kdf_mech(),
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert len(val) == 16
+            expected = _sp800_108_feedback_hmac_sha256_reference(
+                _BASE_KEY_BYTES, _LABEL, _CONTEXT, 128
+            )
+            assert_correct(
+                actual=val,
+                expected=expected,
+                label="CKM_SP800_108_FEEDBACK_KDF:C_DeriveKey KAT (AES-128)",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_FEEDBACK_KDF",
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF not operational")
         finally:
@@ -569,7 +674,16 @@ class TestSP800108FeedbackKDF:
                 _build_feedback_kdf_mech(iv=iv),
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert len(val) == 16
+            expected = _sp800_108_feedback_hmac_sha256_reference(
+                _BASE_KEY_BYTES, _LABEL, _CONTEXT, 128, iv=iv
+            )
+            assert_correct(
+                actual=val,
+                expected=expected,
+                label="CKM_SP800_108_FEEDBACK_KDF:C_DeriveKey KAT (AES-128 with IV)",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_FEEDBACK_KDF",
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF with IV not operational"
@@ -603,7 +717,18 @@ class TestSP800108FeedbackKDF:
             )
             v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
-            assert v1 != v2, "Different IVs produced same derived key"
+            if v1 == v2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_SP800_108_FEEDBACK_KDF:IV must affect output",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_SP800_108_FEEDBACK_KDF",
+                    summary=(
+                        "CKM_SP800_108_FEEDBACK_KDF: two different IVs produced the same "
+                        "derived key -- the IV was ignored"
+                    ),
+                )
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF not operational")
         finally:
@@ -637,7 +762,13 @@ class TestSP800108FeedbackKDF:
             )
             v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
-            assert v1 == v2, "Deterministic KDF produced different outputs"
+            assert_correct(
+                actual=v1,
+                expected=v2,
+                label="CKM_SP800_108_FEEDBACK_KDF:C_DeriveKey determinism",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_FEEDBACK_KDF",
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF not operational")
         finally:
@@ -670,7 +801,16 @@ class TestSP800108DoublePipelineKDF:
                 _build_double_pipeline_kdf_mech(),
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert len(val) == 16
+            expected = _sp800_108_double_pipeline_hmac_sha256_reference(
+                _BASE_KEY_BYTES, _LABEL, _CONTEXT, 128
+            )
+            assert_correct(
+                actual=val,
+                expected=expected,
+                label="CKM_SP800_108_DOUBLE_PIPELINE_KDF:C_DeriveKey KAT (AES-128)",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_DOUBLE_PIPELINE_KDF",
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_DOUBLE_PIPELINE_KDF not operational"
@@ -695,7 +835,16 @@ class TestSP800108DoublePipelineKDF:
                 _build_double_pipeline_kdf_mech(),
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert len(val) == 32
+            expected = _sp800_108_double_pipeline_hmac_sha256_reference(
+                _BASE_KEY_BYTES, _LABEL, _CONTEXT, 256
+            )
+            assert_correct(
+                actual=val,
+                expected=expected,
+                label="CKM_SP800_108_DOUBLE_PIPELINE_KDF:C_DeriveKey KAT (AES-256)",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_DOUBLE_PIPELINE_KDF",
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_DOUBLE_PIPELINE_KDF 256 not operational"
@@ -729,7 +878,13 @@ class TestSP800108DoublePipelineKDF:
             )
             v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
-            assert v1 == v2, "Deterministic KDF produced different outputs"
+            assert_correct(
+                actual=v1,
+                expected=v2,
+                label="CKM_SP800_108_DOUBLE_PIPELINE_KDF:C_DeriveKey determinism",
+                operation="C_DeriveKey",
+                mechanism="CKM_SP800_108_DOUBLE_PIPELINE_KDF",
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_DOUBLE_PIPELINE_KDF not operational"

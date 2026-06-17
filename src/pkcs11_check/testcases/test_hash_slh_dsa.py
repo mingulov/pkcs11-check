@@ -131,7 +131,7 @@ class TestHashSLHDSAGeneric:
         _skip_if_no(rs, "HASH_SLH_DSA")
         _skip_if_no(rs, "SLH_DSA")  # need keygen
 
-        mech_param = mech_hash_sign_context(CKM_HASH_SLH_DSA, hash_mech=int(CKM_SHA256))
+        mech_param = mech_hash_sign_context(CKM_HASH_SLH_DSA, hash_mech=CKM_SHA256)
         pub, priv = _generate_slh_dsa_keypair(rs)
         try:
             try:

@@ -18,22 +18,27 @@ OASIS spec: ssl.md
 from __future__ import annotations
 
 import ctypes
+import hashlib
+from collections.abc import Mapping
 from ctypes import byref
 from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_ulong,
     mech_bytes,
     mech_ssl3_key_mat,
     mech_ssl3_master_key_derive,
     template,
+    template_ptr_count,
 )
 from pkcs11_check.raw.recipes import (
     create_object,
     derive_key,
     destroy_quietly,
+    pack_attrs,
     read_attributes,
     sign_single,
 )
@@ -71,7 +76,12 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import destroy_returned_handles, is_known_error
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    destroy_returned_handles,
+    is_known_error,
+    reject_or_classify,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -79,8 +89,11 @@ pytestmark = pytest.mark.keymgmt
 _CLIENT_RANDOM = bytes(range(28))
 _SERVER_RANDOM = bytes(range(28, 56))
 
-# A 48-byte pre-master secret (SSL3 pre-master key size)
-_PRE_MASTER_SECRET = bytes(range(48))
+# A 48-byte pre-master secret (SSL3 pre-master key size) with version 3.0 prefix.
+_PRE_MASTER_SECRET = b"\x03\x00" + bytes(range(2, 48))
+
+# Arbitrary-length pre-master material for the DH master-key derive variant.
+_DH_PRE_MASTER_SECRET = bytes(range(32))
 
 # CKR values acceptable for operations using placeholder/unsupported params
 _DERIVE_ERROR_RVS = {
@@ -95,6 +108,11 @@ _DERIVE_ERROR_RVS = {
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_OBJECT_HANDLE_INVALID,
 }
+
+_SSL3_TEMPLATE_CONFLICT_REJECT_RVS = (
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+)
 
 # CKR values acceptable for MAC sign/verify operations
 _MAC_ERROR_RVS = {
@@ -121,6 +139,112 @@ def _create_generic_secret(rs: Any, value: bytes) -> int:
             CKA_SENSITIVE: False,
             CKA_EXTRACTABLE: True,
         },
+    )
+
+
+def _ssl3_master_secret_reference(
+    pre_master_secret: bytes,
+    client_random: bytes,
+    server_random: bytes,
+) -> bytes:
+    """Compute the SSL3 master_secret from RFC 6101 section 6.1."""
+    out = bytearray()
+    for pad in (b"A", b"BB", b"CCC"):
+        sha = hashlib.sha1(
+            pad + pre_master_secret + client_random + server_random,
+            usedforsecurity=False,
+        ).digest()
+        out.extend(
+            hashlib.md5(
+                pre_master_secret + sha,
+                usedforsecurity=False,
+            ).digest()
+        )
+    return bytes(out)
+
+
+def _ssl3_key_block_reference(
+    master_secret: bytes,
+    client_random: bytes,
+    server_random: bytes,
+    block_length: int,
+) -> bytes:
+    """Compute the SSL3 key_block from RFC 6101 section 6.2.2."""
+    out = bytearray()
+    i = 1
+    while len(out) < block_length:
+        pad = bytes([ord("A") + i - 1]) * i
+        sha = hashlib.sha1(
+            pad + master_secret + server_random + client_random,
+            usedforsecurity=False,
+        ).digest()
+        out.extend(
+            hashlib.md5(
+                master_secret + sha,
+                usedforsecurity=False,
+            ).digest()
+        )
+        i += 1
+    return bytes(out[:block_length])
+
+
+def _derive_key_material_to_params(
+    rs: Any,
+    base_key: int,
+    attrs: Mapping[Any, Any],
+    mech: Any,
+) -> None:
+    """Run SSL3 key-material derive, whose output handles live in mechanism params."""
+    packed = pack_attrs(attrs)
+    tmpl = template(*packed)
+    rv = rs.raw.C_DeriveKey(
+        rs.sh,
+        mech.byref(),
+        base_key,
+        *template_ptr_count(tmpl),
+        None,
+    )
+    expect_rv(rv, CKR_OK)
+
+
+def _derive_ssl3_key_material_template_conflict(
+    rs: Any,
+    base_key: int,
+    mech: Any,
+    *,
+    label: str,
+) -> None:
+    """Verify SSL3 key material rejects template protection values that differ."""
+    exc: AssertionError | None = None
+    try:
+        _derive_key_material_to_params(
+            rs,
+            base_key,
+            {
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_SENSITIVE: True,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
+            },
+            mech,
+        )
+    except AssertionError as caught:
+        exc = caught
+    finally:
+        out = mech.key_mat_out
+        destroy_returned_handles(
+            rs,
+            out.hClientMacSecret,
+            out.hServerMacSecret,
+            out.hClientKey,
+            out.hServerKey,
+        )
+
+    reject_or_classify(
+        exc,
+        _SSL3_TEMPLATE_CONFLICT_REJECT_RVS,
+        label=label,
     )
 
 
@@ -172,7 +296,14 @@ class TestSSL3PreMasterKeyGen:
                 destroy_quietly(rs.raw, rs.sh, key.value)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_PRE_MASTER_KEY_GEN not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_PRE_MASTER_KEY_GEN:C_GenerateKey",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
+                    summary=f"CKM_SSL3_PRE_MASTER_KEY_GEN not operational: {exc}",
+                )
             raise
 
     def test_generate_produces_random_output(self, p11_raw_session: Any) -> None:
@@ -220,7 +351,14 @@ class TestSSL3PreMasterKeyGen:
                 destroy_quietly(rs.raw, rs.sh, key1.value)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_PRE_MASTER_KEY_GEN not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_PRE_MASTER_KEY_GEN:C_GenerateKey",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
+                    summary=f"CKM_SSL3_PRE_MASTER_KEY_GEN not operational: {exc}",
+                )
             raise
 
 
@@ -269,7 +407,74 @@ class TestSSL3MasterKeyDerive:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_MASTER_KEY_DERIVE not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_MASTER_KEY_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE",
+                    summary=f"CKM_SSL3_MASTER_KEY_DERIVE not operational: {exc}",
+                )
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pre_master)
+
+    def test_derive_master_secret_exact_vector(self, p11_raw_session: Any) -> None:
+        """CKM_SSL3_MASTER_KEY_DERIVE must match the SSL3 master_secret formula."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("SSL3_MASTER_KEY_DERIVE"):
+            pytest.skip("CKM_SSL3_MASTER_KEY_DERIVE not supported")
+
+        pre_master = _create_generic_secret(rs, _PRE_MASTER_SECRET)
+        expected = _ssl3_master_secret_reference(
+            _PRE_MASTER_SECRET,
+            _CLIENT_RANDOM,
+            _SERVER_RANDOM,
+        )
+        try:
+            mech = mech_ssl3_master_key_derive(
+                CKM_SSL3_MASTER_KEY_DERIVE,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+            )
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                pre_master,
+                CKM_SSL3_MASTER_KEY_DERIVE,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 48,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                    CKA_DERIVE: True,
+                },
+                mech_param=mech,
+            )
+            try:
+                raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(raw_val, bytes)
+                assert_correct(
+                    actual=raw_val,
+                    expected=expected,
+                    label="CKM_SSL3_MASTER_KEY_DERIVE:C_DeriveKey KAT (master secret)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE",
+                )
+            finally:
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            if is_known_error(exc, _DERIVE_ERROR_RVS):
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_MASTER_KEY_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE",
+                    summary=f"CKM_SSL3_MASTER_KEY_DERIVE not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pre_master)
@@ -321,7 +526,75 @@ class TestSSL3MasterKeyDeriveDH:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_MASTER_KEY_DERIVE_DH not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_MASTER_KEY_DERIVE_DH:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE_DH",
+                    summary=f"CKM_SSL3_MASTER_KEY_DERIVE_DH not operational: {exc}",
+                )
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pre_master)
+
+    def test_derive_master_secret_dh_exact_vector(self, p11_raw_session: Any) -> None:
+        """CKM_SSL3_MASTER_KEY_DERIVE_DH must match the SSL3 master_secret formula."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("SSL3_MASTER_KEY_DERIVE_DH"):
+            pytest.skip("CKM_SSL3_MASTER_KEY_DERIVE_DH not supported")
+
+        pre_master = _create_generic_secret(rs, _DH_PRE_MASTER_SECRET)
+        expected = _ssl3_master_secret_reference(
+            _DH_PRE_MASTER_SECRET,
+            _CLIENT_RANDOM,
+            _SERVER_RANDOM,
+        )
+        try:
+            mech = mech_ssl3_master_key_derive(
+                CKM_SSL3_MASTER_KEY_DERIVE_DH,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                with_version=False,
+            )
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                pre_master,
+                CKM_SSL3_MASTER_KEY_DERIVE_DH,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 48,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                    CKA_DERIVE: True,
+                },
+                mech_param=mech,
+            )
+            try:
+                raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(raw_val, bytes)
+                assert_correct(
+                    actual=raw_val,
+                    expected=expected,
+                    label="CKM_SSL3_MASTER_KEY_DERIVE_DH:C_DeriveKey KAT (master secret DH)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE_DH",
+                )
+            finally:
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            if is_known_error(exc, _DERIVE_ERROR_RVS):
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_MASTER_KEY_DERIVE_DH:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE_DH",
+                    summary=f"CKM_SSL3_MASTER_KEY_DERIVE_DH not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pre_master)
@@ -349,29 +622,24 @@ class TestSSL3KeyAndMacDerive:
                 _SERVER_RANDOM,
                 key_size_bits=128,
             )
-            derived = derive_key(
-                rs.raw,
-                rs.sh,
-                master_secret,
-                CKM_SSL3_KEY_AND_MAC_DERIVE,
-                attrs={
-                    CKA_CLASS: CKO_SECRET_KEY,
-                    CKA_KEY_TYPE: CKK_AES,
-                    CKA_SENSITIVE: False,
-                    CKA_EXTRACTABLE: True,
-                    CKA_TOKEN: False,
-                },
-                mech_param=mech,
-            )
             try:
+                _derive_key_material_to_params(
+                    rs,
+                    master_secret,
+                    {
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
+                    },
+                    mech,
+                )
                 out = mech.key_mat_out
                 assert out.hClientKey != 0
                 assert out.hServerKey != 0
                 assert any(mech.buffer_bytes("iv_client"))
                 assert any(mech.buffer_bytes("iv_server"))
-                raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-                assert isinstance(raw_val, bytes)
-                assert len(raw_val) == 16, f"Expected 16 bytes, got {len(raw_val)}"
             finally:
                 out = mech.key_mat_out
                 destroy_returned_handles(
@@ -381,11 +649,125 @@ class TestSSL3KeyAndMacDerive:
                     out.hClientKey,
                     out.hServerKey,
                 )
-                destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_KEY_AND_MAC_DERIVE not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_KEY_AND_MAC_DERIVE:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
+                    summary=f"CKM_SSL3_KEY_AND_MAC_DERIVE not operational: {exc}",
+                )
             raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master_secret)
+
+    def test_derive_key_material_exact_vector(self, p11_raw_session: Any) -> None:
+        """Verify CKM_SSL3_KEY_AND_MAC_DERIVE produces exact RFC 6101 vectors."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("SSL3_KEY_AND_MAC_DERIVE"):
+            pytest.skip("CKM_SSL3_KEY_AND_MAC_DERIVE not supported")
+
+        master_secret_data = _ssl3_master_secret_reference(
+            _PRE_MASTER_SECRET, _CLIENT_RANDOM, _SERVER_RANDOM
+        )
+        master_secret = _create_generic_secret(rs, master_secret_data)
+        try:
+            # We request 128-bit keys (16 bytes) and SSL3 MD5/SHA1 MACs (16/20 bytes).
+            # Key block size = 2 * (16 + 16 + 16) = 96 bytes (for AES-128 with 16-byte IVs).
+            key_size_bits = 128
+            mech = mech_ssl3_key_mat(
+                CKM_SSL3_KEY_AND_MAC_DERIVE,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                key_size_bits=key_size_bits,
+            )
+
+            # Expected key block for our fixed inputs
+            expected_block = _ssl3_key_block_reference(
+                master_secret_data,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                96,
+            )
+
+            _derive_key_material_to_params(
+                rs,
+                master_secret,
+                {
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                },
+                mech,
+            )
+
+            out = mech.key_mat_out
+            try:
+                # Client MAC secret (16 bytes), Server MAC secret (16 bytes),
+                # Client Key (16 bytes), Server Key (16 bytes),
+                # Client IV (16 bytes), Server IV (16 bytes).
+                # Total = 96 bytes.
+                c_mac = read_attributes(rs.raw, rs.sh, out.hClientMacSecret, [CKA_VALUE])[CKA_VALUE]
+                s_mac = read_attributes(rs.raw, rs.sh, out.hServerMacSecret, [CKA_VALUE])[CKA_VALUE]
+                c_key = read_attributes(rs.raw, rs.sh, out.hClientKey, [CKA_VALUE])[CKA_VALUE]
+                s_key = read_attributes(rs.raw, rs.sh, out.hServerKey, [CKA_VALUE])[CKA_VALUE]
+                c_iv = mech.buffer_bytes("iv_client")
+                s_iv = mech.buffer_bytes("iv_server")
+
+                actual_block = c_mac + s_mac + c_key + s_key + c_iv + s_iv
+
+                if actual_block != expected_block:
+                    raise AssertionError(
+                        f"SSL3 key material output mismatch.\n"
+                        f"Actual:   {actual_block.hex()}\n"
+                        f"Expected: {expected_block.hex()}"
+                    )
+            finally:
+                destroy_returned_handles(
+                    rs,
+                    out.hClientMacSecret,
+                    out.hServerMacSecret,
+                    out.hClientKey,
+                    out.hServerKey,
+                )
+        except AssertionError as exc:
+            if is_known_error(exc, _DERIVE_ERROR_RVS):
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_KEY_AND_MAC_DERIVE:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
+                    summary=f"CKM_SSL3_KEY_AND_MAC_DERIVE not operational: {exc}",
+                )
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, master_secret)
+
+    def test_rejects_template_protection_conflict(self, p11_raw_session: Any) -> None:
+        """CKM_SSL3_KEY_AND_MAC_DERIVE rejects template protection overrides."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("SSL3_KEY_AND_MAC_DERIVE"):
+            pytest.skip("CKM_SSL3_KEY_AND_MAC_DERIVE not supported")
+
+        master_secret = _create_generic_secret(rs, _PRE_MASTER_SECRET)
+        try:
+            mech = mech_ssl3_key_mat(
+                CKM_SSL3_KEY_AND_MAC_DERIVE,
+                _CLIENT_RANDOM,
+                _SERVER_RANDOM,
+                key_size_bits=128,
+            )
+            _derive_ssl3_key_material_template_conflict(
+                rs,
+                master_secret,
+                mech,
+                label="CKM_SSL3_KEY_AND_MAC_DERIVE template protection conflict",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, master_secret)
 
@@ -429,7 +811,14 @@ class TestSSL3Mac:
             assert len(mac) == 16, f"Expected 16-byte MD5 MAC, got {len(mac)}"
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_MD5_MAC sign not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_MD5_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_MD5_MAC",
+                    summary=f"CKM_SSL3_MD5_MAC sign not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -460,10 +849,23 @@ class TestSSL3Mac:
                 data,
                 mech_param=mech_bytes(CKM_SSL3_MD5_MAC, mac_len_bytes),
             )
-            assert mac1 == mac2, "CKM_SSL3_MD5_MAC produced different MACs for identical input"
+            assert_correct(
+                actual=mac1,
+                expected=mac2,
+                label="CKM_SSL3_MD5_MAC:C_Sign determinism",
+                operation="C_Sign",
+                mechanism="CKM_SSL3_MD5_MAC",
+            )
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_MD5_MAC not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_MD5_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_MD5_MAC",
+                    summary=f"CKM_SSL3_MD5_MAC not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -496,7 +898,14 @@ class TestSSL3Mac:
             assert mac_a != mac_b, "CKM_SSL3_MD5_MAC produced same MAC for different data"
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_MD5_MAC not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_MD5_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_MD5_MAC",
+                    summary=f"CKM_SSL3_MD5_MAC not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -521,7 +930,14 @@ class TestSSL3Mac:
             assert len(mac) == 20, f"Expected 20-byte SHA1 MAC, got {len(mac)}"
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_SHA1_MAC sign not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_SHA1_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_SHA1_MAC",
+                    summary=f"CKM_SSL3_SHA1_MAC sign not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -552,10 +968,23 @@ class TestSSL3Mac:
                 data,
                 mech_param=mech_bytes(CKM_SSL3_SHA1_MAC, mac_len_bytes),
             )
-            assert mac1 == mac2, "CKM_SSL3_SHA1_MAC produced different MACs for identical input"
+            assert_correct(
+                actual=mac1,
+                expected=mac2,
+                label="CKM_SSL3_SHA1_MAC:C_Sign determinism",
+                operation="C_Sign",
+                mechanism="CKM_SSL3_SHA1_MAC",
+            )
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_SHA1_MAC not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_SHA1_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_SHA1_MAC",
+                    summary=f"CKM_SSL3_SHA1_MAC not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -588,7 +1017,14 @@ class TestSSL3Mac:
             assert mac_a != mac_b, "CKM_SSL3_SHA1_MAC produced same MAC for different data"
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_SHA1_MAC not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_SHA1_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_SHA1_MAC",
+                    summary=f"CKM_SSL3_SHA1_MAC not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -620,10 +1056,28 @@ class TestSSL3Mac:
                 data,
                 mech_param=mech_bytes(CKM_SSL3_MD5_MAC, mac_len_bytes),
             )
-            assert mac1 != mac2, "CKM_SSL3_MD5_MAC produced same MAC for different keys"
+            if mac1 == mac2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_SSL3_MD5_MAC:key must affect output",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_MD5_MAC",
+                    summary=(
+                        "CKM_SSL3_MD5_MAC produced the same MAC for two different keys "
+                        "over identical data -- the key was ignored"
+                    ),
+                )
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_MD5_MAC not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_MD5_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_MD5_MAC",
+                    summary=f"CKM_SSL3_MD5_MAC not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -656,10 +1110,28 @@ class TestSSL3Mac:
                 data,
                 mech_param=mech_bytes(CKM_SSL3_SHA1_MAC, mac_len_bytes),
             )
-            assert mac1 != mac2, "CKM_SSL3_SHA1_MAC produced same MAC for different keys"
+            if mac1 == mac2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_SSL3_SHA1_MAC:key must affect output",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_SHA1_MAC",
+                    summary=(
+                        "CKM_SSL3_SHA1_MAC produced the same MAC for two different keys "
+                        "over identical data -- the key was ignored"
+                    ),
+                )
         except AssertionError as exc:
             if is_known_error(exc, _MAC_ERROR_RVS):
-                pytest.xfail(f"CKM_SSL3_SHA1_MAC not operational: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_SSL3_SHA1_MAC:C_Sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SSL3_SHA1_MAC",
+                    summary=f"CKM_SSL3_SHA1_MAC not operational: {exc}",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key2)

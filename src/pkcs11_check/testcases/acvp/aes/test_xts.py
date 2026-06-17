@@ -17,6 +17,7 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     import_secret_key,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -24,14 +25,83 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKK_AES_XTS,
     CKM_AES_XTS,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
+)
+from pkcs11_check.testcases._operability import (
+    Operability,
+    OperabilityResult,
+    classify_kat_clean_error,
+    probe_operability,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import assert_correct, import_secret_key_negotiated
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 REQUIRED_MECHANISMS = ["AES_XTS"]
+
+# --- Canonical operability probe (triage H2) ---------------------------------
+# One canonical XTS known answer per direction per process decides how clean
+# vector errors classify (testcases/_operability.py). Expected output comes
+# from `cryptography` (AES-128-XTS, spec-derived truth).
+PROBE_XTS_KEY = bytes(range(32))
+PROBE_XTS_TWEAK = bytes(range(16))
+PROBE_XTS_PT = bytes(range(32))
+
+
+def _probe_expected_xts_ct() -> bytes:
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    enc = Cipher(algorithms.AES(PROBE_XTS_KEY), modes.XTS(PROBE_XTS_TWEAK)).encryptor()
+    return enc.update(PROBE_XTS_PT) + enc.finalize()
+
+
+def _canonical_xts_probe(rs: Any, direction: str) -> OperabilityResult:
+    expected_ct = _probe_expected_xts_ct()
+    key = 0
+    try:
+        try:
+            key = import_secret_key(
+                rs.raw,
+                rs.sh,
+                CKK_AES_XTS,
+                PROBE_XTS_KEY,
+                attrs={
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
+                },
+            )
+        except CkrAssertionError as exc:
+            return OperabilityResult(
+                Operability.INCONCLUSIVE, f"canonical AES_XTS key import failed: {exc}"
+            )
+        mech = mech_bytes(CKM_AES_XTS, PROBE_XTS_TWEAK)
+        try:
+            if direction == "encrypt":
+                got = encrypt_single(rs.raw, rs.sh, key, CKM_AES_XTS, PROBE_XTS_PT, mech_param=mech)
+                want = expected_ct
+            else:
+                got = decrypt_single(rs.raw, rs.sh, key, CKM_AES_XTS, expected_ct, mech_param=mech)
+                want = PROBE_XTS_PT
+        except CkrAssertionError as exc:
+            return OperabilityResult(
+                Operability.NOT_OPERATIONAL,
+                f"canonical AES_XTS {direction} rejected: {exc}",
+            )
+        if got != want:
+            return OperabilityResult(
+                Operability.WRONG_OUTPUT,
+                f"canonical AES_XTS {direction} output mismatch: "
+                f"got {got.hex()}, want {want.hex()}",
+            )
+        return OperabilityResult(Operability.OPERATIONAL, f"canonical AES_XTS {direction} OK")
+    finally:
+        if key:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+
+def _xts_operability(rs: Any, direction: str) -> OperabilityResult:
+    return probe_operability(f"AES_XTS:{direction}", lambda: _canonical_xts_probe(rs, direction))
 
 
 def _load_xts_vectors(
@@ -160,9 +230,8 @@ def test_acvp_aes_xts_encrypt(p11_module_session: Any, vec_id: str, vec: dict[st
     chunks = _xts_data_unit_chunks(vec["pt"], vec)
     key = 0
     try:
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES_XTS,
             vec["key"],
             attrs={
@@ -187,12 +256,18 @@ def test_acvp_aes_xts_encrypt(p11_module_session: Any, vec_id: str, vec: dict[st
                 )
             ct = b"".join(ct_parts)
         except AssertionError as exc:
-            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-                pytest.xfail(f"AES_XTS advertised but encrypt is not operational: {exc}")
-            raise
+            classify_kat_clean_error(
+                exc, result=_xts_operability(rs, "encrypt"), label="AES_XTS encrypt"
+            )
 
-        assert ct == vec["ct_expected"], (
-            f"{vec_id}: ciphertext mismatch: got {ct.hex()}, expected {vec['ct_expected'].hex()}"
+        assert_correct(
+            actual=ct,
+            expected=vec["ct_expected"],
+            label=f"AES-XTS:C_Encrypt KAT {vec_id}",
+            operation="C_Encrypt",
+            mechanism="CKM_AES_XTS",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
     finally:
         if key:
@@ -213,9 +288,8 @@ def test_acvp_aes_xts_decrypt(p11_module_session: Any, vec_id: str, vec: dict[st
     chunks = _xts_data_unit_chunks(vec["ct"], vec)
     key = 0
     try:
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES_XTS,
             vec["key"],
             attrs={
@@ -240,12 +314,18 @@ def test_acvp_aes_xts_decrypt(p11_module_session: Any, vec_id: str, vec: dict[st
                 )
             pt = b"".join(pt_parts)
         except AssertionError as exc:
-            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-                pytest.xfail(f"AES_XTS advertised but decrypt is not operational: {exc}")
-            raise
+            classify_kat_clean_error(
+                exc, result=_xts_operability(rs, "decrypt"), label="AES_XTS decrypt"
+            )
 
-        assert pt == vec["pt_expected"], (
-            f"{vec_id}: plaintext mismatch: got {pt.hex()}, expected {vec['pt_expected'].hex()}"
+        assert_correct(
+            actual=pt,
+            expected=vec["pt_expected"],
+            label=f"AES-XTS:C_Decrypt KAT {vec_id}",
+            operation="C_Decrypt",
+            mechanism="CKM_AES_XTS",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
     finally:
         if key:

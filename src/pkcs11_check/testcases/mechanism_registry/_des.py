@@ -107,6 +107,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_DES_ENC,
+        vector_file="des_cbc_pad.json",
         notes="DES-CBC with PKCS#7 padding: any-length plaintext, requires 8-byte IV",
     )
 
@@ -116,6 +117,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(64,),
         keygen_recipe=_fixed,
         expected_flags=_DES_SIG,
+        vector_file="des_mac.json",
         notes="DES-MAC: CBC-MAC with fixed output length",
     )
 
@@ -127,6 +129,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_mac_general,
         keygen_recipe=_fixed,
         expected_flags=_DES_SIG,
+        vector_file="des_mac_general.json",
         notes="DES-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
 
@@ -270,6 +273,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_DES_ENC,
+        vector_file="des3_cbc_pad.json",
         notes="3DES-CBC with PKCS#7 padding: any-length plaintext, requires 8-byte IV",
     )
 
@@ -279,6 +283,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_DES3_SIZES,
         keygen_recipe=_fixed,
         expected_flags=_DES_SIG,
+        vector_file="des3_mac.json",
         notes="3DES-MAC: CBC-MAC with fixed output length",
     )
 
@@ -290,6 +295,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_mac_general,
         keygen_recipe=_fixed,
         expected_flags=_DES_SIG,
+        vector_file="des3_mac_general.json",
         notes="3DES-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
 
@@ -299,6 +305,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_DES3_SIZES,
         keygen_recipe=_fixed,
         expected_flags=_DES_SIG,
+        vector_file="des3_cmac.json",
         notes="3DES-CMAC: NIST SP 800-38B CMAC, fixed 64-bit output",
     )
 
@@ -310,6 +317,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_mac_general,
         keygen_recipe=_fixed,
         expected_flags=_DES_SIG,
+        vector_file="des3_cmac_general.json",
         notes="3DES-CMAC-GENERAL: CMAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
 

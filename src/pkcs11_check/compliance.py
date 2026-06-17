@@ -21,6 +21,7 @@ Usage in tests:
 from __future__ import annotations
 
 import enum
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 
@@ -54,20 +55,27 @@ def note(
     description: str,
     level: ComplianceLevel,
     reference: str = "",
+    *,
+    test_id: str = "",
 ) -> None:
     """Record a compliance observation for the current test.
 
     Call this inside a test function to annotate the result with
     compliance-relevant metadata.
-    """
-    import inspect
 
-    # Get the calling test's name
-    frame = inspect.currentframe()
-    caller = frame.f_back if frame else None
-    test_id = ""
-    if caller:
-        test_id = caller.f_code.co_qualname
+    ``test_id`` overrides frame inspection when the caller cannot be the
+    direct test function (e.g., called from a shared helper).  When empty
+    the immediate caller's ``co_qualname`` is used, preserving the original
+    behaviour for all existing call sites.
+    """
+    if not test_id:
+        import inspect
+
+        # Get the calling test's name
+        frame = inspect.currentframe()
+        caller = frame.f_back if frame else None
+        if caller:
+            test_id = caller.f_code.co_qualname
 
     _notes.append(
         ComplianceNote(
@@ -87,6 +95,26 @@ def get_notes() -> list[ComplianceNote]:
 def clear_notes() -> None:
     """Clear collected notes (call between test runs)."""
     _notes.clear()
+
+
+def serialize_notes(
+    notes: Iterable[ComplianceNote],
+    *,
+    nodeid: str = "",
+) -> list[dict[str, str]]:
+    """Serialize compliance notes into JSON-safe artifact records."""
+    result: list[dict[str, str]] = []
+    for n in notes:
+        record = {
+            "description": n.description,
+            "level": n.level.value,
+            "reference": n.reference,
+            "test_id": n.test_id,
+        }
+        if nodeid:
+            record["nodeid"] = nodeid
+        result.append(record)
+    return result
 
 
 def summary() -> dict[str, list[ComplianceNote]]:

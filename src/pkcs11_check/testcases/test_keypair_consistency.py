@@ -16,8 +16,6 @@ import pytest
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    gen_ec_keypair,
-    gen_rsa_keypair,
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
@@ -27,6 +25,11 @@ from pkcs11_check.raw.types_std import (
     CKA_MODULUS,
     CKA_PUBLIC_EXPONENT,
     CKK_EC,
+)
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    gen_ec_keypair_or_xfail,
+    gen_rsa_keypair_or_xfail,
 )
 
 pytestmark = pytest.mark.keymgmt
@@ -41,7 +44,7 @@ class TestRSAKeypairConsistency:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA key generation not supported")
 
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             pub_modulus = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS])[CKA_MODULUS]
             priv_modulus = read_attributes(rs.raw, rs.sh, priv, [CKA_MODULUS])[CKA_MODULUS]
@@ -56,7 +59,7 @@ class TestRSAKeypairConsistency:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA key generation not supported")
 
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             pub_exp = read_attributes(rs.raw, rs.sh, pub, [CKA_PUBLIC_EXPONENT])[
                 CKA_PUBLIC_EXPONENT
@@ -75,7 +78,7 @@ class TestRSAKeypairConsistency:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA key generation not supported")
 
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             modulus = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS])[CKA_MODULUS]
             assert len(modulus) == 256, f"Expected 256-byte modulus, got {len(modulus)}"
@@ -94,7 +97,7 @@ class TestECKeypairConsistency:
             pytest.skip("EC key generation not supported")
 
         curve_oid = encode_named_curve_parameters("secp256r1")
-        pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
+        pub, priv = gen_ec_keypair_or_xfail(rs, curve_oid)
         try:
             pub_params = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_PARAMS])[CKA_EC_PARAMS]
             priv_params = read_attributes(rs.raw, rs.sh, priv, [CKA_EC_PARAMS])[CKA_EC_PARAMS]
@@ -110,7 +113,7 @@ class TestECKeypairConsistency:
             pytest.skip("EC key generation not supported")
 
         curve_oid = encode_named_curve_parameters("secp256r1")
-        pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
+        pub, priv = gen_ec_keypair_or_xfail(rs, curve_oid)
         try:
             ec_point = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])[CKA_EC_POINT]
             assert isinstance(ec_point, bytes)
@@ -126,12 +129,24 @@ class TestECKeypairConsistency:
             pytest.skip("EC key generation not supported")
 
         curve_oid = encode_named_curve_parameters("secp256r1")
-        pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
+        pub, priv = gen_ec_keypair_or_xfail(rs, curve_oid)
         try:
             pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert pub_kt == CKK_EC
-            assert priv_kt == CKK_EC
+            assert_correct(
+                actual=pub_kt,
+                expected=CKK_EC,
+                label="EC:public CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_kt,
+                expected=CKK_EC,
+                label="EC:private CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

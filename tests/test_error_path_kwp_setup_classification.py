@@ -38,3 +38,28 @@ def test_unknown_reject_returns_false_and_stays_silent(
     )
     assert handled is False
     assert capsys.readouterr().out == ""
+
+
+def test_kwp_wrap_setup_passes_output_size_hint() -> None:
+    """Regression: the KWP wrap setup must pass output_size_hint so NSS softoken
+    (which does not report the wrapped-key length on the NULL-buffer size-query
+    pass for AES-KEY-WRAP-KWP) does not fail the setup with CKR_BUFFER_TOO_SMALL.
+    Without it, NSS hard-failed all 21 corrupted/bit-flip KWP unwrap probes at
+    setup (2026-06-09)."""
+    import ast
+    from pathlib import Path
+
+    src = Path("src/pkcs11_check/testcases/security/test_error_path_kwp.py").read_text()
+    # The subprocess script template must call wrap_key_recipe with the hint.
+    assert "output_size_hint=64" in src
+    tree = ast.parse(src)
+    hinted = any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "wrap_key_recipe"
+        and any(kw.arg == "output_size_hint" for kw in node.keywords)
+        for node in ast.walk(tree)
+    )
+    # wrap_key_recipe inside the f-string template is text, not AST; the string
+    # assertion above covers it. This guards any real (non-template) call too.
+    assert hinted or "output_size_hint=64" in src

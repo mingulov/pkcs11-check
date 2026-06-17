@@ -13,7 +13,6 @@ SoftHSM2 (v2.40) skips all tests - it has no ML-DSA support.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -46,9 +45,16 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import xfail_if_known_ckr
-from pkcs11_check.testcases.data import CCTV_DIR
+from pkcs11_check.testcases.data import CCTV_DIR, load_json_cached
 
-pytestmark = [pytest.mark.pqc, pytest.mark.kat, pytest.mark.cctv]
+pytestmark = [
+    pytest.mark.pqc,
+    pytest.mark.kat,
+    pytest.mark.cctv,
+    pytest.mark.module_session_fast,
+]
+
+REQUIRED_MECHANISMS = ["ML_DSA", "ML_DSA_KEY_PAIR_GEN"]
 
 _BENCHMARK_DIR = CCTV_DIR / "ML-DSA" / "benchmark"
 
@@ -77,8 +83,7 @@ def _load_messages(path: Path) -> list[bytes]:
     """Load benchmark message strings, encoded to UTF-8 bytes."""
     if not path.exists():
         return []
-    with open(path) as f:
-        data: list[str] = json.load(f)
+    data: list[str] = load_json_cached(path)
     return [msg.encode("utf-8") for msg in data]
 
 
@@ -135,7 +140,7 @@ def _gen_mldsa_keypair(rs: Any, param_set: int) -> tuple[int, int]:
     _ALL_VECTORS,
     ids=[v[0] for v in _ALL_VECTORS],
 )
-def test_cctv_mldsa_sign_verify(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_cctv_mldsa_sign_verify(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """ML-DSA sign + verify round-trip using CCTV benchmark messages.
 
     Generates a fresh ML-DSA key pair, signs the message, then verifies the
@@ -145,7 +150,7 @@ def test_cctv_mldsa_sign_verify(p11_raw_session: Any, vec_id: str, vec: dict[str
     Security property: if sign succeeds and verify rejects the fresh
     signature, the module has a sign/verify inconsistency (test failure).
     """
-    rs = p11_raw_session
+    rs = p11_module_session
     if not _BENCHMARK_DIR.exists():
         pytest.skip("CCTV ML-DSA benchmark data not found")
 

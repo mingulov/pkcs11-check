@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.pack import attr_ulong
 from pkcs11_check.raw.pack_mechanisms import mech_sign_context
 from pkcs11_check.raw.recipes import (
@@ -47,6 +48,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    assert_correct,
     xfail_if_known_ckr,
 )
 
@@ -135,8 +137,20 @@ class TestMLDSAKeyGeneration:
         try:
             pub_cls = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])[CKA_CLASS]
             priv_cls = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])[CKA_CLASS]
-            assert pub_cls == CKO_PUBLIC_KEY
-            assert priv_cls == CKO_PRIVATE_KEY
+            assert_correct(
+                actual=pub_cls,
+                expected=CKO_PUBLIC_KEY,
+                label="ML_DSA:public CKA_CLASS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_cls,
+                expected=CKO_PRIVATE_KEY,
+                label="ML_DSA:private CKA_CLASS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -149,8 +163,20 @@ class TestMLDSAKeyGeneration:
         try:
             pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert pub_kt == CKK_ML_DSA
-            assert priv_kt == CKK_ML_DSA
+            assert_correct(
+                actual=pub_kt,
+                expected=CKK_ML_DSA,
+                label="ML_DSA:public CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_kt,
+                expected=CKK_ML_DSA,
+                label="ML_DSA:private CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -240,9 +266,16 @@ class TestMLDSASignVerify:
             # ML-DSA is randomized - two signatures should differ (with overwhelming probability)
             # Note: some implementations may use deterministic signing, so xfail not assert
             if sig1 == sig2:
-                pytest.xfail(
-                    "Module appears to use deterministic ML-DSA signing; this randomized-signing "
-                    "probe is provider-specific"
+                classify(
+                    "honest_deviation",
+                    kind="crypto",
+                    label="CKM_ML_DSA:randomized-signing",
+                    operation="C_Sign",
+                    mechanism="CKM_ML_DSA",
+                    summary=(
+                        "Module appears to use deterministic ML-DSA signing; this "
+                        "randomized-signing probe is provider-specific"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -258,7 +291,7 @@ class TestMLDSAHedgeVariants:
         _skip_if_no(rs, "ML_DSA")
         pub, priv = _generate_ml_dsa_keypair(rs)
         try:
-            mech_param = mech_sign_context(CKM_ML_DSA, hedge=int(CKH_HEDGE_PREFERRED))
+            mech_param = mech_sign_context(CKM_ML_DSA, hedge=CKH_HEDGE_PREFERRED)
             sig = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT, mech_param=mech_param)
             assert len(sig) > 0
             result = verify_single(
@@ -281,7 +314,7 @@ class TestMLDSAHedgeVariants:
         _skip_if_no(rs, "ML_DSA")
         pub, priv = _generate_ml_dsa_keypair(rs)
         try:
-            mech_param = mech_sign_context(CKM_ML_DSA, hedge=int(CKH_HEDGE_REQUIRED))
+            mech_param = mech_sign_context(CKM_ML_DSA, hedge=CKH_HEDGE_REQUIRED)
             sig = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT, mech_param=mech_param)
             assert len(sig) > 0
             result = verify_single(
@@ -306,7 +339,7 @@ class TestMLDSAHedgeVariants:
         try:
             mech_param = mech_sign_context(
                 CKM_ML_DSA,
-                hedge=int(CKH_DETERMINISTIC_REQUIRED),
+                hedge=CKH_DETERMINISTIC_REQUIRED,
             )
             sig1 = sign_single(
                 rs.raw,
@@ -354,10 +387,17 @@ class TestSLHDSAKeyGeneration:
         try:
             pub, priv = _generate_slh_dsa_keypair(rs)
         except (AssertionError, OSError) as exc:
-            pytest.xfail(
-                f"Advertised CKM_SLH_DSA key generation is not operational on this module: {exc}"
+            xfail_as(
+                "not_operational",
+                kind="crypto",
+                label="CKM_SLH_DSA:C_GenerateKeyPair",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_SLH_DSA",
+                summary=(
+                    "Advertised CKM_SLH_DSA key generation is not operational on "
+                    f"this module: {exc}"
+                ),
             )
-            raise  # unreachable
         try:
             assert pub != 0
             assert priv != 0
@@ -372,15 +412,34 @@ class TestSLHDSAKeyGeneration:
         try:
             pub, priv = _generate_slh_dsa_keypair(rs)
         except (AssertionError, OSError) as exc:
-            pytest.xfail(
-                f"Advertised CKM_SLH_DSA key generation is not operational on this module: {exc}"
+            xfail_as(
+                "not_operational",
+                kind="crypto",
+                label="CKM_SLH_DSA:C_GenerateKeyPair",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_SLH_DSA",
+                summary=(
+                    "Advertised CKM_SLH_DSA key generation is not operational on "
+                    f"this module: {exc}"
+                ),
             )
-            raise  # unreachable
         try:
             pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert pub_kt == CKK_SLH_DSA
-            assert priv_kt == CKK_SLH_DSA
+            assert_correct(
+                actual=pub_kt,
+                expected=CKK_SLH_DSA,
+                label="SLH_DSA:public CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=priv_kt,
+                expected=CKK_SLH_DSA,
+                label="SLH_DSA:private CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -417,10 +476,17 @@ class TestSLHDSASignVerify:
             pub, priv = _generate_slh_dsa_keypair(rs)
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SLH_DSA, _PLAINTEXT)
         except (AssertionError, OSError) as exc:
-            pytest.xfail(
-                f"Advertised CKM_SLH_DSA sign operation is not operational on this module: {exc}"
+            xfail_as(
+                "not_operational",
+                kind="crypto",
+                label="CKM_SLH_DSA:C_Sign",
+                operation="C_Sign",
+                mechanism="CKM_SLH_DSA",
+                summary=(
+                    "Advertised CKM_SLH_DSA sign operation is not operational on "
+                    f"this module: {exc}"
+                ),
             )
-            raise  # unreachable
         try:
             assert isinstance(sig, bytes) and len(sig) > 0
             result = verify_single(rs.raw, rs.sh, pub, CKM_SLH_DSA, _PLAINTEXT, sig)
@@ -437,10 +503,17 @@ class TestSLHDSASignVerify:
             pub, priv = _generate_slh_dsa_keypair(rs)
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SLH_DSA, _PLAINTEXT)
         except (AssertionError, OSError) as exc:
-            pytest.xfail(
-                f"Advertised CKM_SLH_DSA sign operation is not operational on this module: {exc}"
+            xfail_as(
+                "not_operational",
+                kind="crypto",
+                label="CKM_SLH_DSA:C_Sign",
+                operation="C_Sign",
+                mechanism="CKM_SLH_DSA",
+                summary=(
+                    "Advertised CKM_SLH_DSA sign operation is not operational on "
+                    f"this module: {exc}"
+                ),
             )
-            raise  # unreachable
         try:
             tampered = _PLAINTEXT[:-1] + bytes([_PLAINTEXT[-1] ^ 0xFF])
             try:

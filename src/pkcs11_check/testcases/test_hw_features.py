@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import template_from_dict
 from pkcs11_check.raw.recipes import find_objects, read_attributes
 from pkcs11_check.raw.types_std import (
@@ -80,7 +81,13 @@ class TestHwFeatureEnumeration:
                 hw_type = attrs[CKA_HW_FEATURE_TYPE]
                 assert isinstance(hw_type, (int, bytes))
             except AssertionError as e:
-                pytest.xfail(f"Cannot read CKA_HW_FEATURE_TYPE: {e}")
+                classify(
+                    "not_operational",
+                    kind="metadata",
+                    label="CKO_HW_FEATURE:CKA_HW_FEATURE_TYPE",
+                    operation="C_GetAttributeValue",
+                    summary=f"Cannot read CKA_HW_FEATURE_TYPE: {e}",
+                )
 
     def test_known_hw_feature_types(self, p11_raw_session: Any) -> None:
         """HW feature types are known standard values or vendor-defined."""
@@ -225,4 +232,10 @@ class TestHwFeatureCounter:
                 assert CKA_RESET_ON_INIT in attrs
                 assert CKA_HAS_RESET in attrs
             except AssertionError as e:
-                pytest.xfail(f"Cannot read reset attrs from counter: {e}")
+                classify(
+                    "not_operational",
+                    kind="metadata",
+                    label="CKH_MONOTONIC_COUNTER:reset attributes",
+                    operation="C_GetAttributeValue",
+                    summary=f"Cannot read reset attrs from counter: {e}",
+                )

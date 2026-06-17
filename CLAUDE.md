@@ -4,7 +4,7 @@ CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pyte
 
 ## Quick Reference
 
-- **Language:** Python 3.13+
+- **Language:** Python 3.12+ (floor is 3.12: PEP 695 generics + `type` statements; no 3.13-only features)
 - **Package manager:** uv
 - **Build backend:** hatchling (src/ layout)
 - **CLI framework:** typer + rich
@@ -36,9 +36,9 @@ See [docs/architecture.md](docs/architecture.md) for codebase structure, modules
 ### Test coverage philosophy — CRITICAL
 - **NEVER skip, disable, or suppress real failures or crashes.** pkcs11-check exists to find and report module bugs. A segfault IS the finding.
 - If a module crashes on valid parameters, that is a module bug to be reported, not a test to be skipped.
-- Tests may only be skipped for **missing capabilities** (mechanism not advertised, interface version too old) — never to hide broken behavior.
+- Tests may only be skipped for **missing capabilities** (mechanism not advertised, v3.x function absent from the module) — never to hide broken behavior.
 - Do not add `pytest.skip()` or `pytest.xfail()` for crashes, segfaults, or unexpected errors.
-- Acceptable skips: `rs.has_mechanism()` returns False, `@pytest.mark.requires_v30` on v2.40 module, optional test data not present.
+- Acceptable skips: `rs.has_mechanism()` returns False, `@pytest.mark.needs_function("C_X")` when the module lacks that v3.x function, optional test data not present.
 - Unacceptable skips: module segfaults, module returns wrong error code, module hangs.
 
 ### Test-outcome classification model — ONE RULE
@@ -51,7 +51,7 @@ the right thing done imperfectly is `xfail`; the wrong thing done (or a crash) i
 |---|---|---|
 | **pass** | `CKR_OK` + correct output/value | rejects with the **expected** spec CKR |
 | **xfail** | clean error — advertised but not operational | rejects with **some other** (clean) code |
-| **fail** | `CKR_OK` but **wrong** output/value | `CKR_OK`/accepted **and** it is a crypto-correctness break (Type A) or self-contradiction (Type B/C/D) |
+| **fail** | `CKR_OK` but **wrong** output/value | `CKR_OK`/accepted **and** it is a crypto-correctness break or a self-contradiction |
 | **fail** | crash / hang | crash / hang |
 | **skip** | capability genuinely absent | capability genuinely absent |
 
@@ -60,19 +60,46 @@ the right thing done imperfectly is `xfail`; the wrong thing done (or a crash) i
 "noted deviation, investigate later" bucket — it is recorded, not hidden, and is **never
 gated on provider identity**. No per-provider config, baselines, or allowlists.
 
-- The four self-contradiction classes that `fail` on acceptance: **A** crypto-correctness
-  (wrong/forgeable result), **B** attribute/permission (claimed a protection then violated
-  it), **C** lifecycle/state (claimed success then didn't honor it), **D** derived-attribute
-  invariant (two linked attributes that cannot both be true).
+- The four self-contradiction classes (the `kind` field) that `fail` on acceptance:
+  **crypto** (wrong/forgeable result), **policy** (attribute/permission — claimed a protection
+  then violated it), **lifecycle** (claimed success then didn't honor it), **metadata**
+  (derived-attribute invariant — two linked attributes that cannot both be true).
 - Helpers (in `testcases/conftest.py`): `classify_negative_rv(rv, expected_rvs, *, label,
   allow_ok=False)` and `reject_or_classify(exc, expected_rvs, *, label)` for negative ops
-  outside the table; `classify_policy_enforcement(*, claimed, violated, label)` for Type B;
-  `classify_lifecycle_effect(*, claimed_success, effect_observed, label)` for Type C.
-  Table-driven negative sites use `assert_ckr()` (3-way) over `CkrExpectation` in
-  `testcases/ckr/_ckr_spec.py`.
-- **This supersedes** the "use `pytest.xfail()` for known module bugs" guidance below for
-  Type-A and self-contradiction (Type B/C/D) classes: those `fail`, they are not `xfail`ed.
-- Full model + A/B/C/D rules: [docs/classification-model-design.md](docs/classification-model-design.md).
+  outside the table; `classify_policy_enforcement(*, claimed, violated, label)` for the policy
+  kind; `classify_lifecycle_effect(*, claimed_success, effect_observed, label)` for the
+  lifecycle kind. Table-driven negative sites use `assert_ckr()` (3-way) over `CkrExpectation`
+  in `testcases/ckr/_ckr_spec.py`.
+- **This supersedes** the "use `pytest.xfail()` for known module bugs" guidance below for the
+  crypto-correctness and self-contradiction (policy/lifecycle/metadata) classes: those `fail`,
+  they are not `xfail`ed.
+- Full model + kind rules: [docs/classification-model-design.md](docs/classification-model-design.md).
+
+Two spec-grounded refinements (advertised-capability-honesty model):
+- **Sanctioned policy refusal = pass:** in the `test_mech_*` claim layer, a clean refusal with
+  `CKR_OPERATION_NOT_VALIDATED` (PKCS#11 v3.2 validation-policy code) is conformant → **pass** +
+  `compliance.note`. Any other clean refusal of an advertised (mechanism, operation) stays xfail.
+- **Vacuous reject = xfail:** where a canonical operability probe says NOT_OPERATIONAL, a
+  negative-op "rejection" never evaluated the input → **xfail**, not pass (INCONCLUSIVE never
+  triggers this; WRONG_OUTPUT also leaves the pass untouched).
+- At claim-layer xfail sites the first refinement **supersedes** the "every CKR check must list
+  SPECIFIC acceptable return codes" rule below; that rule remains in force for negative-op
+  assertions.
+
+#### At-source emission (how tests record verdicts)
+
+Tests MUST record their verdict at the decision point via `classification.classify()` /
+`fail_as()` / `xfail_as()` / `assert_correct()` (or the existing `classify_*` / `assert_ckr`
+helpers, which now route through it) — NOT raw `pytest.xfail()` / `pytest.fail()` in `testcases/`
+(enforced by `tests/test_no_raw_xfail_fail.py`). The emitted record carries
+reason/kind/label/operation/mechanism/expected/actual and rides to `report.jsonl`; severity is
+derived centrally. The reason `unclassified` is **reserved** for the plugin's runtime gate (it
+auto-injects it for any un-migrated fail/xfail) and must NEVER be emitted by a test.
+- reason ∈ {wrong_result, accepted_invalid, self_contradiction, oracle, crash (fail);
+  not_operational, nonspec_reject, honest_deviation, undeclared_capability (xfail);
+  sanctioned_refusal (pass)};
+  kind ∈ {crypto, policy, lifecycle, metadata}. See
+  [docs/architecture.md](docs/architecture.md) "At-source test-outcome classification".
 
 ### Error handling — CRITICAL
 - **NEVER use a bare `except Exception: pass` or catch-all CKR check** — this hides real bugs. Every CKR check must list SPECIFIC acceptable return codes.
@@ -111,19 +138,17 @@ gated on provider identity**. No per-provider config, baselines, or allowlists.
   their OWN child to run a controlled crash-expecting sub-script, or to assert on a
   specific crash's `returncode` — not for general survival.
 
-### Test isolation
-- Tests that call `lib.finalize()` or `lib.initialize()` MUST be marked `@destructive`
-- Tests that DELIBERATELY trigger a crash and assert on it run their own child via
-  `subprocess.run([sys.executable, "-c", script])` (general survival is already provided
-  by `--isolation auto`; see the execution model above)
-- Token-locking operations (wrong PIN tests) MUST be marked `@destructive`
+### Fixture usage (performance vs isolation)
+- **`p11_module_session`**: Use for high-count vector-replay or read-only object import tests (e.g. Wycheproof, ACVP, CCTV, X.509 vectors). This fixture reuses one session/login per test file for massive speedup.
+- **`p11_raw_session`**: Use for everything else: security/FFI tests (where a crash must not kill a shared session), lifecycle/login tests, state-machine tests, destructive tests, or small files (< 15 tests) where the ROI is low.
+- **Audit Rule (2026-06-13)**: The migration of existing tests to shared sessions is complete (covering >95% of suite execution). Do not migrate the remaining 170+ files (security, lifecycle, low-count) to shared sessions; they must remain isolated on `p11_raw_session`.
 
 ### Module-specific behavior
 - Document module quirks in `docs/module-issues.md`, not as silent `pass` in code
 - Use `compliance.note()` for spec deviations that aren't bugs
 - Use `pytest.xfail()` for known module bugs with an explanatory message — but see the
-  Test-outcome classification model above: Type-A and self-contradiction (B/C/D) classes
-  `fail`, they are NOT `xfail`ed
+  Test-outcome classification model above: crypto-correctness and self-contradiction
+  (policy/lifecycle/metadata) classes `fail`, they are NOT `xfail`ed
 - NSS uses slot 1 (Certificate DB), not slot 0. Pass `--p11-slot=1`
 
 ### Conventions

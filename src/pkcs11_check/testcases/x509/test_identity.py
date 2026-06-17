@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     create_object,
     destroy_quietly,
@@ -114,4 +115,8 @@ def test_limbo_identity_closeness(
         # Phase 5 P1a: a clean failure of the positive sign leg with a valid
         # imported identity key is advertised-but-not-operational provider-
         # incompleteness -> xfail, not a hard fail.
-        pytest.xfail("\n".join(errors))
+        classify(
+            "not_operational",
+            kind="metadata",
+            summary="\n".join(errors),
+        )

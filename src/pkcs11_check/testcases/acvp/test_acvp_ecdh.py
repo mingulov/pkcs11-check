@@ -9,11 +9,11 @@ Skips gracefully if test vectors not available or mechanism unavailable.
 
 from __future__ import annotations
 
-import json
 from typing import Any, cast
 
 import pytest
 
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
@@ -21,7 +21,6 @@ from pkcs11_check.raw.pack_mechanisms import mech_ecdh
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
-    import_ec_private_key,
     import_ec_public_key,
     read_attributes,
 )
@@ -54,8 +53,14 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    classify_lifecycle_effect,
+    import_ec_private_key_negotiated,
+    is_known_error,
+    xfail_if_known_ckr,
+)
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -181,8 +186,7 @@ def _load_wycheproof_ecdh_vectors(
     if not filepath.exists():
         return []
 
-    with open(filepath) as f:
-        data = json.load(f)
+    data = load_json_cached(filepath)
 
     results: list[tuple[str, dict[str, Any]]] = []
 
@@ -309,9 +313,8 @@ def test_acvp_ecdh_shared_secret(
 
     try:
         try:
-            priv_key = import_ec_private_key(
-                rs.raw,
-                rs.sh,
+            priv_key = import_ec_private_key_negotiated(
+                rs,
                 ec_params=ec_params,
                 value=vec["private_key"],
                 key_type=int(CKK_EC),
@@ -342,7 +345,7 @@ def test_acvp_ecdh_shared_secret(
 
         mech_param = mech_ecdh(
             CKM_ECDH1_DERIVE,
-            kdf=int(CKD_NULL),  # No KDF, raw shared secret
+            kdf=CKD_NULL,  # No KDF, raw shared secret
             public_data=point_data,
         )
 
@@ -377,10 +380,14 @@ def test_acvp_ecdh_shared_secret(
             # Extract the X coordinate if we got a full point
             shared_secret = shared_secret[: len(expected)]
 
-        assert shared_secret == expected, (
-            f"{vec_id}: Shared secret mismatch\n"
-            f"  Expected: {expected.hex()[:32]}...\n"
-            f"  Got:      {shared_secret.hex()[:32]}..."
+        assert_correct(
+            actual=shared_secret,
+            expected=expected,
+            label=f"ECDH:C_DeriveKey KAT {vec_id}",
+            operation="C_DeriveKey",
+            mechanism="CKM_ECDH1_DERIVE",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
     finally:
         destroy_quietly(rs.raw, rs.sh, derived_key)
@@ -436,22 +443,32 @@ class TestEcdhKeyAgreement:
             bob_point_attrs = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_EC_POINT])
             bob_ec_point = cast(bytes, bob_point_attrs.get(CKA_EC_POINT, b""))
 
-            # If we can't read the point, skip
-            if not bob_ec_point:
-                pytest.skip("Cannot extract public key point for ECDH")
+            # The module claimed EC keygen success (gen_ec_keypair asserts CKR_OK).
+            # CKA_EC_POINT is a mandatory, non-sensitive attribute on an EC public
+            # key, so an empty readback contradicts the claimed success (lifecycle
+            # self-contradiction) -> fail, not skip.
+            classify_lifecycle_effect(
+                claimed_success=True,
+                effect_observed=not bob_ec_point,
+                label=f"Curve {curve} EC keygen claimed success but CKA_EC_POINT unreadable",
+            )
 
             # CKA_EC_POINT is DER-encoded; ECDH1_DERIVE requires raw point per OASIS spec.
             try:
                 bob_point_raw = decode_ec_point(bob_ec_point)
             except ValueError as exc:
-                pytest.xfail(
-                    f"Curve {curve} generated public key has malformed CKA_EC_POINT: {exc}"
+                xfail_as(
+                    "honest_deviation",
+                    label=f"ECDH1_DERIVE:{curve}",
+                    summary=(
+                        f"Curve {curve} generated public key has malformed CKA_EC_POINT: {exc}"
+                    ),
                 )
 
             # Derive shared secrets
             mech_param_alice = mech_ecdh(
                 CKM_ECDH1_DERIVE,
-                kdf=int(CKD_NULL),
+                kdf=CKD_NULL,
                 public_data=bob_point_raw,
             )
 

@@ -1,0 +1,22 @@
+{
+  "mechanism": "CKM_IDEA_ECB",
+  "family": "idea_ecb",
+  "key_type": "CKK_IDEA",
+  "source": "NESSIE IDEA verified test vectors via pyca cryptography",
+  "source_url": "https://raw.githubusercontent.com/pyca/cryptography/main/vectors/cryptography_vectors/ciphers/IDEA/idea-ecb.txt",
+  "vectors": [
+    {
+      "id": "idea_ecb_nessie_count_0",
+      "type": "positive",
+      "mechanism_name": "CKM_IDEA_ECB",
+      "key_type": "symmetric",
+      "key_bits": 128,
+      "key_hex": "80000000000000000000000000000000",
+      "params": {
+        "source": "NESSIE IDEA verified test vectors via pyca cryptography"
+      },
+      "plaintext_hex": "0000000000000000",
+      "ciphertext_hex": "b1f5f7f87901370f"
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "mechanism": "CKM_RC5_CBC",
+  "family": "rc5_cbc",
+  "key_type": "CKK_RC5",
+  "source": "RFC 2040 section 9.3",
+  "vectors": [
+    {
+      "id": "rc5_cbc_r8_key128",
+      "type": "positive",
+      "mechanism_name": "CKM_RC5_CBC",
+      "key_type": "symmetric",
+      "key_bits": 128,
+      "key_hex": "01020304050607081020304050607080",
+      "params": {
+        "source": "RFC 2040 section 9.3",
+        "word_bits": 32,
+        "rounds": 8,
+        "iv_hex": "0102030405060708"
+      },
+      "plaintext_hex": "1020304050607080",
+      "ciphertext_hex": "c533771cd0110e63"
+    },
+    {
+      "id": "rc5_cbc_r12_key128",
+      "type": "positive",
+      "mechanism_name": "CKM_RC5_CBC",
+      "key_type": "symmetric",
+      "key_bits": 128,
+      "key_hex": "01020304050607081020304050607080",
+      "params": {
+        "source": "RFC 2040 section 9.3",
+        "word_bits": 32,
+        "rounds": 12,
+        "iv_hex": "0102030405060708"
+      },
+      "plaintext_hex": "1020304050607080",
+      "ciphertext_hex": "294ddb46b3278d60"
+    },
+    {
+      "id": "rc5_cbc_r16_key128",
+      "type": "positive",
+      "mechanism_name": "CKM_RC5_CBC",
+      "key_type": "symmetric",
+      "key_bits": 128,
+      "key_hex": "01020304050607081020304050607080",
+      "params": {
+        "source": "RFC 2040 section 9.3",
+        "word_bits": 32,
+        "rounds": 16,
+        "iv_hex": "0102030405060708"
+      },
+      "plaintext_hex": "1020304050607080",
+      "ciphertext_hex": "dad6bda9dfe8f7e8"
+    }
+  ]
+}

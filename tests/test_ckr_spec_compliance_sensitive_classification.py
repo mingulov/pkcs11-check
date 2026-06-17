@@ -7,12 +7,13 @@ from types import SimpleNamespace
 import pytest
 from _pytest.outcomes import Failed, XFailed
 
+from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.types_std import CKA_SENSITIVE, CKA_VALUE
 from pkcs11_check.testcases.ckr import test_ckr_spec_compliance as tcsc
 
 
 def _run(monkeypatch: pytest.MonkeyPatch, *, claimed: bool, readable: bool) -> None:
-    monkeypatch.setattr(tcsc, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
     monkeypatch.setattr(tcsc, "destroy_quietly", lambda *_a, **_k: None)
 
     def _read(_raw: object, _sh: object, _h: object, attrs: list[int]) -> dict:

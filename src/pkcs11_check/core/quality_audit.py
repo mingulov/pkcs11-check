@@ -38,6 +38,44 @@ _SELECTED_REASON_CATEGORY = {
     "missing_test_data": "test_data_missing",
     "not_implemented": "not_implemented",
 }
+_MECHANISM_STATE_ORDER = (
+    "advertised",
+    "selected",
+    "selection_rejected",
+    "attempted",
+    "invoked",
+    "accepted",
+    "rejected_cleanly",
+    "skipped_by_capability",
+    "crashed",
+    "timeout",
+    "not_invoked",
+)
+_MECHANISM_COMPARISON_STATES = (
+    "advertised",
+    "accepted",
+    "attempted",
+    "rejected_cleanly",
+    "skipped_by_capability",
+    "crashed",
+    "timeout",
+    "selected",
+    "selection_rejected",
+    "invoked",
+)
+_MECHANISM_STATE_FIELDS = {
+    "advertised": "advertised_names",
+    "selected": "selected_names",
+    "selection_rejected": "selection_rejected_names",
+    "attempted": "attempted_names",
+    "invoked": "invoked_names",
+    "accepted": "accepted_names",
+    "rejected_cleanly": "rejected_cleanly_names",
+    "skipped_by_capability": "skipped_by_capability_names",
+    "crashed": "crashed_names",
+    "timeout": "timeout_names",
+    "not_invoked": "not_invoked_names",
+}
 
 
 def classify_skip_reason(reason: str | None) -> SkipReasonCategory:
@@ -228,6 +266,46 @@ def build_quality_audit(
         "mechanism_findings": mechanism_findings,
         "data_quality_warnings": _dedupe_preserve_order(warnings),
     }
+
+
+def compare_mechanism_coverage_states(
+    baseline: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Compare provider-local mechanism coverage states between two artifacts.
+
+    Only states present in the baseline are compared. This keeps older
+    artifacts usable while still detecting when a newer run silently stops
+    reaching a mechanism state that the baseline reached.
+    """
+    baseline_mechanisms = _mechanism_coverage_mapping(baseline)
+    candidate_mechanisms = _mechanism_coverage_mapping(candidate)
+
+    lost_by_state: dict[str, list[str]] = {}
+    states_compared: list[str] = []
+    for state in _MECHANISM_COMPARISON_STATES:
+        field = _MECHANISM_STATE_FIELDS[state]
+        if field not in baseline_mechanisms:
+            continue
+        states_compared.append(state)
+        baseline_names = set(_string_list(baseline_mechanisms.get(field)))
+        candidate_names = set(_string_list(candidate_mechanisms.get(field)))
+        lost = sorted(baseline_names - candidate_names)
+        if lost:
+            lost_by_state[state] = lost
+
+    return {
+        "has_loss": bool(lost_by_state),
+        "states_compared": states_compared,
+        "lost_by_state": lost_by_state,
+    }
+
+
+def _mechanism_coverage_mapping(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    mechanism_coverage = payload.get("mechanism_coverage")
+    if isinstance(mechanism_coverage, Mapping):
+        return mechanism_coverage
+    return payload
 
 
 def _collect_file_skipped_units(results: Mapping[str, Any]) -> list[dict[str, str]]:
@@ -704,34 +782,111 @@ def _collect_mechanism_findings(
     if not isinstance(mechanism_coverage, Mapping):
         return [], "coverage.json missing mechanism_coverage"
 
-    available_names = _string_list(mechanism_coverage.get("available_names"))
-    invoked_names = _string_list(mechanism_coverage.get("invoked_names"))
-    not_invoked_names = _string_list(mechanism_coverage.get("not_invoked_names"))
+    state_names = _mechanism_state_name_sets(mechanism_coverage)
+    available_names = state_names["advertised"]
+    invoked_names = state_names["invoked"]
 
     selected_to_scenarios: dict[str, list[str]] = defaultdict(list)
     for scenario, selected in selected_mechanisms_by_scenario.items():
         for mechanism in selected:
             selected_to_scenarios[mechanism].append(scenario)
+            state_names["selected"].add(mechanism)
 
     findings: list[dict[str, Any]] = []
-    for mechanism in sorted(set(not_invoked_names) | set(selected_to_scenarios)):
+    mechanisms_with_state = set().union(*state_names.values())
+    for mechanism in sorted(mechanisms_with_state | set(selected_to_scenarios)):
         scenarios = sorted(selected_to_scenarios.get(mechanism, []))
-        status = "selected_but_not_invoked" if scenarios else "not_invoked"
-        if mechanism in invoked_names:
-            status = "invoked"
-        elif mechanism not in available_names and not scenarios:
-            status = "unknown"
+        telemetry_states = [
+            state for state in _MECHANISM_STATE_ORDER if mechanism in state_names[state]
+        ]
+        status = _primary_mechanism_status(
+            telemetry_states,
+            selected_scenarios=scenarios,
+            advertised_names=available_names,
+        )
         findings.append(
             {
                 "mechanism": mechanism,
                 "status": status,
+                "telemetry_states": telemetry_states,
                 "selected_in_scenarios": scenarios,
                 "available": mechanism in available_names,
                 "invoked": mechanism in invoked_names,
+                "advertised": mechanism in state_names["advertised"],
+                "selected": mechanism in state_names["selected"],
+                "selection_rejected": mechanism in state_names["selection_rejected"],
+                "attempted": mechanism in state_names["attempted"],
+                "accepted": mechanism in state_names["accepted"],
+                "rejected_cleanly": mechanism in state_names["rejected_cleanly"],
+                "skipped_by_capability": mechanism in state_names["skipped_by_capability"],
+                "crashed": mechanism in state_names["crashed"],
+                "timeout": mechanism in state_names["timeout"],
             }
         )
 
     return findings, None
+
+
+def _mechanism_state_name_sets(
+    mechanism_coverage: Mapping[str, Any],
+) -> dict[str, set[str]]:
+    advertised = set(
+        _string_list(
+            mechanism_coverage.get(
+                "advertised_names",
+                mechanism_coverage.get("available_names"),
+            )
+        )
+    )
+    available = set(_string_list(mechanism_coverage.get("available_names")))
+    advertised.update(available)
+    invoked = set(_string_list(mechanism_coverage.get("invoked_names")))
+    not_invoked = set(_string_list(mechanism_coverage.get("not_invoked_names")))
+    if not not_invoked and available:
+        not_invoked = available - invoked
+    return {
+        "advertised": advertised,
+        "selected": set(_string_list(mechanism_coverage.get("selected_names"))),
+        "selection_rejected": set(_string_list(mechanism_coverage.get("selection_rejected_names"))),
+        "attempted": set(_string_list(mechanism_coverage.get("attempted_names"))),
+        "invoked": invoked,
+        "accepted": set(_string_list(mechanism_coverage.get("accepted_names"))),
+        "rejected_cleanly": set(_string_list(mechanism_coverage.get("rejected_cleanly_names"))),
+        "skipped_by_capability": set(
+            _string_list(mechanism_coverage.get("skipped_by_capability_names"))
+        ),
+        "crashed": set(_string_list(mechanism_coverage.get("crashed_names"))),
+        "timeout": set(_string_list(mechanism_coverage.get("timeout_names"))),
+        "not_invoked": not_invoked,
+    }
+
+
+def _primary_mechanism_status(
+    telemetry_states: list[str],
+    *,
+    selected_scenarios: list[str],
+    advertised_names: set[str],
+) -> str:
+    for status in (
+        "timeout",
+        "crashed",
+        "skipped_by_capability",
+        "rejected_cleanly",
+        "accepted",
+        "attempted",
+        "invoked",
+    ):
+        if status in telemetry_states:
+            return status
+    if selected_scenarios:
+        return "selected_but_not_invoked"
+    if "selection_rejected" in telemetry_states:
+        return "selection_rejected"
+    if "not_invoked" in telemetry_states:
+        return "not_invoked"
+    if "advertised" in telemetry_states and advertised_names:
+        return "not_invoked"
+    return "unknown"
 
 
 def _classify_reason_code_counts(reason_counts: Mapping[str, int]) -> dict[str, int]:

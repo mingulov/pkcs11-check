@@ -12,9 +12,9 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    import_secret_key,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
@@ -54,7 +54,12 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    import_secret_key_negotiated,
+    is_known_error,
+    skip_unless_create_object_supported,
+)
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -139,9 +144,8 @@ def _sign_hmac_with_key_fallback(rs: Any, vec: dict[str, Any]) -> bytes:
     for key_type in _hmac_key_type_candidates(vec["key_type"]):
         key = 0
         try:
-            key = import_secret_key(
-                rs.raw,
-                rs.sh,
+            key = import_secret_key_negotiated(
+                rs,
                 key_type,
                 vec["key"],
                 attrs={
@@ -149,6 +153,7 @@ def _sign_hmac_with_key_fallback(rs: Any, vec: dict[str, Any]) -> bytes:
                     CKA_TOKEN: False,
                     CKA_SENSITIVE: False,
                 },
+                purpose="ACVP HMAC key import",
             )
             return sign_single(rs.raw, rs.sh, key, vec["mechanism"], vec["msg"])
         except AssertionError as exc:
@@ -164,13 +169,27 @@ def _sign_hmac_with_key_fallback(rs: Any, vec: dict[str, Any]) -> bytes:
                 destroy_quietly(rs.raw, rs.sh, key)
 
     if key_use_errors:
-        pytest.xfail(
-            f"{vec['mech_display']} advertised but imported HMAC key was not accepted: "
-            + "; ".join(key_use_errors)
+        xfail_as(
+            "not_operational",
+            kind="crypto",
+            label=f"{vec['mech_display']}:sign",
+            summary=(
+                f"{vec['mech_display']} advertised but imported HMAC key was not accepted: "
+                + "; ".join(key_use_errors)
+            ),
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
-    pytest.xfail(
-        f"{vec['mech_display']} advertised but HMAC key setup failed for typed and "
-        f"generic key types: {'; '.join(key_setup_errors)}"
+    xfail_as(
+        "not_operational",
+        kind="crypto",
+        label=f"{vec['mech_display']}:sign",
+        summary=(
+            f"{vec['mech_display']} advertised but HMAC key setup failed for typed and "
+            f"generic key types: {'; '.join(key_setup_errors)}"
+        ),
+        source=vec.get("_source"),
+        vector_id=vec.get("_vector_id"),
     )
 
 
@@ -227,6 +246,7 @@ def test_acvp_hmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) ->
     standard SHA-2 and SHA-3 algorithms with truncated output (macLen in bits).
     """
     rs = p11_module_session
+    skip_unless_create_object_supported(rs)
     if not rs.has_mechanism(vec["mech_display"]):
         pytest.skip(f"{vec['mech_display']} not supported by module")
 
@@ -237,6 +257,12 @@ def test_acvp_hmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) ->
     truncated = mac[:mac_len_bytes]
     expected = vec["mac_expected"]
 
-    assert truncated == expected, (
-        f"HMAC mismatch for {vec_id}: got {truncated.hex()}, expected {expected.hex()}"
+    assert_correct(
+        actual=truncated,
+        expected=expected,
+        label=f"{vec['mech_display']}:C_Sign KAT {vec_id}",
+        operation="C_Sign",
+        mechanism=vec["mech_display"],
+        source=vec.get("_source"),
+        vector_id=vec.get("_vector_id"),
     )

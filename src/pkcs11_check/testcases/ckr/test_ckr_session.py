@@ -2,7 +2,7 @@
 
 Covers C_OpenSession, C_CloseSession, C_Login, C_Logout.
 
-Source: PKCS#11 v3.1 Sec.5.6.1-5.6.8.
+Source: PKCS#11 v3.2-5.6.8.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.bootstrap import close_session_quietly
 from pkcs11_check.raw.bootstrap import open_session as _raw_open_session
 from pkcs11_check.raw.rv import ckr_name
@@ -86,8 +87,15 @@ class TestLoginErrors:
             rv = rs.raw.C_Login(sh, CKU_USER, pin_buf, len(wrong_pin))
             if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_TYPE_INVALID):
                 # Phase 6 C: token session state (not a missing capability)
-                # prevented exercising the wrong-PIN path -> xfail, not skip.
-                pytest.xfail(f"token login state prevents testing wrong PIN: {ckr_name(rv)}")
+                # prevented exercising the wrong-PIN path. The negative-op probe
+                # never evaluated the wrong PIN -> harmless no-op -> xfail.
+                classify(
+                    "honest_deviation",
+                    label="C_Login:wrong-pin-probe",
+                    operation="C_Login",
+                    actual=rv,
+                    summary=f"token login state prevents testing wrong PIN: {ckr_name(rv)}",
+                )
             # CKR_OK here would mean the module accepted a wrong PIN -> fail;
             # a non-spec reject code -> xfail; CKR_PIN_INCORRECT -> pass.
             classify_negative_rv(rv, (CKR_PIN_INCORRECT,), label="C_Login with a wrong PIN")
@@ -97,7 +105,7 @@ class TestLoginErrors:
     def test_already_logged_in(self, p11_raw_session: Any) -> None:
         """Double login -> CKR_USER_ALREADY_LOGGED_IN.
 
-        Per PKCS#11 v3.1 Sec.5.6.7: C_Login when already logged in MUST return
+        Per PKCS#11 v3.2: C_Login when already logged in MUST return
         CKR_USER_ALREADY_LOGGED_IN. NSS returns CKR_PIN_INCORRECT because it
         re-validates the PIN on every C_Login call even when already authenticated.
         CKR_USER_TYPE_INVALID is accepted for NSS slots that require no login.

@@ -19,41 +19,40 @@ from __future__ import annotations
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_ec_private_key,
-    import_rsa_private_key,
-    import_rsa_public_key,
-    import_secret_key,
     sign_single,
     verify_single,
 )
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_TOKEN,
-    CKK,
     CKK_EC_EDWARDS,
     CKM,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_DATA_INVALID,
-    CKR_DEVICE_ERROR,
+    CKR_CURVE_NOT_SUPPORTED,
     CKR_DOMAIN_PARAMS_INVALID,
-    CKR_FUNCTION_FAILED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
-    CKR_OPERATION_NOT_INITIALIZED,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._capability_claims import claim_refusal_passes
+from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    import_rsa_private_key_negotiated,
+    import_rsa_public_key_negotiated,
+    import_secret_key_negotiated,
+    is_known_error,
+)
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     build_params_from_vector,
@@ -67,25 +66,23 @@ _EDWARDS_OID_PREFIXES = (
     b"\x06\x03\x2b\x65\x71",  # Ed448 (1.3.101.113)
 )
 
-_SIGN_RUNTIME_REJECT_RVS = (
-    CKR_ARGUMENTS_BAD,
-    CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_DATA_INVALID,
-    CKR_DEVICE_ERROR,
+# KAT key-import reject classification (import-skip audit A9). The merged tuple is
+# SPLIT (Batch 3b) the way Batch 2 split the EC public-key tuples: a
+# genuine-capability-absence branch (the specific curve is not supported) stays a
+# skip; the broad import-failure codes are "advertised but not operational" ->
+# xfail (KEY_SIZE_RANGE and TEMPLATE_INCOMPLETE/INCONSISTENT count as broad per
+# the Batch 2 verdict). The generic xfail helper gates on the broad set; the EC
+# private site filters curve-absence to skip first (no negotiated EC-private
+# importer -- the raw single-template import IS the spec path; D2, b56c3f8c).
+_KAT_EC_CURVE_UNSUPPORTED_RVS = (
+    CKR_CURVE_NOT_SUPPORTED,
     CKR_DOMAIN_PARAMS_INVALID,
-    CKR_FUNCTION_FAILED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
-    CKR_OPERATION_NOT_INITIALIZED,
 )
 
 _KAT_IMPORT_CAPABILITY_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_DOMAIN_PARAMS_INVALID,
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_TEMPLATE_INCOMPLETE,
@@ -93,6 +90,18 @@ _KAT_IMPORT_CAPABILITY_REJECT_RVS = (
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.sign]
+
+_MAC_GENERAL_STYLES = frozenset({"mac_general", "rc2_mac_general", "rc5_mac_general"})
+
+
+def _expected_mac_general_len(config: object) -> int | None:
+    param_recipe = getattr(config, "param_recipe", None)
+    if param_recipe is None or param_recipe.style not in _MAC_GENERAL_STYLES:
+        return None
+    mac_len = param_recipe.defaults.get("mac_len")
+    if mac_len is None:
+        return None
+    return int(mac_len)
 
 
 def _ckr_name_from_exception(exc: AssertionError) -> str:
@@ -102,23 +111,81 @@ def _ckr_name_from_exception(exc: AssertionError) -> str:
     return str(exc)
 
 
-def _xfail_sign_runtime_reject(exc: AssertionError, entry: MechEntry, operation: str) -> None:
-    xfail_if_known_ckr(
-        exc,
-        _SIGN_RUNTIME_REJECT_RVS,
-        f"{entry.mech_name}: advertised but {operation} is not operational",
-    )
-
-
-def _skip_kat_import_capability_reject(
+def _xfail_ec_kat_import_not_operational(
     exc: AssertionError,
     entry: MechEntry,
     object_label: str,
 ) -> None:
-    if is_known_error(exc, _KAT_IMPORT_CAPABILITY_REJECT_RVS):
+    """Classify a raw EC-private KAT key-import reject (import-skip audit A9 EC leg).
+
+    Curve-genuine-absence CKRs (CKR_CURVE_NOT_SUPPORTED / CKR_DOMAIN_PARAMS_INVALID)
+    keep the capability skip -- the specific curve is genuinely absent. A broad
+    import-failure CKR, on a sign mechanism the module ADVERTISES (the
+    ``mech_sign_entry`` registry parametrization is advertised-by-construction),
+    is "advertised but not operational" -> xfail. There is no negotiated
+    EC-private importer (D2, commit b56c3f8c): the raw single-template
+    ``import_ec_private_key`` IS the spec path, so the broad reject is conclusive
+    without negotiation wiring. Non-CKR AssertionErrors propagate (harness/coding
+    bug). This routes the EC leg to the same ``not_operational_reason`` wording as
+    the RSA/secret legs, closing the setup/op asymmetry on the EC family.
+    """
+    if is_known_error(exc, _KAT_EC_CURVE_UNSUPPORTED_RVS):
+        # Genuine capability absence: this specific curve is not supported
+        # (CKR_CURVE_NOT_SUPPORTED / CKR_DOMAIN_PARAMS_INVALID). Skip stays.
         pytest.skip(
             f"{entry.mech_name}: cannot import {object_label} for KAT setup: "
             f"{_ckr_name_from_exception(exc)}"
+        )
+    # Broad import-failure CKR -> xfail (may include curve-capability rejects
+    # expressed as generic CKRs -- recorded as xfail, not hidden).
+    _xfail_kat_import_not_operational(exc, entry, object_label)
+
+
+def _xfail_rsa_kat_import_not_operational(
+    exc: AssertionError,
+    entry: MechEntry,
+    object_label: str,
+) -> None:
+    """Classify negotiated RSA KAT key-import rejects (import-skip audit A9 RSA).
+
+    The RSA key is imported through ``import_rsa_private_key_negotiated`` /
+    ``import_rsa_public_key_negotiated``; a clean broad import-failure CKR after
+    negotiation exhaustion on a sign mechanism the module ADVERTISES (the
+    ``mech_sign_entry`` registry parametrization is advertised-by-construction)
+    is advertised-but-not-operational -> xfail, never skip. This matches the
+    op-stage ``claim_refusal_passes`` routing so the setup/op asymmetry on the
+    RSA family is closed. Non-CKR AssertionErrors propagate (harness/coding bug).
+    """
+    _xfail_kat_import_not_operational(exc, entry, object_label)
+
+
+def _xfail_kat_import_not_operational(
+    exc: AssertionError,
+    entry: MechEntry,
+    object_label: str,
+) -> None:
+    """Classify negotiated KAT key-import rejects for any mechanism family.
+
+    A clean broad import-failure CKR after negotiation exhaustion on a sign
+    mechanism the module ADVERTISES is advertised-but-not-operational -> xfail,
+    never skip.  Non-CKR AssertionErrors propagate (harness/coding bug).
+
+    Probe key: ``{entry.mech_name}:key-import`` -- consistent with the RSA and
+    symmetric-MAC call sites.
+    """
+    if is_known_error(exc, _KAT_IMPORT_CAPABILITY_REJECT_RVS):
+        classify(
+            "not_operational",
+            kind="crypto",
+            label=f"{entry.mech_name}:key-import",
+            operation="C_CreateObject",
+            mechanism=entry.mech_name,
+            summary=not_operational_reason(
+                f"{entry.mech_name}:key-import",
+                f"{object_label}: {_ckr_name_from_exception(exc)}"
+                if isinstance(exc, CkrAssertionError)
+                else f"{object_label}: {exc}",
+            ),
         )
     raise exc
 
@@ -151,7 +218,14 @@ class TestMechSignRoundtrip:
                     rs.raw, rs.sh, sign_key, CKM(entry.mech_id), data, mech_param=mech_param
                 )
             except AssertionError as exc:
-                _xfail_sign_runtime_reject(exc, entry, "sign")
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:sign"):
+                    return
+            expected_mac_len = _expected_mac_general_len(config)
+            if expected_mac_len is not None:
+                assert len(sig) == expected_mac_len, (
+                    f"{entry.mech_name}: MAC length mismatch: "
+                    f"got {len(sig)}, expected {expected_mac_len}"
+                )
             try:
                 ok = verify_single(
                     rs.raw,
@@ -163,7 +237,8 @@ class TestMechSignRoundtrip:
                     mech_param=mech_param,
                 )
             except AssertionError as exc:
-                _xfail_sign_runtime_reject(exc, entry, "verify")
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:verify"):
+                    return
             assert ok, f"{entry.mech_name}: verify failed after valid sign (sig={sig.hex()!r})"
         finally:
             destroy_quietly(rs.raw, rs.sh, sign_key)
@@ -197,7 +272,14 @@ class TestMechSignRoundtrip:
                     rs.raw, rs.sh, sign_key, CKM(entry.mech_id), data_a, mech_param=mech_param
                 )
             except AssertionError as exc:
-                _xfail_sign_runtime_reject(exc, entry, "sign")
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:sign"):
+                    return
+            expected_mac_len = _expected_mac_general_len(config)
+            if expected_mac_len is not None:
+                assert len(sig) == expected_mac_len, (
+                    f"{entry.mech_name}: MAC length mismatch: "
+                    f"got {len(sig)}, expected {expected_mac_len}"
+                )
             try:
                 ok = verify_single(
                     rs.raw,
@@ -227,7 +309,7 @@ def _run_asymmetric_sign_kat(
     entry: MechEntry,
     config: object,
     vec: dict,  # type: ignore[type-arg]
-) -> None:
+) -> bool:
     """Import an asymmetric key from a KAT vector and sign/verify.
 
     RSA PKCS#1 v1.5 (verify_only=False): sign with private key, compare bytes.
@@ -235,6 +317,10 @@ def _run_asymmetric_sign_kat(
       imported public key (n, e available in vector).
     ECDSA (verify_only=True): sign with private key + round-trip verify with
       the fresh signature (public point not in vector, so stored sig is skipped).
+
+    Returns True when a sanctioned policy refusal (CKR_OPERATION_NOT_VALIDATED)
+    is seen so the calling loop can end the whole test immediately -- later
+    vectors would only duplicate the compliance note.
     """
     from pkcs11_check.testcases.mechanism_helpers import build_params_from_vector
 
@@ -243,7 +329,7 @@ def _run_asymmetric_sign_kat(
         pytest.skip(f"No param_recipe configured for {entry.mech_name}")
     mech_param = build_params_from_vector(entry.mech_id, param_recipe, vec)
     if mech_param == "SKIP":
-        return
+        return False
 
     input_data = bytes.fromhex(vec["input_hex"])
     verify_only: bool = bool(vec.get("verify_only", False))
@@ -251,9 +337,8 @@ def _run_asymmetric_sign_kat(
     if "n_hex" in vec:
         # RSA: import private key for signing
         try:
-            priv_key = import_rsa_private_key(
-                rs.raw,
-                rs.sh,
+            priv_key = import_rsa_private_key_negotiated(
+                rs,
                 n=bytes.fromhex(vec["n_hex"]),
                 e=bytes.fromhex(vec["e_hex"]),
                 d=bytes.fromhex(vec["d_hex"]),
@@ -265,19 +350,21 @@ def _run_asymmetric_sign_kat(
                 attrs={CKA_SIGN: True, CKA_TOKEN: False},
             )
         except AssertionError as exc:
-            _skip_kat_import_capability_reject(exc, entry, "RSA private key")
+            _xfail_rsa_kat_import_not_operational(exc, entry, "RSA private key")
         pub_key: int | None = None
         if verify_only:
-            # Also import public key so we can verify with it
+            # Also import public key so we can verify with it.  Wrap in
+            # try/finally so priv_key is destroyed even when the xfail helper
+            # raises (xfail fires before the outer finally that covers priv_key).
             try:
-                pub_key = import_rsa_public_key(
-                    rs.raw,
-                    rs.sh,
+                pub_key = import_rsa_public_key_negotiated(
+                    rs,
                     n=bytes.fromhex(vec["n_hex"]),
                     e=bytes.fromhex(vec["e_hex"]),
                 )
             except AssertionError as exc:
-                _skip_kat_import_capability_reject(exc, entry, "RSA public key")
+                destroy_quietly(rs.raw, rs.sh, priv_key)
+                _xfail_rsa_kat_import_not_operational(exc, entry, "RSA public key")
         try:
             if verify_only:
                 assert pub_key is not None
@@ -293,7 +380,8 @@ def _run_asymmetric_sign_kat(
                         mech_param=mech_param,
                     )
                 except AssertionError as exc:
-                    _xfail_sign_runtime_reject(exc, entry, "KAT verify")
+                    if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:kat-verify"):
+                        return True
                 assert ok, (
                     f"KAT verify failed for {vec.get('id', '?')}: "
                     f"stored sig {stored_sig.hex()!r} did not verify"
@@ -310,11 +398,16 @@ def _run_asymmetric_sign_kat(
                         mech_param=mech_param,
                     )
                 except AssertionError as exc:
-                    _xfail_sign_runtime_reject(exc, entry, "KAT sign")
+                    if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:kat-sign"):
+                        return True
                 expected = bytes.fromhex(vec["signature_hex"])
-                assert sig == expected, (
-                    f"KAT sign mismatch for {vec.get('id', '?')}: "
-                    f"got {sig.hex()!r}, expected {expected.hex()!r}"
+                assert_correct(
+                    actual=sig,
+                    expected=expected,
+                    label=f"{entry.mech_name}:KAT deterministic sign",
+                    operation="C_Sign",
+                    mechanism=f"CKM_{entry.mech_name}",
+                    vector_id=str(vec.get("id", "?")),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_key)
@@ -335,7 +428,7 @@ def _run_asymmetric_sign_kat(
                 **({"key_type": ec_key_type} if ec_key_type is not None else {}),
             )
         except AssertionError as exc:
-            _skip_kat_import_capability_reject(exc, entry, "EC private key")
+            _xfail_ec_kat_import_not_operational(exc, entry, "EC private key")
         try:
             # Sign to confirm the key + mechanism work; we cannot verify the stored
             # sig because we have no public key object (scalar only in vector).
@@ -349,12 +442,14 @@ def _run_asymmetric_sign_kat(
                     mech_param=mech_param,
                 )
             except AssertionError as exc:
-                _xfail_sign_runtime_reject(exc, entry, "KAT sign")
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:kat-sign"):
+                    return True
             assert len(sig) > 0, f"KAT sign returned empty signature for {vec.get('id', '?')}"
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_key)
 
     # else: unrecognised asymmetric vector schema -- skip silently
+    return False
 
 
 class TestMechSignKAT:
@@ -381,7 +476,8 @@ class TestMechSignKAT:
                 continue
 
             if vec.get("key_type") == "asymmetric":
-                _run_asymmetric_sign_kat(rs, entry, config, vec)
+                if _run_asymmetric_sign_kat(rs, entry, config, vec):
+                    return
                 continue
 
             key_hex = vec.get("key_hex")
@@ -391,13 +487,15 @@ class TestMechSignKAT:
             if config.key_type is None:
                 continue
             key_bytes = bytes.fromhex(key_hex)
-            key = import_secret_key(
-                rs.raw,
-                rs.sh,
-                CKK(int(config.key_type)),
-                key_bytes,
-                attrs={CKA_SIGN: True, CKA_TOKEN: False},
-            )
+            try:
+                key = import_secret_key_negotiated(
+                    rs,
+                    int(config.key_type),
+                    key_bytes,
+                    attrs={CKA_SIGN: True, CKA_TOKEN: False},
+                )
+            except AssertionError as exc:
+                _xfail_kat_import_not_operational(exc, entry, "secret key")
             try:
                 params = build_params_from_vector(entry.mech_id, config.param_recipe, vec)
                 if params == "SKIP":
@@ -412,11 +510,16 @@ class TestMechSignKAT:
                         mech_param=params,
                     )
                 except AssertionError as exc:
-                    _xfail_sign_runtime_reject(exc, entry, "KAT sign")
+                    if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:kat-sign"):
+                        return
                 expected = bytes.fromhex(mac_hex)
-                assert mac == expected, (
-                    f"KAT MAC mismatch for {vec.get('id', '?')}: "
-                    f"got {mac.hex()!r}, expected {expected.hex()!r}"
+                assert_correct(
+                    actual=mac,
+                    expected=expected,
+                    label=f"{entry.mech_name}:KAT MAC",
+                    operation="C_Sign",
+                    mechanism=f"CKM_{entry.mech_name}",
+                    vector_id=str(vec.get("id", "?")),
                 )
             finally:
                 destroy_quietly(rs.raw, rs.sh, key)

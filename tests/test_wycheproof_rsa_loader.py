@@ -36,18 +36,18 @@ def test_rsa_pss_import_uses_unsigned_pkcs11_bigint_encoding(
     captured: dict[str, bytes] = {}
 
     def fake_import_rsa_public_key(
-        raw: object,
-        session: int,
+        rs: object,
         *,
         n: bytes,
         e: bytes,
         attrs: dict[int, Any],
+        purpose: str = "",
     ) -> int:
         captured["n"] = n
         captured["e"] = e
         return 1
 
-    monkeypatch.setattr(rsa_pss, "import_rsa_public_key", fake_import_rsa_public_key)
+    monkeypatch.setattr(rsa_pss, "import_rsa_public_key_negotiated", fake_import_rsa_public_key)
     monkeypatch.setattr(rsa_pss, "verify_single", lambda *args, **kwargs: True)
     monkeypatch.setattr(rsa_pss, "destroy_quietly", lambda *args: None)
     monkeypatch.setattr(rsa_pss, "generate_random", lambda *args: b"")
@@ -73,8 +73,7 @@ def test_rsa_oaep_import_uses_unsigned_pkcs11_bigint_encoding(
     captured: dict[str, bytes] = {}
 
     def fake_import_rsa_private_key(
-        raw: object,
-        session: int,
+        rs: object,
         *,
         n: bytes,
         e: bytes,
@@ -85,11 +84,12 @@ def test_rsa_oaep_import_uses_unsigned_pkcs11_bigint_encoding(
         dmq1: bytes,
         iqmp: bytes,
         attrs: dict[int, Any],
+        purpose: str = "",
     ) -> int:
         captured.update(n=n, e=e, d=d, p=p, q=q, dmp1=dmp1, dmq1=dmq1, iqmp=iqmp)
         return 1
 
-    monkeypatch.setattr(rsa_oaep, "import_rsa_private_key", fake_import_rsa_private_key)
+    monkeypatch.setattr(rsa_oaep, "import_rsa_private_key_negotiated", fake_import_rsa_private_key)
     monkeypatch.setattr(
         rsa_oaep, "decrypt_single", lambda *args, **kwargs: bytes.fromhex(vec["msg"])
     )

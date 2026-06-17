@@ -20,6 +20,7 @@ The genuine provider bug is surfaced separately as a FAIL by
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 
@@ -204,3 +205,96 @@ def test_holder_consumes_reopen_request_even_when_session_unhealthy() -> None:
 
     assert reopens["n"] == 1, "unhealthy session must reopen"
     assert consume_session_reopen_request() is False, "request must be consumed, not left stale"
+
+
+def test_holder_fast_handout_skips_steady_state_health_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pkcs11_check.fixtures import _ModuleSessionHolder
+
+    class _Raw:
+        call_log: dict[str, int] = {}
+
+        def __init__(self) -> None:
+            self.health_checks = 0
+
+        def C_GetSessionInfo(self, *_args: Any) -> int:  # noqa: N802
+            self.health_checks += 1
+            return CKR_OK
+
+    class _Mod:
+        raw = _Raw()
+
+    def fake_open(_module: Any, _config: Any, **_kwargs: Any) -> tuple[Any, int, int, bool]:
+        return (_module.raw, 7, 0, False)
+
+    monkeypatch.setattr("pkcs11_check.fixtures._open_or_reinit", fake_open)
+    holder = _ModuleSessionHolder(_Mod(), object())  # type: ignore[arg-type]
+
+    holder.get_session()
+    holder.get_session(skip_health_check=True)
+
+    assert _Mod.raw.health_checks == 0
+    assert holder.reopen_count == 1
+
+
+def test_holder_records_health_check_metrics_for_normal_handout() -> None:
+    from pkcs11_check.fixtures import _ModuleSessionHolder
+
+    class _Raw:
+        call_log: dict[str, int] = {}
+
+        def __init__(self) -> None:
+            self.health_checks = 0
+
+        def C_GetSessionInfo(self, *_args: Any) -> int:  # noqa: N802
+            self.health_checks += 1
+            return CKR_OK
+
+    class _Mod:
+        raw = _Raw()
+
+    holder = _ModuleSessionHolder(_Mod(), object())  # type: ignore[arg-type]
+    holder._sh, holder._slot_id = 7, 0
+
+    holder.get_session()
+
+    metrics = holder.consume_health_metrics_delta()
+    assert metrics["checks"] == 1
+    assert metrics["duration_s"] >= 0.0
+    assert holder.consume_health_metrics_delta() == {"checks": 0, "duration_s": 0.0}
+
+
+def test_holder_fast_handout_checks_health_after_dirty_mark() -> None:
+    from pkcs11_check.fixtures import _ModuleSessionHolder
+    from pkcs11_check.raw.types_std import CKR_SESSION_HANDLE_INVALID
+
+    class _Raw:
+        call_log: dict[str, int] = {}
+
+        def __init__(self) -> None:
+            self.health_checks = 0
+
+        def C_GetSessionInfo(self, *_args: Any) -> int:  # noqa: N802
+            self.health_checks += 1
+            return CKR_SESSION_HANDLE_INVALID
+
+    class _Mod:
+        raw = _Raw()
+
+    holder = _ModuleSessionHolder(_Mod(), object())  # type: ignore[arg-type]
+    holder._sh, holder._slot_id = 7, 0
+    reopens = {"n": 0}
+
+    def fake_reopen() -> None:
+        reopens["n"] += 1
+        holder._sh, holder._slot_id = 9, 0
+
+    holder._reopen = fake_reopen  # type: ignore[method-assign]
+    holder.require_health_check()
+
+    sh, _slot_id, _bootstrap = holder.get_session(skip_health_check=True)
+
+    assert sh == 9
+    assert _Mod.raw.health_checks == 1
+    assert reopens["n"] == 1

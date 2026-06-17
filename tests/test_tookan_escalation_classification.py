@@ -15,6 +15,7 @@ from types import SimpleNamespace
 import pytest
 from _pytest.outcomes import Failed, XFailed
 
+from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
@@ -31,7 +32,9 @@ def _session() -> SimpleNamespace:
 
 
 def _run_copy(monkeypatch: pytest.MonkeyPatch, *, claimed: bool, escalated: bool) -> None:
-    monkeypatch.setattr(tt, "gen_aes_key", lambda *_a, **_k: 1)
+    # The setup key is generated via the canonical gen_aes_key_or_xfail helper,
+    # which lazily imports gen_aes_key from raw.recipes -- patch there.
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
     monkeypatch.setattr(tt, "destroy_quietly", lambda *_a, **_k: None)
     monkeypatch.setattr(tt, "copy_object", lambda *_a, **_k: 5)
 
@@ -61,7 +64,7 @@ def test_copy_not_escalated_passes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_copy_rejected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tt, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
     monkeypatch.setattr(tt, "destroy_quietly", lambda *_a, **_k: None)
 
     def _copy_reject(*_a: object, **_k: object) -> int:

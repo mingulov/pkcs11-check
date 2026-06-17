@@ -11,6 +11,13 @@ import pytest
 import pkcs11_check.plugin as plugin_mod
 from pkcs11_check.core.preflight import CapabilityManifest
 from pkcs11_check.fixtures import p11_config
+from pkcs11_check.raw.types_std import (
+    CKM_AES_CBC,
+    CKM_AES_GCM,
+    CKM_EC_KEY_PAIR_GEN,
+    CKR_MECHANISM_INVALID,
+    CKR_OK,
+)
 from pkcs11_check.testcases import mechanism_selection as selection
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 
@@ -417,6 +424,7 @@ def test_sessionfinish_emits_selection_report(
                 call_log={},
                 used_mechanisms=set(),
                 mechanism_counts={},
+                mechanism_rv_counts={},
             ),
             plugin_mod._CUMULATIVE_MECHANISMS: set(),
             plugin_mod._CUMULATIVE_USED_MECHANISMS: set(),
@@ -449,6 +457,164 @@ def test_sessionfinish_emits_selection_report(
     assert selection_reports[0]["selection_coverage"]["encrypt_roundtrip"][
         "selected_mechanisms"
     ] == ["CKM_ENCRYPT_OK"]
+
+
+def test_sessionfinish_emits_mechanism_state_coverage() -> None:
+    report_log = _FakeReportLogPlugin()
+    config = SimpleNamespace(
+        stash={
+            plugin_mod._CUMULATIVE_FUNCTIONS: set(),
+            plugin_mod._RAW_INSTANCE: SimpleNamespace(
+                available_function_names=lambda: set(),
+                call_log={},
+                used_mechanisms={int(CKM_AES_CBC), int(CKM_AES_GCM)},
+                mechanism_counts={int(CKM_AES_CBC): 1, int(CKM_AES_GCM): 2},
+                mechanism_rv_counts={
+                    int(CKM_AES_CBC): {int(CKR_OK): 1},
+                    int(CKM_AES_GCM): {int(CKR_MECHANISM_INVALID): 2},
+                },
+            ),
+            plugin_mod._CUMULATIVE_MECHANISMS: {"CKM_AES_CBC", "CKM_AES_GCM"},
+            plugin_mod._CUMULATIVE_USED_MECHANISMS: {int(CKM_AES_CBC), int(CKM_AES_GCM)},
+            plugin_mod._CUMULATIVE_MECHANISM_DETAILS: set(),
+            plugin_mod._CUMULATIVE_FUNCTION_COUNTS: {},
+            plugin_mod._CUMULATIVE_MECHANISM_COUNTS: {
+                int(CKM_AES_CBC): 1,
+                int(CKM_AES_GCM): 2,
+            },
+            plugin_mod._CUMULATIVE_DETAIL_COUNTS: {},
+            plugin_mod._BOOTSTRAP_FUNCTION_COUNTS: {},
+            plugin_mod._SELECTION_TELEMETRY_KEY: {
+                "encrypt_roundtrip": {
+                    "selected_mechanisms": {"CKM_AES_CBC"},
+                    "rejected_mechanisms": {"CKM_AES_GCM"},
+                    "rejected_reason_counts": Counter({"missing_flags": 1}),
+                }
+            },
+        },
+        getoption=lambda name, default=None: {"p11_module": "/tmp/module.so"}.get(name, default),
+        _report_log_plugin=report_log,
+    )
+    session = SimpleNamespace(config=config)
+
+    plugin_mod.pytest_sessionfinish(session, 0)
+
+    coverage_reports = [
+        record for record in report_log.records if record.get("$report_type") == "CoverageReport"
+    ]
+    assert coverage_reports
+    mechanism_coverage = coverage_reports[0]["mechanism_coverage"]
+    assert mechanism_coverage["advertised_names"] == ["CKM_AES_CBC", "CKM_AES_GCM"]
+    assert mechanism_coverage["selected_names"] == ["CKM_AES_CBC"]
+    assert mechanism_coverage["selection_rejected_names"] == ["CKM_AES_GCM"]
+    assert mechanism_coverage["attempted_names"] == ["CKM_AES_CBC", "CKM_AES_GCM"]
+    assert mechanism_coverage["accepted_names"] == ["CKM_AES_CBC"]
+    assert mechanism_coverage["rejected_cleanly_names"] == ["CKM_AES_GCM"]
+    assert mechanism_coverage["crashed_names"] == []
+    assert mechanism_coverage["timeout_names"] == []
+
+
+def test_teardown_accumulates_module_session_health_metrics() -> None:
+    raw = SimpleNamespace(call_log={}, used_mechanisms=set(), mechanism_counts={})
+    stash = {
+        plugin_mod._CUMULATIVE_FUNCTIONS: set(),
+        plugin_mod._CUMULATIVE_FUNCTION_COUNTS: Counter(),
+        plugin_mod._CUMULATIVE_USED_MECHANISMS: set(),
+        plugin_mod._CUMULATIVE_MECHANISM_COUNTS: Counter(),
+        plugin_mod._CUMULATIVE_MECHANISMS: set(),
+        plugin_mod._MODULE_SESSION_HEALTH_METRICS: {"checks": 0, "duration_s": 0.0},
+    }
+    item = _FakeItem(Path("/tmp/testcases/test_demo.py"), {})
+    item.session = SimpleNamespace(config=SimpleNamespace(stash=stash))
+    item.funcargs = {
+        "p11_module_session": SimpleNamespace(
+            raw=raw,
+            module_session_health_metrics={"checks": 2, "duration_s": 0.125},
+        )
+    }
+
+    plugin_mod.pytest_runtest_teardown(item, None)
+
+    assert stash[plugin_mod._MODULE_SESSION_HEALTH_METRICS] == {
+        "checks": 2,
+        "duration_s": 0.125,
+    }
+
+
+def test_sessionfinish_emits_module_session_health_coverage() -> None:
+    report_log = _FakeReportLogPlugin()
+    config = SimpleNamespace(
+        stash={
+            plugin_mod._CUMULATIVE_FUNCTIONS: set(),
+            plugin_mod._RAW_INSTANCE: SimpleNamespace(
+                available_function_names=lambda: set(),
+                call_log={},
+                used_mechanisms=set(),
+                mechanism_counts={},
+                mechanism_rv_counts={},
+            ),
+            plugin_mod._CUMULATIVE_MECHANISMS: set(),
+            plugin_mod._CUMULATIVE_USED_MECHANISMS: set(),
+            plugin_mod._CUMULATIVE_MECHANISM_DETAILS: set(),
+            plugin_mod._CUMULATIVE_FUNCTION_COUNTS: {},
+            plugin_mod._CUMULATIVE_MECHANISM_COUNTS: {},
+            plugin_mod._CUMULATIVE_DETAIL_COUNTS: {},
+            plugin_mod._BOOTSTRAP_FUNCTION_COUNTS: {},
+            plugin_mod._SELECTION_TELEMETRY_KEY: {},
+            plugin_mod._MODULE_SESSION_HEALTH_METRICS: {"checks": 3, "duration_s": 0.375},
+        },
+        getoption=lambda name, default=None: {"p11_module": "/tmp/module.so"}.get(name, default),
+        _report_log_plugin=report_log,
+    )
+    session = SimpleNamespace(config=config)
+
+    plugin_mod.pytest_sessionfinish(session, 0)
+
+    coverage_report = next(
+        record for record in report_log.records if record.get("$report_type") == "CoverageReport"
+    )
+    assert coverage_report["function_coverage"]["module_session_health"] == {
+        "checks": 3,
+        "duration_s": 0.375,
+    }
+
+
+def test_sessionfinish_mechanism_states_prefer_advertised_alias() -> None:
+    report_log = _FakeReportLogPlugin()
+    config = SimpleNamespace(
+        stash={
+            plugin_mod._CUMULATIVE_FUNCTIONS: set(),
+            plugin_mod._RAW_INSTANCE: SimpleNamespace(
+                available_function_names=lambda: set(),
+                call_log={},
+                used_mechanisms={int(CKM_EC_KEY_PAIR_GEN)},
+                mechanism_counts={int(CKM_EC_KEY_PAIR_GEN): 1},
+                mechanism_rv_counts={int(CKM_EC_KEY_PAIR_GEN): {int(CKR_OK): 1}},
+            ),
+            plugin_mod._CUMULATIVE_MECHANISMS: {"CKM_EC_KEY_PAIR_GEN"},
+            plugin_mod._CUMULATIVE_USED_MECHANISMS: {int(CKM_EC_KEY_PAIR_GEN)},
+            plugin_mod._CUMULATIVE_MECHANISM_DETAILS: set(),
+            plugin_mod._CUMULATIVE_FUNCTION_COUNTS: {},
+            plugin_mod._CUMULATIVE_MECHANISM_COUNTS: {int(CKM_EC_KEY_PAIR_GEN): 1},
+            plugin_mod._CUMULATIVE_DETAIL_COUNTS: {},
+            plugin_mod._BOOTSTRAP_FUNCTION_COUNTS: {},
+            plugin_mod._SELECTION_TELEMETRY_KEY: {},
+        },
+        getoption=lambda name, default=None: {"p11_module": "/tmp/module.so"}.get(name, default),
+        _report_log_plugin=report_log,
+    )
+    session = SimpleNamespace(config=config)
+
+    plugin_mod.pytest_sessionfinish(session, 0)
+
+    coverage_report = next(
+        record for record in report_log.records if record.get("$report_type") == "CoverageReport"
+    )
+    mechanism_coverage = coverage_report["mechanism_coverage"]
+    assert mechanism_coverage["attempted_names"] == ["CKM_EC_KEY_PAIR_GEN"]
+    assert mechanism_coverage["accepted_names"] == ["CKM_EC_KEY_PAIR_GEN"]
+    assert "CKM_ECDSA_KEY_PAIR_GEN" not in mechanism_coverage["attempted_names"]
+    assert "CKM_ECDSA_KEY_PAIR_GEN" not in mechanism_coverage["accepted_names"]
 
 
 def test_collection_modifyitems_applies_only_static_skips() -> None:
@@ -553,7 +719,6 @@ def test_runtime_skip_reason_uses_manifest() -> None:
     item = _FakeItem(
         Path("/tmp/testcases/test_demo.py"),
         {
-            "requires_v32": SimpleNamespace(args=()),
             "needs_mechanism": SimpleNamespace(args=("CKM_AES_ECB",)),
         },
     )
@@ -572,4 +737,86 @@ def test_runtime_skip_reason_uses_manifest() -> None:
 
     reason = plugin_mod._runtime_skip_reason(item, config, manifest)
 
-    assert reason == "Requires v32, module has v3.0"
+    assert reason == "Mechanism CKM_AES_ECB not supported by module"
+
+
+def _manifest_with(functions: list[str], *, version: str = "2.40") -> CapabilityManifest:
+    return CapabilityManifest(
+        status="ok",
+        module_path="/tmp/module.so",
+        requested_interface="auto",
+        interface_version=version,
+        slot_index=0,
+        slot_count=1,
+        mechanisms=["CKM_ML_DSA"],
+        functions=functions,
+    )
+
+
+def test_needs_function_skips_when_function_absent() -> None:
+    item = _FakeItem(
+        Path("/tmp/testcases/test_demo.py"),
+        {"needs_function": SimpleNamespace(args=("C_EncapsulateKey",))},
+    )
+    config = SimpleNamespace(
+        getoption=lambda name, default=None: {"p11_skip_unsupported": True}.get(name, default)
+    )
+    manifest = _manifest_with(["C_Sign", "C_Verify"])  # no C_EncapsulateKey
+
+    reason = plugin_mod._runtime_skip_reason(item, config, manifest)
+
+    assert reason == "Function C_EncapsulateKey not present in module"
+
+
+def test_needs_function_runs_when_function_present() -> None:
+    item = _FakeItem(
+        Path("/tmp/testcases/test_demo.py"),
+        {"needs_function": SimpleNamespace(args=("C_EncapsulateKey",))},
+    )
+    config = SimpleNamespace(
+        getoption=lambda name, default=None: {"p11_skip_unsupported": True}.get(name, default)
+    )
+    manifest = _manifest_with(["C_EncapsulateKey", "C_DecapsulateKey"], version="3.2")
+
+    assert plugin_mod._runtime_skip_reason(item, config, manifest) is None
+
+
+def test_needs_function_registered_as_dynamic_marker() -> None:
+    item = _FakeItem(
+        Path("/tmp/testcases/test_demo.py"),
+        {"needs_function": SimpleNamespace(args=("C_EncapsulateKey",))},
+    )
+    assert plugin_mod._has_dynamic_markers(item) is True
+
+
+def test_mldsa_runs_but_mlkem_encaps_skips_on_v240_module() -> None:
+    """A v2.40 module advertising CKM_ML_DSA but lacking C_EncapsulateKey:
+    ML-DSA (mechanism-gated, no version/function marker) runs; ML-KEM encaps
+    (needs_function) skips. Locks the silent-skip regression."""
+    config = SimpleNamespace(
+        getoption=lambda name, default=None: {"p11_skip_unsupported": True}.get(name, default)
+    )
+    manifest = CapabilityManifest(
+        status="ok",
+        module_path="/tmp/module.so",
+        requested_interface="auto",
+        interface_version="2.40",
+        slot_index=0,
+        slot_count=1,
+        mechanisms=["CKM_ML_DSA", "CKM_ML_DSA_KEY_PAIR_GEN"],
+        functions=["C_Sign", "C_Verify", "C_GenerateKeyPair"],  # no C_EncapsulateKey
+    )
+
+    # ML-DSA test post-migration carries NO version/function marker (mechanism-gated in-test)
+    mldsa_item = _FakeItem(Path("/tmp/testcases/test_mldsa.py"), {})
+    assert plugin_mod._runtime_skip_reason(mldsa_item, config, manifest) is None
+
+    # ML-KEM encaps test carries needs_function
+    mlkem_item = _FakeItem(
+        Path("/tmp/testcases/test_kem.py"),
+        {"needs_function": SimpleNamespace(args=("C_EncapsulateKey",))},
+    )
+    assert (
+        plugin_mod._runtime_skip_reason(mlkem_item, config, manifest)
+        == "Function C_EncapsulateKey not present in module"
+    )

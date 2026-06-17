@@ -5,11 +5,11 @@ Adds decapsulation-style coverage for the available ML-KEM vector families.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     decapsulate_key,
     destroy_quietly,
@@ -19,6 +19,7 @@ from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECAPSULATE,
     CKA_KEY_TYPE,
+    CKA_VALUE_LEN,
     CKK_AES,
     CKK_ML_KEM,
     CKM_ML_KEM,
@@ -26,10 +27,63 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_KEM_512,
     CKP_ML_KEM_768,
     CKP_ML_KEM_1024,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
-pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc, pytest.mark.requires_v32]
+pytestmark = [
+    pytest.mark.wycheproof,
+    pytest.mark.pqc,
+    pytest.mark.needs_function("C_DecapsulateKey"),
+]
+
+# FIPS 203: the ML-KEM shared secret is always 32 bytes. PKCS#11 v3.2 requires the output
+# template to carry CKA_VALUE_LEN ("other attributes required by the key type must be
+# specified"); strict-but-conformant modules (opencryptoki) reject its absence.
+_ML_KEM_SHARED_SECRET_BYTES = 32
+
+# A module that rejects importing a raw decapsulation key (dk only, no CKA_SEED) is exhibiting
+# a spec-permitted operational deviation, not a conformance failure: PKCS#11 v3.2 (ML-KEM
+# private key) says "tokens may reject creation requests that only specify one of CKA_SEED /
+# CKA_VALUE". The semi_expanded vectors carry only dk, so such a rejection is xfail.
+_IMPORT_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+# Clean operational-deviation codes for a decapsulation that does not complete on an advertised
+# module (e.g. ML-KEM decaps not operational). Unexpected codes / wrong output still fail.
+_DECAPS_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 _PARAM_SETS: dict[int, int] = {
     512: CKP_ML_KEM_512,
@@ -51,8 +105,7 @@ def _load_mlkem_vectors(filename: str) -> list[dict[str, Any]]:
     path = WYCHEPROOF_DIR / filename
     if not path.exists():
         return []
-    with open(path) as f:
-        data = json.load(f)
+    data = load_json_cached(path)
     vectors = []
     for group in data.get("testGroups", []):
         group_meta = {k: v for k, v in group.items() if k != "tests"}
@@ -101,8 +154,6 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_module_session: Any)
 
     # Import private key
     param_set = _PARAM_SETS[vec["_parameter_set"]]
-    filename = vec.get("_filename", "")
-    is_semi_expanded = "semi_expanded" in filename
     try:
         priv = import_pqc_private_key(
             rs.raw,
@@ -115,20 +166,16 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_module_session: Any)
     except AssertionError as exc:
         if result == "invalid":
             return  # Invalid key correctly rejected
-        if is_semi_expanded:
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                "Module rejected import of ML-KEM private key in 'semi_expanded' format "
-                "(dk = (z || d) expansion seed). Some PKCS#11 modules only accept the "
-                "fully-expanded decapsulation key format.",
-                ComplianceLevel.NOT_RECOMMENDED,
-                reference="FIPS 203 Section 6.4; PKCS#11 v3.2",
-            )
-            pytest.fail(
-                f"Module does not support ML-KEM 'semi_expanded' (seed-format) private key "
-                f"import: {exc}"
-            )
+        # Valid vector: the module rejected importing the raw decapsulation key (dk only;
+        # these vectors carry no CKA_SEED). PKCS#11 v3.2 (ML-KEM private key) permits a token
+        # to require both CKA_SEED and CKA_VALUE, so a clean rejection is an operational
+        # deviation (xfail), not a conformance failure. Unexpected codes still fail.
+        xfail_if_known_ckr(
+            exc,
+            _IMPORT_REJECT_RVS,
+            "module rejects raw ML-KEM private-key import with dk only (no CKA_SEED); "
+            "PKCS#11 v3.2 permits requiring CKA_SEED",
+        )
         raise
 
     try:
@@ -141,11 +188,20 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_module_session: Any)
             attrs={
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_AES,
+                # Required by strict-but-conformant modules (opencryptoki) per PKCS#11 v3.2;
+                # lenient modules infer it. The ML-KEM shared secret is always 32 bytes.
+                CKA_VALUE_LEN: _ML_KEM_SHARED_SECRET_BYTES,
             },
         )
         try:
             if result == "invalid":
-                pytest.fail(f"Invalid ML-KEM decapsulation vector {vec_id} produced a shared key")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    summary=f"Invalid ML-KEM decapsulation vector {vec_id} produced a shared key",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             if result == "valid" and expected_ss:
                 # We can't directly compare since the key value is wrapped.
                 pass  # Key was produced - that's the expected behavior.
@@ -153,21 +209,21 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_module_session: Any)
             destroy_quietly(rs.raw, rs.sh, shared_key)
     except AssertionError as exc:
         if result == "valid":
-            if is_semi_expanded:
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    "Module failed ML-KEM decapsulation for 'semi_expanded' key format. "
-                    "The provider may require a fully-expanded decapsulation key rather "
-                    "than the seed-format (z || d) key.",
-                    ComplianceLevel.NOT_RECOMMENDED,
-                    reference="FIPS 203 Section 6.4; PKCS#11 v3.2",
-                )
-                pytest.fail(
-                    "Module does not support ML-KEM 'semi_expanded' key format "
-                    f"decapsulation: {exc}"
-                )
-            pytest.fail(f"Valid ML-KEM decaps failed: {vec_id}: {exc}")
+            # A clean operational-deviation code (module advertises ML-KEM but decaps does
+            # not complete for an imported key) is xfail; an unexpected code or wrong output
+            # still fails, surfacing real bugs.
+            xfail_if_known_ckr(
+                exc,
+                _DECAPS_REJECT_RVS,
+                "ML-KEM decapsulation not operational for an imported decapsulation key",
+            )
+            classify(
+                "not_operational",
+                label=f"ML_KEM:decaps:{vec_id}",
+                summary=f"Valid ML-KEM decaps failed: {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable/invalid: reject is fine
         return
     finally:

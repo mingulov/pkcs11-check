@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
     login_user,
@@ -21,7 +22,6 @@ from pkcs11_check.raw.pack import mech_simple, template_from_dict
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     find_objects,
-    gen_aes_key,
 )
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
@@ -41,7 +41,11 @@ from pkcs11_check.raw.types_std import (
     CKR_SESSION_HANDLE_INVALID,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import classify_negative_rv, get_pin_bytes
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    gen_aes_key_or_xfail,
+    get_pin_bytes,
+)
 
 pytestmark = pytest.mark.security
 
@@ -119,7 +123,7 @@ class TestCloseAllSessions:
             sessions.append(sh)
 
         # Generate a key in s1 (session object)
-        gen_aes_key(rs.raw, s1, 128)
+        gen_aes_key_or_xfail(rs, 128, sh=s1)
 
         # Close all sessions at once
         rv = rs.raw.C_CloseAllSessions(rs.slot_id)
@@ -146,9 +150,8 @@ class TestSoftHSM2IssueRegressions:
         """SoftHSM2 #608: C_WrapKey with unsupported mechanism must return
         CKR_MECHANISM_INVALID, not CKR_GENERAL_ERROR or crash."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={
                 CKA_WRAP: True,
@@ -156,9 +159,8 @@ class TestSoftHSM2IssueRegressions:
                 CKA_SENSITIVE: False,
             },
         )
-        target = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        target = gen_aes_key_or_xfail(
+            rs,
             128,
             attrs={CKA_EXTRACTABLE: True},
         )
@@ -169,7 +171,15 @@ class TestSoftHSM2IssueRegressions:
             out_len = CK_ULONG(0)
             rv = rs.raw.C_WrapKey(rs.sh, mech.byref(), key, target, None, byref(out_len))
             if rv == CKR_OK:
-                pytest.fail("Wrap with SHA-256 should have failed")
+                fail_as(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_WrapKey:non-wrapping-mechanism",
+                    operation="C_WrapKey",
+                    mechanism="CKM_SHA256",
+                    actual=rv,
+                    summary="Wrap with SHA-256 should have failed",
+                )
             # CKR_MECHANISM_INVALID or CKR_KEY_NOT_WRAPPABLE are correct
             # Other errors are module quirks - document but don't fail
             if rv not in (
@@ -190,12 +200,12 @@ class TestSoftHSM2IssueRegressions:
 
     def test_rsa_keygen_minimum_size(self, p11_raw_session: Any) -> None:
         """Generate RSA with various sizes - verify minimum is enforced."""
-        from pkcs11_check.raw.recipes import gen_rsa_keypair
-
         rs = p11_raw_session
 
         # Very small RSA should be rejected
         try:
+            from pkcs11_check.raw.recipes import gen_rsa_keypair
+
             pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 512)
             # If accepted, that's a policy choice
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -204,7 +214,9 @@ class TestSoftHSM2IssueRegressions:
             pass  # Correct to reject small RSA
 
         # Standard size should work
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail
+
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             assert pub != 0
         finally:

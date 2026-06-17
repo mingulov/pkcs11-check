@@ -24,6 +24,7 @@ from pkcs11_check.core.file_runner import (
     load_run_state,
     postprocess_jsonl_to_unified,
     run_isolated_pytest_units,
+    validate_subprocess_per_test_expansion,
     write_quality_json_report,
 )
 from pkcs11_check.core.preflight import run_preflight_subprocess
@@ -323,6 +324,10 @@ def test_command(
                     prior_state = load_run_state(state_file) if resume else None
                     if prior_state is not None:
                         units = prior_state.units
+                        validate_subprocess_per_test_expansion(
+                            units,
+                            collect_pytest_item_metadata(target_args, pytest_args),
+                        )
                     else:
                         # Capture the collection metadata produced during unit
                         # discovery so we don't run a second identical

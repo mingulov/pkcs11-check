@@ -1,0 +1,22 @@
+{
+  "mechanism": "CKM_CAST3_CBC",
+  "family": "cast3_cbc",
+  "key_type": "CKK_CAST3",
+  "source": "RFC 2144 appendix B.1 80-bit CAST-128 vector; one-block CBC with zero IV equals CAST3 ECB",
+  "vectors": [
+    {
+      "id": "cast3_cbc_rfc2144_80_zero_iv",
+      "type": "positive",
+      "mechanism_name": "CKM_CAST3_CBC",
+      "key_type": "symmetric",
+      "key_bits": 80,
+      "key_hex": "01234567123456782345",
+      "params": {
+        "source": "RFC 2144 appendix B.1 80-bit CAST-128 vector; one-block CBC with zero IV equals CAST3 ECB",
+        "iv_hex": "0000000000000000"
+      },
+      "plaintext_hex": "0123456789abcdef",
+      "ciphertext_hex": "eb6a711a2c02271b"
+    }
+  ]
+}

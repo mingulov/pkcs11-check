@@ -7,11 +7,98 @@ test coverage, CKR spec coverage, and compliance notes.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from pkcs11_check.compliance import ComplianceNote, get_notes
+
+_OUTCOME_KEYS: tuple[str, ...] = (
+    "passed",
+    "failed",
+    "skipped",
+    "xfailed",
+    "xpassed",
+    "error",
+    "crashed",
+    "timeout",
+)
+
+_COMPLIANCE_NOTE_FIELDS: tuple[str, ...] = (
+    "description",
+    "level",
+    "reference",
+    "test_id",
+    "nodeid",
+)
+
+
+def _empty_test_counts() -> dict[str, int]:
+    counts = {key: 0 for key in _OUTCOME_KEYS}
+    counts["tests"] = 0
+    return counts
+
+
+def _count_value(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return max(value, 0)
+    return 0
+
+
+def _counts_for_base(counts: dict[str, dict[str, int]], base: str) -> dict[str, int]:
+    if base not in counts:
+        counts[base] = _empty_test_counts()
+    return counts[base]
+
+
+def _outcome_from_status(status: str) -> str:
+    if status in _OUTCOME_KEYS:
+        return status
+    if status == "crash":
+        return "crashed"
+    if status in {"errored", "error"}:
+        return "error"
+    return "error"
+
+
+def _outcome_from_pytest_report(outcome: str, wasxfail: Any) -> str:
+    if outcome == "passed" and wasxfail is not None:
+        return "xpassed"
+    if outcome == "skipped" and wasxfail is not None:
+        return "xfailed"
+    return _outcome_from_status(outcome)
+
+
+def _add_outcome(counts: dict[str, int], outcome: str, amount: int = 1) -> None:
+    normalized = _outcome_from_status(outcome)
+    clean_amount = max(amount, 0)
+    counts[normalized] += clean_amount
+    counts["tests"] += clean_amount
+
+
+def _status_from_counts(totals: Mapping[str, int]) -> str:
+    total_tests = sum(int(totals.get(key, 0)) for key in _OUTCOME_KEYS)
+    if total_tests == 0:
+        return "NOT_TESTED"
+    if totals.get("timeout", 0) > 0:
+        return "TIMEOUT"
+    if totals.get("crashed", 0) > 0:
+        return "CRASHED"
+    if totals.get("error", 0) > 0:
+        return "ERROR"
+    if totals.get("failed", 0) > 0:
+        return "FAIL"
+    if totals.get("xfailed", 0) > 0:
+        return "XFAIL"
+    if totals.get("xpassed", 0) > 0:
+        return "XPASS"
+    if totals.get("passed", 0) > 0:
+        return "PASS"
+    return "SKIP"
+
 
 # ---------------------------------------------------------------------------
 # Standard PKCS#11 mechanism names (representative subset)
@@ -408,7 +495,7 @@ def _parse_test_results(
 ) -> dict[str, dict[str, int]]:
     """Parse a pytest-json-report, pkcs11-check isolated, or unified results JSON.
 
-    Returns a mapping of test file base name -> {passed, failed, skipped}.
+    Returns a mapping of test file base name to outcome counts.
     """
     data = json.loads(results_path.read_text())
 
@@ -421,14 +508,30 @@ def _parse_test_results(
             base = target.split("::")[0].split("/")[-1].replace(".py", "")
             if not base:
                 continue
+            base_counts = _counts_for_base(counts, base)
             unit_counts = unit.get("counts")
-            if unit_counts is None:
-                continue
-            if base not in counts:
-                counts[base] = {"passed": 0, "failed": 0, "skipped": 0}
-            counts[base]["passed"] += unit_counts.get("passed", 0)
-            counts[base]["failed"] += unit_counts.get("failed", 0)
-            counts[base]["skipped"] += unit_counts.get("skipped", 0)
+            if isinstance(unit_counts, dict):
+                outcome_total = 0
+                for key in _OUTCOME_KEYS:
+                    value = _count_value(unit_counts.get(key))
+                    base_counts[key] += value
+                    outcome_total += value
+                explicit_total = max(
+                    _count_value(unit_counts.get("tests")),
+                    _count_value(unit_counts.get("total")),
+                )
+                status_outcome = _outcome_from_status(str(unit.get("status", "")))
+                if (
+                    status_outcome in {"crashed", "timeout", "error"}
+                    and _count_value(unit_counts.get(status_outcome)) == 0
+                ):
+                    base_counts[status_outcome] += 1
+                    outcome_total += 1
+                base_counts["tests"] += max(outcome_total, explicit_total)
+            else:
+                status = str(unit.get("status", ""))
+                if status:
+                    _add_outcome(base_counts, _outcome_from_status(status))
         return counts
 
     # pytest-json-report format: {"tests": [{"nodeid": "...", "outcome": "..."}]}
@@ -440,14 +543,11 @@ def _parse_test_results(
             status = r.get("status", "")
             # Extract base filename
             base = target.split("::")[0].split("/")[-1].replace(".py", "")
-            if base not in counts:
-                counts[base] = {"passed": 0, "failed": 0, "skipped": 0}
-            if status == "passed":
-                counts[base]["passed"] += 1
-            elif status == "failed":
-                counts[base]["failed"] += 1
-            else:
-                counts[base]["skipped"] += 1
+            if not base:
+                continue
+            status_text = str(status)
+            if status_text:
+                _add_outcome(_counts_for_base(counts, base), status_text)
         return counts
 
     for test in tests:
@@ -455,16 +555,287 @@ def _parse_test_results(
         outcome = test.get("outcome", "")
         # Extract base filename
         base = nodeid.split("::")[0].split("/")[-1].replace(".py", "")
-        if base not in counts:
-            counts[base] = {"passed": 0, "failed": 0, "skipped": 0}
-        if outcome == "passed":
-            counts[base]["passed"] += 1
-        elif outcome == "failed":
-            counts[base]["failed"] += 1
-        else:
-            counts[base]["skipped"] += 1
+        if not base:
+            continue
+        report_outcome = _outcome_from_pytest_report(str(outcome), test.get("wasxfail"))
+        _add_outcome(_counts_for_base(counts, base), report_outcome)
 
     return counts
+
+
+def _json_mapping(path: Path) -> Mapping[str, Any] | None:
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    return data if isinstance(data, Mapping) else None
+
+
+def _coverage_mapping_from_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    embedded = payload.get("coverage")
+    if isinstance(embedded, Mapping) and isinstance(embedded.get("function_coverage"), Mapping):
+        return embedded
+    if isinstance(payload.get("function_coverage"), Mapping):
+        return payload
+    return None
+
+
+def _counts_from_coverage_payload(coverage: Mapping[str, Any]) -> dict[str, dict[str, int]] | None:
+    raw_fc = coverage.get("function_coverage")
+    if not isinstance(raw_fc, Mapping):
+        return None
+
+    raw_called_names = raw_fc.get("called_names")
+    if isinstance(raw_called_names, list):
+        called_names = {str(name) for name in raw_called_names if isinstance(name, str)}
+    else:
+        called_names = set()
+    raw_called_counts = raw_fc.get("called_counts")
+    called_counts = raw_called_counts if isinstance(raw_called_counts, Mapping) else {}
+    called_names.update(str(name) for name in called_counts if isinstance(name, str))
+    if not called_names:
+        return None
+
+    result: dict[str, dict[str, int]] = {}
+    for name in sorted(called_names):
+        count = _count_value(called_counts.get(name))
+        if count <= 0:
+            count = 1
+        result[name] = {"tests": count}
+    return result
+
+
+def _compliance_note_from_mapping(
+    raw_note: Mapping[str, Any],
+    *,
+    nodeid: str = "",
+) -> dict[str, str] | None:
+    note = {
+        field: str(raw_note.get(field, ""))
+        for field in _COMPLIANCE_NOTE_FIELDS
+        if raw_note.get(field, "") not in (None, "")
+    }
+    if "nodeid" not in note and nodeid:
+        note["nodeid"] = nodeid
+    if not note.get("description") or not note.get("level"):
+        return None
+    return note
+
+
+def _compliance_notes_from_user_properties(
+    user_properties: Any,
+    *,
+    nodeid: str = "",
+) -> list[dict[str, str]]:
+    if not isinstance(user_properties, list):
+        return []
+
+    notes: list[dict[str, str]] = []
+    for prop in user_properties:
+        if not isinstance(prop, (list, tuple)) or len(prop) != 2:
+            continue
+        name, value = prop
+        if name != "pkcs11_compliance_notes" or not isinstance(value, list):
+            continue
+        for raw_note in value:
+            if not isinstance(raw_note, Mapping):
+                continue
+            note = _compliance_note_from_mapping(raw_note, nodeid=nodeid)
+            if note is not None:
+                notes.append(note)
+    return notes
+
+
+def _append_unique_compliance_note(
+    notes: list[dict[str, str]],
+    seen: set[tuple[tuple[str, str], ...]],
+    note: Mapping[str, str],
+) -> None:
+    key = tuple((field, note.get(field, "")) for field in _COMPLIANCE_NOTE_FIELDS)
+    if key in seen:
+        return
+    seen.add(key)
+    notes.append(dict(note))
+
+
+def _compliance_notes_from_results_payload(payload: Mapping[str, Any]) -> list[dict[str, str]]:
+    notes: list[dict[str, str]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+
+    units = payload.get("units")
+    if isinstance(units, list):
+        for unit in units:
+            if not isinstance(unit, Mapping):
+                continue
+            target = str(unit.get("target", ""))
+            raw_notes = unit.get("compliance_notes")
+            if not isinstance(raw_notes, list):
+                continue
+            for raw_note in raw_notes:
+                if not isinstance(raw_note, Mapping):
+                    continue
+                note = _compliance_note_from_mapping(raw_note, nodeid=target)
+                if note is not None:
+                    _append_unique_compliance_note(notes, seen, note)
+
+    tests = payload.get("tests")
+    if isinstance(tests, list):
+        for test in tests:
+            if not isinstance(test, Mapping):
+                continue
+            nodeid = str(test.get("nodeid", ""))
+            for note in _compliance_notes_from_user_properties(
+                test.get("user_properties"),
+                nodeid=nodeid,
+            ):
+                _append_unique_compliance_note(notes, seen, note)
+
+    return notes
+
+
+def _compliance_notes_from_report_jsonl(jsonl_path: Path) -> list[dict[str, str]]:
+    notes: list[dict[str, str]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    try:
+        fh = jsonl_path.open(encoding="utf-8")
+    except OSError:
+        return notes
+    with fh:
+        for line in fh:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, Mapping):
+                continue
+            if record.get("$report_type", "TestReport") != "TestReport":
+                continue
+            nodeid = str(record.get("nodeid", ""))
+            for note in _compliance_notes_from_user_properties(
+                record.get("user_properties"),
+                nodeid=nodeid,
+            ):
+                _append_unique_compliance_note(notes, seen, note)
+    return notes
+
+
+def _load_artifact_compliance_notes(results_path: Path) -> list[dict[str, str]]:
+    notes: list[dict[str, str]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+
+    payload = _json_mapping(results_path)
+    if payload is not None:
+        for note in _compliance_notes_from_results_payload(payload):
+            _append_unique_compliance_note(notes, seen, note)
+
+    for note in _compliance_notes_from_report_jsonl(results_path.parent / "report.jsonl"):
+        _append_unique_compliance_note(notes, seen, note)
+
+    return notes
+
+
+def _rv_trace_from_user_properties(user_properties: Any) -> list[Mapping[str, Any]]:
+    if not isinstance(user_properties, list):
+        return []
+    for prop in user_properties:
+        if not isinstance(prop, (list, tuple)) or len(prop) != 2:
+            continue
+        name, value = prop
+        if name not in {"pkcs11_rv_trace", "pkcs11_rv_trace_compact"}:
+            continue
+        if isinstance(value, list):
+            return [entry for entry in value if isinstance(entry, Mapping)]
+    return []
+
+
+def _counts_from_report_jsonl(jsonl_path: Path) -> dict[str, dict[str, int]] | None:
+    counts: dict[str, dict[str, int]] = {}
+    try:
+        fh = jsonl_path.open(encoding="utf-8")
+    except OSError:
+        return None
+    with fh:
+        for line in fh:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, Mapping):
+                continue
+            if record.get("$report_type", "TestReport") != "TestReport":
+                continue
+            trace = _rv_trace_from_user_properties(record.get("user_properties"))
+            if not trace:
+                continue
+            outcome = _outcome_from_pytest_report(
+                str(record.get("outcome", "")),
+                record.get("wasxfail"),
+            )
+            for entry in trace:
+                fn = entry.get("fn")
+                if not isinstance(fn, str) or not fn.startswith("C_"):
+                    continue
+                _add_outcome(_counts_for_base(counts, fn), outcome)
+    return counts or None
+
+
+def _load_observed_function_coverage(results_path: Path) -> dict[str, dict[str, int]] | None:
+    """Load observed C_* coverage from results/coverage/report-log artifacts."""
+    observed: dict[str, dict[str, int]] = {}
+
+    payload = _json_mapping(results_path)
+    if payload is not None:
+        coverage = _coverage_mapping_from_payload(payload)
+        if coverage is not None:
+            coverage_counts = _counts_from_coverage_payload(coverage)
+            if coverage_counts:
+                observed.update(coverage_counts)
+
+    sibling_coverage = _json_mapping(results_path.parent / "coverage.json")
+    if sibling_coverage is not None:
+        coverage = _coverage_mapping_from_payload(sibling_coverage)
+        if coverage is not None:
+            coverage_counts = _counts_from_coverage_payload(coverage)
+            if coverage_counts:
+                observed.update(coverage_counts)
+
+    report_counts = _counts_from_report_jsonl(results_path.parent / "report.jsonl")
+    if report_counts:
+        observed.update(report_counts)
+
+    return observed or None
+
+
+def _classify_functions_from_observed_coverage(
+    observed_function_counts: Mapping[str, Mapping[str, int]],
+) -> dict[str, dict[str, Any]]:
+    """Classify functions from observed C_* calls, not filename keywords."""
+    result: dict[str, dict[str, Any]] = {}
+
+    for func_name in STANDARD_FUNCTIONS:
+        raw_counts = observed_function_counts.get(func_name)
+        totals = _empty_test_counts()
+        if raw_counts is not None:
+            for key in _OUTCOME_KEYS:
+                totals[key] = _count_value(raw_counts.get(key))
+            explicit_tests = _count_value(raw_counts.get("tests"))
+            outcome_total = sum(totals[key] for key in _OUTCOME_KEYS)
+            totals["tests"] = max(explicit_tests, outcome_total)
+
+        result[func_name] = {
+            "status": _status_from_counts(totals),
+            "tests": totals["tests"],
+            "passed": totals["passed"],
+            "failed": totals["failed"],
+            "skipped": totals["skipped"],
+            "xfailed": totals["xfailed"],
+            "xpassed": totals["xpassed"],
+            "error": totals["error"],
+            "crashed": totals["crashed"],
+            "timeout": totals["timeout"],
+        }
+
+    return result
 
 
 def _classify_functions(
@@ -475,85 +846,87 @@ def _classify_functions(
 
     for func_name in STANDARD_FUNCTIONS:
         keywords = _FUNCTION_KEYWORDS.get(func_name, [])
-        total_passed = 0
-        total_failed = 0
-        total_skipped = 0
+        totals = _empty_test_counts()
 
         for keyword in keywords:
             for file_base, cnts in test_counts.items():
                 if keyword in file_base:
-                    total_passed += cnts["passed"]
-                    total_failed += cnts["failed"]
-                    total_skipped += cnts["skipped"]
+                    for key in _OUTCOME_KEYS:
+                        totals[key] += cnts.get(key, 0)
 
-        total_tests = total_passed + total_failed + total_skipped
-        if total_tests == 0:
-            status = "NOT_TESTED"
-        elif total_failed > 0:
-            status = "FAIL"
-        elif total_passed > 0:
-            status = "PASS"
-        else:
-            status = "SKIP"
+        total_tests = sum(totals[key] for key in _OUTCOME_KEYS)
+        status = _status_from_counts(totals)
 
         result[func_name] = {
             "status": status,
             "tests": total_tests,
-            "passed": total_passed,
-            "failed": total_failed,
-            "skipped": total_skipped,
+            "passed": totals["passed"],
+            "failed": totals["failed"],
+            "skipped": totals["skipped"],
+            "xfailed": totals["xfailed"],
+            "xpassed": totals["xpassed"],
+            "error": totals["error"],
+            "crashed": totals["crashed"],
+            "timeout": totals["timeout"],
         }
 
     return result
 
 
-def _ckr_coverage_summary() -> dict[str, int]:
+def _ckr_test_base_for_spec(attr_name: str) -> str:
+    return f"test_{attr_name.lower()}"
+
+
+def _ckr_file_has_executed_tests(counts: Mapping[str, int]) -> bool:
+    return any(
+        _count_value(counts.get(key)) > 0
+        for key in ("passed", "failed", "xfailed", "xpassed", "error", "crashed", "timeout")
+    )
+
+
+def _ckr_coverage_summary(
+    test_counts: Mapping[str, Mapping[str, int]] | None = None,
+) -> dict[str, int]:
     """Count CKR spec expectations and tested coverage."""
     try:
         from pkcs11_check.testcases.ckr import _ckr_spec
     except ImportError:
         return {"total_specs": 0, "tested": 0, "untestable": 0, "untested": 0}
 
-    # Collect all CKR spec dicts
     total = 0
-    spec_dicts: list[dict[str, Any]] = []
-    for attr_name in dir(_ckr_spec):
-        attr = getattr(_ckr_spec, attr_name)
-        if isinstance(attr, dict) and attr_name.startswith("CKR_"):
-            spec_dicts.append(attr)
-            total += len(attr)
-
-    # Check which have corresponding test files
-    ckr_test_dir = Path(__file__).parent / "testcases" / "ckr"
-    test_files = set()
-    if ckr_test_dir.is_dir():
-        for p in ckr_test_dir.iterdir():
-            if p.name.startswith("test_") and p.suffix == ".py":
-                test_files.add(p.stem)
-
-    # Count tested expectations: those whose spec dict name maps to a test file
     tested = 0
     untestable = 0
     for attr_name in dir(_ckr_spec):
         attr = getattr(_ckr_spec, attr_name)
-        if not isinstance(attr, dict) or not attr_name.startswith("CKR_"):
-            continue
-        # Check each expectation
-        for _key, expectation in attr.items():
-            untestable_flag = getattr(expectation, "untestable", False)
-            if untestable_flag:
-                untestable += 1
-            else:
-                tested += 1
+        if isinstance(attr, dict) and attr_name.startswith("CKR_"):
+            total += len(attr)
+            testable_entries = 0
+            for _key, expectation in attr.items():
+                if getattr(expectation, "untestable", False):
+                    untestable += 1
+                    continue
+                testable_entries += 1
+            if test_counts is None:
+                continue
+            file_counts = test_counts.get(_ckr_test_base_for_spec(attr_name))
+            if file_counts is not None and _ckr_file_has_executed_tests(file_counts):
+                tested += testable_entries
+    if test_counts is None:
+        for attr_name in dir(_ckr_spec):
+            attr = getattr(_ckr_spec, attr_name)
+            if not isinstance(attr, dict) or not attr_name.startswith("CKR_"):
+                continue
+            for _key, expectation in attr.items():
+                if not getattr(expectation, "untestable", False):
+                    tested += 1
+    else:
+        tested = min(tested, max(total - untestable, 0))
 
-    # All specs are either tested or untestable for the purpose of this count
-    # The "tested" count here means "has a spec entry" - actual test execution
-    # is tracked via test results
     return {
         "total_specs": total,
         "tested": tested,
         "untestable": untestable,
-        "untested": 0,
+        "untested": max(total - untestable - tested, 0),
     }
 
 
@@ -571,6 +944,17 @@ def _compliance_notes_list() -> list[dict[str, str]]:
             }
         )
     return result
+
+
+def _merge_compliance_notes(
+    process_notes: list[dict[str, str]],
+    artifact_notes: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    notes: list[dict[str, str]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    for note in [*process_notes, *artifact_notes]:
+        _append_unique_compliance_note(notes, seen, note)
+    return notes
 
 
 def generate_report(
@@ -599,9 +983,16 @@ def generate_report(
     mechanisms = _collect_mechanisms(module, slot_index=slot_index)
 
     # Function coverage from test results
+    test_counts: dict[str, dict[str, int]] | None = None
     if test_results_path and test_results_path.exists():
         test_counts = _parse_test_results(test_results_path)
-        functions = _classify_functions(test_counts)
+        observed_function_counts = _load_observed_function_coverage(test_results_path)
+        if observed_function_counts is not None:
+            functions = _classify_functions_from_observed_coverage(
+                observed_function_counts,
+            )
+        else:
+            functions = _classify_functions(test_counts)
     else:
         functions = {
             f: {
@@ -610,19 +1001,30 @@ def generate_report(
                 "passed": 0,
                 "failed": 0,
                 "skipped": 0,
+                "xfailed": 0,
+                "xpassed": 0,
+                "error": 0,
+                "crashed": 0,
+                "timeout": 0,
             }
             for f in STANDARD_FUNCTIONS
         }
 
     # CKR coverage
-    ckr_coverage = _ckr_coverage_summary()
+    ckr_coverage = _ckr_coverage_summary(test_counts)
 
     # Compliance notes
-    compliance_notes = _compliance_notes_list()
+    artifact_compliance_notes: list[dict[str, str]] = []
+    if test_results_path and test_results_path.exists():
+        artifact_compliance_notes = _load_artifact_compliance_notes(test_results_path)
+    compliance_notes = _merge_compliance_notes(
+        _compliance_notes_list(),
+        artifact_compliance_notes,
+    )
 
     # Aggregate scores
     mechs_supported = sum(1 for v in mechanisms.values() if v == "SUPPORTED")
-    funcs_tested = sum(1 for v in functions.values() if v["status"] in {"PASS", "FAIL"})
+    funcs_tested = sum(1 for v in functions.values() if v["status"] not in {"NOT_TESTED", "SKIP"})
     ckr_total = ckr_coverage["total_specs"]
     ckr_tested = ckr_coverage["tested"]
     ckr_pct = round(ckr_tested / ckr_total * 100, 1) if ckr_total > 0 else 0.0

@@ -4,14 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-_VERSION_ORDER = {"2.40": 0, "3.0": 1, "3.1": 2, "3.2": 3}
-
-_MARKER_MIN_VERSION: dict[str, str] = {
-    "requires_v30": "3.0",
-    "requires_v31": "3.1",
-    "requires_v32": "3.2",
-}
-
 
 @dataclass(frozen=True)
 class MarkerDef:
@@ -28,9 +20,6 @@ MARKER_DEFINITIONS: list[MarkerDef] = [
     MarkerDef("boundary", "Boundary-condition test"),
     MarkerDef("cctv", "CCTV (C2SP) edge-case test vector"),
     MarkerDef("crossverify", "Cross-verification test against an independent implementation"),
-    MarkerDef("requires_v30", "Test requires PKCS#11 v3.0 or later"),
-    MarkerDef("requires_v31", "Test requires PKCS#11 v3.1 or later"),
-    MarkerDef("requires_v32", "Test requires PKCS#11 v3.2 or later"),
     MarkerDef("destructive", "Test modifies token state (requires --p11-destructive)"),
     MarkerDef("differential", "Cross-backend differential test"),
     MarkerDef("encrypt", "Encryption and decryption mechanism test"),
@@ -47,6 +36,10 @@ MARKER_DEFINITIONS: list[MarkerDef] = [
     MarkerDef("lab", "Lab profile including expensive or invasive tests"),
     MarkerDef("mechflags", "Mechanism flags validation test"),
     MarkerDef("metamorphic", "Metamorphic relation test"),
+    MarkerDef(
+        "module_session_fast",
+        "Skip steady-state shared-session health checks for vector-style tests",
+    ),
     MarkerDef("multipart", "Multi-part or dual-function operation test"),
     MarkerDef("operation_state", "C_GetOperationState / C_SetOperationState test"),
     MarkerDef("pqc", "Post-quantum cryptography test"),
@@ -60,6 +53,7 @@ MARKER_DEFINITIONS: list[MarkerDef] = [
     MarkerDef("smoke", "Quick smoke profile"),
     MarkerDef("slow", "Long-running test"),
     MarkerDef("needs_mechanism", "Test needs a specific PKCS#11 mechanism"),
+    MarkerDef("needs_function", "Test needs a specific PKCS#11 C_* function to be present"),
     MarkerDef("stateful", "State-machine or stateful property test"),
     MarkerDef("stress", "Concurrency, resource, or longevity stress test"),
     MarkerDef("subprocess", "Test always runs in isolated subprocess (crash-prone operations)"),
@@ -87,11 +81,3 @@ MARKER_DEFINITIONS: list[MarkerDef] = [
     MarkerDef("flag_validation", "CKF_* flag correctness test"),
     MarkerDef("digest", "Digest/hash mechanism test"),
 ]
-
-
-def should_skip_for_version(marker_name: str, interface_version: str) -> bool:
-    """Return True if a test with this marker should be skipped for the given version."""
-    min_version = _MARKER_MIN_VERSION.get(marker_name)
-    if min_version is None:
-        return False
-    return _VERSION_ORDER.get(interface_version, 0) < _VERSION_ORDER[min_version]

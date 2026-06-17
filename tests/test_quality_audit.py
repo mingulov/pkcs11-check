@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from pkcs11_check.core.quality_audit import build_quality_audit, classify_skip_reason
+from pkcs11_check.core.quality_audit import (
+    build_quality_audit,
+    classify_skip_reason,
+    compare_mechanism_coverage_states,
+)
 
 
 def test_classify_skip_reason_falls_back_to_unknown() -> None:
@@ -146,6 +150,119 @@ def test_build_quality_audit_uses_coverage_for_mechanism_findings() -> None:
     assert "selection telemetry not provided" in report["data_quality_warnings"]
 
 
+def test_build_quality_audit_reports_mechanism_coverage_states() -> None:
+    results = {
+        "tool": "pkcs11-check",
+        "kind": "test-run",
+        "summary": {"passed": 0, "failed": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "error": 0},
+        "units": [],
+    }
+    coverage = {
+        "mechanism_coverage": {
+            "available": 7,
+            "available_names": [
+                "CKM_AES_CBC",
+                "CKM_AES_GCM",
+                "CKM_AES_XTS",
+                "CKM_EDDSA",
+                "CKM_HKDF_DERIVE",
+                "CKM_ML_DSA",
+                "CKM_SHA256_HMAC",
+            ],
+            "advertised_names": [
+                "CKM_AES_CBC",
+                "CKM_AES_GCM",
+                "CKM_AES_XTS",
+                "CKM_EDDSA",
+                "CKM_HKDF_DERIVE",
+                "CKM_ML_DSA",
+                "CKM_SHA256_HMAC",
+            ],
+            "selected_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+            "selection_rejected_names": ["CKM_AES_XTS"],
+            "attempted_names": ["CKM_AES_CBC", "CKM_AES_GCM", "CKM_SHA256_HMAC"],
+            "invoked": 3,
+            "invoked_names": ["CKM_AES_CBC", "CKM_AES_GCM", "CKM_SHA256_HMAC"],
+            "invoked_counts": {"CKM_AES_CBC": 1, "CKM_AES_GCM": 1, "CKM_SHA256_HMAC": 1},
+            "not_invoked": 4,
+            "not_invoked_names": ["CKM_AES_XTS", "CKM_EDDSA", "CKM_HKDF_DERIVE", "CKM_ML_DSA"],
+            "accepted_names": ["CKM_AES_CBC"],
+            "rejected_cleanly_names": ["CKM_AES_GCM"],
+            "skipped_by_capability_names": ["CKM_EDDSA"],
+            "crashed_names": ["CKM_HKDF_DERIVE"],
+            "timeout_names": ["CKM_ML_DSA"],
+        },
+    }
+
+    report = build_quality_audit(results=results, coverage=coverage)
+
+    findings = {finding["mechanism"]: finding for finding in report["mechanism_findings"]}
+    assert findings["CKM_AES_CBC"]["status"] == "accepted"
+    assert findings["CKM_AES_CBC"]["telemetry_states"] == [
+        "advertised",
+        "selected",
+        "attempted",
+        "invoked",
+        "accepted",
+    ]
+    assert findings["CKM_AES_GCM"]["status"] == "rejected_cleanly"
+    assert "rejected_cleanly" in findings["CKM_AES_GCM"]["telemetry_states"]
+    assert findings["CKM_AES_XTS"]["status"] == "selection_rejected"
+    assert findings["CKM_EDDSA"]["status"] == "skipped_by_capability"
+    assert findings["CKM_HKDF_DERIVE"]["status"] == "crashed"
+    assert findings["CKM_ML_DSA"]["status"] == "timeout"
+    assert findings["CKM_SHA256_HMAC"]["status"] == "attempted"
+
+
+def test_compare_mechanism_coverage_states_reports_losses() -> None:
+    baseline = {
+        "mechanism_coverage": {
+            "advertised_names": ["CKM_AES_CBC", "CKM_AES_GCM", "CKM_SHA256_HMAC"],
+            "accepted_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+            "attempted_names": ["CKM_AES_CBC", "CKM_AES_GCM", "CKM_SHA256_HMAC"],
+            "rejected_cleanly_names": ["CKM_AES_XTS"],
+            "skipped_by_capability_names": ["CKM_EDDSA"],
+        },
+    }
+    candidate = {
+        "mechanism_coverage": {
+            "advertised_names": ["CKM_AES_CBC", "CKM_SHA256_HMAC"],
+            "accepted_names": ["CKM_AES_CBC"],
+            "attempted_names": ["CKM_AES_CBC", "CKM_SHA256_HMAC"],
+            "rejected_cleanly_names": [],
+            "skipped_by_capability_names": ["CKM_EDDSA"],
+        },
+    }
+
+    comparison = compare_mechanism_coverage_states(baseline, candidate)
+
+    assert comparison["has_loss"] is True
+    assert comparison["lost_by_state"] == {
+        "advertised": ["CKM_AES_GCM"],
+        "accepted": ["CKM_AES_GCM"],
+        "attempted": ["CKM_AES_GCM"],
+        "rejected_cleanly": ["CKM_AES_XTS"],
+    }
+    assert comparison["states_compared"] == [
+        "advertised",
+        "accepted",
+        "attempted",
+        "rejected_cleanly",
+        "skipped_by_capability",
+    ]
+
+
+def test_compare_mechanism_coverage_states_skips_missing_baseline_states() -> None:
+    baseline = {"mechanism_coverage": {"invoked_names": ["CKM_AES_CBC"]}}
+    candidate = {"mechanism_coverage": {}}
+
+    comparison = compare_mechanism_coverage_states(baseline, candidate)
+
+    assert comparison["has_loss"] is True
+    assert comparison["lost_by_state"] == {"invoked": ["CKM_AES_CBC"]}
+    assert "accepted" not in comparison["states_compared"]
+
+
 def test_build_quality_audit_selection_report_enables_selected_but_not_invoked() -> None:
     results = {
         "tool": "pkcs11-check",
@@ -264,7 +381,7 @@ def test_build_quality_audit_merges_selection_reports_by_scenario() -> None:
         "not_implemented": 1,
     }
     mechanism_findings = {finding["mechanism"]: finding for finding in report["mechanism_findings"]}
-    assert mechanism_findings == {
+    expected_mechanism_findings = {
         "CKM_AES_CBC": {
             "mechanism": "CKM_AES_CBC",
             "status": "invoked",
@@ -294,6 +411,8 @@ def test_build_quality_audit_merges_selection_reports_by_scenario() -> None:
             "invoked": False,
         },
     }
+    for mechanism, expected in expected_mechanism_findings.items():
+        assert {key: mechanism_findings[mechanism][key] for key in expected} == expected
 
 
 def test_build_quality_audit_classifies_input_constraint_rejections() -> None:

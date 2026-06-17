@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -37,6 +38,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKM_SHA256_RSA_PKCS,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
@@ -54,11 +56,12 @@ pytestmark = [pytest.mark.access]
 # at keygen" — skip gracefully rather than failing.
 _KEYGEN_ATTR_SKIP_RVS: frozenset[int] = frozenset(
     {
-        int(CKR_TEMPLATE_INCONSISTENT),
-        int(CKR_ATTRIBUTE_TYPE_INVALID),
-        int(CKR_ATTRIBUTE_VALUE_INVALID),
-        int(CKR_FUNCTION_NOT_SUPPORTED),
-        int(CKR_ARGUMENTS_BAD),
+        CKR_TEMPLATE_INCONSISTENT,
+        CKR_ATTRIBUTE_TYPE_INVALID,
+        CKR_ATTRIBUTE_VALUE_INVALID,
+        CKR_ATTRIBUTE_READ_ONLY,
+        CKR_FUNCTION_NOT_SUPPORTED,
+        CKR_ARGUMENTS_BAD,
     }
 )
 
@@ -152,11 +155,17 @@ class TestAlwaysAuthenticateEnforcement:
             rv_sign = int(rs.raw.C_Sign(rs.sh, msg_buf, len(msg), sig_buf, byref(sig_len)))
 
             if rv_sign == CKR_OK:
-                pytest.fail(
-                    "C_Sign on CKA_ALWAYS_AUTHENTICATE=True key succeeded "
-                    "without prior CKU_CONTEXT_SPECIFIC login — module is "
-                    "not enforcing the spec-mandated re-authentication. "
-                    "This is a CVE-class security gap."
+                classify(
+                    "self_contradiction",
+                    kind="policy",
+                    label="CKA_ALWAYS_AUTHENTICATE:C_Sign without re-auth",
+                    operation="C_Sign",
+                    summary=(
+                        "C_Sign on CKA_ALWAYS_AUTHENTICATE=True key succeeded "
+                        "without prior CKU_CONTEXT_SPECIFIC login — module is "
+                        "not enforcing the spec-mandated re-authentication. "
+                        "This is a CVE-class security gap."
+                    ),
                 )
             assert rv_sign == int(CKR_USER_NOT_LOGGED_IN), (
                 f"C_Sign without re-auth returned {ckr_name(rv_sign)}, "
@@ -261,11 +270,17 @@ class TestAlwaysAuthenticateEnforcement:
             # Second sign without a fresh re-auth: must fail.
             rv2 = attempt_sign()
             if rv2 == CKR_OK:
-                pytest.fail(
-                    "Second C_Sign on always-auth key succeeded without a "
-                    "fresh CKU_CONTEXT_SPECIFIC login — module is reusing "
-                    "the re-auth.  The CKA_ALWAYS_AUTHENTICATE security "
-                    "guarantee is not being enforced."
+                classify(
+                    "self_contradiction",
+                    kind="policy",
+                    label="CKA_ALWAYS_AUTHENTICATE:re-auth reused",
+                    operation="C_Sign",
+                    summary=(
+                        "Second C_Sign on always-auth key succeeded without a "
+                        "fresh CKU_CONTEXT_SPECIFIC login — module is reusing "
+                        "the re-auth.  The CKA_ALWAYS_AUTHENTICATE security "
+                        "guarantee is not being enforced."
+                    ),
                 )
             assert rv2 == int(CKR_USER_NOT_LOGGED_IN), (
                 f"Second C_Sign without re-auth returned {ckr_name(rv2)}, "
@@ -294,9 +309,15 @@ class TestAlwaysAuthenticateEnforcement:
         if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
             pytest.skip("Module does not implement CKU_CONTEXT_SPECIFIC login")
         if rv == CKR_OK:
-            pytest.fail(
-                "Module accepted CKU_CONTEXT_SPECIFIC login outside any active "
-                "operation — spec requires CKR_OPERATION_NOT_INITIALIZED."
+            classify(
+                "self_contradiction",
+                kind="lifecycle",
+                label="CKU_CONTEXT_SPECIFIC login outside active operation",
+                operation="C_Login",
+                summary=(
+                    "Module accepted CKU_CONTEXT_SPECIFIC login outside any active "
+                    "operation — spec requires CKR_OPERATION_NOT_INITIALIZED."
+                ),
             )
         # CKR_OPERATION_NOT_INITIALIZED is spec-mandated; some modules
         # return CKR_USER_NOT_LOGGED_IN which is also defensible.

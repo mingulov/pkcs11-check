@@ -2,8 +2,8 @@
 
 Happy-path functional tests exercising sign-recover and verify-recover operations.
 
-Source: PKCS#11 v3.1 Sec.5.10.5 (C_SignRecoverInit), Sec.5.10.6 (C_SignRecover),
-        Sec.5.11.5 (C_VerifyRecoverInit), Sec.5.11.6 (C_VerifyRecover).
+Source: PKCS#11 v3.2 (C_SignRecoverInit, C_SignRecover,
+        C_VerifyRecoverInit, C_VerifyRecover).
 
 C_SignRecover produces a signature from which the original data can be recovered.
 C_VerifyRecover takes a signature and recovers the original data (and verifies it).
@@ -32,6 +32,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -43,7 +44,7 @@ from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import CKM_RSA_X_509, CKR_FUNCTION_NOT_SUPPORTED
 from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 from pkcs11_check.testcases._raw_subprocess import run_raw_script
-from pkcs11_check.testcases.conftest import KEYPAIR_RUNTIME_REJECT_RVS
+from pkcs11_check.testcases.conftest import KEYPAIR_RUNTIME_REJECT_RVS, assert_correct
 
 pytestmark = pytest.mark.full
 
@@ -205,11 +206,23 @@ def _handle_subprocess_failure(returncode: int, stdout: str, stderr: str) -> Non
             except ValueError:
                 rv = None
             if rv is not None and rv in KEYPAIR_RUNTIME_REJECT_RVS:
-                pytest.xfail(f"RSA_PKCS_KEY_PAIR_GEN keypair setup rejected: {ckr_name(rv)}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="RSA_PKCS_KEY_PAIR_GEN:keypair setup",
+                    operation="C_GenerateKeyPair",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    actual=rv,
+                    summary=f"RSA_PKCS_KEY_PAIR_GEN keypair setup rejected: {ckr_name(rv)}",
+                )
     else:
         detail = f"stdout={stdout!r} stderr={stderr!r}"
 
-    pytest.fail(f"Subprocess failed: {detail}")
+    classify(
+        "crash",
+        label="sign-recover subprocess",
+        summary=f"Subprocess failed: {detail}",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +253,7 @@ class TestSignRecover:
         3. C_SignRecover(padded_data) -> signature.
         4. Verify signature length equals modulus size (256 bytes).
 
-        Source: PKCS#11 v3.1 Sec.5.10.5-Sec.5.10.6.
+        Source: PKCS#11 v3.2.
         """
         if not _has_rsa_x509(p11_module):
             pytest.skip("CKM_RSA_X_509 not supported by this module")
@@ -312,7 +325,7 @@ class TestSignRecover:
         3. C_VerifyRecoverInit -> C_VerifyRecover(signature) -> recovered_data.
         4. Assert recovered_data == padded_data.
 
-        Source: PKCS#11 v3.1 Sec.5.10.5-Sec.5.10.6, Sec.5.11.5-Sec.5.11.6.
+        Source: PKCS#11 v3.2.
         """
         if not _has_rsa_x509(p11_module):
             pytest.skip("CKM_RSA_X_509 not supported by this module")
@@ -403,10 +416,12 @@ class TestSignRecover:
 
         original = lines_map["ORIGINAL"]
         recovered = lines_map["RECOVERED"]
-        assert recovered == original, (
-            f"Verify-recover round-trip mismatch:\n"
-            f"  original  = {original!r}\n"
-            f"  recovered = {recovered!r}"
+        assert_correct(
+            actual=recovered,
+            expected=original,
+            label="CKM_RSA_X_509:Sign/VerifyRecover round-trip",
+            operation="C_VerifyRecover",
+            mechanism="CKM_RSA_X_509",
         )
 
     def test_sign_recover_wrong_data_length(self, p11_config: Any, p11_module: Any) -> None:
@@ -416,7 +431,7 @@ class TestSignRecover:
         Passing shorter data must return CKR_DATA_LEN_RANGE or CKR_ARGUMENTS_BAD
         (or similar), not crash or silently succeed.
 
-        Source: PKCS#11 v3.1 Sec.5.10.6 error table.
+        Source: PKCS#11 v3.2 error table.
         """
         if not _has_rsa_x509(p11_module):
             pytest.skip("CKM_RSA_X_509 not supported by this module")
@@ -471,9 +486,16 @@ class TestSignRecover:
         # for CKM_RSA_X_509 but we don't fail on it; we just note it.
         result = lines_map["RESULT"]
         if result == "ACCEPTED_SHORT_DATA":
-            pytest.xfail(
-                "Module accepted short data for CKM_RSA_X_509 C_SignRecover - "
-                "non-standard behaviour (spec requires CKR_DATA_LEN_RANGE)"
+            classify(
+                "honest_deviation",
+                kind="crypto",
+                label="CKM_RSA_X_509:C_SignRecover short data",
+                operation="C_SignRecover",
+                mechanism="CKM_RSA_X_509",
+                summary=(
+                    "Module accepted short data for CKM_RSA_X_509 C_SignRecover - "
+                    "non-standard behaviour (spec requires CKR_DATA_LEN_RANGE)"
+                ),
             )
 
 
@@ -539,12 +561,24 @@ class TestSignRecoverRecipes:
             sig = sign_recover_single(rs.raw, rs.sh, priv, CKM_RSA_X_509, data)
             valid, recovered = verify_recover_single(rs.raw, rs.sh, pub, CKM_RSA_X_509, sig)
             assert valid is True
-            if recovered != data:
-                pytest.xfail(
-                    f"Module C_VerifyRecover returned wrong data: "
-                    f"recovered[0]={recovered[0] if recovered else 'empty'!r}, "
-                    f"expected[0]={data[0]!r} -- "
-                    f"CKM_RSA_X_509 C_VerifyRecover implementation bug"
+            # Raw RSA (CKM_RSA_X_509) VerifyRecover returns sig^e mod n, i.e. the signed
+            # value AS AN INTEGER. Compare as integers so a benign leading-zero / length
+            # representation difference is not mis-flagged. A genuine integer mismatch IS a
+            # crypto-correctness break (the module recovered the wrong value) -> wrong_result
+            # (crypto fail), not a tolerable deviation. (Any documented per-module bug is
+            # cross-referenced as KNOWN_ISSUE at the report layer, not hidden here.)
+            recovered_int = int.from_bytes(recovered, "big") if recovered else -1
+            if recovered_int != int.from_bytes(data, "big"):
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_RSA_X_509:C_VerifyRecover recovered data",
+                    operation="C_VerifyRecover",
+                    mechanism="CKM_RSA_X_509",
+                    summary=(
+                        "C_VerifyRecover recovered the wrong value for CKM_RSA_X_509 "
+                        "(recovered integer != signed integer) -- crypto-correctness break"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -564,10 +598,17 @@ class TestSignRecoverRecipes:
             bad_sig = b"\x00" * 256
             valid, recovered = verify_recover_single(rs.raw, rs.sh, pub, CKM_RSA_X_509, bad_sig)
             if valid is True or recovered != b"":
-                pytest.xfail(
-                    f"Module C_VerifyRecover accepted invalid all-zero signature: "
-                    f"valid={valid}, recovered={recovered!r} -- "
-                    f"the signature block is not validated in C_VerifyRecover"
+                classify(
+                    "honest_deviation",
+                    kind="crypto",
+                    label="CKM_RSA_X_509:C_VerifyRecover invalid signature",
+                    operation="C_VerifyRecover",
+                    mechanism="CKM_RSA_X_509",
+                    summary=(
+                        f"Module C_VerifyRecover accepted invalid all-zero signature: "
+                        f"valid={valid}, recovered={recovered!r} -- "
+                        f"the signature block is not validated in C_VerifyRecover"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

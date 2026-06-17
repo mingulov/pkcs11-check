@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, fail_as
 from pkcs11_check.testcases._subprocess_trace import RV_TRACE_MARKER, record_subprocess_rv_trace
 
 pytestmark = [pytest.mark.security, pytest.mark.stress]
@@ -200,9 +201,17 @@ class TestForkSafety:
         """
         rc, output = _run_script(script, timeout=15)
         if rc != 0:
-            pytest.fail(f"Fork test crashed (rc={rc}): {output}")
+            classify(
+                "crash",
+                label="fork-after-initialize",
+                summary=f"Fork test crashed (rc={rc}): {output}",
+            )
         if "CHILD_SIGNAL:" in output:
-            pytest.fail(f"Fork child was killed by a signal: {output}")
+            classify(
+                "crash",
+                label="fork-after-initialize",
+                summary=f"Fork child was killed by a signal: {output}",
+            )
 
         child_exit: int | None = None
         for line in output.splitlines():
@@ -210,18 +219,30 @@ class TestForkSafety:
                 try:
                     child_exit = int(line.split(":", 1)[1])
                 except ValueError:
-                    pytest.fail(f"Fork child reported malformed exit status: {output}")
+                    fail_as(
+                        "crash",
+                        label="fork-after-initialize",
+                        summary=f"Fork child reported malformed exit status: {output}",
+                    )
                 break
         if child_exit is None:
-            pytest.fail(f"Fork child did not report exit status: {output}")
+            fail_as(
+                "crash",
+                label="fork-after-initialize",
+                summary=f"Fork child did not report exit status: {output}",
+            )
         if child_exit != 0:
-            pytest.fail(f"Fork child failed (exit={child_exit}): {output}")
+            classify(
+                "crash",
+                label="fork-after-initialize",
+                summary=f"Fork child failed (exit={child_exit}): {output}",
+            )
 
 
 class TestSessionObjectProcessIsolation:
     """CROSS-PROC-001: cross-process session-object isolation.
 
-    PKCS#11 v3.1 Sec.4.2 says session objects belong to a session, and
+    PKCS#11 v3.2 says session objects belong to a session, and
     sessions belong to an "application". An application is whatever
     called C_Initialize — distinct processes are distinct applications.
     Session objects MUST NOT be visible to a different process even if
@@ -330,7 +351,7 @@ class TestSessionObjectProcessIsolation:
         pid = os.fork()
         if pid == 0:
             # Child: must Finalize the inherited handle before re-Initializing,
-            # per PKCS#11 v3.1 Sec.5.6.5 fork semantics.
+            # per PKCS#11 v3.2 fork semantics.
             raw.C_Finalize(None)
             try:
                 raw2 = RawPKCS11.from_lib("{module}")
@@ -398,25 +419,46 @@ class TestSessionObjectProcessIsolation:
         rc, output = _run_script(script, timeout=90)
         if rc != 0:
             if "FATAL:Parent_CreateObject:" in output:
-                pytest.xfail(
-                    "session-object setup rejected before cross-process isolation "
-                    f"could be tested: {output}"
+                classify(
+                    "not_operational",
+                    label="cross-process session-object isolation (setup)",
+                    operation="C_CreateObject",
+                    summary=(
+                        "session-object setup rejected before cross-process isolation "
+                        f"could be tested: {output}"
+                    ),
                 )
-            pytest.fail(f"Cross-process session-object isolation test crashed (rc={rc}): {output}")
+            classify(
+                "crash",
+                label="cross-process session-object isolation",
+                summary=f"Cross-process session-object isolation test crashed (rc={rc}): {output}",
+            )
 
         # Parse output: PARENT_LABEL must be set; child must report
         # CHILD_FOUND:0 (didn't see parent's session object).
         if "PARENT_LABEL:" not in output:
-            pytest.fail(f"Parent didn't create the session object: {output}")
+            classify(
+                "crash",
+                label="cross-process session-object isolation",
+                summary=f"Parent didn't create the session object: {output}",
+            )
         if "CHILD_EXIT:" not in output:
-            pytest.fail(f"Child didn't exit cleanly: {output}")
+            classify(
+                "crash",
+                label="cross-process session-object isolation",
+                summary=f"Child didn't exit cleanly: {output}",
+            )
         # A child killed by signal (CHILD_SIGNAL: in output) is a CRASH
         # — that IS the finding, not a skip condition. Project rule:
         # "A segfault IS the finding."
         if "CHILD_SIGNAL:" in output:
-            pytest.fail(
-                f"SECURITY: child process was killed by a signal (likely "
-                f"crash) during cross-process isolation test:\n{output}"
+            classify(
+                "crash",
+                label="cross-process session-object isolation",
+                summary=(
+                    "SECURITY: child process was killed by a signal (likely "
+                    f"crash) during cross-process isolation test:\n{output}"
+                ),
             )
 
         # Narrow skip-on-CHILD_FATAL/EXC: skip only on documented
@@ -443,9 +485,13 @@ class TestSessionObjectProcessIsolation:
                 f"(daemon-backed module limit): {output}"
             )
         if "CHILD_FATAL" in output or "CHILD_EXC" in output:
-            pytest.fail(
-                f"Child failed unexpectedly during cross-process test "
-                f"(not a documented daemon limitation): {output}"
+            classify(
+                "crash",
+                label="cross-process session-object isolation",
+                summary=(
+                    "Child failed unexpectedly during cross-process test "
+                    f"(not a documented daemon limitation): {output}"
+                ),
             )
         if "CHILD_FOUND:0" not in output:
             # Extract just the diagnostic lines for the failure message.
@@ -470,16 +516,22 @@ class TestSessionObjectProcessIsolation:
                 f"Cross-process session-object leak detected: a session "
                 f"object created in the parent process was visible to a "
                 f"child process that re-Initialized the module. PKCS#11 "
-                f"v3.1 Sec.4.2 says session objects belong to a single "
+                f"v3.2 says session objects belong to a single "
                 f"application, and distinct processes are distinct "
                 f"applications. Diagnostic: {diag}",
                 ComplianceLevel.CRITICAL,
-                reference="PKCS#11 v3.1 Sec.4.2 / Sec.5.6.5",
+                reference="PKCS#11 v3.2",
             )
-            pytest.fail(
-                f"SECURITY: cross-process session-object isolation violated "
-                f"— child process saw the parent's session object. "
-                f"Diagnostic:\n{diag}"
+            classify(
+                "self_contradiction",
+                kind="policy",
+                label="cross-process session-object isolation",
+                spec_ref="PKCS#11 v3.2",
+                summary=(
+                    "SECURITY: cross-process session-object isolation violated "
+                    "— child process saw the parent's session object. "
+                    f"Diagnostic:\n{diag}"
+                ),
             )
 
 
@@ -524,7 +576,11 @@ class TestLibraryReload:
         rc, output = _run_script(script, timeout=30)
         if rc < 0:
             # Negative exit code = killed by signal (crash/segfault) -- real module bug
-            pytest.fail(f"Reload cycle crashed with signal (rc={rc}): {output}")
+            classify(
+                "crash",
+                label="library reload cycle (5x)",
+                summary=f"Reload cycle crashed with signal (rc={rc}): {output}",
+            )
         if rc != 0:
             # Non-zero but no signal: module raised an exception during reinit
             # (e.g. token not found after reinit, daemon not provisioned).
@@ -537,5 +593,10 @@ class TestLibraryReload:
                 "PKCS#11 spec does not require multi-cycle reinit support",
                 ComplianceLevel.VENDOR,
             )
-            pytest.xfail(f"Module fails reload cycle (rc={rc}): {output[:200]}")
+            classify(
+                "honest_deviation",
+                kind="lifecycle",
+                label="library reload cycle (5x)",
+                summary=f"Module fails reload cycle (rc={rc}): {output[:200]}",
+            )
         assert "OK:" in output

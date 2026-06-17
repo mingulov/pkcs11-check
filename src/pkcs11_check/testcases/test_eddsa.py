@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import attr_bytes
 from pkcs11_check.raw.recipes import (
@@ -37,7 +38,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import assert_correct, xfail_if_known_ckr
 
 _EDDSA_RUNTIME_REJECT_RVS = (
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -122,8 +123,20 @@ class TestEdDSAKeyGeneration:
         pub, priv = ed25519_keypair
         pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
         priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-        assert pub_kt == CKK_EC_EDWARDS
-        assert priv_kt == CKK_EC_EDWARDS
+        assert_correct(
+            actual=pub_kt,
+            expected=CKK_EC_EDWARDS,
+            label="Ed25519:public CKA_KEY_TYPE readback",
+            operation="C_GetAttributeValue",
+            kind="metadata",
+        )
+        assert_correct(
+            actual=priv_kt,
+            expected=CKK_EC_EDWARDS,
+            label="Ed25519:private CKA_KEY_TYPE readback",
+            operation="C_GetAttributeValue",
+            kind="metadata",
+        )
 
     def test_ed25519_ec_params(
         self, p11_raw_session: Any, ed25519_keypair: tuple[int, int]
@@ -132,7 +145,13 @@ class TestEdDSAKeyGeneration:
         rs = p11_raw_session
         pub, _ = ed25519_keypair
         params = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_PARAMS])[CKA_EC_PARAMS]
-        assert params == ED25519_OID
+        assert_correct(
+            actual=params,
+            expected=ED25519_OID,
+            label="Ed25519:CKA_EC_PARAMS readback",
+            operation="C_GetAttributeValue",
+            kind="metadata",
+        )
 
 
 class TestEdDSASignVerify:
@@ -176,7 +195,16 @@ class TestEdDSASignVerify:
         _, priv = ed25519_keypair
         sig1 = _sign_eddsa(rs, priv, b"message one")
         sig2 = _sign_eddsa(rs, priv, b"message two")
-        assert sig1 != sig2
+        if sig1 == sig2:
+            classify(
+                "wrong_result",
+                kind="crypto",
+                label="CKM_EDDSA:sign message dependence",
+                operation="C_Sign",
+                mechanism="CKM_EDDSA",
+                summary="different messages produced identical signatures -- "
+                "signature does not depend on the message",
+            )
 
     def test_deterministic_signatures(
         self, p11_raw_session: Any, ed25519_keypair: tuple[int, int]
@@ -187,7 +215,13 @@ class TestEdDSASignVerify:
         data = b"determinism test"
         sig1 = _sign_eddsa(rs, priv, data)
         sig2 = _sign_eddsa(rs, priv, data)
-        assert sig1 == sig2
+        assert_correct(
+            actual=sig1,
+            expected=sig2,
+            label="CKM_EDDSA:sign determinism",
+            operation="C_Sign",
+            mechanism="CKM_EDDSA",
+        )
 
     def test_different_keys_different_signatures(self, p11_raw_session: Any) -> None:
         """Same data signed with different Ed25519 keys gives different sigs."""
@@ -204,7 +238,15 @@ class TestEdDSASignVerify:
         data = b"key independence test"
         sig1 = _sign_eddsa(rs, priv1, data)
         sig2 = _sign_eddsa(rs, priv2, data)
-        assert sig1 != sig2
+        if sig1 == sig2:
+            classify(
+                "wrong_result",
+                kind="crypto",
+                label="CKM_EDDSA:sign key independence",
+                operation="C_Sign",
+                mechanism="CKM_EDDSA",
+                summary="different keys produced identical signatures -- key not used",
+            )
 
 
 class TestEdDSACrossVerify:
@@ -289,7 +331,13 @@ class TestEd448:
         rs = p11_raw_session
         pub, _ = ed448_keypair
         attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])
-        assert attrs[CKA_KEY_TYPE] == int(CKK_EC_EDWARDS)
+        assert_correct(
+            actual=attrs[CKA_KEY_TYPE],
+            expected=int(CKK_EC_EDWARDS),
+            label="Ed448:CKA_KEY_TYPE readback",
+            operation="C_GetAttributeValue",
+            kind="metadata",
+        )
 
     def test_sign_verify_roundtrip(
         self, p11_raw_session: Any, ed448_keypair: tuple[int, int]

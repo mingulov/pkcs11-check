@@ -7,20 +7,19 @@ Skips on modules without HKDF support (e.g., SoftHSM2).
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_hkdf
 from pkcs11_check.raw.recipes import (
-    create_object,
     derive_key,
     destroy_quietly,
     read_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
     CKA_DERIVE,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -34,13 +33,14 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA384,
     CKM_SHA512,
     CKM_SHA_1,
-    CKO_SECRET_KEY,
 )
+from pkcs11_check.testcases._operability import not_operational_reason
+from pkcs11_check.testcases.conftest import assert_correct, import_secret_key_negotiated
 
-pytestmark = [pytest.mark.wycheproof, pytest.mark.requires_v30]
+pytestmark = [pytest.mark.wycheproof, pytest.mark.subprocess_per_test]
 REQUIRED_MECHANISMS = ["HKDF_DERIVE"]
 
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
 
 _HKDF_FILES = [
     ("hkdf_sha1_test.json", "SHA-1"),
@@ -64,8 +64,7 @@ def _load_hkdf_vectors() -> list[tuple[str, dict[str, Any]]]:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         for group in data["testGroups"]:
             for test in group["tests"]:
                 test["_group"] = {k: v for k, v in group.items() if k != "tests"}
@@ -98,25 +97,37 @@ def test_hkdf(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
     if hash_mech is None:
         pytest.skip(f"No hash mechanism mapping for {sha}")
 
-    # Import IKM as a generic secret key
+    # Import IKM as a generic secret key. The IKM is the subject key of the
+    # advertised HKDF op (it is what the derive runs FROM), so its negotiated
+    # import is the canonical capability path for HKDF_DERIVE.
     try:
-        ikm_key = create_object(
-            rs.raw,
-            rs.sh,
-            {
-                CKA_CLASS: CKO_SECRET_KEY,
-                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-                CKA_VALUE: ikm,
+        ikm_key = import_secret_key_negotiated(
+            rs,
+            int(CKK_GENERIC_SECRET),
+            ikm,
+            attrs={
                 CKA_VALUE_LEN: len(ikm),
                 CKA_DERIVE: True,
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
             },
         )
-    except AssertionError:
+    except AssertionError as exc:
         if result == "invalid":
             return
-        pytest.skip("Cannot import IKM key for HKDF")
+        if not isinstance(exc, CkrAssertionError):
+            # Non-CKR AssertionError -- a harness/ctypes bug must never be
+            # classified as "not operational".
+            raise
+        # HKDF_DERIVE was advertised (has_mechanism gate passed above); a
+        # negotiation-exhausted IKM import refusal is "advertised but not
+        # operational" -> xfail per the classification model, never skip.
+        classify(
+            "not_operational",
+            summary=not_operational_reason("HKDF_DERIVE:key-import", ckr_name(exc.rv)),
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
     # CK_HKDF_PARAMS: (hash_mechanism, salt, info)
     # Uses extract+expand mode (standard HKDF)
@@ -150,13 +161,33 @@ def test_hkdf(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
         destroy_quietly(rs.raw, rs.sh, derived)
     except (AssertionError, TypeError, NotImplementedError) as exc:
         if result == "valid":
-            pytest.fail(f"HKDF derive failed for valid vector {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label=f"HKDF:{vec_id}",
+                summary=f"HKDF derive failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable: reject is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, ikm_key)
 
     if result == "valid" and okm is not None:
-        assert okm == okm_expected
+        assert_correct(
+            actual=okm,
+            expected=okm_expected,
+            label=f"HKDF:C_DeriveKey KAT {vec_id}",
+            operation="C_DeriveKey",
+            mechanism="CKM_HKDF_DERIVE",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     if result == "invalid" and okm is not None:
-        pytest.fail(f"Invalid HKDF vector {vec_id} derived successfully")
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            summary=f"Invalid HKDF vector {vec_id} derived successfully",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )

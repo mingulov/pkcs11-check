@@ -1,0 +1,26 @@
+{
+  "mechanism": "CKM_CDMF_MAC",
+  "family": "cdmf_mac",
+  "key_type": "CKK_CDMF",
+  "source": "IBM CDMF key-shortening algorithm, evaluated with OpenSSL DES-ECB; historical PKCS#11 CDMF fixed MAC is the no-parameter half-block special case of MAC_GENERAL",
+  "source_url": "https://bitsavers.trailing-edge.com/pdf/ibm/IBM_Journal_of_Research_and_Development/382/johnson.pdf",
+  "vectors": [
+    {
+      "id": "cdmf_mac_ibm_key_shortening_key64_half_block",
+      "type": "positive",
+      "mechanism_name": "CKM_CDMF_MAC",
+      "key_type": "symmetric",
+      "key_bits": 64,
+      "key_hex": "0123456789abcdef",
+      "params": {
+        "source": "IBM CDMF key-shortening algorithm, evaluated with OpenSSL DES-ECB; historical PKCS#11 CDMF fixed MAC is the no-parameter half-block special case of MAC_GENERAL",
+        "source_url": "https://bitsavers.trailing-edge.com/pdf/ibm/IBM_Journal_of_Research_and_Development/382/johnson.pdf",
+        "pkcs11_source_url": "https://docs.oasis-open.org/pkcs11/pkcs11-hist/v2.40/os/pkcs11-hist-v2.40-os.html",
+        "derived_des_key_hex": "1fb26b1a81089f12",
+        "mac_len": 4
+      },
+      "input_hex": "0123456789abcdef",
+      "mac_hex": "230d53ce"
+    }
+  ]
+}

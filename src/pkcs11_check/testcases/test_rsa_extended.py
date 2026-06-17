@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     PackedMechanism,
     attr_ulong,
@@ -31,7 +32,6 @@ from pkcs11_check.raw.recipes import (
     gen_rsa_keypair,
     read_attributes,
     sign_single,
-    unwrap_key,
     verify_single,
     wrap_key,
 )
@@ -70,6 +70,9 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    assert_correct,
+    classify_discrimination,
+    unwrap_key_for_mechanism_roundtrip,
     xfail_if_known_ckr,
 )
 
@@ -392,7 +395,13 @@ class TestRSAX931KeyPairGen:
                 ct,
                 mech_param=oaep,
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="RSA-OAEP:decrypt(X9.31 key) roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS_OAEP",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -437,7 +446,7 @@ def _mech_rsa_aes_key_wrap(aes_key_bits: int = 256) -> PackedMechanism:
 class TestRSAAESKeyWrap:
     """CKM_RSA_AES_KEY_WRAP - wraps a key with AES, then wraps the AES key with RSA-OAEP."""
 
-    def test_wrap_unwrap_aes128(self, p11_raw_session: Any) -> None:
+    def test_wrap_unwrap_aes128(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Wrap an AES-128 key using RSA_AES_KEY_WRAP and unwrap it."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_AES_KEY_WRAP"):
@@ -471,12 +480,12 @@ class TestRSAAESKeyWrap:
             assert len(wrapped) > 0
 
             unwrap_param = _mech_rsa_aes_key_wrap(256)
-            unwrapped = unwrap_key(
-                rs.raw,
-                rs.sh,
-                priv,
-                wrapped,
-                CKM_RSA_AES_KEY_WRAP,
+            unwrapped = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=priv,
+                wrapped_key=wrapped,
+                mechanism=CKM_RSA_AES_KEY_WRAP,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
@@ -485,6 +494,7 @@ class TestRSAAESKeyWrap:
                     CKA_TOKEN: False,
                 },
                 mech_param=unwrap_param,
+                purpose="RSA-AES-KEY-WRAP AES-128 roundtrip",
             )
             try:
                 unwrapped_attrs = read_attributes(
@@ -493,7 +503,13 @@ class TestRSAAESKeyWrap:
                     unwrapped,
                     [CKA_VALUE],
                 )
-                assert unwrapped_attrs[CKA_VALUE] == original_value
+                assert_correct(
+                    actual=unwrapped_attrs[CKA_VALUE],
+                    expected=original_value,
+                    label="CKM_RSA_AES_KEY_WRAP:unwrap AES-128 roundtrip",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_RSA_AES_KEY_WRAP",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -501,7 +517,7 @@ class TestRSAAESKeyWrap:
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, aes_key)
 
-    def test_wrap_unwrap_aes256(self, p11_raw_session: Any) -> None:
+    def test_wrap_unwrap_aes256(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Wrap an AES-256 key using RSA_AES_KEY_WRAP."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_AES_KEY_WRAP"):
@@ -532,12 +548,12 @@ class TestRSAAESKeyWrap:
                 raise
 
             unwrap_param = _mech_rsa_aes_key_wrap(256)
-            unwrapped = unwrap_key(
-                rs.raw,
-                rs.sh,
-                priv,
-                wrapped,
-                CKM_RSA_AES_KEY_WRAP,
+            unwrapped = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=priv,
+                wrapped_key=wrapped,
+                mechanism=CKM_RSA_AES_KEY_WRAP,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
@@ -546,6 +562,7 @@ class TestRSAAESKeyWrap:
                     CKA_TOKEN: False,
                 },
                 mech_param=unwrap_param,
+                purpose="RSA-AES-KEY-WRAP AES-256 roundtrip",
             )
             try:
                 unwrapped_attrs = read_attributes(
@@ -554,7 +571,13 @@ class TestRSAAESKeyWrap:
                     unwrapped,
                     [CKA_VALUE],
                 )
-                assert unwrapped_attrs[CKA_VALUE] == original_value
+                assert_correct(
+                    actual=unwrapped_attrs[CKA_VALUE],
+                    expected=original_value,
+                    label="CKM_RSA_AES_KEY_WRAP:unwrap AES-256 roundtrip",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_RSA_AES_KEY_WRAP",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -599,6 +622,95 @@ class TestRSAAESKeyWrap:
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, aes_key)
 
+    def test_tampered_blob_rejected(self, p11_raw_session: Any, p11_config: Any) -> None:
+        """Bit-flipped RSA-AES hybrid wrapped blobs must not unwrap successfully."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_AES_KEY_WRAP"):
+            pytest.skip("CKM_RSA_AES_KEY_WRAP not supported")
+
+        pub, priv = _rsa_keypair(rs, wrap=True)
+        aes_key = _make_extractable_aes(rs, 128)
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])
+            original_value = attrs[CKA_VALUE]
+            assert isinstance(original_value, bytes)
+
+            try:
+                wrapped = wrap_key(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    aes_key,
+                    CKM_RSA_AES_KEY_WRAP,
+                    mech_param=_mech_rsa_aes_key_wrap(256),
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc, _RSA_OP_REJECT_RVS, "CKM_RSA_AES_KEY_WRAP wrap not operational"
+                )
+                raise
+
+            assert len(wrapped) > 2, "CKM_RSA_AES_KEY_WRAP output unexpectedly short"
+
+            unwrap_attrs = {
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
+                CKA_TOKEN: False,
+            }
+
+            try:
+                good = unwrap_key_for_mechanism_roundtrip(
+                    rs,
+                    p11_config,
+                    unwrapping_key=priv,
+                    wrapped_key=wrapped,
+                    mechanism=CKM_RSA_AES_KEY_WRAP,
+                    attrs=unwrap_attrs,
+                    mech_param=_mech_rsa_aes_key_wrap(256),
+                    purpose="RSA-AES-KEY-WRAP unwrap (valid leg)",
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _RSA_OP_REJECT_RVS,
+                    "CKM_RSA_AES_KEY_WRAP unwrap (valid leg) not operational",
+                )
+                raise
+            good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
+            destroy_quietly(rs.raw, rs.sh, good)
+            valid_accepted = good_value is not None and good_value == original_value
+
+            tampered = bytearray(wrapped)
+            tampered[-2] ^= 0xFF
+            invalid_outcome: Any
+            try:
+                h = unwrap_key_for_mechanism_roundtrip(
+                    rs,
+                    p11_config,
+                    unwrapping_key=priv,
+                    wrapped_key=bytes(tampered),
+                    mechanism=CKM_RSA_AES_KEY_WRAP,
+                    attrs=unwrap_attrs,
+                    mech_param=_mech_rsa_aes_key_wrap(256),
+                    purpose="RSA-AES-KEY-WRAP unwrap of bit-flipped ciphertext",
+                )
+                invalid_outcome = h
+                destroy_quietly(rs.raw, rs.sh, h)
+            except AssertionError as exc:
+                invalid_outcome = exc
+
+            classify_discrimination(
+                valid_accepted=valid_accepted,
+                invalid_outcome=invalid_outcome,
+                label="RSA-AES-KEY-WRAP unwrap of bit-flipped ciphertext",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, aes_key)
+
 
 # ---------------------------------------------------------------------------
 # CKM_RSA_PKCS_OAEP_TPM_1_1 - TPM 1.1 variant of RSA-OAEP
@@ -627,10 +739,25 @@ class TestRSAOAEPTPM:
                 raise
 
             assert len(ct) == 256  # 2048-bit RSA
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_OAEP_TPM_1_1:encrypt",
+                    operation="C_Encrypt",
+                    mechanism="CKM_RSA_PKCS_OAEP_TPM_1_1",
+                    summary="ciphertext equals plaintext -- encryption was a no-op "
+                    "(plaintext leak)",
+                )
 
             pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP_TPM_1_1, ct)
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_RSA_PKCS_OAEP_TPM_1_1:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS_OAEP_TPM_1_1",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -667,7 +794,16 @@ class TestRSAOAEPTPM:
                 raise
 
             # OAEP uses random padding - two encryptions should differ
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_OAEP_TPM_1_1:encrypt randomization",
+                    operation="C_Encrypt",
+                    mechanism="CKM_RSA_PKCS_OAEP_TPM_1_1",
+                    summary="two OAEP encryptions of the same plaintext are identical -- "
+                    "padding is not randomized",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -701,7 +837,13 @@ class TestRSAOAEPTPM:
                 raise
 
             pt = decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP_TPM_1_1, ct)
-            assert pt == max_plaintext
+            assert_correct(
+                actual=pt,
+                expected=max_plaintext,
+                label="CKM_RSA_PKCS_OAEP_TPM_1_1:decrypt max-plaintext roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS_OAEP_TPM_1_1",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

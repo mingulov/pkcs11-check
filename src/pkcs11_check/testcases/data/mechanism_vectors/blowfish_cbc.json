@@ -1,0 +1,22 @@
+{
+  "mechanism": "CKM_BLOWFISH_CBC",
+  "family": "blowfish_cbc",
+  "key_type": "CKK_BLOWFISH",
+  "source": "Bruce Schneier Blowfish ECB test data, replayed as single-block CBC with zero IV",
+  "vectors": [
+    {
+      "id": "blowfish_cbc_zero_iv_key64_block0",
+      "type": "positive",
+      "mechanism_name": "CKM_BLOWFISH_CBC",
+      "key_type": "symmetric",
+      "key_bits": 64,
+      "key_hex": "0000000000000000",
+      "params": {
+        "source": "Bruce Schneier Blowfish ECB test data, replayed as single-block CBC with zero IV",
+        "iv_hex": "0000000000000000"
+      },
+      "plaintext_hex": "0000000000000000",
+      "ciphertext_hex": "4ef997456198dd78"
+    }
+  ]
+}

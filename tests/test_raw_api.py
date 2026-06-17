@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ctypes
+from collections import Counter, defaultdict
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 
@@ -11,7 +13,70 @@ def test_generated_standard_c_methods() -> None:
     assert "C_GetFunctionList" in names
     assert "C_CancelFunction" in names
     assert "C_DigestEncryptUpdate" in names
-    assert len(names) >= 104
+    for name in (
+        "C_DigestXofInit",
+        "C_DigestXof",
+        "C_DigestXofUpdate",
+        "C_DigestXofExtract",
+        "C_DigestXofFinal",
+        "C_DigestXofKeyValue",
+    ):
+        assert name in names
+    assert len(names) >= 110
+
+
+def test_rawpkcs11_loads_optional_exported_xof_functions() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+    from pkcs11_check.raw.types_std import CK_BYTE_PTR, CK_RV, CK_SESSION_HANDLE, CK_ULONG
+
+    exported = Mock(return_value=0)
+    fake_lib = SimpleNamespace(C_DigestXof=exported)
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {}
+    raw._lib = fake_lib
+
+    RawPKCS11._load_optional_exported_functions(raw)
+
+    assert raw.available_function_names() == {"C_DigestXof"}
+    assert exported.restype is CK_RV
+    assert exported.argtypes == [
+        CK_SESSION_HANDLE,
+        CK_BYTE_PTR,
+        CK_ULONG,
+        CK_BYTE_PTR,
+        CK_ULONG,
+    ]
+
+
+def test_xof_trace_records_input_and_requested_output_lengths() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+    from pkcs11_check.raw.types_std import CK_BYTE, CKR_OK
+
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {"C_DigestXof": Mock(return_value=CKR_OK)}
+    raw._call_log = defaultdict(int)
+    raw._used_mechanisms = set()
+    raw._mechanism_counts = Counter()
+    raw._mechanism_rv_counts = defaultdict(Counter)
+    raw._journal = None
+    raw.enable_rv_trace()
+
+    in_buf = (CK_BYTE * 4).from_buffer_copy(b"data")
+    out_buf = (CK_BYTE * 16)()
+
+    raw.C_DigestXof(1, in_buf, 4, out_buf, 16)
+
+    assert raw.rv_trace == [
+        {
+            "i": 0,
+            "fn": "C_DigestXof",
+            "mech": None,
+            "rv": int(CKR_OK),
+            "rv_name": "CKR_OK",
+            "in_len": 4,
+            "out_len": 16,
+        }
+    ]
 
 
 def test_rawpkcs11_available_function_names_are_explicit() -> None:
@@ -169,7 +234,6 @@ def test_call_log_increments_on_call() -> None:
 
     raw = object.__new__(RawPKCS11)
     raw._funcs = {"C_Initialize": Mock(return_value=0)}
-    from collections import defaultdict
 
     raw._call_log = defaultdict(int)
     raw._rv_trace = None
@@ -186,12 +250,42 @@ def test_call_log_increments_on_call() -> None:
     assert raw.call_count == 3
 
 
+def test_mechanism_rv_counts_track_accept_and_clean_reject() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+    from pkcs11_check.raw.types_std import (
+        CK_MECHANISM,
+        CKM_AES_CBC,
+        CKR_MECHANISM_INVALID,
+        CKR_OK,
+    )
+
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {"C_EncryptInit": Mock(side_effect=[CKR_OK, CKR_MECHANISM_INVALID])}
+    raw._call_log = defaultdict(int)
+    raw._used_mechanisms = set()
+    raw._mechanism_counts = Counter()
+    raw._mechanism_rv_counts = defaultdict(Counter)
+    raw._rv_trace = None
+    raw._journal = None
+    mech = CK_MECHANISM(CKM_AES_CBC, None, 0)
+
+    raw.C_EncryptInit(1, ctypes.byref(mech), 2)
+    raw.C_EncryptInit(1, ctypes.byref(mech), 2)
+
+    assert raw.mechanism_counts == {int(CKM_AES_CBC): 2}
+    assert raw.mechanism_rv_counts == {
+        int(CKM_AES_CBC): {
+            int(CKR_OK): 1,
+            int(CKR_MECHANISM_INVALID): 1,
+        }
+    }
+
+
 def test_call_log_reset_clears_counts() -> None:
     from pkcs11_check.raw.api import RawPKCS11
 
     raw = object.__new__(RawPKCS11)
     raw._funcs = {"C_Initialize": Mock(return_value=0)}
-    from collections import defaultdict
 
     raw._call_log = defaultdict(int)
     raw._rv_trace = None

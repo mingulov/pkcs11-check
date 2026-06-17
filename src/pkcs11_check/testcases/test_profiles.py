@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.pack import template_from_dict
 from pkcs11_check.raw.recipes import find_objects, read_attributes
 from pkcs11_check.raw.types_std import (
@@ -27,8 +28,6 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
 )
 from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
-
-pytestmark = pytest.mark.requires_v30
 
 # CKR codes acceptable when profile attribute reads fail
 _PROFILE_ATTR_ERROR_CKRS = (
@@ -146,9 +145,14 @@ class TestProfileObjects:
                 pass
         standard = {CKP_BASELINE_PROVIDER, CKP_EXTENDED_PROVIDER}
         if not pids & standard:
-            pytest.xfail(
-                "Module does not advertise Baseline or Extended Provider "
-                f"profile - profiles present: {[hex(p) for p in sorted(pids)]}"
+            classify(
+                "honest_deviation",
+                kind="metadata",
+                label="CKO_PROFILE:baseline-or-extended",
+                summary=(
+                    "Module does not advertise Baseline or Extended Provider "
+                    f"profile - profiles present: {[hex(p) for p in sorted(pids)]}"
+                ),
             )
 
 
@@ -239,9 +243,17 @@ class TestProfileBehavioralConformance:
         if not tested_any:
             pytest.skip("No tabulated profile IDs advertised by module")
         if failures:
-            # Phase 5 P1a: an advertised profile missing mandatory functions is
-            # provider-incompleteness -> xfail (noted deviation), not a hard fail.
-            pytest.xfail("Profile conformance failures:\n  " + "\n  ".join(failures))
+            # An advertised profile missing mandatory functions is
+            # provider-incompleteness -> honest_deviation (noted xfail), not a hard
+            # fail: the suite is provider-general with no single reference
+            # implementation to declare the module broken (see Phase 5 P1a and
+            # tests/test_profiles_classification.py).
+            classify(
+                "honest_deviation",
+                kind="metadata",
+                label="CKO_PROFILE:required-functions",
+                summary="Profile conformance failures:\n  " + "\n  ".join(failures),
+            )
 
     def test_advertised_profiles_have_required_mechanisms(self, p11_raw_session: Any) -> None:
         """Profiles that mandate specific mechanisms (HKDF TLS Token) must
@@ -289,9 +301,17 @@ class TestProfileBehavioralConformance:
                 "'None specified' for mechs)"
             )
         if failures:
-            # Phase 5 P1a: an advertised profile missing mandatory mechanisms is
-            # provider-incompleteness -> xfail (noted deviation), not a hard fail.
-            pytest.xfail("Profile mechanism-conformance failures:\n  " + "\n  ".join(failures))
+            # An advertised profile missing mandatory mechanisms is
+            # provider-incompleteness -> honest_deviation (noted xfail), not a hard
+            # fail: the suite is provider-general with no single reference
+            # implementation to declare the module broken (see Phase 5 P1a and
+            # tests/test_profiles_classification.py).
+            classify(
+                "honest_deviation",
+                kind="metadata",
+                label="CKO_PROFILE:required-mechanisms",
+                summary="Profile mechanism-conformance failures:\n  " + "\n  ".join(failures),
+            )
 
     def test_advertised_profiles_have_required_object_classes(self, p11_raw_session: Any) -> None:
         """Profiles that mandate specific object classes must be able to
@@ -336,21 +356,31 @@ class TestProfileBehavioralConformance:
                         template_from_dict({CKA_CLASS: CKO_CERTIFICATE}),
                     )
                 except AssertionError as exc:
-                    # Phase 5 P1a: a clean enumeration error for an advertised
-                    # profile is provider-incompleteness -> xfail, not a hard fail.
-                    pytest.xfail(
-                        f"Public Certificates Token profile advertised, but "
-                        f"C_FindObjects for CKO_CERTIFICATE cleanly failed: {exc}"
+                    # A clean enumeration error for an advertised profile is an
+                    # advertised-but-not-operational read -> xfail (noted deviation).
+                    xfail_as(
+                        "not_operational",
+                        kind="metadata",
+                        label="CKP_PUBLIC_CERTIFICATES_TOKEN:C_FindObjects",
+                        operation="C_FindObjects",
+                        summary=(
+                            "Public Certificates Token profile advertised, but "
+                            f"C_FindObjects for CKO_CERTIFICATE cleanly failed: {exc}"
+                        ),
                     )
                 if not certs:
-                    # Phase 5 P1a: an advertised profile with no required objects
-                    # present (e.g. unprovisioned token) is provider-incompleteness
-                    # -> xfail, not a hard fail.
-                    pytest.xfail(
-                        "Public Certificates Token profile advertised, but "
-                        "no CKO_CERTIFICATE objects are present on token. "
-                        "Spec §5.5 requires certificates be present and "
-                        "publicly readable."
+                    # An advertised profile with no required objects present (e.g. an
+                    # unprovisioned token) is a harmless honest deviation -> xfail.
+                    classify(
+                        "honest_deviation",
+                        kind="metadata",
+                        label="CKP_PUBLIC_CERTIFICATES_TOKEN:certificate-presence",
+                        summary=(
+                            "Public Certificates Token profile advertised, but "
+                            "no CKO_CERTIFICATE objects are present on token. "
+                            "Spec §5.5 requires certificates be present and "
+                            "publicly readable."
+                        ),
                     )
 
         if not tested_any:

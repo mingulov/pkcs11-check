@@ -25,7 +25,9 @@ def test_rfc6979_public_import_runtime_reject_is_xfail(
     def _import_reject(*_args: Any, **_kwargs: Any) -> int:
         raise CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
 
-    monkeypatch.setattr(test_cctv_rfc6979, "import_ec_public_key", _import_reject)
+    # Batch 3b: the public-key site now negotiates storage shapes via
+    # import_ec_public_key_negotiated -- patch that name (stale-pin reconciliation).
+    monkeypatch.setattr(test_cctv_rfc6979, "import_ec_public_key_negotiated", _import_reject)
     monkeypatch.setattr(
         test_cctv_rfc6979.pytest,
         "skip",

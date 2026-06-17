@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -62,10 +63,16 @@ class TestECDSANonceReuse:
             if len(unique_r) < len(r_values):
                 # Count how many are duplicated
                 dupes = len(r_values) - len(unique_r)
-                pytest.fail(
-                    f"CRITICAL: ECDSA nonce reuse detected! "
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="ECDSA nonce reuse",
+                    operation="C_Sign",
+                    mechanism="CKM_ECDSA",
+                    summary=f"CRITICAL: ECDSA nonce reuse detected! "
                     f"{dupes} duplicate r values in {len(r_values)} signatures. "
-                    f"Private key is recoverable."
+                    f"Private key is recoverable.",
+                    detail={"duplicate_r": dupes, "signatures": len(r_values)},
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -170,18 +177,30 @@ class TestECDSANonceBias:
 
             # Allow 30%-70% range (very generous - real bias would show <10% or >90%)
             if ratio < 0.30 or ratio > 0.70:
-                pytest.fail(
-                    f"SECURITY: ECDSA nonce MSB bias detected - "
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="ECDSA nonce MSB bias",
+                    operation="C_Sign",
+                    mechanism="CKM_ECDSA",
+                    summary=f"SECURITY: ECDSA nonce MSB bias detected - "
                     f"{msb_set}/{len(r_values)} ({ratio:.1%}) have MSB set "
-                    f"(expected ~50%)"
+                    f"(expected ~50%)",
+                    detail={"msb_set": msb_set, "samples": len(r_values), "ratio": round(ratio, 3)},
                 )
 
             # Check for short nonces (upper bytes all zero)
             short_nonces = sum(1 for r in r_values if r < (1 << 240))
             if short_nonces > 5:
-                pytest.fail(
-                    f"SECURITY: {short_nonces}/{len(r_values)} signatures have "
-                    f"short nonces (<240 bits) - lattice attack may be feasible"
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="ECDSA short nonce bias",
+                    operation="C_Sign",
+                    mechanism="CKM_ECDSA",
+                    summary=f"SECURITY: {short_nonces}/{len(r_values)} signatures have "
+                    f"short nonces (<240 bits) - lattice attack may be feasible",
+                    detail={"short_nonces": short_nonces, "samples": len(r_values)},
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

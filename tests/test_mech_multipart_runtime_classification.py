@@ -93,7 +93,7 @@ def test_multipart_encrypt_runtime_reject_is_xfail(
     monkeypatch.setattr(mech_multipart, "encrypt_multipart", _encrypt_multipart_reject)
     monkeypatch.setattr(mech_multipart, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(pytest.xfail.Exception, match="multipart encrypt is not operational"):
+    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
         mech_multipart.TestMultipartEncrypt().test_streaming_equals_single(
             _session(),
             _encrypt_entry(),
@@ -116,7 +116,7 @@ def test_multipart_decrypt_runtime_reject_is_xfail(
     monkeypatch.setattr(mech_multipart, "decrypt_multipart", _decrypt_multipart_reject)
     monkeypatch.setattr(mech_multipart, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(pytest.xfail.Exception, match="multipart decrypt is not operational"):
+    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
         mech_multipart.TestMultipartEncrypt().test_streaming_equals_single(
             _session(),
             _encrypt_entry(deterministic=False),
@@ -157,7 +157,7 @@ def test_multipart_digest_runtime_reject_is_xfail(
     monkeypatch.setattr(mech_multipart, "digest_single", lambda *_args, **_kwargs: b"digest")
     monkeypatch.setattr(mech_multipart, "digest_multipart", _digest_multipart_reject)
 
-    with pytest.raises(pytest.xfail.Exception, match="multipart digest is not operational"):
+    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
         mech_multipart.TestMultipartDigest().test_streaming_equals_single(
             _session(),
             _digest_entry(),
@@ -175,7 +175,7 @@ def test_multipart_sign_runtime_reject_is_xfail(
     monkeypatch.setattr(mech_multipart, "sign_multipart", _sign_multipart_reject)
     monkeypatch.setattr(mech_multipart, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(pytest.xfail.Exception, match="multipart sign is not operational"):
+    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
         mech_multipart.TestMultipartSign().test_multipart_sign_verify(
             _session(),
             _sign_entry(),
@@ -197,7 +197,7 @@ def test_multipart_verify_runtime_reject_is_xfail(
     monkeypatch.setattr(mech_multipart, "verify_multipart", _verify_multipart_reject)
     monkeypatch.setattr(mech_multipart, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(pytest.xfail.Exception, match="multipart verify is not operational"):
+    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
         mech_multipart.TestMultipartSign().test_multipart_sign_verify(
             _session(),
             _sign_entry(),

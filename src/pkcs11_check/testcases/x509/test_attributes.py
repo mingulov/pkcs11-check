@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
 from pkcs11_check.raw.types_std import (
     CKA_CERTIFICATE_TYPE,
@@ -18,6 +19,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKC_X_509,
 )
+from pkcs11_check.testcases.conftest import assert_correct
 from pkcs11_check.testcases.x509.conftest import (
     import_cert_object,
     load_limbo_testcases,
@@ -86,7 +88,11 @@ class TestCertificateAttributes:
             if tc["expected_result"] == "SUCCESS":
                 # Phase 5 P1a: a clean reject of a Limbo-valid cert is provider-
                 # incompleteness -> xfail, not a hard fail.
-                pytest.xfail(f"module cleanly rejected a cert Limbo considers valid: {tc['id']}")
+                classify(
+                    "not_operational",
+                    kind="metadata",
+                    summary=f"module cleanly rejected a cert Limbo considers valid: {tc['id']}",
+                )
             pytest.skip(f"Module rejected certificate {tc['id']} as expected")
             return
 
@@ -95,7 +101,13 @@ class TestCertificateAttributes:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
             val = attrs[CKA_VALUE]
             if val != b"Hello world!":
-                assert val == der
+                assert_correct(
+                    actual=val,
+                    expected=der,
+                    label="X509:CKA_VALUE matches imported DER",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
 
             # CKA_CERTIFICATE_TYPE MUST be X_509
             try:

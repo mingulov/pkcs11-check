@@ -18,6 +18,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.pack import attr_ulong
 from pkcs11_check.raw.pack_mechanisms import mech_sign_context
 from pkcs11_check.raw.recipes import (
@@ -32,6 +33,7 @@ from pkcs11_check.raw.types_std import (
     CKA_PARAMETER_SET,
     CKA_SIGN,
     CKA_VERIFY,
+    CKF_VERIFY,
     CKK_ML_DSA,
     CKM_ML_DSA_KEY_PAIR_GEN,
     CKP_ML_DSA_44,
@@ -57,7 +59,11 @@ from pkcs11_check.testcases.acvp._mldsa_helpers import (
     load_mldsa_sigver_vectors,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    is_known_error,
+    skip_unless_mechanism_flag,
+    xfail_if_known_ckr,
+)
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp, pytest.mark.pqc]
 
@@ -158,7 +164,7 @@ class TestMlDsaKeyGen:
             pub_key, priv_key = gen_keypair(
                 rs.raw,
                 rs.sh,
-                mechanism=int(CKM_ML_DSA_KEY_PAIR_GEN),
+                mechanism=CKM_ML_DSA_KEY_PAIR_GEN,
                 pub_base=[attr_ulong(CKA_PARAMETER_SET, vec["parameter_set"])],
                 priv_base=[attr_ulong(CKA_PARAMETER_SET, vec["parameter_set"])],
                 public_attrs={CKA_VERIFY: True},
@@ -264,7 +270,14 @@ class TestMlDsaSigGen:
                         exc, f"{vec_id}: generated signature verification"
                     )
                 if not verified:
-                    pytest.fail(f"{vec_id}: Generated signature failed verification")
+                    fail_as(
+                        "wrong_result",
+                        kind="crypto",
+                        label=f"{vec_id}:ML-DSA:sign-verify",
+                        summary=f"{vec_id}: Generated signature failed verification",
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
+                    )
             finally:
                 destroy_quietly(rs.raw, rs.sh, pub_key)
 
@@ -293,6 +306,7 @@ class TestMlDsaSigVer:
         # Pure ML-DSA uses CKM_ML_DSA, Hash-ML-DSA uses hash-specific mechanisms
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} mechanism not supported by module")
+        skip_unless_mechanism_flag(rs, mech_name, int(CKF_VERIFY))
 
         pub_key = 0
         try:
@@ -329,15 +343,36 @@ class TestMlDsaSigVer:
                 )
             except AssertionError as exc:
                 if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
-                    pytest.xfail(f"{vec_id}: advertised Hash-ML-DSA params are not operational")
+                    xfail_as(
+                        "not_operational",
+                        kind="crypto",
+                        label=f"{mech_name}:verify",
+                        summary=f"{vec_id}: advertised Hash-ML-DSA params are not operational",
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
+                    )
                 if vec["expected_pass"]:
                     _xfail_if_mldsa_runtime_reject(exc, f"{vec_id}: valid signature verification")
                 verified = signature_rejected_or_xfail(exc, vec_id)
 
             if not vec["expected_pass"] and verified:
-                pytest.fail(f"{vec_id}: module ACCEPTED an INVALID ML-DSA signature")
+                fail_as(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label=f"{mech_name}:verify",
+                    summary=f"{vec_id}: module ACCEPTED an INVALID ML-DSA signature",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             if vec["expected_pass"] and not verified:
-                pytest.fail(f"{vec_id}: module rejected a VALID ML-DSA signature")
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label=f"{mech_name}:verify",
+                    summary=f"{vec_id}: module rejected a VALID ML-DSA signature",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
         except AssertionError as exc:
             _handle_unsupported(exc, vec["param_set"])
         finally:

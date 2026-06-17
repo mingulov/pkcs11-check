@@ -18,10 +18,11 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as
 from pkcs11_check.testcases._subprocess_trace import record_subprocess_rv_trace
 from pkcs11_check.testcases.ckr._subprocess import ckr_subprocess_cleanup_setup
 
-pytestmark = [pytest.mark.access, pytest.mark.subprocess, pytest.mark.requires_v32]
+pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
 _RV_TRACE_SETUP = """\
 import atexit as _p11check_atexit
@@ -128,15 +129,24 @@ def _check(rc: int, out: str, err: str, func: str) -> None:
     if "SKIP:" in out:
         pytest.skip(out.split("SKIP:")[1])
     if rc < 0:
-        pytest.fail(f"{func}: subprocess crashed with signal {-rc}; stderr: {err[-300:]}")
+        fail_as(
+            "crash",
+            label=func,
+            summary=f"{func}: subprocess crashed with signal {-rc}; stderr: {err[-300:]}",
+        )
     if rc != 0:
-        pytest.fail(
-            f"{func}: subprocess failed with exit code {rc}; "
-            f"stdout: {out[-300:]}; stderr: {err[-300:]}"
+        fail_as(
+            "crash",
+            label=func,
+            summary=(
+                f"{func}: subprocess failed with exit code {rc}; "
+                f"stdout: {out[-300:]}; stderr: {err[-300:]}"
+            ),
         )
     assert "OK" in out, f"{func}: {out} | {err[-200:]}"
 
 
+@pytest.mark.needs_function("C_VerifySignatureInit")
 class TestVerifySignatureErrors:
     """v3.2 C_VerifySignatureInit error conditions."""
 
@@ -173,6 +183,7 @@ print("OK")
         _check(rc, out, err, "C_VerifySignature")
 
 
+@pytest.mark.needs_function("C_EncapsulateKey")
 class TestEncapsulateKeyErrors:
     """v3.2 C_EncapsulateKey via raw calls."""
 
@@ -226,6 +237,7 @@ print("OK")
         _check(rc, out, err, "C_EncapsulateKey_NULLs")
 
 
+@pytest.mark.needs_function("C_DecapsulateKey")
 class TestDecapsulateKeyErrors:
     """v3.2 C_DecapsulateKey via raw calls."""
 
@@ -285,6 +297,7 @@ print("OK")
         _check(rc, out, err, "C_DecapsulateKey_NULLs")
 
 
+@pytest.mark.needs_function("C_AsyncGetID")
 class TestAsyncErrors:
     """v3.2 async function error conditions."""
 
@@ -306,6 +319,7 @@ print("OK")
         _check(rc, out, err, "C_AsyncGetID")
 
 
+@pytest.mark.needs_function("C_WrapKeyAuthenticated")
 class TestWrapKeyAuthenticatedErrors:
     """v3.2 C_WrapKeyAuthenticated error conditions."""
 

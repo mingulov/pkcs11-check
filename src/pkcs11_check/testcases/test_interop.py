@@ -23,7 +23,6 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     gen_ec_keypair,
     gen_rsa_keypair,
-    import_secret_key,
     read_attributes,
     sign_single,
 )
@@ -54,7 +53,13 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_reject
 from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
-from pkcs11_check.testcases.conftest import extract_ec_point
+from pkcs11_check.testcases._signature_policy import xfail_if_op_not_operational
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    extract_ec_point,
+    import_secret_key_negotiated,
+    skip_unless_create_object_supported,
+)
 
 pytestmark = pytest.mark.interop
 
@@ -168,7 +173,12 @@ class TestRSAInterop:
         data = b"multi-hash interop test"
 
         try:
-            sig = sign_single(rs.raw, rs.sh, priv_h, hash_mech, data)
+            try:
+                sig = sign_single(rs.raw, rs.sh, priv_h, hash_mech, data)
+            except AssertionError as exc:
+                # FIPS deprecates SHA-1 for signature generation -> DEVICE_ERROR:
+                # advertised but not operational, not a break.
+                xfail_if_op_not_operational(exc, mech_names[int(hash_mech)])
 
             pub_crypto = read_rsa_public_key_or_xfail(rs, pub_h)
             pub_crypto.verify(sig, data, padding.PKCS1v15(), hash_class)
@@ -254,6 +264,10 @@ class TestECDSAInterop:
 class TestAESInterop:
     """AES key interop - import key from raw bytes, use in both."""
 
+    @pytest.fixture(autouse=True)
+    def _skip_if_no_create_object(self, p11_raw_session: Any) -> None:
+        skip_unless_create_object_supported(p11_raw_session)
+
     def test_aes_ecb_encrypt_p11_decrypt_crypto(self, p11_raw_session: Any) -> None:
         """Import AES key, encrypt in P11, decrypt in crypto."""
         rs = p11_raw_session
@@ -261,9 +275,8 @@ class TestAESInterop:
         key_bytes = bytes(range(32))
         plaintext = b"AES interop test"  # 16 bytes
 
-        key_h = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key_h = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -285,7 +298,14 @@ class TestAESInterop:
             cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())  # nosec B305
             dec = cipher.decryptor()
             pt = dec.update(ct) + dec.finalize()
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="AES_ECB:P11-encrypt cryptography-decrypt round-trip",
+                operation="C_Encrypt",
+                mechanism="CKM_AES_ECB",
+                source="cryptography",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -301,9 +321,8 @@ class TestAESInterop:
         enc = cipher.encryptor()
         ct = enc.update(plaintext) + enc.finalize()
 
-        key_h = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key_h = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -320,7 +339,14 @@ class TestAESInterop:
                 pt = decrypt_single(rs.raw, rs.sh, key_h, CKM_AES_ECB, ct)
             except AssertionError as exc:
                 xfail_if_interop_operation_reject(exc, "AES_ECB decrypt")
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="AES_ECB:cryptography-encrypt P11-decrypt round-trip",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_ECB",
+                source="cryptography",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -332,9 +358,8 @@ class TestAESInterop:
         plaintext = b"GCM interop test data!!"
         nonce = b"\x00" * 12
 
-        key_h = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key_h = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -360,13 +385,24 @@ class TestAESInterop:
 
             aesgcm = AESGCM(key_bytes)
             pt = aesgcm.decrypt(nonce, ct_tag, b"")
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="AES_GCM:P11-encrypt cryptography-decrypt round-trip",
+                operation="C_Encrypt",
+                mechanism="CKM_AES_GCM",
+                source="cryptography",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
 
 class TestHMACInterop:
     """HMAC interop between PKCS#11 and cryptography."""
+
+    @pytest.fixture(autouse=True)
+    def _skip_if_no_create_object(self, p11_raw_session: Any) -> None:
+        skip_unless_create_object_supported(p11_raw_session)
 
     def test_hmac_sha256_interop(self, p11_raw_session: Any) -> None:
         """Compute HMAC-SHA256 in both, compare."""
@@ -376,9 +412,8 @@ class TestHMACInterop:
         data = b"HMAC interop test data"
 
         # PKCS#11
-        key_h = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key_h = import_secret_key_negotiated(
+            rs,
             CKK_GENERIC_SECRET,
             key_bytes,
             attrs={
@@ -400,7 +435,14 @@ class TestHMACInterop:
             h.update(data)
             crypto_mac = h.finalize()
 
-            assert p11_mac == crypto_mac
+            assert_correct(
+                actual=p11_mac,
+                expected=crypto_mac,
+                label="SHA256_HMAC:MAC cross-verify vs cryptography",
+                operation="C_Sign",
+                mechanism="CKM_SHA256_HMAC",
+                source="cryptography",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -411,9 +453,8 @@ class TestHMACInterop:
         key_bytes = b"secret key for hmac!!"  # >= 20 bytes for SHA-1 HMAC
         data = b"message to authenticate"
 
-        key_h = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key_h = import_secret_key_negotiated(
+            rs,
             CKK_GENERIC_SECRET,
             key_bytes,
             attrs={
@@ -434,6 +475,13 @@ class TestHMACInterop:
             h.update(data)
             crypto_mac = h.finalize()
 
-            assert p11_mac == crypto_mac
+            assert_correct(
+                actual=p11_mac,
+                expected=crypto_mac,
+                label="SHA_1_HMAC:MAC cross-verify vs cryptography",
+                operation="C_Sign",
+                mechanism="CKM_SHA_1_HMAC",
+                source="cryptography",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)

@@ -6,20 +6,20 @@ with EC_MONTGOMERY key type across raw, ASN.1, PEM, and JWK encodings.
 
 from __future__ import annotations
 
-import json
 from binascii import Error as BinasciiError
 from typing import Any, NoReturn
 
 import pytest
 from cryptography.exceptions import UnsupportedAlgorithm
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_ecdh
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
-    import_ec_private_key,
     read_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DERIVE,
@@ -48,7 +48,13 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases._operability import not_operational_reason
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    import_ec_private_key_negotiated,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 from pkcs11_check.testcases.wycheproof._key_decoders import (
     decode_xdh_private_bytes,
     decode_xdh_public_bytes,
@@ -57,7 +63,7 @@ from pkcs11_check.testcases.wycheproof._key_decoders import (
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["ECDH1_DERIVE"]
 
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
 
 # Module-level cache of curve OIDs that failed C_CreateObject with a domain/curve error.
 # Keyed by OID bytes; avoids redundant probe calls for unsupported Montgomery curves.
@@ -115,6 +121,44 @@ _X25519_X448_FILES = [
 ]
 
 
+def _xdh_jwk_invalidity_not_representable(test: dict[str, Any], key_size: int) -> bool:
+    """Whether a JWK ``InvalidPublic`` vector's invalidity is invisible to PKCS#11.
+
+    Wycheproof's JWK ``InvalidPublic`` vectors carry the invalidity entirely in
+    the JWK wrapper -- a wrong ``crv``/``kty`` (e.g. a P-256 public key, or a
+    malformed/missing ``kty``) while the ``x`` member is a canonical-length
+    Montgomery coordinate.  ``decode_xdh_public_bytes`` extracts only that raw
+    ``x``; per RFC 7748 sec 5 every 32-byte (X25519) / 56-byte (X448) string is a
+    valid public key, so the module sees a fully valid raw point and deriving a
+    secret is correct -- there is no invalid-curve / invalid-point attack class
+    on Montgomery curves (RFC 7748 clamps the scalar; all inputs are valid
+    points).  This is the direct analog of the ECDH ``InvalidAsn``/``InvalidPem``
+    untestable-flag class: the invalidity is not representable once the wrapper
+    is stripped, so the vector must be dropped at load rather than hard-failed.
+
+    The wrong-length / missing-``x`` JWK invalid vectors are NOT swept: their
+    ``x`` decodes to a non-canonical length (or is absent), which a careful
+    module rejects at import, so they remain a genuine raw-point signal.
+    """
+    if test.get("_encoding") != "jwk" or test.get("result") != "invalid":
+        return False
+    if "InvalidPublic" not in test.get("flags", []):
+        return False
+    public = test.get("public")
+    if not isinstance(public, dict):
+        return False
+    x_field = public.get("x")
+    if not isinstance(x_field, str):
+        return False
+    try:
+        raw = decode_xdh_public_bytes(public, "jwk")
+    except _XDH_DECODE_ERRORS:
+        return False
+    # Only the canonical-length container-mismatch class is untestable; a
+    # wrong-length coordinate is a real import-validation signal and stays.
+    return len(raw) == key_size
+
+
 def _pkcs11_xdh_fingerprint(test: dict[str, Any]) -> tuple[bytes, bytes, bytes, bytes, str] | None:
     """Return the PKCS#11-visible XDH operation inputs for duplicate detection."""
     try:
@@ -137,8 +181,7 @@ def _load_xdh_vectors() -> list[tuple[str, dict[str, Any]]]:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
-        with open(path) as f:
-            data = json.load(f)
+        data = load_json_cached(path)
         for group in data["testGroups"]:
             for test in group["tests"]:
                 test["_group"] = {k: v for k, v in group.items() if k != "tests"}
@@ -146,6 +189,11 @@ def _load_xdh_vectors() -> list[tuple[str, dict[str, Any]]]:
                 test["_key_size"] = key_size
                 test["_encoding"] = encoding_name
                 test["_file"] = filename
+                if _xdh_jwk_invalidity_not_representable(test, key_size):
+                    # JWK wrapper-only invalidity (wrong crv/kty, canonical-length
+                    # x): not representable through the raw-point path -- drop it,
+                    # like the ECDH InvalidAsn/InvalidPem untestable class.
+                    continue
                 vec_id = f"{filename}:tc{test['tcId']}-{test['result']}"
                 fingerprint = _pkcs11_xdh_fingerprint(test)
                 if fingerprint is not None:
@@ -202,9 +250,8 @@ def test_xdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
 
     # Import Montgomery private key
     try:
-        priv_key = import_ec_private_key(
-            rs.raw,
-            rs.sh,
+        priv_key = import_ec_private_key_negotiated(
+            rs,
             ec_params=oid,
             value=private_bytes,
             key_type=int(CKK_EC_MONTGOMERY),
@@ -218,8 +265,21 @@ def test_xdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             pytest.skip(f"Cannot import Montgomery private key: {exc}")
         if result == "invalid" and is_known_error(exc, _MONTGOMERY_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
             return
-        if is_known_error(exc, _MONTGOMERY_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
-            pytest.skip(f"Cannot import Montgomery private key: {exc}")
+        if isinstance(exc, CkrAssertionError) and is_known_error(
+            exc, _MONTGOMERY_PRIVATE_IMPORT_UNSUPPORTED_CKRS
+        ):
+            # ECDH1_DERIVE is advertised (gate passed above) and providers that
+            # hit this branch (softhsm2/tpm2/wolfpkcs11/kryoptic per the D2
+            # cross-check) operationally derive XDH/ECDH -- the canonical
+            # private-key import of a VALID vector is the only gap. That is
+            # "advertised but not operational" -> xfail per the classification
+            # model, not skip. The CKR_CURVE_NOT_SUPPORTED/DOMAIN branch above
+            # keeps the genuine-absence skip; the result=="invalid" return above
+            # keeps the vacuous pass.
+            classify(
+                "not_operational",
+                summary=not_operational_reason("ECDH:Montgomery-private-import", ckr_name(exc.rv)),
+            )
         raise
 
     # Derive shared secret
@@ -249,15 +309,36 @@ def test_xdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         if result == "valid":
             if isinstance(exc, AssertionError):
                 _xfail_if_xdh_runtime_reject(exc, vec_id)
-            pytest.fail(f"X25519/X448 derive failed for valid vector {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label=vec_id,
+                summary=f"X25519/X448 derive failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable: reject is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, priv_key)
 
     if result == "valid" and shared is not None:
-        assert shared == shared_expected
+        assert_correct(
+            actual=shared,
+            expected=shared_expected,
+            label=f"X25519/X448:C_DeriveKey KAT {vec_id}",
+            operation="C_DeriveKey",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     if result == "invalid" and shared is not None:
-        pytest.fail(
-            f"X25519/X448 derived a secret for an invalid vector {vec_id} (invalid-point accepted)"
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            label=vec_id,
+            summary=(
+                f"X25519/X448 derived a secret for an invalid vector {vec_id} "
+                "(invalid-point accepted)"
+            ),
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )

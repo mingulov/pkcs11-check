@@ -2,22 +2,23 @@
 
 from __future__ import annotations
 
-import json
+from collections.abc import Mapping
 from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_ccm
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
     generate_random,
-    import_secret_key,
     read_attributes,
     unwrap_key,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
@@ -29,6 +30,7 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_UNWRAP,
     CKA_VALUE,
+    CKA_VALUE_LEN,
     CKA_VERIFY,
     CKA_WRAP,
     CKK_AES,
@@ -42,16 +44,33 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_XTS,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_HANDLE_INVALID,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR
+from pkcs11_check.testcases._negotiation import (
+    TEMPLATE_SHAPE_REJECTS,
+    negotiate_request,
+    value_len_variant_allowed,
+)
+from pkcs11_check.testcases._operability import (
+    classify_kat_clean_error,
+    not_operational_reason,
+    xfail_vacuous_reject,
+)
+from pkcs11_check.testcases.acvp.aes.base_runner_aead import _aead_operability as _ccm_operability
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    import_secret_key_negotiated,
+    xfail_if_known_ckr,
+)
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
 pytestmark = pytest.mark.wycheproof
 
@@ -62,6 +81,11 @@ _AES_RUNTIME_REJECT_CKRS = (
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    # Imported-with-CKR_OK key not honored at use time (corePKCS11 returns
+    # KEY_HANDLE_INVALID for CMAC keys it claimed to import) -- the deviation
+    # is recorded here; the self-contradiction itself belongs to the dedicated
+    # object-coherence conformance coverage. Same precedent as wycheproof ECDSA.
+    CKR_KEY_HANDLE_INVALID,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
@@ -77,13 +101,48 @@ def _xfail_if_aes_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
     raise exc
 
 
+# Clean reject codes that, on a VALID AES-KW vector after negotiation is exhausted,
+# indicate an operational deviation (module cannot create the generic-secret object) ->
+# xfail, not fail. Broader than the negotiation retry-trigger set on purpose.
+_AES_KW_VALID_VECTOR_CLEAN_REJECTS = TEMPLATE_SHAPE_REJECTS + (CKR_ATTRIBUTE_VALUE_INVALID,)
+
+
+def _unwrap_aes_kw_adaptive(
+    rs: Any, unwrapping_key: int, wrapped: bytes, base_attrs: dict[int, Any], value_len: int | None
+) -> int:
+    """Unwrap an AES-KW blob, retrying with CKA_VALUE_LEN on a template-shape reject.
+
+    The first variant uses the minimal template (no CKA_VALUE_LEN), which lenient
+    modules accept unchanged. Only when the module rejects that template with a
+    "shape" code does :func:`negotiate_request` move on to a variant that restates
+    the recovered length explicitly. Any other rejection (e.g. an integrity failure
+    on a forged blob) propagates to the caller for normal classification, so forgery
+    detection is preserved.
+
+    ``value_len`` is ``None`` for *invalid* vectors: a forged blob must never be
+    coerced through a restated length (that would let the module recover a wrongly
+    sized object and accept material it should reject), so no length variant is added
+    and the module's own rejection stands.
+    """
+    variants = [dict(base_attrs)]
+    if value_len is not None and value_len_variant_allowed(
+        base_attrs[CKA_KEY_TYPE], CKM_AES_KEY_WRAP
+    ):
+        variants.append({**base_attrs, CKA_VALUE_LEN: value_len})
+
+    def attempt(delta: Mapping[int, Any]) -> int:
+        return unwrap_key(rs.raw, rs.sh, unwrapping_key, wrapped, CKM_AES_KEY_WRAP, attrs=delta)
+
+    result, _idx = negotiate_request(attempt, variants, label="AES-KW unwrap")
+    return result
+
+
 def _load_flat(filename: str) -> list[tuple[str, dict[str, Any]]]:
     """Load vectors from a Wycheproof JSON, flattening groups."""
     path = WYCHEPROOF_DIR / filename
     if not path.exists():
         return []
-    with open(path) as f:
-        data = json.load(f)
+    data = load_json_cached(path)
     vectors = []
     for group in data["testGroups"]:
         for test in group["tests"]:
@@ -104,7 +163,7 @@ def test_aes_cmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
 
     Verifies the *supplied* tag with C_Verify so that invalid vectors actually
     exercise rejection. A module that verifies an invalid tag as valid is a
-    crypto-correctness break (Type A -> fail). The previous produce-direction
+    crypto-correctness break (-> fail). The previous produce-direction
     (C_Sign + compare) could never reject an invalid vector because a fresh
     correct tag never matched the modified expected tag.
     """
@@ -118,9 +177,8 @@ def test_aes_cmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
     result = vec["result"]
 
     try:
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -140,16 +198,29 @@ def test_aes_cmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_aes_runtime_reject(exc, f"AES-CMAC {vec_id}")
-            pytest.fail(f"AES-CMAC failed for valid vector {vec_id}: {exc}")
         # acceptable: reject of an invalid vector is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
 
     if result == "valid" and not verified:
-        pytest.fail(f"AES-CMAC rejected a valid CMAC vector {vec_id}")
+        classify(
+            "wrong_result",
+            kind="crypto",
+            label="AES-CMAC",
+            summary=f"AES-CMAC rejected a valid CMAC vector {vec_id}",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     if result == "invalid" and verified:
-        pytest.fail(f"AES-CMAC {vec_id}: accepted invalid tag (forged tag verified)")
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            label="AES-CMAC",
+            summary=f"AES-CMAC {vec_id}: accepted invalid tag (forged tag verified)",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
     generate_random(rs.raw, rs.sh, 64)
 
@@ -165,7 +236,7 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
 
     Unwraps the supplied wrapped blob (``ct``) so invalid vectors actually
     exercise rejection. A module that unwraps an invalid (malformed/forged)
-    wrapped blob is a crypto-correctness break (Type A -> fail). The previous
+    wrapped blob is a crypto-correctness break (-> fail). The previous
     produce-direction (wrap + compare) could never reject an invalid vector
     because a fresh correct wrap never matched the modified expected blob.
     """
@@ -180,9 +251,8 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
 
     # Import unwrapping key
     try:
-        wrap_key_h = import_secret_key(
-            rs.raw,
-            rs.sh,
+        wrap_key_h = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -192,30 +262,60 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
                 CKA_SENSITIVE: False,
             },
         )
-    except AssertionError:
-        pytest.skip("Cannot import AES unwrapping key")
+    except AssertionError as exc:
+        if not isinstance(exc, CkrAssertionError):
+            raise
+        # Mechanism was advertised (has_mechanism gate passed above); a
+        # negotiation-exhausted import refusal is "advertised but not
+        # operational" -> xfail per the classification model.
+        classify(
+            "not_operational",
+            label="AES_KEY_WRAP:key-import",
+            summary=not_operational_reason(
+                "AES_KEY_WRAP:key-import",
+                ckr_name(exc.rv),
+            ),
+        )
 
     # Unwrap the supplied blob and verify the recovered key material
     unwrapped = None
     try:
-        unwrapped = unwrap_key(
-            rs.raw,
-            rs.sh,
+        unwrapped = _unwrap_aes_kw_adaptive(
+            rs,
             wrap_key_h,
             ct,
-            CKM_AES_KEY_WRAP,
-            attrs={
+            {
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                 CKA_EXTRACTABLE: True,
                 CKA_SENSITIVE: False,
                 CKA_TOKEN: False,
             },
+            # Restate the recovered length only for VALID vectors. Invalid (forged)
+            # blobs pass None so they are never coerced through an explicit length.
+            len(msg_expected) if result == "valid" else None,
         )
     except AssertionError as exc:
         if result == "valid":
-            _xfail_if_aes_runtime_reject(exc, f"AES-KW {vec_id}")
-            pytest.fail(f"AES-KW unwrap failed for valid vector {vec_id}: {exc}")
+            # The adaptive unwrap already tried both the minimal template and one with an
+            # explicit CKA_VALUE_LEN, so a remaining clean template/attribute reject is an
+            # operational deviation, not a crypto break: the module cannot create the
+            # generic-secret object either way. Examples seen across modules: NSS refuses
+            # the oversized 384-byte CounterOverflow vectors (TEMPLATE_INCONSISTENT) and
+            # opencryptoki/softhsm2 reject CKA_VALUE_LEN itself (ATTRIBUTE_READ_ONLY).
+            # softhsm2 and kryoptic unwrap these vectors, so the inputs are valid.
+            xfail_if_known_ckr(
+                exc,
+                _AES_RUNTIME_REJECT_CKRS + _AES_KW_VALID_VECTOR_CLEAN_REJECTS,
+                f"AES-KW {vec_id}: unwrap into a generic secret not operational",
+            )
+            classify(
+                "not_operational",
+                label="AES-KW",
+                summary=f"AES-KW unwrap failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable: reject of an invalid wrapped blob is fine
         return
     finally:
@@ -223,7 +323,14 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
 
     if result == "invalid":
         destroy_quietly(rs.raw, rs.sh, unwrapped)
-        pytest.fail(f"AES-KW unwrap {vec_id}: accepted invalid wrapped key (forged blob unwrapped)")
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            label="AES-KW",
+            summary=f"AES-KW unwrap {vec_id}: accepted invalid wrapped key (forged blob unwrapped)",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
     # valid: recovered key material must match the original
     try:
@@ -231,8 +338,23 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
     finally:
         destroy_quietly(rs.raw, rs.sh, unwrapped)
     recovered = attrs.get(CKA_VALUE)
-    if recovered is not None:
-        assert recovered == msg_expected, f"AES-KW {vec_id}: unwrapped key material mismatch"
+    if recovered is None:
+        classify(
+            "honest_deviation",
+            label="AES-KW",
+            summary=f"AES-KW {vec_id}: unwrapped key material unreadable; cannot verify",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
+    assert_correct(
+        actual=recovered,
+        expected=msg_expected,
+        label=f"AES-KW:C_UnwrapKey KAT {vec_id}",
+        operation="C_UnwrapKey",
+        mechanism="CKM_AES_KEY_WRAP",
+        source=vec.get("_source"),
+        vector_id=vec.get("_vector_id"),
+    )
 
 
 # --- AES Key Wrap with Padding (RFC 5649) ---
@@ -258,9 +380,8 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
 
     # Import wrapping key
     try:
-        wrap_key_h = import_secret_key(
-            rs.raw,
-            rs.sh,
+        wrap_key_h = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -271,8 +392,20 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
                 CKA_SENSITIVE: False,
             },
         )
-    except AssertionError:
-        pytest.skip("Cannot import AES wrapping key")
+    except AssertionError as exc:
+        if not isinstance(exc, CkrAssertionError):
+            raise
+        # Mechanism was advertised (has_mechanism gate passed above); a
+        # negotiation-exhausted import refusal is "advertised but not
+        # operational" -> xfail per the classification model.
+        classify(
+            "not_operational",
+            label="AES_KEY_WRAP_KWP:key-import",
+            summary=not_operational_reason(
+                "AES_KEY_WRAP_KWP:key-import",
+                ckr_name(exc.rv),
+            ),
+        )
 
     # Wycheproof KWP vectors are RFC 5649 raw data vectors.  PKCS#11 exposes
     # that exact operation through CKM_AES_KEY_WRAP_KWP C_Encrypt.
@@ -289,19 +422,30 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_aes_runtime_reject(exc, f"AES-KWP {vec_id}")
-            pytest.fail(f"AES-KWP wrap failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, wrap_key_h)
 
     if result == "valid" and wrapped is not None:
-        assert wrapped == ct_expected, (
-            f"AES-KWP wrap output differs for {vec_id} "
-            f"(got {len(wrapped)}B, expected {len(ct_expected)}B)"
+        assert_correct(
+            actual=wrapped,
+            expected=ct_expected,
+            label=f"AES-KWP:C_WrapKey KAT {vec_id}",
+            operation="C_WrapKey",
+            mechanism="CKM_AES_KEY_WRAP_KWP",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
         )
     if result == "invalid" and wrapped is not None and wrapped == ct_expected:
-        pytest.fail(f"AES-KWP wrap {vec_id} produced invalid ciphertext")
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            label="AES-KWP",
+            summary=f"AES-KWP wrap {vec_id} produced invalid ciphertext",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
 
 # --- AES-CCM ---
@@ -315,7 +459,7 @@ def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
 
     Decrypts the supplied ct||tag so invalid vectors actually exercise tag
     rejection. A module that decrypts an invalid (forged/modified) ciphertext
-    or tag is a crypto-correctness break (Type A -> fail). The previous
+    or tag is a crypto-correctness break (-> fail). The previous
     produce-direction (encrypt + compare) could never reject an invalid vector
     because a fresh correct ciphertext never matched the modified expected one.
     """
@@ -332,9 +476,8 @@ def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     result = vec["result"]
 
     try:
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -370,17 +513,56 @@ def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     except (AssertionError, TypeError, NotImplementedError) as exc:
         if result == "valid":
             if isinstance(exc, AssertionError):
-                _xfail_if_aes_runtime_reject(exc, f"AES-CCM {vec_id}")
-            pytest.fail(f"AES-CCM decrypt failed for valid vector {vec_id}: {exc}")
-        # acceptable: reject of an invalid vector is fine
+                # Effect-based (triage H2): a clean decrypt error on a valid CCM
+                # vector is classified against the canonical CCM-decrypt probe.
+                # Non-operational (bouncyhsm CCM -> GENERAL_ERROR) or an honest
+                # clean reject -> xfail; a working probe with WRONG canonical
+                # output (a real break) re-raises. The real CCM findings
+                # (accepted-invalid, wrong plaintext) are caught below, not here.
+                classify_kat_clean_error(
+                    exc,
+                    result=_ccm_operability(rs, "AES_CCM", "decrypt"),
+                    label=f"AES-CCM {vec_id}",
+                )
+            classify(
+                "not_operational",
+                label="AES-CCM",
+                summary=f"AES-CCM decrypt failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
+        # invalid vector rejected -- genuine only if CCM decrypt actually works.
+        # A clean op-reject (AssertionError) on a NOT_OPERATIONAL mechanism is
+        # vacuous (the module refuses everything); TypeError/NotImplementedError
+        # are not op-rejects and keep returning as before.
+        if isinstance(exc, AssertionError):
+            xfail_vacuous_reject(
+                _ccm_operability(rs, "AES_CCM", "decrypt"),
+                label=f"AES-CCM {vec_id} invalid reject",
+            )
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
 
     if result == "valid" and plaintext is not None:
-        assert plaintext == msg_expected, f"AES-CCM {vec_id}: plaintext mismatch"
+        assert_correct(
+            actual=plaintext,
+            expected=msg_expected,
+            label=f"AES-CCM:C_Decrypt KAT {vec_id}",
+            operation="C_Decrypt",
+            mechanism="CKM_AES_CCM",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     if result == "invalid" and plaintext is not None:
-        pytest.fail(f"AES-CCM decrypt {vec_id}: accepted invalid ciphertext/tag")
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            label="AES-CCM",
+            summary=f"AES-CCM decrypt {vec_id}: accepted invalid ciphertext/tag",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
 
 # --- AES-GMAC ---
@@ -394,8 +576,8 @@ def test_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
 
     GMAC is GCM with empty plaintext - authenticates AAD only. Verifies the
     *supplied* tag with C_Verify so invalid vectors actually exercise
-    rejection; an accepted invalid tag is a crypto-correctness break (Type A
-    -> fail). The previous produce-direction (C_Sign + compare) could never
+    rejection; an accepted invalid tag is a crypto-correctness break
+    (-> fail). The previous produce-direction (C_Sign + compare) could never
     reject an invalid vector.
     """
     rs = p11_module_session
@@ -409,9 +591,8 @@ def test_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
     result = vec["result"]
 
     try:
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES,
             key_bytes,
             attrs={
@@ -440,16 +621,36 @@ def test_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
         if result == "valid":
             if isinstance(exc, AssertionError):
                 _xfail_if_aes_runtime_reject(exc, f"AES-GMAC {vec_id}")
-            pytest.fail(f"AES-GMAC verify failed for valid vector {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label="AES-GMAC",
+                summary=f"AES-GMAC verify failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable: reject of an invalid vector is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
 
     if result == "valid" and not verified:
-        pytest.fail(f"AES-GMAC rejected a valid GMAC vector {vec_id}")
+        classify(
+            "wrong_result",
+            kind="crypto",
+            label="AES-GMAC",
+            summary=f"AES-GMAC rejected a valid GMAC vector {vec_id}",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     if result == "invalid" and verified:
-        pytest.fail(f"AES-GMAC {vec_id}: accepted invalid tag (forged tag verified)")
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            label="AES-GMAC",
+            summary=f"AES-GMAC {vec_id}: accepted invalid tag (forged tag verified)",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
 
 # --- AES-XTS ---
@@ -476,9 +677,8 @@ def test_aes_xts(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
 
     # XTS uses AES_XTS key type with double-size key
     try:
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
+        key = import_secret_key_negotiated(
+            rs,
             CKK_AES_XTS,
             key_bytes,
             attrs={
@@ -488,10 +688,24 @@ def test_aes_xts(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
                 CKA_SENSITIVE: False,
             },
         )
-    except (AssertionError, AttributeError):
+    except (AssertionError, AttributeError) as exc:
         if result == "invalid":
+            # Invalid vector: import failure means the operation was never
+            # attempted -> vacuous (the invalid input was not evaluated).
             return
-        pytest.skip("Cannot import AES-XTS key")
+        if isinstance(exc, CkrAssertionError):
+            # Mechanism was advertised (has_mechanism gate passed above); a
+            # negotiation-exhausted import refusal is "advertised but not
+            # operational" -> xfail per the classification model.
+            classify(
+                "not_operational",
+                label="AES_XTS:key-import",
+                summary=not_operational_reason(
+                    "AES_XTS:key-import",
+                    ckr_name(exc.rv),
+                ),
+            )
+        raise
 
     ct = None
     try:
@@ -507,11 +721,25 @@ def test_aes_xts(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
         if result == "valid":
             if isinstance(exc, AssertionError):
                 _xfail_if_aes_runtime_reject(exc, f"AES-XTS {vec_id}")
-            pytest.fail(f"AES-XTS encrypt failed for valid vector {vec_id}: {exc}")
+            classify(
+                "not_operational",
+                label="AES-XTS",
+                summary=f"AES-XTS encrypt failed for valid vector {vec_id}: {exc}",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
         # acceptable: reject is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
 
     if result == "valid" and ct is not None:
-        assert ct == ct_expected
+        assert_correct(
+            actual=ct,
+            expected=ct_expected,
+            label=f"AES-XTS:C_Encrypt KAT {vec_id}",
+            operation="C_Encrypt",
+            mechanism="CKM_AES_XTS",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )

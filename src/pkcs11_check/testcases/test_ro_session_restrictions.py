@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
 )
@@ -89,6 +90,7 @@ from pkcs11_check.testcases.conftest import (
     reject_or_classify,
     require_operational_aes_keygen,
     skip_if_token_write_protected,
+    skip_unless_create_object_supported,
     xfail_if_known_ckr,
 )
 
@@ -139,7 +141,13 @@ def _skip_unless_mechanism(rs: Any, name: str) -> None:
 
 def _xfail_if_aes_keygen_rv(rv: int, context: str) -> None:
     if rv in AES_KEYGEN_RUNTIME_REJECT_RVS:
-        pytest.xfail(f"{context}: {ckr_name(rv)}")
+        classify(
+            "not_operational",
+            label=context,
+            operation="C_GenerateKey",
+            actual=rv,
+            summary=f"{context}: {ckr_name(rv)}",
+        )
 
 
 def _gen_ro_setup_aes_key(
@@ -156,6 +164,7 @@ def _gen_ro_setup_aes_key(
     try:
         return _raw_gen_aes_key(rs.raw, sh, bits, attrs=attrs)
     except AssertionError as exc:
+        _xfail_if_session_object_rejected_readonly(exc)
         xfail_if_known_ckr(
             exc,
             AES_KEYGEN_RUNTIME_REJECT_RVS,
@@ -184,6 +193,7 @@ def _gen_ro_setup_generic_key(
             mechanism=CKM_GENERIC_SECRET_KEY_GEN,
         )
     except AssertionError as exc:
+        _xfail_if_session_object_rejected_readonly(exc)
         xfail_if_known_ckr(
             exc,
             AES_KEYGEN_RUNTIME_REJECT_RVS,
@@ -213,6 +223,7 @@ def _gen_ro_setup_rsa_keypair(
             private_attrs=private_attrs,
         )
     except AssertionError as exc:
+        _xfail_if_session_object_rejected_readonly(exc)
         xfail_if_known_ckr(
             exc,
             KEYPAIR_RUNTIME_REJECT_RVS,
@@ -351,6 +362,23 @@ class TestROTokenObjectCreation:
             close_session_quietly(rs.raw, ro_sh)
 
 
+def _xfail_if_session_object_rejected_readonly(exc: AssertionError) -> None:
+    """CKR_SESSION_READ_ONLY for a SESSION object is a deviation, not a finding
+    to hard-fail: the spec defines that code for token-object writes in R/O
+    sessions; session-scoped objects are legal there (bouncyhsm rejects them
+    anyway, triage H4). The module still refused cleanly -> recorded xfail."""
+    if is_known_error(exc, (CKR_SESSION_READ_ONLY,)):
+        classify(
+            "not_operational",
+            label="RO-session:create-session-object",
+            operation="C_CreateObject",
+            summary=(
+                f"session object rejected in RO session (deviation; "
+                f"CKR_SESSION_READ_ONLY is specified for token objects): {exc}"
+            ),
+        )
+
+
 class TestROSessionObjectsAllowed:
     """RO sessions must allow session-scoped (TOKEN=False) operations."""
 
@@ -359,21 +387,26 @@ class TestROSessionObjectsAllowed:
     ) -> None:
         """C_CreateObject with CKA_TOKEN=False in RO session succeeds."""
         rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
         pin_bytes = get_pin_bytes(p11_config)
         ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
-            obj_h = import_secret_key(
-                rs.raw,
-                ro_sh,
-                CKK_AES,
-                os.urandom(16),
-                attrs={
-                    CKA_TOKEN: False,
-                    CKA_SENSITIVE: False,
-                    CKA_EXTRACTABLE: True,
-                },
-            )
+            try:
+                obj_h = import_secret_key(
+                    rs.raw,
+                    ro_sh,
+                    CKK_AES,
+                    os.urandom(16),
+                    attrs={
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                )
+            except AssertionError as exc:
+                _xfail_if_session_object_rejected_readonly(exc)
+                raise
             assert obj_h != 0
             destroy_quietly(rs.raw, ro_sh, obj_h)
         finally:
@@ -761,6 +794,7 @@ class TestROWrapUnwrapRestrictions:
         """Unwrap with TOKEN=True template in RO session must fail."""
         rs = p11_raw_session
         skip_if_token_write_protected(rs.raw, rs.slot_id)
+        skip_unless_create_object_supported(rs)
         if not rs.has_mechanism("AES_KEY_WRAP"):
             if not rs.has_mechanism("AES_CBC_PAD"):
                 pytest.skip("No AES wrap mechanism supported")
@@ -821,7 +855,7 @@ class TestROWrapUnwrapRestrictions:
                     assert False, "Unwrap to TOKEN=True succeeded in RO session"
                 except AssertionError as e:
                     if "Unwrap to TOKEN=True succeeded" in str(e):
-                        raise  # Type-A acceptance must hard-fail
+                        raise  # crypto-correctness acceptance must hard-fail
                     reject_or_classify(
                         e,
                         _RO_OR_UNSUPPORTED_RVS,
@@ -837,6 +871,7 @@ class TestROWrapUnwrapRestrictions:
         """Unwrap with TOKEN=False template in RO session succeeds."""
         rs = p11_raw_session
         skip_if_token_write_protected(rs.raw, rs.slot_id)
+        skip_unless_create_object_supported(rs)
         if not rs.has_mechanism("AES_KEY_WRAP"):
             if not rs.has_mechanism("AES_CBC_PAD"):
                 pytest.skip("No AES wrap mechanism supported")
@@ -903,7 +938,12 @@ class TestROWrapUnwrapRestrictions:
                         "creation via C_UnwrapKey in RO sessions",
                         ComplianceLevel.NOT_RECOMMENDED,
                     )
-                    pytest.xfail(f"Module overly restricts RO session unwrap ({exc})")
+                    xfail_as(
+                        "not_operational",
+                        label="RO-session:unwrap-session-object",
+                        operation="C_UnwrapKey",
+                        summary=f"Module overly restricts RO session unwrap ({exc})",
+                    )
             finally:
                 close_session_quietly(rs.raw, ro_sh)
         finally:

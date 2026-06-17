@@ -25,7 +25,6 @@ from pkcs11_check.raw.recipes import (
     gen_aes_key,
     read_attributes,
     sign_single,
-    unwrap_key,
     verify_single,
 )
 from pkcs11_check.raw.recipes import (
@@ -71,6 +70,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     gen_rsa_keypair_or_xfail,
     require_operational_aes_keygen,
+    unwrap_key_for_mechanism_roundtrip,
 )
 
 _CURVE_UNSUPPORTED_RVS = {
@@ -139,7 +139,7 @@ class TestRSAKeyLifecycle:
 class TestAESKeyWrapLifecycle:
     """Full AES key wrap lifecycle: generate wrapping key, wrap target, unwrap, verify."""
 
-    def test_aes_wrap_unwrap_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_aes_wrap_unwrap_roundtrip(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Wrap AES key with another AES key, unwrap, verify material matches."""
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
@@ -173,18 +173,19 @@ class TestAESKeyWrapLifecycle:
             assert wrapped != original_value
 
             # Unwrap
-            unwrapped = unwrap_key(
-                rs.raw,
-                rs.sh,
-                wrap_h,
-                wrapped,
-                CKM_AES_KEY_WRAP,
+            unwrapped = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=wrap_h,
+                wrapped_key=wrapped,
+                mechanism=CKM_AES_KEY_WRAP,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
                     CKA_EXTRACTABLE: True,
                     CKA_SENSITIVE: False,
                 },
+                purpose="AES-KEY-WRAP lifecycle roundtrip",
             )
 
             # Verify material matches
@@ -196,7 +197,7 @@ class TestAESKeyWrapLifecycle:
             if unwrapped:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
 
-    def test_aes_wrapped_key_functional(self, p11_raw_session: Any) -> None:
+    def test_aes_wrapped_key_functional(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Unwrapped AES key can encrypt/decrypt correctly."""
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
@@ -227,12 +228,12 @@ class TestAESKeyWrapLifecycle:
 
             # Wrap and unwrap
             wrapped = wrap_key_recipe(rs.raw, rs.sh, wrap_h, target, CKM_AES_KEY_WRAP)
-            unwrapped = unwrap_key(
-                rs.raw,
-                rs.sh,
-                wrap_h,
-                wrapped,
-                CKM_AES_KEY_WRAP,
+            unwrapped = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=wrap_h,
+                wrapped_key=wrapped,
+                mechanism=CKM_AES_KEY_WRAP,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
@@ -241,6 +242,7 @@ class TestAESKeyWrapLifecycle:
                     CKA_EXTRACTABLE: True,
                     CKA_SENSITIVE: False,
                 },
+                purpose="AES-KEY-WRAP unwrapped-key functional roundtrip",
             )
 
             # Decrypt with unwrapped key

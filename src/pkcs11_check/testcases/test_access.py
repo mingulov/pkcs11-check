@@ -25,7 +25,6 @@ from pkcs11_check.raw.recipes import (
     find_objects,
     generate_random,
 )
-from pkcs11_check.raw.recipes import gen_aes_key as _raw_gen_aes_key
 from pkcs11_check.raw.recipes import gen_rsa_keypair as _raw_gen_rsa_keypair
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
@@ -38,11 +37,10 @@ from pkcs11_check.raw.types_std import (
     CKU_USER,
 )
 from pkcs11_check.testcases.conftest import (
-    AES_KEYGEN_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    gen_aes_key_or_xfail,
     get_pin_bytes,
     is_known_error,
-    require_operational_aes_keygen,
     xfail_if_known_ckr,
 )
 
@@ -60,29 +58,6 @@ def raw_open_session(raw: Any, slot_id: int, flags: int) -> int:
                 f"{ckr_name(int(CKR_SESSION_COUNT))}"
             )
         raise
-
-
-def _gen_access_aes_key(
-    rs: Any,
-    sh: int,
-    bits: int = 128,
-    *,
-    attrs: Mapping[Any, Any] | None = None,
-    purpose: str = "access setup key generation",
-) -> int:
-    """Generate an AES setup key without hiding actual access-control findings."""
-    if not rs.has_mechanism("AES_KEY_GEN"):
-        pytest.skip("AES_KEY_GEN not supported by module")
-    require_operational_aes_keygen(rs)
-    try:
-        return _raw_gen_aes_key(rs.raw, sh, bits, attrs=attrs)
-    except AssertionError as exc:
-        xfail_if_known_ckr(
-            exc,
-            AES_KEYGEN_RUNTIME_REJECT_RVS,
-            f"AES_KEY_GEN advertised but {purpose} is not operational",
-        )
-    raise
 
 
 def _gen_access_rsa_keypair(
@@ -118,7 +93,7 @@ class TestSessionTypes:
     def test_rw_session_can_generate_key(self, p11_raw_session: Any) -> None:
         """R/W session (our default fixture) can generate keys."""
         rs = p11_raw_session
-        key_h = _gen_access_aes_key(rs, rs.sh)
+        key_h = gen_aes_key_or_xfail(rs)
         try:
             assert key_h != 0
         finally:
@@ -136,10 +111,10 @@ class TestSessionTypes:
             login_user(rs.raw, ro_sh, CKU_USER, pin_bytes)
         try:
             # Session objects should be creatable in R/O sessions
-            key_h = _gen_access_aes_key(
+            key_h = gen_aes_key_or_xfail(
                 rs,
-                ro_sh,
-                purpose="RO-session object setup key generation",
+                sh=ro_sh,
+                purpose="RO-session object setup",
             )
             assert key_h != 0
             destroy_quietly(rs.raw, ro_sh, key_h)
@@ -210,8 +185,8 @@ class TestMultipleSessions:
             if pin_bytes is not None:
                 login_user(rs.raw, s1, CKU_USER, pin_bytes)
             s2 = raw_open_session(rs.raw, rs.slot_id, flags)
-            key1 = _gen_access_aes_key(rs, s1, attrs={CKA_LABEL: "sess1"})
-            key2 = _gen_access_aes_key(rs, s2, attrs={CKA_LABEL: "sess2"})
+            key1 = gen_aes_key_or_xfail(rs, attrs={CKA_LABEL: "sess1"}, sh=s1)
+            key2 = gen_aes_key_or_xfail(rs, attrs={CKA_LABEL: "sess2"}, sh=s2)
             assert key1 != 0
             assert key2 != 0
             destroy_quietly(rs.raw, s1, key1)
@@ -234,7 +209,7 @@ class TestMultipleSessions:
         if pin_bytes is not None:
             login_user(rs.raw, s1, CKU_USER, pin_bytes)
         try:
-            key_h = _gen_access_aes_key(rs, s1, attrs={CKA_LABEL: "session-obj-test"})
+            key_h = gen_aes_key_or_xfail(rs, attrs={CKA_LABEL: "session-obj-test"}, sh=s1)
             s2 = raw_open_session(rs.raw, rs.slot_id, flags)
             try:
                 tmpl = template_from_dict({CKA_LABEL: "session-obj-test"})
@@ -260,7 +235,7 @@ class TestSessionLifecycle:
         temp_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
             login_user(rs.raw, temp_sh, CKU_USER, pin_bytes)
-        _gen_access_aes_key(rs, temp_sh, attrs={CKA_LABEL: "lifecycle-test"})
+        gen_aes_key_or_xfail(rs, attrs={CKA_LABEL: "lifecycle-test"}, sh=temp_sh)
         close_session_quietly(rs.raw, temp_sh)
 
         # Object should be gone in a new session

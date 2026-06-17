@@ -13,13 +13,14 @@ from typing import Any, NoReturn
 import pytest
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     generate_random,
-    import_ec_public_key,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKM_ECDSA,
@@ -27,6 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_CURVE_NOT_SUPPORTED,
     CKR_DATA_INVALID,
+    CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_FAILED,
@@ -39,8 +41,14 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    ec_public_key_binding_defect,
+    import_ec_public_key_negotiated,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["ECDSA"]
@@ -50,6 +58,12 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa
 # Module-level cache of curves that failed C_CreateObject with a domain/curve error.
 # Avoids thousands of redundant probe calls when a module does not support a curve.
 _UNSUPPORTED_CURVES: set[str] = set()
+
+# Per-curve effect-check result: None = curve binding verified coherent; str = defect
+# reason (silent rebind / incoherent object). Checked once per curve per process; a
+# defective curve's vectors skip BEFORE import so a bounded object store is not
+# flooded with broken objects (corePKCS11: 128-slot list -> CKR_DEVICE_MEMORY).
+_CURVE_BINDING_DEFECTS: dict[str, str | None] = {}
 
 _CURVE_UNSUPPORTED_CKRS = (
     CKR_CURVE_NOT_SUPPORTED,
@@ -67,6 +81,10 @@ _EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS = (
 _ECDSA_RUNTIME_REJECT_CKRS = (
     CKR_ARGUMENTS_BAD,
     CKR_DATA_INVALID,
+    # PKCS#11 §2.3.1: CKM_ECDSA must accept any hash length (truncating to the
+    # group order); a module pinning the digest length (corePKCS11: exactly 32B)
+    # cleanly rejects valid longer digests -> recorded deviation, not hard fail.
+    CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
@@ -327,43 +345,81 @@ def test_ecdsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
     if curve in _UNSUPPORTED_CURVES:
         pytest.skip(f"Curve {curve} not supported (cached)")
 
-    try:
-        pub_key = import_ec_public_key(
-            rs.raw,
-            rs.sh,
-            ec_params=ec_params,
-            ec_point=ec_point_der,
-            attrs={CKA_VERIFY: True},
-        )
-    except AssertionError as exc:
-        if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):
-            _UNSUPPORTED_CURVES.add(curve)
-            pytest.skip(f"Cannot import EC key for {curve}: {exc}")
-        if is_known_error(exc, _EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
-            pytest.skip(f"Cannot import EC key for {curve}: {exc}")
-        raise
+    if defect := _CURVE_BINDING_DEFECTS.get(curve):
+        pytest.skip(f"Curve {curve} not honored by module (cached): {defect}")
 
+    # Decode the signature BEFORE importing the key: this path returns/fails
+    # without reaching the destroying try/finally, so an already-imported key
+    # would leak — fatal on modules with a bounded object store.
     try:
         raw_sig = _raw_ecdsa_signature(vec)
     except (ValueError, OverflowError) as exc:
         if result == "invalid":
             return
-        pytest.fail(f"Cannot decode valid DER sig for {vec_id}: {exc}")
+        classify(
+            "not_operational",
+            label="ECDSA:DER-decode",
+            summary=f"Cannot decode valid DER sig for {vec_id}: {exc}",
+        )
 
     digest = hash_fn(msg).digest()
+
+    try:
+        pub_key = import_ec_public_key_negotiated(
+            rs,
+            ec_params=ec_params,
+            ec_point=ec_point_der,
+            attrs={CKA_VERIFY: True},
+            purpose=f"wycheproof ECDSA {curve} public key import",
+        )
+    except AssertionError as exc:
+        if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):
+            # Genuine capability absence: this specific curve is not supported
+            # (CKR_CURVE_NOT_SUPPORTED / CKR_DOMAIN_PARAMS_INVALID). Skip stays.
+            _UNSUPPORTED_CURVES.add(curve)
+            pytest.skip(f"Cannot import EC key for {curve}: {exc}")
+        if isinstance(exc, CkrAssertionError) and is_known_error(
+            exc, _EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS
+        ):
+            # ECDSA is advertised (has_mechanism gate passed above) and the
+            # negotiated import is exhausted -> "advertised but not operational"
+            # -> xfail per the classification model (not skip).
+            # May include curve-capability rejects expressed as generic CKRs --
+            # recorded as xfail, not hidden.
+            classify(
+                "not_operational",
+                label="ECDSA:key-import",
+                summary=not_operational_reason("ECDSA:key-import", f"{curve}: {ckr_name(exc.rv)}"),
+            )
+        raise
+
+    if curve not in _CURVE_BINDING_DEFECTS:
+        _CURVE_BINDING_DEFECTS[curve] = ec_public_key_binding_defect(rs, pub_key, ec_params)
+    if defect := _CURVE_BINDING_DEFECTS[curve]:
+        destroy_quietly(rs.raw, rs.sh, pub_key)
+        pytest.skip(f"Curve {curve} not honored by module: {defect}")
 
     try:
         verified = verify_single(rs.raw, rs.sh, pub_key, CKM_ECDSA, digest, raw_sig)
         if result == "invalid":
             if verified:
-                pytest.fail(f"Invalid ECDSA sig {vec_id} accepted by module")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="ECDSA",
+                    summary=f"Invalid ECDSA sig {vec_id} accepted by module",
+                )
             return
         if result == "valid" and not verified:
-            pytest.fail(f"Valid ECDSA sig {vec_id} rejected by module")
+            classify(
+                "wrong_result",
+                kind="crypto",
+                label="ECDSA",
+                summary=f"Valid ECDSA sig {vec_id} rejected by module",
+            )
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_ecdsa_runtime_reject(exc, vec_id)
-            pytest.fail(f"Valid ECDSA sig {vec_id} rejected: {exc}")
         signature_rejected_or_xfail(exc, vec_id)
         return
     finally:

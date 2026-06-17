@@ -293,6 +293,10 @@ class CK_KIP_PARAMS(ctypes.Structure):
     pass
 
 
+class CK_KMAC_PARAMS(ctypes.Structure):
+    pass
+
+
 class CK_MECHANISM(ctypes.Structure):
     pass
 
@@ -648,6 +652,8 @@ CK_KEY_WRAP_SET_OAEP_PARAMS_PTR = ctypes.POINTER(CK_KEY_WRAP_SET_OAEP_PARAMS)
 CK_KEY_WRAP_SET_OAEP_PARAMS_PTR_PTR = ctypes.POINTER(ctypes.POINTER(CK_KEY_WRAP_SET_OAEP_PARAMS))
 CK_KIP_PARAMS_PTR = ctypes.POINTER(CK_KIP_PARAMS)
 CK_KIP_PARAMS_PTR_PTR = ctypes.POINTER(ctypes.POINTER(CK_KIP_PARAMS))
+CK_KMAC_PARAMS_PTR = ctypes.POINTER(CK_KMAC_PARAMS)
+CK_KMAC_PARAMS_PTR_PTR = ctypes.POINTER(ctypes.POINTER(CK_KMAC_PARAMS))
 CK_LMOTS_TYPE = CK_ULONG
 CK_LMOTS_TYPE_PTR = ctypes.POINTER(CK_LMOTS_TYPE)
 CK_LMS_TYPE = CK_ULONG
@@ -1185,6 +1191,14 @@ CK_C_UnwrapKeyAuthenticated = ctypes.CFUNCTYPE(
     CK_ULONG,
     CK_OBJECT_HANDLE_PTR,
 )
+CK_C_DigestXofInit = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR)
+CK_C_DigestXof = ctypes.CFUNCTYPE(
+    CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG
+)
+CK_C_DigestXofUpdate = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG)
+CK_C_DigestXofExtract = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG)
+CK_C_DigestXofFinal = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG)
+CK_C_DigestXofKeyValue = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_OBJECT_HANDLE)
 
 CK_ATTRIBUTE._fields_ = [
     ("type", CK_ATTRIBUTE_TYPE),
@@ -1834,13 +1848,13 @@ CK_X9_42_DH2_DERIVE_PARAMS._fields_ = [
 CK_X9_42_MQV_DERIVE_PARAMS._fields_ = [
     ("kdf", CK_X9_42_DH_KDF_TYPE),
     ("ulOtherInfoLen", CK_ULONG),
-    ("OtherInfo", ctypes.c_void_p),
+    ("pOtherInfo", ctypes.c_void_p),
     ("ulPublicDataLen", CK_ULONG),
-    ("PublicData", ctypes.c_void_p),
+    ("pPublicData", ctypes.c_void_p),
     ("ulPrivateDataLen", CK_ULONG),
     ("hPrivateData", CK_OBJECT_HANDLE),
     ("ulPublicDataLen2", CK_ULONG),
-    ("PublicData2", ctypes.c_void_p),
+    ("pPublicData2", ctypes.c_void_p),
     ("publicKey", CK_OBJECT_HANDLE),
 ]
 
@@ -2232,6 +2246,13 @@ CK_FUNCTION_LIST._fields_ = [
     ("C_GetFunctionStatus", CK_C_GetFunctionStatus),
     ("C_CancelFunction", CK_C_CancelFunction),
     ("C_WaitForSlotEvent", CK_C_WaitForSlotEvent),
+]
+
+CK_KMAC_PARAMS._fields_ = [
+    ("hKey", CK_OBJECT_HANDLE),
+    ("ulMacLength", CK_ULONG),
+    ("pCustomizationString", CK_BYTE_PTR),
+    ("ulCustomizationStringLen", CK_ULONG),
 ]
 
 _CK_ULONG_MAX = (1 << (ctypes.sizeof(ctypes.c_ulong) * 8)) - 1
@@ -2662,9 +2683,11 @@ CKM_DSA_SHA3_384 = CKM(0x0000001A, "CKM_DSA_SHA3_384")
 CKM_DSA_SHA3_512 = CKM(0x0000001B, "CKM_DSA_SHA3_512")
 CKM_ML_DSA_KEY_PAIR_GEN = CKM(0x0000001C, "CKM_ML_DSA_KEY_PAIR_GEN")
 CKM_ML_DSA = CKM(0x0000001D, "CKM_ML_DSA")
+CKM_ML_DSA_EXTERNAL_MU_GEN = CKM(0x0000001E, "CKM_ML_DSA_EXTERNAL_MU_GEN")
 CKM_HASH_ML_DSA = CKM(0x0000001F, "CKM_HASH_ML_DSA")
 CKM_DH_PKCS_KEY_PAIR_GEN = CKM(0x00000020, "CKM_DH_PKCS_KEY_PAIR_GEN")
 CKM_DH_PKCS_DERIVE = CKM(0x00000021, "CKM_DH_PKCS_DERIVE")
+CKM_ML_DSA_EXTERNAL_MU = CKM(0x00000022, "CKM_ML_DSA_EXTERNAL_MU")
 CKM_HASH_ML_DSA_SHA224 = CKM(0x00000023, "CKM_HASH_ML_DSA_SHA224")
 CKM_HASH_ML_DSA_SHA256 = CKM(0x00000024, "CKM_HASH_ML_DSA_SHA256")
 CKM_HASH_ML_DSA_SHA384 = CKM(0x00000025, "CKM_HASH_ML_DSA_SHA384")

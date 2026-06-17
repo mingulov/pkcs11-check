@@ -16,9 +16,7 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
-    gen_aes_key,
     generate_random,
-    import_secret_key,
 )
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
@@ -27,16 +25,19 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKM_AES_GCM,
 )
-from pkcs11_check.testcases.conftest import skip_if_mech_param_unsupported
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    import_secret_key_negotiated,
+    skip_if_mech_param_unsupported,
+)
 
 pytestmark = pytest.mark.crossverify
 
 
 def _import_aes(rs: Any, key_bytes: bytes) -> int:
     """Import an AES key with encrypt/decrypt for the raw session."""
-    return import_secret_key(
-        rs.raw,
-        rs.sh,
+    return import_secret_key_negotiated(
+        rs,
         CKK_AES,
         key_bytes,
         attrs={
@@ -86,6 +87,8 @@ class TestAESGCMCrossVerify:
     def test_gcm_256_encrypt_crossverify(self, p11_raw_session: Any) -> None:
         """AES-256-GCM: encrypt via PKCS#11, verify with cryptography."""
         rs = p11_raw_session
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("CKM_AES_GCM not supported")
         key_bytes = bytes(range(32))
         nonce = bytes(12)  # 96-bit recommended IV
         plaintext = b"GCM cross-verify test data!!"
@@ -115,6 +118,8 @@ class TestAESGCMCrossVerify:
     def test_gcm_128_encrypt_crossverify(self, p11_raw_session: Any) -> None:
         """AES-128-GCM cross-verify."""
         rs = p11_raw_session
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("CKM_AES_GCM not supported")
         key_bytes = bytes(16)
         nonce = bytes(range(12))
         plaintext = b"GCM-128 test!!"
@@ -141,6 +146,8 @@ class TestAESGCMCrossVerify:
     def test_gcm_decrypt_crossverify(self, p11_raw_session: Any) -> None:
         """Encrypt with cryptography, decrypt with PKCS#11."""
         rs = p11_raw_session
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("CKM_AES_GCM not supported")
         key_bytes = bytes(range(32))
         nonce = bytes(12)
         plaintext = b"decrypt cross-verify"
@@ -224,7 +231,7 @@ class TestAESGCMProperties:
     def test_gcm_different_nonces_different_ct(self, p11_raw_session: Any) -> None:
         """Same key+plaintext with different nonces must produce different ciphertext."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         plaintext = b"nonce uniqueness"
 
         nonce1 = generate_random(rs.raw, rs.sh, 12)
@@ -257,7 +264,7 @@ class TestAESGCMProperties:
     def test_gcm_roundtrip(self, p11_raw_session: Any) -> None:
         """GCM encrypt then decrypt must return original plaintext."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         nonce = generate_random(rs.raw, rs.sh, 12)
         plaintext = b"GCM roundtrip test data"
         aad = b"authenticated but not encrypted"

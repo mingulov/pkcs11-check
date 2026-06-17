@@ -1,0 +1,21 @@
+{
+  "mechanism": "CKM_CAST3_MAC",
+  "family": "cast3_mac",
+  "key_type": "CKK_CAST3",
+  "source": "RFC 2144 appendix B.1 80-bit CAST-128 vector; one-block CBC-MAC with zero IV equals CAST3 ECB; PKCS#11 CAST3-MAC is a special case producing half the block size",
+  "vectors": [
+    {
+      "id": "cast3_mac_rfc2144_80_half_block",
+      "type": "positive",
+      "mechanism_name": "CKM_CAST3_MAC",
+      "key_type": "symmetric",
+      "key_bits": 80,
+      "key_hex": "01234567123456782345",
+      "params": {
+        "source": "RFC 2144 appendix B.1 80-bit CAST-128 vector; one-block CBC-MAC with zero IV equals CAST3 ECB; PKCS#11 CAST3-MAC is a special case producing half the block size"
+      },
+      "input_hex": "0123456789abcdef",
+      "mac_hex": "eb6a711a"
+    }
+  ]
+}

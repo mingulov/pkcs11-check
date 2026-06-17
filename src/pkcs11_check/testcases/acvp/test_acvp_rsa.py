@@ -19,21 +19,25 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives import hashes
 
+from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.raw.pack_mechanisms import mech_pss
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_rsa_keypair,
-    import_rsa_public_key,
     sign_single,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_VERIFY,
+    CKF_VERIFY,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
@@ -41,6 +45,21 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._local_verify import (
+    rsa_pkcs15_local,
+    rsa_pss_local,
+    rsa_pss_local_any_salt,
+    rsa_pss_local_recover_mgf,
+    verify_roundtrip,
+)
+from pkcs11_check.testcases._operability import (
+    Operability,
+    OperabilityResult,
+    not_operational_reason,
+    probe_operability,
+    xfail_vacuous_reject,
+)
+from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 from pkcs11_check.testcases.acvp.rsa.base_loader import (
@@ -49,7 +68,13 @@ from pkcs11_check.testcases.acvp.rsa.base_loader import (
     load_sigver_pkcs15_vectors,
     load_sigver_pss_vectors,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    import_rsa_public_key_negotiated,
+    is_known_error,
+    require_keygen_key_size,
+    skip_unless_mechanism_flag,
+    xfail_if_known_ckr,
+)
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -87,11 +112,47 @@ _RSA_SIGGEN_RUNTIME_REJECT_RVS = (
     CKR_MECHANISM_PARAM_INVALID,
 )
 
+# ACVP hashAlg string -> cryptography HashAlgorithm class for the local oracle.
+# The signing mechanism (CKM_SHA*_RSA_PKCS / ..._PSS) hashes the message
+# internally, so the oracle hashes the same message internally -- they match.
+_ACVP_HASH_TO_CRYPTO: dict[str, type[hashes.HashAlgorithm]] = {
+    "SHA-1": hashes.SHA1,
+    "SHA2-224": hashes.SHA224,
+    "SHA2-256": hashes.SHA256,
+    "SHA2-384": hashes.SHA384,
+    "SHA2-512": hashes.SHA512,
+    "SHA3-224": hashes.SHA3_224,
+    "SHA3-256": hashes.SHA3_256,
+    "SHA3-384": hashes.SHA3_384,
+    "SHA3-512": hashes.SHA3_512,
+}
 
-def _skip_rsa_public_import_reject(exc: AssertionError) -> None:
-    """Skip RSA SigVer vectors when the provider cannot import the public key."""
+
+def _crypto_hash_for(hash_alg: str) -> hashes.HashAlgorithm:
+    """Map an ACVP hashAlg string to a cryptography HashAlgorithm instance."""
+    return _ACVP_HASH_TO_CRYPTO[hash_alg]()
+
+
+def _skip_rsa_public_import_reject(exc: AssertionError, *, mech_name: str) -> None:
+    """Xfail RSA SigVer vectors when the negotiated public key import is refused.
+
+    The mechanism was already advertised (has_mechanism gate passed), so a
+    negotiation-exhausted import refusal is "advertised but not operational" ->
+    xfail per the classification model.  Non-CKR errors are harness bugs and
+    propagate.
+    """
+    if not isinstance(exc, CkrAssertionError):
+        raise exc
     if is_known_error(exc, _RSA_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
-        pytest.skip(f"RSA public key import failed: {exc}")
+        classify(
+            "not_operational",
+            kind="crypto",
+            label=f"{mech_name}:key-import",
+            summary=not_operational_reason(
+                f"{mech_name}:key-import",
+                ckr_name(exc.rv),
+            ),
+        )
     raise exc
 
 
@@ -101,7 +162,7 @@ def _skip_or_xfail_rsa_siggen_keygen_reject(exc: AssertionError, key_bits: int) 
         pytest.skip(f"RSA {key_bits}-bit key generation failed: {exc}")
     xfail_if_known_ckr(
         exc,
-        (CKR_MECHANISM_INVALID,),
+        (CKR_MECHANISM_INVALID, CKR_FUNCTION_NOT_SUPPORTED),
         "CKM_RSA_PKCS_KEY_PAIR_GEN advertised but keygen failed",
     )
 
@@ -132,6 +193,7 @@ class TestRsaPkcs15:
             pytest.skip(f"{mech_name} not supported")
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported by module")
+        require_keygen_key_size(rs, "RSA_PKCS_KEY_PAIR_GEN", key_bits, label=vec_id)
 
         pub_key = priv_key = 0
         try:
@@ -148,10 +210,24 @@ class TestRsaPkcs15:
 
             try:
                 sig = sign_single(rs.raw, rs.sh, priv_key, mech_int, vec["message"])
-                verified = verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["message"], sig)
             except AssertionError as exc:
                 _xfail_rsa_siggen_runtime_reject(exc, mech_name)
-            assert verified
+
+            hash_alg = _crypto_hash_for(vec["hash_alg"])
+
+            def _local() -> bool:
+                pub = read_rsa_public_key_or_xfail(rs, pub_key)
+                return rsa_pkcs15_local(pub, vec["message"], sig, hash_alg)
+
+            verify_roundtrip(
+                rs,
+                mechanism=mech_int,
+                data=vec["message"],
+                signature=sig,
+                local=_local,
+                module_pub_handle=pub_key,
+                label=vec_id,
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
             destroy_quietly(rs.raw, rs.sh, priv_key)
@@ -177,6 +253,7 @@ class TestRsaPss:
             pytest.skip(f"{mech_name} not supported")
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported by module")
+        require_keygen_key_size(rs, "RSA_PKCS_KEY_PAIR_GEN", key_bits, label=vec_id)
 
         pub_key = priv_key = 0
         try:
@@ -196,21 +273,116 @@ class TestRsaPss:
                 sig = sign_single(
                     rs.raw, rs.sh, priv_key, mech_int, vec["message"], mech_param=mech_param
                 )
-                verified = verify_single(
-                    rs.raw,
-                    rs.sh,
-                    pub_key,
-                    mech_int,
-                    vec["message"],
-                    sig,
-                    mech_param=mech_param,
-                )
             except AssertionError as exc:
                 _xfail_rsa_siggen_runtime_reject(exc, mech_name)
-            assert verified
+
+            # MGF1 mask uses the same hash as the signature (ACVP expresses only
+            # mgf1-with-message-hash for PKCS#11), so mgf_hash == hash_alg here.
+            hash_alg = _crypto_hash_for(vec["hash_alg"])
+
+            def _local() -> bool:
+                pub = read_rsa_public_key_or_xfail(rs, pub_key)
+                if rsa_pss_local(pub, vec["message"], sig, hash_alg, hash_alg, salt_len):
+                    return True
+                # Exact (requested salt + requested MGF=hash) failed. Before
+                # declaring a crypto break, check whether the signature is a VALID
+                # PSS signature under a non-requested PARAMETER -- the module
+                # produced sound crypto but did not honor what was asked
+                # (honest_deviation, logged), NOT a wrong_result. Only a signature
+                # invalid under EVERY standard (salt, MGF) combination is a real
+                # crypto break.
+                if rsa_pss_local_any_salt(pub, vec["message"], sig, hash_alg, hash_alg):
+                    xfail_as(
+                        "honest_deviation",
+                        kind="metadata",
+                        label=vec_id,
+                        summary=(
+                            f"{vec_id}: valid RSA-PSS signature but module did not honor "
+                            f"requested saltLen={salt_len}"
+                        ),
+                    )
+                recovered_mgf = rsa_pss_local_recover_mgf(pub, vec["message"], sig, hash_alg)
+                if recovered_mgf is not None:
+                    xfail_as(
+                        "honest_deviation",
+                        kind="metadata",
+                        label=vec_id,
+                        summary=(
+                            f"{vec_id}: valid RSA-PSS signature but module used "
+                            f"MGF1-{recovered_mgf.name} not requested MGF1-{hash_alg.name}"
+                        ),
+                    )
+                return False
+
+            verify_roundtrip(
+                rs,
+                mechanism=mech_int,
+                data=vec["message"],
+                signature=sig,
+                local=_local,
+                module_pub_handle=pub_key,
+                mech_param=mech_param,
+                label=vec_id,
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
             destroy_quietly(rs.raw, rs.sh, priv_key)
+
+
+def _pkcs15_sigver_operability(rs: Any, mech_name: str, key_bits: int) -> OperabilityResult:
+    """Canonical (mech, key-bits) SigVer probe: imported public key + single verify.
+
+    INCONCLUSIVE when staging fails (import refused / no canonical vector available) --
+    no mechanism evidence either way; NOT_OPERATIONAL when the canonical known-valid vector
+    is refused (CkrAssertionError) or verifies False; OPERATIONAL on True.
+
+    Three-state design (triage H2): tpm2 rejects all 27 valid SHA-1 SigVer vectors while
+    still rejecting every invalid one.  A reject of EVERY valid vector of a (mechanism,
+    key-size) class is "advertised but not operational" (classification model: xfail), not a
+    pile of per-vector findings; a staging failure (key import refused) must not masquerade as
+    NOT_OPERATIONAL -- it is INCONCLUSIVE (no mechanism evidence either way).
+
+    Non-CkrAssertionError exceptions from the probe are harness bugs and always propagate.
+    """
+
+    def probe() -> OperabilityResult:
+        for _vec_id, vec in _PKCS15_VER:
+            if (
+                vec["mech_name"] != mech_name
+                or not vec["expected_pass"]
+                or len(vec["n"]) * 8 != key_bits
+            ):
+                continue
+            pub_key = 0
+            try:
+                try:
+                    pub_key = import_rsa_public_key_negotiated(
+                        rs, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
+                    )
+                except CkrAssertionError as exc:
+                    return OperabilityResult(
+                        Operability.INCONCLUSIVE, f"canonical public-key import failed: {exc}"
+                    )
+                try:
+                    ok = verify_single(
+                        rs.raw, rs.sh, pub_key, vec["mech_int"], vec["message"], vec["signature"]
+                    )
+                except CkrAssertionError as exc:
+                    return OperabilityResult(
+                        Operability.NOT_OPERATIONAL, f"canonical verify rejected: {exc}"
+                    )
+                if not ok:
+                    return OperabilityResult(
+                        Operability.NOT_OPERATIONAL, "canonical known-valid vector verifies False"
+                    )
+                return OperabilityResult(Operability.OPERATIONAL, "canonical verify OK")
+            finally:
+                destroy_quietly(rs.raw, rs.sh, pub_key)
+        return OperabilityResult(
+            Operability.INCONCLUSIVE, f"no canonical valid vector for {mech_name}/{key_bits}"
+        )
+
+    return probe_operability(f"{mech_name}:{key_bits}:verify", probe)
 
 
 class TestRsaSigVer:
@@ -228,15 +400,16 @@ class TestRsaSigVer:
 
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} not supported")
+        skip_unless_mechanism_flag(rs, mech_int, int(CKF_VERIFY))
 
         pub_key = 0
         try:
             try:
-                pub_key = import_rsa_public_key(
-                    rs.raw, rs.sh, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
+                pub_key = import_rsa_public_key_negotiated(
+                    rs, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
                 )
             except AssertionError as exc:
-                _skip_rsa_public_import_reject(exc)
+                _skip_rsa_public_import_reject(exc, mech_name=mech_name)
             try:
                 verified = verify_single(
                     rs.raw, rs.sh, pub_key, mech_int, vec["message"], vec["signature"]
@@ -245,9 +418,60 @@ class TestRsaSigVer:
                 verified = signature_rejected_or_xfail(exc, vec_id)
 
             if not expected_pass and verified:
-                pytest.fail(f"{vec_id}: ACCEPTED INVALID signature - security concern")
+                fail_as(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label=f"{mech_name}:verify",
+                    summary=f"{vec_id}: ACCEPTED INVALID signature - security concern",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
+            if not expected_pass and not verified:
+                # The invalid vector was rejected -- a genuine pass ONLY if the
+                # mechanism actually verifies anything. tpm2 rejects all 27 valid
+                # SHA-1 SigVer vectors while "passing" 135 invalid ones: those
+                # rejections never evaluated the signature -> vacuous (xfail). The
+                # probe is INCONCLUSIVE-safe (canonical import refused never fires).
+                key_bits = len(vec["n"]) * 8
+                xfail_vacuous_reject(
+                    _pkcs15_sigver_operability(rs, mech_name, key_bits),
+                    label=f"{vec_id}: {mech_name} invalid-signature reject",
+                )
             if expected_pass and not verified:
-                pytest.fail(f"{vec_id}: rejected VALID signature")
+                key_bits = len(vec["n"]) * 8
+                result = _pkcs15_sigver_operability(rs, mech_name, key_bits)
+                if result.status is Operability.NOT_OPERATIONAL:
+                    xfail_as(
+                        "not_operational",
+                        kind="crypto",
+                        label=f"{mech_name}:verify",
+                        summary=(
+                            f"{vec_id}: {mech_name} canonical known-valid ACVP vector for "
+                            f"{key_bits}-bit imported keys does not verify ({result.detail}) "
+                            "-- advertised but not operational"
+                        ),
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
+                    )
+                if result.status is Operability.INCONCLUSIVE:
+                    xfail_as(
+                        "honest_deviation",
+                        label=f"{mech_name}:verify",
+                        summary=(
+                            f"{vec_id}: {mech_name} canonical probe inconclusive ({result.detail})"
+                            " -- cannot distinguish deviation from module bug, recorded as xfail"
+                        ),
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
+                    )
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label=f"{mech_name}:verify",
+                    summary=f"{vec_id}: rejected VALID signature",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
 
@@ -266,15 +490,16 @@ class TestRsaSigVer:
 
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} not supported")
+        skip_unless_mechanism_flag(rs, mech_int, int(CKF_VERIFY))
 
         pub_key = 0
         try:
             try:
-                pub_key = import_rsa_public_key(
-                    rs.raw, rs.sh, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
+                pub_key = import_rsa_public_key_negotiated(
+                    rs, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
                 )
             except AssertionError as exc:
-                _skip_rsa_public_import_reject(exc)
+                _skip_rsa_public_import_reject(exc, mech_name=mech_name)
             mech_param = mech_pss(mech_int, hash_mech=hash_mech, mgf=mgf, salt_len=salt_len)
             try:
                 verified = verify_single(
@@ -288,14 +513,37 @@ class TestRsaSigVer:
                 )
             except AssertionError as exc:
                 if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
-                    pytest.xfail(
-                        f"{mech_name} advertised but PSS params are not operational: {exc}"
+                    xfail_as(
+                        "not_operational",
+                        kind="crypto",
+                        label=f"{mech_name}:verify",
+                        summary=f"{mech_name} advertised but PSS params are not operational: {exc}",
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
                     )
+                # Known vacuous pass-through: invalid-PSS rejects are not probe-gated
+                # here (no in-scope PSS probe; the PKCS15 probe covers RSA but not PSS
+                # combos, and the PSS combo probe is private to the wycheproof module --
+                # cross-module import forbidden). See SESSION-RESTORE queue item.
                 verified = signature_rejected_or_xfail(exc, vec_id)
 
             if not expected_pass and verified:
-                pytest.fail(f"{vec_id}: ACCEPTED INVALID PSS signature - security concern")
+                fail_as(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label=f"{mech_name}:verify",
+                    summary=f"{vec_id}: ACCEPTED INVALID PSS signature - security concern",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             if expected_pass and not verified:
-                pytest.fail(f"{vec_id}: rejected VALID PSS signature")
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label=f"{mech_name}:verify",
+                    summary=f"{vec_id}: rejected VALID PSS signature",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)

@@ -5,7 +5,7 @@ against the OASIS PKCS#11 spec. In compat mode (default), acceptable
 alternatives are logged as compliance notes. In strict mode (--ckr-strict),
 only the spec-mandated CKR is accepted.
 
-Source: PKCS#11 v3.1 Sec.5.8.1 (C_EncryptInit), Sec.5.8.2 (C_Encrypt).
+Source: PKCS#11 v3.2 (C_EncryptInit, C_Encrypt).
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -49,7 +50,14 @@ class TestEncryptInitErrors:
             mech = mech_simple(CKM_SHA256)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             if rv == CKR_OK:
-                pytest.fail("Should have rejected SHA256 as encryption mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_EncryptInit:digest-mechanism",
+                    operation="C_EncryptInit",
+                    actual=rv,
+                    summary="Should have rejected SHA256 as encryption mechanism",
+                )
             assert_ckr(CKR_ENCRYPT["init_mechanism_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -69,7 +77,14 @@ class TestEncryptInitErrors:
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             if rv == CKR_OK:
                 if not exp.allow_success:
-                    pytest.fail("Should have rejected key without CKA_ENCRYPT")
+                    classify(
+                        "accepted_invalid",
+                        kind="policy",
+                        label="C_EncryptInit:CKA_ENCRYPT-false",
+                        operation="C_EncryptInit",
+                        actual=rv,
+                        summary="Should have rejected key without CKA_ENCRYPT",
+                    )
             else:
                 assert_ckr(exp, rv, ckr_strict)
         finally:
@@ -83,7 +98,14 @@ class TestEncryptInitErrors:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub)
             if rv == CKR_OK:
-                pytest.fail("Should have rejected RSA key with AES mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_EncryptInit:key-type-inconsistent",
+                    operation="C_EncryptInit",
+                    actual=rv,
+                    summary="Should have rejected RSA key with AES mechanism",
+                )
             assert_ckr(CKR_ENCRYPT["init_key_type_inconsistent"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -100,7 +122,15 @@ class TestEncryptInitErrors:
             mech = mech_bytes(CKM_AES_CBC, b"\x00" * 8)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             if rv == CKR_OK:
-                pytest.fail("Should have rejected 8-byte IV for AES-CBC")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_EncryptInit:AES-CBC-IV-length",
+                    operation="C_EncryptInit",
+                    mechanism="CKM_AES_CBC",
+                    actual=rv,
+                    summary="Should have rejected 8-byte IV for AES-CBC",
+                )
             assert_ckr(CKR_ENCRYPT["init_mechanism_param_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -124,7 +154,15 @@ class TestEncryptDataErrors:
             out_buf = (ctypes.c_ubyte * (size + 16))()
             rv = rs.raw.C_Encrypt(rs.sh, data, size, out_buf, byref(out_len))
             if rv == CKR_OK:
-                pytest.fail(f"Should have rejected {size}-byte ECB data")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="C_Encrypt:AES-ECB-unaligned-data",
+                    operation="C_Encrypt",
+                    mechanism="CKM_AES_ECB",
+                    actual=rv,
+                    summary=f"Should have rejected {size}-byte ECB data",
+                )
             assert_ckr(CKR_ENCRYPT["data_len_range"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -165,7 +203,15 @@ class TestEncryptDataErrors:
             out_buf = (ctypes.c_ubyte * 256)()
             rv = rs.raw.C_Encrypt(rs.sh, data, 246, out_buf, byref(out_len))
             if rv == CKR_OK:
-                pytest.fail("Should have rejected 246 bytes for RSA-2048 PKCS")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="C_Encrypt:RSA-PKCS-data-too-long",
+                    operation="C_Encrypt",
+                    mechanism="CKM_RSA_PKCS",
+                    actual=rv,
+                    summary="Should have rejected 246 bytes for RSA-2048 PKCS",
+                )
             assert_ckr(CKR_ENCRYPT["data_too_long_rsa"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -223,7 +269,15 @@ class TestEncryptDataErrors:
             mech_ecb = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech_ecb.byref(), des_key.value)
             if rv == CKR_OK:
-                pytest.fail("Should have rejected DES3 key with AES mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_EncryptInit:DES3-key-AES-mechanism",
+                    operation="C_EncryptInit",
+                    mechanism="CKM_AES_ECB",
+                    actual=rv,
+                    summary="Should have rejected DES3 key with AES mechanism",
+                )
             if rv in (CKR_KEY_TYPE_INCONSISTENT, CKR_KEY_SIZE_RANGE):
                 pass  # Both are correct per spec
             else:

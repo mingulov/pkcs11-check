@@ -13,11 +13,8 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.recipes import (
-    create_object,
     destroy_quietly,
-    gen_aes_key,
     read_attributes,
-    sign_single,
 )
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
@@ -35,21 +32,14 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_HMAC,
     CKM_SHA512_HMAC,
     CKO_SECRET_KEY,
-    CKR_DEVICE_ERROR,
-    CKR_FUNCTION_FAILED,
-    CKR_GENERAL_ERROR,
-    CKR_MECHANISM_INVALID,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    create_object_negotiated,
+    gen_aes_key_or_xfail,
+    hmac_sign_or_xfail,
+)
 
 pytestmark = pytest.mark.keymgmt
-
-_HMAC_RUNTIME_REJECT_RVS = (
-    CKR_DEVICE_ERROR,
-    CKR_FUNCTION_FAILED,
-    CKR_GENERAL_ERROR,
-    CKR_MECHANISM_INVALID,
-)
 
 
 class TestGenericSecretKeyGen:
@@ -62,11 +52,11 @@ class TestGenericSecretKeyGen:
             pytest.skip("CKM_GENERIC_SECRET_KEY_GEN not supported")
 
         for bits in [128, 256, 512]:
-            key = gen_aes_key(
-                rs.raw,
-                rs.sh,
+            key = gen_aes_key_or_xfail(
+                rs,
                 bits,
                 mechanism=CKM_GENERIC_SECRET_KEY_GEN,
+                mechanism_label="GENERIC_SECRET_KEY_GEN",
                 attrs={
                     CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                     CKA_SENSITIVE: False,
@@ -87,22 +77,22 @@ class TestGenericSecretKeyGen:
         if not rs.has_mechanism("GENERIC_SECRET_KEY_GEN"):
             pytest.skip("CKM_GENERIC_SECRET_KEY_GEN not supported")
 
-        k1 = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        k1 = gen_aes_key_or_xfail(
+            rs,
             256,
             mechanism=CKM_GENERIC_SECRET_KEY_GEN,
+            mechanism_label="GENERIC_SECRET_KEY_GEN",
             attrs={
                 CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                 CKA_SENSITIVE: False,
                 CKA_EXTRACTABLE: True,
             },
         )
-        k2 = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        k2 = gen_aes_key_or_xfail(
+            rs,
             256,
             mechanism=CKM_GENERIC_SECRET_KEY_GEN,
+            mechanism_label="GENERIC_SECRET_KEY_GEN",
             attrs={
                 CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                 CKA_SENSITIVE: False,
@@ -129,9 +119,8 @@ class TestGenericSecretHMAC:
         key_bytes = b"hmac-test-key-for-generic-secret"
         data = b"HMAC with generic secret key"
 
-        key_h = create_object(
-            rs.raw,
-            rs.sh,
+        key_h = create_object_negotiated(
+            rs,
             {
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_SHA256_HMAC,
@@ -143,14 +132,7 @@ class TestGenericSecretHMAC:
             },
         )
         try:
-            try:
-                p11_mac = sign_single(rs.raw, rs.sh, key_h, CKM_SHA256_HMAC, data)
-            except AssertionError as exc:
-                xfail_if_known_ckr(
-                    exc,
-                    _HMAC_RUNTIME_REJECT_RVS,
-                    "SHA256_HMAC advertised but sign is not operational",
-                )
+            p11_mac = hmac_sign_or_xfail(rs, key_h, CKM_SHA256_HMAC, data, label="SHA256_HMAC")
             expected = hmac_mod.new(key_bytes, data, hashlib.sha256).digest()
             assert p11_mac == expected
         finally:
@@ -164,9 +146,8 @@ class TestGenericSecretHMAC:
         key_bytes = bytes(range(64))
         data = b"HMAC-SHA512 cross-verification test data"
 
-        key_h = create_object(
-            rs.raw,
-            rs.sh,
+        key_h = create_object_negotiated(
+            rs,
             {
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_SHA512_HMAC,
@@ -178,14 +159,7 @@ class TestGenericSecretHMAC:
             },
         )
         try:
-            try:
-                p11_mac = sign_single(rs.raw, rs.sh, key_h, CKM_SHA512_HMAC, data)
-            except AssertionError as exc:
-                xfail_if_known_ckr(
-                    exc,
-                    _HMAC_RUNTIME_REJECT_RVS,
-                    "SHA512_HMAC advertised but sign is not operational",
-                )
+            p11_mac = hmac_sign_or_xfail(rs, key_h, CKM_SHA512_HMAC, data, label="SHA512_HMAC")
             expected = hmac_mod.new(key_bytes, data, hashlib.sha512).digest()
             assert p11_mac == expected
         finally:

@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.pack import mech_simple
-from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key, read_attributes
+from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
@@ -37,6 +37,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     classify_policy_enforcement,
+    gen_aes_key_or_xfail,
 )
 
 pytestmark = pytest.mark.security
@@ -70,7 +71,7 @@ class TestCKRMechanismErrors:
     def test_ckr_mechanism_invalid(self, p11_raw_session: Any) -> None:
         """Using a non-existent mechanism triggers CKR_MECHANISM_INVALID."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             # Use SHA256 (digest mech) for encrypt - should fail
             mech = mech_simple(CKM_SHA256)
@@ -86,7 +87,7 @@ class TestCKRDataErrors:
     def test_ckr_data_len_range_ecb(self, p11_raw_session: Any) -> None:
         """Non-block-aligned data in AES-ECB triggers CKR_DATA_LEN_RANGE."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
@@ -107,13 +108,13 @@ class TestCKRAttributeErrors:
     def test_ckr_attribute_sensitive(self, p11_raw_session: Any) -> None:
         """Reading CKA_VALUE on sensitive key triggers CKR_ATTRIBUTE_SENSITIVE.
 
-        PKCS#11 v3.1 Sec.4.9.2: CKA_VALUE on a CKA_SENSITIVE=True key MUST return
+        PKCS#11 v3.2: CKA_VALUE on a CKA_SENSITIVE=True key MUST return
         CKR_ATTRIBUTE_SENSITIVE.
         """
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SENSITIVE: True})
+        key = gen_aes_key_or_xfail(rs, 256, attrs={CKA_SENSITIVE: True})
         try:
-            # Type-B claim/effect-check: claimed = the key reports
+            # policy claim/effect-check: claimed = the key reports
             # CKA_SENSITIVE=True back; violated = the protected CKA_VALUE is
             # actually readable (read_attributes omits unavailable attributes).
             sens_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
@@ -124,7 +125,7 @@ class TestCKRAttributeErrors:
                 claimed=claimed,
                 violated=violated,
                 label="read CKA_VALUE on a CKA_SENSITIVE=True key "
-                "(PKCS#11 v3.1 Sec.4.9.2 requires CKR_ATTRIBUTE_SENSITIVE)",
+                "(PKCS#11 v3.2 requires CKR_ATTRIBUTE_SENSITIVE)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -132,7 +133,7 @@ class TestCKRAttributeErrors:
     def test_ckr_attribute_type_invalid(self, p11_raw_session: Any) -> None:
         """Reading a nonsense attribute ID triggers CKR_ATTRIBUTE_TYPE_INVALID or similar."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             tmpl = (CK_ATTRIBUTE * 1)()
             tmpl[0].type = 0xFFFFFFFF
@@ -151,7 +152,7 @@ class TestCKRSessionErrors:
     def test_ckr_user_already_logged_in(self, p11_raw_session: Any) -> None:
         """Double login triggers CKR_USER_ALREADY_LOGGED_IN.
 
-        Per PKCS#11 v3.1 Sec.5.6.7: C_Login when already logged in MUST return
+        Per PKCS#11 v3.2: C_Login when already logged in MUST return
         CKR_USER_ALREADY_LOGGED_IN. NSS returns CKR_PIN_INCORRECT because it
         re-validates the PIN on every C_Login call even when already authenticated.
         CKR_USER_TYPE_INVALID is accepted for NSS slots that require no login.
@@ -177,7 +178,7 @@ class TestCKRObjectErrors:
     ) -> None:
         """Using a destroyed object's handle -> CKR_OBJECT_HANDLE_INVALID."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         rs.raw.C_DestroyObject(rs.sh, key)
         # Negative op on a destroyed handle. Issue C_GetAttributeValue *directly*
         # (not via read_attributes, which would re-raise the correct

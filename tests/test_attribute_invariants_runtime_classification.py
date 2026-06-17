@@ -26,8 +26,12 @@ from _pytest.outcomes import Failed, XFailed
 from pkcs11_check.raw.types_std import (
     CKA_ALWAYS_SENSITIVE,
     CKA_EXTRACTABLE,
+    CKA_KEY_GEN_MECHANISM,
+    CKA_LOCAL,
     CKA_NEVER_EXTRACTABLE,
     CKA_SENSITIVE,
+    CKM_AES_KEY_GEN,
+    CKM_GENERIC_SECRET_KEY_GEN,
 )
 from pkcs11_check.testcases import test_attribute_invariants as tai
 
@@ -39,7 +43,9 @@ def _session() -> SimpleNamespace:
 def _reader(values: dict[int, object]):  # type: ignore[no-untyped-def]
     """read_attributes stub returning only the requested+present attributes."""
 
-    def _read(_raw: object, _sh: object, _handle: object, attr_list: list[int]) -> dict:
+    def _read(
+        _raw: object, _sh: object, _handle: object, attr_list: list[int]
+    ) -> dict[int, object]:
         return {a: values[a] for a in attr_list if a in values}
 
     return _read
@@ -130,3 +136,107 @@ def test_always_sensitive_consistent_passes(monkeypatch: pytest.MonkeyPatch) -> 
         monkeypatch,
         {CKA_SENSITIVE: True, CKA_ALWAYS_SENSITIVE: True},
     )
+
+
+# --- generated-key origin invariant --------------------------------------
+
+
+def _run_generated_aes_origin(monkeypatch: pytest.MonkeyPatch, values: dict[int, object]) -> None:
+    _setup(monkeypatch, values)
+    tai.TestDerivedAttributeInvariants().test_generated_aes_key_reports_local_key_gen_mechanism(
+        _session()
+    )
+
+
+def test_generated_aes_origin_wrong_mechanism_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(Failed) as ei:
+        _run_generated_aes_origin(
+            monkeypatch,
+            {
+                CKA_LOCAL: True,
+                CKA_KEY_GEN_MECHANISM: int(CKM_GENERIC_SECRET_KEY_GEN),
+            },
+        )
+    assert not isinstance(ei.value, XFailed)
+
+
+def test_generated_aes_origin_missing_local_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        _run_generated_aes_origin(
+            monkeypatch,
+            {CKA_KEY_GEN_MECHANISM: int(CKM_AES_KEY_GEN)},
+        )
+
+
+def test_generated_aes_origin_local_false_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        _run_generated_aes_origin(
+            monkeypatch,
+            {CKA_LOCAL: False, CKA_KEY_GEN_MECHANISM: int(CKM_AES_KEY_GEN)},
+        )
+
+
+def test_generated_aes_origin_missing_mechanism_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        _run_generated_aes_origin(monkeypatch, {CKA_LOCAL: True})
+
+
+def test_generated_aes_origin_consistent_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    _run_generated_aes_origin(
+        monkeypatch,
+        {CKA_LOCAL: True, CKA_KEY_GEN_MECHANISM: int(CKM_AES_KEY_GEN)},
+    )
+
+
+# --- imported-key origin invariant ---------------------------------------
+
+
+def _run_imported_aes_origin(
+    monkeypatch: pytest.MonkeyPatch,
+    values: dict[int, object],
+    keygen_state: tuple[str, int | None],
+) -> None:
+    _setup(monkeypatch, values)
+    monkeypatch.setattr(tai, "import_secret_key", lambda *_a, **_k: 1, raising=False)
+    monkeypatch.setattr(tai, "_read_ulong_attr_state", lambda *_a: keygen_state, raising=False)
+    monkeypatch.setattr(
+        tai, "skip_unless_create_object_supported", lambda *_a, **_k: None, raising=False
+    )
+    tai.TestDerivedAttributeInvariants().test_imported_aes_key_reports_not_local_no_key_gen_mechanism(
+        _session()
+    )
+
+
+def test_imported_aes_origin_readable_mechanism_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(Failed) as ei:
+        _run_imported_aes_origin(
+            monkeypatch,
+            {CKA_LOCAL: False},
+            ("present", int(CKM_AES_KEY_GEN)),
+        )
+    assert not isinstance(ei.value, XFailed)
+
+
+def test_imported_aes_origin_unavailable_mechanism_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _run_imported_aes_origin(monkeypatch, {CKA_LOCAL: False}, ("unavailable", None))
+
+
+def test_imported_aes_origin_missing_local_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        _run_imported_aes_origin(monkeypatch, {}, ("unavailable", None))
+
+
+def test_imported_aes_origin_local_true_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        _run_imported_aes_origin(monkeypatch, {CKA_LOCAL: True}, ("present", int(CKM_AES_KEY_GEN)))
+
+
+def test_imported_aes_origin_unsupported_mechanism_xfails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        _run_imported_aes_origin(monkeypatch, {CKA_LOCAL: False}, ("unsupported", None))

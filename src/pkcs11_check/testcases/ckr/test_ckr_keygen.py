@@ -1,15 +1,17 @@
 """CKR compliance tests for C_GenerateKey and C_GenerateKeyPair.
 
-Source: PKCS#11 v3.1 Sec.5.14.1 (C_GenerateKey), Sec.5.14.2 (C_GenerateKeyPair).
+Source: PKCS#11 v3.2 (C_GenerateKey, C_GenerateKeyPair).
 """
 
 from __future__ import annotations
 
-from ctypes import byref
+from ctypes import byref, sizeof
 from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, fail_as, xfail_as
+from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import (
     attr_bool,
     attr_bytes,
@@ -17,29 +19,129 @@ from pkcs11_check.raw.pack import (
     mech_simple,
     template,
 )
-from pkcs11_check.raw.recipes import destroy_quietly
+from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
+    CK_ULONG,
+    CKA_CLASS,
+    CKA_DECAPSULATE,
+    CKA_DECRYPT,
     CKA_EC_PARAMS,
+    CKA_ENCAPSULATE,
+    CKA_ENCRYPT,
     CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
     CKA_MODULUS_BITS,
+    CKA_PARAMETER_SET,
     CKA_PRIVATE,
+    CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_TOKEN,
     CKA_VALUE_LEN,
+    CKA_VERIFY,
+    CKK_DES,
+    CKK_DES2,
+    CKK_DES3,
     CKM_AES_ECB,
     CKM_AES_KEY_GEN,
+    CKM_DES2_KEY_GEN,
+    CKM_DES3_KEY_GEN,
+    CKM_DES_KEY_GEN,
     CKM_EC_KEY_PAIR_GEN,
+    CKM_ML_DSA_KEY_PAIR_GEN,
+    CKM_ML_KEM_KEY_PAIR_GEN,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SHA256,
+    CKO_SECRET_KEY,
+    CKP_ML_DSA_65,
+    CKP_ML_KEM_768,
     CKR_OK,
 )
+from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_KEYGEN, assert_ckr
+from pkcs11_check.testcases.ckr._malformed_attrs import (
+    make_bool_attr_overlong,
+    make_ulong_attr_with_length,
+)
+from pkcs11_check.testcases.conftest import assert_correct, classify_negative_rv
 
 pytestmark = pytest.mark.access
+
+_FIXED_LENGTH_SECRET_KEYGEN_CASES: tuple[tuple[str, int, int], ...] = (
+    ("DES_KEY_GEN", CKM_DES_KEY_GEN, CKK_DES),
+    ("DES2_KEY_GEN", CKM_DES2_KEY_GEN, CKK_DES2),
+    ("DES3_KEY_GEN", CKM_DES3_KEY_GEN, CKK_DES3),
+)
 
 
 class TestGenerateKeyErrors:
     """Error conditions for C_GenerateKey (Sec.5.14.1)."""
+
+    def test_fixed_length_generate_key_accepts_null_empty_template(
+        self, p11_raw_session: Any
+    ) -> None:
+        """Fixed-length C_GenerateKey may use pTemplate=NULL when ulCount is zero."""
+        rs = p11_raw_session
+        selected = next(
+            (
+                (name, mechanism, expected_key_type)
+                for name, mechanism, expected_key_type in _FIXED_LENGTH_SECRET_KEYGEN_CASES
+                if rs.has_mechanism(name)
+            ),
+            None,
+        )
+        if selected is None:
+            pytest.skip("No fixed-length secret key generation mechanism supported")
+
+        name, mechanism, expected_key_type = selected
+        mech = mech_simple(mechanism)
+        key = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), None, 0, byref(key))
+        if rv != CKR_OK:
+            # Advertised fixed-length keygen cleanly errored on the spec-permitted
+            # NULL/empty template -> advertised but not operational -> xfail.
+            xfail_as(
+                "not_operational",
+                label=f"{name}:generate-key-null-template",
+                operation="C_GenerateKey",
+                mechanism=f"CKM_{name}",
+                actual=rv,
+                summary=f"{name} advertised but C_GenerateKey(NULL, 0) returned {ckr_name(rv)}",
+            )
+
+        try:
+            if not key.value:
+                # C_GenerateKey claimed CKR_OK yet returned no key handle:
+                # claimed success not honored -> lifecycle contradiction.
+                fail_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label=f"{name}:generate-key-null-template",
+                    operation="C_GenerateKey",
+                    actual=rv,
+                    summary="C_GenerateKey(NULL, 0) returned CKR_OK without a key handle",
+                )
+            attrs = read_attributes(rs.raw, rs.sh, key.value, [CKA_CLASS, CKA_KEY_TYPE])
+            assert_correct(
+                actual=attrs[CKA_CLASS],
+                expected=CKO_SECRET_KEY,
+                label=f"{name}:generate-key-null-template:CKA_CLASS",
+                operation="C_GenerateKey",
+                mechanism=f"CKM_{name}",
+                kind="metadata",
+            )
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=expected_key_type,
+                label=f"{name}:generate-key-null-template:CKA_KEY_TYPE",
+                operation="C_GenerateKey",
+                mechanism=f"CKM_{name}",
+                kind="metadata",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key.value)
 
     def test_mechanism_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Using hash mechanism for keygen -> CKR_MECHANISM_INVALID."""
@@ -56,7 +158,14 @@ class TestGenerateKeyErrors:
         )
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, key.value)
-            pytest.fail("Should have rejected SHA256 as key generation mechanism")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_GenerateKey:digest-mechanism",
+                operation="C_GenerateKey",
+                actual=rv,
+                summary="Should have rejected SHA256 as key generation mechanism",
+            )
         assert_ckr(CKR_KEYGEN["genkey_mechanism_invalid"], rv, ckr_strict)
 
     def test_bad_key_size_zero(self, p11_raw_session: Any, ckr_strict: bool) -> None:
@@ -76,7 +185,15 @@ class TestGenerateKeyErrors:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, key.value)
             if not exp.allow_success:
-                pytest.fail("Should have rejected AES key size 0")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_GenerateKey:AES-size-zero",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_AES_KEY_GEN",
+                    actual=rv,
+                    summary="Should have rejected AES key size 0",
+                )
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
@@ -105,7 +222,15 @@ class TestGenerateKeyErrors:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, key.value)
             if not exp.allow_success:
-                pytest.fail("Should have rejected AES key size 13 bytes (non-standard)")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_GenerateKey:AES-size-non-standard",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_AES_KEY_GEN",
+                    actual=rv,
+                    summary="Should have rejected AES key size 13 bytes (non-standard)",
+                )
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
@@ -145,6 +270,79 @@ class TestGenerateKeyErrors:
         else:
             assert_ckr(exp, rv, ckr_strict)
 
+    def test_token_bool_overlong_length(self, p11_raw_session: Any) -> None:
+        """C_GenerateKey must reject CK_ULONG-sized CKA_TOKEN template value."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
+            pytest.skip("AES_KEY_GEN not supported")
+
+        mech = mech_simple(CKM_AES_KEY_GEN)
+        tmpl = template(
+            attr_ulong(CKA_VALUE_LEN, 16),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_ENCRYPT, True),
+            attr_bool(CKA_DECRYPT, True),
+        )
+        _storage = make_bool_attr_overlong(tmpl, 1)
+        key = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKey(
+            rs.sh,
+            mech.byref(),
+            tmpl.ptr,
+            tmpl.count,
+            byref(key),
+        )
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, key.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label="C_GenerateKey with CK_ULONG-sized CKA_TOKEN boolean attribute",
+            kind="metadata",
+        )
+
+    @pytest.mark.parametrize(
+        ("attr_len", "case_name"),
+        [
+            pytest.param(1, "underlong", id="underlong"),
+            pytest.param(sizeof(CK_ULONG) + 1, "overlong", id="overlong"),
+        ],
+    )
+    def test_value_len_ulong_malformed_length(
+        self,
+        p11_raw_session: Any,
+        attr_len: int,
+        case_name: str,
+    ) -> None:
+        """C_GenerateKey must reject non-CK_ULONG-sized CKA_VALUE_LEN."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
+            pytest.skip("AES_KEY_GEN not supported")
+
+        mech = mech_simple(CKM_AES_KEY_GEN)
+        tmpl = template(
+            attr_ulong(CKA_VALUE_LEN, 16),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_ENCRYPT, True),
+            attr_bool(CKA_DECRYPT, True),
+        )
+        _storage = make_ulong_attr_with_length(tmpl, 0, 16, attr_len)
+        key = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKey(
+            rs.sh,
+            mech.byref(),
+            tmpl.ptr,
+            tmpl.count,
+            byref(key),
+        )
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, key.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label=f"C_GenerateKey with {case_name} CKA_VALUE_LEN CK_ULONG attribute",
+        )
+
 
 class TestGenerateKeyPairErrors:
     """Error conditions for C_GenerateKeyPair (Sec.5.14.2)."""
@@ -170,7 +368,15 @@ class TestGenerateKeyPairErrors:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, pub.value)
             destroy_quietly(rs.raw, rs.sh, priv.value)
-            pytest.fail("Should have rejected RSA key size 0")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_GenerateKeyPair:RSA-size-zero",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                actual=rv,
+                summary="Should have rejected RSA key size 0",
+            )
         assert_ckr(CKR_KEYGEN["genkeypair_bad_size"], rv, ckr_strict)
 
     def test_bad_rsa_size_tiny(self, p11_raw_session: Any, ckr_strict: bool) -> None:
@@ -194,7 +400,15 @@ class TestGenerateKeyPairErrors:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, pub.value)
             destroy_quietly(rs.raw, rs.sh, priv.value)
-            pytest.fail("Should have rejected RSA key size 64")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_GenerateKeyPair:RSA-size-tiny",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                actual=rv,
+                summary="Should have rejected RSA key size 64",
+            )
         assert_ckr(CKR_KEYGEN["genkeypair_bad_size"], rv, ckr_strict)
 
     def test_mechanism_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
@@ -218,7 +432,14 @@ class TestGenerateKeyPairErrors:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, pub.value)
             destroy_quietly(rs.raw, rs.sh, priv.value)
-            pytest.fail("Should have rejected AES_ECB for RSA keypair generation")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_GenerateKeyPair:AES-mechanism",
+                operation="C_GenerateKeyPair",
+                actual=rv,
+                summary="Should have rejected AES_ECB for RSA keypair generation",
+            )
         assert_ckr(CKR_KEYGEN["genkeypair_mechanism_invalid"], rv, ckr_strict)
 
     def test_ec_curve_not_supported(self, p11_raw_session: Any, ckr_strict: bool) -> None:
@@ -246,7 +467,15 @@ class TestGenerateKeyPairErrors:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, pub.value)
             destroy_quietly(rs.raw, rs.sh, priv.value)
-            pytest.fail("Should have rejected bogus EC curve OID")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_GenerateKeyPair:bogus-EC-curve",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_EC_KEY_PAIR_GEN",
+                actual=rv,
+                summary="Should have rejected bogus EC curve OID",
+            )
         assert_ckr(CKR_KEYGEN["genkeypair_curve_not_supported"], rv, ckr_strict)
 
     def test_attribute_type_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
@@ -269,7 +498,14 @@ class TestGenerateKeyPairErrors:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, key.value)
             if not exp.allow_success:
-                pytest.fail("Should have rejected bogus attribute type")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_GenerateKey:bogus-attribute-type",
+                    operation="C_GenerateKey",
+                    actual=rv,
+                    summary="Should have rejected bogus attribute type",
+                )
         else:
             assert_ckr(exp, rv, ckr_strict)
 
@@ -298,5 +534,379 @@ class TestGenerateKeyPairErrors:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, pub.value)
             destroy_quietly(rs.raw, rs.sh, priv.value)
-            pytest.fail("Should have rejected malformed EC params")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_GenerateKeyPair:malformed-EC-params",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_EC_KEY_PAIR_GEN",
+                actual=rv,
+                summary="Should have rejected malformed EC params",
+            )
         assert_ckr(CKR_KEYGEN["genkeypair_domain_params_invalid"], rv, ckr_strict)
+
+    def test_public_token_bool_overlong_length(self, p11_raw_session: Any) -> None:
+        """C_GenerateKeyPair must reject CK_ULONG-sized public CKA_TOKEN."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("RSA_PKCS_KEY_PAIR_GEN not supported")
+
+        mech = mech_simple(CKM_RSA_PKCS_KEY_PAIR_GEN)
+        pub_tmpl = template(
+            attr_ulong(CKA_MODULUS_BITS, 2048),
+            attr_bytes(CKA_PUBLIC_EXPONENT, b"\x01\x00\x01"),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_VERIFY, True),
+            attr_bool(CKA_ENCRYPT, True),
+        )
+        priv_tmpl = template(
+            attr_bool(CKA_SIGN, True),
+            attr_bool(CKA_DECRYPT, True),
+        )
+        _storage = make_bool_attr_overlong(pub_tmpl, 2)
+        pub = CK_OBJECT_HANDLE(0)
+        priv = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            pub_tmpl.ptr,
+            pub_tmpl.count,
+            priv_tmpl.ptr,
+            priv_tmpl.count,
+            byref(pub),
+            byref(priv),
+        )
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, pub.value)
+            destroy_quietly(rs.raw, rs.sh, priv.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label="C_GenerateKeyPair with CK_ULONG-sized public CKA_TOKEN boolean attribute",
+        )
+
+    def test_private_token_bool_overlong_length(self, p11_raw_session: Any) -> None:
+        """C_GenerateKeyPair must reject CK_ULONG-sized private CKA_TOKEN."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("RSA_PKCS_KEY_PAIR_GEN not supported")
+
+        mech = mech_simple(CKM_RSA_PKCS_KEY_PAIR_GEN)
+        pub_tmpl = template(
+            attr_ulong(CKA_MODULUS_BITS, 2048),
+            attr_bytes(CKA_PUBLIC_EXPONENT, b"\x01\x00\x01"),
+            attr_bool(CKA_VERIFY, True),
+            attr_bool(CKA_ENCRYPT, True),
+        )
+        priv_tmpl = template(
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SIGN, True),
+            attr_bool(CKA_DECRYPT, True),
+        )
+        _storage = make_bool_attr_overlong(priv_tmpl, 0)
+        pub = CK_OBJECT_HANDLE(0)
+        priv = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            pub_tmpl.ptr,
+            pub_tmpl.count,
+            priv_tmpl.ptr,
+            priv_tmpl.count,
+            byref(pub),
+            byref(priv),
+        )
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, pub.value)
+            destroy_quietly(rs.raw, rs.sh, priv.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label="C_GenerateKeyPair with CK_ULONG-sized private CKA_TOKEN boolean attribute",
+        )
+
+    @pytest.mark.parametrize(
+        "malformed_template",
+        ["public", "private"],
+        ids=["public-template", "private-template"],
+    )
+    def test_ec_token_bool_overlong_length(
+        self, p11_raw_session: Any, malformed_template: str
+    ) -> None:
+        """EC C_GenerateKeyPair must reject CK_ULONG-sized CKA_TOKEN."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
+            pytest.skip("EC_KEY_PAIR_GEN not supported")
+
+        curve_oid = encode_named_curve_parameters("secp256r1")
+        mech = mech_simple(CKM_EC_KEY_PAIR_GEN)
+        control_pub_tmpl = template(
+            attr_bytes(CKA_EC_PARAMS, curve_oid),
+            attr_bool(CKA_VERIFY, True),
+        )
+        control_priv_tmpl = template(attr_bool(CKA_SIGN, True))
+        control_pub = CK_OBJECT_HANDLE(0)
+        control_priv = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            control_pub_tmpl.ptr,
+            control_pub_tmpl.count,
+            control_priv_tmpl.ptr,
+            control_priv_tmpl.count,
+            byref(control_pub),
+            byref(control_priv),
+        )
+        if rv != CKR_OK:
+            xfail_as(
+                "not_operational",
+                label="EC_KEY_PAIR_GEN:P-256-control",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_EC_KEY_PAIR_GEN",
+                actual=rv,
+                summary=f"EC P-256 keypair generation is not operational: {ckr_name(rv)}",
+            )
+        destroy_quietly(rs.raw, rs.sh, control_pub.value)
+        destroy_quietly(rs.raw, rs.sh, control_priv.value)
+
+        if malformed_template == "public":
+            pub_tmpl = template(
+                attr_bytes(CKA_EC_PARAMS, curve_oid),
+                attr_bool(CKA_TOKEN, False),
+                attr_bool(CKA_VERIFY, True),
+            )
+            priv_tmpl = template(attr_bool(CKA_SIGN, True))
+            _storage = make_bool_attr_overlong(pub_tmpl, 1)
+        else:
+            pub_tmpl = template(
+                attr_bytes(CKA_EC_PARAMS, curve_oid),
+                attr_bool(CKA_VERIFY, True),
+            )
+            priv_tmpl = template(
+                attr_bool(CKA_TOKEN, False),
+                attr_bool(CKA_SIGN, True),
+            )
+            _storage = make_bool_attr_overlong(priv_tmpl, 0)
+        pub = CK_OBJECT_HANDLE(0)
+        priv = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            pub_tmpl.ptr,
+            pub_tmpl.count,
+            priv_tmpl.ptr,
+            priv_tmpl.count,
+            byref(pub),
+            byref(priv),
+        )
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, pub.value)
+            destroy_quietly(rs.raw, rs.sh, priv.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label=(
+                f"EC C_GenerateKeyPair with CK_ULONG-sized {malformed_template} "
+                "CKA_TOKEN boolean attribute"
+            ),
+        )
+
+    @pytest.mark.pqc
+    @pytest.mark.parametrize(
+        ("malformed_template", "attr_len", "case_name"),
+        [
+            pytest.param("public", 1, "underlong", id="public-underlong"),
+            pytest.param("public", sizeof(CK_ULONG) + 1, "overlong", id="public-overlong"),
+            pytest.param("private", 1, "underlong", id="private-underlong"),
+            pytest.param("private", sizeof(CK_ULONG) + 1, "overlong", id="private-overlong"),
+        ],
+    )
+    def test_ml_kem_parameter_set_ulong_malformed_length(
+        self,
+        p11_raw_session: Any,
+        malformed_template: str,
+        attr_len: int,
+        case_name: str,
+    ) -> None:
+        """ML-KEM CKA_PARAMETER_SET with non-CK_ULONG-sized storage must be rejected."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("ML_KEM_KEY_PAIR_GEN"):
+            pytest.skip("ML_KEM_KEY_PAIR_GEN not supported")
+
+        mech = mech_simple(CKM_ML_KEM_KEY_PAIR_GEN)
+        control_pub_tmpl = template(
+            attr_bool(CKA_ENCAPSULATE, True),
+            attr_ulong(CKA_PARAMETER_SET, CKP_ML_KEM_768),
+            attr_bool(CKA_TOKEN, False),
+        )
+        control_priv_tmpl = template(
+            attr_bool(CKA_DECAPSULATE, True),
+            attr_ulong(CKA_PARAMETER_SET, CKP_ML_KEM_768),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, False),
+        )
+        control_pub = CK_OBJECT_HANDLE(0)
+        control_priv = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            control_pub_tmpl.ptr,
+            control_pub_tmpl.count,
+            control_priv_tmpl.ptr,
+            control_priv_tmpl.count,
+            byref(control_pub),
+            byref(control_priv),
+        )
+        if rv != CKR_OK:
+            xfail_as(
+                "not_operational",
+                label="ML_KEM_KEY_PAIR_GEN:768-control",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                actual=rv,
+                summary=f"ML-KEM-768 keypair generation is not operational: {ckr_name(rv)}",
+            )
+        destroy_quietly(rs.raw, rs.sh, control_pub.value)
+        destroy_quietly(rs.raw, rs.sh, control_priv.value)
+
+        pub_tmpl = template(
+            attr_bool(CKA_ENCAPSULATE, True),
+            attr_ulong(CKA_PARAMETER_SET, CKP_ML_KEM_768),
+            attr_bool(CKA_TOKEN, False),
+        )
+        priv_tmpl = template(
+            attr_bool(CKA_DECAPSULATE, True),
+            attr_ulong(CKA_PARAMETER_SET, CKP_ML_KEM_768),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, False),
+        )
+        if malformed_template == "public":
+            _storage = make_ulong_attr_with_length(pub_tmpl, 1, CKP_ML_KEM_768, attr_len)
+        else:
+            _storage = make_ulong_attr_with_length(priv_tmpl, 1, CKP_ML_KEM_768, attr_len)
+
+        pub = CK_OBJECT_HANDLE(0)
+        priv = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            pub_tmpl.ptr,
+            pub_tmpl.count,
+            priv_tmpl.ptr,
+            priv_tmpl.count,
+            byref(pub),
+            byref(priv),
+        )
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, pub.value)
+            destroy_quietly(rs.raw, rs.sh, priv.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label=(
+                f"ML-KEM C_GenerateKeyPair with {case_name} {malformed_template} "
+                "CKA_PARAMETER_SET CK_ULONG attribute"
+            ),
+        )
+
+    @pytest.mark.pqc
+    @pytest.mark.parametrize(
+        ("malformed_template", "attr_len", "case_name"),
+        [
+            pytest.param("public", 1, "underlong", id="public-underlong"),
+            pytest.param("public", sizeof(CK_ULONG) + 1, "overlong", id="public-overlong"),
+            pytest.param("private", 1, "underlong", id="private-underlong"),
+            pytest.param("private", sizeof(CK_ULONG) + 1, "overlong", id="private-overlong"),
+        ],
+    )
+    def test_ml_dsa_parameter_set_ulong_malformed_length(
+        self,
+        p11_raw_session: Any,
+        malformed_template: str,
+        attr_len: int,
+        case_name: str,
+    ) -> None:
+        """ML-DSA CKA_PARAMETER_SET with non-CK_ULONG-sized storage must be rejected."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("ML_DSA_KEY_PAIR_GEN"):
+            pytest.skip("ML_DSA_KEY_PAIR_GEN not supported")
+
+        mech = mech_simple(CKM_ML_DSA_KEY_PAIR_GEN)
+        control_pub_tmpl = template(
+            attr_bool(CKA_VERIFY, True),
+            attr_ulong(CKA_PARAMETER_SET, CKP_ML_DSA_65),
+            attr_bool(CKA_TOKEN, False),
+        )
+        control_priv_tmpl = template(
+            attr_bool(CKA_SIGN, True),
+            attr_ulong(CKA_PARAMETER_SET, CKP_ML_DSA_65),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, False),
+        )
+        control_pub = CK_OBJECT_HANDLE(0)
+        control_priv = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            control_pub_tmpl.ptr,
+            control_pub_tmpl.count,
+            control_priv_tmpl.ptr,
+            control_priv_tmpl.count,
+            byref(control_pub),
+            byref(control_priv),
+        )
+        if rv != CKR_OK:
+            xfail_as(
+                "not_operational",
+                label="ML_DSA_KEY_PAIR_GEN:65-control",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_ML_DSA_KEY_PAIR_GEN",
+                actual=rv,
+                summary=f"ML-DSA-65 keypair generation is not operational: {ckr_name(rv)}",
+            )
+        destroy_quietly(rs.raw, rs.sh, control_pub.value)
+        destroy_quietly(rs.raw, rs.sh, control_priv.value)
+
+        pub_tmpl = template(
+            attr_bool(CKA_VERIFY, True),
+            attr_ulong(CKA_PARAMETER_SET, CKP_ML_DSA_65),
+            attr_bool(CKA_TOKEN, False),
+        )
+        priv_tmpl = template(
+            attr_bool(CKA_SIGN, True),
+            attr_ulong(CKA_PARAMETER_SET, CKP_ML_DSA_65),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, False),
+        )
+        if malformed_template == "public":
+            _storage = make_ulong_attr_with_length(pub_tmpl, 1, CKP_ML_DSA_65, attr_len)
+        else:
+            _storage = make_ulong_attr_with_length(priv_tmpl, 1, CKP_ML_DSA_65, attr_len)
+
+        pub = CK_OBJECT_HANDLE(0)
+        priv = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            pub_tmpl.ptr,
+            pub_tmpl.count,
+            priv_tmpl.ptr,
+            priv_tmpl.count,
+            byref(pub),
+            byref(priv),
+        )
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, pub.value)
+            destroy_quietly(rs.raw, rs.sh, priv.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label=(
+                f"ML-DSA C_GenerateKeyPair with {case_name} {malformed_template} "
+                "CKA_PARAMETER_SET CK_ULONG attribute"
+            ),
+        )

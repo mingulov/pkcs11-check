@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.raw.pack_mechanisms import mech_gcm
 from pkcs11_check.raw.recipes import decrypt_single, destroy_quietly, encrypt_single
 from pkcs11_check.raw.types_std import CKM_AES_GMAC
@@ -137,7 +138,14 @@ def test_acvp_aes_gcm_siv_encrypt(
     try:
         param = mech_gcm(CKM_AES_GCM_SIV, vec["iv"], aad=vec.get("aad"), tag_bits=128)
     except (AssertionError, ValueError, TypeError) as exc:
-        pytest.xfail(f"Binding rejects GCM-SIV params: {exc}")
+        xfail_as(
+            "not_operational",
+            kind="crypto",
+            label="AES_GCM_SIV:encrypt",
+            summary=f"Binding rejects GCM-SIV params: {exc}",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     key = 0
     try:
         key = _import_aes_key(rs, vec["key"], encrypt=True)
@@ -146,7 +154,13 @@ def test_acvp_aes_gcm_siv_encrypt(
         assert ct_got == vec["ct_expected"], f"{vec_id}: ciphertext mismatch"
         assert tag_got == vec["tag_expected"], f"{vec_id}: tag mismatch"
     except AssertionError as exc:
-        pytest.xfail(f"Module limitation: GCM-SIV not supported ({exc})")
+        classify(
+            "honest_deviation",
+            label="AES_GCM_SIV:encrypt",
+            summary=f"Module limitation: GCM-SIV not supported ({exc})",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     finally:
         if key:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -165,8 +179,14 @@ def test_acvp_aes_gcm_siv_decrypt(
     try:
         param = mech_gcm(CKM_AES_GCM_SIV, vec["iv"], aad=vec.get("aad"), tag_bits=128)
     except (AssertionError, ValueError, TypeError) as exc:
-        pytest.xfail(f"Binding rejects GCM-SIV params: {exc}")
-        return
+        xfail_as(
+            "not_operational",
+            kind="crypto",
+            label="AES_GCM_SIV:decrypt",
+            summary=f"Binding rejects GCM-SIV params: {exc}",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     key = 0
     try:
         key = _import_aes_key(rs, vec["key"], decrypt=True)
@@ -176,13 +196,27 @@ def test_acvp_aes_gcm_siv_decrypt(
         if vec["test_passed"]:
             assert pt == vec["pt_expected"], f"{vec_id}: plaintext mismatch"
         else:
-            pytest.fail(
-                f"{vec_id}: decrypted an invalid GCM-SIV vector (forged ciphertext/tag accepted)"
+            fail_as(
+                "accepted_invalid",
+                kind="crypto",
+                label="AES_GCM_SIV:decrypt",
+                summary=(
+                    f"{vec_id}: decrypted an invalid GCM-SIV vector "
+                    f"(forged ciphertext/tag accepted)"
+                ),
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
             )
     except AssertionError:
         if not vec["test_passed"]:
             return
-        pytest.xfail("Module limitation: GCM-SIV decrypt failed")
+        classify(
+            "honest_deviation",
+            label="AES_GCM_SIV:decrypt",
+            summary="Module limitation: GCM-SIV decrypt failed",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     finally:
         if key:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -218,14 +252,27 @@ def test_acvp_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
             CKM_AES_GMAC, vec["iv"], aad=vec.get("aad"), tag_bits=vec["tag_len_bits"]
         )
     except (AssertionError, ValueError, TypeError) as exc:
-        pytest.xfail(f"Binding rejects GMAC params: {exc}")
+        xfail_as(
+            "not_operational",
+            kind="crypto",
+            label="AES_GMAC",
+            summary=f"Binding rejects GMAC params: {exc}",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     key = 0
     try:
         key = _import_aes_key(rs, vec["key"], encrypt=True)
         result = encrypt_single(rs.raw, rs.sh, key, CKM_AES_GMAC, b"", mech_param=gmac_param)
         assert result == vec["tag_expected"], f"{vec_id}: tag mismatch"
     except AssertionError as exc:
-        pytest.xfail(f"Module limitation: GMAC not supported ({exc})")
+        classify(
+            "honest_deviation",
+            label="AES_GMAC",
+            summary=f"Module limitation: GMAC not supported ({exc})",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     finally:
         if key:
             destroy_quietly(rs.raw, rs.sh, key)

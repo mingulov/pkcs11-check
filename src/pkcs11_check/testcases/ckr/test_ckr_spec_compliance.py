@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_bool,
     attr_bytes,
@@ -27,7 +28,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     encrypt_single,
-    gen_aes_key,
     gen_rsa_keypair,
     read_attributes,
     sign_single,
@@ -38,16 +38,21 @@ from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
     CKA_CLASS,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
     CKA_LABEL,
     CKA_MODULUS_BITS,
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKA_VALUE,
+    CKK_AES,
     CKM_AES_CBC,
     CKM_AES_ECB,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS,
+    CKO_SECRET_KEY,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_LEN_RANGE,
     CKR_MECHANISM_INVALID,
@@ -56,7 +61,12 @@ from pkcs11_check.raw.types_std import (
     CKR_SIGNATURE_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
 )
-from pkcs11_check.testcases.conftest import classify_negative_rv, classify_policy_enforcement
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    classify_negative_rv,
+    classify_policy_enforcement,
+    gen_aes_key_or_xfail,
+)
 
 pytestmark = pytest.mark.access
 
@@ -87,7 +97,14 @@ class TestCKRTemplateCompliance:
         rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, handle.value)
-            pytest.fail("Should have raised for missing CKA_CLASS")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_CreateObject:missing-class",
+                operation="C_CreateObject",
+                actual=rv,
+                summary="Should have raised for missing CKA_CLASS",
+            )
         _check_ckr("C_CreateObject(missing CLASS)", CKR_TEMPLATE_INCOMPLETE, rv)
 
     def test_invalid_class_returns_attribute_value_invalid(self, p11_raw_session: Any) -> None:
@@ -101,7 +118,14 @@ class TestCKRTemplateCompliance:
         rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, handle.value)
-            pytest.fail("Should have raised for invalid CLASS")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_CreateObject:invalid-class-value",
+                operation="C_CreateObject",
+                actual=rv,
+                summary="Should have raised for invalid CLASS",
+            )
         _check_ckr("C_CreateObject(bad CLASS)", CKR_ATTRIBUTE_VALUE_INVALID, rv)
 
     def test_rsa_zero_size_returns_attribute_value_invalid(self, p11_raw_session: Any) -> None:
@@ -125,8 +149,65 @@ class TestCKRTemplateCompliance:
         if rv == CKR_OK:
             destroy_quietly(rs.raw, rs.sh, pub.value)
             destroy_quietly(rs.raw, rs.sh, priv.value)
-            pytest.fail("Should have raised for RSA size 0")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_GenerateKeyPair:RSA-size-zero",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                actual=rv,
+                summary="Should have raised for RSA size 0",
+            )
         _check_ckr("C_GenerateKeyPair(RSA, 0)", CKR_ATTRIBUTE_VALUE_INVALID, rv)
+
+    def test_create_object_with_read_write_policy_attrs(self, p11_raw_session: Any) -> None:
+        """Spec permits CKA_SENSITIVE=False / CKA_EXTRACTABLE=True at creation.
+
+        Un-negotiated, canonical probe. Rejecting these as
+        CKR_ATTRIBUTE_READ_ONLY (craton-hsm one-way guards) is a policy
+        deviation, recorded once here so the crypto suite's negotiated path does
+        not hide it.
+        """
+        rs = p11_raw_session
+        tmpl = template(
+            attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_AES),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, True),
+            attr_bytes(CKA_VALUE, b"\x00" * 16),
+        )
+        handle = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, handle.value)
+            return  # spec-conformant accept -> pass
+        if rv == CKR_ATTRIBUTE_READ_ONLY:
+            classify(
+                "honest_deviation",
+                kind="policy",
+                label="C_CreateObject:read-write-policy-attrs",
+                operation="C_CreateObject",
+                expected=[CKR_OK],
+                actual=rv,
+                summary=(
+                    "C_CreateObject rejected spec-permitted CKA_SENSITIVE=False/"
+                    "CKA_EXTRACTABLE=True with CKR_ATTRIBUTE_READ_ONLY"
+                ),
+            )
+        else:
+            classify(
+                "not_operational",
+                kind="policy",
+                label="C_CreateObject:read-write-policy-attrs",
+                operation="C_CreateObject",
+                expected=[CKR_OK],
+                actual=rv,
+                summary=(
+                    f"C_CreateObject rejected spec-permitted policy attrs with "
+                    f"unexpected {ckr_name(rv)}"
+                ),
+            )
 
 
 class TestCKRMechanismCompliance:
@@ -135,12 +216,19 @@ class TestCKRMechanismCompliance:
     def test_sha256_as_encrypt_returns_mechanism_invalid(self, p11_raw_session: Any) -> None:
         """SHA-256 for encrypt -> CKR_MECHANISM_INVALID (spec)."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             mech = mech_simple(CKM_SHA256)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             if rv == CKR_OK:
-                pytest.fail("SHA-256 encrypt should fail")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_EncryptInit:digest-mechanism",
+                    operation="C_EncryptInit",
+                    actual=rv,
+                    summary="SHA-256 encrypt should fail",
+                )
             _check_ckr("C_EncryptInit(SHA256)", CKR_MECHANISM_INVALID, rv)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -148,7 +236,7 @@ class TestCKRMechanismCompliance:
     def test_non_aligned_ecb_returns_data_len_range(self, p11_raw_session: Any) -> None:
         """AES-ECB with 15 bytes -> CKR_DATA_LEN_RANGE (spec)."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
@@ -159,7 +247,15 @@ class TestCKRMechanismCompliance:
             out_buf = (ctypes.c_ubyte * 32)()
             rv = rs.raw.C_Encrypt(rs.sh, data, 15, out_buf, byref(out_len))
             if rv == CKR_OK:
-                pytest.fail("Non-aligned ECB should fail")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="C_Encrypt:AES-ECB-unaligned-data",
+                    operation="C_Encrypt",
+                    mechanism="CKM_AES_ECB",
+                    actual=rv,
+                    summary="Non-aligned ECB should fail",
+                )
             _check_ckr("C_Encrypt(AES_ECB, 15 bytes)", CKR_DATA_LEN_RANGE, rv)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -171,13 +267,13 @@ class TestCKRAttributeCompliance:
     def test_sensitive_value_returns_attribute_sensitive(self, p11_raw_session: Any) -> None:
         """Reading VALUE on SENSITIVE key -> CKR_ATTRIBUTE_SENSITIVE (spec).
 
-        PKCS#11 v3.1 Sec.4.9.2: C_GetAttributeValue(CKA_VALUE) on a CKA_SENSITIVE=True
+        PKCS#11 v3.2: C_GetAttributeValue(CKA_VALUE) on a CKA_SENSITIVE=True
         key MUST return CKR_ATTRIBUTE_SENSITIVE.
         """
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SENSITIVE: True})
+        key = gen_aes_key_or_xfail(rs, 256, attrs={CKA_SENSITIVE: True})
         try:
-            # Type-B claim/effect-check: claimed = the key reports
+            # policy claim/effect-check: claimed = the key reports
             # CKA_SENSITIVE=True back; violated = the protected CKA_VALUE is
             # actually readable (read_attributes omits unavailable attributes).
             sens_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
@@ -188,7 +284,7 @@ class TestCKRAttributeCompliance:
                 claimed=claimed,
                 violated=violated,
                 label="read CKA_VALUE on a CKA_SENSITIVE=True key "
-                "(PKCS#11 v3.1 Sec.4.9.2 requires CKR_ATTRIBUTE_SENSITIVE)",
+                "(PKCS#11 v3.2 requires CKR_ATTRIBUTE_SENSITIVE)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -200,7 +296,7 @@ class TestCKRObjectCompliance:
     def test_destroyed_handle_returns_object_handle_invalid(self, p11_raw_session: Any) -> None:
         """Using destroyed handle -> CKR_OBJECT_HANDLE_INVALID (spec)."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         rs.raw.C_DestroyObject(rs.sh, key)
         tmpl = (CK_ATTRIBUTE * 1)()
         tmpl[0].type = CKA_LABEL
@@ -249,7 +345,15 @@ class TestCKRVerifyCompliance:
             # CKR_DEVICE_ERROR is a clean non-spec reject -> classified as a noted
             # deviation (xfail) by _check_ckr; no provider-specific pre-guard.
             if rv == CKR_OK:
-                pytest.fail("Tampered signature verified as valid!")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="C_Verify:tampered-signature",
+                    operation="C_Verify",
+                    mechanism="CKM_SHA256_RSA_PKCS",
+                    actual=rv,
+                    summary="Tampered signature verified as valid!",
+                )
             _check_ckr("C_Verify(tampered)", CKR_SIGNATURE_INVALID, rv)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -264,7 +368,7 @@ class TestCKRMultipartCompliance:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CBC"):
             pytest.skip("AES_CBC not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             mech = mech_bytes(CKM_AES_CBC, b"\x00" * 16)
             data = b"\x42" * 64  # 4 blocks
@@ -288,7 +392,13 @@ class TestCKRMultipartCompliance:
                 ct,
                 mech_param=mech2,
             )
-            assert pt == data
+            assert_correct(
+                actual=pt,
+                expected=data,
+                label="AES_CBC:multipart decrypt(encrypt(pt)) roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -300,4 +410,10 @@ class TestCKRMultipartCompliance:
         data = b"multipart digest compliance test" * 100
         p11_digest = digest_single(rs.raw, rs.sh, CKM_SHA256, data)
         py_digest = hashlib.sha256(data).digest()
-        assert p11_digest == py_digest
+        assert_correct(
+            actual=p11_digest,
+            expected=py_digest,
+            label="SHA256:multipart digest matches single-shot known answer",
+            operation="C_Digest",
+            mechanism="CKM_SHA256",
+        )

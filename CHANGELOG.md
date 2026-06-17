@@ -1,5 +1,111 @@
 # Changelog
 
+## [0.1.4] - 2026-06-17
+
+Broader reach and more honest results. The Python floor drops to **3.12**, the
+validation matrix grows to **28 provider builds** (adding software, HSM, and KMS
+targets), and a capability-boundary-honesty model makes results across limited and
+signing-only modules truthful instead of noisy. No breaking CLI or API changes
+(new flags/commands are additive; the default `pkcs11-check test` still runs the
+full suite).
+
+- **Runs on Python 3.12.** The minimum supported Python drops from 3.13 to
+  **3.12** (`requires-python = ">=3.12"`; ruff/mypy targets and trove classifiers
+  updated). This widens the set of distributions and CI images the tool installs
+  on out of the box; no 3.13-only language features are used.
+- **Capability-boundary honesty.** A module is no longer failed for *not* doing
+  something it never advertised. The suite probes real capability — verify
+  operability, certificate/object storage (`CKF_VERIFY`, cert-storage probe),
+  per-operation mechanism gating — and routes an advertised-but-not-operational
+  surface to a recorded `xfail`/`skip` with an explicit reason instead of a false
+  `fail`. A local cross-verify oracle lets sign-only modules be checked even when
+  the module cannot verify its own signatures. Capability-based gating replaces
+  version-number skipping, so a mechanism that *is* supported is no longer
+  silently skipped on a version heuristic.
+- **Parameter fidelity.** New probes recover the *actual* parameter a module used
+  (RSA-PSS salt length / MGF, OAEP hash / MGF / label, GCM tag length) and report
+  it, catching silent parameter substitution that a plain pass/fail check misses.
+- **Much broader coverage.** Hundreds of new vectors and negative cases: legacy
+  block ciphers (RC2/RC4/RC5, IDEA, CAST, Blowfish, Twofish, CDMF, Skipjack,
+  GOST 28147, Salsa20), protocol KDFs (TLS 1.0/1.2, SSL3, WTLS, IKE/IKEv2,
+  SP800-108, X9.42 DH, X3DH, X2Ratchet, CT-KIP), BLAKE2b, KMAC, SHAKE XOF,
+  MAC-general and CBC-PAD vectors, ML-DSA/ML-KEM parameter and semantic hardening,
+  and registry-driven negatives (malformed/missing parameters, wrong-key,
+  permission). At-source verdict emission (a reason × kind taxonomy) now records
+  *why* each outcome was reached and is enforced over raw `pytest.xfail/fail`.
+- **More targets checked.** The validation matrix grew to 28 provider builds,
+  adding software, HSM, and KMS modules — Craton HSM, Nitrokey NetHSM, FreeHSM-C,
+  jCardSim (IsoApplet smartcard sim), CrypTech, google-kmsp11, and Cosmian KMS —
+  alongside wolfPKCS11 and corePKCS11 (added since 0.1.3) and pooled OP-TEE
+  heavy-target support. Existing pins were refreshed (Kryoptic v1.5.1,
+  BouncyHSM v2.1.1).
+- **Faster, leaner pooled runs.** Report postprocessing now streams the
+  per-unit / retry / resume / final report logs instead of buffering them, the
+  pooled runner's concurrency and hot-file sharding were tuned, shared-session
+  health checks were reduced for vector files, and vector JSON is loaded through a
+  cache.
+- **Finding integrity.** Several finding-hiding tests (self-contradiction classes
+  that had been softened to `xfail`/note) were corrected to surface as `fail`, and
+  raw `pytest.xfail()` / `pytest.fail()` in product tests is now blocked in favor
+  of at-source classification, so a real break cannot be quietly downgraded.
+
+### Supported modules
+
+SoftHSM2 2.7.0 / main · Kryoptic v1.5.1 / main / FIPS · NSS (Fedora softoken,
+slots 0 and 1) / main · OpenCryptoki v3.27.0 / master · wolfPKCS11 v2.0.0-stable /
+master · corePKCS11 v3.6.4 · tpm2-pkcs11 1.10.0 · BouncyHSM v2.1.1 ·
+pkcs11-mock v2.0.0 · Craton HSM · Nitrokey NetHSM · FreeHSM-C · jCardSim
+(IsoApplet) · CrypTech · google-kmsp11 · Cosmian KMS · OP-TEE (heavy target)
+
+### Test Results
+
+Latest full provider matrix (baseline dated 2026-06-17), one row per distinct
+build, from the pooled `docker/test_pool.py` sweep. The run was reconciled
+test-id-by-test-id against the prior baseline: no findings disappeared and no test
+stopped running. Failures, crashes, and skips are kept as provider findings — a
+crash is a finding, not a hidden result.
+
+| Build | Passed | Failed | Skipped | Xfailed | Crashed | Total |
+|-------|-------:|-------:|--------:|--------:|--------:|------:|
+| SoftHSM2 2.7.0 | 44,972 | 69 | 60,858 | 6,197 | 0 | 112,096 |
+| SoftHSM2 main | 47,212 | 199 | 59,071 | 5,698 | 0 | 112,180 |
+| Kryoptic v1.5.1 | 58,700 | 160 | 30,483 | 24,579 | 0 | 113,922 |
+| Kryoptic main | 58,700 | 160 | 30,483 | 24,579 | 0 | 113,922 |
+| Kryoptic FIPS/PQC | 44,006 | 189 | 38,425 | 23,691 | 14 | 106,325 |
+| NSS (Fedora, slot 1) | 38,400 | 142 | 71,588 | 2,196 | 9 | 112,335 |
+| NSS (Fedora, slot 0) | 1,545 | 79 | 878 | 316 | 9 | 2,827 |
+| NSS main (slot 1) | 36,944 | 130 | 73,209 | 2,118 | 9 | 112,410 |
+| OpenCryptoki v3.27.0 | 64,574 | 216 | 46,467 | 2,860 | 0 | 114,117 |
+| wolfPKCS11 v2.0.0-stable | 46,645 | 609 | 47,958 | 16,241 | 18 | 111,471 |
+| wolfPKCS11 master | 48,772 | 434 | 48,351 | 14,031 | 4 | 111,592 |
+| corePKCS11 v3.6.4 | 9,500 | 643 | 90,573 | 9,759 | 0 | 110,475 |
+| tpm2-pkcs11 1.10.0 | 18,145 | 47 | 67,342 | 25,569 | 0 | 111,103 |
+| BouncyHSM v2.1.1 | 54,348 | 2,043 | 42,065 | 16,511 | 5 | 114,972 |
+| pkcs11-mock v2.0.0 | 758 | 267 | 109,408 | 81 | 0 | 110,514 |
+| Craton HSM | 20,230 | 3,174 | 59,951 | 27,654 | 0 | 111,009 |
+| Nitrokey NetHSM | 11,668 | 514 | 78,808 | 19,872 | 0 | 110,883 |
+| FreeHSM-C | 11,916 | 617 | 96,439 | 2,466 | 5 | 111,451 |
+| jCardSim (IsoApplet) | 1,212 | 1,865 | 103,636 | 3,999 | 0 | 110,742 |
+| CrypTech | 10,516 | 253 | 82,357 | 17,587 | 0 | 110,729 |
+| google-kmsp11 | 11,066 | 173 | 98,641 | 952 | 0 | 110,832 |
+| Cosmian KMS 5.23.0 | 10,465 | 15,142 | 80,035 | 4,844 | 0 | 110,501 |
+
+~2.8M total test executions across the full 28-target matrix (including the
+`*-main` / `*-master` / FIPS / slot variants not all shown above). The large
+`xfailed` counts on capability-limited modules (Craton HSM, NetHSM, CrypTech,
+tpm2) are the capability-boundary-honesty model recording advertised-but-not-
+operational surface rather than failing it; Cosmian KMS is a first-sweep snapshot
+whose failures are largely key-capability metadata gaps still to be triaged. Real
+SIGSEGV crash findings remain on NSS, BouncyHSM, wolfPKCS11, and FreeHSM-C; the 14
+Kryoptic FIPS/PQC "crashes" are debug-build `abort()`s on internal assertions, not
+release segfaults. See [docs/module-issues.md](docs/module-issues.md) for
+per-module findings.
+
+### Requirements
+
+- Python 3.12+
+- Linux (primary), macOS and Windows where ctypes works
+
 ## [0.1.3] - 2026-06-04
 
 Faster, more diagnosable, and a documented contract for tools building on it.
@@ -40,8 +146,8 @@ BouncyHSM v2.1.0 · pkcs11-mock v2.0.0
 
 ### Test Results
 
-Latest full provider matrix (`artifacts/_matrix/baseline-2026-06-04.json`,
-2026-06-04), one row per distinct build. Validated by **two independent full
+Latest full provider matrix (baseline dated 2026-06-04), one row per distinct
+build. Validated by **two independent full
 sweeps** that agree; failures held or decreased on every provider vs the v0.1.2
 baseline (PC-6 keygen reclassification + gap-triage), crashes stable.
 
@@ -246,8 +352,8 @@ Findings are classified under a hardware-token threat model and are not CVE-grad
 vulnerability claims against upstream projects. The two CRITICAL rows are
 upstream-known properties of NSS softokn (software-only token) rather than
 defects; HIGH-severity issues span 4 modules; real SIGSEGV crashes in all 6
-modules. See [docs/release-v0.1.0.md](docs/release-v0.1.0.md) for the
-severity-model note and full breakdown.
+modules. See the v0.1.0 release notes for the severity-model note and full
+breakdown.
 
 ### Requirements
 

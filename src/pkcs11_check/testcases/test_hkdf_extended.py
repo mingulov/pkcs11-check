@@ -14,11 +14,11 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.pack import mech_hkdf, mech_simple
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
-    import_secret_key,
     read_attributes,
 )
 from pkcs11_check.raw.rv import expect_rv
@@ -52,7 +52,12 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    import_secret_key_negotiated,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -110,9 +115,8 @@ def _gen_hkdf_key(rs: Any, key_type: int, bits: int = 256) -> int:
 def _create_base_key(rs: Any) -> int:
     """Create a GENERIC_SECRET key suitable for HKDF derivation."""
     ikm = bytes(range(32))
-    return import_secret_key(
-        rs.raw,
-        rs.sh,
+    return import_secret_key_negotiated(
+        rs,
         CKK_GENERIC_SECRET,
         ikm,
         attrs={
@@ -173,21 +177,12 @@ def _hkdf_data_derive(rs: Any, base_key: int, salt: bytes, info: bytes) -> int:
     )
 
 
-@pytest.mark.requires_v30
 class TestHKDFKeyGen:
     """CKM_HKDF_KEY_GEN tests - generate keys for HKDF input keying material."""
 
     @pytest.mark.parametrize(
         "key_type",
-        [
-            CKK_HKDF,
-            pytest.param(
-                CKK_GENERIC_SECRET,
-                marks=pytest.mark.xfail(
-                    reason="CKM_HKDF_KEY_GEN should produce CKK_HKDF per spec",
-                ),
-            ),
-        ],
+        [CKK_HKDF, CKK_GENERIC_SECRET],
         ids=["CKK_HKDF", "CKK_GENERIC_SECRET"],
     )
     def test_hkdf_key_gen_basic(
@@ -195,7 +190,16 @@ class TestHKDFKeyGen:
         p11_raw_session: Any,
         key_type: int,
     ) -> None:
-        """Generate a key via CKM_HKDF_KEY_GEN with the given key type."""
+        """Generate a key via CKM_HKDF_KEY_GEN with the given key type.
+
+        Per the OASIS HKDF profile, ``CKM_HKDF_KEY_GEN`` produces a ``CKK_HKDF``
+        key.  Requesting ``CKK_GENERIC_SECRET`` therefore probes a spec
+        constraint: a module that produces ``CKK_HKDF`` regardless (the
+        spec-correct type) is a clean, noted deviation from the requested type
+        (``honest_deviation``); a module that honors ``CKK_GENERIC_SECRET`` as
+        asked is also acceptable.  This replaces the prior declarative
+        ``@pytest.mark.xfail`` so every outcome carries a classify() record.
+        """
         rs = p11_raw_session
         if not rs.has_mechanism("HKDF_KEY_GEN"):
             pytest.skip("CKM_HKDF_KEY_GEN not supported")
@@ -224,7 +228,30 @@ class TestHKDFKeyGen:
                     _KEYGEN_VALUE_READ_ERROR_RVS,
                     "CKM_HKDF_KEY_GEN generated key CKA_VALUE readback rejected",
                 )
-            assert attrs[CKA_KEY_TYPE] == key_type
+            actual_key_type = attrs[CKA_KEY_TYPE]
+            if key_type == CKK_GENERIC_SECRET and actual_key_type == CKK_HKDF:
+                # The module ignored the requested CKK_GENERIC_SECRET and produced
+                # the spec-mandated CKK_HKDF: a clean, noted deviation from the
+                # requested type, recorded via classify() rather than a bare
+                # declarative xfail (which would emit no classification record).
+                xfail_as(
+                    "honest_deviation",
+                    label="CKM_HKDF_KEY_GEN:key_type",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_HKDF_KEY_GEN",
+                    summary=(
+                        "CKM_HKDF_KEY_GEN produced CKK_HKDF (the spec-mandated type) "
+                        "for a CKK_GENERIC_SECRET request"
+                    ),
+                )
+            assert_correct(
+                actual=actual_key_type,
+                expected=key_type,
+                label="CKM_HKDF_KEY_GEN:CKA_KEY_TYPE readback",
+                operation="C_GenerateKey",
+                mechanism="CKM_HKDF_KEY_GEN",
+                kind="metadata",
+            )
             value = attrs[CKA_VALUE]
             assert len(value) == 32  # 256 bits = 32 bytes
             assert attrs[CKA_DERIVE] is True
@@ -251,9 +278,15 @@ class TestHKDFKeyGen:
                     raise
                 rejects.append(str(exc))
         if base_key is None:
-            pytest.xfail(
-                "CKM_HKDF_KEY_GEN advertised but no tested key type is operational: "
-                + "; ".join(rejects)
+            xfail_as(
+                "not_operational",
+                label="CKM_HKDF_KEY_GEN",
+                operation="C_GenerateKey",
+                mechanism="CKM_HKDF_KEY_GEN",
+                summary=(
+                    "CKM_HKDF_KEY_GEN advertised but no tested key type is operational: "
+                    + "; ".join(rejects)
+                ),
             )
 
         derived = 0
@@ -269,7 +302,6 @@ class TestHKDFKeyGen:
                 destroy_quietly(rs.raw, rs.sh, derived)
 
 
-@pytest.mark.requires_v30
 class TestHKDFData:
     """CKM_HKDF_DATA tests - derive data objects via HKDF."""
 
@@ -307,7 +339,13 @@ class TestHKDFData:
             derived_2 = _hkdf_data_derive(rs, base_key, b"det-salt", b"det-info")
             val_1 = read_attributes(rs.raw, rs.sh, derived_1, [CKA_VALUE])[CKA_VALUE]
             val_2 = read_attributes(rs.raw, rs.sh, derived_2, [CKA_VALUE])[CKA_VALUE]
-            assert val_1 == val_2, "HKDF_DATA must be deterministic"
+            assert_correct(
+                actual=val_1,
+                expected=val_2,
+                label="CKM_HKDF_DATA:C_DeriveKey determinism",
+                operation="C_DeriveKey",
+                mechanism="CKM_HKDF_DATA",
+            )
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "HKDF_DATA derive failed")
         finally:

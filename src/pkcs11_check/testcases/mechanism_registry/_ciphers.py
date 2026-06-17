@@ -69,6 +69,8 @@ _fixed = KeygenRecipe("fixed_length")
 _iv16 = ParamRecipe("iv", {"iv_len": 16})
 _mac_general = ParamRecipe("mac_general", {"mac_len": 8})
 _string_data = ParamRecipe("string_data")
+_salsa20 = ParamRecipe("salsa20", {"nonce_len": 8, "counter": 0})
+_salsa20_poly1305 = ParamRecipe("salsa20_poly1305", {"nonce_len": 8, "aad_len": 0})
 
 
 def populate(registry: dict[int, MechConfig]) -> None:
@@ -134,7 +136,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_recipe=ParamRecipe("none"),
+        param_recipe=_salsa20,
         keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_ENC_DEC,
@@ -148,7 +150,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_recipe=ParamRecipe("none"),
+        param_recipe=_salsa20_poly1305,
         keygen_recipe=_sym,
         multi_part_supported=False,
         auth_tag_included=True,
@@ -229,6 +231,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_CAMELLIA_ENC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="camellia_cbc_pad.json",
         notes="Camellia-CBC with PKCS#7 padding: any-length plaintext, requires 16-byte IV",
     )
 
@@ -251,6 +254,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_CAMELLIA_SIZES,
         keygen_recipe=_sym,
         expected_flags=_CAMELLIA_SIG,
+        vector_file="camellia_mac.json",
         notes="Camellia-MAC: CBC-MAC with fixed output length",
     )
 
@@ -262,6 +266,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_mac_general,
         keygen_recipe=_sym,
         expected_flags=_CAMELLIA_SIG,
+        vector_file="camellia_mac_general.json",
         notes="Camellia-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
 
@@ -340,6 +345,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_ARIA_ENC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="aria_cbc_pad.json",
         notes="ARIA-CBC with PKCS#7 padding: any-length plaintext, requires 16-byte IV",
     )
 
@@ -349,6 +355,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_ARIA_SIZES,
         keygen_recipe=_sym,
         expected_flags=_ARIA_SIG,
+        vector_file="aria_mac.json",
         notes="ARIA-MAC: CBC-MAC with fixed output length",
     )
 
@@ -360,6 +367,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_mac_general,
         keygen_recipe=_sym,
         expected_flags=_ARIA_SIG,
+        vector_file="aria_mac_general.json",
         notes="ARIA-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
 
@@ -438,6 +446,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_SEED_ENC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="seed_cbc_pad.json",
         notes="SEED-CBC with PKCS#7 padding: any-length plaintext, requires 16-byte IV",
     )
 
@@ -447,6 +456,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(128,),
         keygen_recipe=_fixed,
         expected_flags=_SEED_SIG,
+        vector_file="seed_mac.json",
         notes="SEED-MAC: CBC-MAC with fixed output length",
     )
 
@@ -458,6 +468,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_mac_general,
         keygen_recipe=_fixed,
         expected_flags=_SEED_SIG,
+        vector_file="seed_mac_general.json",
         notes="SEED-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
 

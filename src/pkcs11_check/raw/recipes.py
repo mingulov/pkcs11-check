@@ -10,6 +10,7 @@ import ctypes
 import sys
 from collections.abc import Callable, Mapping
 from ctypes import byref
+from enum import Flag, auto
 from typing import Any
 
 from .api import RawPKCS11
@@ -298,7 +299,7 @@ def _two_call_output(
     # Standard two-call pattern: query size with NULL, then allocate and call again.
     out_len = CK_ULONG(0)
     rv = fn(*args, None, byref(out_len))
-    expect_rv(rv, CKR_OK)
+    expect_rv(rv, CKR_OK, CKR_BUFFER_TOO_SMALL)
     size = out_len.value
     out_buf = (ctypes.c_ubyte * size)()
     out_len = CK_ULONG(size)
@@ -424,20 +425,56 @@ def gen_keypair(
     return pub_handle.value, priv_handle.value
 
 
+class RSAUsage(Flag):
+    """Declared purpose of an RSA key pair, mapped to capability attributes.
+
+    Purpose is a *crypto-visible* attribute: it changes what the key is and
+    which operation may use it, so it must be declared explicitly by the caller
+    rather than inferred or silently negotiated. Single-purpose providers
+    (Cloud-KMS-class, e.g. kmsp11) back keys that are sign-only XOR decrypt-only
+    and reject the multi-purpose combination with CKR_TEMPLATE_INCONSISTENT;
+    pass ``RSAUsage.SIGN`` or ``RSAUsage.DECRYPT`` to target them.
+    """
+
+    SIGN = auto()  # private CKA_SIGN / public CKA_VERIFY
+    DECRYPT = auto()  # private CKA_DECRYPT / public CKA_ENCRYPT
+
+
+def rsa_usage_attrs(usage: RSAUsage) -> tuple[dict[CKA, Any], dict[CKA, Any]]:
+    """Map an RSAUsage to ``(public_attrs, private_attrs)`` capability flags."""
+    pub: dict[CKA, Any] = {}
+    priv: dict[CKA, Any] = {}
+    if RSAUsage.SIGN in usage:
+        priv[CKA_SIGN] = True
+        pub[CKA_VERIFY] = True
+    if RSAUsage.DECRYPT in usage:
+        priv[CKA_DECRYPT] = True
+        pub[CKA_ENCRYPT] = True
+    return pub, priv
+
+
 def gen_rsa_keypair(
     raw: RawPKCS11,
     session: int,
     bits: int = 2048,
+    *,
+    usage: RSAUsage = RSAUsage.SIGN | RSAUsage.DECRYPT,
     public_attrs: Mapping[Any, Any] | None = None,
     private_attrs: Mapping[Any, Any] | None = None,
 ) -> tuple[int, int]:
-    """Generate an RSA key pair. Returns (pub_handle, priv_handle)."""
+    """Generate an RSA key pair. Returns (pub_handle, priv_handle).
+
+    ``usage`` declares the key's purpose (default: multi-purpose sign+decrypt,
+    preserving legacy behaviour). Pass ``RSAUsage.SIGN`` / ``RSAUsage.DECRYPT``
+    for a single-purpose key on Cloud-KMS-class providers. ``public_attrs`` /
+    ``private_attrs`` remain an explicit per-attribute override (escape hatch).
+    """
+    pub_caps, priv_caps = rsa_usage_attrs(usage)
     _pub_defaults: dict[CKA, Any] = {
-        CKA_VERIFY: True,
-        CKA_ENCRYPT: True,
+        **pub_caps,
         CKA_PUBLIC_EXPONENT: b"\x01\x00\x01",  # 65537, required by NSS
     }
-    _priv_defaults: dict[CKA, Any] = {CKA_SIGN: True, CKA_DECRYPT: True}
+    _priv_defaults: dict[CKA, Any] = {**priv_caps}
     if public_attrs:
         _pub_defaults.update(public_attrs)
     if private_attrs:
@@ -1507,9 +1544,7 @@ def restore_operation_state(
 def init_token(raw: RawPKCS11, slot_id: int, so_pin: bytes, label: str) -> None:
     """Initialize a token with C_InitToken. Label is padded to 32 bytes with spaces."""
     label_bytes = label.encode().ljust(32)[:32]
-    # ctypes c_char array constructor accepts bytes per-element at runtime; the
-    # static type stub flags the splat as Iterable[c_char] mismatch.
-    label_buf = (ctypes.c_char * 32)(*[bytes([b]) for b in label_bytes])
+    label_buf = to_ubyte_buf(label_bytes)
     pin_buf = to_ubyte_buf(so_pin)
     rv = raw.C_InitToken(slot_id, pin_buf, len(so_pin), label_buf)
     expect_rv(rv, CKR_OK)

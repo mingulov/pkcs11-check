@@ -10,7 +10,8 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.pack import attr_bytes, template
+from pkcs11_check.classification import fail_as, xfail_as
+from pkcs11_check.raw.pack import attr_bytes, attr_ulong, template
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     find_objects,
@@ -26,16 +27,59 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKK_RSA,
     CKO_PUBLIC_KEY,
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_OK,
 )
-from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    classify_negative_rv,
+    gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.keymgmt
+
+_SET_ATTR_REJECT_RVS = (
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+)
+
+
+def _read_back_or_fail(rs: Any, handle: int, attrs: list[int], *, label: str) -> dict[int, Any]:
+    """Read attributes back for an effect check, failing clearly on a bad read.
+
+    ``read_attributes`` already tolerates ``CKR_ATTRIBUTE_SENSITIVE`` /
+    ``CKR_ATTRIBUTE_TYPE_INVALID`` (those attributes are simply omitted). Any
+    *other* clean error from ``C_GetAttributeValue`` after a write means the
+    object can no longer be read back consistently -- a lifecycle self-contradiction
+    (the write was accepted, then the object was left in a bad state). Surface it
+    as a clear finding instead of an opaque ``CkrAssertionError`` from the recipe.
+    """
+    try:
+        return read_attributes(rs.raw, rs.sh, handle, attrs)
+    except AssertionError as exc:
+        fail_as(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation="C_GetAttributeValue",
+            summary=(
+                f"{label}: attribute(s) could not be read back after the write ({exc}) "
+                "-- the object was left in an inconsistent state"
+            ),
+        )
 
 
 def _classify_readonly_write(
     rs: Any, handle: int, attr: int, new_value: Any, *, label: str
 ) -> None:
-    """Type-C effect-check for a write to a read-only attribute.
+    """lifecycle effect-check for a write to a read-only attribute.
 
     C_SetAttributeValue on a read-only attribute must reject. Verify the effect,
     not the return code:
@@ -51,12 +95,24 @@ def _classify_readonly_write(
         set_attributes(rs.raw, rs.sh, handle, {attr: new_value})
     except AssertionError:
         return  # Rejected the read-only write -- correct.
-    after = read_attributes(rs.raw, rs.sh, handle, [attr])
+    after = _read_back_or_fail(rs, handle, [attr], label=label)
     if after.get(attr) == new_value:
-        pytest.fail(f"{label}: claimed success and the read-only value actually changed")
-    pytest.xfail(
-        f"{label}: returned CKR_OK but the value was unchanged (no-op; "
-        "spec prefers CKR_ATTRIBUTE_READ_ONLY)"
+        fail_as(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation="C_SetAttributeValue",
+            summary=f"{label}: claimed success and the read-only value actually changed",
+        )
+    xfail_as(
+        "honest_deviation",
+        kind="lifecycle",
+        label=label,
+        operation="C_SetAttributeValue",
+        summary=(
+            f"{label}: returned CKR_OK but the value was unchanged (no-op; "
+            "spec prefers CKR_ATTRIBUTE_READ_ONLY)"
+        ),
     )
 
 
@@ -74,7 +130,13 @@ class TestSetAttributePositive:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LABEL])
-            assert attrs[CKA_LABEL] == "before"
+            assert_correct(
+                actual=attrs[CKA_LABEL],
+                expected="before",
+                label="CKA_LABEL readback after create",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
 
             set_attributes(rs.raw, rs.sh, key, {CKA_LABEL: "after"})
 
@@ -97,7 +159,13 @@ class TestSetAttributePositive:
         try:
             set_attributes(rs.raw, rs.sh, key, {CKA_ID: b"\xaa\xbb"})
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_ID])
-            assert attrs[CKA_ID] == b"\xaa\xbb"
+            assert_correct(
+                actual=attrs[CKA_ID],
+                expected=b"\xaa\xbb",
+                label="CKA_ID readback after C_SetAttributeValue",
+                operation="C_SetAttributeValue",
+                kind="metadata",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -121,6 +189,87 @@ class TestSetAttributePositive:
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
+
+
+class TestSetAttributeAtomicity:
+    """Verify that rejected multi-row updates do not leave partial state behind."""
+
+    def test_set_attribute_mixed_template_is_atomic(self, p11_raw_session: Any) -> None:
+        """A failing SetAttribute template must not partially apply earlier rows."""
+        rs = p11_raw_session
+        original = "atomic-before"
+        control = "atomic-control"
+        target = "atomic-after"
+        key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_LABEL: original},
+            purpose="set-attribute atomicity",
+        )
+        try:
+            try:
+                set_attributes(rs.raw, rs.sh, key, {CKA_LABEL: control})
+                set_attributes(rs.raw, rs.sh, key, {CKA_LABEL: original})
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _SET_ATTR_REJECT_RVS,
+                    "C_SetAttributeValue rejected mutable CKA_LABEL setup",
+                )
+                raise
+
+            mixed = template(
+                attr_bytes(CKA_LABEL, target.encode("utf-8")),
+                attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY),
+            )
+            rv = rs.raw.C_SetAttributeValue(rs.sh, key, mixed.ptr, mixed.count)
+            attrs = _read_back_or_fail(
+                rs,
+                key,
+                [CKA_LABEL, CKA_CLASS],
+                label="C_SetAttributeValue mixed mutable/read-only template",
+            )
+            label_after = attrs.get(CKA_LABEL)
+            class_after = attrs.get(CKA_CLASS)
+
+            if label_after == target:
+                fail_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label="C_SetAttributeValue:partial-apply",
+                    operation="C_SetAttributeValue",
+                    summary=(
+                        "C_SetAttributeValue partially applied CKA_LABEL before rejecting "
+                        "a later read-only CKA_CLASS row"
+                    ),
+                )
+            if class_after == CKO_PUBLIC_KEY:
+                fail_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label="C_SetAttributeValue:read-only-CKA_CLASS",
+                    operation="C_SetAttributeValue",
+                    summary="C_SetAttributeValue changed read-only CKA_CLASS on an AES key",
+                )
+            if rv == CKR_OK:
+                xfail_as(
+                    "honest_deviation",
+                    kind="lifecycle",
+                    label="C_SetAttributeValue:mixed-template-noop",
+                    operation="C_SetAttributeValue",
+                    actual=rv,
+                    summary=(
+                        "C_SetAttributeValue returned CKR_OK for a mixed template containing "
+                        "read-only CKA_CLASS, but left the object unchanged"
+                    ),
+                )
+            classify_negative_rv(
+                rv,
+                _SET_ATTR_REJECT_RVS,
+                label="C_SetAttributeValue mixed mutable/read-only template",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 class TestSetAttributeNegative:

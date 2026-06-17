@@ -29,7 +29,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
     find_objects,
-    gen_aes_key,
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
@@ -44,7 +43,11 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKO_DATA,
 )
-from pkcs11_check.testcases.conftest import skip_if_token_write_protected
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    skip_if_data_objects_unsupported,
+    skip_if_token_write_protected,
+)
 
 pytestmark = pytest.mark.security
 
@@ -72,9 +75,8 @@ class TestConcurrentSessions:
         skip_if_token_write_protected(rs.raw, rs.slot_id)
         label = _unique_label("vis")
 
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_TOKEN: True, CKA_LABEL: label},
         )
@@ -101,9 +103,8 @@ class TestConcurrentSessions:
         skip_if_token_write_protected(rs.raw, rs.slot_id)
         label = _unique_label("destr")
 
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_TOKEN: True, CKA_LABEL: label},
         )
@@ -141,9 +142,8 @@ class TestConcurrentSessions:
         label = _unique_label("use")
         plaintext = b"concurrent-test!" * 2  # 32 bytes
 
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={
                 CKA_TOKEN: True,
@@ -185,9 +185,8 @@ class TestConcurrentObjectCreation:
         for i in range(20):
             label = _unique_label(f"rapid-{i}")
             labels.append(label)
-            key = gen_aes_key(
-                rs.raw,
-                rs.sh,
+            key = gen_aes_key_or_xfail(
+                rs,
                 128,
                 attrs={CKA_TOKEN: True, CKA_LABEL: label},
             )
@@ -211,20 +210,19 @@ class TestConcurrentObjectCreation:
         label_a = _unique_label("sA")
         label_b = _unique_label("sB")
 
-        key_a = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key_a = gen_aes_key_or_xfail(
+            rs,
             128,
             attrs={CKA_TOKEN: True, CKA_LABEL: label_a},
         )
 
         sh2 = _open_second_session(rs)
         try:
-            key_b = gen_aes_key(
-                rs.raw,
-                sh2,
+            key_b = gen_aes_key_or_xfail(
+                rs,
                 128,
                 attrs={CKA_TOKEN: True, CKA_LABEL: label_b},
+                sh=sh2,
             )
 
             # Both should be visible in both sessions
@@ -253,6 +251,7 @@ class TestConcurrentDataObjects:
         """CKO_DATA with TOKEN=True visible in concurrent session."""
         rs = p11_raw_session
         skip_if_token_write_protected(rs.raw, rs.slot_id)
+        skip_if_data_objects_unsupported(rs)
         label = _unique_label("data")
 
         obj = create_object(

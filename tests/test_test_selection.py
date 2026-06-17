@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from pkcs11_check.core import test_selection as test_selection_mod
 from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.test_selection import (
     DisabledBaseline,
@@ -203,6 +204,35 @@ def test_collect_disabled_candidates_from_report_jsonl_supports_multiple_outcome
         "test_demo.py::test_skipped",
         "test_demo.py::test_xfailed",
     ]
+    assert manual == []
+
+
+def test_collect_disabled_candidates_streams_report_jsonl(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    artifact_dir = tmp_path / "artifact"
+    artifact_dir.mkdir()
+    (artifact_dir / "report.jsonl").write_text(
+        json.dumps(
+            {
+                "$report_type": "TestReport",
+                "nodeid": "test_demo.py::test_failed",
+                "when": "call",
+                "outcome": "failed",
+            }
+        )
+        + "\n"
+    )
+
+    def _load_all_forbidden(_path: Path) -> list[dict[str, object]]:
+        pytest.fail("collect_disabled_candidates must stream report.jsonl")
+
+    monkeypatch.setattr(test_selection_mod, "_load_report_log_records", _load_all_forbidden)
+
+    candidates, manual = collect_disabled_candidates([artifact_dir], outcomes={"failed"})
+
+    assert candidates == ["test_demo.py::test_failed"]
     assert manual == []
 
 
@@ -480,3 +510,16 @@ def test_extract_required_mechanisms_empty_list(tmp_path: Path) -> None:
     f = tmp_path / "test_example.py"
     f.write_text("REQUIRED_MECHANISMS = []\n")
     assert extract_required_mechanisms(str(f)) is None
+
+
+def test_cctv_ed25519_declares_required_mechanism() -> None:
+    assert extract_required_mechanisms("src/pkcs11_check/testcases/test_cctv_ed25519.py") == [
+        "EDDSA"
+    ]
+
+
+def test_cctv_mldsa_declares_required_mechanisms() -> None:
+    assert extract_required_mechanisms("src/pkcs11_check/testcases/test_cctv_mldsa.py") == [
+        "ML_DSA",
+        "ML_DSA_KEY_PAIR_GEN",
+    ]

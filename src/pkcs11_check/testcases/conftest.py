@@ -8,22 +8,43 @@ collection-safe capability manifest before test setup.
 from __future__ import annotations
 
 import functools
+import itertools
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from pkcs11_check.raw.rv import ckr_name
+if TYPE_CHECKING:
+    from pkcs11_check.raw.recipes import RSAUsage
+
+from pkcs11_check.raw.api import ckm_name
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_EC_PARAMS,
+    CKA_EC_POINT,
+    CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
+    CKA_LABEL,
+    CKA_MODULUS,
+    CKA_PUBLIC_EXPONENT,
+    CKA_SENSITIVE,
     CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKA_VALUE_LEN,
     CKA_VERIFY,
+    CKK_EC,
+    CKK_RSA,
     CKM_EC_EDWARDS_KEY_PAIR_GEN,
+    CKO_PUBLIC_KEY,
+    CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_CURVE_NOT_SUPPORTED,
+    CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_FAILED,
@@ -38,14 +59,22 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._capability import Capability, capability_for
 from pkcs11_check.testcases._error_tuples import MECH_PARAM_UNSUPPORTED_ERRORS
+from pkcs11_check.testcases._operability import not_operational_reason
 
 AES_KEYGEN_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 
 KEYPAIR_RUNTIME_REJECT_RVS = (
@@ -74,6 +103,9 @@ EC_CURVE_UNSUPPORTED_RVS = (
 # output) is NOT routed here -- that stays a hard failure (self-contradiction).
 CIPHER_OP_RUNTIME_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
+    # Clean length-range reject of spec-valid input (opencryptoki CTR with a
+    # 32B/17B payload, triage H5): advertised-but-not-operational deviation.
+    CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
@@ -84,6 +116,107 @@ CIPHER_OP_RUNTIME_REJECT_RVS = (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
+
+# Clean codes a module may return at an HMAC *sign/verify* use site when the
+# HMAC mechanism is advertised but the operation is not operational (tpm2
+# advertises CKM_SHA*_HMAC but C_Sign returns CKR_GENERAL_ERROR). A produce
+# (sign) leg returning one of these -> xfail (advertised-but-not-operational);
+# the cross-verify comparison against a reference MAC stays a hard failure.
+# Mirrors the established local tuple in test_generic_secret.py (promoted here
+# so the sign-op guard is shared, not duplicated per file).
+HMAC_OP_RUNTIME_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+)
+
+# CKO_DATA C_CreateObject rejection codes returned by modules that do not
+# implement free-form data-object storage (architectural absence — network/HSM
+# tokens accept only key/certificate objects). PKCS#11 v3.2 §6.4 permits a
+# token to decline support for an object class. A setup site hitting one of
+# these -> xfail (advertised-but-not-operational class); a test whose purpose
+# is to assert CKO_DATA semantics should skip instead (genuine capability
+# absence) via skip_if_data_objects_unsupported.
+CKO_DATA_NOT_SUPPORTED_RVS: tuple[int, ...] = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
+)
+
+
+def skip_unless_create_object_supported(rs: Any) -> None:
+    """Skip unless the module implements ``C_CreateObject``.
+
+    Cloud-KMS proxies (kmsp11) and other read-only modules do not implement
+    object creation at all — every ``C_CreateObject`` returns
+    ``CKR_FUNCTION_NOT_SUPPORTED``. Probing this once at the top of an
+    object-creation/import test lets the suite skip cleanly (genuine capability
+    absence) instead of cascading FNS into every dependent assertion.
+    """
+    from ctypes import byref
+
+    from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE
+
+    handle = CK_OBJECT_HANDLE(0)
+    # Minimal probe template: an empty attribute list. Modules that implement
+    # C_CreateObject will reject this with a template error (CKR_TEMPLATE_INCOMPLETE,
+    # CKR_ATTRIBUTE_TYPE_INVALID, CKR_ARGUMENTS_BAD); modules that do not implement
+    # the function at all return CKR_FUNCTION_NOT_SUPPORTED. Only the FNS case skips.
+    rv = rs.raw.C_CreateObject(rs.sh, None, 0, byref(handle))
+    if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+        pytest.skip("Module does not implement C_CreateObject")
+
+
+def skip_unless_generate_random_supported(rs: Any) -> None:
+    """Skip unless the module implements ``C_GenerateRandom``.
+
+    Several modules' RNG is non-operational: ``C_GenerateRandom`` returns
+    ``CKR_FUNCTION_FAILED`` (cryptech, corepkcs11) or ``CKR_FUNCTION_NOT_SUPPORTED``.
+    Probe once at the top of an RNG-dependent test so a non-operational RNG
+    surfaces as a clean skip rather than cascading into statistical/protocol
+    tests that assume randomness is available.
+    """
+    from pkcs11_check.raw.types_std import CK_BYTE
+
+    probe = (CK_BYTE * 16)()
+    rv = rs.raw.C_GenerateRandom(rs.sh, probe, 16)
+    if rv in (int(CKR_FUNCTION_FAILED), int(CKR_FUNCTION_NOT_SUPPORTED)):
+        pytest.skip(f"Module RNG not operational: {ckr_name(rv)}")
+
+
+def skip_if_data_objects_unsupported(rs: Any) -> None:
+    """Skip the current test if the module rejects CKO_DATA C_CreateObject.
+
+    Use at the top of tests that exercise CKO_DATA semantics: a module that
+    does not implement the data-object storage class rejects every create
+    (5+ providers including nethsm/corepkcs11/tpm2/wolfpkcs11/craton-hsm);
+    this is a genuine capability absence (PKCS#11 v3.2 §6.4) and the right
+    harness classification is ``skip``, not ``xfail``. Probe-style: tries a
+    minimal CKO_DATA create and skips if it sees a CKO_DATA_NOT_SUPPORTED_RVS
+    code; otherwise destroys the probe object and continues.
+    """
+    from pkcs11_check.raw.recipes import create_object, destroy_quietly
+    from pkcs11_check.raw.types_std import CKO_DATA
+
+    handle = 0
+    try:
+        handle = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: b"p11chk-cko-data-probe",
+                CKA_VALUE: b"probe",
+                CKA_TOKEN: False,
+            },
+        )
+    except CkrAssertionError as exc:
+        if exc.rv in CKO_DATA_NOT_SUPPORTED_RVS:
+            pytest.skip(f"Module does not support CKO_DATA storage: {ckr_name(exc.rv)}")
+        raise
+    finally:
+        if handle:
+            destroy_quietly(rs.raw, rs.sh, handle)
 
 
 def needs_mechanism(name: str) -> Callable[[Any], Any]:
@@ -105,6 +238,82 @@ def needs_mechanism(name: str) -> Callable[[Any], Any]:
 def skip_unless_mechanism(rs: Any, name: str) -> None:
     if not rs.has_mechanism(name):
         pytest.skip(f"{name} not supported")
+
+
+def skip_unless_mechanism_flag(rs: Any, mechanism: str | int, flag: int) -> None:
+    """Skip the test unless *mechanism* advertises *flag* in C_GetMechanismInfo.
+
+    A missing operation flag is the module declaring it does not expose that
+    operation for that mechanism -- a genuine capability absence, the one
+    sanctioned skip category. The metadata deviation itself is recorded once by
+    test_mech_flags.py::test_expected_flags_present (see the resilience spec).
+    """
+    if rs.has_mechanism_flag(mechanism, flag):
+        return
+    from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
+    from pkcs11_check.raw.types_std import CKF_DECRYPT, CKF_ENCRYPT, CKF_SIGN, CKF_VERIFY
+
+    name = (
+        MECHANISM_NAMES.get(int(mechanism), str(mechanism))
+        if isinstance(mechanism, int)
+        else mechanism
+    )
+    flag_names = {
+        int(CKF_VERIFY): "CKF_VERIFY",
+        int(CKF_SIGN): "CKF_SIGN",
+        int(CKF_ENCRYPT): "CKF_ENCRYPT",
+        int(CKF_DECRYPT): "CKF_DECRYPT",
+    }
+    pytest.skip(f"Mechanism {name} lacks required capability {flag_names.get(flag, hex(flag))}")
+
+
+def keygen_key_size_supported(rs: Any, keygen_mech: str | int, bits: int) -> bool:
+    """True iff the module advertises *keygen_mech* with min<=bits<=max.
+
+    Reads ``C_GetMechanismInfo`` (via the merged ``get_mechanism_info`` recipe).
+    *bits* is the key-size unit the mechanism's min/max range is expressed in:
+    RSA modulus bits for ``*_RSA_*KEY_PAIR_GEN``; EC curve field bits (==
+    ``cryptography`` ``curve.key_size``, e.g. P-521 -> 521, NOT coord_len*8) for
+    ``EC_KEY_PAIR_GEN`` / ``ECDSA_KEY_PAIR_GEN``. Never raises: returns ``False``
+    when the mechanism is not advertised, its name is unknown, or the info query
+    errors -- so it can safely gate test setup.
+    """
+    if not rs.has_mechanism(keygen_mech):
+        return False
+    from pkcs11_check.raw.recipes import get_mechanism_info
+
+    # Resolve a name -> CKM int exactly as has_mechanism_flag does.
+    if isinstance(keygen_mech, str):
+        from pkcs11_check.raw import types_std
+
+        name = keygen_mech if keygen_mech.startswith("CKM_") else "CKM_" + keygen_mech
+        mech_int_opt = getattr(types_std, name, None)
+        if mech_int_opt is None:
+            return False
+        mech_int = int(mech_int_opt)
+    else:
+        mech_int = int(keygen_mech)
+
+    try:
+        info = get_mechanism_info(rs.raw, rs.slot_id, mech_int)
+    except CkrAssertionError:
+        return False
+    return info["min_key_size"] <= bits <= info["max_key_size"]
+
+
+def require_keygen_key_size(rs: Any, keygen_mech: str | int, bits: int, *, label: str) -> None:
+    """Skip when *bits* is outside *keygen_mech*'s advertised key-size range.
+
+    A size outside the module's advertised ``C_GetMechanismInfo`` min/max for the
+    keygen mechanism is a genuine capability absence -- the one sanctioned skip
+    category -- so the ACVP suite does not hard-fail a module (e.g. jcardsim,
+    RSA_PKCS_KEY_PAIR_GEN min=max=2048) for refusing a size it never claimed to
+    support. An in-range size that still cannot keygen is handled downstream as a
+    ``not_operational`` xfail by the keygen-reject guards, not here.
+    """
+    if keygen_key_size_supported(rs, keygen_mech, bits):
+        return
+    pytest.skip(f"{label}: key size {bits} outside advertised range for {keygen_mech}")
 
 
 def require_operational_aes_keygen(rs: Any) -> None:
@@ -134,21 +343,75 @@ def gen_aes_key_or_xfail(
     attrs: Mapping[Any, Any] | None = None,
     *,
     purpose: str = "setup",
+    sh: int | None = None,
+    mechanism: int | None = None,
+    mechanism_label: str = "AES_KEY_GEN",
 ) -> int:
-    """Generate an AES key, xfail-ing explicit setup rejection CKRs."""
-    if not rs.has_mechanism("AES_KEY_GEN"):
-        pytest.skip("AES_KEY_GEN not supported by module")
+    """Generate an AES key, xfail-ing explicit setup rejection CKRs.
+
+    ``sh`` overrides the session the key is generated in (defaults to ``rs.sh``);
+    a few setup sites generate the key in a freshly opened session on the same
+    token, where the advertised-but-not-operational reject is identical.
+
+    ``mechanism`` overrides the keygen mechanism (defaults to ``CKM_AES_KEY_GEN``);
+    used by tests that exercise CKM_GENERIC_SECRET_KEY_GEN via the same code path.
+    The xfail tuple is the same — the advertised-but-not-operational reject set
+    is identical across AES-class keygen mechanisms.
+    """
+    if not rs.has_mechanism(mechanism_label):
+        pytest.skip(f"{mechanism_label} not supported by module")
 
     from pkcs11_check.raw.recipes import gen_aes_key
+    from pkcs11_check.raw.types_std import CKM_AES_KEY_GEN
 
+    session = rs.sh if sh is None else sh
+    mech = CKM_AES_KEY_GEN if mechanism is None else mechanism
+    kwargs: dict[str, Any] = {"attrs": attrs}
+    if mechanism is not None:
+        kwargs["mechanism"] = mech
     try:
-        return gen_aes_key(rs.raw, rs.sh, bits, attrs=attrs)
+        return gen_aes_key(rs.raw, session, bits, **kwargs)
     except AssertionError as exc:
         xfail_if_known_ckr(
             exc,
             AES_KEYGEN_RUNTIME_REJECT_RVS,
-            f"AES_KEY_GEN advertised but AES-{bits} key generation for {purpose} "
+            f"{mechanism_label} advertised but {bits}-bit key generation for {purpose} "
             "is not operational",
+        )
+    raise
+
+
+def hmac_sign_or_xfail(
+    rs: Any,
+    key_handle: int,
+    mechanism: int,
+    data: bytes,
+    *,
+    label: str,
+) -> bytes:
+    """C_Sign an HMAC, skipping when not advertised, xfail-ing op rejects.
+
+    label must be the mechanism name (e.g. "SHA256_HMAC") — it is used both
+    for the has_mechanism gate and for the xfail/skip messages.
+
+    tpm2-pkcs11 advertises CKM_SHA*_HMAC yet C_Sign returns CKR_GENERAL_ERROR.
+    * mechanism NOT advertised → pytest.skip (capability genuinely absent)
+    * advertised + HMAC_OP_RUNTIME_REJECT_RVS → xfail (advertised-but-not-operational)
+    * any other failure (incl. wrong-MAC comparison by the caller) → hard fail
+    Provider-general: no provider identity consulted.
+    """
+    if not rs.has_mechanism(label):
+        pytest.skip(f"{label} not advertised")
+
+    from pkcs11_check.raw.recipes import sign_single
+
+    try:
+        return sign_single(rs.raw, rs.sh, key_handle, mechanism, data)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            HMAC_OP_RUNTIME_REJECT_RVS,
+            f"{label} advertised but sign is not operational",
         )
     raise
 
@@ -162,73 +425,384 @@ def unwrap_key_for_mechanism_roundtrip(
     mechanism: Any,
     attrs: Mapping[Any, Any],
     mech_param: Any | None = None,
+    value_len: int | None = None,
     purpose: str = "mechanism unwrap roundtrip",
 ) -> int:
-    """Unwrap for mechanism-level crypto checks, retrying documented template quirks.
+    """Unwrap for mechanism-level crypto checks, negotiating the accepted template.
 
-    Some modules reject CKA_CLASS/CKA_KEY_TYPE in C_UnwrapKey templates even
-    though the mechanism can still unwrap a valid provider-generated blob when
-    those type identifiers are omitted. Mechanism-level tests care about the
-    cryptographic roundtrip; stricter attribute-template behavior belongs in
-    dedicated attribute/security tests.
+    The canonical template (variant 0) carries CKA_CLASS, CKA_KEY_TYPE and whatever
+    policy attributes the caller supplied. Both CKA_CLASS and CKA_KEY_TYPE are kept in
+    every variant (opencryptoki requires CKA_CLASS on C_UnwrapKey and CKA_KEY_TYPE is
+    spec-mandatory). What modules disagree on is the *policy* attributes: opencryptoki
+    rejects CKA_EXTRACTABLE/CKA_SENSITIVE in an unwrap template (CKR_ATTRIBUTE_READ_ONLY)
+    whereas lenient modules (softhsm2) need CKA_EXTRACTABLE for the unwrapped value to be
+    readable. So on a clean template-shape reject, a second variant drops those policy
+    attributes. Provider-general: a module that accepts the policy attrs succeeds on
+    variant 0 and never retries; no provider identity is consulted. (Probed 2026-06-09.)
     """
-    from pkcs11_check.compliance import ComplianceLevel, note
     from pkcs11_check.raw.recipes import unwrap_key
-    from pkcs11_check.testcases._module_quirks import quirk_extras
+    from pkcs11_check.testcases._negotiation import negotiate_request, value_len_variant_allowed
+
+    base = dict(attrs)
+    variants = [base]
+    relaxed = {k: v for k, v in base.items() if k not in (CKA_EXTRACTABLE, CKA_SENSITIVE)}
+    if relaxed != base:
+        variants.append(relaxed)
+    if (
+        value_len is not None
+        and CKA_KEY_TYPE in base
+        and value_len_variant_allowed(base[CKA_KEY_TYPE], int(mechanism))
+    ):
+        variants = [{**v, CKA_VALUE_LEN: value_len} for v in variants] + variants
+
+    def attempt(delta: Mapping[Any, Any]) -> int:
+        return unwrap_key(
+            rs.raw,
+            rs.sh,
+            unwrapping_key,
+            wrapped_key,
+            mechanism,
+            attrs=delta,
+            mech_param=mech_param,
+        )
+
+    result, _idx = negotiate_request(attempt, variants, label=purpose)
+    return result
+
+
+# C_CreateObject storage-shape rejects: the template rejects plus the clean codes
+# storage-oriented modules use for storage-model constraints (probed corePKCS11
+# 2026-06-09: missing CKA_LABEL -> CKR_ARGUMENTS_BAD, CKA_TOKEN=False ->
+# CKR_ATTRIBUTE_VALUE_INVALID, CKA_SENSITIVE unknown to the HMAC key parser ->
+# CKR_ATTRIBUTE_TYPE_INVALID). Import-site only: at other sites these codes stay
+# real findings (see negotiate_request).
+IMPORT_STORAGE_SHAPE_REJECTS: tuple[int, ...] = (
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_ATTRIBUTE_READ_ONLY,
+)
+
+# Benign policy attributes a storage variant may DROP on a clean shape reject
+# (mirrors unwrap_key_for_mechanism_roundtrip): their absence does not change
+# what the KAT asserts. Crypto-visible attributes are never touched.
+_IMPORT_DROPPABLE_POLICY_ATTRS: tuple[Any, ...] = (CKA_SENSITIVE, CKA_EXTRACTABLE)
+
+_import_label_counter = itertools.count(1)
+
+# Winning storage-variant cache, keyed by template shape (class, key type,
+# attr-type set). One negotiation walk per shape per process; subsequent
+# imports go straight to the learned variant instead of re-rejecting the
+# canonical thousands of times. A cached winner that stops working falls back
+# to the full canonical-first sequence and re-learns.
+_IMPORT_SHAPE_WINNERS: dict[tuple[Any, ...], int] = {}
+
+
+def reset_import_negotiation_cache() -> None:
+    """Test hook: forget learned storage-variant winners."""
+    _IMPORT_SHAPE_WINNERS.clear()
+
+
+def _next_import_label() -> bytes:
+    """Unique short label for label-keyed object stores (max 32 bytes)."""
+    return f"p11chk-import-{next(_import_label_counter)}".encode()
+
+
+def _storage_variants(base: dict[Any, Any]) -> list[dict[Any, Any]]:
+    """Spec-equivalent storage variants, canonical-minimal first (G1)."""
+    variants: list[dict[Any, Any]] = [base]
+    labeled = base if CKA_LABEL in base else {**base, CKA_LABEL: _next_import_label()}
+    if labeled is not base:
+        variants.append(labeled)
+    tokened = labeled if base.get(CKA_TOKEN, False) else {**labeled, CKA_TOKEN: True}
+    if tokened is not labeled:
+        variants.append(tokened)
+    dropped = {k: v for k, v in tokened.items() if k not in _IMPORT_DROPPABLE_POLICY_ATTRS}
+    if dropped != tokened:
+        variants.append(dropped)
+    return variants
+
+
+def _import_shape_key(base: Mapping[Any, Any]) -> tuple[Any, ...]:
+    return (
+        base.get(CKA_CLASS),
+        base.get(CKA_KEY_TYPE),
+        tuple(sorted(int(k) for k in base)),
+    )
+
+
+def create_object_negotiated(
+    rs: Any,
+    attrs: Mapping[Any, Any],
+    *,
+    purpose: str = "key import",
+) -> int:
+    """Create an object, negotiating storage-shape requirements (label / token).
+
+    Variant 0 is the caller's spec-minimal template. Storage-oriented modules reject
+    it cleanly: corePKCS11 requires CKA_LABEL on every key object (CKR_ARGUMENTS_BAD
+    when absent), supports only token objects (CKR_ATTRIBUTE_VALUE_INVALID for
+    CKA_TOKEN=False) and rejects policy attributes its parsers do not know
+    (CKR_ATTRIBUTE_TYPE_INVALID for CKA_SENSITIVE). Retry variants add a unique
+    CKA_LABEL, then CKA_TOKEN=True, then drop the benign policy attrs -- storage
+    shape only; crypto-visible attributes are never changed and no provider
+    identity is consulted. The winning variant is cached per template shape per
+    process (see _IMPORT_SHAPE_WINNERS); callers destroy the object in their
+    cleanup path regardless of which variant won.
+    """
+    from pkcs11_check.raw.recipes import create_object
+    from pkcs11_check.raw.rv import CkrAssertionError as _CkrError
+    from pkcs11_check.testcases._negotiation import negotiate_request
+
+    base = dict(attrs)
+    variants = _storage_variants(base)
+    shape_key = _import_shape_key(base)
+
+    def attempt(delta: Mapping[Any, Any]) -> int:
+        return create_object(rs.raw, rs.sh, dict(delta))
+
+    cached = _IMPORT_SHAPE_WINNERS.get(shape_key)
+    if cached is not None and 0 < cached < len(variants):
+        try:
+            return attempt(variants[cached])
+        except _CkrError as exc:
+            if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
+                pytest.skip("Module does not implement C_CreateObject")
+            if exc.rv not in IMPORT_STORAGE_SHAPE_REJECTS:
+                raise
+            # The learned winner stopped working: re-learn from canonical.
 
     try:
-        return unwrap_key(
-            rs.raw,
-            rs.sh,
-            unwrapping_key,
-            wrapped_key,
-            mechanism,
-            attrs=attrs,
-            mech_param=mech_param,
+        result, idx = negotiate_request(
+            attempt, variants, label=purpose, shape_rejects=IMPORT_STORAGE_SHAPE_REJECTS
         )
-    except AssertionError as exc:
-        allowed_errors = quirk_extras(p11_config, "unwrap_template_class_keytype_rejected")
-        if not is_known_error(exc, allowed_errors):
-            raise
-        relaxed_attrs = {
-            key: value for key, value in attrs.items() if key not in (CKA_CLASS, CKA_KEY_TYPE)
-        }
-        if relaxed_attrs == attrs:
-            raise
-        note(
-            f"{purpose}: provider rejected CKA_CLASS/CKA_KEY_TYPE in unwrap template; "
-            "retried without CKA_CLASS/CKA_KEY_TYPE for mechanism-level crypto check",
-            ComplianceLevel.VENDOR,
-            reference="docs/module-issues.md OpenCryptoki unwrap-template attribute rejection",
+    except _CkrError as exc:
+        # No C_CreateObject at all (Cloud-KMS proxy / no-import provider, e.g.
+        # kmsp11): every import setup site routes here, so skip uniformly rather
+        # than hard-failing each. Capability absent -> skip (genuine), not xfail.
+        if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
+            pytest.skip("Module does not implement C_CreateObject")
+        raise
+    _IMPORT_SHAPE_WINNERS[shape_key] = idx
+    return result
+
+
+def import_rsa_public_key_negotiated(
+    rs: Any,
+    *,
+    n: bytes,
+    e: bytes,
+    attrs: Mapping[Any, Any] | None = None,
+    purpose: str = "RSA public key import",
+) -> int:
+    """Import an RSA public key, negotiating storage-shape template requirements.
+
+    Same canonical template as ``raw.recipes.import_rsa_public_key``; clean
+    storage-shape rejects retry via ``create_object_negotiated`` variants.
+    """
+    base: dict[Any, Any] = {
+        CKA_CLASS: CKO_PUBLIC_KEY,
+        CKA_KEY_TYPE: CKK_RSA,
+        CKA_TOKEN: False,
+        CKA_MODULUS: n,
+        CKA_PUBLIC_EXPONENT: e,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object_negotiated(rs, base, purpose=purpose)
+
+
+def import_rsa_private_key_negotiated(
+    rs: Any,
+    *,
+    n: bytes,
+    e: bytes,
+    d: bytes,
+    p: bytes,
+    q: bytes,
+    dmp1: bytes,
+    dmq1: bytes,
+    iqmp: bytes,
+    attrs: Mapping[Any, Any] | None = None,
+    purpose: str = "RSA private key import",
+) -> int:
+    """Import an RSA private key from CRT components, negotiating storage shape.
+
+    Same canonical template as ``raw.recipes.import_rsa_private_key``; clean
+    storage-shape rejects retry via ``create_object_negotiated`` variants.
+    """
+    from pkcs11_check.raw.types_std import (
+        CKA_COEFFICIENT,
+        CKA_EXPONENT_1,
+        CKA_EXPONENT_2,
+        CKA_PRIME_1,
+        CKA_PRIME_2,
+        CKA_PRIVATE_EXPONENT,
+        CKO_PRIVATE_KEY,
+    )
+
+    base: dict[Any, Any] = {
+        CKA_CLASS: CKO_PRIVATE_KEY,
+        CKA_KEY_TYPE: CKK_RSA,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_MODULUS: n,
+        CKA_PUBLIC_EXPONENT: e,
+        CKA_PRIVATE_EXPONENT: d,
+        CKA_PRIME_1: p,
+        CKA_PRIME_2: q,
+        CKA_EXPONENT_1: dmp1,
+        CKA_EXPONENT_2: dmq1,
+        CKA_COEFFICIENT: iqmp,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object_negotiated(rs, base, purpose=purpose)
+
+
+def ec_public_key_binding_defect(rs: Any, handle: int, requested_params: bytes) -> str | None:
+    """Effect-check a just-created EC public key: is it bound to the requested curve?
+
+    Some modules accept a foreign-curve import with CKR_OK but bind the key to
+    their only supported group (corePKCS11 binds everything to P-256; the object
+    is then incoherent -- attribute readback returns CKR_OBJECT_HANDLE_INVALID --
+    or reports different CKA_EC_PARAMS). Verify the effect, not the return code:
+    a CKR_OK whose object does not round-trip the requested curve is a defect.
+    Returns None when coherent, else a reason string. KAT suites skip vectors of
+    a defective curve (capability genuinely absent); the self-contradiction
+    itself is surfaced by the dedicated object-coherence conformance test.
+    """
+    from pkcs11_check.raw.recipes import read_attributes
+
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, handle, [int(CKA_EC_PARAMS)])
+    except CkrAssertionError as exc:
+        return f"object incoherent after CKR_OK create: {exc}"
+    got = attrs.get(int(CKA_EC_PARAMS))
+    if got is None:
+        return "CKA_EC_PARAMS unavailable after CKR_OK create"
+    if bytes(got) != bytes(requested_params):
+        return (
+            f"module silently rebound curve: requested CKA_EC_PARAMS "
+            f"{bytes(requested_params).hex()}, object reports {bytes(got).hex()}"
         )
-        return unwrap_key(
-            rs.raw,
-            rs.sh,
-            unwrapping_key,
-            wrapped_key,
-            mechanism,
-            attrs=relaxed_attrs,
-            mech_param=mech_param,
-        )
+    return None
+
+
+def import_secret_key_negotiated(
+    rs: Any,
+    key_type: int,
+    value: bytes,
+    *,
+    attrs: Mapping[Any, Any] | None = None,
+    purpose: str = "secret key import",
+) -> int:
+    """Import a secret key by value, negotiating storage-shape requirements.
+
+    Same canonical template as ``raw.recipes.import_secret_key``; on a clean
+    storage-shape reject it retries via ``create_object_negotiated`` variants
+    (unique CKA_LABEL, then CKA_TOKEN=TRUE -- corePKCS11-style label-keyed
+    token-only stores).
+    """
+    base: dict[Any, Any] = {
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: key_type,
+        CKA_VALUE: value,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object_negotiated(rs, base, purpose=purpose)
+
+
+def import_ec_public_key_negotiated(
+    rs: Any,
+    *,
+    ec_params: bytes,
+    ec_point: bytes,
+    key_type: int = int(CKK_EC),
+    attrs: Mapping[Any, Any] | None = None,
+    purpose: str = "EC public key import",
+) -> int:
+    """Import an EC public key, negotiating storage-shape template requirements.
+
+    Same canonical template as ``raw.recipes.import_ec_public_key``; on a clean
+    storage-shape reject it retries via ``create_object_negotiated`` variants.
+    """
+    base: dict[Any, Any] = {
+        CKA_CLASS: CKO_PUBLIC_KEY,
+        CKA_KEY_TYPE: key_type,
+        CKA_TOKEN: False,
+        CKA_EC_PARAMS: ec_params,
+        CKA_EC_POINT: ec_point,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object_negotiated(rs, base, purpose=purpose)
+
+
+def import_ec_private_key_negotiated(
+    rs: Any,
+    *,
+    ec_params: bytes,
+    value: bytes,
+    key_type: int = int(CKK_EC),
+    attrs: Mapping[Any, Any] | None = None,
+    purpose: str = "EC private key import",
+) -> int:
+    """Import an EC/Edwards/Montgomery private key, negotiating storage-shape template
+    requirements. Same canonical template as ``raw.recipes.import_ec_private_key``; on a
+    clean storage-shape reject it retries via ``create_object_negotiated`` variants
+    (and inherits the per-shape winner cache)."""
+    from pkcs11_check.raw.types_std import CKO_PRIVATE_KEY
+
+    base: dict[Any, Any] = {
+        CKA_CLASS: CKO_PRIVATE_KEY,
+        CKA_KEY_TYPE: key_type,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_EC_PARAMS: ec_params,
+        CKA_VALUE: value,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object_negotiated(rs, base, purpose=purpose)
 
 
 def gen_rsa_keypair_or_xfail(
     rs: Any,
     bits: int = 2048,
+    *,
+    usage: RSAUsage | None = None,
     public_attrs: Mapping[Any, Any] | None = None,
     private_attrs: Mapping[Any, Any] | None = None,
 ) -> tuple[int, int]:
-    """Generate an RSA keypair, xfail-ing explicit setup rejection CKRs."""
+    """Generate an RSA keypair, xfail-ing explicit setup rejection CKRs.
+
+    ``usage`` declares the key's purpose (default: multi-purpose sign+decrypt).
+    Pass ``RSAUsage.SIGN`` / ``RSAUsage.DECRYPT`` so single-purpose providers
+    (Cloud-KMS-class) generate a usable key and the test actually runs, instead
+    of the multi-purpose template being rejected and the whole test xfailing.
+    A provider that genuinely cannot satisfy the requested single purpose still
+    routes to xfail via KEYPAIR_RUNTIME_REJECT_RVS (provider-general).
+    """
     if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
         pytest.skip("RSA_PKCS_KEY_PAIR_GEN not supported by module")
 
-    from pkcs11_check.raw.recipes import gen_rsa_keypair
+    from pkcs11_check.raw.recipes import RSAUsage, gen_rsa_keypair
+
+    if usage is None:
+        usage = RSAUsage.SIGN | RSAUsage.DECRYPT
 
     try:
         return gen_rsa_keypair(
             rs.raw,
             rs.sh,
             bits,
+            usage=usage,
             public_attrs=public_attrs,
             private_attrs=private_attrs,
         )
@@ -423,7 +997,16 @@ def xfail_if_known_ckr(
     """
     matched = _matched_ckr_name(exc, known_ckrs)
     if matched is not None:
-        pytest.xfail(f"{msg}: {matched}")
+        from pkcs11_check import classification as C
+
+        rv = getattr(exc, "rv", None)
+        C.classify(
+            "not_operational",
+            label=msg,
+            actual=rv if rv is not None else matched,
+            summary=f"{msg}: {matched}",
+        )
+        return  # classify() raises XFailed; defensive
     raise  # Not a known CKR -- propagate as real failure
 
 
@@ -433,6 +1016,7 @@ def classify_negative_rv(
     *,
     label: str,
     allow_ok: bool = False,
+    kind: str | None = None,
 ) -> None:
     """Raw-rv negative classifier (provider-general 3-way).
 
@@ -450,14 +1034,68 @@ def classify_negative_rv(
     ``xfail``. This helper decides direction by the model, never to silence a
     finding.
     """
+    from pkcs11_check import classification as C
+
     if rv == CKR_OK:
         if allow_ok:
             return
-        pytest.fail(f"{label}: accepted invalid (CKR_OK) -- must reject")
+        C.classify(
+            "accepted_invalid",
+            kind=kind,
+            label=label,
+            actual=rv,
+            expected=tuple(expected_rvs),
+            summary=f"{label}: accepted invalid (CKR_OK) -- must reject",
+        )
+        return
     if rv in expected_rvs:
         return
-    pytest.xfail(
-        f"{label}: rejected with {ckr_name(rv)}, expected {[ckr_name(c) for c in expected_rvs]}"
+    _classify_unexpected_clean_rv(rv, expected_rvs, label=label, kind=kind)
+
+
+def _classify_unexpected_clean_rv(
+    rv: int,
+    expected_rvs: tuple[Any, ...] | set[Any] | frozenset[Any],
+    *,
+    label: str,
+    kind: str | None = None,
+) -> None:
+    from pkcs11_check import classification as C
+
+    expected_names = [ckr_name(c) for c in expected_rvs]
+    if is_vendor_defined_ckr(rv):
+        C.classify(
+            "nonspec_reject",
+            kind=kind,
+            label=label,
+            actual=rv,
+            expected=tuple(expected_rvs),
+            summary=f"{label}: rejected with vendor-defined CK_RV {ckr_name(rv)}, "
+            f"expected {expected_names}",
+        )
+        return
+    if not is_standard_ckr(rv):
+        # An undefined CK_RV is a return-value-contract violation: the module returned
+        # a value outside the defined PKCS#11 CK_RV enum (metadata-class
+        # self-inconsistency).  Force kind="metadata" so the verdict is fail/HIGH
+        # (not escalated to CRITICAL by a crypto kind), and never emit the reserved
+        # backlog-gate marker (that reason belongs only to the plugin runtime gate).
+        C.classify(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            actual=rv,
+            expected=tuple(expected_rvs),
+            summary=f"{label}: rejected with undefined CK_RV {ckr_name(rv)}, "
+            f"expected {expected_names}",
+        )
+        return
+    C.classify(
+        "nonspec_reject",
+        kind=kind,
+        label=label,
+        actual=rv,
+        expected=tuple(expected_rvs),
     )
 
 
@@ -466,6 +1104,7 @@ def reject_or_classify(
     expected_rvs: tuple[Any, ...] | set[Any] | frozenset[Any],
     *,
     label: str,
+    kind: str | None = None,
 ) -> None:
     """Recipe-site negative classifier (exception-shaped, provider-general 3-way).
 
@@ -481,17 +1120,34 @@ def reject_or_classify(
     Mirrors ``classify_negative_rv`` for the exception path, reusing
     ``is_known_error`` for the match.
     """
+    from pkcs11_check import classification as C
+
     if exc is None:
-        pytest.fail(f"{label}: accepted invalid (CKR_OK) -- must reject")
+        C.classify(
+            "accepted_invalid",
+            kind=kind,
+            label=label,
+            actual="CKR_OK",
+            expected=tuple(expected_rvs),
+            summary=f"{label}: accepted invalid (CKR_OK) -- must reject",
+        )
+        return
     if is_known_error(exc, expected_rvs):
         return
     rv = getattr(exc, "rv", None)
-    name = ckr_name(rv) if rv is not None else str(exc)
-    pytest.xfail(f"{label}: rejected with {name}, expected {[ckr_name(c) for c in expected_rvs]}")
+    if rv is not None:
+        _classify_unexpected_clean_rv(rv, expected_rvs, label=label, kind=kind)
+        return
+    C.classify(
+        "nonspec_reject",
+        kind=kind,
+        label=label,
+        summary=f"{label}: rejected with {type(exc).__name__}, expected {list(expected_rvs)}",
+    )
 
 
 def classify_policy_enforcement(*, claimed: bool, violated: bool, label: str) -> None:
-    """Type-B attribute/permission self-contradiction classifier.
+    """Policy attribute/permission self-contradiction classifier.
 
     Args:
         claimed: the module reported the protective attribute back (e.g. a
@@ -505,14 +1161,28 @@ def classify_policy_enforcement(*, claimed: bool, violated: bool, label: str) ->
       then violated it -- a self-contradiction, broken for any provider).
     - ``claimed`` and not ``violated`` -> ``pass``.
     """
+    from pkcs11_check import classification as C
+
+    if claimed and not violated:
+        return
     if not claimed:
-        pytest.xfail(f"{label}: module does not claim the protection (honest non-support)")
-    if violated:
-        pytest.fail(f"{label}: claimed the protection then violated it (self-contradiction)")
+        C.classify(
+            "honest_deviation",
+            kind="policy",
+            label=label,
+            summary=f"{label}: module does not claim the protection (honest non-support)",
+        )
+        return
+    C.classify(
+        "self_contradiction",
+        kind="policy",
+        label=label,
+        summary=f"{label}: claimed the protection then violated it (self-contradiction)",
+    )
 
 
 def classify_lifecycle_effect(*, claimed_success: bool, effect_observed: bool, label: str) -> None:
-    """Type-C lifecycle/state self-contradiction classifier.
+    """Lifecycle/state self-contradiction classifier.
 
     Args:
         claimed_success: the prior operation returned ``CKR_OK`` (e.g. a
@@ -528,10 +1198,71 @@ def classify_lifecycle_effect(*, claimed_success: bool, effect_observed: bool, l
       contradicted -- a self-contradiction).
     - ``claimed_success`` and not ``effect_observed`` -> ``pass``.
     """
+    from pkcs11_check import classification as C
+
+    if claimed_success and not effect_observed:
+        return
     if not claimed_success:
-        pytest.xfail(f"{label}: prior operation did not claim success")
-    if effect_observed:
-        pytest.fail(f"{label}: success claimed then contradicted (self-contradiction)")
+        C.classify(
+            "honest_deviation",
+            kind="lifecycle",
+            label=label,
+            summary=f"{label}: prior operation did not claim success",
+        )
+        return
+    C.classify(
+        "self_contradiction",
+        kind="lifecycle",
+        label=label,
+        summary=f"{label}: success claimed then contradicted (self-contradiction)",
+    )
+
+
+def classify_discrimination(*, valid_accepted: bool, invalid_outcome: Any, label: str) -> None:
+    """Outcome-based discrimination classifier (Pillar 2, guardrails D1-D5).
+
+    For integrity/forgery/type-confusion negative tests where the spec mandates no
+    specific failure code: the verdict is the security EFFECT, not the CKR named.
+
+    Args:
+        valid_accepted: the un-tampered operation succeeded AND its result was verified
+            (a real, material-checked positive leg). Advertised-but-not-operational
+            positive legs are routed to xfail by the caller BEFORE this call (D5); a
+            ``False`` here means CKR_OK-but-wrong/unverifiable output -- a real break.
+        invalid_outcome: the invalid leg's outcome -- either the caught exception, or the
+            produced object (handle/bytes) when the module ACCEPTED the bad input.
+            A ``CkrAssertionError`` (clean ``.rv``) -> rejected (any code, D3). Any other
+            exception (no ``.rv``) -> re-raised (D2: a harness/ctypes bug, not detection).
+            A produced object (not an exception) -> accepted -> break.
+    """
+    if isinstance(invalid_outcome, CkrAssertionError):
+        invalid_rejected = True
+    elif isinstance(invalid_outcome, BaseException):
+        raise invalid_outcome
+    else:
+        invalid_rejected = False
+
+    if not valid_accepted:
+        from pkcs11_check import classification as C
+
+        C.classify(
+            "accepted_invalid",
+            kind="crypto",
+            label=label,
+            summary=(
+                f"{label}: the valid/un-tampered operation did not verify -- cannot "
+                "distinguish 'detected tampering' from 'cannot do the operation'"
+            ),
+        )
+    if not invalid_rejected:
+        from pkcs11_check import classification as C
+
+        C.classify(
+            "accepted_invalid",
+            kind="crypto",
+            label=label,
+            summary=f"{label}: accepted the tampered/forged/confused input (security break)",
+        )
 
 
 def destroy_returned_handles(rs: Any, *handles: int) -> None:
@@ -557,3 +1288,98 @@ def skip_if_mech_param_unsupported(exc: BaseException, context: str) -> None:
     if is_known_error(exc, MECH_PARAM_UNSUPPORTED_ERRORS):
         pytest.skip(f"{context} not supported: {exc}")
     raise exc
+
+
+def assert_correct(
+    *,
+    actual: object,
+    expected: object,
+    label: str,
+    operation: str | None = None,
+    mechanism: str | None = None,
+    source: str | None = None,
+    vector_id: str | None = None,
+    kind: str = "crypto",
+) -> None:
+    """KAT correctness check: equal values pass; a mismatch is wrong_result.
+
+    On mismatch, emits a ``wrong_result`` classification record and raises
+    ``pytest.fail`` via :func:`pkcs11_check.classification.classify`. ``kind``
+    selects the verdict family (default ``"crypto"`` -- the common case for KAT
+    outputs; pass ``"metadata"`` for a non-crypto attribute-value verdict).
+    On match, returns normally with no side effects.
+    """
+    from pkcs11_check import classification as C
+
+    if actual == expected:
+        return
+    C.classify(
+        "wrong_result",
+        kind=kind,
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        source=source,
+        vector_id=vector_id,
+        summary=f"{label}: output does not match known answer",
+    )
+
+
+# In-range advertised op that then refuses: the module advertised this exact
+# size/mech and then said it cannot do it. Narrow on purpose -- GENERAL_ERROR /
+# DEVICE_ERROR / wrong-output / crash are excluded and stay hard findings
+# (DEVICE_ERROR can mask a kryoptic crypto failure). Same narrow-explicit-reject-set
+# pattern as _DIGEST_OP_REJECT_RVS (test_sha3/test_crossverify).
+_IN_RANGE_NOT_OPERATIONAL_RVS: tuple[int, ...] = (
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+)
+
+
+def skip_unless_capability(
+    rs: Any,
+    mechanism: int,
+    *,
+    key_size: int | None = None,
+    operation: int | None = None,
+) -> None:
+    """Skip a functional test when the (mechanism, key_size, operation) is not
+    advertised IN_RANGE. Judged per (key_size, operation): a multi-size caller
+    invokes this per size, so in-range sizes still run -- no wholesale skip.
+    """
+    verdict = capability_for(rs, mechanism, key_size=key_size, operation=operation)
+    if verdict is Capability.IN_RANGE:
+        return
+    pytest.skip(
+        f"{ckm_name(mechanism)} not advertised for "
+        f"(key_size={key_size}, operation={operation}): {verdict.value}"
+    )
+
+
+def route_in_range_not_operational(
+    exc: BaseException,
+    *,
+    label: str,
+    mechanism: str,
+    key_size: int | None,
+    operation: str | None,
+) -> None:
+    """For an IN_RANGE op that then cleanly refused: route FNS/KEY_SIZE_RANGE/
+    MECHANISM_INVALID to the advertised-but-not-operational xfail, carrying the
+    capability verdict for the report audit. Any other code re-raises (finding).
+    """
+    rv = getattr(exc, "rv", None)
+    if rv is None or rv not in _IN_RANGE_NOT_OPERATIONAL_RVS:
+        raise exc
+    from pkcs11_check import classification as C
+
+    C.classify(
+        "not_operational",
+        label=not_operational_reason(label, ckr_name(rv)),
+        operation=operation,
+        mechanism=mechanism,
+        actual=rv,
+        summary=f"{label}: advertised IN_RANGE but not operational ({ckr_name(rv)})",
+        detail={"capability_verdict": "IN_RANGE", "key_size": key_size},
+    )

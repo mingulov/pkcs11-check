@@ -18,23 +18,19 @@ The fast syntax/generated-subprocess gate covers ordinary Python syntax under
 used by crash-survival tests. It does not replace provider runs; it prevents
 broken local test code from being counted as provider evidence.
 
-## Local builds
+## Running the suite against a module
 
 ```bash
-bash local-builds/build.sh kryoptic           # build token
-bash local-builds/test.sh kryoptic            # run full suite (~5 min)
-bash local-builds/test.sh kryoptic -k test_encrypt -v  # specific tests
-bash local-builds/test.sh softhsm2            # system SoftHSM2
-bash local-builds/reset.sh kryoptic           # reset token data
+uv run pkcs11-check test --p11-module /path/to/module.so --p11-pin 1234
 ```
 
-### Test profiles
+### Test profiles (marker selection)
 
 ```bash
-bash local-builds/test.sh softhsm2 -m smoke                              # 27 tests, ~5s
-bash local-builds/test.sh softhsm2 -m "not (wycheproof or acvp or cctv or stress or fuzz or slow)"  # ~2300 tests, ~30s
-bash local-builds/test.sh softhsm2 -m "wycheproof or acvp or cctv"       # ~72K vectors only
-bash local-builds/test.sh softhsm2                                        # full: ~75K tests, ~5min
+uv run pkcs11-check test --p11-module <so> -m smoke                              # ~27 tests, ~5s
+uv run pkcs11-check test --p11-module <so> -m "not (wycheproof or acvp or cctv or stress or fuzz or slow)"  # ~2300 tests, ~30s
+uv run pkcs11-check test --p11-module <so> -m "wycheproof or acvp or cctv"       # ~72K vectors only
+uv run pkcs11-check test --p11-module <so>                                        # full: ~75K tests
 ```
 
 ### Fast vs full: long-running test cases (`slow`)
@@ -55,20 +51,6 @@ uv run pkcs11-check test -m <module>               # full: everything (default)
 --skip-slow` → `-m "(acvp) and (not slow)"`). The full profile still runs every
 case — `slow` is a *selection* profile, never a way to hide a finding.
 
-### Available providers
-
-OpenSSL 4.0.0 preferred / 3.6.2 fallback, Kryoptic 1.5.0+PQC, SoftHSM2 2.7.0, OpenCryptoki 3.27.0, NSS softoken, pkcs11-mock 2.0.0, tpm2-pkcs11 1.10.0, BouncyHSM 2.1.0, swtpm 0.10.1, libtpms 0.10.2
-
-### Worktree Kryoptic testing
-
-Kryoptic requires OpenSSL 3.5.0+. In worktrees, use the pre-built module:
-
-```bash
-LD_LIBRARY_PATH="$PWD/local-builds/openssl/install/lib64" \
-P11TEST_MODULE="$PWD/local-builds/kryoptic/lib/libkryoptic_pkcs11.so" \
-P11TEST_PIN=1234 uv run python -m pytest src/pkcs11_check/testcases/<test_file>.py -v
-```
-
 ## Test vector data
 
 ```bash
@@ -78,15 +60,44 @@ uv run pkcs11-check fetch-data wycheproof    # fetch individual source
 uv run pkcs11-check fetch-disabled           # fetch disabled-tests baseline
 ```
 
-## Docker testing
+## Artifact comparison
 
 ```bash
-bash docker/test.sh softhsm2
-bash docker/test.sh softhsm2-generated-iv --match generated_iv -- src/pkcs11_check/testcases/test_aead.py
-bash docker/test.sh opencryptoki
-bash docker/test.sh nss --timeout 30 -- src/pkcs11_check/testcases/test_interface.py
-docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2
-docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2-generated-iv
+uv run pkcs11-check compare-coverage artifacts3/wolfpkcs11-pooled artifacts/wolfpkcs11-pooled --fail-on-loss
+uv run pkcs11-check compare-coverage old/coverage.json new/coverage.json --output json
 ```
 
-See [docker-artifacts.md](docker-artifacts.md) for the runner contract and artifact layout.
+`compare-coverage` compares provider-local mechanism coverage state buckets
+(`accepted`, `attempted`, `rejected_cleanly`, crash/timeout, and compatibility
+`invoked`) and exits 1 with `--fail-on-loss` if the candidate lost a baseline
+state. Use it before trusting a speed change that rearranges sharding, skips, or
+fast paths.
+
+## Per-provider classification report
+
+Roll at-source classifications (and runner-side crash findings) up into per-provider
+conformance reports. Run after a test run that produced a `report.jsonl` (the `test_cmd`
+JSON path sets `PKCS11_CHECK_REPORT_LOG` so the plugin writes one).
+
+```bash
+# Single provider (bare paths; --provider names it; --results-json adds crash findings):
+uv run python -m tools.report --report-log /path/report.jsonl \
+    --results-json /path/results.json --provider <name> --out <dir>
+
+# Multi-provider (repeat NAME=path; writes _index.md + _universal.md too):
+uv run python -m tools.report \
+    --report-log nss=/p/nss.jsonl --report-log softhsm2=/p/sh.jsonl --out <dir>
+```
+
+Flags: `--report-log` (path, or `NAME=path`, repeatable), `--results-json` (optional, same
+forms, for crash/timeout findings), `--provider` (names the provider for the single bare-path
+form), `--out` (output directory). Writes `<provider>.md` + `<provider>.jsonl` per provider, and
+`_index.md` + `_universal.md` when more than one provider is given. See
+[../tools/report/README.md](../tools/report/README.md).
+
+## Provider builds & the Docker test matrix
+
+Local provider builds (`local-builds/`), the Docker target matrix
+(`docker/` + the pooled `test_pool.py` runner), and result-comparison tooling live in
+the **development workspace** (`pkcs11-check-ws`), not in this repo. See the workspace
+docs for building providers and running the Docker conformance matrix.

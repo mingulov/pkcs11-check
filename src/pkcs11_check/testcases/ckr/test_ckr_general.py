@@ -3,7 +3,7 @@
 Covers C_Initialize, C_Finalize, C_GetInterfaceList.
 All tests run in subprocess - these functions affect global library state.
 
-Source: PKCS#11 v3.1 Sec.5.4.1-5.4.4.
+Source: PKCS#11 v3.2-5.4.4.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ class TestInitializeErrors:
                 print("CKR:CRYPTOKI_ALREADY_INITIALIZED")
             else:
                 print(f"CKR:0x{{rv2:08x}}")
+            print("OK")
             raw.C_Finalize(None)
         """)
         result = subprocess.run(
@@ -73,6 +74,7 @@ class TestInitializeErrors:
                 print("CKR:CRYPTOKI_NOT_INITIALIZED")
             else:
                 print(f"CKR:0x{{rv:08x}}")
+            print("OK")
         """)
         result = subprocess.run(
             [sys.executable, "-c", script],
@@ -107,6 +109,7 @@ class TestInitializeErrors:
                     print(f"CKR:OK:{{count.value}}_interfaces")
                 else:
                     print(f"CKR:0x{{rv:08x}}")
+                print("OK")
             except AttributeError:
                 print("CKR:NO_METHOD")  # v2.40 module, C_GetInterfaceList not available
                 print("OK")

@@ -20,14 +20,15 @@ from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_ec_private_key,
-    import_ec_public_key,
     sign_single,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_VERIFY,
@@ -41,6 +42,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
@@ -48,7 +50,12 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases._operability import not_operational_reason
+from pkcs11_check.testcases.conftest import (
+    import_ec_public_key_negotiated,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 
 pytestmark = [pytest.mark.kat, pytest.mark.cctv]
 
@@ -74,10 +81,20 @@ _EC_PARAMS = encode_named_curve_parameters("secp256r1")
 _RAW_POINT = bytes([0x04]) + _PUB_QX + _PUB_QY
 _EC_POINT_DER = bytes([0x04, len(_RAW_POINT)]) + _RAW_POINT  # len=65, fits in 1-byte DER length
 
-_CCTV_EC_IMPORT_UNSUPPORTED_CKRS = (
-    CKR_ATTRIBUTE_VALUE_INVALID,
+# EC import reject classification (import-skip audit A15). The reject is split: a
+# genuine-capability-absence branch (the P-256 curve is not supported) stays a
+# skip; a broad import-failure branch on a module that ADVERTISES ECDSA_SHA256 is
+# "advertised but not operational" -> xfail. The public-key site negotiates
+# storage shapes via import_ec_public_key_negotiated; the private-key site uses
+# the raw single-template import_ec_private_key (no negotiated EC-private importer
+# exists -- the canonical raw import IS the spec path; D2, commit b56c3f8c).
+_CCTV_EC_CURVE_UNSUPPORTED_CKRS = (
     CKR_CURVE_NOT_SUPPORTED,
     CKR_DOMAIN_PARAMS_INVALID,
+)
+
+_CCTV_EC_IMPORT_UNSUPPORTED_CKRS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
@@ -91,6 +108,11 @@ _CCTV_ECDSA_RUNTIME_REJECT_CKRS = (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
+    # Module-verify-unusable codes (a module that advertises ECDSA verify but
+    # cannot use the imported key handle / size for C_Verify) -> not_operational,
+    # matching the shared sigver classification (signature_rejected_or_xfail).
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
@@ -99,9 +121,38 @@ _CCTV_ECDSA_RUNTIME_REJECT_CKRS = (
 
 
 def _skip_or_xfail_cctv_ec_import_reject(exc: AssertionError, label: str) -> NoReturn:
-    """Classify EC import rejects before CCTV RFC6979 operations."""
-    if is_known_error(exc, _CCTV_EC_IMPORT_UNSUPPORTED_CKRS):
+    """Classify EC import rejects before CCTV RFC6979 operations (import-skip audit A15).
+
+    Curve-genuine-absence CKRs (CKR_CURVE_NOT_SUPPORTED / CKR_DOMAIN_PARAMS_INVALID)
+    keep the capability skip. A broad import-failure CKR on a module that
+    ADVERTISES ECDSA_SHA256 (the ``has_mechanism("ECDSA_SHA256")`` gate passed
+    upstream) is "advertised but not operational" -> xfail per the classification
+    model -- for both the negotiated public-key site and the raw single-template
+    private-key site (D2: the canonical raw EC-private import IS the spec path).
+    The existing runtime-reject branch is preserved. Non-CKR AssertionErrors
+    propagate (harness/coding bug).
+    """
+    if is_known_error(exc, _CCTV_EC_CURVE_UNSUPPORTED_CKRS):
+        # Genuine capability absence: the curve is not supported
+        # (CKR_CURVE_NOT_SUPPORTED / CKR_DOMAIN_PARAMS_INVALID). Skip stays.
         pytest.skip(f"Cannot import {label}: {exc}")
+    if isinstance(exc, CkrAssertionError) and is_known_error(exc, _CCTV_EC_IMPORT_UNSUPPORTED_CKRS):
+        # ECDSA_SHA256 is advertised (has_mechanism gate passed above) and the
+        # import is exhausted -> "advertised but not operational" -> xfail per
+        # the classification model (not skip).
+        # May include curve-capability rejects expressed as generic CKRs --
+        # recorded as xfail, not hidden.
+        xfail_as(
+            "not_operational",
+            kind="crypto",
+            label="ECDSA_SHA256:key-import",
+            operation="C_CreateObject",
+            mechanism="CKM_ECDSA_SHA256",
+            actual=exc.rv,
+            summary=not_operational_reason(
+                "ECDSA_SHA256:key-import", f"{label}: {ckr_name(exc.rv)}"
+            ),
+        )
     xfail_if_known_ckr(
         exc,
         _CCTV_ECDSA_RUNTIME_REJECT_CKRS,
@@ -124,12 +175,12 @@ def test_rfc6979_ecdsa_verify(p11_raw_session: Any) -> None:
     pub_key = 0
     try:
         try:
-            pub_key = import_ec_public_key(
-                rs.raw,
-                rs.sh,
+            pub_key = import_ec_public_key_negotiated(
+                rs,
                 ec_params=_EC_PARAMS,
                 ec_point=_EC_POINT_DER,
                 attrs={CKA_VERIFY: True},
+                purpose="CCTV RFC6979 P-256 public key import",
             )
         except AssertionError as e:
             _skip_or_xfail_cctv_ec_import_reject(e, "P-256 public-key")
@@ -144,9 +195,16 @@ def test_rfc6979_ecdsa_verify(p11_raw_session: Any) -> None:
             )
             raise
         if not verified:
-            pytest.fail(
-                "Module rejected a VALID ECDSA-SHA256 signature - "
-                "the RFC 6979 CCTV vector should verify correctly"
+            fail_as(
+                "wrong_result",
+                kind="crypto",
+                label="ECDSA_SHA256:verify (RFC6979 CCTV vector)",
+                operation="C_Verify",
+                mechanism="CKM_ECDSA_SHA256",
+                summary=(
+                    "Module rejected a VALID ECDSA-SHA256 signature - "
+                    "the RFC 6979 CCTV vector should verify correctly"
+                ),
             )
     finally:
         if pub_key:
@@ -188,9 +246,16 @@ def test_rfc6979_ecdsa_sign_deterministic(p11_raw_session: Any) -> None:
             )
             raise
         if sig != _EXPECTED_SIG:
-            pytest.xfail(
-                "Module does not use RFC 6979 deterministic k "
-                f"(got {sig.hex()[:32]}..., expected {_EXPECTED_SIG.hex()[:32]}...)"
+            classify(
+                "honest_deviation",
+                kind="crypto",
+                label="ECDSA_SHA256:sign (RFC6979 deterministic k)",
+                operation="C_Sign",
+                mechanism="CKM_ECDSA_SHA256",
+                summary=(
+                    "Module does not use RFC 6979 deterministic k "
+                    f"(got {sig.hex()[:32]}..., expected {_EXPECTED_SIG.hex()[:32]}...)"
+                ),
             )
     finally:
         if priv_key:

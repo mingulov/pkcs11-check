@@ -16,6 +16,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_OK,
     CKR_PIN_INCORRECT,
+    CKR_VENDOR_DEFINED,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CkrExpectation, assert_ckr
 from pkcs11_check.testcases.conftest import (
@@ -177,6 +178,20 @@ def test_rv_other_xfails() -> None:
         classify_negative_rv(CKR_FUNCTION_FAILED, (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
 
 
+def test_rv_unknown_non_vendor_value_fails() -> None:
+    with pytest.raises(Failed, match="undefined CK_RV"):
+        classify_negative_rv(0x7FFFFFFF, (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
+
+
+def test_rv_vendor_defined_value_xfails_distinctly() -> None:
+    with pytest.raises(pytest.xfail.Exception, match="vendor-defined CK_RV"):
+        classify_negative_rv(
+            int(CKR_VENDOR_DEFINED) + 1,
+            (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+            label="x",
+        )
+
+
 def test_exc_none_is_fail() -> None:
     with pytest.raises(Failed):
         reject_or_classify(None, (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
@@ -191,6 +206,20 @@ def test_exc_expected_passes() -> None:
 def test_exc_other_xfails() -> None:
     with pytest.raises(pytest.xfail.Exception):
         reject_or_classify(_exc(CKR_FUNCTION_FAILED), (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
+
+
+def test_exc_unknown_non_vendor_value_fails() -> None:
+    with pytest.raises(Failed, match="undefined CK_RV"):
+        reject_or_classify(_exc(0x7FFFFFFF), (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
+
+
+def test_exc_vendor_defined_value_xfails_distinctly() -> None:
+    with pytest.raises(pytest.xfail.Exception, match="vendor-defined CK_RV"):
+        reject_or_classify(
+            _exc(int(CKR_VENDOR_DEFINED) + 1),
+            (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+            label="x",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -277,3 +306,86 @@ def test_xfail_if_known_ckr_reraises_on_prefix_collision() -> None:
             raise exc
         except CkrAssertionError as e:
             xfail_if_known_ckr(e, set(_KNOWN), "ckr probe")
+
+
+# --- Direct unit tests for the shared setup/op helpers ----------------------
+
+
+def test_hmac_sign_or_xfail_xfails_on_known_op_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A known HMAC sign-op reject CKR -> xfail (advertised-but-not-operational)."""
+    from types import SimpleNamespace
+
+    from pkcs11_check.raw import recipes as raw_recipes
+    from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR
+    from pkcs11_check.testcases.conftest import hmac_sign_or_xfail
+
+    def _raise(*_a: object, **_k: object) -> bytes:
+        raise CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
+
+    monkeypatch.setattr(raw_recipes, "sign_single", _raise)
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
+
+    with pytest.raises(pytest.xfail.Exception, match="SHA256_HMAC advertised but sign"):
+        hmac_sign_or_xfail(rs, 1, 0x251, b"data", label="SHA256_HMAC")
+
+
+def test_hmac_sign_or_xfail_reraises_on_unknown_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-reject failure (e.g. wrong-output break code) must propagate, not xfail."""
+    from types import SimpleNamespace
+
+    from pkcs11_check.raw import recipes as raw_recipes
+    from pkcs11_check.raw.types_std import CKR_KEY_FUNCTION_NOT_PERMITTED
+    from pkcs11_check.testcases.conftest import hmac_sign_or_xfail
+
+    def _raise(*_a: object, **_k: object) -> bytes:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_KEY_FUNCTION_NOT_PERMITTED",
+            int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        )
+
+    monkeypatch.setattr(raw_recipes, "sign_single", _raise)
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
+
+    with pytest.raises(CkrAssertionError):
+        hmac_sign_or_xfail(rs, 1, 0x251, b"data", label="SHA256_HMAC")
+
+
+def test_hmac_sign_or_xfail_returns_mac_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On a working module the helper returns the MAC bytes unchanged."""
+    from types import SimpleNamespace
+
+    from pkcs11_check.raw import recipes as raw_recipes
+    from pkcs11_check.testcases.conftest import hmac_sign_or_xfail
+
+    monkeypatch.setattr(raw_recipes, "sign_single", lambda *_a, **_k: b"\xaa\xbb")
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
+
+    assert hmac_sign_or_xfail(rs, 1, 0x251, b"data", label="SHA256_HMAC") == b"\xaa\xbb"
+
+
+def test_gen_aes_key_or_xfail_honors_sh_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The optional sh= override is the session passed to the raw recipe."""
+    from types import SimpleNamespace
+
+    from pkcs11_check.raw import recipes as raw_recipes
+    from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail
+
+    seen: dict[str, object] = {}
+
+    def _gen(raw: object, sh: int, bits: int, attrs: object = None) -> int:
+        seen["sh"] = sh
+        return 42
+
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _gen)
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "AES_KEY_GEN")
+
+    assert gen_aes_key_or_xfail(rs, 128, sh=99) == 42
+    assert seen["sh"] == 99

@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from pkcs11_check.core.merge import merge_results_payloads, merge_shard_dirs
-from pkcs11_check.core.sharding import duration_by_unit_from_results, plan_shards
+from pkcs11_check.core.sharding import (
+    duration_by_unit_from_results,
+    estimate_shard_load,
+    plan_shards,
+)
 
 # --------------------------------------------------------------------------- #
 # Sharding
@@ -89,6 +93,34 @@ def test_plan_shards_heavy_disabled_when_none() -> None:
     shards = plan_shards([*heavy, "x.py"], 2, heavy_basenames=None)
     flat = sorted(u for s in shards for u in s)
     assert flat == sorted([*heavy, "x.py"])  # partition intact, no special handling
+
+
+def test_plan_shards_provider_specific_zero_duration_beats_synthetic_heavy() -> None:
+    # Provider-local results are authoritative for that provider: if opencryptoki
+    # skipped a synthetic-heavy ACVP file in 0s, do not rebalance it as if it
+    # were a bouncyhsm long pole.
+    heavy_zero = "src/pkcs11_check/testcases/acvp/aes/test_ccm.py"
+    slow = "src/pkcs11_check/testcases/test_slow.py"
+    light = "src/pkcs11_check/testcases/test_light.py"
+    durations = {heavy_zero: 0.0, slow: 10.0, light: 1.0}
+
+    shards = plan_shards([heavy_zero, slow, light], 2, duration_by_unit=durations)
+    heavy_shard = next(s for s in shards if heavy_zero in s)
+
+    assert light in heavy_shard
+    assert slow not in heavy_shard
+
+
+def test_estimate_shard_load_uses_provider_specific_zero_duration() -> None:
+    heavy_zero = "src/pkcs11_check/testcases/acvp/aes/test_ccm.py"
+    light = "src/pkcs11_check/testcases/test_light.py"
+
+    load = estimate_shard_load(
+        [heavy_zero, light],
+        duration_by_unit={heavy_zero: 0.0, light: 1.25},
+    )
+
+    assert load == 1.25
 
 
 def test_duration_by_unit_folds_per_test_nodeids(tmp_path: Path) -> None:
@@ -213,6 +245,88 @@ def test_merge_shard_dirs_unions_coverage_and_sums_results(tmp_path: Path) -> No
     assert set(cov["mechanism_coverage"]["invoked_names"]) == {"CKM_AES_CBC", "CKM_AES_GCM"}
     # both available mechanisms were invoked across shards -> none not-invoked
     assert cov["mechanism_coverage"]["not_invoked"] == 0
+
+
+def test_merge_shard_dirs_preserves_file_skip_quality_accounting(tmp_path: Path) -> None:
+    s0 = tmp_path / "shard0"
+    _write_shard(
+        s0,
+        units=[
+            {
+                "target": "test_cctv_ed25519.py",
+                "status": "passed",
+                "counts": {
+                    "passed": 0,
+                    "failed": 0,
+                    "skipped": 914,
+                    "xfailed": 0,
+                    "xpassed": 0,
+                    "error": 0,
+                    "crashed": 0,
+                    "timeout": 0,
+                },
+                "skip_reasons": {"EDDSA not supported by module": 914},
+                "file_skip": True,
+            }
+        ],
+        summary={"passed": 0, "failed": 0, "skipped": 914},
+        records=[],
+    )
+
+    out = tmp_path / "merged"
+    merge_shard_dirs([s0], out)
+
+    quality = json.loads((out / "quality.json").read_text())
+    assert quality["file_skipped_units"] == [
+        {"target": "test_cctv_ed25519.py", "reason": "EDDSA not supported by module"}
+    ]
+
+
+def test_merge_shard_dirs_salvages_compliance_notes_from_report_jsonl(
+    tmp_path: Path,
+) -> None:
+    s0 = tmp_path / "shard0"
+    s0.mkdir()
+    (s0 / "report.jsonl").write_text(
+        json.dumps(
+            {
+                "$report_type": "TestReport",
+                "nodeid": "test_mech_encrypt.py::test_encrypt_claim",
+                "when": "call",
+                "outcome": "passed",
+                "duration": 0.1,
+                "user_properties": [
+                    [
+                        "pkcs11_compliance_notes",
+                        [
+                            {
+                                "description": "validation policy accepted",
+                                "level": "standard",
+                                "reference": "PKCS#11 v3.2",
+                                "test_id": "test_encrypt_claim",
+                                "nodeid": "test_mech_encrypt.py::test_encrypt_claim",
+                            }
+                        ],
+                    ]
+                ],
+            }
+        )
+        + "\n"
+    )
+
+    out = tmp_path / "merged"
+    merge_shard_dirs([s0], out)
+
+    merged = json.loads((out / "results.json").read_text())
+    assert merged["units"][0]["compliance_notes"] == [
+        {
+            "description": "validation policy accepted",
+            "level": "standard",
+            "reference": "PKCS#11 v3.2",
+            "test_id": "test_encrypt_claim",
+            "nodeid": "test_mech_encrypt.py::test_encrypt_claim",
+        }
+    ]
 
 
 def test_merge_shard_dirs_promotes_teardown_trace_to_failed_call_report(tmp_path: Path) -> None:

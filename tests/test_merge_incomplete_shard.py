@@ -96,6 +96,27 @@ def test_corrupt_results_json_does_not_abort_merge(tmp_path: Path) -> None:
     assert any("unreadable" in w for w in warnings), warnings
 
 
+def test_partial_shard_results_are_warned_not_silent(tmp_path: Path) -> None:
+    s0 = _make_shard(
+        tmp_path, "shard-0", results=True, jsonl=[_call("test_ok.py::test_pass", "passed")]
+    )
+    s1 = _make_shard(
+        tmp_path, "shard-1", results=True, jsonl=[_call("test_partial.py::test_fail", "failed")]
+    )
+    payload = _ok_results("test_partial.py")
+    payload["partial"] = {
+        "reason": "OP-TEE guest runner exited before final report generation",
+        "completed_units": 223,
+        "planned_units": 246,
+    }
+    (s1 / "results.json").write_text(json.dumps(payload))
+
+    merged = merge_shard_dirs([s0, s1], tmp_path / "out")
+
+    warnings = merged.get("shards", {}).get("warnings", [])
+    assert any("partial" in w and "223/246" in w for w in warnings), warnings
+
+
 def test_total_loss_shard_is_warned_not_silent(tmp_path: Path) -> None:
     s0 = _make_shard(
         tmp_path, "shard-0", results=True, jsonl=[_call("test_ok.py::test_pass", "passed")]

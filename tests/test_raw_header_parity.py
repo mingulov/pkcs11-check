@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from pkcs11_check.raw.types_std import CK_X9_42_MQV_DERIVE_PARAMS
+
 TESTS_DIR = Path(__file__).parent
 REF_TYPES = TESTS_DIR / "data" / "types_std_reference.py"
 REF_METADATA = TESTS_DIR / "data" / "metadata_std_reference.py"
@@ -53,6 +55,16 @@ class TestTypesParity:
         )
         missing = ref - cur
         assert not missing, f"Missing structs: {sorted(missing)}"
+
+    def test_x942_mqv_field_names_match_oasis_header(self) -> None:
+        fields = [field[0] for field in CK_X9_42_MQV_DERIVE_PARAMS._fields_]
+
+        assert "pOtherInfo" in fields
+        assert "pPublicData" in fields
+        assert "pPublicData2" in fields
+        assert "OtherInfo" not in fields
+        assert "PublicData" not in fields
+        assert "PublicData2" not in fields
 
 
 class TestMetadataParity:

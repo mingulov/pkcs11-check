@@ -24,6 +24,22 @@ class _KeygenSession:
         return True
 
 
+@pytest.fixture(autouse=True)
+def _advertise_keygen_in_range(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the new ACVP key-size gate in range for the duplicate-skip path.
+
+    The duplicate guard must fire (the second same-size/curve vector is skipped)
+    regardless of the advertised range, so the size gate is made to pass through
+    with a wide [192, 16384] range covering every RSA modulus and EC field size
+    these vectors use; the stub C_GetMechanismInfo would otherwise short-circuit.
+    """
+
+    def _fake(_raw: object, _slot: int, _mech: int) -> dict[str, int]:
+        return {"min_key_size": 192, "max_key_size": 16384, "flags": 0}
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.get_mechanism_info", _fake)
+
+
 def _fail_if_called(*_args: Any, **_kwargs: Any) -> tuple[int, int]:
     raise AssertionError("PKCS#11 key generation reached for duplicate ACVP KeyGen vector")
 

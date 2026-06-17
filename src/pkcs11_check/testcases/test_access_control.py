@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
 )
@@ -51,9 +52,11 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
+    assert_correct,
     get_pin_bytes,
     is_known_error,
     require_operational_aes_keygen,
+    skip_if_data_objects_unsupported,
     skip_if_token_write_protected,
     xfail_if_known_ckr,
 )
@@ -103,9 +106,15 @@ class TestPrivateAttribute:
                 note(
                     "Module defaults CKA_PRIVATE to False for secret keys (spec requires True)",
                     ComplianceLevel.NOT_RECOMMENDED,
-                    reference="PKCS#11 v3.1 Sec.4.9.2: default CKA_PRIVATE is True for secret keys",
+                    reference="PKCS#11 v3.2: default CKA_PRIVATE is True for secret keys",
                 )
-                pytest.xfail("Module defaults CKA_PRIVATE=False for secret keys (spec violation)")
+                classify(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_PRIVATE default (secret key)",
+                    spec_ref="PKCS#11 v3.2",
+                    summary="Module defaults CKA_PRIVATE=False for secret keys (spec violation)",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -120,6 +129,7 @@ class TestPrivateAttribute:
         label = f"pub-visible-{id(self)}"
 
         # Create a non-private data object (logged in)
+        skip_if_data_objects_unsupported(rs)
         obj_h = create_object(
             rs.raw,
             rs.sh,
@@ -188,7 +198,7 @@ class TestModifiableAttribute:
     def test_modifiable_false_blocks_set_attribute(self, p11_raw_session: Any) -> None:
         """CKA_MODIFIABLE=False MUST block C_SetAttributeValue on any attribute.
 
-        PKCS#11 v3.1 Sec.4.1.2: when CKA_MODIFIABLE=False, the object's
+        PKCS#11 v3.2: when CKA_MODIFIABLE=False, the object's
         attributes are immutable. The spec does NOT carve out a "non-security
         attributes are still settable" exception — even CKA_LABEL changes
         must be rejected.
@@ -240,13 +250,20 @@ class TestModifiableAttribute:
                     f"the attribute was silently ignored at create time, "
                     f"making downstream MODIFIABLE enforcement untestable.",
                     ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.4.1.2",
+                    reference="PKCS#11 v3.2",
                 )
-                pytest.fail(
-                    "SECURITY: module silently ignored CKA_MODIFIABLE=False "
-                    "at create time (read-back returned True) — would have "
-                    "skipped the SetAttribute test and hidden a real "
-                    "conformance bug. Lying-module pattern."
+                classify(
+                    "self_contradiction",
+                    kind="policy",
+                    label="CKA_MODIFIABLE=False enforcement (create-time)",
+                    operation="C_CreateObject",
+                    spec_ref="PKCS#11 v3.2",
+                    summary=(
+                        "SECURITY: module silently ignored CKA_MODIFIABLE=False "
+                        "at create time (read-back returned True) — would have "
+                        "skipped the SetAttribute test and hidden a real "
+                        "conformance bug. Lying-module pattern."
+                    ),
                 )
 
             try:
@@ -271,12 +288,19 @@ class TestModifiableAttribute:
                 "C_SetAttributeValue succeeded on CKA_MODIFIABLE=False key "
                 "(expected CKR_ACTION_PROHIBITED).",
                 ComplianceLevel.CRITICAL,
-                reference="PKCS#11 v3.1 Sec.4.1.2",
+                reference="PKCS#11 v3.2",
             )
-            pytest.fail(
-                "SECURITY: module accepted C_SetAttributeValue on a "
-                "CKA_MODIFIABLE=False key — attribute mutability "
-                "constraint silently ignored"
+            classify(
+                "self_contradiction",
+                kind="policy",
+                label="CKA_MODIFIABLE=False enforcement (C_SetAttributeValue)",
+                operation="C_SetAttributeValue",
+                spec_ref="PKCS#11 v3.2",
+                summary=(
+                    "SECURITY: module accepted C_SetAttributeValue on a "
+                    "CKA_MODIFIABLE=False key — attribute mutability "
+                    "constraint silently ignored"
+                ),
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
@@ -313,7 +337,13 @@ class TestCopyableAttribute:
                 return
             try:
                 copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [CKA_LABEL])
-                assert copy_attrs[CKA_LABEL] == "copy-dst"
+                assert_correct(
+                    actual=copy_attrs[CKA_LABEL],
+                    expected="copy-dst",
+                    label="C_CopyObject:CKA_LABEL on copy",
+                    operation="C_CopyObject",
+                    kind="metadata",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, copied_h)
         finally:
@@ -349,9 +379,27 @@ class TestCopyObject:
                     key_h,
                     [CKA_KEY_TYPE, CKA_VALUE_LEN],
                 )
-                assert copy_attrs[CKA_LABEL] == "copied-label"
-                assert copy_attrs[CKA_KEY_TYPE] == orig_attrs[CKA_KEY_TYPE]
-                assert copy_attrs[CKA_VALUE_LEN] == orig_attrs[CKA_VALUE_LEN]
+                assert_correct(
+                    actual=copy_attrs[CKA_LABEL],
+                    expected="copied-label",
+                    label="C_CopyObject:CKA_LABEL on copy",
+                    operation="C_CopyObject",
+                    kind="metadata",
+                )
+                assert_correct(
+                    actual=copy_attrs[CKA_KEY_TYPE],
+                    expected=orig_attrs[CKA_KEY_TYPE],
+                    label="C_CopyObject:CKA_KEY_TYPE preserved on copy",
+                    operation="C_CopyObject",
+                    kind="metadata",
+                )
+                assert_correct(
+                    actual=copy_attrs[CKA_VALUE_LEN],
+                    expected=orig_attrs[CKA_VALUE_LEN],
+                    label="C_CopyObject:CKA_VALUE_LEN preserved on copy",
+                    operation="C_CopyObject",
+                    kind="metadata",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, copied_h)
         finally:
@@ -430,12 +478,19 @@ class TestCopyObject:
             note(
                 "Module ignores CKA_COPYABLE=False: C_CopyObject succeeded on non-copyable key",
                 ComplianceLevel.CRITICAL,
-                reference="PKCS#11 v3.1 Sec.4.1.2: CKA_COPYABLE=False must prevent copy",
+                reference="PKCS#11 v3.2: CKA_COPYABLE=False must prevent copy",
             )
             destroy_quietly(rs.raw, rs.sh, copied_h)
-            pytest.fail(
-                "SECURITY: module copied a CKA_COPYABLE=False key — "
-                "copy-prohibition silently ignored"
+            classify(
+                "self_contradiction",
+                kind="policy",
+                label="CKA_COPYABLE=False enforcement (C_CopyObject)",
+                operation="C_CopyObject",
+                spec_ref="PKCS#11 v3.2",
+                summary=(
+                    "SECURITY: module copied a CKA_COPYABLE=False key — "
+                    "copy-prohibition silently ignored"
+                ),
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)

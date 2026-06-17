@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -70,6 +71,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
+    assert_correct,
     is_known_error,
     xfail_if_known_ckr,
 )
@@ -128,9 +130,9 @@ def _gen_des_key(raw: Any, sh: int, mechanism: Any, attrs: Mapping[Any, Any]) ->
 class TestDESKeyGen:
     """CKM_DES_KEY_GEN - single-DES key generation."""
 
-    def test_des_key_gen(self, p11_raw_session: Any) -> None:
+    def test_des_key_gen(self, p11_module_session: Any) -> None:
         """Generate a DES session key."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         key = _gen_des_key(
@@ -144,9 +146,9 @@ class TestDESKeyGen:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des_key_gen_not_null(self, p11_raw_session: Any) -> None:
+    def test_des_key_gen_not_null(self, p11_module_session: Any) -> None:
         """DES key generation produces a usable, non-null key object."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         key = _gen_des_key(
@@ -172,9 +174,9 @@ class TestDESEncryption:
     advertised the mechanism) are caught by the has_mechanism guard.
     """
 
-    def test_des_ecb_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_des_ecb_roundtrip(self, p11_module_session: Any) -> None:
         """DES-ECB encrypt/decrypt roundtrip with block-aligned data."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         if not rs.has_mechanism("DES_ECB"):
@@ -195,16 +197,30 @@ class TestDESEncryption:
                 _TWO_BLOCKS,
                 xfail_msg=des_skip,
             )
-            assert ct != _TWO_BLOCKS
+            if ct == _TWO_BLOCKS:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_ECB:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES_ECB",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             assert len(ct) == len(_TWO_BLOCKS)
             pt = decrypt_single(rs.raw, rs.sh, key, CKM_DES_ECB, ct)
-            assert pt == _TWO_BLOCKS
+            assert_correct(
+                actual=pt,
+                expected=_TWO_BLOCKS,
+                label="CKM_DES_ECB:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES_ECB",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des_ecb_different_keys(self, p11_raw_session: Any) -> None:
+    def test_des_ecb_different_keys(self, p11_module_session: Any) -> None:
         """DES-ECB: same plaintext encrypted with different keys should differ."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         if not rs.has_mechanism("DES_ECB"):
@@ -223,14 +239,22 @@ class TestDESEncryption:
                 xfail_msg=des_skip,
             )
             ct2 = encrypt_single(rs.raw, rs.sh, key2, CKM_DES_ECB, _TWO_BLOCKS)
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_ECB:encrypt key independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES_ECB",
+                    summary="different keys produced identical ECB ciphertext -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
 
-    def test_des_cbc_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_des_cbc_roundtrip(self, p11_module_session: Any) -> None:
         """DES-CBC encrypt/decrypt roundtrip with 8-byte IV and block-aligned data."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         if not rs.has_mechanism("DES_CBC"):
@@ -253,7 +277,15 @@ class TestDESEncryption:
                 mech_param=mech_bytes(CKM_DES_CBC, iv),
                 xfail_msg=des_skip,
             )
-            assert ct != _TWO_BLOCKS
+            if ct == _TWO_BLOCKS:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_CBC:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES_CBC",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -262,13 +294,19 @@ class TestDESEncryption:
                 ct,
                 mech_param=mech_bytes(CKM_DES_CBC, iv),
             )
-            assert pt == _TWO_BLOCKS
+            assert_correct(
+                actual=pt,
+                expected=_TWO_BLOCKS,
+                label="CKM_DES_CBC:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des_cbc_different_ivs(self, p11_raw_session: Any) -> None:
+    def test_des_cbc_different_ivs(self, p11_module_session: Any) -> None:
         """DES-CBC with different IVs produces different ciphertexts."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         if not rs.has_mechanism("DES_CBC"):
@@ -300,13 +338,22 @@ class TestDESEncryption:
                 _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_DES_CBC, iv2),
             )
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_CBC:encrypt IV independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES_CBC",
+                    summary="different IVs (same key) produced identical CBC "
+                    "ciphertext -- IV ignored",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des_cbc_pad_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_des_cbc_pad_roundtrip(self, p11_module_session: Any) -> None:
         """DES-CBC-PAD encrypt/decrypt roundtrip with arbitrary-length data."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         if not rs.has_mechanism("DES_CBC_PAD"):
@@ -331,7 +378,15 @@ class TestDESEncryption:
                 mech_param=mech_bytes(CKM_DES_CBC_PAD, iv),
                 xfail_msg=des_skip,
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_CBC_PAD:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES_CBC_PAD",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             # Ciphertext is padded to block boundary
             assert len(ct) % 8 == 0
             pt = decrypt_single(
@@ -342,13 +397,19 @@ class TestDESEncryption:
                 ct,
                 mech_param=mech_bytes(CKM_DES_CBC_PAD, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_DES_CBC_PAD:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES_CBC_PAD",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des_ofb64_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_des_ofb64_roundtrip(self, p11_module_session: Any) -> None:
         """DES-OFB64 encrypt/decrypt roundtrip with 8-byte IV."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         if not rs.has_mechanism("DES_OFB64"):
@@ -372,7 +433,15 @@ class TestDESEncryption:
                 mech_param=mech_bytes(CKM_DES_OFB64, iv),
                 xfail_msg=des_skip,
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_OFB64:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES_OFB64",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             assert len(ct) == len(plaintext)
             pt = decrypt_single(
                 rs.raw,
@@ -382,13 +451,19 @@ class TestDESEncryption:
                 ct,
                 mech_param=mech_bytes(CKM_DES_OFB64, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_DES_OFB64:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES_OFB64",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des_cfb8_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_des_cfb8_roundtrip(self, p11_module_session: Any) -> None:
         """DES-CFB8 encrypt/decrypt roundtrip with 8-byte IV."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         if not rs.has_mechanism("DES_CFB8"):
@@ -412,7 +487,15 @@ class TestDESEncryption:
                 mech_param=mech_bytes(CKM_DES_CFB8, iv),
                 xfail_msg=des_skip,
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_CFB8:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES_CFB8",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -421,13 +504,19 @@ class TestDESEncryption:
                 ct,
                 mech_param=mech_bytes(CKM_DES_CFB8, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_DES_CFB8:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES_CFB8",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des_cfb64_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_des_cfb64_roundtrip(self, p11_module_session: Any) -> None:
         """DES-CFB64 encrypt/decrypt roundtrip with 8-byte IV."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         if not rs.has_mechanism("DES_CFB64"):
@@ -451,7 +540,15 @@ class TestDESEncryption:
                 mech_param=mech_bytes(CKM_DES_CFB64, iv),
                 xfail_msg=des_skip,
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_CFB64:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES_CFB64",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -460,7 +557,13 @@ class TestDESEncryption:
                 ct,
                 mech_param=mech_bytes(CKM_DES_CFB64, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_DES_CFB64:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES_CFB64",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -473,9 +576,9 @@ class TestDESMAC:
     gracefully in that case.
     """
 
-    def test_des_mac_sign_verify(self, p11_raw_session: Any) -> None:
+    def test_des_mac_sign_verify(self, p11_module_session: Any) -> None:
         """DES-MAC sign and verify roundtrip."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         if not rs.has_mechanism("DES_MAC"):
@@ -500,9 +603,9 @@ class TestDESMAC:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des_mac_general_sign_verify(self, p11_raw_session: Any) -> None:
+    def test_des_mac_general_sign_verify(self, p11_module_session: Any) -> None:
         """DES-MAC-GENERAL sign and verify roundtrip with explicit MAC length."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         if not rs.has_mechanism("DES_MAC_GENERAL"):
@@ -546,9 +649,9 @@ class TestDESMAC:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des_mac_different_keys(self, p11_raw_session: Any) -> None:
+    def test_des_mac_different_keys(self, p11_module_session: Any) -> None:
         """Different DES keys produce different MAC values."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         if not rs.has_mechanism("DES_MAC"):
@@ -566,7 +669,15 @@ class TestDESMAC:
                     pytest.skip(des_skip)
                 raise
             mac2 = sign_single(rs.raw, rs.sh, key2, CKM_DES_MAC, data)
-            assert mac1 != mac2
+            if mac1 == mac2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES_MAC:sign key independence",
+                    operation="C_Sign",
+                    mechanism="CKM_DES_MAC",
+                    summary="different keys produced identical MAC -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -580,9 +691,9 @@ class TestDESMAC:
 class TestDES2KeyGen:
     """CKM_DES2_KEY_GEN - two-key Triple DES key generation."""
 
-    def test_des2_key_gen(self, p11_raw_session: Any) -> None:
+    def test_des2_key_gen(self, p11_module_session: Any) -> None:
         """Generate a DES2 session key."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES2_KEY_GEN"):
             pytest.skip("CKM_DES2_KEY_GEN not supported")
         key = _gen_des_key(
@@ -605,9 +716,9 @@ class TestDES2KeyGen:
 class TestDES3KeyGen:
     """CKM_DES3_KEY_GEN - three-key Triple DES key generation."""
 
-    def test_des3_key_gen(self, p11_raw_session: Any) -> None:
+    def test_des3_key_gen(self, p11_module_session: Any) -> None:
         """Generate a DES3 session key."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         key = _gen_des_key(
@@ -621,9 +732,9 @@ class TestDES3KeyGen:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des3_key_gen_not_null(self, p11_raw_session: Any) -> None:
+    def test_des3_key_gen_not_null(self, p11_module_session: Any) -> None:
         """DES3 key generation produces a usable, non-null key object."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         key = _gen_des_key(
@@ -641,9 +752,9 @@ class TestDES3KeyGen:
 class TestDES3Encryption:
     """DES3 encryption/decryption: ECB, CBC, CBC_PAD."""
 
-    def test_des3_ecb_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_des3_ecb_roundtrip(self, p11_module_session: Any) -> None:
         """DES3-ECB encrypt/decrypt roundtrip with block-aligned data."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         if not rs.has_mechanism("DES3_ECB"):
@@ -656,16 +767,30 @@ class TestDES3Encryption:
         )
         try:
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_DES3_ECB, _TWO_BLOCKS)
-            assert ct != _TWO_BLOCKS
+            if ct == _TWO_BLOCKS:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES3_ECB:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES3_ECB",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             assert len(ct) == len(_TWO_BLOCKS)
             pt = decrypt_single(rs.raw, rs.sh, key, CKM_DES3_ECB, ct)
-            assert pt == _TWO_BLOCKS
+            assert_correct(
+                actual=pt,
+                expected=_TWO_BLOCKS,
+                label="CKM_DES3_ECB:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES3_ECB",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des3_ecb_different_keys(self, p11_raw_session: Any) -> None:
+    def test_des3_ecb_different_keys(self, p11_module_session: Any) -> None:
         """DES3-ECB: same plaintext encrypted with different keys should differ."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         if not rs.has_mechanism("DES3_ECB"):
@@ -676,14 +801,22 @@ class TestDES3Encryption:
         try:
             ct1 = encrypt_single(rs.raw, rs.sh, key1, CKM_DES3_ECB, _TWO_BLOCKS)
             ct2 = encrypt_single(rs.raw, rs.sh, key2, CKM_DES3_ECB, _TWO_BLOCKS)
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES3_ECB:encrypt key independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES3_ECB",
+                    summary="different keys produced identical ECB ciphertext -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
 
-    def test_des3_cbc_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_des3_cbc_roundtrip(self, p11_module_session: Any) -> None:
         """DES3-CBC encrypt/decrypt roundtrip with 8-byte IV and block-aligned data."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         if not rs.has_mechanism("DES3_CBC"):
@@ -704,7 +837,15 @@ class TestDES3Encryption:
                 _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_DES3_CBC, iv),
             )
-            assert ct != _TWO_BLOCKS
+            if ct == _TWO_BLOCKS:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES3_CBC:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES3_CBC",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -713,13 +854,19 @@ class TestDES3Encryption:
                 ct,
                 mech_param=mech_bytes(CKM_DES3_CBC, iv),
             )
-            assert pt == _TWO_BLOCKS
+            assert_correct(
+                actual=pt,
+                expected=_TWO_BLOCKS,
+                label="CKM_DES3_CBC:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES3_CBC",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des3_cbc_different_ivs(self, p11_raw_session: Any) -> None:
+    def test_des3_cbc_different_ivs(self, p11_module_session: Any) -> None:
         """DES3-CBC with different IVs produces different ciphertexts."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         if not rs.has_mechanism("DES3_CBC"):
@@ -749,13 +896,22 @@ class TestDES3Encryption:
                 _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_DES3_CBC, iv2),
             )
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES3_CBC:encrypt IV independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES3_CBC",
+                    summary="different IVs (same key) produced identical CBC "
+                    "ciphertext -- IV ignored",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des3_cbc_pad_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_des3_cbc_pad_roundtrip(self, p11_module_session: Any) -> None:
         """DES3-CBC-PAD encrypt/decrypt roundtrip with arbitrary-length data."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         if not rs.has_mechanism("DES3_CBC_PAD"):
@@ -777,7 +933,15 @@ class TestDES3Encryption:
                 plaintext,
                 mech_param=mech_bytes(CKM_DES3_CBC_PAD, iv),
             )
-            assert ct != plaintext
+            if ct == plaintext:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES3_CBC_PAD:encrypt confidentiality",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES3_CBC_PAD",
+                    summary="ciphertext equals plaintext -- encryption was a no-op",
+                )
             assert len(ct) % 8 == 0
             pt = decrypt_single(
                 rs.raw,
@@ -787,13 +951,19 @@ class TestDES3Encryption:
                 ct,
                 mech_param=mech_bytes(CKM_DES3_CBC_PAD, iv),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="CKM_DES3_CBC_PAD:decrypt roundtrip",
+                operation="C_Decrypt",
+                mechanism="CKM_DES3_CBC_PAD",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des3_cbc_pad_different_keys(self, p11_raw_session: Any) -> None:
+    def test_des3_cbc_pad_different_keys(self, p11_module_session: Any) -> None:
         """DES3-CBC-PAD: same plaintext encrypted with different keys should differ."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         if not rs.has_mechanism("DES3_CBC_PAD"):
@@ -820,7 +990,15 @@ class TestDES3Encryption:
                 plaintext,
                 mech_param=mech_bytes(CKM_DES3_CBC_PAD, iv),
             )
-            assert ct1 != ct2
+            if ct1 == ct2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES3_CBC_PAD:encrypt key independence",
+                    operation="C_Encrypt",
+                    mechanism="CKM_DES3_CBC_PAD",
+                    summary="different keys produced identical CBC-PAD ciphertext -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -829,9 +1007,9 @@ class TestDES3Encryption:
 class TestDES3MAC:
     """DES3_MAC, DES3_MAC_GENERAL, DES3_CMAC, DES3_CMAC_GENERAL - sign/verify tests."""
 
-    def test_des3_mac_sign_verify(self, p11_raw_session: Any) -> None:
+    def test_des3_mac_sign_verify(self, p11_module_session: Any) -> None:
         """DES3-MAC sign and verify roundtrip."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         if not rs.has_mechanism("DES3_MAC"):
@@ -850,9 +1028,9 @@ class TestDES3MAC:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des3_mac_general_sign_verify(self, p11_raw_session: Any) -> None:
+    def test_des3_mac_general_sign_verify(self, p11_module_session: Any) -> None:
         """DES3-MAC-GENERAL sign and verify roundtrip with explicit MAC length."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         if not rs.has_mechanism("DES3_MAC_GENERAL"):
@@ -887,9 +1065,9 @@ class TestDES3MAC:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des3_cmac_sign_verify(self, p11_raw_session: Any) -> None:
+    def test_des3_cmac_sign_verify(self, p11_module_session: Any) -> None:
         """DES3-CMAC sign and verify roundtrip."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         if not rs.has_mechanism("DES3_CMAC"):
@@ -908,9 +1086,9 @@ class TestDES3MAC:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des3_cmac_different_keys(self, p11_raw_session: Any) -> None:
+    def test_des3_cmac_different_keys(self, p11_module_session: Any) -> None:
         """Different DES3 keys produce different CMAC values."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         if not rs.has_mechanism("DES3_CMAC"):
@@ -922,14 +1100,22 @@ class TestDES3MAC:
         try:
             mac1 = sign_single(rs.raw, rs.sh, key1, CKM_DES3_CMAC, data)
             mac2 = sign_single(rs.raw, rs.sh, key2, CKM_DES3_CMAC, data)
-            assert mac1 != mac2
+            if mac1 == mac2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES3_CMAC:sign key independence",
+                    operation="C_Sign",
+                    mechanism="CKM_DES3_CMAC",
+                    summary="different keys produced identical CMAC -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
 
-    def test_des3_cmac_general_sign_verify(self, p11_raw_session: Any) -> None:
+    def test_des3_cmac_general_sign_verify(self, p11_module_session: Any) -> None:
         """DES3-CMAC-GENERAL sign and verify roundtrip with explicit length."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         if not rs.has_mechanism("DES3_CMAC_GENERAL"):
@@ -964,9 +1150,9 @@ class TestDES3MAC:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_des3_mac_different_keys(self, p11_raw_session: Any) -> None:
+    def test_des3_mac_different_keys(self, p11_module_session: Any) -> None:
         """Different DES3 keys produce different MAC values."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         if not rs.has_mechanism("DES3_MAC"):
@@ -978,7 +1164,15 @@ class TestDES3MAC:
         try:
             mac1 = sign_single(rs.raw, rs.sh, key1, CKM_DES3_MAC, data)
             mac2 = sign_single(rs.raw, rs.sh, key2, CKM_DES3_MAC, data)
-            assert mac1 != mac2
+            if mac1 == mac2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_DES3_MAC:sign key independence",
+                    operation="C_Sign",
+                    mechanism="CKM_DES3_MAC",
+                    summary="different keys produced identical MAC -- key not used",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
@@ -999,9 +1193,9 @@ class TestDESKeyDerivation:
     the key derivation test suite.
     """
 
-    def test_des_ecb_encrypt_data_available(self, p11_raw_session: Any) -> None:
+    def test_des_ecb_encrypt_data_available(self, p11_module_session: Any) -> None:
         """Check CKM_DES_ECB_ENCRYPT_DATA is advertised when DES is supported."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported - skipping derivation check")
         if not rs.has_mechanism("DES_ECB_ENCRYPT_DATA"):
@@ -1009,27 +1203,27 @@ class TestDESKeyDerivation:
         # Mechanism is present - no further operation needed for availability check
         assert True
 
-    def test_des_cbc_encrypt_data_available(self, p11_raw_session: Any) -> None:
+    def test_des_cbc_encrypt_data_available(self, p11_module_session: Any) -> None:
         """Check CKM_DES_CBC_ENCRYPT_DATA is advertised when DES is supported."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported - skipping derivation check")
         if not rs.has_mechanism("DES_CBC_ENCRYPT_DATA"):
             pytest.skip("CKM_DES_CBC_ENCRYPT_DATA not supported")
         assert True
 
-    def test_des3_ecb_encrypt_data_available(self, p11_raw_session: Any) -> None:
+    def test_des3_ecb_encrypt_data_available(self, p11_module_session: Any) -> None:
         """Check CKM_DES3_ECB_ENCRYPT_DATA is advertised when DES3 is supported."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported - skipping derivation check")
         if not rs.has_mechanism("DES3_ECB_ENCRYPT_DATA"):
             pytest.skip("CKM_DES3_ECB_ENCRYPT_DATA not supported")
         assert True
 
-    def test_des3_cbc_encrypt_data_available(self, p11_raw_session: Any) -> None:
+    def test_des3_cbc_encrypt_data_available(self, p11_module_session: Any) -> None:
         """Check CKM_DES3_CBC_ENCRYPT_DATA is advertised when DES3 is supported."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported - skipping derivation check")
         if not rs.has_mechanism("DES3_CBC_ENCRYPT_DATA"):
@@ -1051,9 +1245,9 @@ _DES_WEAK_KEYS = frozenset(
 class TestDESWeakKeys:
     """DES weak key detection -- generated keys should not be weak."""
 
-    def test_des_keygen_avoids_weak_keys(self, p11_raw_session: Any) -> None:
+    def test_des_keygen_avoids_weak_keys(self, p11_module_session: Any) -> None:
         """Generated DES keys must not be weak or semi-weak keys."""
-        rs = p11_raw_session
+        rs = p11_module_session
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
 

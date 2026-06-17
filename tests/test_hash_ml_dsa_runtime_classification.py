@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKR_DATA_LEN_RANGE, CKR_GENERAL_ERROR
+from pkcs11_check.raw.types_std import CKM_SHA256, CKR_DATA_LEN_RANGE, CKR_GENERAL_ERROR
 from pkcs11_check.testcases import test_hash_ml_dsa
 
 
@@ -39,4 +39,10 @@ def test_hash_ml_dsa_sign_runtime_reject_is_xfail(
     )
 
     with pytest.raises(pytest.xfail.Exception, match="CKM_HASH_ML_DSA sign not operational"):
-        test_hash_ml_dsa.TestHashMLDSAGeneric().test_sign_verify_roundtrip(_session())
+        # test_sign_verify_roundtrip is parametrized over (hash_name, hash_mech) since the
+        # multi-hash HASH_ML_DSA change; pass one valid pair. The sign-reject path is
+        # hash-independent, so SHA-256 exercises it. The xfail message gained a "(hash_name)"
+        # suffix but the substring match above still holds.
+        test_hash_ml_dsa.TestHashMLDSAGeneric().test_sign_verify_roundtrip(
+            _session(), "SHA-256", CKM_SHA256
+        )

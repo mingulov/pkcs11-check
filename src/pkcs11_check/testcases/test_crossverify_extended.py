@@ -15,13 +15,13 @@ from cryptography.hazmat.primitives.asymmetric import padding as rsa_padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from pkcs11_check.classification import fail_as
 from pkcs11_check.raw.pack import mech_bytes, mech_gcm, mech_oaep, mech_pss
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
     gen_rsa_keypair,
-    import_secret_key,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
@@ -46,7 +46,12 @@ from pkcs11_check.testcases._rsa_export import (
     read_rsa_private_key_or_xfail,
     read_rsa_public_key_or_xfail,
 )
-from pkcs11_check.testcases.conftest import CIPHER_OP_RUNTIME_REJECT_RVS, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    CIPHER_OP_RUNTIME_REJECT_RVS,
+    assert_correct,
+    import_secret_key_negotiated,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.crossverify
 
@@ -62,9 +67,8 @@ def _import_aes_key_raw(rs: Any, key_bytes: bytes, *allowed_mechanisms: int) -> 
     }
     if allowed_mechanisms:
         attrs[CKA_ALLOWED_MECHANISMS] = [int(mech) for mech in allowed_mechanisms]
-    return import_secret_key(
-        rs.raw,
-        rs.sh,
+    return import_secret_key_negotiated(
+        rs,
         CKK_AES,
         key_bytes,
         attrs=attrs,
@@ -101,7 +105,14 @@ class TestAESCBCCrossVerify:
             enc = cipher.encryptor()
             ct_crypto = enc.update(data) + enc.finalize()
 
-            assert ct_p11 == ct_crypto
+            assert_correct(
+                actual=ct_p11,
+                expected=ct_crypto,
+                label="AES_CBC:encrypt cross-verify vs cryptography",
+                operation="C_Encrypt",
+                mechanism="CKM_AES_CBC",
+                source="cryptography",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, p11_key)
 
@@ -131,7 +142,14 @@ class TestAESCBCCrossVerify:
                 )
             except AssertionError as exc:
                 xfail_if_interop_operation_reject(exc, "AES_CBC decrypt")
-            assert pt == data
+            assert_correct(
+                actual=pt,
+                expected=data,
+                label="AES_CBC:decrypt cross-verify vs cryptography",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_CBC",
+                source="cryptography",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, p11_key)
 
@@ -180,9 +198,13 @@ class TestAESGCMCrossVerify:
             # Phase 6 P2: the decrypt succeeded -- a plaintext that does not match
             # the reference (cryptography AESGCM) is a crypto-correctness break
             # and must fail, never be swallowed by a skip.
-            assert pt == plaintext, (
-                "AES-GCM cross-verify: PKCS#11 decrypt produced plaintext that "
-                "differs from the cryptography-library reference"
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="AES_GCM:decrypt cross-verify vs cryptography",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_GCM",
+                source="cryptography",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, p11_key)
@@ -230,8 +252,15 @@ class TestRSAPSSCrossVerify:
                     ),
                     hashes.SHA256(),
                 )
-            except Exception:
-                pytest.fail("cryptography failed to verify PKCS#11 RSA-PSS signature")
+            except Exception as exc:
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="RSA-PSS:cross-verify",
+                    operation="C_Sign",
+                    mechanism="CKM_SHA256_RSA_PKCS_PSS",
+                    summary=f"cryptography failed to verify PKCS#11 RSA-PSS signature: {exc}",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -284,7 +313,14 @@ class TestRSAOAEPCrossVerify:
                     label=None,
                 ),
             )
-            assert pt == plaintext
+            assert_correct(
+                actual=pt,
+                expected=plaintext,
+                label="RSA_PKCS_OAEP:P11-encrypt cryptography-decrypt round-trip",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS_OAEP",
+                source="cryptography",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

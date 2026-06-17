@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_ecdh
@@ -39,6 +40,7 @@ from pkcs11_check.raw.types_std import (
     CKM_ECDH1_DERIVE,
     CKO_SECRET_KEY,
 )
+from pkcs11_check.testcases.conftest import assert_correct
 
 pytestmark = pytest.mark.crossverify
 
@@ -112,7 +114,14 @@ class TestECDHKnownAnswer:
                     mech_param=ecdh_param,
                 )
             except AssertionError as exc:
-                pytest.xfail(f"ECDH derivation failed -- mechanism advertised but rejected: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_ECDH1_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_ECDH1_DERIVE",
+                    summary=f"ECDH derivation failed -- mechanism advertised but rejected: {exc}",
+                )
 
             p11_secret = read_attributes(rs.raw, rs.sh, derived_h, [CKA_VALUE])[CKA_VALUE]
 
@@ -125,10 +134,12 @@ class TestECDHKnownAnswer:
             crypto_secret = crypto_priv.exchange(ec.ECDH(), p11_pub_crypto)
 
             # Both should produce the same raw shared secret
-            assert p11_secret == crypto_secret, (
-                f"ECDH shared secret mismatch: "
-                f"PKCS#11={p11_secret.hex()[:16]}... "
-                f"crypto={crypto_secret.hex()[:16]}..."
+            assert_correct(
+                actual=p11_secret,
+                expected=crypto_secret,
+                label="CKM_ECDH1_DERIVE:C_DeriveKey KAT (vs cryptography)",
+                operation="C_DeriveKey",
+                mechanism="CKM_ECDH1_DERIVE",
             )
         finally:
             if derived_h:
@@ -194,11 +205,24 @@ class TestECDHKnownAnswer:
                     mech_param=ecdh_ba,
                 )
             except AssertionError as exc:
-                pytest.xfail(f"ECDH derivation failed -- mechanism advertised but rejected: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_ECDH1_DERIVE:C_DeriveKey",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_ECDH1_DERIVE",
+                    summary=f"ECDH derivation failed -- mechanism advertised but rejected: {exc}",
+                )
 
             secret_ab = read_attributes(rs.raw, rs.sh, key_ab, [CKA_VALUE])[CKA_VALUE]
             secret_ba = read_attributes(rs.raw, rs.sh, key_ba, [CKA_VALUE])[CKA_VALUE]
-            assert secret_ab == secret_ba
+            assert_correct(
+                actual=secret_ab,
+                expected=secret_ba,
+                label="CKM_ECDH1_DERIVE:shared-secret symmetric agreement",
+                operation="C_DeriveKey",
+                mechanism="CKM_ECDH1_DERIVE",
+            )
         finally:
             if key_ab:
                 destroy_quietly(rs.raw, rs.sh, key_ab)

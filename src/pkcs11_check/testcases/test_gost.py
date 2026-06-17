@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -24,6 +25,7 @@ from pkcs11_check.raw.recipes import (
     import_secret_key,
     sign_single,
     verify_single,
+    wrap_key,
 )
 from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
@@ -31,15 +33,19 @@ from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
+    CKA_GOST28147_PARAMS,
     CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
     CKA_VALUE_LEN,
     CKA_VERIFY,
+    CKA_WRAP,
+    CKK_GOST28147,
     CKK_GOSTR3411,
     CKM_GOST28147,
     CKM_GOST28147_ECB,
     CKM_GOST28147_KEY_GEN,
+    CKM_GOST28147_KEY_WRAP,
     CKM_GOST28147_MAC,
     CKM_GOSTR3410,
     CKM_GOSTR3410_KEY_PAIR_GEN,
@@ -58,7 +64,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import assert_correct, xfail_if_known_ckr
 
 pytestmark = pytest.mark.full
 
@@ -81,6 +87,27 @@ _GOST_RUNTIME_REJECT_RVS = (
     CKR_TEMPLATE_INCONSISTENT,
 )
 
+_GOST28147_TC26_PARAM_Z_OID_DER = bytes.fromhex("06092a8503070102050101")
+_GOST28147_RFC7836_SEED = bytes.fromhex("af21434145656378")
+_GOST28147_RFC7836_DERIVED_KEK = bytes.fromhex(
+    "a1aa5f7de402d7b3d323f2991c8d4534013137010a83754fd0af6d7cd4922ed9"
+)
+_GOST28147_RFC7836_CONTENT_KEY = bytes.fromhex(
+    "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"
+)
+_GOST28147_RFC7836_CEK_MAC = bytes.fromhex("be33f052")
+_GOST28147_RFC7836_CEK_ENC = bytes.fromhex(
+    "d15547f8ee85121bc87d4b1027d26027ecc071bba6e72f3fec6f620f56834c5a"
+)
+# RFC 7836 wraps as seed || CEK_ENC || CEK_MAC; CKM_GOST28147_KEY_WRAP takes the
+# seed/IV as the mechanism parameter and returns the OASIS CEK_ENC || CEK_MAC body.
+_GOST28147_RFC7836_WRAPPED_KEY = _GOST28147_RFC7836_CEK_ENC + _GOST28147_RFC7836_CEK_MAC
+_GOST28147_RFC8891_MAGMA_KEY = bytes.fromhex(
+    "ffeeddccbbaa99887766554433221100f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"
+)
+_GOST28147_RFC8891_MAGMA_PLAINTEXT = bytes.fromhex("fedcba9876543210")
+_GOST28147_RFC8891_MAGMA_CIPHERTEXT = bytes.fromhex("4ee901e5c2d8ca3d")
+
 
 def _gost_key(raw: Any, sh: int, attrs: Mapping[Any, Any]) -> int:
     """Generate a 256-bit GOST 28147-89 key via C_GenerateKey."""
@@ -96,6 +123,21 @@ def _gost_key(raw: Any, sh: int, attrs: Mapping[Any, Any]) -> int:
     rv = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key))
     expect_rv(rv, CKR_OK)
     return key.value
+
+
+def _import_gost28147_key(raw: Any, sh: int, value: bytes, attrs: Mapping[Any, Any]) -> int:
+    """Import a GOST 28147-89 key with the TC26 param-Z OID."""
+    return import_secret_key(
+        raw,
+        sh,
+        CKK_GOST28147,
+        value,
+        attrs={
+            CKA_TOKEN: False,
+            CKA_GOST28147_PARAMS: _GOST28147_TC26_PARAM_Z_OID_DER,
+            **attrs,
+        },
+    )
 
 
 def _gost_keypair(raw: Any, sh: int) -> tuple[int, int]:
@@ -161,6 +203,70 @@ class TestGOST28147KeyGen:
 class TestGOST28147Encryption:
     """CKM_GOST28147_ECB and CKM_GOST28147 - GOST 28147-89 encrypt/decrypt."""
 
+    def test_ecb_rfc8891_magma_tc26_z_vector(self, p11_raw_session: Any) -> None:
+        """Encrypt and decrypt the RFC 8891 Magma TC26 param-Z ECB vector."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("GOST28147_ECB"):
+            pytest.skip("CKM_GOST28147_ECB not supported")
+
+        key = 0
+        try:
+
+            def _setup() -> int:
+                return _import_gost28147_key(
+                    rs.raw,
+                    rs.sh,
+                    _GOST28147_RFC8891_MAGMA_KEY,
+                    {
+                        CKA_ENCRYPT: True,
+                        CKA_DECRYPT: True,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                )
+
+            key = _try_or_xfail(_setup, "CKM_GOST28147_ECB RFC 8891 key import not operational")
+
+            def _do() -> tuple[bytes, bytes]:
+                ct = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_GOST28147_ECB,
+                    _GOST28147_RFC8891_MAGMA_PLAINTEXT,
+                )
+                pt = decrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_GOST28147_ECB,
+                    _GOST28147_RFC8891_MAGMA_CIPHERTEXT,
+                )
+                return ct, pt
+
+            ciphertext, plaintext = _try_or_xfail(
+                _do,
+                "CKM_GOST28147_ECB RFC 8891 KAT not operational",
+            )
+            assert_correct(
+                actual=ciphertext,
+                expected=_GOST28147_RFC8891_MAGMA_CIPHERTEXT,
+                label="CKM_GOST28147_ECB:encrypt RFC 8891 Magma KAT",
+                operation="C_Encrypt",
+                mechanism="CKM_GOST28147_ECB",
+                source="RFC8891",
+            )
+            assert_correct(
+                actual=plaintext,
+                expected=_GOST28147_RFC8891_MAGMA_PLAINTEXT,
+                label="CKM_GOST28147_ECB:decrypt RFC 8891 Magma KAT",
+                operation="C_Decrypt",
+                mechanism="CKM_GOST28147_ECB",
+                source="RFC8891",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
     def test_ecb_roundtrip(self, p11_raw_session: Any) -> None:
         """Encrypt and decrypt two blocks with CKM_GOST28147_ECB."""
         rs = p11_raw_session
@@ -183,7 +289,13 @@ class TestGOST28147Encryption:
             def _do() -> None:
                 ct = encrypt_single(rs.raw, rs.sh, key, CKM_GOST28147_ECB, _TWO_BLOCKS)
                 pt = decrypt_single(rs.raw, rs.sh, key, CKM_GOST28147_ECB, ct)
-                assert pt == _TWO_BLOCKS
+                assert_correct(
+                    actual=pt,
+                    expected=_TWO_BLOCKS,
+                    label="CKM_GOST28147_ECB:decrypt roundtrip",
+                    operation="C_Decrypt",
+                    mechanism="CKM_GOST28147_ECB",
+                )
 
             _try_or_xfail(_do, "CKM_GOST28147_ECB not operational")
         finally:
@@ -208,7 +320,15 @@ class TestGOST28147Encryption:
             def _do() -> None:
                 ct1 = encrypt_single(rs.raw, rs.sh, key1, CKM_GOST28147_ECB, _TWO_BLOCKS)
                 ct2 = encrypt_single(rs.raw, rs.sh, key2, CKM_GOST28147_ECB, _TWO_BLOCKS)
-                assert ct1 != ct2, "Different keys produced identical ECB ciphertext"
+                if ct1 == ct2:
+                    classify(
+                        "wrong_result",
+                        kind="crypto",
+                        label="CKM_GOST28147_ECB:encrypt key independence",
+                        operation="C_Encrypt",
+                        mechanism="CKM_GOST28147_ECB",
+                        summary="different keys produced identical ECB ciphertext -- key not used",
+                    )
 
             _try_or_xfail(_do, "CKM_GOST28147_ECB not operational")
         finally:
@@ -252,7 +372,13 @@ class TestGOST28147Encryption:
                     ct,
                     mech_param=mech_bytes(CKM_GOST28147, iv),
                 )
-                assert pt == _TWO_BLOCKS
+                assert_correct(
+                    actual=pt,
+                    expected=_TWO_BLOCKS,
+                    label="CKM_GOST28147:decrypt roundtrip",
+                    operation="C_Decrypt",
+                    mechanism="CKM_GOST28147",
+                )
 
             _try_or_xfail(_do, "CKM_GOST28147 not operational")
         finally:
@@ -261,6 +387,65 @@ class TestGOST28147Encryption:
 
 class TestGOST28147MAC:
     """CKM_GOST28147_MAC - GOST 28147-89 message authentication code."""
+
+    def test_mac_rfc7836_tc26_z_vector(self, p11_raw_session: Any) -> None:
+        """Sign and verify the RFC 7836 TC26 param-Z CEK_MAC vector."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("GOST28147_MAC"):
+            pytest.skip("CKM_GOST28147_MAC not supported")
+
+        key = 0
+        try:
+
+            def _setup() -> int:
+                return _import_gost28147_key(
+                    rs.raw,
+                    rs.sh,
+                    _GOST28147_RFC7836_DERIVED_KEK,
+                    {
+                        CKA_SIGN: True,
+                        CKA_VERIFY: True,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                )
+
+            key = _try_or_xfail(_setup, "CKM_GOST28147_MAC RFC 7836 key import not operational")
+
+            def _do() -> bytes:
+                mech = mech_bytes(CKM_GOST28147_MAC, _GOST28147_RFC7836_SEED)
+                mac = sign_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_GOST28147_MAC,
+                    _GOST28147_RFC7836_CONTENT_KEY,
+                    mech_param=mech,
+                    output_size_hint=len(_GOST28147_RFC7836_CEK_MAC),
+                )
+                ok = verify_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_GOST28147_MAC,
+                    _GOST28147_RFC7836_CONTENT_KEY,
+                    _GOST28147_RFC7836_CEK_MAC,
+                    mech_param=mech_bytes(CKM_GOST28147_MAC, _GOST28147_RFC7836_SEED),
+                )
+                assert ok, "CKM_GOST28147_MAC rejected the RFC 7836 CEK_MAC"
+                return mac
+
+            mac = _try_or_xfail(_do, "CKM_GOST28147_MAC RFC 7836 KAT not operational")
+            assert_correct(
+                actual=mac,
+                expected=_GOST28147_RFC7836_CEK_MAC,
+                label="CKM_GOST28147_MAC:sign RFC 7836 CEK_MAC KAT",
+                operation="C_Sign",
+                mechanism="CKM_GOST28147_MAC",
+                source="RFC7836",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
     def test_mac_sign_verify(self, p11_raw_session: Any) -> None:
         """Sign and verify a MAC with CKM_GOST28147_MAC."""
@@ -290,6 +475,72 @@ class TestGOST28147MAC:
             _try_or_xfail(_do, "CKM_GOST28147_MAC not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
+
+
+class TestGOST28147KeyWrap:
+    """CKM_GOST28147_KEY_WRAP - GOST 28147-89 key wrapping."""
+
+    def test_key_wrap_rfc7836_tc26_z_vector(self, p11_raw_session: Any) -> None:
+        """Wrap the RFC 7836 TC26 param-Z example key material."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("GOST28147_KEY_WRAP"):
+            pytest.skip("CKM_GOST28147_KEY_WRAP not supported")
+
+        wrapping_key = 0
+        target_key = 0
+        try:
+
+            def _setup() -> tuple[int, int]:
+                return (
+                    _import_gost28147_key(
+                        rs.raw,
+                        rs.sh,
+                        _GOST28147_RFC7836_DERIVED_KEK,
+                        {
+                            CKA_WRAP: True,
+                            CKA_SENSITIVE: False,
+                            CKA_EXTRACTABLE: True,
+                        },
+                    ),
+                    _import_gost28147_key(
+                        rs.raw,
+                        rs.sh,
+                        _GOST28147_RFC7836_CONTENT_KEY,
+                        {
+                            CKA_SENSITIVE: False,
+                            CKA_EXTRACTABLE: True,
+                        },
+                    ),
+                )
+
+            wrapping_key, target_key = _try_or_xfail(
+                _setup,
+                "CKM_GOST28147_KEY_WRAP RFC 7836 key import not operational",
+            )
+
+            def _do() -> bytes:
+                return wrap_key(
+                    rs.raw,
+                    rs.sh,
+                    wrapping_key,
+                    target_key,
+                    CKM_GOST28147_KEY_WRAP,
+                    mech_param=mech_bytes(CKM_GOST28147_KEY_WRAP, _GOST28147_RFC7836_SEED),
+                    output_size_hint=len(_GOST28147_RFC7836_WRAPPED_KEY),
+                )
+
+            wrapped = _try_or_xfail(_do, "CKM_GOST28147_KEY_WRAP RFC 7836 KAT not operational")
+            assert_correct(
+                actual=wrapped,
+                expected=_GOST28147_RFC7836_WRAPPED_KEY,
+                label="CKM_GOST28147_KEY_WRAP:wrap RFC 7836 KAT",
+                operation="C_WrapKey",
+                mechanism="CKM_GOST28147_KEY_WRAP",
+                source="RFC7836",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, target_key)
+            destroy_quietly(rs.raw, rs.sh, wrapping_key)
 
 
 class TestGOSTR3410Signature:
@@ -399,7 +650,15 @@ class TestGOSTR3411Digest:
         def _do() -> None:
             d1 = digest_single(rs.raw, rs.sh, CKM_GOSTR3411, data)
             d2 = digest_single(rs.raw, rs.sh, CKM_GOSTR3411, data)
-            assert d1 == d2, "CKM_GOSTR3411 digest is not deterministic"
+            if d1 != d2:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_GOSTR3411:digest determinism",
+                    operation="C_Digest",
+                    mechanism="CKM_GOSTR3411",
+                    summary="two digests of the same input differ -- digest is not deterministic",
+                )
 
         _try_or_xfail(_do, "CKM_GOSTR3411 digest not operational")
 

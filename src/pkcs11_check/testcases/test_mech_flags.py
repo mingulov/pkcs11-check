@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify, fail_as
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.pack import mech_simple
@@ -123,10 +124,17 @@ class TestMechFlags:
                     "PKCS#11 C_GetMechanismInfo flags report operations supported by this module"
                 ),
             )
-            pytest.xfail(
-                f"{entry.mech_name}: missing expected mechanism capability flags {missing_names} "
-                f"(registry expected=0x{expected:08x}, "
-                f"module reported=0x{actual:08x})"
+            classify(
+                "honest_deviation",
+                kind="metadata",
+                label=f"{entry.mech_name}:missing-flags",
+                operation="C_GetMechanismInfo",
+                mechanism=entry.mech_name,
+                summary=(
+                    f"{entry.mech_name}: missing expected mechanism capability flags "
+                    f"{missing_names} (registry expected=0x{expected:08x}, "
+                    f"module reported=0x{actual:08x})"
+                ),
             )
 
     def test_min_le_max_key_size(
@@ -195,10 +203,18 @@ def _assert_not_lie(entry: MechEntry, flag_name: str, init_name: str, rv: int | 
             int(CKR_MECHANISM_INVALID): "CKR_MECHANISM_INVALID",
             int(CKR_FUNCTION_NOT_SUPPORTED): "CKR_FUNCTION_NOT_SUPPORTED",
         }.get(rv, f"0x{rv:08x}")
-        pytest.fail(
-            f"{entry.mech_name} advertises {flag_name} in C_GetMechanismInfo "
-            f"(flags=0x{entry.flags:08x}), but {init_name} returned {rv_name}. "
-            f"Module is advertising a mechanism it does not actually implement."
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=f"{entry.mech_name}:{flag_name}",
+            operation=init_name,
+            mechanism=entry.mech_name,
+            actual=rv,
+            summary=(
+                f"{entry.mech_name} advertises {flag_name} in C_GetMechanismInfo "
+                f"(flags=0x{entry.flags:08x}), but {init_name} returned {rv_name}. "
+                f"Module is advertising a mechanism it does not actually implement."
+            ),
         )
 
 

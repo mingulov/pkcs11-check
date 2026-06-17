@@ -25,13 +25,19 @@ from pkcs11_check.raw.pack_mechanisms import (
     mech_pss,
     mech_rc2,
     mech_rc2_cbc,
+    mech_rc2_mac_general,
+    mech_rc5,
+    mech_rc5_cbc,
+    mech_rc5_mac_general,
+    mech_salsa20,
+    mech_salsa20_poly1305,
 )
 from pkcs11_check.raw.recipes import (
     gen_keypair,
     gen_rsa_keypair,
     pack_attrs,
 )
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_EC_PARAMS,
@@ -44,6 +50,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKA_VERIFY,
     CKK_AES,
+    CKK_CDMF,
     CKK_DES,
     CKK_DES2,
     CKK_DES3,
@@ -51,6 +58,7 @@ from pkcs11_check.raw.types_std import (
     CKK_EC_EDWARDS,
     CKK_EC_MONTGOMERY,
     CKK_GENERIC_SECRET,
+    CKK_IDEA,
     CKK_RSA,
     CKK_SEED,
     CKM,
@@ -93,7 +101,7 @@ except ImportError:
 
 # Fixed-length symmetric key types: CKA_VALUE_LEN must NOT be set.
 FIXED_LENGTH_KEY_TYPES: frozenset[int] = frozenset(
-    [int(CKK_DES), int(CKK_DES2), int(CKK_DES3), int(CKK_SEED)]
+    [int(CKK_DES), int(CKK_DES2), int(CKK_DES3), int(CKK_IDEA), int(CKK_CDMF), int(CKK_SEED)]
 )
 
 # EC key types that need CKA_EC_PARAMS
@@ -166,9 +174,15 @@ def _skip_if_keygen_mechanism_absent(rs: Any, keygen_mech: int, mech_name: str) 
 def _xfail_if_keygen_runtime_reject(rv: int, mech_name: str) -> None:
     if rv not in _KEYGEN_RUNTIME_REJECT_RVS:
         return
-    import pytest
+    from pkcs11_check.classification import classify
 
-    pytest.xfail(f"{mech_name} keygen rejected at runtime: {ckr_name(rv)}")
+    classify(
+        "not_operational",
+        label=f"{mech_name}:keygen",
+        operation="C_GenerateKey",
+        actual=rv,
+        summary=f"{mech_name} keygen rejected at runtime: {ckr_name(rv)}",
+    )
 
 
 def _pbkdf2_keygen_mechanism() -> Any:
@@ -185,19 +199,29 @@ def _pbkdf2_keygen_mechanism() -> Any:
 
 
 def _xfail_if_keypair_runtime_reject(exc: AssertionError, mech_name: str) -> None:
+    from pkcs11_check.classification import classify
+
     rv = getattr(exc, "rv", None)
     if rv is not None:
         if rv in _KEYPAIR_RUNTIME_REJECT_RVS:
-            import pytest
-
-            pytest.xfail(f"{mech_name} keypair rejected at runtime: {ckr_name(rv)}")
+            classify(
+                "not_operational",
+                label=f"{mech_name}:keypair",
+                operation="C_GenerateKeyPair",
+                actual=rv,
+                summary=f"{mech_name} keypair rejected at runtime: {ckr_name(rv)}",
+            )
         return
     msg = str(exc)
     for candidate in _KEYPAIR_RUNTIME_REJECT_RVS:
         if ckr_name(candidate) in msg:
-            import pytest
-
-            pytest.xfail(f"{mech_name} keypair rejected at runtime: {ckr_name(candidate)}")
+            classify(
+                "not_operational",
+                label=f"{mech_name}:keypair",
+                operation="C_GenerateKeyPair",
+                actual=candidate,
+                summary=f"{mech_name} keypair rejected at runtime: {ckr_name(candidate)}",
+            )
 
 
 def _generate_keypair_or_xfail(
@@ -326,6 +350,13 @@ def build_test_params(mech_id: int, recipe: ParamRecipe) -> Any:
     elif style == "chacha20_poly1305":
         nonce = os.urandom(12)
         return mech_chacha20_poly1305(CKM(mech_id), nonce=nonce)
+    elif style == "salsa20":
+        nonce = os.urandom(d.get("nonce_len", 8))
+        return mech_salsa20(CKM(mech_id), nonce=nonce, counter=d.get("counter", 0))
+    elif style == "salsa20_poly1305":
+        nonce = os.urandom(d.get("nonce_len", 8))
+        aad = os.urandom(d.get("aad_len", 0)) if d.get("aad_len", 0) else None
+        return mech_salsa20_poly1305(CKM(mech_id), nonce=nonce, aad=aad)
     elif style == "rc2":
         effective_bits = d.get("effective_bits", 128)
         return mech_rc2(CKM(mech_id), effective_bits=effective_bits)
@@ -333,6 +364,30 @@ def build_test_params(mech_id: int, recipe: ParamRecipe) -> Any:
         effective_bits = d.get("effective_bits", 128)
         iv = os.urandom(8)
         return mech_rc2_cbc(CKM(mech_id), effective_bits=effective_bits, iv=iv)
+    elif style == "rc2_mac_general":
+        effective_bits = d.get("effective_bits", 128)
+        mac_len = d.get("mac_len", 8)
+        return mech_rc2_mac_general(CKM(mech_id), effective_bits=effective_bits, mac_len=mac_len)
+    elif style == "rc5":
+        return mech_rc5(
+            CKM(mech_id),
+            word_bits=d.get("word_bits", 32),
+            rounds=d.get("rounds", 12),
+        )
+    elif style == "rc5_cbc":
+        return mech_rc5_cbc(
+            CKM(mech_id),
+            word_bits=d.get("word_bits", 32),
+            rounds=d.get("rounds", 12),
+            iv=os.urandom((d.get("word_bits", 32) * 2 + 7) // 8),
+        )
+    elif style == "rc5_mac_general":
+        return mech_rc5_mac_general(
+            CKM(mech_id),
+            word_bits=d.get("word_bits", 32),
+            rounds=d.get("rounds", 12),
+            mac_len=d.get("mac_len", 8),
+        )
     elif style == "eddsa":
         return mech_eddsa(CKM(mech_id))
     elif style == "mac_general":
@@ -345,8 +400,6 @@ def build_test_params(mech_id: int, recipe: ParamRecipe) -> Any:
         return mech_pbe(CKM(mech_id), password=password, salt=salt, iteration=iteration)
     elif style in ("ecdh", "hkdf", "string_data", "pbkdf2", "tls", "sp800_108"):
         return "SKIP"  # Needs runtime data
-    elif style in ("rc2_mac_general", "rc5_mac_general"):
-        return "SKIP"  # Needs CK_RC2/RC5_MAC_GENERAL_PARAMS (multi-field struct)
     # Unknown style
     return "SKIP"
 
@@ -418,7 +471,9 @@ def gen_symmetric_key(
     from pkcs11_check.raw.pack import attr_ulong, template
 
     key_type = config.key_type
-    is_fixed = key_type is not None and int(key_type) in FIXED_LENGTH_KEY_TYPES
+    is_fixed = config.keygen_recipe.style == "fixed_length" or (
+        key_type is not None and int(key_type) in FIXED_LENGTH_KEY_TYPES
+    )
 
     attrs: dict[int, Any] = {CKA_TOKEN: False}
     if key_type is not None:
@@ -843,6 +898,12 @@ def build_params_from_vector(mech_id: int, recipe: ParamRecipe, vec: dict[str, A
         ``"ccm"``    -- uses ``iv_hex`` (nonce), ``aad_hex``, ``tag_bits``, ``data_len``.
         ``"pss"``    -- uses ``params["hash_mech_hex"]`` as CKM constant name.
         ``"oaep"``   -- uses ``params["hash_mech_hex"]`` as CKM constant name.
+        ``"rc2"``    -- uses ``params["effective_bits"]``.
+        ``"rc2_cbc"`` -- uses ``effective_bits`` and ``iv_hex``.
+        ``"rc2_mac_general"`` -- uses ``effective_bits`` and ``mac_len``.
+        ``"rc5"``    -- uses ``word_bits`` and ``rounds``.
+        ``"rc5_cbc"`` -- uses ``word_bits``, ``rounds``, and ``iv_hex``.
+        ``"rc5_mac_general"`` -- uses ``word_bits``, ``rounds``, and ``mac_len``.
 
     For all other styles the function delegates to ``build_test_params``.
 
@@ -924,6 +985,72 @@ def build_params_from_vector(mech_id: int, recipe: ParamRecipe, vec: dict[str, A
             mgf=_resolve_const(d.get("mgf", "CKG_MGF1_SHA256")),
         )
 
+    if style == "rc2":
+        effective_bits_rc2: int = vp.get("effective_bits", d.get("effective_bits", 128))
+        return mech_rc2(CKM(mech_id), effective_bits=effective_bits_rc2)
+
+    if style == "rc2_cbc":
+        iv_hex_rc2: str | None = vp.get("iv_hex")
+        if iv_hex_rc2 is None:
+            return build_test_params(mech_id, recipe)
+        effective_bits_rc2_cbc: int = vp.get("effective_bits", d.get("effective_bits", 128))
+        return mech_rc2_cbc(
+            CKM(mech_id),
+            effective_bits=effective_bits_rc2_cbc,
+            iv=bytes.fromhex(iv_hex_rc2),
+        )
+
+    if style == "rc2_mac_general":
+        effective_bits_rc2_mac_general: int = vp.get("effective_bits", d.get("effective_bits", 128))
+        mac_len_rc2_mac_general: int = vp.get("mac_len", d.get("mac_len", 8))
+        return mech_rc2_mac_general(
+            CKM(mech_id),
+            effective_bits=effective_bits_rc2_mac_general,
+            mac_len=mac_len_rc2_mac_general,
+        )
+
+    if style == "rc5":
+        word_bits_rc5: int = vp.get("word_bits", d.get("word_bits", 32))
+        rounds_rc5: int = vp.get("rounds", d.get("rounds", 12))
+        return mech_rc5(CKM(mech_id), word_bits=word_bits_rc5, rounds=rounds_rc5)
+
+    if style == "rc5_cbc":
+        iv_hex_rc5: str | None = vp.get("iv_hex")
+        if iv_hex_rc5 is None:
+            return build_test_params(mech_id, recipe)
+        word_bits_rc5_cbc: int = vp.get("word_bits", d.get("word_bits", 32))
+        rounds_rc5_cbc: int = vp.get("rounds", d.get("rounds", 12))
+        return mech_rc5_cbc(
+            CKM(mech_id),
+            word_bits=word_bits_rc5_cbc,
+            rounds=rounds_rc5_cbc,
+            iv=bytes.fromhex(iv_hex_rc5),
+        )
+
+    if style == "rc5_mac_general":
+        word_bits_rc5_mac_general: int = vp.get("word_bits", d.get("word_bits", 32))
+        rounds_rc5_mac_general: int = vp.get("rounds", d.get("rounds", 12))
+        mac_len_rc5_mac_general: int = vp.get("mac_len", d.get("mac_len", 8))
+        return mech_rc5_mac_general(
+            CKM(mech_id),
+            word_bits=word_bits_rc5_mac_general,
+            rounds=rounds_rc5_mac_general,
+            mac_len=mac_len_rc5_mac_general,
+        )
+
+    if style == "mac_general":
+        mac_len_general: int = vp.get("mac_len", d.get("mac_len", 8))
+        return mech_bytes(CKM(mech_id), mac_len_general.to_bytes(8, "little"))
+
+    if style == "chacha20_poly1305":
+        iv_hex_cp: str | None = vp.get("iv_hex")
+        if iv_hex_cp is None:
+            return build_test_params(mech_id, recipe)
+        nonce_cp = bytes.fromhex(iv_hex_cp)
+        aad_hex_cp: str | None = vp.get("aad_hex")
+        aad_cp: bytes | None = bytes.fromhex(aad_hex_cp) if aad_hex_cp else None
+        return mech_chacha20_poly1305(CKM(mech_id), nonce=nonce_cp, aad=aad_cp)
+
     # All other styles (eddsa, ecdh, hkdf, etc.) delegate to random generation
     return build_test_params(mech_id, recipe)
 
@@ -990,8 +1117,8 @@ def gen_generic_secret(
     packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
 
     tmpl = template(*packed)
-    mech = mech_simple(CKM(CKM_GENERIC_SECRET_KEY_GEN))
+    mech = mech_simple(CKM_GENERIC_SECRET_KEY_GEN)
     handle = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
-    assert rv == CKR_OK, f"Generic secret key gen failed: {rv}"
+    expect_rv(rv, CKR_OK, context="Generic secret key gen")
     return handle.value

@@ -34,7 +34,7 @@ def test_advertised_hmac_runtime_general_error_is_xfail(
     def _sign_general_error(*_args: Any, **_kwargs: Any) -> bytes:
         raise CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
 
-    monkeypatch.setattr(hmac, "import_secret_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(hmac, "import_secret_key_negotiated", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(hmac, "sign_single", _sign_general_error)
     monkeypatch.setattr(hmac, "destroy_quietly", lambda *_args: None)
 

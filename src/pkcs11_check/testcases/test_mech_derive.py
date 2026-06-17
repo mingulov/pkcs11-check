@@ -26,14 +26,22 @@ from __future__ import annotations
 import ctypes
 import os
 from ctypes import byref
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.api import ckm_name
 from pkcs11_check.raw.ec import encode_named_curve_parameters
-from pkcs11_check.raw.pack import attr_ulong, mech_bytes, mech_simple, template
+from pkcs11_check.raw.pack import (
+    LengthArg,
+    PackedMechanism,
+    PointerArg,
+    attr_ulong,
+    mech_bytes,
+    mech_simple,
+    template,
+)
 from pkcs11_check.raw.pack_mechanisms import mech_ecdh, mech_hkdf, mech_string_data
 from pkcs11_check.raw.recipes import (
     derive_key,
@@ -43,8 +51,14 @@ from pkcs11_check.raw.recipes import (
     pack_attrs,
     read_attributes,
 )
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
+    CK_ARIA_CBC_ENCRYPT_DATA_PARAMS,
+    CK_BYTE,
+    CK_CAMELLIA_CBC_ENCRYPT_DATA_PARAMS,
+    CK_MECHANISM,
     CK_OBJECT_HANDLE,
+    CK_SEED_CBC_ENCRYPT_DATA_PARAMS,
     CKA_CLASS,
     CKA_DECRYPT,
     CKA_DERIVE,
@@ -56,61 +70,36 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKD_NULL,
     CKK_AES,
+    CKK_ARIA,
+    CKK_CAMELLIA,
     CKK_DES,
     CKK_DES3,
     CKK_EC,
     CKK_GENERIC_SECRET,
     CKK_HKDF,
+    CKK_SEED,
     CKM,
+    CKM_ARIA_CBC_ENCRYPT_DATA,
+    CKM_ARIA_ECB_ENCRYPT_DATA,
+    CKM_ARIA_KEY_GEN,
+    CKM_CAMELLIA_CBC_ENCRYPT_DATA,
+    CKM_CAMELLIA_ECB_ENCRYPT_DATA,
+    CKM_CAMELLIA_KEY_GEN,
     CKM_DES3_KEY_GEN,
     CKM_DES_KEY_GEN,
+    CKM_SEED_CBC_ENCRYPT_DATA,
+    CKM_SEED_ECB_ENCRYPT_DATA,
+    CKM_SEED_KEY_GEN,
     CKM_SHA256,
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
-    CKR_ARGUMENTS_BAD,
-    CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_DEVICE_ERROR,
-    CKR_FUNCTION_FAILED,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_KEY_SIZE_RANGE,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
-    CKR_TEMPLATE_INCOMPLETE,
-    CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases._capability_claims import claim_refusal_passes
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import gen_generic_secret
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.derive]
-
-_DERIVE_RUNTIME_REJECT_RVS = (
-    CKR_ARGUMENTS_BAD,
-    CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_DEVICE_ERROR,
-    CKR_FUNCTION_FAILED,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_KEY_SIZE_RANGE,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
-    CKR_TEMPLATE_INCOMPLETE,
-    CKR_TEMPLATE_INCONSISTENT,
-)
-
-
-def _xfail_derive_runtime_reject(exc: AssertionError, entry: MechEntry) -> None:
-    xfail_if_known_ckr(
-        exc,
-        _DERIVE_RUNTIME_REJECT_RVS,
-        f"{entry.mech_name}: advertised derive path is not operational",
-    )
 
 
 # SHA key derivation mechanisms have no params and use a generic secret base key
@@ -236,6 +225,68 @@ try:
 except ImportError:
     pass
 
+
+# Regional cipher ECB/CBC encrypt-data derive mechanisms.
+class _CipherEncryptDataDeriveCase(NamedTuple):
+    keygen_name: str
+    keygen_mech: CKM
+    key_type: int
+    mode: str
+    block_size: int
+    cbc_params_cls: type[Any] | None = None
+    key_size_bits: int | None = 128
+
+
+_CIPHER_ENCRYPT_DATA_DERIVE_CASES: dict[int, _CipherEncryptDataDeriveCase] = {
+    int(CKM_CAMELLIA_ECB_ENCRYPT_DATA): _CipherEncryptDataDeriveCase(
+        keygen_name="CAMELLIA_KEY_GEN",
+        keygen_mech=CKM_CAMELLIA_KEY_GEN,
+        key_type=CKK_CAMELLIA,
+        mode="ecb",
+        block_size=16,
+    ),
+    int(CKM_CAMELLIA_CBC_ENCRYPT_DATA): _CipherEncryptDataDeriveCase(
+        keygen_name="CAMELLIA_KEY_GEN",
+        keygen_mech=CKM_CAMELLIA_KEY_GEN,
+        key_type=CKK_CAMELLIA,
+        mode="cbc",
+        block_size=16,
+        cbc_params_cls=CK_CAMELLIA_CBC_ENCRYPT_DATA_PARAMS,
+    ),
+    int(CKM_ARIA_ECB_ENCRYPT_DATA): _CipherEncryptDataDeriveCase(
+        keygen_name="ARIA_KEY_GEN",
+        keygen_mech=CKM_ARIA_KEY_GEN,
+        key_type=CKK_ARIA,
+        mode="ecb",
+        block_size=16,
+    ),
+    int(CKM_ARIA_CBC_ENCRYPT_DATA): _CipherEncryptDataDeriveCase(
+        keygen_name="ARIA_KEY_GEN",
+        keygen_mech=CKM_ARIA_KEY_GEN,
+        key_type=CKK_ARIA,
+        mode="cbc",
+        block_size=16,
+        cbc_params_cls=CK_ARIA_CBC_ENCRYPT_DATA_PARAMS,
+    ),
+    int(CKM_SEED_ECB_ENCRYPT_DATA): _CipherEncryptDataDeriveCase(
+        keygen_name="SEED_KEY_GEN",
+        keygen_mech=CKM_SEED_KEY_GEN,
+        key_type=CKK_SEED,
+        mode="ecb",
+        block_size=16,
+        key_size_bits=None,
+    ),
+    int(CKM_SEED_CBC_ENCRYPT_DATA): _CipherEncryptDataDeriveCase(
+        keygen_name="SEED_KEY_GEN",
+        keygen_mech=CKM_SEED_KEY_GEN,
+        key_type=CKK_SEED,
+        mode="cbc",
+        block_size=16,
+        cbc_params_cls=CK_SEED_CBC_ENCRYPT_DATA_PARAMS,
+        key_size_bits=None,
+    ),
+}
+
 # Mechanisms that produce key material output, not key object handles (skip)
 _SKIPPED_PROTOCOL_MECHS: set[int] = set()
 try:
@@ -348,10 +399,10 @@ def _gen_hkdf_base_key(rs: RawSession) -> int:
     packed = [attr_ulong(CKA_VALUE_LEN, 32)]
     packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
     tmpl = template(*packed)
-    mech = mech_simple(CKM(CKM_HKDF_KEY_GEN))
+    mech = mech_simple(CKM_HKDF_KEY_GEN)
     handle = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
-    assert rv == CKR_OK, f"HKDF base key gen failed: {rv}"
+    expect_rv(rv, CKR_OK, context="HKDF base key gen")
     return handle.value
 
 
@@ -394,7 +445,7 @@ def _derive_hkdf(rs: RawSession, entry: MechEntry) -> None:
         salt = os.urandom(16)
         hkdf_param = mech_hkdf(
             CKM(mech_id),
-            hash_mech=int(CKM_SHA256),
+            hash_mech=CKM_SHA256,
             extract=True,
             expand=True,
             salt=salt,
@@ -441,7 +492,7 @@ def _derive_ecdh(rs: RawSession, entry: MechEntry) -> None:
             pytest.skip(f"{entry.mech_name}: cannot read CKA_EC_POINT from peer key")
         ecdh_param = mech_ecdh(
             CKM(mech_id),
-            kdf=int(CKD_NULL),
+            kdf=CKD_NULL,
             public_data=peer_point,
         )
         # CKA_CLASS required; no CKA_VALUE_LEN -- ECDH output length is curve-fixed
@@ -510,7 +561,7 @@ def _gen_des_base_key(rs: RawSession, des3: bool) -> int:
     from ctypes import byref
 
     key_type = CKK_DES3 if des3 else CKK_DES
-    keygen_ckm = CKM(CKM_DES3_KEY_GEN) if des3 else CKM(CKM_DES_KEY_GEN)
+    keygen_ckm = CKM_DES3_KEY_GEN if des3 else CKM_DES_KEY_GEN
     attrs: dict[int, Any] = {
         CKA_KEY_TYPE: key_type,
         CKA_DERIVE: True,
@@ -523,7 +574,7 @@ def _gen_des_base_key(rs: RawSession, des3: bool) -> int:
     mech = mech_simple(keygen_ckm)
     handle = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
-    assert rv == CKR_OK, f"DES{'3' if des3 else ''} base key gen failed: {rv}"
+    expect_rv(rv, CKR_OK, context=f"DES{'3' if des3 else ''} base key gen")
     return handle.value
 
 
@@ -541,6 +592,105 @@ def _derive_des_ecb(rs: RawSession, entry: MechEntry, des3: bool) -> None:
             CKM(mech_id),
             b"derive08",  # 8 bytes
         )
+        derived_key = derive_key(
+            rs.raw,
+            rs.sh,
+            base_key,
+            CKM(mech_id),
+            attrs=_DERIVED_GENERIC_ATTRS,
+            mech_param=data_param,
+        )
+        assert derived_key != 0, f"{entry.mech_name}: derive returned handle 0"
+    finally:
+        destroy_quietly(rs.raw, rs.sh, base_key)
+        if derived_key != 0:
+            destroy_quietly(rs.raw, rs.sh, derived_key)
+
+
+def _gen_cipher_encrypt_data_base_key(
+    rs: RawSession,
+    case: _CipherEncryptDataDeriveCase,
+) -> int:
+    """Generate a regional cipher base key with CKA_DERIVE=True."""
+    attrs: dict[int, Any] = {
+        CKA_KEY_TYPE: case.key_type,
+        CKA_DERIVE: True,
+        CKA_TOKEN: False,
+        CKA_EXTRACTABLE: True,
+        CKA_SENSITIVE: False,
+    }
+    packed = []
+    if case.key_size_bits is not None:
+        packed.append(attr_ulong(CKA_VALUE_LEN, case.key_size_bits // 8))
+        packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
+    else:
+        packed.extend(pack_attrs(attrs))
+    tmpl = template(*packed)
+    mech = mech_simple(case.keygen_mech)
+    handle = CK_OBJECT_HANDLE(0)
+    rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
+    expect_rv(rv, CKR_OK, context=f"{case.keygen_name} base key gen")
+    return handle.value
+
+
+def _mech_block_cbc_encrypt_data(
+    mechanism_type: CKM | int,
+    params_cls: type[Any],
+    *,
+    iv: bytes,
+    data: bytes,
+) -> PackedMechanism:
+    """Pack CK_*_CBC_ENCRYPT_DATA_PARAMS for 16-byte block cipher derives."""
+    if len(iv) != 16:
+        raise ValueError("CBC encrypt-data IV must be exactly 16 bytes")
+    if len(data) == 0 or len(data) % 16 != 0:
+        raise ValueError("CBC encrypt-data input must be a non-empty 16-byte multiple")
+
+    params = params_cls()
+    for index, value in enumerate(iv):
+        params.iv[index] = CK_BYTE(value)
+    data_buf = (ctypes.c_ubyte * len(data))(*data)
+    params.pData = ctypes.cast(data_buf, ctypes.c_void_p)
+    params.length = len(data)
+
+    pointer_arg = PointerArg.to_storage(params, origin="mech_block_cbc_encrypt_data")
+    length_arg = LengthArg.native(ctypes.sizeof(params))
+    result = PackedMechanism(
+        CK_MECHANISM(mechanism_type, pointer_arg.pointer, length_arg.value),
+        storage=params,
+        pointer_arg=pointer_arg,
+        length_arg=length_arg,
+        params=params,
+    )
+    result._keepalive.append(data_buf)
+    return result
+
+
+def _derive_cipher_encrypt_data(
+    rs: RawSession,
+    entry: MechEntry,
+    case: _CipherEncryptDataDeriveCase,
+) -> None:
+    """Camellia/ARIA/SEED ECB/CBC encrypt-data derive path."""
+    if not rs.has_mechanism(case.keygen_name):
+        pytest.skip(f"{entry.mech_name}: {case.keygen_name} not available")
+
+    mech_id = entry.mech_id
+    base_key = _gen_cipher_encrypt_data_base_key(rs, case)
+    derived_key: int = 0
+    try:
+        data = b"derive__test__01"
+        if case.mode == "ecb":
+            data_param = mech_string_data(CKM(mech_id), data)
+        else:
+            if case.cbc_params_cls is None:
+                raise AssertionError(f"{entry.mech_name}: missing CBC parameter struct")
+            data_param = _mech_block_cbc_encrypt_data(
+                CKM(mech_id),
+                case.cbc_params_cls,
+                iv=bytes(range(case.block_size)),
+                data=data,
+            )
         derived_key = derive_key(
             rs.raw,
             rs.sh,
@@ -785,6 +935,12 @@ class TestMechDerive:
                 _derive_des_ecb(rs, entry, des3=False)
             elif _DES3_ECB_ENCRYPT_DATA_ID and mech_id == _DES3_ECB_ENCRYPT_DATA_ID:
                 _derive_des_ecb(rs, entry, des3=True)
+            elif mech_id in _CIPHER_ENCRYPT_DATA_DERIVE_CASES:
+                _derive_cipher_encrypt_data(
+                    rs,
+                    entry,
+                    _CIPHER_ENCRYPT_DATA_DERIVE_CASES[mech_id],
+                )
             elif mech_id in _CONCAT_DATA_MECH_IDS or mech_id == _XOR_MECH_ID:
                 _derive_concat_data(rs, entry)
             elif _EXTRACT_MECH_ID and mech_id == _EXTRACT_MECH_ID:
@@ -799,4 +955,7 @@ class TestMechDerive:
                     "in this generic test"
                 )
         except AssertionError as exc:
-            _xfail_derive_runtime_reject(exc, entry)
+            # Spans both setup (keygen) and op (derive): dispatch helpers own their
+            # own keygen, unlike wrap/lifecycle where setup and op are separate legs.
+            if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:derive"):
+                return

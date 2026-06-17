@@ -11,7 +11,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from pkcs11_check.core import file_runner as file_runner_mod
 from pkcs11_check.core.file_runner import (
+    _extract_unit_report_records_from_jsonl,
     _load_report_log_records,
     extract_coverage_from_jsonl,
     extract_quality_report_records_from_jsonl,
@@ -28,15 +32,25 @@ _FIXTURE_RECORDS: list[dict] = [
             "called_names": ["C_A", "C_B"],
             "called_counts": {"C_A": 2, "C_B": 3},
             "bootstrap_counts": {"C_Initialize": 1},
+            "module_session_health": {"checks": 1, "duration_s": 0.25},
             "uncalled_names": ["C_X", "C_Y"],
         },
         "mechanism_coverage": {
             "available_names": ["M1", "M2"],
+            "advertised_names": ["M1", "M2"],
+            "selected_names": ["M1"],
+            "selection_rejected_names": ["M2"],
+            "attempted_names": ["M1"],
             "invoked_names": ["M1"],
             "invoked_counts": {"M1": 5},
             "not_invoked_names": ["M2"],
             "invoked_detail": ["D1"],
             "invoked_detail_counts": {"D1": 1},
+            "accepted_names": ["M1"],
+            "rejected_cleanly_names": [],
+            "skipped_by_capability_names": [],
+            "crashed_names": [],
+            "timeout_names": [],
         },
     },
     {
@@ -46,14 +60,24 @@ _FIXTURE_RECORDS: list[dict] = [
             "called_names": ["C_B", "C_Z"],
             "called_counts": {"C_B": 1, "C_Z": 4},
             "bootstrap_counts": {"C_GetSlotList": 2},
+            "module_session_health": {"checks": 2, "duration_s": 0.5},
             "uncalled_names": ["C_Y"],
         },
         "mechanism_coverage": {
             "available_names": ["M2", "M3"],
+            "advertised_names": ["M2", "M3"],
+            "selected_names": ["M2"],
+            "selection_rejected_names": [],
+            "attempted_names": ["M2"],
             "invoked_names": ["M2"],
             "invoked_counts": {"M2": 7},
             "invoked_detail": ["D2"],
             "invoked_detail_counts": {"D2": 2},
+            "accepted_names": [],
+            "rejected_cleanly_names": ["M2"],
+            "skipped_by_capability_names": [],
+            "crashed_names": [],
+            "timeout_names": [],
         },
     },
     {"$report_type": "TestReport", "nodeid": "t.py::test_a", "when": "setup", "outcome": "passed"},
@@ -90,6 +114,47 @@ def test_load_report_log_records_returns_all_dicts(tmp_path: Path) -> None:
 
 def test_load_report_log_records_missing_file_is_empty(tmp_path: Path) -> None:
     assert _load_report_log_records(tmp_path / "nope.jsonl") == []
+
+
+def test_extract_unit_report_records_streams_without_load_all(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    p = tmp_path / "report.jsonl"
+    records = [
+        {"$report_type": "SessionStart"},
+        {
+            "$report_type": "TestReport",
+            "nodeid": "a.py::test_one",
+            "when": "call",
+            "outcome": "passed",
+        },
+        {
+            "$report_type": "CoverageReport",
+            "function_coverage": {"called_names": ["C_Initialize"]},
+        },
+        {
+            "$report_type": "TestReport",
+            "nodeid": "b.py::test_two",
+            "when": "call",
+            "outcome": "failed",
+        },
+        {"$report_type": "SessionFinish"},
+    ]
+    p.write_text("".join(json.dumps(record) + "\n" for record in records))
+
+    def _load_all_forbidden(_path: Path) -> list[dict[str, object]]:
+        pytest.fail("_extract_unit_report_records_from_jsonl must stream records")
+
+    monkeypatch.setattr(file_runner_mod, "_load_report_log_records", _load_all_forbidden)
+
+    assert _extract_unit_report_records_from_jsonl(
+        p,
+        candidate_targets={"a.py", "b.py"},
+    ) == {
+        "a.py": records[:3],
+        "b.py": records[3:],
+    }
 
 
 def test_quality_records_keep_only_test_and_selection_reports(tmp_path: Path) -> None:
@@ -131,11 +196,16 @@ def test_coverage_merges_two_reports_exactly(tmp_path: Path) -> None:
             "called_names": ["C_A", "C_B", "C_Z"],
             "called_counts": {"C_A": 2, "C_B": 4, "C_Z": 4},
             "bootstrap_counts": {"C_Initialize": 1, "C_GetSlotList": 2},
+            "module_session_health": {"checks": 3, "duration_s": 0.75},
             "uncalled_names": ["C_X", "C_Y"],
         },
         "mechanism_coverage": {
             "available": 3,
             "available_names": ["M1", "M2", "M3"],
+            "advertised_names": ["M1", "M2", "M3"],
+            "selected_names": ["M1", "M2"],
+            "selection_rejected_names": ["M2"],
+            "attempted_names": ["M1", "M2"],
             "invoked": 2,
             "invoked_names": ["M1", "M2"],
             "invoked_counts": {"M1": 5, "M2": 7},
@@ -143,6 +213,11 @@ def test_coverage_merges_two_reports_exactly(tmp_path: Path) -> None:
             "not_invoked_names": ["M3"],
             "invoked_detail": ["D1", "D2"],
             "invoked_detail_counts": {"D1": 1, "D2": 2},
+            "accepted_names": ["M1"],
+            "rejected_cleanly_names": ["M2"],
+            "skipped_by_capability_names": [],
+            "crashed_names": [],
+            "timeout_names": [],
         },
     }
 

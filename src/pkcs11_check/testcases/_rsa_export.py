@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.recipes import read_attributes
 from pkcs11_check.raw.types_std import (
     CKA_COEFFICIENT,
@@ -47,19 +47,34 @@ def _rsa_int_attr(
 ) -> int:
     if attr not in attrs:
         kind = "private" if private else "public"
-        pytest.xfail(f"{label}: missing RSA {kind} attribute {_attr_name(attr)}")
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            summary=f"{label}: missing RSA {kind} attribute {_attr_name(attr)}",
+        )
 
     value = attrs[attr]
     if not isinstance(value, bytes) or not value:
         kind = "private" if private else "public"
-        pytest.xfail(f"{label}: malformed RSA {kind} attributes: {_attr_name(attr)}={value!r}")
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            summary=f"{label}: malformed RSA {kind} attributes: {_attr_name(attr)}={value!r}",
+        )
 
     parsed = int.from_bytes(value, "big")
     if parsed < min_value:
         kind = "private" if private else "public"
-        pytest.xfail(
-            f"{label}: malformed RSA {kind} attributes: {_attr_name(attr)} value {parsed} "
-            f"is below minimum {min_value}"
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            summary=(
+                f"{label}: malformed RSA {kind} attributes: {_attr_name(attr)} value {parsed} "
+                f"is below minimum {min_value}"
+            ),
         )
     return parsed
 
@@ -75,7 +90,12 @@ def rsa_public_key_from_attrs_or_xfail(
     try:
         return rsa.RSAPublicNumbers(e, n).public_key()
     except ValueError as exc:
-        pytest.xfail(f"{label}: malformed RSA public attributes: {exc}")
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            summary=f"{label}: malformed RSA public attributes: {exc}",
+        )
 
 
 def read_rsa_public_key_or_xfail(
@@ -88,7 +108,12 @@ def read_rsa_public_key_or_xfail(
     try:
         attrs = read_attributes(rs.raw, rs.sh, pub_handle, _RSA_PUBLIC_ATTRS)
     except AssertionError as exc:
-        pytest.xfail(f"{label}: cannot read RSA public attributes: {exc}")
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            summary=f"{label}: cannot read RSA public attributes: {exc}",
+        )
     return rsa_public_key_from_attrs_or_xfail(attrs, label=label)
 
 
@@ -102,7 +127,12 @@ def read_rsa_private_key_or_xfail(
     try:
         attrs = read_attributes(rs.raw, rs.sh, priv_handle, _RSA_PRIVATE_ATTRS)
     except AssertionError as exc:
-        pytest.xfail(f"{label}: cannot read RSA private attributes: {exc}")
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            summary=f"{label}: cannot read RSA private attributes: {exc}",
+        )
 
     n = _rsa_int_attr(attrs, CKA_MODULUS, label, private=True, min_value=3)
     e = _rsa_int_attr(attrs, CKA_PUBLIC_EXPONENT, label, private=True, min_value=3)
@@ -124,4 +154,9 @@ def read_rsa_private_key_or_xfail(
             rsa.RSAPublicNumbers(e, n),
         ).private_key()
     except ValueError as exc:
-        pytest.xfail(f"{label}: malformed RSA private attributes: {exc}")
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            summary=f"{label}: malformed RSA private attributes: {exc}",
+        )

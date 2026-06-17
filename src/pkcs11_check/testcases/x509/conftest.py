@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import datetime
-import json
+import functools
 from typing import Any
 
 import pytest
@@ -20,9 +20,11 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
+    CKA_CERTIFICATE_CATEGORY,
     CKA_CERTIFICATE_TYPE,
     CKA_CLASS,
     CKA_END_DATE,
+    CKA_ID,
     CKA_ISSUER,
     CKA_LABEL,
     CKA_PUBLIC_KEY_INFO,
@@ -30,13 +32,177 @@ from pkcs11_check.raw.types_std import (
     CKA_START_DATE,
     CKA_SUBJECT,
     CKA_TOKEN,
+    CKA_TRUSTED,
     CKA_VALUE,
     CKC_X_509,
     CKO_CERTIFICATE,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.data import X509_LIMBO_DIR
+from pkcs11_check.testcases.data import X509_LIMBO_DIR, load_json_cached
 
 _LIMBO_FILE = X509_LIMBO_DIR / "limbo.json"
+
+# Clean cert-storage refusal codes: the module is declaring it won't store this shape.
+# Anything else (or a crash) is NOT a clean refusal -> propagate as a real finding.
+# CKR_KEY_HANDLE_INVALID is the broadest entry: it is non-spec for a no-input-handle
+# C_CreateObject, but some modules (nethsm) use it to mean "I don't store cert objects".
+# It is still a *clean* refusal (recorded once per template as xfail by test_cert_storage,
+# which flags it as non-spec); the gate skips only when EVERY template refuses, so a single
+# odd code never triggers a false-skip.
+_CERT_STORAGE_REFUSAL_CKRS: tuple[int, ...] = (
+    int(CKR_KEY_HANDLE_INVALID),
+    int(CKR_TEMPLATE_INCOMPLETE),
+    int(CKR_TEMPLATE_INCONSISTENT),
+    int(CKR_ATTRIBUTE_VALUE_INVALID),
+    int(CKR_ATTRIBUTE_TYPE_INVALID),
+    int(CKR_FUNCTION_NOT_SUPPORTED),
+    int(CKR_ARGUMENTS_BAD),
+)
+
+# slot_id -> can store a cert object. Process-global per slot (cert-storage capability is
+# stable for a slot across a run), mirroring the _IMPORT_SHAPE_WINNERS cache convention.
+_CERT_STORAGE_SUPPORTED: dict[int, bool] = {}
+
+
+@functools.cache
+def _canonical_self_signed_cert_der() -> bytes:
+    """A minimal self-signed RSA certificate, generated once, for capability probing
+    (mirrors the ca_cert_der fixture pattern in test_core_ops.py)."""
+    import datetime as _dt
+
+    from cryptography import x509 as cx509
+    from cryptography.hazmat.primitives import hashes as _hashes
+    from cryptography.hazmat.primitives import serialization as _ser
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+    from cryptography.x509.oid import NameOID as _NameOID
+
+    key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = cx509.Name([cx509.NameAttribute(_NameOID.COMMON_NAME, "p11chk-cert-probe")])
+    cert = (
+        cx509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(cx509.random_serial_number())
+        .not_valid_before(_dt.datetime(2020, 1, 1))
+        .not_valid_after(_dt.datetime(2040, 1, 1))
+        .sign(key, _hashes.SHA256())
+    )
+    return cert.public_bytes(_ser.Encoding.DER)
+
+
+@functools.cache
+def _san_only_cert_der() -> bytes:
+    """A subject-less X.509 cert (RFC 5280 4.1.2.6): EMPTY subject DN, NON-empty issuer,
+    and a critical subjectAltName. Only the subject is empty -- the non-empty issuer
+    isolates the subject-less variable. Signed by its own key (not a valid PKI chain;
+    irrelevant to a storage test)."""
+    import datetime as _dt
+
+    from cryptography import x509 as cx509
+    from cryptography.hazmat.primitives import hashes as _hashes
+    from cryptography.hazmat.primitives import serialization as _ser
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+    from cryptography.x509.oid import NameOID as _NameOID
+
+    key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    issuer = cx509.Name([cx509.NameAttribute(_NameOID.COMMON_NAME, "p11chk-test-issuer")])
+    cert = (
+        cx509.CertificateBuilder()
+        .subject_name(cx509.Name([]))  # empty subject DN; identity is in the SAN
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(cx509.random_serial_number())
+        .not_valid_before(_dt.datetime(2020, 1, 1))
+        .not_valid_after(_dt.datetime(2040, 1, 1))
+        .add_extension(
+            cx509.SubjectAlternativeName([cx509.RFC822Name("p11chk@example.com")]),
+            critical=True,
+        )
+        .sign(key, _hashes.SHA256())
+    )
+    return cert.public_bytes(_ser.Encoding.DER)
+
+
+def _minimal_cert_template(der: bytes) -> dict[int, Any]:
+    """A spec-INCOMPLETE cert template that OMITS the mandatory CKA_SUBJECT (CKA_VALUE only).
+    Per certificate_objects.md, CKA_SUBJECT footnote ^1^ MUST be specified at creation, so a
+    conformant module rejects this with CKR_TEMPLATE_INCOMPLETE. Used by the negative
+    conformance test and as the probe's last-resort fallback."""
+    return {CKA_CLASS: CKO_CERTIFICATE, CKA_CERTIFICATE_TYPE: CKC_X_509, CKA_VALUE: der}
+
+
+def cert_storage_templates(der: bytes) -> list[tuple[str, dict[int, Any]]]:
+    """The spec-complete (CKA_SUBJECT present) cert templates -- single source of truth
+    shared by the capability probe and the characterization suite. The spec-incomplete
+    omit-CKA_SUBJECT template is NOT here; it is a negative case (_minimal_cert_template)."""
+    full = _build_cert_template(der)  # adds SUBJECT/ISSUER/SERIAL (+ v3.0 PUBLIC_KEY_INFO)
+    san_only = _build_cert_template(_san_only_cert_der())  # CKA_SUBJECT present = empty Name
+    return [
+        ("full", full),
+        ("full+label", {**full, CKA_LABEL: b"p11chk-cert"}),
+        ("full+id", {**full, CKA_ID: b"\x01\x02\x03\x04"}),
+        ("full+session", {**full, CKA_TOKEN: False}),
+        ("full+token", {**full, CKA_TOKEN: True}),
+        ("full+trusted_false", {**full, CKA_TRUSTED: False}),
+        ("full+category", {**full, CKA_CERTIFICATE_CATEGORY: 0}),
+        ("san_only_empty_subject", san_only),
+    ]
+
+
+def attempt_store_cert(rs: Any, template: dict[int, Any]) -> tuple[int | None, int | None]:
+    """Try to store one cert object. Returns ``(handle, None)`` on success (caller
+    destroys), or ``(None, rv)`` on a CLEAN cert-storage refusal. A non-refusal CKR or
+    a crash propagates (real finding, never swallowed). Shared by probe and suite."""
+    from pkcs11_check.raw.recipes import create_object as _create_object
+    from pkcs11_check.raw.rv import CkrAssertionError as _CkrAssertionError
+
+    try:
+        return _create_object(rs.raw, rs.sh, template), None
+    except _CkrAssertionError as exc:
+        if exc.rv not in _CERT_STORAGE_REFUSAL_CKRS:
+            raise
+        return None, exc.rv
+
+
+def cert_storage_supported(rs: Any) -> bool:
+    """Cached behavioral probe: can the module store ANY certificate object? Tries every
+    cert_storage_templates() shape, then the spec-incomplete omit-CKA_SUBJECT minimal
+    template as a last-resort fallback (a module that only accepts the minimal template --
+    which import_cert_raw also tries first -- is still detected as supported). True on first
+    success, False ONLY if all are cleanly refused (exhaustive). Non-refusal CKR propagates."""
+    cached = _CERT_STORAGE_SUPPORTED.get(rs.slot_id)
+    if cached is not None:
+        return cached
+
+    from pkcs11_check.raw.recipes import destroy_quietly as _destroy_quietly
+
+    der = _canonical_self_signed_cert_der()
+    candidates = [tmpl for _n, tmpl in cert_storage_templates(der)]
+    candidates.append(_minimal_cert_template(der))  # last-resort fallback
+    supported = False
+    for tmpl in candidates:
+        handle, _rv = attempt_store_cert(rs, tmpl)
+        if handle is not None:
+            _destroy_quietly(rs.raw, rs.sh, handle)
+            supported = True
+            break
+    _CERT_STORAGE_SUPPORTED[rs.slot_id] = supported
+    return supported
+
+
+def skip_unless_cert_storage(rs: Any) -> None:
+    """Skip when the module cannot store certificate objects at all (probe-established)."""
+    import pytest as _pytest
+
+    if not cert_storage_supported(rs):
+        _pytest.skip("module cannot store CKO_CERTIFICATE objects (cert-storage probe)")
 
 
 def pem_to_der(pem: str | dict[str, Any] | None) -> bytes | None:
@@ -324,10 +490,12 @@ def load_limbo_testcases() -> list[dict[str, Any]]:
     if not _LIMBO_FILE.exists():
         return []
 
-    with open(_LIMBO_FILE) as f:
-        data = json.load(f)
+    data = load_json_cached(_LIMBO_FILE)
 
     cases: list[dict[str, Any]] = data.get("testcases", [])
+    for tc in cases:
+        tc["_source"] = "x509:limbo.json"
+        tc["_vector_id"] = f"id={tc.get('id')}"
     return cases
 
 

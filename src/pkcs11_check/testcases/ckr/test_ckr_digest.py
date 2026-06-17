@@ -1,6 +1,6 @@
 """CKR compliance tests for C_DigestInit and C_Digest.
 
-Source: PKCS#11 v3.1 Sec.5.12.1 (C_DigestInit), Sec.5.12.2 (C_Digest).
+Source: PKCS#11 v3.2 (C_DigestInit, C_Digest).
 """
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
@@ -30,7 +31,14 @@ class TestDigestInitErrors:
         mech = mech_simple(CKM_AES_ECB)
         rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
         if rv == CKR_OK:
-            pytest.fail("Should have rejected AES_ECB as digest mechanism")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_DigestInit:AES-mechanism",
+                operation="C_DigestInit",
+                actual=rv,
+                summary="Should have rejected AES_ECB as digest mechanism",
+            )
         assert_ckr(CKR_DIGEST["init_mechanism_invalid"], rv, ckr_strict)
 
     def test_encrypt_mechanism_for_digest(self, p11_raw_session: Any, ckr_strict: bool) -> None:
@@ -39,7 +47,14 @@ class TestDigestInitErrors:
         mech = mech_simple(CKM_RSA_PKCS)
         rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
         if rv == CKR_OK:
-            pytest.fail("Should have rejected RSA_PKCS as digest mechanism")
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_DigestInit:RSA-mechanism",
+                operation="C_DigestInit",
+                actual=rv,
+                summary="Should have rejected RSA_PKCS as digest mechanism",
+            )
         assert_ckr(CKR_DIGEST["init_encrypt_mechanism"], rv, ckr_strict)
 
     def test_mechanism_param_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:

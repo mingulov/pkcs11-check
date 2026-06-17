@@ -22,6 +22,7 @@ from .types_std import (
     CK_AES_GCM_PARAMS,
     CK_BBOOL,
     CK_BYTE,
+    CK_BYTE_PTR,
     CK_CCM_MESSAGE_PARAMS,
     CK_CCM_WRAP_PARAMS,
     CK_CHACHA20_PARAMS,
@@ -32,13 +33,23 @@ from .types_std import (
     CK_GCM_WRAP_PARAMS,
     CK_HASH_SIGN_ADDITIONAL_CONTEXT,
     CK_HKDF_PARAMS,
+    CK_IKE1_EXTENDED_DERIVE_PARAMS,
+    CK_IKE1_PRF_DERIVE_PARAMS,
+    CK_IKE2_PRF_PLUS_DERIVE_PARAMS,
+    CK_IKE_PRF_DERIVE_PARAMS,
     CK_KEY_DERIVATION_STRING_DATA,
+    CK_KMAC_PARAMS,
     CK_PBE_PARAMS,
     CK_PKCS5_PBKD2_PARAMS2,
     CK_RC2_CBC_PARAMS,
+    CK_RC2_MAC_GENERAL_PARAMS,
+    CK_RC5_CBC_PARAMS,
+    CK_RC5_MAC_GENERAL_PARAMS,
+    CK_RC5_PARAMS,
     CK_RSA_PKCS_OAEP_PARAMS,
     CK_RSA_PKCS_PSS_PARAMS,
     CK_SALSA20_CHACHA20_POLY1305_PARAMS,
+    CK_SALSA20_PARAMS,
     CK_SIGN_ADDITIONAL_CONTEXT,
     CK_SSL3_KEY_MAT_OUT,
     CK_SSL3_KEY_MAT_PARAMS,
@@ -56,7 +67,10 @@ from .types_std import (
     CK_WTLS_KEY_MAT_PARAMS,
     CK_WTLS_MASTER_KEY_DERIVE_PARAMS,
     CK_WTLS_PRF_PARAMS,
+    CKD,
+    CKG,
     CKG_GENERATE_RANDOM,
+    CKH,
     CKH_HEDGE_PREFERRED,
     CKM,
     CKZ_DATA_SPECIFIED,
@@ -172,7 +186,7 @@ def mech_gcm_message(
     iv: bytes,
     *,
     iv_fixed_bits: int = 0,
-    iv_generator: int = 0,
+    iv_generator: CKG | int = 0,
     tag_bits: int = 128,
 ) -> PackedMechanism:
     """Pack CK_GCM_MESSAGE_PARAMS for v3.0 message-based AEAD.
@@ -201,7 +215,7 @@ def mech_gcm_message_inherit_tag(
     *,
     source: PackedMechanism,
     iv_fixed_bits: int = 0,
-    iv_generator: int = 0,
+    iv_generator: CKG | int = 0,
 ) -> PackedMechanism:
     """Pack CK_GCM_MESSAGE_PARAMS that shares its pTag with ``source``.
 
@@ -233,7 +247,7 @@ def mech_gcm_message_generated_iv(
     *,
     iv_len: int = 12,
     iv_fixed_bits: int = 0,
-    iv_generator: int = int(CKG_GENERATE_RANDOM),
+    iv_generator: CKG | int = CKG_GENERATE_RANDOM,
     tag_bits: int = 128,
 ) -> PackedMechanism:
     """Pack CK_GCM_MESSAGE_PARAMS with writable IV and tag buffers."""
@@ -298,7 +312,7 @@ def mech_gcm_wrap_generated_iv(
     *,
     iv_len: int = 12,
     iv_fixed_bits: int = 0,
-    iv_generator: int = int(CKG_GENERATE_RANDOM),
+    iv_generator: CKG | int = CKG_GENERATE_RANDOM,
     aad: bytes | None = None,
     aad_len: int = 0,
     tag_bits: int = 128,
@@ -336,7 +350,7 @@ def mech_ccm_message_generated_nonce(
     data_len: int,
     nonce_len: int = 12,
     nonce_fixed_bits: int = 0,
-    nonce_generator: int = int(CKG_GENERATE_RANDOM),
+    nonce_generator: CKG | int = CKG_GENERATE_RANDOM,
     mac_len: int = 16,
 ) -> PackedMechanism:
     """Pack CK_CCM_MESSAGE_PARAMS with writable nonce and MAC buffers."""
@@ -407,7 +421,7 @@ def mech_ccm_wrap_generated_nonce(
     data_len: int,
     nonce_len: int = 12,
     nonce_fixed_bits: int = 0,
-    nonce_generator: int = int(CKG_GENERATE_RANDOM),
+    nonce_generator: CKG | int = CKG_GENERATE_RANDOM,
     aad: bytes | None = None,
     aad_len: int = 0,
     mac_len: int = 16,
@@ -473,8 +487,8 @@ def mech_ccm(
 def mech_pss(
     mechanism_type: CKM | int,
     *,
-    hash_mech: int,
-    mgf: int,
+    hash_mech: CKM | int,
+    mgf: CKG | int,
     salt_len: int,
 ) -> PackedMechanism:
     """Pack CK_RSA_PKCS_PSS_PARAMS."""
@@ -493,8 +507,8 @@ def mech_pss(
 def mech_oaep(
     mechanism_type: CKM | int,
     *,
-    hash_mech: int,
-    mgf: int,
+    hash_mech: CKM | int,
+    mgf: CKG | int,
     source_data: bytes | None = None,
 ) -> PackedMechanism:
     """Pack CK_RSA_PKCS_OAEP_PARAMS."""
@@ -516,7 +530,7 @@ def mech_oaep(
 def mech_ecdh(
     mechanism_type: CKM | int,
     *,
-    kdf: int,
+    kdf: CKD | int,
     public_data: bytes,
     shared_data: bytes | None = None,
 ) -> PackedMechanism:
@@ -539,7 +553,7 @@ def mech_ecdh_aes_kw(
     mechanism_type: CKM | int,
     *,
     aes_key_bits: int,
-    kdf: int,
+    kdf: CKD | int,
     shared_data: bytes | None = None,
 ) -> PackedMechanism:
     """Pack CK_ECDH_AES_KEY_WRAP_PARAMS for CKM_ECDH_AES_KEY_WRAP family.
@@ -572,7 +586,7 @@ def mech_ecdh_aes_kw(
 def mech_hkdf(
     mechanism_type: CKM | int,
     *,
-    hash_mech: int,
+    hash_mech: CKM | int,
     extract: bool = True,
     expand: bool = True,
     salt_type: int | None = None,
@@ -607,6 +621,27 @@ def mech_hkdf(
     )
 
 
+def mech_kmac(
+    mechanism_type: CKM | int,
+    *,
+    key_handle: int,
+    mac_len: int,
+    customization: bytes | None = None,
+) -> PackedMechanism:
+    """Pack CK_KMAC_PARAMS for CKM_KMAC_128 / CKM_KMAC_256 operations."""
+    if mac_len < 0:
+        raise ValueError("mac_len must be non-negative")
+    ka: list[Any] = []
+    params = CK_KMAC_PARAMS()
+    params.hKey = key_handle
+    params.ulMacLength = mac_len
+    customization_ptr, params.ulCustomizationStringLen = _pack_bytes(customization, ka)
+    params.pCustomizationString = (
+        ctypes.cast(customization_ptr, CK_BYTE_PTR) if customization_ptr is not None else None
+    )
+    return _mech_struct(mechanism_type, params, "mech_kmac", ka, sub_mechanisms={"macLen": mac_len})
+
+
 def mech_cbc_pad(mechanism_type: CKM | int, iv: bytes) -> PackedMechanism:
     """Pack 16-byte IV for AES-CBC / AES-CBC-PAD (raw bytes parameter)."""
     return mech_bytes(mechanism_type, iv)
@@ -637,6 +672,23 @@ def mech_chacha20(
     return _mech_struct(mechanism_type, params, "mech_chacha20", ka)
 
 
+def mech_salsa20(
+    mechanism_type: CKM | int,
+    nonce: bytes,
+    counter: int = 0,
+) -> PackedMechanism:
+    """Pack CK_SALSA20_PARAMS with a 64-bit counter and nonce."""
+    if counter < 0 or counter >= 2**64:
+        raise ValueError("counter must fit in 64 bits")
+    ka: list[Any] = []
+    params = CK_SALSA20_PARAMS()
+    counter_bytes = counter.to_bytes(8, "little")
+    params.pBlockCounter, _ = _pack_bytes(counter_bytes, ka)
+    params.pNonce, _ = _pack_bytes(nonce, ka)
+    params.ulNonceBits = len(nonce) * 8
+    return _mech_struct(mechanism_type, params, "mech_salsa20", ka)
+
+
 def mech_chacha20_poly1305(
     mechanism_type: CKM | int,
     nonce: bytes,
@@ -648,6 +700,19 @@ def mech_chacha20_poly1305(
     params.pNonce, params.ulNonceLen = _pack_bytes(nonce, ka)
     params.pAAD, params.ulAADLen = _pack_bytes(aad, ka)
     return _mech_struct(mechanism_type, params, "mech_chacha20_poly1305", ka)
+
+
+def mech_salsa20_poly1305(
+    mechanism_type: CKM | int,
+    nonce: bytes,
+    aad: bytes | None = None,
+) -> PackedMechanism:
+    """Pack CK_SALSA20_CHACHA20_POLY1305_PARAMS for Salsa20-Poly1305."""
+    ka: list[Any] = []
+    params = CK_SALSA20_CHACHA20_POLY1305_PARAMS()
+    params.pNonce, params.ulNonceLen = _pack_bytes(nonce, ka)
+    params.pAAD, params.ulAADLen = _pack_bytes(aad, ka)
+    return _mech_struct(mechanism_type, params, "mech_salsa20_poly1305", ka)
 
 
 def mech_rc2(
@@ -675,6 +740,85 @@ def mech_rc2_cbc(
     for i in range(8):
         params.iv[i] = CK_BYTE(iv[i])
     return _mech_struct(mechanism_type, params, "mech_rc2_cbc")
+
+
+def mech_rc2_mac_general(
+    mechanism_type: CKM | int,
+    *,
+    effective_bits: int = 128,
+    mac_len: int = 8,
+) -> PackedMechanism:
+    """Pack CK_RC2_MAC_GENERAL_PARAMS (effective bits + MAC length)."""
+    if effective_bits <= 0:
+        raise ValueError("effective_bits must be positive")
+    if mac_len <= 0:
+        raise ValueError("mac_len must be positive")
+    params = CK_RC2_MAC_GENERAL_PARAMS()
+    params.ulEffectiveBits = effective_bits
+    params.ulMacLength = mac_len
+    return _mech_struct(mechanism_type, params, "mech_rc2_mac_general")
+
+
+def mech_rc5(
+    mechanism_type: CKM | int,
+    *,
+    word_bits: int = 32,
+    rounds: int = 12,
+) -> PackedMechanism:
+    """Pack CK_RC5_PARAMS (word size in bits + rounds)."""
+    if word_bits <= 0:
+        raise ValueError("word_bits must be positive")
+    if rounds < 0:
+        raise ValueError("rounds must be non-negative")
+    params = CK_RC5_PARAMS()
+    params.ulWordsize = word_bits
+    params.ulRounds = rounds
+    return _mech_struct(mechanism_type, params, "mech_rc5")
+
+
+def mech_rc5_cbc(
+    mechanism_type: CKM | int,
+    *,
+    word_bits: int = 32,
+    rounds: int = 12,
+    iv: bytes | None = None,
+) -> PackedMechanism:
+    """Pack CK_RC5_CBC_PARAMS (word size, rounds, variable-length IV)."""
+    if word_bits <= 0:
+        raise ValueError("word_bits must be positive")
+    if rounds < 0:
+        raise ValueError("rounds must be non-negative")
+    if iv is None:
+        iv = bytes((word_bits * 2 + 7) // 8)
+    if len(iv) == 0:
+        raise ValueError("iv must be non-empty")
+    ka: list[Any] = []
+    params = CK_RC5_CBC_PARAMS()
+    params.ulWordsize = word_bits
+    params.ulRounds = rounds
+    params.pIv, params.ulIvLen = _pack_bytes(iv, ka)
+    return _mech_struct(mechanism_type, params, "mech_rc5_cbc", ka)
+
+
+def mech_rc5_mac_general(
+    mechanism_type: CKM | int,
+    *,
+    word_bits: int = 32,
+    rounds: int = 12,
+    mac_len: int = 8,
+) -> PackedMechanism:
+    """Pack CK_RC5_MAC_GENERAL_PARAMS (word size, rounds, MAC length)."""
+    if word_bits <= 0:
+        raise ValueError("word_bits must be positive")
+    if rounds < 0:
+        raise ValueError("rounds must be non-negative")
+    if mac_len <= 0:
+        raise ValueError("mac_len must be positive")
+    params = CK_RC5_MAC_GENERAL_PARAMS()
+    params.ulWordsize = word_bits
+    params.ulRounds = rounds
+    params.ulMacLength = mac_len
+    return _mech_struct(mechanism_type, params, "mech_rc5_mac_general")
 
 
 def mech_eddsa(
@@ -773,6 +917,119 @@ def mech_string_data(mechanism_type: CKM | int, data: bytes) -> PackedMechanism:
 # ---------------------------------------------------------------------------
 
 
+def mech_ike_prf_derive(
+    mechanism_type: CKM | int,
+    *,
+    prf_mechanism: CKM | int,
+    initiator_nonce: bytes,
+    responder_nonce: bytes,
+    data_as_key: bool = False,
+    rekey: bool = False,
+    new_key_handle: int = 0,
+) -> PackedMechanism:
+    """Pack CK_IKE_PRF_DERIVE_PARAMS for CKM_IKE_PRF_DERIVE."""
+    ka: list[Any] = []
+    params = CK_IKE_PRF_DERIVE_PARAMS()
+    params.prfMechanism = prf_mechanism
+    params.bDataAsKey = CK_BBOOL(1 if data_as_key else 0)
+    params.bRekey = CK_BBOOL(1 if rekey else 0)
+    params.pNi, params.ulNiLen = _pack_bytes(initiator_nonce, ka)
+    params.pNr, params.ulNrLen = _pack_bytes(responder_nonce, ka)
+    params.hNewKey = new_key_handle
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_ike_prf_derive",
+        ka,
+        sub_mechanisms={"prfMechanism": int(prf_mechanism)},
+    )
+
+
+def mech_ike1_prf_derive(
+    mechanism_type: CKM | int,
+    *,
+    prf_mechanism: CKM | int,
+    keygxy_handle: int,
+    initiator_cookie: bytes,
+    responder_cookie: bytes,
+    key_number: int,
+    previous_key_handle: int = 0,
+) -> PackedMechanism:
+    """Pack CK_IKE1_PRF_DERIVE_PARAMS for CKM_IKE1_PRF_DERIVE."""
+    if not 0 <= key_number <= 0xFF:
+        raise ValueError("key_number must fit in CK_BYTE")
+    ka: list[Any] = []
+    params = CK_IKE1_PRF_DERIVE_PARAMS()
+    params.prfMechanism = prf_mechanism
+    params.bHasPrevKey = CK_BBOOL(1 if previous_key_handle else 0)
+    params.hKeygxy = keygxy_handle
+    params.hPrevKey = previous_key_handle
+    params.pCKYi, params.ulCKYiLen = _pack_bytes(initiator_cookie, ka)
+    params.pCKYr, params.ulCKYrLen = _pack_bytes(responder_cookie, ka)
+    params.keyNumber = CK_BYTE(key_number)
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_ike1_prf_derive",
+        ka,
+        sub_mechanisms={"prfMechanism": int(prf_mechanism)},
+    )
+
+
+def mech_ike1_extended_derive(
+    mechanism_type: CKM | int,
+    *,
+    prf_mechanism: CKM | int,
+    keygxy_handle: int = 0,
+    extra_data: bytes | None = None,
+) -> PackedMechanism:
+    """Pack CK_IKE1_EXTENDED_DERIVE_PARAMS for CKM_IKE1_EXTENDED_DERIVE."""
+    ka: list[Any] = []
+    params = CK_IKE1_EXTENDED_DERIVE_PARAMS()
+    params.prfMechanism = prf_mechanism
+    params.bHasKeygxy = CK_BBOOL(1 if keygxy_handle else 0)
+    params.hKeygxy = keygxy_handle
+    if extra_data:
+        params.pExtraData, params.ulExtraDataLen = _pack_bytes(extra_data, ka)
+    else:
+        params.pExtraData = None
+        params.ulExtraDataLen = 0
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_ike1_extended_derive",
+        ka,
+        sub_mechanisms={"prfMechanism": int(prf_mechanism)},
+    )
+
+
+def mech_ike2_prf_plus_derive(
+    mechanism_type: CKM | int,
+    *,
+    prf_mechanism: CKM | int,
+    seed_data: bytes | None = None,
+    seed_key_handle: int = 0,
+) -> PackedMechanism:
+    """Pack CK_IKE2_PRF_PLUS_DERIVE_PARAMS for CKM_IKE2_PRF_PLUS_DERIVE."""
+    ka: list[Any] = []
+    params = CK_IKE2_PRF_PLUS_DERIVE_PARAMS()
+    params.prfMechanism = prf_mechanism
+    params.bHasSeedKey = CK_BBOOL(1 if seed_key_handle else 0)
+    params.hSeedKey = seed_key_handle
+    if seed_data is None:
+        params.pSeedData = None
+        params.ulSeedDataLen = 0
+    else:
+        params.pSeedData, params.ulSeedDataLen = _pack_bytes(seed_data, ka)
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_ike2_prf_plus_derive",
+        ka,
+        sub_mechanisms={"prfMechanism": int(prf_mechanism)},
+    )
+
+
 def _fill_random_data(
     random_info: Any,
     client_random: bytes,
@@ -867,7 +1124,7 @@ def mech_tls12_master_key_derive(
     mechanism_type: CKM | int,
     client_random: bytes,
     server_random: bytes,
-    hash_mech: int,
+    hash_mech: CKM | int,
     *,
     with_version: bool = True,
 ) -> PackedMechanism:
@@ -899,7 +1156,7 @@ def mech_tls12_key_mat(
     mechanism_type: CKM | int,
     client_random: bytes,
     server_random: bytes,
-    hash_mech: int,
+    hash_mech: CKM | int,
     *,
     mac_size_bits: int = 0,
     key_size_bits: int = 128,
@@ -950,7 +1207,7 @@ def mech_tls12_key_mat(
 
 def mech_tls12_extended_master_key_derive(
     mechanism_type: CKM | int,
-    hash_mech: int,
+    hash_mech: CKM | int,
     session_hash: bytes,
     *,
     with_version: bool = True,
@@ -1178,9 +1435,9 @@ def mech_wtls_prf(
 
 def mech_hash_sign_context(
     mechanism_type: CKM | int,
-    hash_mech: int,
+    hash_mech: CKM | int,
     *,
-    hedge: int | None = None,
+    hedge: CKH | int | None = None,
     context: bytes | None = None,
 ) -> PackedMechanism:
     """Pack CK_HASH_SIGN_ADDITIONAL_CONTEXT for CKM_HASH_ML_DSA / CKM_HASH_SLH_DSA.
@@ -1191,7 +1448,7 @@ def mech_hash_sign_context(
     """
     ka: list[Any] = []
     params = CK_HASH_SIGN_ADDITIONAL_CONTEXT()
-    params.hedgeVariant = int(CKH_HEDGE_PREFERRED) if hedge is None else hedge
+    params.hedgeVariant = CKH_HEDGE_PREFERRED if hedge is None else hedge
     if context is not None:
         params.pContext, params.ulContextLen = _pack_bytes(context, ka)
     else:
@@ -1204,7 +1461,7 @@ def mech_hash_sign_context(
 def mech_sign_context(
     mechanism_type: CKM | int,
     *,
-    hedge: int | None = None,
+    hedge: CKH | int | None = None,
     context: bytes | None = None,
 ) -> PackedMechanism:
     """Pack CK_SIGN_ADDITIONAL_CONTEXT for CKM_ML_DSA / CKM_SLH_DSA (pure).
@@ -1215,7 +1472,7 @@ def mech_sign_context(
     """
     ka: list[Any] = []
     params = CK_SIGN_ADDITIONAL_CONTEXT()
-    params.hedgeVariant = int(CKH_HEDGE_PREFERRED) if hedge is None else hedge
+    params.hedgeVariant = CKH_HEDGE_PREFERRED if hedge is None else hedge
     if context is not None:
         params.pContext, params.ulContextLen = _pack_bytes(context, ka)
     else:
@@ -1244,12 +1501,23 @@ __all__ = [
     "mech_gcm_wrap_generated_iv",
     "mech_hash_sign_context",
     "mech_hkdf",
+    "mech_ike1_extended_derive",
+    "mech_ike1_prf_derive",
+    "mech_ike2_prf_plus_derive",
+    "mech_ike_prf_derive",
+    "mech_kmac",
     "mech_oaep",
     "mech_pbe",
     "mech_pbkdf2",
     "mech_pss",
     "mech_rc2",
     "mech_rc2_cbc",
+    "mech_rc2_mac_general",
+    "mech_rc5",
+    "mech_rc5_cbc",
+    "mech_rc5_mac_general",
+    "mech_salsa20",
+    "mech_salsa20_poly1305",
     "mech_sign_context",
     "mech_ssl3_key_mat",
     "mech_ssl3_master_key_derive",

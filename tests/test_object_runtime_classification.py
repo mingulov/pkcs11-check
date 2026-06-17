@@ -81,6 +81,7 @@ def test_imported_key_verifies_signature_skips_missing_rsa_sign_mechanism(
         raise AssertionError("RSA keypair generation should have been guarded")
 
     monkeypatch.setattr(raw_recipes, "gen_rsa_keypair", _unexpected_keypair)
+    monkeypatch.setattr(test_object, "skip_unless_create_object_supported", lambda *_a, **_k: None)
 
     with pytest.raises(pytest.skip.Exception, match="SHA256_RSA_PKCS not supported"):
         test_object.TestKeyImportExport().test_imported_key_verifies_signature(
@@ -103,6 +104,7 @@ def test_import_rsa_public_key_xfails_malformed_generated_attrs(
         },
     )
     monkeypatch.setattr(test_object, "destroy_quietly", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(test_object, "skip_unless_create_object_supported", lambda *_a, **_k: None)
 
     with pytest.raises(pytest.xfail.Exception, match="generated RSA public key"):
         test_object.TestKeyImportExport().test_import_rsa_public_key(
@@ -130,6 +132,7 @@ def test_import_rsa_public_key_import_reject_is_xfail(
     monkeypatch.setattr(test_object, "read_attributes", lambda *_args, **_kwargs: attrs)
     monkeypatch.setattr(test_object, "create_object", _import_reject)
     monkeypatch.setattr(test_object, "destroy_quietly", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(test_object, "skip_unless_create_object_supported", lambda *_a, **_k: None)
 
     with pytest.raises(pytest.xfail.Exception, match="RSA public key import not operational"):
         test_object.TestKeyImportExport().test_import_rsa_public_key(

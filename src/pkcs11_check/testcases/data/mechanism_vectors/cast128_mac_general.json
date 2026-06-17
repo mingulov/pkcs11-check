@@ -1,0 +1,22 @@
+{
+  "mechanism": "CKM_CAST128_MAC_GENERAL",
+  "family": "cast128_mac_general",
+  "key_type": "CKK_CAST128",
+  "source": "RFC 2144 appendix B.1; one-block CBC-MAC with zero IV equals CAST-128 ECB",
+  "vectors": [
+    {
+      "id": "cast128_mac_general_rfc2144_128_full_block",
+      "type": "positive",
+      "mechanism_name": "CKM_CAST128_MAC_GENERAL",
+      "key_type": "symmetric",
+      "key_bits": 128,
+      "key_hex": "0123456712345678234567893456789a",
+      "params": {
+        "source": "RFC 2144 appendix B.1; one-block CBC-MAC with zero IV equals CAST-128 ECB",
+        "mac_len": 8
+      },
+      "input_hex": "0123456789abcdef",
+      "mac_hex": "238b4fe5847e44b2"
+    }
+  ]
+}

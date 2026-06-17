@@ -4,7 +4,7 @@ When multiple error conditions apply simultaneously, the PKCS#11 spec
 defines priority rules. These tests verify the higher-priority CKR is
 returned.
 
-Source: PKCS#11 v3.1 Sec.5.1.7 (relative priorities).
+Source: PKCS#11 v3.2 (relative priorities).
 """
 
 from __future__ import annotations
@@ -13,8 +13,9 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_simple
-from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key, gen_rsa_keypair
+from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
@@ -26,7 +27,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
 )
-from pkcs11_check.testcases.conftest import classify_lifecycle_effect
+from pkcs11_check.testcases.conftest import classify_lifecycle_effect, gen_aes_key_or_xfail
 
 pytestmark = pytest.mark.access
 
@@ -41,13 +42,13 @@ class TestErrorPriority:
         CKR_KEY_HANDLE_INVALID or CKR_OBJECT_HANDLE_INVALID expected.
         """
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         destroy_rv = rs.raw.C_DestroyObject(rs.sh, key)
         # Both conditions: handle is invalid AND SHA256 is wrong for encrypt
         mech = mech_simple(CKM_SHA256)
         rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
         if rv == CKR_OK:
-            # Type-C use-after-destroy: the destroy claimed success yet
+            # lifecycle use-after-destroy: the destroy claimed success yet
             # C_EncryptInit on the same handle still succeeded -> contradiction.
             classify_lifecycle_effect(
                 claimed_success=destroy_rv == CKR_OK,
@@ -63,7 +64,7 @@ class TestErrorPriority:
             note(
                 "Module returned MECHANISM_INVALID before checking handle validity",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 v3.1 Sec.5.1.7",
+                reference="PKCS#11 v3.2",
             )
         # Other errors acceptable
 
@@ -79,7 +80,15 @@ class TestErrorPriority:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub)
             if rv == CKR_OK:
-                pytest.fail("Should have rejected RSA key with AES-ECB")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_EncryptInit:RSA-key-AES-ECB",
+                    operation="C_EncryptInit",
+                    mechanism="CKM_AES_ECB",
+                    actual=rv,
+                    summary="Should have rejected RSA key with AES-ECB",
+                )
             assert (
                 rv
                 in (
@@ -99,12 +108,20 @@ class TestErrorPriority:
         is checked first per spec.
         """
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 128)
+        key = gen_aes_key_or_xfail(rs, 128)
         try:
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             if rv == CKR_OK:
-                pytest.fail("Should have rejected AES key with RSA mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_EncryptInit:AES-key-RSA-mechanism",
+                    operation="C_EncryptInit",
+                    mechanism="CKM_RSA_PKCS",
+                    actual=rv,
+                    summary="Should have rejected AES key with RSA mechanism",
+                )
             assert (
                 rv
                 in (

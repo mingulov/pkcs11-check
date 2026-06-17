@@ -23,7 +23,9 @@ def test_aes_key_wrap_pkcs7_unwrap_template_omits_value_len(
     )
     monkeypatch.setattr(os, "urandom", lambda length: key_bytes[:length])
     monkeypatch.setattr(test_aes_modes, "gen_aes_key", lambda *_args, **_kwargs: 10)
-    monkeypatch.setattr(test_aes_modes, "import_secret_key", lambda *_args, **_kwargs: 11)
+    monkeypatch.setattr(
+        test_aes_modes, "import_secret_key_negotiated", lambda *_args, **_kwargs: 11
+    )
     monkeypatch.setattr(test_aes_modes, "wrap_key", lambda *_args, **_kwargs: b"wrapped-key")
     monkeypatch.setattr(test_aes_modes, "destroy_quietly", lambda *_args: None)
     monkeypatch.setattr(

@@ -123,24 +123,36 @@ def test_gcm_reuse_other_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
 # --- PSS zero salt --------------------------------------------------------
 
 
-def _run_pss(monkeypatch: pytest.MonkeyPatch, *, accepted: bool, rv: int = 0) -> None:
+def _run_pss(
+    monkeypatch: pytest.MonkeyPatch, *, accepted: bool, rv: int = 0, verifies: bool = True
+) -> None:
     monkeypatch.setattr(pv, "gen_rsa_keypair", lambda *_a, **_k: (1, 2))
     monkeypatch.setattr(pv, "destroy_quietly", lambda *_a, **_k: None)
     monkeypatch.setattr(pv, "sign_single", (lambda *_a, **_k: b"sig") if accepted else _raise(rv))
+    monkeypatch.setattr(pv, "verify_single", lambda *_a, **_k: verifies)
     pv.TestPssSaltLength().test_pss_zero_salt_length(_session(), 0)
 
 
-def test_pss_accept_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+# sLen=0 is a VALID deterministic PSS variant (RFC 8017 §9.1 / FIPS 186-5):
+# accepting it and producing a verifiable signature is CORRECT (pass); declining
+# it cleanly is a policy choice (xfail); accepting it but producing a signature
+# that does NOT verify is a real break (fail).
+def test_pss_sln0_accepted_and_verifies_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    _run_pss(monkeypatch, accepted=True, verifies=True)
+
+
+def test_pss_sln0_accepted_but_invalid_signature_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(Failed):
-        _run_pss(monkeypatch, accepted=True)
+        _run_pss(monkeypatch, accepted=True, verifies=False)
 
 
-def test_pss_expected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
-    _run_pss(monkeypatch, accepted=False, rv=_EXPECTED)
-
-
-def test_pss_other_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pss_sln0_clean_decline_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(pytest.xfail.Exception):
+        _run_pss(monkeypatch, accepted=False, rv=_EXPECTED)
+
+
+def test_pss_sln0_nonclean_decline_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(CkrAssertionError):
         _run_pss(monkeypatch, accepted=False, rv=_OTHER)
 
 

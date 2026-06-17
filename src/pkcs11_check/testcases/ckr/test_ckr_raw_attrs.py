@@ -28,7 +28,7 @@ pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
 
 def _classify_permission_flag(out: str, *, label: str) -> None:
-    """Type-B claim/effect-check from subprocess output.
+    """policy claim/effect-check from subprocess output.
 
     The subprocess prints ``CLAIM:0`` (the key read the permission flag back as
     False -- the module claims the restriction) or ``CLAIM:1`` (the flag was not
@@ -110,7 +110,7 @@ class TestKeyFunctionNotPermitted:
     def test_encrypt_not_permitted(self, p11_config: Any) -> None:
         """Key with CKA_ENCRYPT=False -> C_EncryptInit -> CKR_KEY_FUNCTION_NOT_PERMITTED.
 
-        PKCS#11 v3.1 Sec.4.4.1: If CKA_ENCRYPT is False, C_EncryptInit MUST return
+        PKCS#11 v3.2: If CKA_ENCRYPT is False, C_EncryptInit MUST return
         CKR_KEY_FUNCTION_NOT_PERMITTED. NSS returns CKR_OK, meaning the key permission
         flag is silently ignored -- keys without CKA_ENCRYPT=True can still be used to
         encrypt. This is a security finding.
@@ -142,13 +142,13 @@ else:
 """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_EncryptInit with CKA_ENCRYPT=False")
-        # Type-B: enforcing CKA_ENCRYPT=False is mandatory (PKCS#11 v3.1 Sec.4.4.1).
+        # policy: enforcing CKA_ENCRYPT=False is mandatory (PKCS#11 v3.2).
         # claimed = the key read CKA_ENCRYPT back as False; violated = EncryptInit
         # still returned CKR_OK.
         _classify_permission_flag(
             out,
             label="C_EncryptInit with a CKA_ENCRYPT=False key "
-            "(PKCS#11 v3.1 Sec.4.4.1 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+            "(PKCS#11 v3.2 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
         )
 
     def test_sign_not_permitted(self, p11_config: Any) -> None:
@@ -179,17 +179,17 @@ else:
 """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_SignInit with CKA_SIGN=False")
-        # Type-B: enforcing CKA_SIGN=False is mandatory (PKCS#11 v3.1 Sec.4.4.1).
+        # policy: enforcing CKA_SIGN=False is mandatory (PKCS#11 v3.2).
         _classify_permission_flag(
             out,
             label="C_SignInit with a CKA_SIGN=False key "
-            "(PKCS#11 v3.1 Sec.4.4.1 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+            "(PKCS#11 v3.2 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
         )
 
     def test_decrypt_not_permitted(self, p11_config: Any) -> None:
         """Key with CKA_DECRYPT=False -> C_DecryptInit -> CKR_KEY_FUNCTION_NOT_PERMITTED.
 
-        PKCS#11 v3.1 Sec.4.4.1: If CKA_DECRYPT is False, C_DecryptInit MUST return
+        PKCS#11 v3.2: If CKA_DECRYPT is False, C_DecryptInit MUST return
         CKR_KEY_FUNCTION_NOT_PERMITTED. NSS returns CKR_OK, meaning the key permission
         flag is silently ignored -- keys without CKA_DECRYPT=True can still be used to
         decrypt. This is a security finding.
@@ -219,9 +219,9 @@ else:
 """,
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_DecryptInit with CKA_DECRYPT=False")
-        # Type-B: enforcing CKA_DECRYPT=False is mandatory (PKCS#11 v3.1 Sec.4.4.1).
+        # policy: enforcing CKA_DECRYPT=False is mandatory (PKCS#11 v3.2).
         _classify_permission_flag(
             out,
             label="C_DecryptInit with a CKA_DECRYPT=False key "
-            "(PKCS#11 v3.1 Sec.4.4.1 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+            "(PKCS#11 v3.2 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
         )

@@ -1,6 +1,6 @@
 """CKR compliance tests for C_VerifyInit and C_Verify.
 
-Source: PKCS#11 v3.1 Sec.5.11.1 (C_VerifyInit), Sec.5.11.2 (C_Verify).
+Source: PKCS#11 v3.2 (C_VerifyInit, C_Verify).
 """
 
 from __future__ import annotations
@@ -10,21 +10,26 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    gen_aes_key,
     gen_rsa_keypair,
     sign_single,
 )
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
+    CKF_VERIFY,
     CKM_AES_ECB,
     CKM_SHA256_RSA_PKCS,
     CKR_OK,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_VERIFY, assert_ckr
-from pkcs11_check.testcases.conftest import classify_lifecycle_effect
+from pkcs11_check.testcases.conftest import (
+    classify_lifecycle_effect,
+    gen_aes_key_or_xfail,
+    skip_unless_mechanism_flag,
+)
 
 pytestmark = pytest.mark.access
 
@@ -40,7 +45,14 @@ class TestVerifyInitErrors:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub)
             if rv == CKR_OK:
-                pytest.fail("Should have rejected AES_ECB as verify mechanism")
+                classify(
+                    "accepted_invalid",
+                    kind="policy",
+                    label="C_VerifyInit:AES-mechanism",
+                    operation="C_VerifyInit",
+                    actual=rv,
+                    summary="Should have rejected AES_ECB as verify mechanism",
+                )
             assert_ckr(CKR_VERIFY["init_mechanism_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -49,12 +61,12 @@ class TestVerifyInitErrors:
     def test_key_type_inconsistent(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """AES key with RSA verify mechanism -> CKR_KEY_TYPE_INCONSISTENT."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256)
         try:
             exp = CKR_VERIFY["init_key_type_inconsistent"]
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
             rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), key)
-            # Type-A crypto-correctness: accepting an AES key under an RSA verify
+            # crypto-correctness: accepting an AES key under an RSA verify
             # mechanism (CKR_OK) is key-type confusion -> fail; an expected
             # reject -> pass; another clean reject -> xfail (3-way assert_ckr).
             assert_ckr(exp, rv, ckr_strict)
@@ -70,7 +82,7 @@ class TestVerifyInitErrors:
         mech = mech_simple(CKM_SHA256_RSA_PKCS)
         rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub)
         if rv == CKR_OK:
-            # Type-C use-after-destroy: destroy claimed CKR_OK yet C_VerifyInit
+            # lifecycle use-after-destroy: destroy claimed CKR_OK yet C_VerifyInit
             # on the same handle still succeeded -> contradiction.
             classify_lifecycle_effect(
                 claimed_success=destroy_rv == CKR_OK,
@@ -87,6 +99,7 @@ class TestVerifyErrors:
     def test_signature_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Tampered RSA signature -> CKR_SIGNATURE_INVALID."""
         rs = p11_raw_session
+        skip_unless_mechanism_flag(rs, CKM_SHA256_RSA_PKCS, int(CKF_VERIFY))
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             data = b"CKR compliance test data"
@@ -114,7 +127,15 @@ class TestVerifyErrors:
             # deviation (xfail) by assert_ckr via _TOKEN_UNIVERSAL; no provider-
             # specific pre-guard (it would leak provider identity into the report).
             if rv == CKR_OK:
-                pytest.fail("Tampered signature verified as valid!")
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="C_Verify:tampered-signature",
+                    operation="C_Verify",
+                    mechanism="CKM_SHA256_RSA_PKCS",
+                    actual=rv,
+                    summary="Tampered signature verified as valid!",
+                )
             assert_ckr(CKR_VERIFY["signature_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -123,6 +144,7 @@ class TestVerifyErrors:
     def test_signature_wrong_length(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """RSA signature with wrong length -> CKR_SIGNATURE_LEN_RANGE."""
         rs = p11_raw_session
+        skip_unless_mechanism_flag(rs, CKM_SHA256_RSA_PKCS, int(CKF_VERIFY))
         pub, _priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             exp = CKR_VERIFY["signature_len_range"]
@@ -140,7 +162,7 @@ class TestVerifyErrors:
             # CKR_DEVICE_ERROR is a clean non-spec reject -> classified as a noted
             # deviation (xfail) by assert_ckr via _TOKEN_UNIVERSAL; no provider-
             # specific pre-guard (it would leak provider identity into the report).
-            # Type-A crypto-correctness: a wrong-length RSA signature that
+            # crypto-correctness: a wrong-length RSA signature that
             # verifies (CKR_OK) is a break -> fail; an expected reject -> pass;
             # another clean reject -> xfail (3-way assert_ckr).
             assert_ckr(exp, rv, ckr_strict)
