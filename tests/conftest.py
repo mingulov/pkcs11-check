@@ -7,37 +7,52 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from pkcs11_check.testcases.data import ACVP_DIR, WYCHEPROOF_DIR
+from pkcs11_check.testcases.data import ACVP_DIR, CCTV_DIR, WYCHEPROOF_DIR
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-# Meta-tests that load downloaded Wycheproof/ACVP vectors. When fetch-data has
-# not populated the vendor data dir (e.g. CI), these have no vectors to read and
-# would raise FileNotFoundError/StopIteration/IndexError. Skip them instead --
-# missing optional test data is an acceptable skip (unlike a module crash or a
-# wrong return code, which must always surface). Each module maps to the data
-# directory it requires.
-_VECTOR_DEPENDENT_MODULES: dict[str, Path] = {
-    "test_acvp_ecdh_loader.py": WYCHEPROOF_DIR,
-    "test_acvp_rsa_pss_loader.py": ACVP_DIR,
-    "test_wycheproof_dsa_loader.py": WYCHEPROOF_DIR,
-    "test_wycheproof_ecdh_guards.py": WYCHEPROOF_DIR,
-    "test_wycheproof_ed25519_loader.py": WYCHEPROOF_DIR,
-    "test_wycheproof_generic_guards.py": WYCHEPROOF_DIR,
-    "test_wycheproof_rsa_loader.py": WYCHEPROOF_DIR,
-    "test_wycheproof_rsa_oaep_import_classification.py": WYCHEPROOF_DIR,
-    "test_wycheproof_rsa_siggen_runtime_classification.py": WYCHEPROOF_DIR,
-    "test_wycheproof_signature_duplicate_guards.py": WYCHEPROOF_DIR,
-    "test_wycheproof_xdh_guards.py": WYCHEPROOF_DIR,
+# Meta-tests that load downloaded Wycheproof/ACVP/CCTV vectors. When fetch-data
+# has not populated the vendor data dir (e.g. CI), these have no vectors to read
+# and would raise FileNotFoundError/StopIteration/IndexError or assert on empty
+# data. Skip them instead -- missing optional test data is an acceptable skip
+# (unlike a module crash or a wrong return code, which must always surface).
+#
+# Each module maps to the data directories it requires; a file is skipped when
+# ANY required directory is absent. Completeness is enforced by
+# tests/test_no_data_skip_guard.py, which reproduces the no-data condition so a
+# newly added vector-dependent file that forgets to register here is caught
+# locally rather than only in CI.
+_VECTOR_DEPENDENT_MODULES: dict[str, tuple[Path, ...]] = {
+    "test_acvp_ecdh_loader.py": (WYCHEPROOF_DIR,),
+    "test_acvp_rsa_pss_loader.py": (ACVP_DIR,),
+    "test_wycheproof_dsa_loader.py": (WYCHEPROOF_DIR,),
+    "test_wycheproof_ecdh_guards.py": (WYCHEPROOF_DIR,),
+    "test_wycheproof_ed25519_loader.py": (WYCHEPROOF_DIR,),
+    "test_wycheproof_generic_guards.py": (WYCHEPROOF_DIR,),
+    "test_wycheproof_rsa_loader.py": (WYCHEPROOF_DIR,),
+    "test_wycheproof_rsa_oaep_import_classification.py": (WYCHEPROOF_DIR,),
+    "test_wycheproof_rsa_siggen_runtime_classification.py": (WYCHEPROOF_DIR,),
+    "test_wycheproof_signature_duplicate_guards.py": (WYCHEPROOF_DIR,),
+    "test_wycheproof_xdh_guards.py": (WYCHEPROOF_DIR,),
+    # Registered 2026-06-17: these load vendor vectors but were not listed, so
+    # they failed in CI (no fetch-data) instead of skipping. See the guard test.
+    "test_import_skip_xfail_batch3a.py": (WYCHEPROOF_DIR,),
+    "test_import_skip_xfail_batch3b.py": (WYCHEPROOF_DIR, CCTV_DIR),
+    "test_wycheproof_kryoptic_classification.py": (WYCHEPROOF_DIR,),
+    "test_wycheproof_provenance.py": (WYCHEPROOF_DIR,),
 }
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: Iterable[pytest.Item]) -> None:
-    """Skip vector-dependent meta-tests when their data dir is not fetched."""
+    """Skip vector-dependent meta-tests when any required data dir is not fetched."""
     for item in items:
         required = _VECTOR_DEPENDENT_MODULES.get(Path(str(item.fspath)).name)
-        if required is not None and not required.exists():
+        if required is None:
+            continue
+        missing = [d for d in required if not d.exists()]
+        if missing:
+            reason = ", ".join(str(d) for d in missing)
             item.add_marker(
-                pytest.mark.skip(reason=f"vector data not fetched: {required} (run fetch-data)")
+                pytest.mark.skip(reason=f"vector data not fetched: {reason} (run fetch-data)")
             )
