@@ -427,7 +427,7 @@ wheels = [
 
 [[package]]
 name = "pkcs11-check"
-version = "0.1.3"
+version = "0.1.4"
 source = { editable = "." }
 dependencies = [
     { name = "asn1crypto" },
