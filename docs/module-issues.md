@@ -63,6 +63,17 @@ provider package versions where the finding was first recorded.
   `C_EncryptInit(CKM_AES_CBC, ulParameterLen=ULONG_MAX)`. That row is not a
   signal crash, but it is still a failed malformed-boundary probe and should
   remain visible.
+- **C_GenerateRandom 64-bit length truncation (NEW 2026-06-18)**:
+  `test_random_length_truncation.py::TestGenerateRandomLengthTruncation` calls
+  `C_GenerateRandom(buf, 0x100000008)` over an mmap-backed demand-zero 4 GiB buffer.
+  Stock SoftHSM2 2.7.0 (local `/usr/lib/softhsm/libsofthsm2.so`) returns `CKR_OK`
+  in ~0 s but fills only the low-32-bits count (8 bytes) — the requested length is
+  silently truncated by a 32-bit cast, leaving the rest of the buffer unwritten.
+  The caller believes the whole buffer was randomized (a cryptographic-contract
+  violation), so this is classified `accepted_invalid` (fail). The companion
+  `TestSeedRandomLengthTruncation` cannot distinguish truncation from honor by
+  return code alone and records a `compliance.note`. A 64-bit length silently
+  truncated to its low 32 bits; reportable upstream.
 - **GCM null-IV SIGSEGV (UPDATED 2026-05-26)**:
   `test_ffi_length_boundary.py::TestMechanismNullInnerParams::test_gcm_null_iv`
   calls `C_EncryptInit(CKM_AES_GCM, pIv=NULL, ulIvLen=12)` in a crash-isolated

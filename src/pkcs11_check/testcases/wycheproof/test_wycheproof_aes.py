@@ -54,6 +54,13 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases._aes_operability import (
+    cmac_operability,
+    gmac_operability,
+    kw_unwrap_operability,
+    kwp_encrypt_operability,
+    xts_encrypt_operability,
+)
 from pkcs11_check.testcases._negotiation import (
     TEMPLATE_SHAPE_REJECTS,
     negotiate_request,
@@ -198,7 +205,10 @@ def test_aes_cmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_aes_runtime_reject(exc, f"AES-CMAC {vec_id}")
-        # acceptable: reject of an invalid vector is fine
+        # invalid vector: gate on operability (vacuous-reject fix).
+        xfail_vacuous_reject(
+            cmac_operability(rs), label=f"AES-CMAC {vec_id} invalid reject"
+        )
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
@@ -316,7 +326,10 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
                 source=vec.get("_source"),
                 vector_id=vec.get("_vector_id"),
             )
-        # acceptable: reject of an invalid wrapped blob is fine
+        # invalid vector: gate on operability (vacuous-reject fix).
+        xfail_vacuous_reject(
+            kw_unwrap_operability(rs), label=f"AES-KW {vec_id} invalid reject"
+        )
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, wrap_key_h)
@@ -422,7 +435,10 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_aes_runtime_reject(exc, f"AES-KWP {vec_id}")
-        # acceptable: reject is fine
+        # invalid vector: gate on operability (vacuous-reject fix).
+        xfail_vacuous_reject(
+            kwp_encrypt_operability(rs), label=f"AES-KWP {vec_id} invalid reject"
+        )
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, wrap_key_h)
@@ -628,7 +644,11 @@ def test_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
                 source=vec.get("_source"),
                 vector_id=vec.get("_vector_id"),
             )
-        # acceptable: reject of an invalid vector is fine
+        # invalid vector: gate on operability (vacuous-reject fix).
+        if isinstance(exc, AssertionError):
+            xfail_vacuous_reject(
+                gmac_operability(rs), label=f"AES-GMAC {vec_id} invalid reject"
+            )
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
@@ -728,7 +748,11 @@ def test_aes_xts(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
                 source=vec.get("_source"),
                 vector_id=vec.get("_vector_id"),
             )
-        # acceptable: reject is fine
+        # invalid vector: gate on operability (vacuous-reject fix).
+        if isinstance(exc, AssertionError):
+            xfail_vacuous_reject(
+                xts_encrypt_operability(rs), label=f"AES-XTS {vec_id} invalid reject"
+            )
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)

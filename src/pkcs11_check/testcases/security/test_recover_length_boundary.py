@@ -23,6 +23,10 @@ pytestmark = [pytest.mark.security, pytest.mark.subprocess]
 
 _ISIZE_MAX_64 = 0x7FFFFFFFFFFFFFFF
 _ISIZE_MAX_PLUS_1_64 = 0x8000000000000000
+# Oversized output-length: low 32 bits = 256 (matches a 256-byte output buffer),
+# high 32 bits set.  A module that writes only the low 32 bits of *pulDataLen
+# leaves the high half intact, producing a huge value that drives an OOB copy.
+_R6_INFLATED_PULDATALEN = (1 << 32) + 256
 
 _BOUNDARY_LENGTHS = [
     pytest.param(_ISIZE_MAX_64, id="isize_max"),
@@ -304,6 +308,86 @@ cleanup()
 
 class TestRecoverOutputLengthBoundary:
     """Recover output buffers must not be overrun on valid operations."""
+
+    def test_verify_recover_inflated_pul_data_len_does_not_crash(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """``C_VerifyRecover`` with ``*pulDataLen`` high 32 bits set must not crash.
+
+        The output-length pointer value exceeds 32 bits: low 32 bits = 256
+        (the actual output buffer size), high 32 bits set.  A module that writes
+        only the low 32 bits of ``*pulDataLen`` leaves the high half intact;
+        the surviving large value then drives an oversized output copy (OOB).
+        A conformant module treats ``*pulDataLen`` as a capacity and writes only
+        the actual recovered length (≤256); the high bits are irrelevant to a
+        correct implementation.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_X_509"):
+            pytest.skip("CKM_RSA_X_509 not supported")
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
+
+        body = (
+            _RECOVER_SETUP
+            + f"""
+pub = CK_OBJECT_HANDLE(0)
+priv = CK_OBJECT_HANDLE(0)
+try:
+    pub, priv = _gen_recover_keypair()
+    payload = _padded_recover_block(b"output-len-pun-probe")
+    signature = _sign_recover(priv, payload)
+    signature_buf = _byte_array(signature)
+
+    mech = mech_simple(CKM_RSA_X_509)
+    rv = raw.C_VerifyRecoverInit(sh, mech.byref(), pub.value)
+    if rv != CKR_OK:
+        _setup_xfail_if_known(rv, "C_VerifyRecoverInit rejected")
+        raise AssertionError(f"C_VerifyRecoverInit returned {{ckr_name(rv)}}")
+
+    out_buf = (ctypes.c_ubyte * 256)()
+    out_len = CK_ULONG({_R6_INFLATED_PULDATALEN})
+    print("TARGET:C_VerifyRecover")
+    print(f"INFLATED_LEN:{{out_len.value:#x}}")
+    rv = raw.C_VerifyRecover(
+        sh,
+        signature_buf,
+        len(signature),
+        out_buf,
+        ctypes.byref(out_len),
+    )
+    print(f"CKR:0x{{rv:08x}}")
+    print(f"OUT_LEN:{{out_len.value}}")
+finally:
+    if priv.value:
+        destroy_quietly(raw, sh, priv.value)
+    if pub.value:
+        destroy_quietly(raw, sh, pub.value)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(
+            _preamble(p11_config) + body,
+            timeout=20,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_VerifyRecover(*pulDataLen={_R6_INFLATED_PULDATALEN:#x})",
+        )
+        rv = _parse_output_value(stdout, "CKR:")
+        classify_negative_rv(
+            rv,
+            (CKR_BUFFER_TOO_SMALL,),
+            label=(
+                f"C_VerifyRecover with *pulDataLen={_R6_INFLATED_PULDATALEN:#x} (high 32 bits set)"
+            ),
+            allow_ok=True,
+        )
 
     def test_verify_recover_one_byte_output_preserves_guard(
         self,
