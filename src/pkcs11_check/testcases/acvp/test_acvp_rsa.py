@@ -60,6 +60,7 @@ from pkcs11_check.testcases._operability import (
     xfail_vacuous_reject,
 )
 from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
+from pkcs11_check.testcases._rsa_pss_operability import pss_combo_operability
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 from pkcs11_check.testcases.acvp.rsa.base_loader import (
@@ -521,10 +522,6 @@ class TestRsaSigVer:
                         source=vec.get("_source"),
                         vector_id=vec.get("_vector_id"),
                     )
-                # Known vacuous pass-through: invalid-PSS rejects are not probe-gated
-                # here (no in-scope PSS probe; the PKCS15 probe covers RSA but not PSS
-                # combos, and the PSS combo probe is private to the wycheproof module --
-                # cross-module import forbidden). See SESSION-RESTORE queue item.
                 verified = signature_rejected_or_xfail(exc, vec_id)
 
             if not expected_pass and verified:
@@ -536,7 +533,44 @@ class TestRsaSigVer:
                     source=vec.get("_source"),
                     vector_id=vec.get("_vector_id"),
                 )
+            if not expected_pass and not verified:
+                # The invalid vector was rejected -- a genuine pass ONLY if the
+                # (mech, hash, mgf, sLen) PSS combo actually verifies anything.
+                # A combo that is NOT_OPERATIONAL refuses everything, so the
+                # signature was never evaluated -> vacuous reject (xfail).
+                # INCONCLUSIVE (keypair staging refused, no combo evidence) leaves
+                # the legacy pass untouched.
+                xfail_vacuous_reject(
+                    pss_combo_operability(rs, mech_int, hash_mech, mgf, salt_len),
+                    label=f"{vec_id}: {mech_name} invalid-PSS reject",
+                )
             if expected_pass and not verified:
+                result = pss_combo_operability(rs, mech_int, hash_mech, mgf, salt_len)
+                if result.status is Operability.NOT_OPERATIONAL:
+                    xfail_as(
+                        "not_operational",
+                        kind="crypto",
+                        label=f"{mech_name}:verify",
+                        summary=(
+                            f"{vec_id}: {mech_name} canonical PSS sign+verify roundtrip for "
+                            f"({mech_name}, hash={hash_mech:#x}, mgf={mgf:#x}, "
+                            f"sLen={salt_len}) is not operational ({result.detail}) "
+                            "-- advertised but not operational"
+                        ),
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
+                    )
+                if result.status is Operability.INCONCLUSIVE:
+                    xfail_as(
+                        "honest_deviation",
+                        label=f"{mech_name}:verify",
+                        summary=(
+                            f"{vec_id}: {mech_name} PSS combo probe inconclusive ({result.detail})"
+                            " -- cannot distinguish deviation from module bug, recorded as xfail"
+                        ),
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
+                    )
                 fail_as(
                     "wrong_result",
                     kind="crypto",
