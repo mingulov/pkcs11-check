@@ -22,13 +22,22 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.types_std import _CK_ULONG_MAX, CKA_SIGN, CKA_TOKEN, CKA_VERIFY
+from pkcs11_check.raw.types_std import (
+    _CK_ULONG_MAX,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VERIFY,
+    CKR_ARGUMENTS_BAD,
+    CKR_DATA_LEN_RANGE,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+)
 from pkcs11_check.testcases._subprocess_preamble import (
     pin_from_config,
     run_with_coverage,
     subprocess_session_preamble,
 )
 from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
     destroy_returned_handles,
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
@@ -166,6 +175,129 @@ cleanup()
             stderr,
             context=f"{func}(ulDataLen={data_len:#x})",
         )
+
+
+# ---------------------------------------------------------------------------
+# TestGcmDecryptUpdateAccumulation -- 1 case
+# ---------------------------------------------------------------------------
+
+# Reject codes a conformant module may return when ulEncryptedPartLen is
+# out of range for the streaming decryption phase.
+_DATA_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DATA_LEN_RANGE,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+)
+
+
+class TestGcmDecryptUpdateAccumulation:
+    """AES-GCM C_DecryptUpdate must reject huge length before accumulating.
+
+    A plain 32-bit add for the internal byte accumulator means that feeding
+    0xFFFFFFFF first then 2 wraps the accumulator to 1, bypassing the length
+    guard and driving an OOB copy.  A conformant module rejects the oversized
+    first-update length with ``CKR_DATA_LEN_RANGE`` / ``CKR_ARGUMENTS_BAD`` /
+    ``CKR_ENCRYPTED_DATA_LEN_RANGE`` (or another clean code) BEFORE any
+    accumulation.
+    """
+
+    def test_gcm_decrypt_update_accumulation_does_not_crash(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """Two-call ``C_DecryptUpdate`` accumulation wrap must be rejected.
+
+        Two ``C_DecryptUpdate`` calls whose lengths sum past the 32-bit boundary
+        must not wrap the internal byte accumulator into a small allocation.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("CKM_AES_GCM not supported")
+        if "C_DecryptUpdate" not in rs.raw.available_function_names():
+            pytest.skip("C_DecryptUpdate not available")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-GCM DecryptUpdate accumulation crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + f"""
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_AES_GCM_PARAMS, CK_MECHANISM, CK_ULONG, CKM_AES_GCM, CKR_OK,
+)
+from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+try:
+    iv = (ctypes.c_ubyte * 12)(*range(12))
+    params = CK_AES_GCM_PARAMS()
+    params.pIv = ctypes.cast(iv, ctypes.c_void_p)
+    params.ulIvLen = 12
+    params.ulIvBits = 96
+    params.pAAD = None
+    params.ulAADLen = 0
+    params.ulTagBits = 128
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_GCM
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+    rv_init = raw.C_DecryptInit(sh, ctypes.byref(mech), key)
+    if rv_init != CKR_OK:
+        print(f"SETUP_XFAIL:C_DecryptInit rejected: {{rv_init}}")
+        cleanup()
+        raise SystemExit(0)
+
+    # Small real buffer, but claim 0xFFFFFFFF bytes.
+    buf1 = (ctypes.c_ubyte * 16)(*range(16))
+    out1 = (ctypes.c_ubyte * 32)()
+    out1_len = CK_ULONG(32)
+    rv1 = raw.C_DecryptUpdate(sh, buf1, {_ULONG_32BIT_MAX}, out1, ctypes.byref(out1_len))
+    print(f"CKR_UPDATE1:0x{{rv1:08x}}")
+    if rv1 == CKR_OK:
+        # If the first update was accepted, attempt the wrap-triggering second
+        # call only if the module allowed the first; a crash here IS the finding.
+        buf2 = (ctypes.c_ubyte * 2)(*[0, 1])
+        out2 = (ctypes.c_ubyte * 32)()
+        out2_len = CK_ULONG(32)
+        rv2 = raw.C_DecryptUpdate(sh, buf2, 2, out2, ctypes.byref(out2_len))
+        print(f"CKR_UPDATE2:0x{{rv2:08x}}")
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_DecryptUpdate(AES_GCM, ulEncryptedPartLen={_ULONG_32BIT_MAX:#x})",
+        )
+        # Classify the first-update return value: the module must reject the
+        # oversized length before any accumulation.
+        rv1_line = next((ln for ln in stdout.splitlines() if ln.startswith("CKR_UPDATE1:")), None)
+        if rv1_line is not None:
+            rv1 = int(rv1_line.removeprefix("CKR_UPDATE1:"), 0)
+            classify_negative_rv(
+                rv1,
+                _DATA_REJECT_CKRS,
+                label=(
+                    f"C_DecryptUpdate(AES_GCM, ulEncryptedPartLen={_ULONG_32BIT_MAX:#x}) "
+                    "-- must reject before accumulating"
+                ),
+                allow_ok=True,  # CKR_OK + no crash is tolerable; the two-call crash is the finding
+            )
 
 
 # ---------------------------------------------------------------------------
