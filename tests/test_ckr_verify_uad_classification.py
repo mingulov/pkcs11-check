@@ -24,7 +24,7 @@ def _session(destroy_rv: int, init_rv: int) -> SimpleNamespace:
 
 
 def _run(monkeypatch: pytest.MonkeyPatch, *, destroy_rv: int, init_rv: int) -> None:
-    monkeypatch.setattr(test_ckr_verify, "gen_rsa_keypair", lambda *_a, **_k: (1, 2))
+    monkeypatch.setattr(test_ckr_verify, "gen_rsa_keypair_or_xfail", lambda *_a, **_k: (1, 2))
     monkeypatch.setattr(test_ckr_verify, "destroy_quietly", lambda *_a, **_k: None)
     test_ckr_verify.TestVerifyInitErrors().test_key_handle_invalid(
         _session(destroy_rv, init_rv), ckr_strict=False

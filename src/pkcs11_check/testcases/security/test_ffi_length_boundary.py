@@ -16,8 +16,9 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, fail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_DERIVE,
     CKA_ENCRYPT,
@@ -35,8 +36,12 @@ from pkcs11_check.raw.types_std import (
     CKR_BUFFER_TOO_SMALL,
     CKR_DATA_LEN_RANGE,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OK,
+    CKR_OPERATION_NOT_INITIALIZED,
+    CKR_RANDOM_NO_RNG,
     CKR_SIGNATURE_LEN_RANGE,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
@@ -73,7 +78,7 @@ _ISIZE_MAX_PLUS_1_64 = 0x8000000000000000
 # Large but sub-OOM value for allocation guard testing (2 GB).
 _ALLOC_GUARD_VALUE_LEN = 0x7FFFFFFF
 
-_KDF_LENGTH_REJECT_RVS = (
+_PARAM_LENGTH_REJECT_RVS = (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -257,9 +262,9 @@ try:
         rv2 = raw.C_Encrypt(
             sh, buf, {data_len}, out_buf, ctypes.byref(out_len),
         )
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:C_EncryptInit not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key)
 cleanup()
@@ -271,6 +276,12 @@ cleanup()
             stdout,
             stderr,
             context=f"C_Encrypt(ulDataLen={data_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Encrypt(ulDataLen={data_len:#x})",
         )
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -319,9 +330,9 @@ try:
         rv2 = raw.C_Decrypt(
             sh, buf, {data_len}, out_buf, ctypes.byref(out_len),
         )
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:C_DecryptInit not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key)
 cleanup()
@@ -333,6 +344,12 @@ cleanup()
             stdout,
             stderr,
             context=f"C_Decrypt(ulDataLen={data_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Decrypt(ulEncryptedDataLen={data_len:#x})",
         )
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -396,7 +413,7 @@ rv = raw.C_CreateObject(
     5, ctypes.byref(key),
 )
 if rv != CKR_OK:
-    print(f"rv={{rv}}")
+    print(f"SETUP_XFAIL:HMAC key import not operational 0x{{rv:08x}}")
     cleanup()
     raise SystemExit(0)
 
@@ -413,9 +430,9 @@ try:
         rv2 = raw.C_Sign(
             sh, buf, {data_len}, sig_buf, ctypes.byref(sig_len),
         )
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:C_SignInit not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key.value)
 cleanup()
@@ -427,6 +444,12 @@ cleanup()
             stdout,
             stderr,
             context=f"C_Sign(HMAC_SHA256, ulDataLen={data_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Sign(ulDataLen={data_len:#x})",
         )
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -459,9 +482,9 @@ try:
         buf = (ctypes.c_ubyte * 16)(*range(16))
         sig_buf = (ctypes.c_ubyte * 32)()
         rv2 = raw.C_Verify(sh, buf, {data_len}, sig_buf, 32)
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:C_VerifyInit not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key.value)
 cleanup()
@@ -473,6 +496,12 @@ cleanup()
             stdout,
             stderr,
             context=f"C_Verify(HMAC_SHA256, ulDataLen={data_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_VERIFY_LENGTH_REJECT_RVS,
+            label=f"C_Verify(ulDataLen={data_len:#x})",
         )
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -506,9 +535,9 @@ if rv == CKR_OK:
     rv2 = raw.C_Digest(
         sh, buf, {data_len}, digest_buf, ctypes.byref(digest_len),
     )
-    print(f"rv={{rv2}}")
+    print(f"TARGET_RV:0x{{rv2:08x}}")
 else:
-    print(f"rv={{rv}}")
+    print(f"SETUP_XFAIL:C_DigestInit not operational 0x{{rv:08x}}")
 cleanup()
 """
         )
@@ -518,6 +547,12 @@ cleanup()
             stdout,
             stderr,
             context=f"C_Digest(SHA256, ulDataLen={data_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Digest(ulDataLen={data_len:#x})",
         )
 
 
@@ -687,12 +722,6 @@ cleanup()
             stderr,
             context=f"C_EncryptMessage({field}={data_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -823,12 +852,6 @@ cleanup()
             stderr,
             context=f"C_DecryptMessage({field}={data_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -983,12 +1006,6 @@ cleanup()
             stderr,
             context=f"{op}(ciphertext_len={data_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1093,12 +1110,6 @@ cleanup()
             stderr,
             context=f"C_SignMessage(data_len={data_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1225,12 +1236,6 @@ cleanup()
             stderr,
             context=f"C_VerifyMessage({field}_len={data_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1363,12 +1368,6 @@ cleanup()
             stderr,
             context=f"{op}(data_len={data_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1514,12 +1513,6 @@ cleanup()
             stderr,
             context=f"C_VerifyMessage multipart {field}={data_len:#x}",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1674,12 +1667,6 @@ cleanup()
             stderr,
             context=f"{op}(plaintext_len={data_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1761,9 +1748,9 @@ try:
         print("TARGET:{op}", flush=True)
         print("LEN:{data_len}", flush=True)
         rv2 = raw.{op}(sh, buf, {data_len}, out_buf, ctypes.byref(out_len))
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:{init_op} not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key)
 cleanup()
@@ -1786,9 +1773,9 @@ try:
         print("TARGET:C_SignUpdate", flush=True)
         print("LEN:{data_len}", flush=True)
         rv2 = raw.C_SignUpdate(sh, buf, {data_len})
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:C_SignInit not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key.value)
 cleanup()
@@ -1811,9 +1798,9 @@ try:
         print("TARGET:C_VerifyUpdate", flush=True)
         print("LEN:{data_len}", flush=True)
         rv2 = raw.C_VerifyUpdate(sh, buf, {data_len})
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:C_VerifyInit not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key.value)
 cleanup()
@@ -1833,9 +1820,9 @@ if rv == CKR_OK:
     print("TARGET:C_DigestUpdate", flush=True)
     print("LEN:{data_len}", flush=True)
     rv2 = raw.C_DigestUpdate(sh, buf, {data_len})
-    print(f"rv={{rv2}}")
+    print(f"TARGET_RV:0x{{rv2:08x}}")
 else:
-    print(f"rv={{rv}}")
+    print(f"SETUP_XFAIL:C_DigestInit not operational 0x{{rv:08x}}")
 cleanup()
 """
         else:
@@ -1848,6 +1835,12 @@ cleanup()
             stdout,
             stderr,
             context=f"{op}(ulDataLen={data_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"{op}(ulPartLen={data_len:#x})",
         )
 
 
@@ -1894,18 +1887,12 @@ rv = raw.C_GenerateRandom(
     ctypes.cast(probe.data, ctypes.POINTER(ctypes.c_ubyte)),
     {data_len},
 )
-print(f"rv={{rv}}")
+print(f"TARGET_RV:0x{{rv:08x}}")
 print(f"rv_name={{ckr_name(rv)}}")
 overwritten = sum(1 for byte in probe.guard if byte != GUARD)
 print(f"OVERWRITTEN:{{overwritten}}")
-assert overwritten == 0, (
-    "C_GenerateRandom wrote past the tiny real output allocation: "
-    f"{{overwritten}} guard byte(s) changed"
-)
-assert rv != CKR_OK, (
-    "C_GenerateRandom accepted an impossible claimed output length "
-    f"({data_len:#x}) for a tiny real allocation"
-)
+if overwritten != 0:
+    print(f"GUARD_OVERWRITE:{{overwritten}}")
 cleanup()
 """
         )
@@ -1915,6 +1902,20 @@ cleanup()
             stdout,
             stderr,
             context=f"C_GenerateRandom(ulRandomLen={data_len:#x})",
+        )
+        if "GUARD_OVERWRITE:" in stdout:
+            fail_as(
+                "wrong_result",
+                kind="crypto",
+                label="output-buffer guard byte overwritten",
+                actual=_parse_prefixed_int(stdout, "GUARD_OVERWRITE:"),
+                summary="module wrote past the requested output length (OOB write)",
+            )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            (CKR_RANDOM_NO_RNG, CKR_FUNCTION_NOT_SUPPORTED, CKR_ARGUMENTS_BAD),
+            label="C_GenerateRandom/C_SeedRandom isize length",
         )
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -1936,12 +1937,8 @@ seed = (ctypes.c_ubyte * 16)(*range(16))
 print("TARGET:C_SeedRandom", flush=True)
 print("LEN:{data_len}", flush=True)
 rv = raw.C_SeedRandom(sh, seed, {data_len})
-print(f"rv={{rv}}")
+print(f"TARGET_RV:0x{{rv:08x}}")
 print(f"rv_name={{ckr_name(rv)}}")
-assert rv != CKR_OK, (
-    "C_SeedRandom accepted an impossible claimed seed length "
-    f"({data_len:#x}) for a tiny real allocation"
-)
 cleanup()
 """
         )
@@ -1951,6 +1948,12 @@ cleanup()
             stdout,
             stderr,
             context=f"C_SeedRandom(ulSeedLen={data_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            (CKR_RANDOM_NO_RNG, CKR_FUNCTION_NOT_SUPPORTED, CKR_ARGUMENTS_BAD),
+            label="C_GenerateRandom/C_SeedRandom isize length",
         )
 
 
@@ -2020,7 +2023,7 @@ rv = raw.C_GenerateKey(
     ctypes.cast(attrs, ctypes.POINTER(CK_ATTRIBUTE)), 3,
     ctypes.byref(key),
 )
-print(f"rv={{rv}}")
+print(f"TARGET_RV:0x{{rv:08x}}")
 cleanup()
 """
         )
@@ -2030,6 +2033,13 @@ cleanup()
             stdout,
             stderr,
             context=(f"C_GenerateKey(AES, CKA_VALUE_LEN={_ALLOC_GUARD_VALUE_LEN:#x})"),
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _PARAM_LENGTH_REJECT_RVS,
+            label=f"C_GenerateKey(AES, CKA_VALUE_LEN={_ALLOC_GUARD_VALUE_LEN:#x})",
+            allow_ok=True,
         )
 
 
@@ -2095,7 +2105,7 @@ try:
     )
     mech.ulParameterLen = ctypes.sizeof(params)
     rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, key)
 cleanup()
@@ -2107,6 +2117,12 @@ cleanup()
             stdout,
             stderr,
             context="C_EncryptInit(AES_GCM, pIv=NULL, ulIvLen=12)",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _PARAM_LENGTH_REJECT_RVS,
+            label="C_EncryptInit(GCM, pIv=NULL, ulIvLen>0)",
         )
 
     def test_ecdh_null_public_data(
@@ -2198,7 +2214,7 @@ try:
         ctypes.cast(tmpl, ctypes.POINTER(CK_ATTRIBUTE)), 4,
         ctypes.byref(derived),
     )
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, pub)
     destroy_quietly(raw, sh, priv)
@@ -2211,6 +2227,12 @@ cleanup()
             stdout,
             stderr,
             context=("C_DeriveKey(ECDH1, pPublicData=NULL, ulPublicDataLen=65)"),
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _PARAM_LENGTH_REJECT_RVS,
+            label="C_DeriveKey(ECDH1, pPublicData=NULL, len>0)",
         )
 
     def test_oaep_null_source_data(
@@ -2267,7 +2289,7 @@ try:
     )
     mech.ulParameterLen = ctypes.sizeof(params)
     rv = raw.C_EncryptInit(sh, ctypes.byref(mech), pub)
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, pub)
     destroy_quietly(raw, sh, priv)
@@ -2280,6 +2302,12 @@ cleanup()
             stdout,
             stderr,
             context=("C_EncryptInit(RSA_OAEP, pSourceData=NULL, ulSourceDataLen=16)"),
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _PARAM_LENGTH_REJECT_RVS,
+            label="C_EncryptInit(OAEP, pSourceData=NULL, len>0)",
         )
 
     def test_hkdf_null_salt(
@@ -2346,7 +2374,7 @@ rv = raw.C_CreateObject(
     5, ctypes.byref(base_key),
 )
 if rv != CKR_OK:
-    print(f"rv={rv}")
+    print(f"SETUP_XFAIL:HKDF base key import not operational 0x{rv:08x}")
     cleanup()
     raise SystemExit(0)
 
@@ -2402,7 +2430,7 @@ try:
         ctypes.cast(d_tmpl, ctypes.POINTER(CK_ATTRIBUTE)), 4,
         ctypes.byref(derived),
     )
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, base_key.value)
 cleanup()
@@ -2414,6 +2442,12 @@ cleanup()
             stdout,
             stderr,
             context=("C_DeriveKey(HKDF, pSalt=NULL, ulSaltLen=16, ulSaltType=CKF_HKDF_SALT_DATA)"),
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _PARAM_LENGTH_REJECT_RVS,
+            label="C_DeriveKey(HKDF, pSalt=NULL, len>0)",
         )
 
 
@@ -2494,7 +2528,7 @@ rv = raw.C_CreateObject(
     5, ctypes.byref(key),
 )
 if rv != CKR_OK:
-    print(f"rv={{rv}}")
+    print(f"SETUP_XFAIL:HMAC key import not operational 0x{{rv:08x}}")
     cleanup()
     raise SystemExit(0)
 
@@ -2511,9 +2545,9 @@ try:
         rv2 = raw.C_Sign(
             sh, data, 16, sig_buf, ctypes.byref(sig_len),
         )
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:C_SignInit not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key.value)
 cleanup()
@@ -2525,6 +2559,13 @@ cleanup()
             stdout,
             stderr,
             context=f"C_Sign(HMAC_SHA256, sig_len={out_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_VERIFY_LENGTH_REJECT_RVS,
+            label=f"C_Sign(sig_len={out_len:#x})",
+            allow_ok=True,
         )
 
     @pytest.mark.parametrize("out_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -2559,9 +2600,9 @@ if rv == CKR_OK:
     rv2 = raw.C_Digest(
         sh, data, 16, digest_buf, ctypes.byref(digest_len),
     )
-    print(f"rv={{rv2}}")
+    print(f"TARGET_RV:0x{{rv2:08x}}")
 else:
-    print(f"rv={{rv}}")
+    print(f"SETUP_XFAIL:C_DigestInit not operational 0x{{rv:08x}}")
 cleanup()
 """
         )
@@ -2571,6 +2612,13 @@ cleanup()
             stdout,
             stderr,
             context=f"C_Digest(SHA256, digest_len={out_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Digest(digest_len={out_len:#x})",
+            allow_ok=True,
         )
 
     @pytest.mark.parametrize("sig_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -2635,7 +2683,7 @@ rv = raw.C_CreateObject(
     5, ctypes.byref(key),
 )
 if rv != CKR_OK:
-    print(f"rv={{rv}}")
+    print(f"SETUP_XFAIL:HMAC key import not operational 0x{{rv:08x}}")
     cleanup()
     raise SystemExit(0)
 
@@ -2651,9 +2699,9 @@ try:
         rv2 = raw.C_Verify(
             sh, data, 16, sig_buf, {sig_len},
         )
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:C_VerifyInit not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key.value)
 cleanup()
@@ -2665,6 +2713,12 @@ cleanup()
             stdout,
             stderr,
             context=f"C_Verify(HMAC_SHA256, sig_len={sig_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_VERIFY_LENGTH_REJECT_RVS,
+            label=f"C_Verify(ulSignatureLen={sig_len:#x})",
         )
 
 
@@ -2743,7 +2797,7 @@ rv = raw.C_CreateObject(
     5, ctypes.byref(base_key),
 )
 if rv != CKR_OK:
-    print(f"rv={rv}")
+    print(f"SETUP_XFAIL:HKDF base key import not operational 0x{rv:08x}")
     cleanup()
     raise SystemExit(0)
 
@@ -2798,7 +2852,7 @@ try:
         ctypes.cast(d_tmpl, ctypes.POINTER(CK_ATTRIBUTE)), 4,
         ctypes.byref(derived),
     )
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, base_key.value)
 cleanup()
@@ -2810,6 +2864,12 @@ cleanup()
             stdout,
             stderr,
             context="C_DeriveKey(HKDF, pInfo=NULL, ulInfoLen=16)",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _PARAM_LENGTH_REJECT_RVS,
+            label="C_DeriveKey(HKDF, pInfo=NULL, len>0)",
         )
 
 
@@ -2884,7 +2944,7 @@ try:
     )
     mech.ulParameterLen = ctypes.sizeof(params)
     rv = raw.C_SignInit(sh, ctypes.byref(mech), priv)
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, pub)
     destroy_quietly(raw, sh, priv)
@@ -2897,6 +2957,12 @@ cleanup()
             stdout,
             stderr,
             context=("C_SignInit(EDDSA, pContextData=NULL, ulContextDataLen=16)"),
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _PARAM_LENGTH_REJECT_RVS,
+            label="C_SignInit(EDDSA, pContextData=NULL, len>0)",
         )
 
 
@@ -2984,6 +3050,7 @@ cleanup()
             stderr,
             context=("C_Verify(ML-DSA, pContext non-NULL, ulContextLen=0)"),
         )
+        # audit-ok(2026-06-19): positive op -- empty context is RFC 8032 default; CKR_OK is correct.
 
 
 # ---------------------------------------------------------------------------
@@ -3045,7 +3112,7 @@ try:
     )
     mech.ulParameterLen = ctypes.sizeof(params)
     rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, key)
 cleanup()
@@ -3057,6 +3124,12 @@ cleanup()
             stdout,
             stderr,
             context="C_EncryptInit(AES_CCM, pNonce=NULL, ulNonceLen=7)",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _PARAM_LENGTH_REJECT_RVS,
+            label="C_EncryptInit(CCM, pNonce=NULL, len>0)",
         )
 
 
@@ -3135,7 +3208,7 @@ rv = raw.C_CreateObject(
     5, ctypes.byref(base_key),
 )
 if rv != CKR_OK:
-    print(f"rv={rv}")
+    print(f"SETUP_XFAIL:CONCATENATE base key import not operational 0x{rv:08x}")
     cleanup()
     raise SystemExit(0)
 
@@ -3183,7 +3256,7 @@ try:
         ctypes.cast(d_tmpl, ctypes.POINTER(CK_ATTRIBUTE)), 4,
         ctypes.byref(derived),
     )
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, base_key.value)
 cleanup()
@@ -3195,6 +3268,12 @@ cleanup()
             stdout,
             stderr,
             context=("C_DeriveKey(CONCATENATE_BASE_AND_DATA, pData=NULL, ulLen=16)"),
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _PARAM_LENGTH_REJECT_RVS,
+            label="C_DeriveKey(CONCATENATE, pData=NULL, len>0)",
         )
 
 
@@ -3322,16 +3401,10 @@ cleanup()
             stderr,
             context=f"C_DeriveKey(AES_CBC_ENCRYPT_DATA, {case_label})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label=f"C_DeriveKey(AES_CBC_ENCRYPT_DATA, {case_label})",
         )
 
@@ -3432,16 +3505,10 @@ cleanup()
             stderr,
             context=f"C_Sign(SHA256_RSA_PKCS_PSS, sLen={salt_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label=f"C_Sign(SHA256_RSA_PKCS_PSS, sLen={salt_len:#x})",
         )
 
@@ -3536,12 +3603,6 @@ cleanup()
             stderr,
             context=f"C_Encrypt(AES_GCM, ulAADLen={aad_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
@@ -3639,12 +3700,6 @@ cleanup()
             stderr,
             context=f"C_Encrypt(AES_CCM, ulAADLen={aad_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
@@ -3787,7 +3842,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label=f"C_GenerateKey(PBKDF2, {field} length={data_len:#x})",
         )
 
@@ -3951,7 +4006,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label=f"C_GenerateKey({mech_const}, {field} length={data_len:#x})",
         )
 
@@ -4030,7 +4085,7 @@ rv = raw.C_CreateObject(
     5, ctypes.byref(base_key),
 )
 if rv != CKR_OK:
-    print(f"rv={rv}")
+    print(f"SETUP_XFAIL:TLS_KDF base key import not operational 0x{rv:08x}")
     cleanup()
     raise SystemExit(0)
 
@@ -4095,7 +4150,7 @@ try:
         ctypes.cast(d_tmpl, ctypes.POINTER(CK_ATTRIBUTE)), 4,
         ctypes.byref(derived),
     )
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, base_key.value)
 cleanup()
@@ -4107,6 +4162,12 @@ cleanup()
             stdout,
             stderr,
             context=("C_DeriveKey(TLS_KDF, pLabel=NULL, ulLabelLength=16)"),
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _PARAM_LENGTH_REJECT_RVS,
+            label="C_DeriveKey(TLS_KDF, pLabel=NULL, len>0)",
         )
 
 
@@ -4272,7 +4333,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label=f"C_DeriveKey(TLS_KDF, {field} random length={data_len:#x})",
         )
 
@@ -4351,7 +4412,7 @@ rv = raw.C_CreateObject(
     5, ctypes.byref(base_key),
 )
 if rv != CKR_OK:
-    print(f"rv={rv}")
+    print(f"SETUP_XFAIL:SP800-108 base key import not operational 0x{rv:08x}")
     cleanup()
     raise SystemExit(0)
 
@@ -4402,7 +4463,7 @@ try:
         ctypes.cast(d_tmpl, ctypes.POINTER(CK_ATTRIBUTE)), 4,
         ctypes.byref(derived),
     )
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, base_key.value)
 cleanup()
@@ -4416,6 +4477,12 @@ cleanup()
             context=(
                 "C_DeriveKey(SP800_108_COUNTER_KDF, pDataParams=NULL, ulNumberOfDataParams=1)"
             ),
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _PARAM_LENGTH_REJECT_RVS,
+            label="C_DeriveKey(SP800-108, NULL data params)",
         )
 
 
@@ -4590,7 +4657,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label=f"C_DeriveKey(SP800_108_COUNTER_KDF, data-param count={data_len:#x})",
         )
 
@@ -4796,8 +4863,1253 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label=(
                 f"C_DeriveKey(SP800_108_COUNTER_KDF, additional-derived-key count={data_len:#x})"
             ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Wave 1: nested mechanism-parameter length-boundary probes
+# (RSA-OAEP source-data, GCM IV / tag-bits, CCM nonce / MAC, EdDSA context)
+# Each probe pairs a tiny real buffer with an impossible (isize::MAX /
+# isize::MAX+1) *claimed* length. Crash/hang is a finding; CKR_OK accepts a
+# nonsensical length; clean reject is the only passing verdict.
+# ---------------------------------------------------------------------------
+
+
+class TestRsaOaepSourceDataLengthBoundary:
+    """RSA-OAEP ulSourceDataLen must not turn a tiny source buffer into a huge read.
+
+    CK_RSA_PKCS_OAEP_PARAMS.pSourceData/ulSourceDataLen are caller-controlled. A
+    module that reads ulSourceDataLen bytes from pSourceData without
+    bounds-checking over-reads when the claimed length is impossible. Drive
+    C_EncryptInit + C_Encrypt with a tiny real source buffer and isize::MAX /
+    isize::MAX+1 claimed lengths; crash/hang is a finding and CKR_OK accepts a
+    nonsensical length.
+    """
+
+    @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
+    def test_rsa_oaep_source_data_length_boundary(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        data_len: int,
+    ) -> None:
+        """C_EncryptInit/C_Encrypt(RSA_PKCS_OAEP) with tiny pSourceData + huge ulSourceDataLen."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
+        if not rs.has_mechanism("RSA_PKCS_OAEP"):
+            pytest.skip("CKM_RSA_PKCS_OAEP not supported")
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
+            2048,
+            public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+            private_attrs={CKA_TOKEN: False},
+        )
+        destroy_returned_handles(rs, pub, priv)
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + f"""
+import ctypes
+from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM,
+    CK_RSA_PKCS_OAEP_PARAMS,
+    CK_ULONG,
+    CKA_ENCRYPT,
+    CKA_TOKEN,
+    CKG_MGF1_SHA256,
+    CKM_SHA256,
+    CKM_RSA_PKCS_OAEP,
+    CKR_OK,
+    CKZ_DATA_SPECIFIED,
+)
+
+pub = priv = 0
+try:
+    pub, priv = gen_rsa_keypair(
+        raw,
+        sh,
+        2048,
+        public_attrs={{CKA_ENCRYPT: True, CKA_TOKEN: False}},
+        private_attrs={{CKA_TOKEN: False}},
+    )
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "RSA keypair generation rejected",
+    )
+
+try:
+    src = (ctypes.c_ubyte * 16)(*range(16))
+    params = CK_RSA_PKCS_OAEP_PARAMS()
+    params.hashAlg = CKM_SHA256
+    params.mgf = CKG_MGF1_SHA256
+    params.source = CKZ_DATA_SPECIFIED
+    params.pSourceData = ctypes.cast(src, ctypes.c_void_p)
+    params.ulSourceDataLen = {data_len}
+
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_RSA_PKCS_OAEP
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), pub)
+    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
+    if rv == CKR_OK:
+        pt = (ctypes.c_ubyte * 16)(*range(16))
+        out_len = CK_ULONG(512)
+        out = (ctypes.c_ubyte * 512)()
+        print("TARGET_CALL:C_Encrypt(RSA_PKCS_OAEP,ulSourceDataLen={data_len:#x})", flush=True)
+        rv = raw.C_Encrypt(sh, pt, 16, out, ctypes.byref(out_len))
+    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
+    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
+finally:
+    destroy_quietly(raw, sh, pub)
+    destroy_quietly(raw, sh, priv)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Encrypt(RSA_PKCS_OAEP, ulSourceDataLen={data_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Encrypt(RSA_PKCS_OAEP, ulSourceDataLen={data_len:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestGcmIvLengthBoundary
+# ---------------------------------------------------------------------------
+
+
+class TestGcmIvLengthBoundary:
+    """AES-GCM ulIvLen must not turn a tiny IV buffer into a huge read.
+
+    CK_AES_GCM_PARAMS.pIv/ulIvLen are caller-controlled. A module that reads
+    ulIvLen bytes from pIv without bounds-checking over-reads when the claimed
+    length is impossible. Drive C_EncryptInit + C_Encrypt with a tiny real IV
+    buffer and isize::MAX / isize::MAX+1 claimed lengths; crash/hang is a
+    finding and CKR_OK accepts a nonsensical length.
+    """
+
+    @pytest.mark.parametrize("iv_len", _ISIZE_BOUNDARY_LENGTHS)
+    def test_gcm_iv_length_boundary(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        iv_len: int,
+    ) -> None:
+        """C_EncryptInit/C_Encrypt(AES_GCM) with tiny pIv + huge ulIvLen."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("CKM_AES_GCM not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-GCM IV-length crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + f"""
+import ctypes
+from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_AES_GCM_PARAMS,
+    CK_MECHANISM,
+    CK_ULONG,
+    CKM_AES_GCM,
+    CKR_OK,
+)
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+try:
+    iv = (ctypes.c_ubyte * 12)(*range(12))
+    params = CK_AES_GCM_PARAMS()
+    params.pIv = ctypes.cast(iv, ctypes.c_void_p)
+    params.ulIvLen = {iv_len}
+    params.ulIvBits = 96
+    params.pAAD = None
+    params.ulAADLen = 0
+    params.ulTagBits = 128
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_GCM
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
+    if rv == CKR_OK:
+        pt = (ctypes.c_ubyte * 16)(*range(16))
+        out_len = CK_ULONG(64)
+        out = (ctypes.c_ubyte * 64)()
+        print("TARGET_CALL:C_Encrypt(AES_GCM,ulIvLen={iv_len:#x})", flush=True)
+        rv = raw.C_Encrypt(sh, pt, 16, out, ctypes.byref(out_len))
+    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
+    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Encrypt(AES_GCM, ulIvLen={iv_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Encrypt(AES_GCM, ulIvLen={iv_len:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestGcmTagBitsLengthBoundary
+# ---------------------------------------------------------------------------
+
+
+class TestGcmTagBitsLengthBoundary:
+    """AES-GCM ulTagBits must reject impossible values safely.
+
+    CK_AES_GCM_PARAMS.ulTagBits is a caller-controlled CK_ULONG. Valid tag
+    lengths are {128, 120, 112, 104, 96, 64, 32} per SP800-38D; isize::MAX /
+    isize::MAX+1 is impossible. A module that uses the value without
+    bounds-checking can over-allocate or write a nonsensical tag. Drive
+    C_EncryptInit + C_Encrypt with isize::MAX / isize::MAX+1 ulTagBits; crash is
+    a finding and CKR_OK accepts a nonsensical length.
+    """
+
+    @pytest.mark.parametrize("tag_bits", _ISIZE_BOUNDARY_LENGTHS)
+    def test_gcm_tag_bits_length_boundary(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        tag_bits: int,
+    ) -> None:
+        """C_EncryptInit/C_Encrypt(AES_GCM) with impossible ulTagBits."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("CKM_AES_GCM not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-GCM tag-bits crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + f"""
+import ctypes
+from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_AES_GCM_PARAMS,
+    CK_MECHANISM,
+    CK_ULONG,
+    CKM_AES_GCM,
+    CKR_OK,
+)
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+try:
+    iv = (ctypes.c_ubyte * 12)(*range(12))
+    params = CK_AES_GCM_PARAMS()
+    params.pIv = ctypes.cast(iv, ctypes.c_void_p)
+    params.ulIvLen = 12
+    params.ulIvBits = 96
+    params.pAAD = None
+    params.ulAADLen = 0
+    params.ulTagBits = {tag_bits}
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_GCM
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
+    if rv == CKR_OK:
+        pt = (ctypes.c_ubyte * 16)(*range(16))
+        out_len = CK_ULONG(64)
+        out = (ctypes.c_ubyte * 64)()
+        print("TARGET_CALL:C_Encrypt(AES_GCM,ulTagBits={tag_bits:#x})", flush=True)
+        rv = raw.C_Encrypt(sh, pt, 16, out, ctypes.byref(out_len))
+    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
+    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Encrypt(AES_GCM, ulTagBits={tag_bits:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Encrypt(AES_GCM, ulTagBits={tag_bits:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestCcmNonceLengthBoundary
+# ---------------------------------------------------------------------------
+
+
+class TestCcmNonceLengthBoundary:
+    """AES-CCM ulNonceLen must reject impossible values safely.
+
+    CK_AES_CCM_PARAMS.ulNonceLen is a caller-controlled CK_ULONG. NIST SP800-38C
+    restricts nonce size to the range [7, 13]; isize::MAX / isize::MAX+1 is
+    impossible. A module that uses the value without bounds-checking can
+    over-read or over-allocate. Drive C_EncryptInit + C_Encrypt with isize::MAX
+    / isize::MAX+1 ulNonceLen and a tiny real pNonce (13 bytes); crash is a
+    finding and CKR_OK accepts a nonsensical length.
+    """
+
+    @pytest.mark.parametrize("nonce_len", _ISIZE_BOUNDARY_LENGTHS)
+    def test_ccm_nonce_length_boundary(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        nonce_len: int,
+    ) -> None:
+        """C_EncryptInit/C_Encrypt(AES_CCM) with tiny pNonce + huge ulNonceLen."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CCM"):
+            pytest.skip("CKM_AES_CCM not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-CCM nonce-length crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + f"""
+import ctypes
+from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_AES_CCM_PARAMS,
+    CK_MECHANISM,
+    CK_ULONG,
+    CKM_AES_CCM,
+    CKR_OK,
+)
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+try:
+    nonce = (ctypes.c_ubyte * 13)(*range(13))
+    params = CK_AES_CCM_PARAMS()
+    params.ulDataLen = 16
+    params.pNonce = ctypes.cast(nonce, ctypes.c_void_p)
+    params.ulNonceLen = {nonce_len}
+    params.pAAD = None
+    params.ulAADLen = 0
+    params.ulMACLen = 16
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_CCM
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
+    if rv == CKR_OK:
+        pt = (ctypes.c_ubyte * 16)(*range(16))
+        out_len = CK_ULONG(64)
+        out = (ctypes.c_ubyte * 64)()
+        print("TARGET_CALL:C_Encrypt(AES_CCM,ulNonceLen={nonce_len:#x})", flush=True)
+        rv = raw.C_Encrypt(sh, pt, 16, out, ctypes.byref(out_len))
+    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
+    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Encrypt(AES_CCM, ulNonceLen={nonce_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Encrypt(AES_CCM, ulNonceLen={nonce_len:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestCcmMacLengthBoundary
+# ---------------------------------------------------------------------------
+
+
+class TestCcmMacLengthBoundary:
+    """AES-CCM ulMACLen must reject impossible values safely.
+
+    CK_AES_CCM_PARAMS.ulMACLen is a caller-controlled CK_ULONG. NIST SP800-38C
+    restricts the MAC length to the set {4, 6, 8, 10, 12, 14, 16}; isize::MAX /
+    isize::MAX+1 is impossible. A module that uses the value without
+    bounds-checking can over-allocate or write a nonsensical tag. Drive
+    C_EncryptInit + C_Encrypt with isize::MAX / isize::MAX+1 ulMACLen; crash is
+    a finding and CKR_OK accepts a nonsensical length.
+    """
+
+    @pytest.mark.parametrize("mac_len", _ISIZE_BOUNDARY_LENGTHS)
+    def test_ccm_mac_length_boundary(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        mac_len: int,
+    ) -> None:
+        """C_EncryptInit/C_Encrypt(AES_CCM) with impossible ulMACLen."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CCM"):
+            pytest.skip("CKM_AES_CCM not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-CCM MAC-length crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + f"""
+import ctypes
+from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_AES_CCM_PARAMS,
+    CK_MECHANISM,
+    CK_ULONG,
+    CKM_AES_CCM,
+    CKR_OK,
+)
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+try:
+    nonce = (ctypes.c_ubyte * 13)(*range(13))
+    params = CK_AES_CCM_PARAMS()
+    params.ulDataLen = 16
+    params.pNonce = ctypes.cast(nonce, ctypes.c_void_p)
+    params.ulNonceLen = 13
+    params.pAAD = None
+    params.ulAADLen = 0
+    params.ulMACLen = {mac_len}
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_CCM
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
+    if rv == CKR_OK:
+        pt = (ctypes.c_ubyte * 16)(*range(16))
+        out_len = CK_ULONG(64)
+        out = (ctypes.c_ubyte * 64)()
+        print("TARGET_CALL:C_Encrypt(AES_CCM,ulMACLen={mac_len:#x})", flush=True)
+        rv = raw.C_Encrypt(sh, pt, 16, out, ctypes.byref(out_len))
+    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
+    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Encrypt(AES_CCM, ulMACLen={mac_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Encrypt(AES_CCM, ulMACLen={mac_len:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestEddsaContextLengthBoundary
+# ---------------------------------------------------------------------------
+
+
+class TestEddsaContextLengthBoundary:
+    """EdDSA ulContextDataLen must not turn a tiny context buffer into a huge read.
+
+    CK_EDDSA_PARAMS.pContextData/ulContextDataLen are caller-controlled. A module
+    that reads ulContextDataLen bytes from pContextData without bounds-checking
+    over-reads when the claimed length is impossible. Drive C_SignInit + C_Sign
+    with a tiny real context buffer and isize::MAX / isize::MAX+1 claimed
+    lengths; crash/hang is a finding and CKR_OK accepts a nonsensical length.
+    """
+
+    @pytest.mark.parametrize("ctx_len", _ISIZE_BOUNDARY_LENGTHS)
+    def test_eddsa_context_length_boundary(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        ctx_len: int,
+    ) -> None:
+        """C_SignInit/C_Sign(EDDSA) with tiny pContextData + huge ulContextDataLen."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("EDDSA"):
+            pytest.skip("CKM_EDDSA not supported")
+        curve_oid = encode_named_curve_parameters("ed25519")
+        pub, priv = gen_edwards_keypair_or_xfail(
+            rs,
+            curve_oid,
+            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+        )
+        destroy_returned_handles(rs, pub, priv)
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + f"""
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_EDDSA_PARAMS, CK_MECHANISM, CK_ULONG, CKM_EDDSA,
+    CKM_EC_EDWARDS_KEY_PAIR_GEN, CKA_EC_PARAMS, CKA_SIGN, CKA_TOKEN,
+    CKA_VERIFY, CKR_OK,
+)
+from pkcs11_check.raw.pack import attr_bytes
+from pkcs11_check.raw.recipes import gen_keypair, destroy_quietly
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.ec import encode_named_curve_parameters
+
+curve_oid = encode_named_curve_parameters("ed25519")
+pub = priv = 0
+try:
+    pub, priv = gen_keypair(
+        raw, sh, CKM_EC_EDWARDS_KEY_PAIR_GEN,
+        pub_base=[attr_bytes(CKA_EC_PARAMS, curve_oid)],
+        priv_base=[],
+        public_attrs={{CKA_VERIFY: True, CKA_TOKEN: False}},
+        private_attrs={{CKA_SIGN: True, CKA_TOKEN: False}},
+        pub_skip={{CKA_EC_PARAMS}},
+    )
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "EC_EDWARDS keypair generation rejected",
+    )
+try:
+    ctx = (ctypes.c_ubyte * 16)(*range(16))
+    params = CK_EDDSA_PARAMS()
+    params.phFlag = 0
+    params.pContextData = ctypes.cast(ctx, ctypes.c_void_p)
+    params.ulContextDataLen = {ctx_len}
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_EDDSA
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+    rv = raw.C_SignInit(sh, ctypes.byref(mech), priv)
+    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
+    if rv == CKR_OK:
+        msg = (ctypes.c_ubyte * 16)(*range(16))
+        sig_len = CK_ULONG(128)
+        sig = (ctypes.c_ubyte * 128)()
+        print("TARGET_CALL:C_Sign(EDDSA,ulContextDataLen={ctx_len:#x})", flush=True)
+        rv = raw.C_Sign(sh, msg, 16, sig, ctypes.byref(sig_len))
+    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
+    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
+finally:
+    destroy_quietly(raw, sh, pub)
+    destroy_quietly(raw, sh, priv)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Sign(EDDSA, ulContextDataLen={ctx_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _PARAM_LENGTH_REJECT_RVS,
+            label=f"C_Sign(EDDSA, ulContextDataLen={ctx_len:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Wave 4: Update output guard + continuation-after-NULL-output probes
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateOutputGuard:
+    """``C_EncryptUpdate`` / ``C_DecryptUpdate`` with a 1-byte declared output.
+
+    Probe: ``C_<Enc|Dec>ryptInit`` → ``C_<Enc|Dec>ryptUpdate(NULL, &len)`` size
+    query → ``C_<Enc|Dec>ryptUpdate`` continuation with a 1-byte guard-backed
+    output buffer.  Per PKCS#11, the NULL-output size query does NOT terminate
+    the operation.  The continuation real call must return ``CKR_BUFFER_TOO_SMALL``
+    with the required length and must not overwrite the guard bytes.
+    """
+
+    def test_encrypt_update_one_byte_output_preserves_guard(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """``C_EncryptUpdate`` with one declared output byte preserves guard bytes."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB"):
+            pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_EncryptUpdate guard probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + """
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
+)
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+
+try:
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_ECB
+    mech.pParameter = None
+    mech.ulParameterLen = 0
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{rv:08x}", flush=True)
+    if rv == CKR_OK:
+        buf = (ctypes.c_ubyte * 16)(*range(16))
+        needed = CK_ULONG(0)
+        rv_q = raw.C_EncryptUpdate(sh, buf, 16, None, ctypes.byref(needed))
+        print(f"QUERY_RV:0x{rv_q:08x}", flush=True)
+        print(f"NEEDED:{needed.value}", flush=True)
+        if rv_q == CKR_OK:
+            GUARD = 0xE1
+            GUARD_SIZE = 32
+
+            class UpdateProbe(ctypes.Structure):
+                _fields_ = [
+                    ("data", ctypes.c_ubyte * 1),
+                    ("guard", ctypes.c_ubyte * GUARD_SIZE),
+                ]
+
+            probe = UpdateProbe()
+            for idx in range(GUARD_SIZE):
+                probe.guard[idx] = GUARD
+            out_len = CK_ULONG(1)
+            rv2 = raw.C_EncryptUpdate(
+                sh, buf, 16,
+                ctypes.cast(probe.data, ctypes.POINTER(ctypes.c_ubyte)),
+                ctypes.byref(out_len),
+            )
+            print(f"FINAL_RV:0x{rv2:08x}", flush=True)
+            print(f"LEN:{out_len.value}", flush=True)
+            overwritten = sum(1 for byte in probe.guard if byte != GUARD)
+            print(f"OVERWRITTEN:{overwritten}", flush=True)
+            if overwritten != 0:
+                print(f"GUARD_OVERWRITE:{overwritten}")
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script,
+            timeout=10,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context="C_EncryptUpdate one-byte output buffer guard",
+        )
+        self._classify_update_guard(stdout, "C_EncryptUpdate", "Encrypt")
+
+    def test_decrypt_update_one_byte_output_preserves_guard(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """``C_DecryptUpdate`` with one declared output byte preserves guard bytes."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB"):
+            pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_DecryptUpdate guard probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + """
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
+)
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+
+try:
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_ECB
+    mech.pParameter = None
+    mech.ulParameterLen = 0
+
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:encrypt setup (C_EncryptInit) rejected: rv=0x{rv:08x}")
+        raise SystemExit(0)
+    pt_buf = (ctypes.c_ubyte * 16)(*range(16))
+    ct_buf = (ctypes.c_ubyte * 16)()
+    ct_len = CK_ULONG(16)
+    rv = raw.C_Encrypt(sh, pt_buf, 16, ct_buf, ctypes.byref(ct_len))
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:encrypt setup (C_Encrypt) rejected: rv=0x{rv:08x}")
+        raise SystemExit(0)
+
+    dec_rv = raw.C_DecryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{dec_rv:08x}", flush=True)
+    if dec_rv == CKR_OK:
+        needed = CK_ULONG(0)
+        rv_q = raw.C_DecryptUpdate(sh, ct_buf, 16, None, ctypes.byref(needed))
+        print(f"QUERY_RV:0x{rv_q:08x}", flush=True)
+        print(f"NEEDED:{needed.value}", flush=True)
+        if rv_q == CKR_OK:
+            GUARD = 0xD2
+            GUARD_SIZE = 32
+
+            class UpdateProbe(ctypes.Structure):
+                _fields_ = [
+                    ("data", ctypes.c_ubyte * 1),
+                    ("guard", ctypes.c_ubyte * GUARD_SIZE),
+                ]
+
+            probe = UpdateProbe()
+            for idx in range(GUARD_SIZE):
+                probe.guard[idx] = GUARD
+            out_len = CK_ULONG(1)
+            rv2 = raw.C_DecryptUpdate(
+                sh, ct_buf, 16,
+                ctypes.cast(probe.data, ctypes.POINTER(ctypes.c_ubyte)),
+                ctypes.byref(out_len),
+            )
+            print(f"FINAL_RV:0x{rv2:08x}", flush=True)
+            print(f"LEN:{out_len.value}", flush=True)
+            overwritten = sum(1 for byte in probe.guard if byte != GUARD)
+            print(f"OVERWRITTEN:{overwritten}", flush=True)
+            if overwritten != 0:
+                print(f"GUARD_OVERWRITE:{overwritten}")
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script,
+            timeout=10,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context="C_DecryptUpdate one-byte output buffer guard",
+        )
+        self._classify_update_guard(stdout, "C_DecryptUpdate", "Decrypt")
+
+    @staticmethod
+    def _classify_update_guard(stdout: str, op: str, side: str) -> None:
+        """Shared parent-side classification for the update guard probes."""
+        if "GUARD_OVERWRITE:" in stdout:
+            fail_as(
+                "wrong_result",
+                kind="crypto",
+                label=f"{op} output-buffer guard byte overwritten",
+                actual=_parse_prefixed_int(stdout, "GUARD_OVERWRITE:"),
+                summary="module wrote past the requested output length (OOB write)",
+            )
+        init_rv = _parse_prefixed_int(stdout, "INIT_RV:")
+        if init_rv != CKR_OK:
+            classify(
+                "not_operational",
+                label=f"{op} guard probe",
+                summary=f"C_{side}Init returned {ckr_name(init_rv)}",
+            )
+        query_rv = _parse_prefixed_int(stdout, "QUERY_RV:")
+        if query_rv != CKR_OK:
+            classify(
+                "not_operational",
+                label=f"{op} guard probe",
+                summary=f"{op} size query returned {ckr_name(query_rv)}",
+            )
+        final_rv = _parse_prefixed_int(stdout, "FINAL_RV:")
+        classify_negative_rv(
+            final_rv,
+            (CKR_BUFFER_TOO_SMALL,),
+            label=f"{op} with a one-byte output buffer",
+        )
+
+
+class TestContinueAfterNullOutputQuery:
+    """Continuation real call after a NULL-output size query must succeed.
+
+    Per PKCS#11, a NULL-output size query (``C_*Update(NULL, &len)`` or
+    ``C_*Final(NULL, &len)``) does NOT terminate the active operation.  The
+    caller should make the real call again with a real output buffer WITHOUT
+    re-initializing.  If the continuation returns ``CKR_OPERATION_NOT_INITIALIZED``,
+    the module incorrectly terminated the operation on the size query -- a spec
+    violation (lifecycle self-contradiction).
+    """
+
+    def test_encrypt_update_continuation_after_size_query(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """``C_EncryptUpdate`` real call after NULL-output size query succeeds."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB"):
+            pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_EncryptUpdate continuation probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + """
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
+)
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+
+try:
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_ECB
+    mech.pParameter = None
+    mech.ulParameterLen = 0
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{rv:08x}", flush=True)
+    if rv == CKR_OK:
+        buf = (ctypes.c_ubyte * 16)(*range(16))
+        needed = CK_ULONG(0)
+        rv_q = raw.C_EncryptUpdate(sh, buf, 16, None, ctypes.byref(needed))
+        print(f"QUERY_RV:0x{rv_q:08x}", flush=True)
+        if rv_q == CKR_OK:
+            real_buf = (ctypes.c_ubyte * 64)()
+            real_len = CK_ULONG(64)
+            rv2 = raw.C_EncryptUpdate(sh, buf, 16, real_buf, ctypes.byref(real_len))
+            print(f"CONTINUATION_RV:0x{rv2:08x}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script,
+            timeout=10,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context="C_EncryptUpdate continuation after NULL-output size query",
+        )
+        self._classify_continuation(
+            stdout,
+            "C_EncryptUpdate",
+            has_update_step=False,
+        )
+
+    def test_decrypt_update_continuation_after_size_query(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """``C_DecryptUpdate`` real call after NULL-output size query succeeds."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB"):
+            pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_DecryptUpdate continuation probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + """
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
+)
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+
+try:
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_ECB
+    mech.pParameter = None
+    mech.ulParameterLen = 0
+
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:encrypt setup (C_EncryptInit) rejected: rv=0x{rv:08x}")
+        raise SystemExit(0)
+    pt_buf = (ctypes.c_ubyte * 16)(*range(16))
+    ct_buf = (ctypes.c_ubyte * 16)()
+    ct_len = CK_ULONG(16)
+    rv = raw.C_Encrypt(sh, pt_buf, 16, ct_buf, ctypes.byref(ct_len))
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:encrypt setup (C_Encrypt) rejected: rv=0x{rv:08x}")
+        raise SystemExit(0)
+
+    dec_rv = raw.C_DecryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{dec_rv:08x}", flush=True)
+    if dec_rv == CKR_OK:
+        needed = CK_ULONG(0)
+        rv_q = raw.C_DecryptUpdate(sh, ct_buf, 16, None, ctypes.byref(needed))
+        print(f"QUERY_RV:0x{rv_q:08x}", flush=True)
+        if rv_q == CKR_OK:
+            real_buf = (ctypes.c_ubyte * 64)()
+            real_len = CK_ULONG(64)
+            rv2 = raw.C_DecryptUpdate(sh, ct_buf, 16, real_buf, ctypes.byref(real_len))
+            print(f"CONTINUATION_RV:0x{rv2:08x}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script,
+            timeout=10,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context="C_DecryptUpdate continuation after NULL-output size query",
+        )
+        self._classify_continuation(
+            stdout,
+            "C_DecryptUpdate",
+            has_update_step=False,
+        )
+
+    def test_encrypt_final_continuation_after_size_query(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """``C_EncryptFinal`` real call after NULL-output size query succeeds."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB"):
+            pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_EncryptFinal continuation probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + """
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
+)
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+
+try:
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_ECB
+    mech.pParameter = None
+    mech.ulParameterLen = 0
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{rv:08x}", flush=True)
+    if rv == CKR_OK:
+        buf = (ctypes.c_ubyte * 16)(*range(16))
+        upd_buf = (ctypes.c_ubyte * 16)()
+        upd_len = CK_ULONG(16)
+        rv_u = raw.C_EncryptUpdate(sh, buf, 16, upd_buf, ctypes.byref(upd_len))
+        print(f"UPDATE_RV:0x{rv_u:08x}", flush=True)
+        if rv_u == CKR_OK:
+            needed = CK_ULONG(0)
+            rv_q = raw.C_EncryptFinal(sh, None, ctypes.byref(needed))
+            print(f"QUERY_RV:0x{rv_q:08x}", flush=True)
+            if rv_q == CKR_OK:
+                real_buf = (ctypes.c_ubyte * 64)()
+                real_len = CK_ULONG(64)
+                rv2 = raw.C_EncryptFinal(sh, real_buf, ctypes.byref(real_len))
+                print(f"CONTINUATION_RV:0x{rv2:08x}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script,
+            timeout=10,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context="C_EncryptFinal continuation after NULL-output size query",
+        )
+        self._classify_continuation(
+            stdout,
+            "C_EncryptFinal",
+            has_update_step=True,
+        )
+
+    def test_decrypt_final_continuation_after_size_query(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """``C_DecryptFinal`` real call after NULL-output size query succeeds."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB"):
+            pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_DecryptFinal continuation probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + """
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
+)
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+
+try:
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_ECB
+    mech.pParameter = None
+    mech.ulParameterLen = 0
+
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:encrypt setup (C_EncryptInit) rejected: rv=0x{rv:08x}")
+        raise SystemExit(0)
+    pt_buf = (ctypes.c_ubyte * 16)(*range(16))
+    ct_buf = (ctypes.c_ubyte * 16)()
+    ct_len = CK_ULONG(16)
+    rv = raw.C_Encrypt(sh, pt_buf, 16, ct_buf, ctypes.byref(ct_len))
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:encrypt setup (C_Encrypt) rejected: rv=0x{rv:08x}")
+        raise SystemExit(0)
+
+    dec_rv = raw.C_DecryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{dec_rv:08x}", flush=True)
+    if dec_rv == CKR_OK:
+        upd_buf = (ctypes.c_ubyte * 16)()
+        upd_len = CK_ULONG(16)
+        rv_u = raw.C_DecryptUpdate(sh, ct_buf, 16, upd_buf, ctypes.byref(upd_len))
+        print(f"UPDATE_RV:0x{rv_u:08x}", flush=True)
+        if rv_u == CKR_OK:
+            needed = CK_ULONG(0)
+            rv_q = raw.C_DecryptFinal(sh, None, ctypes.byref(needed))
+            print(f"QUERY_RV:0x{rv_q:08x}", flush=True)
+            if rv_q == CKR_OK:
+                real_buf = (ctypes.c_ubyte * 64)()
+                real_len = CK_ULONG(64)
+                rv2 = raw.C_DecryptFinal(sh, real_buf, ctypes.byref(real_len))
+                print(f"CONTINUATION_RV:0x{rv2:08x}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script,
+            timeout=10,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context="C_DecryptFinal continuation after NULL-output size query",
+        )
+        self._classify_continuation(
+            stdout,
+            "C_DecryptFinal",
+            has_update_step=True,
+        )
+
+    @staticmethod
+    def _classify_continuation(
+        stdout: str,
+        op: str,
+        *,
+        has_update_step: bool,
+    ) -> None:
+        """Shared parent-side classification for continuation probes."""
+        init_rv = _parse_prefixed_int(stdout, "INIT_RV:")
+        if init_rv != CKR_OK:
+            classify(
+                "not_operational",
+                label=f"{op} continuation probe",
+                summary=f"Init returned {ckr_name(init_rv)}",
+            )
+        if has_update_step:
+            update_rv = _parse_prefixed_int(stdout, "UPDATE_RV:")
+            if update_rv != CKR_OK:
+                classify(
+                    "not_operational",
+                    label=f"{op} continuation probe",
+                    summary=f"Update returned {ckr_name(update_rv)}",
+                )
+        query_rv = _parse_prefixed_int(stdout, "QUERY_RV:")
+        if query_rv != CKR_OK:
+            classify(
+                "not_operational",
+                label=f"{op} continuation probe",
+                summary=f"NULL-output size query returned {ckr_name(query_rv)}",
+            )
+        continuation_rv = _parse_prefixed_int(stdout, "CONTINUATION_RV:")
+        if continuation_rv == CKR_OK:
+            return
+        if continuation_rv == CKR_OPERATION_NOT_INITIALIZED:
+            classify(
+                "self_contradiction",
+                kind="lifecycle",
+                label=f"{op} continuation after NULL-output size query",
+                summary=(
+                    f"{op} returned {ckr_name(continuation_rv)} on the "
+                    f"continuation real call after a NULL-output size query -- "
+                    f"the size query must NOT terminate the operation "
+                    f"(PKCS#11 spec violation)"
+                ),
+            )
+        classify(
+            "honest_deviation",
+            label=f"{op} continuation after NULL-output size query",
+            summary=f"{op} continuation returned {ckr_name(continuation_rv)}",
         )

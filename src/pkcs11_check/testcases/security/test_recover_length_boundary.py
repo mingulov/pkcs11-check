@@ -6,6 +6,9 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check import compliance
+from pkcs11_check.classification import fail_as
+from pkcs11_check.compliance import ComplianceLevel
 from pkcs11_check.raw.types_std import (
     CKR_BUFFER_TOO_SMALL,
     CKR_DATA_LEN_RANGE,
@@ -445,11 +448,10 @@ try:
     for idx in range(GUARD_SIZE):
         probe.guard[idx] = GUARD
 
-    rv = raw.C_VerifyRecoverInit(sh, mech.byref(), pub.value)
-    if rv != CKR_OK:
-        _setup_xfail_if_known(rv, "C_VerifyRecoverInit retry rejected")
-        raise AssertionError(f"C_VerifyRecoverInit retry returned {ckr_name(rv)}")
-
+    # No re-Init here: per PKCS#11, the NULL-output size query above did NOT
+    # terminate the operation. Calling C_VerifyRecover again with a real output
+    # buffer is the correct continuation. (Re-Init would return
+    # CKR_OPERATION_ACTIVE on a conformant module -- the previous test bug.)
     out_len = CK_ULONG(1)
     print(f"NEEDED:{needed.value}")
     rv = raw.C_VerifyRecover(
@@ -490,12 +492,151 @@ cleanup()
         if rv == CKR_BUFFER_TOO_SMALL:
             needed = _parse_output_value(stdout, "NEEDED:")
             out_len = _parse_output_value(stdout, "LEN:")
-            assert out_len == needed, (
-                f"C_VerifyRecover reported required length {out_len}, expected {needed}"
-            )
+            # PKCS#11 v3.2 §5.2: both the NULL-size-query length and the
+            # CKR_BUFFER_TOO_SMALL *pulBufLen may over-estimate, so they need not be
+            # equal. Only a length that does not exceed the 1-byte probe buffer is a
+            # self-contradiction (module said "too small" yet needs <= 1 byte).
+            if out_len <= 1:
+                fail_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label="C_VerifyRecover one-byte output buffer length",
+                    actual=out_len,
+                    summary=f"CKR_BUFFER_TOO_SMALL but reported needed length {out_len} <= 1",
+                )
+            elif out_len != needed:
+                compliance.note(
+                    "C_VerifyRecover size-query length "
+                    f"{needed} != BUFFER_TOO_SMALL length {out_len} "
+                    "(both spec-legal over-estimates)",
+                    ComplianceLevel.EXTENDED,
+                )
         else:
             classify_negative_rv(
                 rv,
                 (CKR_BUFFER_TOO_SMALL,),
                 label="C_VerifyRecover with a one-byte output buffer",
+            )
+
+    def test_sign_recover_one_byte_output_preserves_guard(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """``C_SignRecover`` with one declared output byte preserves guard bytes.
+
+        Mirrors the verify-recover guard probe on the sign side: ``C_SignRecoverInit``
+        -> NULL-output size query -> real call with a 1-byte guard-backed output
+        buffer (NO re-Init -- the size query does not terminate the operation).
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_X_509"):
+            pytest.skip("CKM_RSA_X_509 not supported")
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
+
+        body = (
+            _RECOVER_SETUP
+            + """
+pub = CK_OBJECT_HANDLE(0)
+priv = CK_OBJECT_HANDLE(0)
+try:
+    pub, priv = _gen_recover_keypair()
+    payload = _padded_recover_block(b"sign-recover guard")
+    payload_buf = _byte_array(payload)
+
+    mech = mech_simple(CKM_RSA_X_509)
+    rv = raw.C_SignRecoverInit(sh, mech.byref(), priv.value)
+    if rv != CKR_OK:
+        _setup_xfail_if_known(rv, "C_SignRecoverInit rejected")
+        raise AssertionError(f"C_SignRecoverInit returned {ckr_name(rv)}")
+
+    needed = CK_ULONG(0)
+    rv = raw.C_SignRecover(sh, payload_buf, len(payload), None, ctypes.byref(needed))
+    if rv != CKR_OK:
+        _setup_xfail_if_known(rv, "C_SignRecover size query rejected")
+        raise AssertionError(f"C_SignRecover size query returned {ckr_name(rv)}")
+    if needed.value <= 1:
+        _setup_xfail_rv(CKR_OK, f"C_SignRecover reported only {needed.value} output byte(s)")
+
+    GUARD = 0xB7
+    GUARD_SIZE = 32
+
+    class RecoverProbe(ctypes.Structure):
+        _fields_ = [
+            ("data", ctypes.c_ubyte * 1),
+            ("guard", ctypes.c_ubyte * GUARD_SIZE),
+        ]
+
+    probe = RecoverProbe()
+    for idx in range(GUARD_SIZE):
+        probe.guard[idx] = GUARD
+
+    # Continuation real call (NO re-Init): the NULL-output size query above did
+    # not terminate the operation, so we call C_SignRecover again with a real
+    # 1-byte output buffer + guard bytes to detect overflow.
+    out_len = CK_ULONG(1)
+    print(f"NEEDED:{needed.value}")
+    rv = raw.C_SignRecover(
+        sh,
+        payload_buf,
+        len(payload),
+        ctypes.cast(probe.data, ctypes.POINTER(ctypes.c_ubyte)),
+        ctypes.byref(out_len),
+    )
+    print(f"CKR:0x{rv:08x}")
+    print(f"LEN:{out_len.value}")
+    overwritten = sum(1 for byte in probe.guard if byte != GUARD)
+    print(f"OVERWRITTEN:{overwritten}")
+    assert overwritten == 0, (
+        "C_SignRecover wrote past the declared one-byte output buffer: "
+        f"{overwritten} guard byte(s) changed"
+    )
+finally:
+    if priv.value:
+        destroy_quietly(raw, sh, priv.value)
+    if pub.value:
+        destroy_quietly(raw, sh, pub.value)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(
+            _preamble(p11_config) + body,
+            timeout=20,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context="C_SignRecover one-byte output buffer guard",
+        )
+        rv = _parse_output_value(stdout, "CKR:")
+        if rv == CKR_BUFFER_TOO_SMALL:
+            needed = _parse_output_value(stdout, "NEEDED:")
+            out_len = _parse_output_value(stdout, "LEN:")
+            # PKCS#11 v3.2 §5.2: both the NULL-size-query length and the
+            # CKR_BUFFER_TOO_SMALL *pulBufLen may over-estimate, so they need not be
+            # equal. Only a length that does not exceed the 1-byte probe buffer is a
+            # self-contradiction (module said "too small" yet needs <= 1 byte).
+            if out_len <= 1:
+                fail_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label="C_SignRecover one-byte output buffer length",
+                    actual=out_len,
+                    summary=f"CKR_BUFFER_TOO_SMALL but reported needed length {out_len} <= 1",
+                )
+            elif out_len != needed:
+                compliance.note(
+                    "C_SignRecover size-query length "
+                    f"{needed} != BUFFER_TOO_SMALL length {out_len} "
+                    "(both spec-legal over-estimates)",
+                    ComplianceLevel.EXTENDED,
+                )
+        else:
+            classify_negative_rv(
+                rv,
+                (CKR_BUFFER_TOO_SMALL,),
+                label="C_SignRecover with a one-byte output buffer",
             )

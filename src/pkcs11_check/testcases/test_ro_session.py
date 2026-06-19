@@ -22,7 +22,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     find_objects,
-    gen_rsa_keypair,
     sign_single,
     verify_single,
 )
@@ -43,6 +42,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
     get_pin_bytes,
     is_known_error,
     skip_if_token_write_protected,
@@ -104,7 +104,7 @@ class TestROSessionOperations:
     def test_verify_in_ro_session(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Signature verification works in R/O session."""
         rs = p11_raw_session
-        pub_h, priv_h = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub_h, priv_h = gen_rsa_keypair_or_xfail(rs, 2048)
         data = b"verify in RO session"
         sig = sign_single(rs.raw, rs.sh, priv_h, CKM_SHA256_RSA_PKCS, data)
 

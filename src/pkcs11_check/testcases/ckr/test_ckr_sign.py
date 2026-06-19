@@ -13,7 +13,7 @@ import pytest
 
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
-from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair
+from pkcs11_check.raw.recipes import destroy_quietly
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKM_AES_ECB,
@@ -23,7 +23,11 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_SIGN, assert_ckr
-from pkcs11_check.testcases.conftest import classify_lifecycle_effect, gen_aes_key_or_xfail
+from pkcs11_check.testcases.conftest import (
+    classify_lifecycle_effect,
+    gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
+)
 
 pytestmark = pytest.mark.access
 
@@ -34,7 +38,7 @@ class TestSignInitErrors:
     def test_mechanism_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Using encrypt mechanism for sign -> CKR_MECHANISM_INVALID."""
         rs = p11_raw_session
-        _pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        _pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
@@ -71,7 +75,7 @@ class TestSignInitErrors:
         rs = p11_raw_session
         if not rs.has_mechanism("SHA256_RSA_PKCS_PSS"):
             pytest.skip("RSA-PSS not supported")
-        _pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        _pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             # RSA-PSS needs CK_RSA_PKCS_PSS_PARAMS - provide 3 garbage bytes
             mech = mech_bytes(CKM_SHA256_RSA_PKCS_PSS, b"\x00" * 3)
@@ -94,7 +98,7 @@ class TestSignInitErrors:
     def test_key_handle_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Sign with destroyed key handle -> CKR_KEY_HANDLE_INVALID."""
         rs = p11_raw_session
-        _pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        _pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         destroy_quietly(rs.raw, rs.sh, _pub)
         destroy_rv = rs.raw.C_DestroyObject(rs.sh, priv)
         mech = mech_simple(CKM_SHA256_RSA_PKCS)
@@ -120,7 +124,7 @@ class TestSignDataErrors:
         RSA-PKCS v1.5 signing: max data = k - 11 bytes = 245 for RSA-2048.
         """
         rs = p11_raw_session
-        _pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        _pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)

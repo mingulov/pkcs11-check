@@ -28,7 +28,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     encrypt_single,
-    gen_rsa_keypair,
     read_attributes,
     sign_single,
 )
@@ -66,6 +65,7 @@ from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     classify_policy_enforcement,
     gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
 )
 
 pytestmark = pytest.mark.access
@@ -303,14 +303,15 @@ class TestCKRObjectCompliance:
         tmpl[0].pValue = None
         tmpl[0].ulValueLen = 0
         rv = rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
-        if rv == CKR_OK:
-            pass  # Some modules don't detect - that's a deviation but not crash
-        else:
-            _check_ckr(
-                "C_GetAttributeValue(destroyed)",
-                CKR_OBJECT_HANDLE_INVALID,
-                rv,
-            )
+        # Use-after-destroy read: spec requires CKR_OBJECT_HANDLE_INVALID.
+        # CKR_OK means the module served a stale handle (lifecycle
+        # self-contradiction) -- fail, do not silently pass.
+        classify_negative_rv(
+            rv,
+            (CKR_OBJECT_HANDLE_INVALID,),
+            label="C_GetAttributeValue on destroyed handle",
+            kind="lifecycle",
+        )
 
 
 class TestCKRVerifyCompliance:
@@ -319,7 +320,7 @@ class TestCKRVerifyCompliance:
     def test_bad_signature_returns_signature_invalid(self, p11_raw_session: Any) -> None:
         """Tampered signature -> CKR_SIGNATURE_INVALID (spec)."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             data = b"spec compliance test"
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
