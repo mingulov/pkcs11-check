@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, fail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
@@ -36,10 +36,12 @@ from pkcs11_check.raw.types_std import (
     CKR_BUFFER_TOO_SMALL,
     CKR_DATA_LEN_RANGE,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
     CKR_OPERATION_NOT_INITIALIZED,
+    CKR_RANDOM_NO_RNG,
     CKR_SIGNATURE_LEN_RANGE,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
@@ -260,9 +262,9 @@ try:
         rv2 = raw.C_Encrypt(
             sh, buf, {data_len}, out_buf, ctypes.byref(out_len),
         )
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:C_EncryptInit not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key)
 cleanup()
@@ -274,6 +276,12 @@ cleanup()
             stdout,
             stderr,
             context=f"C_Encrypt(ulDataLen={data_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Encrypt(ulDataLen={data_len:#x})",
         )
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -322,9 +330,9 @@ try:
         rv2 = raw.C_Decrypt(
             sh, buf, {data_len}, out_buf, ctypes.byref(out_len),
         )
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:C_DecryptInit not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key)
 cleanup()
@@ -336,6 +344,12 @@ cleanup()
             stdout,
             stderr,
             context=f"C_Decrypt(ulDataLen={data_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Decrypt(ulEncryptedDataLen={data_len:#x})",
         )
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -399,7 +413,7 @@ rv = raw.C_CreateObject(
     5, ctypes.byref(key),
 )
 if rv != CKR_OK:
-    print(f"rv={{rv}}")
+    print(f"SETUP_XFAIL:HMAC key import not operational 0x{{rv:08x}}")
     cleanup()
     raise SystemExit(0)
 
@@ -416,9 +430,9 @@ try:
         rv2 = raw.C_Sign(
             sh, buf, {data_len}, sig_buf, ctypes.byref(sig_len),
         )
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:C_SignInit not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key.value)
 cleanup()
@@ -430,6 +444,12 @@ cleanup()
             stdout,
             stderr,
             context=f"C_Sign(HMAC_SHA256, ulDataLen={data_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Sign(ulDataLen={data_len:#x})",
         )
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -462,9 +482,9 @@ try:
         buf = (ctypes.c_ubyte * 16)(*range(16))
         sig_buf = (ctypes.c_ubyte * 32)()
         rv2 = raw.C_Verify(sh, buf, {data_len}, sig_buf, 32)
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:C_VerifyInit not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key.value)
 cleanup()
@@ -476,6 +496,12 @@ cleanup()
             stdout,
             stderr,
             context=f"C_Verify(HMAC_SHA256, ulDataLen={data_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_VERIFY_LENGTH_REJECT_RVS,
+            label=f"C_Verify(ulDataLen={data_len:#x})",
         )
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -509,9 +535,9 @@ if rv == CKR_OK:
     rv2 = raw.C_Digest(
         sh, buf, {data_len}, digest_buf, ctypes.byref(digest_len),
     )
-    print(f"rv={{rv2}}")
+    print(f"TARGET_RV:0x{{rv2:08x}}")
 else:
-    print(f"rv={{rv}}")
+    print(f"SETUP_XFAIL:C_DigestInit not operational 0x{{rv:08x}}")
 cleanup()
 """
         )
@@ -521,6 +547,12 @@ cleanup()
             stdout,
             stderr,
             context=f"C_Digest(SHA256, ulDataLen={data_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Digest(ulDataLen={data_len:#x})",
         )
 
 
@@ -690,12 +722,6 @@ cleanup()
             stderr,
             context=f"C_EncryptMessage({field}={data_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -826,12 +852,6 @@ cleanup()
             stderr,
             context=f"C_DecryptMessage({field}={data_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -986,12 +1006,6 @@ cleanup()
             stderr,
             context=f"{op}(ciphertext_len={data_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1096,12 +1110,6 @@ cleanup()
             stderr,
             context=f"C_SignMessage(data_len={data_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1228,12 +1236,6 @@ cleanup()
             stderr,
             context=f"C_VerifyMessage({field}_len={data_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1366,12 +1368,6 @@ cleanup()
             stderr,
             context=f"{op}(data_len={data_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1517,12 +1513,6 @@ cleanup()
             stderr,
             context=f"C_VerifyMessage multipart {field}={data_len:#x}",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1677,12 +1667,6 @@ cleanup()
             stderr,
             context=f"{op}(plaintext_len={data_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
 
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1764,9 +1748,9 @@ try:
         print("TARGET:{op}", flush=True)
         print("LEN:{data_len}", flush=True)
         rv2 = raw.{op}(sh, buf, {data_len}, out_buf, ctypes.byref(out_len))
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:{init_op} not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key)
 cleanup()
@@ -1789,9 +1773,9 @@ try:
         print("TARGET:C_SignUpdate", flush=True)
         print("LEN:{data_len}", flush=True)
         rv2 = raw.C_SignUpdate(sh, buf, {data_len})
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:C_SignInit not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key.value)
 cleanup()
@@ -1814,9 +1798,9 @@ try:
         print("TARGET:C_VerifyUpdate", flush=True)
         print("LEN:{data_len}", flush=True)
         rv2 = raw.C_VerifyUpdate(sh, buf, {data_len})
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:C_VerifyInit not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key.value)
 cleanup()
@@ -1836,9 +1820,9 @@ if rv == CKR_OK:
     print("TARGET:C_DigestUpdate", flush=True)
     print("LEN:{data_len}", flush=True)
     rv2 = raw.C_DigestUpdate(sh, buf, {data_len})
-    print(f"rv={{rv2}}")
+    print(f"TARGET_RV:0x{{rv2:08x}}")
 else:
-    print(f"rv={{rv}}")
+    print(f"SETUP_XFAIL:C_DigestInit not operational 0x{{rv:08x}}")
 cleanup()
 """
         else:
@@ -1851,6 +1835,12 @@ cleanup()
             stdout,
             stderr,
             context=f"{op}(ulDataLen={data_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"{op}(ulPartLen={data_len:#x})",
         )
 
 
@@ -1897,18 +1887,12 @@ rv = raw.C_GenerateRandom(
     ctypes.cast(probe.data, ctypes.POINTER(ctypes.c_ubyte)),
     {data_len},
 )
-print(f"rv={{rv}}")
+print(f"TARGET_RV:0x{{rv:08x}}")
 print(f"rv_name={{ckr_name(rv)}}")
 overwritten = sum(1 for byte in probe.guard if byte != GUARD)
 print(f"OVERWRITTEN:{{overwritten}}")
-assert overwritten == 0, (
-    "C_GenerateRandom wrote past the tiny real output allocation: "
-    f"{{overwritten}} guard byte(s) changed"
-)
-assert rv != CKR_OK, (
-    "C_GenerateRandom accepted an impossible claimed output length "
-    f"({data_len:#x}) for a tiny real allocation"
-)
+if overwritten != 0:
+    print(f"GUARD_OVERWRITE:{{overwritten}}")
 cleanup()
 """
         )
@@ -1918,6 +1902,20 @@ cleanup()
             stdout,
             stderr,
             context=f"C_GenerateRandom(ulRandomLen={data_len:#x})",
+        )
+        if "GUARD_OVERWRITE:" in stdout:
+            fail_as(
+                "wrong_result",
+                kind="crypto",
+                label="output-buffer guard byte overwritten",
+                actual=_parse_prefixed_int(stdout, "GUARD_OVERWRITE:"),
+                summary="module wrote past the requested output length (OOB write)",
+            )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            (CKR_RANDOM_NO_RNG, CKR_FUNCTION_NOT_SUPPORTED, CKR_ARGUMENTS_BAD),
+            label="C_GenerateRandom/C_SeedRandom isize length",
         )
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -1939,12 +1937,8 @@ seed = (ctypes.c_ubyte * 16)(*range(16))
 print("TARGET:C_SeedRandom", flush=True)
 print("LEN:{data_len}", flush=True)
 rv = raw.C_SeedRandom(sh, seed, {data_len})
-print(f"rv={{rv}}")
+print(f"TARGET_RV:0x{{rv:08x}}")
 print(f"rv_name={{ckr_name(rv)}}")
-assert rv != CKR_OK, (
-    "C_SeedRandom accepted an impossible claimed seed length "
-    f"({data_len:#x}) for a tiny real allocation"
-)
 cleanup()
 """
         )
@@ -1954,6 +1948,12 @@ cleanup()
             stdout,
             stderr,
             context=f"C_SeedRandom(ulSeedLen={data_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            (CKR_RANDOM_NO_RNG, CKR_FUNCTION_NOT_SUPPORTED, CKR_ARGUMENTS_BAD),
+            label="C_GenerateRandom/C_SeedRandom isize length",
         )
 
 
@@ -2023,7 +2023,7 @@ rv = raw.C_GenerateKey(
     ctypes.cast(attrs, ctypes.POINTER(CK_ATTRIBUTE)), 3,
     ctypes.byref(key),
 )
-print(f"rv={{rv}}")
+print(f"TARGET_RV:0x{{rv:08x}}")
 cleanup()
 """
         )
@@ -2033,6 +2033,13 @@ cleanup()
             stdout,
             stderr,
             context=(f"C_GenerateKey(AES, CKA_VALUE_LEN={_ALLOC_GUARD_VALUE_LEN:#x})"),
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _KDF_LENGTH_REJECT_RVS,
+            label=f"C_GenerateKey(AES, CKA_VALUE_LEN={_ALLOC_GUARD_VALUE_LEN:#x})",
+            allow_ok=True,
         )
 
 
@@ -2098,7 +2105,7 @@ try:
     )
     mech.ulParameterLen = ctypes.sizeof(params)
     rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, key)
 cleanup()
@@ -2110,6 +2117,12 @@ cleanup()
             stdout,
             stderr,
             context="C_EncryptInit(AES_GCM, pIv=NULL, ulIvLen=12)",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _KDF_LENGTH_REJECT_RVS,
+            label="C_EncryptInit(GCM, pIv=NULL, ulIvLen>0)",
         )
 
     def test_ecdh_null_public_data(
@@ -2201,7 +2214,7 @@ try:
         ctypes.cast(tmpl, ctypes.POINTER(CK_ATTRIBUTE)), 4,
         ctypes.byref(derived),
     )
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, pub)
     destroy_quietly(raw, sh, priv)
@@ -2214,6 +2227,12 @@ cleanup()
             stdout,
             stderr,
             context=("C_DeriveKey(ECDH1, pPublicData=NULL, ulPublicDataLen=65)"),
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _KDF_LENGTH_REJECT_RVS,
+            label="C_DeriveKey(ECDH1, pPublicData=NULL, len>0)",
         )
 
     def test_oaep_null_source_data(
@@ -2270,7 +2289,7 @@ try:
     )
     mech.ulParameterLen = ctypes.sizeof(params)
     rv = raw.C_EncryptInit(sh, ctypes.byref(mech), pub)
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, pub)
     destroy_quietly(raw, sh, priv)
@@ -2283,6 +2302,12 @@ cleanup()
             stdout,
             stderr,
             context=("C_EncryptInit(RSA_OAEP, pSourceData=NULL, ulSourceDataLen=16)"),
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _KDF_LENGTH_REJECT_RVS,
+            label="C_EncryptInit(OAEP, pSourceData=NULL, len>0)",
         )
 
     def test_hkdf_null_salt(
@@ -2349,7 +2374,7 @@ rv = raw.C_CreateObject(
     5, ctypes.byref(base_key),
 )
 if rv != CKR_OK:
-    print(f"rv={rv}")
+    print(f"SETUP_XFAIL:HKDF base key import not operational 0x{rv:08x}")
     cleanup()
     raise SystemExit(0)
 
@@ -2405,7 +2430,7 @@ try:
         ctypes.cast(d_tmpl, ctypes.POINTER(CK_ATTRIBUTE)), 4,
         ctypes.byref(derived),
     )
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, base_key.value)
 cleanup()
@@ -2417,6 +2442,12 @@ cleanup()
             stdout,
             stderr,
             context=("C_DeriveKey(HKDF, pSalt=NULL, ulSaltLen=16, ulSaltType=CKF_HKDF_SALT_DATA)"),
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _KDF_LENGTH_REJECT_RVS,
+            label="C_DeriveKey(HKDF, pSalt=NULL, len>0)",
         )
 
 
@@ -2497,7 +2528,7 @@ rv = raw.C_CreateObject(
     5, ctypes.byref(key),
 )
 if rv != CKR_OK:
-    print(f"rv={{rv}}")
+    print(f"SETUP_XFAIL:HMAC key import not operational 0x{{rv:08x}}")
     cleanup()
     raise SystemExit(0)
 
@@ -2514,9 +2545,9 @@ try:
         rv2 = raw.C_Sign(
             sh, data, 16, sig_buf, ctypes.byref(sig_len),
         )
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:C_SignInit not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key.value)
 cleanup()
@@ -2528,6 +2559,13 @@ cleanup()
             stdout,
             stderr,
             context=f"C_Sign(HMAC_SHA256, sig_len={out_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_VERIFY_LENGTH_REJECT_RVS,
+            label=f"C_Sign(sig_len={out_len:#x})",
+            allow_ok=True,
         )
 
     @pytest.mark.parametrize("out_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -2562,9 +2600,9 @@ if rv == CKR_OK:
     rv2 = raw.C_Digest(
         sh, data, 16, digest_buf, ctypes.byref(digest_len),
     )
-    print(f"rv={{rv2}}")
+    print(f"TARGET_RV:0x{{rv2:08x}}")
 else:
-    print(f"rv={{rv}}")
+    print(f"SETUP_XFAIL:C_DigestInit not operational 0x{{rv:08x}}")
 cleanup()
 """
         )
@@ -2574,6 +2612,13 @@ cleanup()
             stdout,
             stderr,
             context=f"C_Digest(SHA256, digest_len={out_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Digest(digest_len={out_len:#x})",
+            allow_ok=True,
         )
 
     @pytest.mark.parametrize("sig_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -2638,7 +2683,7 @@ rv = raw.C_CreateObject(
     5, ctypes.byref(key),
 )
 if rv != CKR_OK:
-    print(f"rv={{rv}}")
+    print(f"SETUP_XFAIL:HMAC key import not operational 0x{{rv:08x}}")
     cleanup()
     raise SystemExit(0)
 
@@ -2654,9 +2699,9 @@ try:
         rv2 = raw.C_Verify(
             sh, data, 16, sig_buf, {sig_len},
         )
-        print(f"rv={{rv2}}")
+        print(f"TARGET_RV:0x{{rv2:08x}}")
     else:
-        print(f"rv={{rv}}")
+        print(f"SETUP_XFAIL:C_VerifyInit not operational 0x{{rv:08x}}")
 finally:
     destroy_quietly(raw, sh, key.value)
 cleanup()
@@ -2668,6 +2713,12 @@ cleanup()
             stdout,
             stderr,
             context=f"C_Verify(HMAC_SHA256, sig_len={sig_len:#x})",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_VERIFY_LENGTH_REJECT_RVS,
+            label=f"C_Verify(ulSignatureLen={sig_len:#x})",
         )
 
 
@@ -2746,7 +2797,7 @@ rv = raw.C_CreateObject(
     5, ctypes.byref(base_key),
 )
 if rv != CKR_OK:
-    print(f"rv={rv}")
+    print(f"SETUP_XFAIL:HKDF base key import not operational 0x{rv:08x}")
     cleanup()
     raise SystemExit(0)
 
@@ -2801,7 +2852,7 @@ try:
         ctypes.cast(d_tmpl, ctypes.POINTER(CK_ATTRIBUTE)), 4,
         ctypes.byref(derived),
     )
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, base_key.value)
 cleanup()
@@ -2813,6 +2864,12 @@ cleanup()
             stdout,
             stderr,
             context="C_DeriveKey(HKDF, pInfo=NULL, ulInfoLen=16)",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _KDF_LENGTH_REJECT_RVS,
+            label="C_DeriveKey(HKDF, pInfo=NULL, len>0)",
         )
 
 
@@ -2887,7 +2944,7 @@ try:
     )
     mech.ulParameterLen = ctypes.sizeof(params)
     rv = raw.C_SignInit(sh, ctypes.byref(mech), priv)
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, pub)
     destroy_quietly(raw, sh, priv)
@@ -2900,6 +2957,12 @@ cleanup()
             stdout,
             stderr,
             context=("C_SignInit(EDDSA, pContextData=NULL, ulContextDataLen=16)"),
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _KDF_LENGTH_REJECT_RVS,
+            label="C_SignInit(EDDSA, pContextData=NULL, len>0)",
         )
 
 
@@ -2987,6 +3050,7 @@ cleanup()
             stderr,
             context=("C_Verify(ML-DSA, pContext non-NULL, ulContextLen=0)"),
         )
+        # audit-ok(2026-06-19): positive op -- empty context is RFC 8032 default; CKR_OK is correct.
 
 
 # ---------------------------------------------------------------------------
@@ -3048,7 +3112,7 @@ try:
     )
     mech.ulParameterLen = ctypes.sizeof(params)
     rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, key)
 cleanup()
@@ -3060,6 +3124,12 @@ cleanup()
             stdout,
             stderr,
             context="C_EncryptInit(AES_CCM, pNonce=NULL, ulNonceLen=7)",
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _KDF_LENGTH_REJECT_RVS,
+            label="C_EncryptInit(CCM, pNonce=NULL, len>0)",
         )
 
 
@@ -3138,7 +3208,7 @@ rv = raw.C_CreateObject(
     5, ctypes.byref(base_key),
 )
 if rv != CKR_OK:
-    print(f"rv={rv}")
+    print(f"SETUP_XFAIL:CONCATENATE base key import not operational 0x{rv:08x}")
     cleanup()
     raise SystemExit(0)
 
@@ -3186,7 +3256,7 @@ try:
         ctypes.cast(d_tmpl, ctypes.POINTER(CK_ATTRIBUTE)), 4,
         ctypes.byref(derived),
     )
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, base_key.value)
 cleanup()
@@ -3198,6 +3268,12 @@ cleanup()
             stdout,
             stderr,
             context=("C_DeriveKey(CONCATENATE_BASE_AND_DATA, pData=NULL, ulLen=16)"),
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _KDF_LENGTH_REJECT_RVS,
+            label="C_DeriveKey(CONCATENATE, pData=NULL, len>0)",
         )
 
 
@@ -3325,12 +3401,6 @@ cleanup()
             stderr,
             context=f"C_DeriveKey(AES_CBC_ENCRYPT_DATA, {case_label})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
@@ -3435,12 +3505,6 @@ cleanup()
             stderr,
             context=f"C_Sign(SHA256_RSA_PKCS_PSS, sLen={salt_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
@@ -3539,12 +3603,6 @@ cleanup()
             stderr,
             context=f"C_Encrypt(AES_GCM, ulAADLen={aad_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
@@ -3642,12 +3700,6 @@ cleanup()
             stderr,
             context=f"C_Encrypt(AES_CCM, ulAADLen={aad_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
@@ -4033,7 +4085,7 @@ rv = raw.C_CreateObject(
     5, ctypes.byref(base_key),
 )
 if rv != CKR_OK:
-    print(f"rv={rv}")
+    print(f"SETUP_XFAIL:TLS_KDF base key import not operational 0x{rv:08x}")
     cleanup()
     raise SystemExit(0)
 
@@ -4098,7 +4150,7 @@ try:
         ctypes.cast(d_tmpl, ctypes.POINTER(CK_ATTRIBUTE)), 4,
         ctypes.byref(derived),
     )
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, base_key.value)
 cleanup()
@@ -4110,6 +4162,12 @@ cleanup()
             stdout,
             stderr,
             context=("C_DeriveKey(TLS_KDF, pLabel=NULL, ulLabelLength=16)"),
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _KDF_LENGTH_REJECT_RVS,
+            label="C_DeriveKey(TLS_KDF, pLabel=NULL, len>0)",
         )
 
 
@@ -4354,7 +4412,7 @@ rv = raw.C_CreateObject(
     5, ctypes.byref(base_key),
 )
 if rv != CKR_OK:
-    print(f"rv={rv}")
+    print(f"SETUP_XFAIL:SP800-108 base key import not operational 0x{rv:08x}")
     cleanup()
     raise SystemExit(0)
 
@@ -4405,7 +4463,7 @@ try:
         ctypes.cast(d_tmpl, ctypes.POINTER(CK_ATTRIBUTE)), 4,
         ctypes.byref(derived),
     )
-    print(f"rv={rv}")
+    print(f"TARGET_RV:0x{rv:08x}")
 finally:
     destroy_quietly(raw, sh, base_key.value)
 cleanup()
@@ -4419,6 +4477,12 @@ cleanup()
             context=(
                 "C_DeriveKey(SP800_108_COUNTER_KDF, pDataParams=NULL, ulNumberOfDataParams=1)"
             ),
+        )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _KDF_LENGTH_REJECT_RVS,
+            label="C_DeriveKey(SP800-108, NULL data params)",
         )
 
 
@@ -4918,12 +4982,6 @@ cleanup()
             stderr,
             context=f"C_Encrypt(RSA_PKCS_OAEP, ulSourceDataLen={data_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
@@ -5021,12 +5079,6 @@ cleanup()
             stderr,
             context=f"C_Encrypt(AES_GCM, ulIvLen={iv_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
@@ -5125,12 +5177,6 @@ cleanup()
             stderr,
             context=f"C_Encrypt(AES_GCM, ulTagBits={tag_bits:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
@@ -5229,12 +5275,6 @@ cleanup()
             stderr,
             context=f"C_Encrypt(AES_CCM, ulNonceLen={nonce_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
@@ -5333,12 +5373,6 @@ cleanup()
             stderr,
             context=f"C_Encrypt(AES_CCM, ulMACLen={mac_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
@@ -5444,12 +5478,6 @@ cleanup()
             stderr,
             context=f"C_Sign(EDDSA, ulContextDataLen={ctx_len:#x})",
         )
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label="FFI length-boundary setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
@@ -5543,10 +5571,8 @@ try:
             print(f"LEN:{out_len.value}", flush=True)
             overwritten = sum(1 for byte in probe.guard if byte != GUARD)
             print(f"OVERWRITTEN:{overwritten}", flush=True)
-            assert overwritten == 0, (
-                "C_EncryptUpdate wrote past the declared one-byte output buffer: "
-                f"{overwritten} guard byte(s) changed"
-            )
+            if overwritten != 0:
+                print(f"GUARD_OVERWRITE:{overwritten}")
 finally:
     destroy_quietly(raw, sh, key)
 cleanup()
@@ -5647,10 +5673,8 @@ try:
             print(f"LEN:{out_len.value}", flush=True)
             overwritten = sum(1 for byte in probe.guard if byte != GUARD)
             print(f"OVERWRITTEN:{overwritten}", flush=True)
-            assert overwritten == 0, (
-                "C_DecryptUpdate wrote past the declared one-byte output buffer: "
-                f"{overwritten} guard byte(s) changed"
-            )
+            if overwritten != 0:
+                print(f"GUARD_OVERWRITE:{overwritten}")
 finally:
     destroy_quietly(raw, sh, key)
 cleanup()
@@ -5672,11 +5696,13 @@ cleanup()
     @staticmethod
     def _classify_update_guard(stdout: str, op: str, side: str) -> None:
         """Shared parent-side classification for the update guard probes."""
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label=f"{op} guard probe setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+        if "GUARD_OVERWRITE:" in stdout:
+            fail_as(
+                "wrong_result",
+                kind="crypto",
+                label=f"{op} output-buffer guard byte overwritten",
+                actual=_parse_prefixed_int(stdout, "GUARD_OVERWRITE:"),
+                summary="module wrote past the requested output length (OOB write)",
             )
         init_rv = _parse_prefixed_int(stdout, "INIT_RV:")
         if init_rv != CKR_OK:
@@ -6045,12 +6071,6 @@ cleanup()
         has_update_step: bool,
     ) -> None:
         """Shared parent-side classification for continuation probes."""
-        if "SETUP_XFAIL:" in stdout:
-            classify(
-                "not_operational",
-                label=f"{op} continuation probe setup",
-                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
-            )
         init_rv = _parse_prefixed_int(stdout, "INIT_RV:")
         if init_rv != CKR_OK:
             classify(

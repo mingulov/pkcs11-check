@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -344,17 +345,18 @@ def test_ffi_length_aes_child_script_marks_setup_reject(
 
     def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
         scripts.append(script)
-        return 0, "", ""
+        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
 
     monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
     monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
 
-    test_ffi_length_boundary.TestIsizeMaxDataLength().test_encrypt_isize_boundary(
-        _RawSession(),
-        cfg,
-        0x8000000000000000,
-    )
+    with pytest.raises(pytest.xfail.Exception):
+        test_ffi_length_boundary.TestIsizeMaxDataLength().test_encrypt_isize_boundary(
+            _RawSession(),
+            cfg,
+            0x8000000000000000,
+        )
 
     assert len(scripts) == 1
     assert "SETUP_XFAIL:" in scripts[0]
@@ -370,7 +372,7 @@ def test_ffi_length_keypair_child_scripts_mark_setup_reject(
 
     def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
         scripts.append(script)
-        return 0, "", ""
+        return 0, "SETUP_XFAIL:keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
 
     monkeypatch.setattr(
         test_ffi_length_boundary,
@@ -385,14 +387,16 @@ def test_ffi_length_keypair_child_scripts_mark_setup_reject(
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
     monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
 
-    test_ffi_length_boundary.TestMechanismNullInnerParams().test_ecdh_null_public_data(
-        _RawSession(),
-        cfg,
-    )
-    test_ffi_length_boundary.TestMechanismNullInnerParams().test_oaep_null_source_data(
-        _RawSession(),
-        cfg,
-    )
+    with pytest.raises(pytest.xfail.Exception):
+        test_ffi_length_boundary.TestMechanismNullInnerParams().test_ecdh_null_public_data(
+            _RawSession(),
+            cfg,
+        )
+    with pytest.raises(pytest.xfail.Exception):
+        test_ffi_length_boundary.TestMechanismNullInnerParams().test_oaep_null_source_data(
+            _RawSession(),
+            cfg,
+        )
 
     assert len(scripts) == 2
     assert all("SETUP_XFAIL:" in script for script in scripts)
@@ -408,7 +412,7 @@ def test_ffi_length_eddsa_child_script_uses_edwards_keygen(
 
     def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
         scripts.append(script)
-        return 0, "", ""
+        return 0, "SETUP_XFAIL:EC_EDWARDS keygen rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
 
     monkeypatch.setattr(
         test_ffi_length_boundary,
@@ -424,10 +428,11 @@ def test_ffi_length_eddsa_child_script_uses_edwards_keygen(
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
     monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
 
-    test_ffi_length_boundary.TestEddsaNullContext().test_eddsa_null_context_data(
-        _RawSession(),
-        cfg,
-    )
+    with pytest.raises(pytest.xfail.Exception):
+        test_ffi_length_boundary.TestEddsaNullContext().test_eddsa_null_context_data(
+            _RawSession(),
+            cfg,
+        )
 
     assert len(scripts) == 1
     assert "CKM_EC_EDWARDS_KEY_PAIR_GEN" in scripts[0]
@@ -871,3 +876,46 @@ def test_ffi_length_encrypt_final_continuation_child_marks_setup_reject(
     assert "SETUP_XFAIL:" in scripts[0]
     assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
     assert "C_EncryptFinal" in scripts[0]
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 (F1/M1): every Category-A FFI length probe must parse + classify its
+# child rv, and no dead SETUP_XFAIL classify block may remain.
+# ---------------------------------------------------------------------------
+
+_F1_CATEGORY_A = [
+    "test_encrypt_isize_boundary",
+    "test_decrypt_isize_boundary",
+    "test_sign_isize_boundary",
+    "test_verify_isize_data_len",
+    "test_digest_isize_boundary",
+    "test_update_isize_data_len",
+    "test_verify_isize_sig_len",
+    "test_gcm_null_iv",
+    "test_ecdh_null_public_data",
+    "test_oaep_null_source_data",
+    "test_hkdf_null_salt",
+    "test_hkdf_null_info",
+    "test_eddsa_null_context_data",
+    "test_ccm_null_nonce",
+    "test_concat_base_data_null",
+    "test_tls_kdf_null_label",
+    "test_sp800_108_null_data_params",
+]
+
+
+def test_f1_category_a_methods_parse_and_classify_target_rv() -> None:
+    """Every Category-A FFI length probe must parse + classify its child rv."""
+    src = inspect.getsource(test_ffi_length_boundary)
+    for name in _F1_CATEGORY_A:
+        idx = src.index(f"def {name}(")
+        end = src.index("\n    def ", idx + 1) if "\n    def " in src[idx + 1 :] else len(src)
+        body = src[idx:end]
+        assert "TARGET_RV:" in body, f"{name}: child must print TARGET_RV:"
+        assert "classify_negative_rv(" in body, f"{name}: parent must classify the rv"
+
+
+def test_no_dead_setup_xfail_classify_blocks() -> None:
+    """No probe may keep an unreachable `if \"SETUP_XFAIL:\" in stdout: classify(...)`."""
+    src = inspect.getsource(test_ffi_length_boundary)
+    assert 'if "SETUP_XFAIL:" in stdout:' not in src
