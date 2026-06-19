@@ -78,7 +78,7 @@ _ISIZE_MAX_PLUS_1_64 = 0x8000000000000000
 # Large but sub-OOM value for allocation guard testing (2 GB).
 _ALLOC_GUARD_VALUE_LEN = 0x7FFFFFFF
 
-_KDF_LENGTH_REJECT_RVS = (
+_PARAM_LENGTH_REJECT_RVS = (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -2037,7 +2037,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label=f"C_GenerateKey(AES, CKA_VALUE_LEN={_ALLOC_GUARD_VALUE_LEN:#x})",
             allow_ok=True,
         )
@@ -2121,7 +2121,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label="C_EncryptInit(GCM, pIv=NULL, ulIvLen>0)",
         )
 
@@ -2231,7 +2231,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label="C_DeriveKey(ECDH1, pPublicData=NULL, len>0)",
         )
 
@@ -2306,7 +2306,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label="C_EncryptInit(OAEP, pSourceData=NULL, len>0)",
         )
 
@@ -2446,7 +2446,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label="C_DeriveKey(HKDF, pSalt=NULL, len>0)",
         )
 
@@ -2868,7 +2868,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label="C_DeriveKey(HKDF, pInfo=NULL, len>0)",
         )
 
@@ -2961,7 +2961,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label="C_SignInit(EDDSA, pContextData=NULL, len>0)",
         )
 
@@ -3128,7 +3128,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label="C_EncryptInit(CCM, pNonce=NULL, len>0)",
         )
 
@@ -3272,7 +3272,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label="C_DeriveKey(CONCATENATE, pData=NULL, len>0)",
         )
 
@@ -3404,7 +3404,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label=f"C_DeriveKey(AES_CBC_ENCRYPT_DATA, {case_label})",
         )
 
@@ -3508,7 +3508,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label=f"C_Sign(SHA256_RSA_PKCS_PSS, sLen={salt_len:#x})",
         )
 
@@ -3842,7 +3842,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label=f"C_GenerateKey(PBKDF2, {field} length={data_len:#x})",
         )
 
@@ -4006,7 +4006,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label=f"C_GenerateKey({mech_const}, {field} length={data_len:#x})",
         )
 
@@ -4166,7 +4166,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label="C_DeriveKey(TLS_KDF, pLabel=NULL, len>0)",
         )
 
@@ -4333,7 +4333,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label=f"C_DeriveKey(TLS_KDF, {field} random length={data_len:#x})",
         )
 
@@ -4481,7 +4481,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label="C_DeriveKey(SP800-108, NULL data params)",
         )
 
@@ -4657,7 +4657,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label=f"C_DeriveKey(SP800_108_COUNTER_KDF, data-param count={data_len:#x})",
         )
 
@@ -4863,7 +4863,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label=(
                 f"C_DeriveKey(SP800_108_COUNTER_KDF, additional-derived-key count={data_len:#x})"
             ),
@@ -5481,7 +5481,7 @@ cleanup()
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
-            _KDF_LENGTH_REJECT_RVS,
+            _PARAM_LENGTH_REJECT_RVS,
             label=f"C_Sign(EDDSA, ulContextDataLen={ctx_len:#x})",
         )
 

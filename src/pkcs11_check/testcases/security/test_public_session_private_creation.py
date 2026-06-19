@@ -171,76 +171,81 @@ class TestPublicSessionPrivateCreation:
             pytest.skip("CKM_AES_KEY_WRAP not advertised")
         label = f"pub-unwrap-priv-{id(self)}"
 
-        # Setup on the logged-in fixture session: public KEK + extractable target.
-        kek = gen_aes_key_or_xfail(
-            rs,
-            256,
-            attrs={
-                CKA_TOKEN: True,
-                CKA_PRIVATE: False,
-                CKA_WRAP: True,
-                CKA_UNWRAP: True,
-                CKA_LABEL: label,
-                CKA_EXTRACTABLE: True,
-            },
-            purpose="public-session unwrap KEK setup",
-        )
-        target = gen_aes_key_or_xfail(
-            rs,
-            128,
-            attrs={
-                CKA_TOKEN: True,
-                CKA_PRIVATE: False,
-                CKA_EXTRACTABLE: True,
-                CKA_LABEL: label,
-            },
-            purpose="public-session unwrap target setup",
-        )
-        wrapped = wrap_key(rs.raw, rs.sh, kek, target, CKM_AES_KEY_WRAP)
-
-        # Establish a genuinely public session (login is per-token).
-        public_sh, pin_bytes = _establish_public_session(rs, p11_config)
-        created = None
         try:
-            try:
-                created = unwrap_key(
-                    rs.raw,
-                    public_sh,
-                    kek,
-                    wrapped,
-                    CKM_AES_KEY_WRAP,
-                    attrs={
-                        CKA_CLASS: CKO_SECRET_KEY,
-                        CKA_KEY_TYPE: CKK_AES,
-                        CKA_TOKEN: False,
-                        CKA_PRIVATE: True,
-                        CKA_VALUE_LEN: 16,
-                        CKA_LABEL: label,
-                    },
-                )
-            except AssertionError as exc:
-                reject_or_classify(
-                    exc,
-                    (CKR_USER_NOT_LOGGED_IN,),
-                    label="C_UnwrapKey CKA_PRIVATE=True session object in a public "
-                    "(unauthenticated) session",
-                )
-                return
-            # Created without login -- policy claim/effect check.
-            priv = read_attributes(rs.raw, public_sh, created, [CKA_PRIVATE]).get(CKA_PRIVATE)
-            classify_policy_enforcement(
-                claimed=priv is True,
-                violated=True,
-                label="public (unauthenticated) session unwrapped a CKA_PRIVATE=True "
-                "session object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
+            # Setup on the logged-in fixture session: public KEK + extractable target.
+            kek = gen_aes_key_or_xfail(
+                rs,
+                256,
+                attrs={
+                    CKA_TOKEN: True,
+                    CKA_PRIVATE: False,
+                    CKA_WRAP: True,
+                    CKA_UNWRAP: True,
+                    CKA_LABEL: label,
+                    CKA_EXTRACTABLE: True,
+                },
+                purpose="public-session unwrap KEK setup",
             )
+            target = gen_aes_key_or_xfail(
+                rs,
+                128,
+                attrs={
+                    CKA_TOKEN: True,
+                    CKA_PRIVATE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_LABEL: label,
+                },
+                purpose="public-session unwrap target setup",
+            )
+            wrapped = wrap_key(rs.raw, rs.sh, kek, target, CKM_AES_KEY_WRAP)
+
+            # Establish a genuinely public session (login is per-token).
+            public_sh, pin_bytes = _establish_public_session(rs, p11_config)
+            created = None
+            try:
+                try:
+                    created = unwrap_key(
+                        rs.raw,
+                        public_sh,
+                        kek,
+                        wrapped,
+                        CKM_AES_KEY_WRAP,
+                        attrs={
+                            CKA_CLASS: CKO_SECRET_KEY,
+                            CKA_KEY_TYPE: CKK_AES,
+                            CKA_TOKEN: False,
+                            CKA_PRIVATE: True,
+                            CKA_VALUE_LEN: 16,
+                            CKA_LABEL: label,
+                        },
+                    )
+                except AssertionError as exc:
+                    reject_or_classify(
+                        exc,
+                        (CKR_USER_NOT_LOGGED_IN,),
+                        label="C_UnwrapKey CKA_PRIVATE=True session object in a public "
+                        "(unauthenticated) session",
+                    )
+                    return
+                # Created without login -- policy claim/effect check.
+                priv = read_attributes(rs.raw, public_sh, created, [CKA_PRIVATE]).get(CKA_PRIVATE)
+                classify_policy_enforcement(
+                    claimed=priv is True,
+                    violated=True,
+                    label="public (unauthenticated) session unwrapped a CKA_PRIVATE=True "
+                    "session object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
+                )
+            finally:
+                # Restore login for cleanup of token objects created during setup.
+                _login_user_raw(rs.raw, public_sh, pin_bytes)
+                if created is not None:
+                    destroy_quietly(rs.raw, public_sh, created)
+                _cleanup_label(rs, public_sh, label)
+                close_session_quietly(rs.raw, public_sh)
         finally:
-            # Restore login for cleanup of token objects created during setup.
-            _login_user_raw(rs.raw, public_sh, pin_bytes)
-            if created is not None:
-                destroy_quietly(rs.raw, public_sh, created)
-            _cleanup_label(rs, public_sh, label)
-            close_session_quietly(rs.raw, public_sh)
+            _cleanup_label(
+                rs, rs.sh, label
+            )  # catches early pytest.skip in _establish_public_session
 
     def test_public_cannot_derive_private_ecdh_key(
         self, p11_raw_session: Any, p11_config: Any
@@ -259,72 +264,79 @@ class TestPublicSessionPrivateCreation:
         label = f"pub-derive-ecdh-{id(self)}"
         curve_oid = encode_named_curve_parameters("secp256r1")
 
-        # Setup on the logged-in fixture session: derive-capable public EC key.
         try:
-            pub, priv = gen_ec_keypair(
-                rs.raw,
-                rs.sh,
-                curve_oid,
-                public_attrs={CKA_TOKEN: True, CKA_PRIVATE: False, CKA_LABEL: label},
-                private_attrs={
-                    CKA_TOKEN: True,
-                    CKA_PRIVATE: False,
-                    CKA_DERIVE: True,
-                    CKA_LABEL: label,
-                },
-            )
-        except AssertionError as exc:
-            xfail_if_known_ckr(
-                exc,
-                KEYPAIR_RUNTIME_REJECT_RVS,
-                "EC keypair staging for public-session ECDH setup is not operational",
-            )
-        peer_point = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT]).get(CKA_EC_POINT)
-        if peer_point is None:
-            pytest.skip("Module did not return CKA_EC_POINT for the staged EC public key")
-
-        # Establish a genuinely public session.
-        public_sh, pin_bytes = _establish_public_session(rs, p11_config)
-        created = None
-        try:
+            # Setup on the logged-in fixture session: derive-capable public EC key.
             try:
-                created = derive_key(
+                pub, priv = gen_ec_keypair(
                     rs.raw,
-                    public_sh,
-                    priv,
-                    CKM_ECDH1_DERIVE,
-                    attrs={
-                        CKA_CLASS: CKO_SECRET_KEY,
-                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-                        CKA_TOKEN: False,
-                        CKA_PRIVATE: True,
+                    rs.sh,
+                    curve_oid,
+                    public_attrs={CKA_TOKEN: True, CKA_PRIVATE: False, CKA_LABEL: label},
+                    private_attrs={
+                        CKA_TOKEN: True,
+                        CKA_PRIVATE: False,
+                        CKA_DERIVE: True,
                         CKA_LABEL: label,
                     },
-                    mech_param=mech_ecdh(
-                        CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=bytes(peer_point)
-                    ),
                 )
             except AssertionError as exc:
-                reject_or_classify(
+                xfail_if_known_ckr(
                     exc,
-                    (CKR_USER_NOT_LOGGED_IN,),
-                    label="C_DeriveKey(ECDH) CKA_PRIVATE=True session object in a public "
-                    "(unauthenticated) session",
+                    KEYPAIR_RUNTIME_REJECT_RVS,
+                    "EC keypair staging for public-session ECDH setup is not operational",
                 )
-                return
-            priv_attr = read_attributes(rs.raw, public_sh, created, [CKA_PRIVATE]).get(CKA_PRIVATE)
-            classify_policy_enforcement(
-                claimed=priv_attr is True,
-                violated=True,
-                label="public (unauthenticated) session ECDH-derived a CKA_PRIVATE=True "
-                "session object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
-            )
+            peer_point = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT]).get(CKA_EC_POINT)
+            if peer_point is None:
+                pytest.skip("Module did not return CKA_EC_POINT for the staged EC public key")
+
+            # Establish a genuinely public session.
+            public_sh, pin_bytes = _establish_public_session(rs, p11_config)
+            created = None
+            try:
+                try:
+                    created = derive_key(
+                        rs.raw,
+                        public_sh,
+                        priv,
+                        CKM_ECDH1_DERIVE,
+                        attrs={
+                            CKA_CLASS: CKO_SECRET_KEY,
+                            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                            CKA_TOKEN: False,
+                            CKA_PRIVATE: True,
+                            CKA_LABEL: label,
+                        },
+                        mech_param=mech_ecdh(
+                            CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=bytes(peer_point)
+                        ),
+                    )
+                except AssertionError as exc:
+                    reject_or_classify(
+                        exc,
+                        (CKR_USER_NOT_LOGGED_IN,),
+                        label="C_DeriveKey(ECDH) CKA_PRIVATE=True session object in a public "
+                        "(unauthenticated) session",
+                    )
+                    return
+                priv_attr = read_attributes(rs.raw, public_sh, created, [CKA_PRIVATE]).get(
+                    CKA_PRIVATE
+                )
+                classify_policy_enforcement(
+                    claimed=priv_attr is True,
+                    violated=True,
+                    label="public (unauthenticated) session ECDH-derived a CKA_PRIVATE=True "
+                    "session object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
+                )
+            finally:
+                _login_user_raw(rs.raw, public_sh, pin_bytes)
+                if created is not None:
+                    destroy_quietly(rs.raw, public_sh, created)
+                _cleanup_label(rs, public_sh, label)
+                close_session_quietly(rs.raw, public_sh)
         finally:
-            _login_user_raw(rs.raw, public_sh, pin_bytes)
-            if created is not None:
-                destroy_quietly(rs.raw, public_sh, created)
-            _cleanup_label(rs, public_sh, label)
-            close_session_quietly(rs.raw, public_sh)
+            _cleanup_label(
+                rs, rs.sh, label
+            )  # catches early pytest.skip in _establish_public_session
 
     def test_public_cannot_derive_private_hkdf_key(
         self, p11_raw_session: Any, p11_config: Any
@@ -340,67 +352,74 @@ class TestPublicSessionPrivateCreation:
             pytest.skip("CKM_HKDF_DERIVE not advertised")
         label = f"pub-derive-hkdf-{id(self)}"
 
-        # Setup on the logged-in fixture session: derive-capable public secret key.
-        gen_aes_key_or_xfail(
-            rs,
-            256,
-            attrs={
-                CKA_TOKEN: True,
-                CKA_PRIVATE: False,
-                CKA_DERIVE: True,
-                CKA_LABEL: label,
-                CKA_EXTRACTABLE: True,
-            },
-            purpose="public-session HKDF base setup",
-        )
-        # Re-fetch the handle so cleanup in finally matches what we use.
-        setup_tmpl = template_from_dict({CKA_LABEL: label, CKA_KEY_TYPE: CKK_AES})
-        setup_handles = find_objects(rs.raw, rs.sh, setup_tmpl)
-        if not setup_handles:
-            pytest.skip("Module refused to create the derive base key for HKDF setup")
-        base_key = setup_handles[0]
-
-        # Establish a genuinely public session.
-        public_sh, pin_bytes = _establish_public_session(rs, p11_config)
-        created = None
         try:
-            try:
-                created = derive_key(
-                    rs.raw,
-                    public_sh,
-                    base_key,
-                    CKM_HKDF_DERIVE,
-                    attrs={
-                        CKA_CLASS: CKO_SECRET_KEY,
-                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-                        CKA_TOKEN: False,
-                        CKA_PRIVATE: True,
-                        CKA_VALUE_LEN: 32,
-                        CKA_LABEL: label,
-                    },
-                    mech_param=mech_hkdf(CKM_HKDF_DERIVE, hash_mech=CKM_SHA256),
-                )
-            except AssertionError as exc:
-                reject_or_classify(
-                    exc,
-                    (CKR_USER_NOT_LOGGED_IN,),
-                    label="C_DeriveKey(HKDF) CKA_PRIVATE=True session object in a public "
-                    "(unauthenticated) session",
-                )
-                return
-            priv_attr = read_attributes(rs.raw, public_sh, created, [CKA_PRIVATE]).get(CKA_PRIVATE)
-            classify_policy_enforcement(
-                claimed=priv_attr is True,
-                violated=True,
-                label="public (unauthenticated) session HKDF-derived a CKA_PRIVATE=True "
-                "session object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
+            # Setup on the logged-in fixture session: derive-capable public secret key.
+            gen_aes_key_or_xfail(
+                rs,
+                256,
+                attrs={
+                    CKA_TOKEN: True,
+                    CKA_PRIVATE: False,
+                    CKA_DERIVE: True,
+                    CKA_LABEL: label,
+                    CKA_EXTRACTABLE: True,
+                },
+                purpose="public-session HKDF base setup",
             )
+            # Re-fetch the handle so cleanup in finally matches what we use.
+            setup_tmpl = template_from_dict({CKA_LABEL: label, CKA_KEY_TYPE: CKK_AES})
+            setup_handles = find_objects(rs.raw, rs.sh, setup_tmpl)
+            if not setup_handles:
+                pytest.skip("Module refused to create the derive base key for HKDF setup")
+            base_key = setup_handles[0]
+
+            # Establish a genuinely public session.
+            public_sh, pin_bytes = _establish_public_session(rs, p11_config)
+            created = None
+            try:
+                try:
+                    created = derive_key(
+                        rs.raw,
+                        public_sh,
+                        base_key,
+                        CKM_HKDF_DERIVE,
+                        attrs={
+                            CKA_CLASS: CKO_SECRET_KEY,
+                            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                            CKA_TOKEN: False,
+                            CKA_PRIVATE: True,
+                            CKA_VALUE_LEN: 32,
+                            CKA_LABEL: label,
+                        },
+                        mech_param=mech_hkdf(CKM_HKDF_DERIVE, hash_mech=CKM_SHA256),
+                    )
+                except AssertionError as exc:
+                    reject_or_classify(
+                        exc,
+                        (CKR_USER_NOT_LOGGED_IN,),
+                        label="C_DeriveKey(HKDF) CKA_PRIVATE=True session object in a public "
+                        "(unauthenticated) session",
+                    )
+                    return
+                priv_attr = read_attributes(rs.raw, public_sh, created, [CKA_PRIVATE]).get(
+                    CKA_PRIVATE
+                )
+                classify_policy_enforcement(
+                    claimed=priv_attr is True,
+                    violated=True,
+                    label="public (unauthenticated) session HKDF-derived a CKA_PRIVATE=True "
+                    "session object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
+                )
+            finally:
+                _login_user_raw(rs.raw, public_sh, pin_bytes)
+                if created is not None:
+                    destroy_quietly(rs.raw, public_sh, created)
+                _cleanup_label(rs, public_sh, label)
+                close_session_quietly(rs.raw, public_sh)
         finally:
-            _login_user_raw(rs.raw, public_sh, pin_bytes)
-            if created is not None:
-                destroy_quietly(rs.raw, public_sh, created)
-            _cleanup_label(rs, public_sh, label)
-            close_session_quietly(rs.raw, public_sh)
+            _cleanup_label(
+                rs, rs.sh, label
+            )  # catches early pytest.skip in _establish_public_session
 
     def test_public_cannot_copy_to_private_object(
         self, p11_raw_session: Any, p11_config: Any
@@ -414,56 +433,63 @@ class TestPublicSessionPrivateCreation:
         rs = p11_raw_session
         label = f"pub-copy-priv-{id(self)}"
 
-        # Setup on the logged-in fixture session: public data object.
-        create_object(
-            rs.raw,
-            rs.sh,
-            {
-                CKA_CLASS: CKO_DATA,
-                CKA_LABEL: label,
-                CKA_VALUE: b"public-copy-source",
-                CKA_TOKEN: True,
-                CKA_PRIVATE: False,
-            },
-        )
-        setup_tmpl = template_from_dict({CKA_LABEL: label, CKA_CLASS: CKO_DATA})
-        setup_handles = find_objects(rs.raw, rs.sh, setup_tmpl)
-        if not setup_handles:
-            pytest.skip("Module refused to create the source data object for copy setup")
-        source = setup_handles[0]
-
-        # Establish a genuinely public session.
-        public_sh, pin_bytes = _establish_public_session(rs, p11_config)
-        created = None
         try:
-            try:
-                created = copy_object(
-                    rs.raw,
-                    public_sh,
-                    source,
-                    attrs={
-                        CKA_PRIVATE: True,
-                        CKA_LABEL: label,
-                    },
-                )
-            except AssertionError as exc:
-                reject_or_classify(
-                    exc,
-                    (CKR_USER_NOT_LOGGED_IN,),
-                    label="C_CopyObject CKA_PRIVATE=True copy in a public "
-                    "(unauthenticated) session",
-                )
-                return
-            priv_attr = read_attributes(rs.raw, public_sh, created, [CKA_PRIVATE]).get(CKA_PRIVATE)
-            classify_policy_enforcement(
-                claimed=priv_attr is True,
-                violated=True,
-                label="public (unauthenticated) session C_CopyObject'd to a "
-                "CKA_PRIVATE=True copy (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
+            # Setup on the logged-in fixture session: public data object.
+            create_object(
+                rs.raw,
+                rs.sh,
+                {
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: label,
+                    CKA_VALUE: b"public-copy-source",
+                    CKA_TOKEN: True,
+                    CKA_PRIVATE: False,
+                },
             )
+            setup_tmpl = template_from_dict({CKA_LABEL: label, CKA_CLASS: CKO_DATA})
+            setup_handles = find_objects(rs.raw, rs.sh, setup_tmpl)
+            if not setup_handles:
+                pytest.skip("Module refused to create the source data object for copy setup")
+            source = setup_handles[0]
+
+            # Establish a genuinely public session.
+            public_sh, pin_bytes = _establish_public_session(rs, p11_config)
+            created = None
+            try:
+                try:
+                    created = copy_object(
+                        rs.raw,
+                        public_sh,
+                        source,
+                        attrs={
+                            CKA_PRIVATE: True,
+                            CKA_LABEL: label,
+                        },
+                    )
+                except AssertionError as exc:
+                    reject_or_classify(
+                        exc,
+                        (CKR_USER_NOT_LOGGED_IN,),
+                        label="C_CopyObject CKA_PRIVATE=True copy in a public "
+                        "(unauthenticated) session",
+                    )
+                    return
+                priv_attr = read_attributes(rs.raw, public_sh, created, [CKA_PRIVATE]).get(
+                    CKA_PRIVATE
+                )
+                classify_policy_enforcement(
+                    claimed=priv_attr is True,
+                    violated=True,
+                    label="public (unauthenticated) session C_CopyObject'd to a "
+                    "CKA_PRIVATE=True copy (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
+                )
+            finally:
+                _login_user_raw(rs.raw, public_sh, pin_bytes)
+                if created is not None:
+                    destroy_quietly(rs.raw, public_sh, created)
+                _cleanup_label(rs, public_sh, label)
+                close_session_quietly(rs.raw, public_sh)
         finally:
-            _login_user_raw(rs.raw, public_sh, pin_bytes)
-            if created is not None:
-                destroy_quietly(rs.raw, public_sh, created)
-            _cleanup_label(rs, public_sh, label)
-            close_session_quietly(rs.raw, public_sh)
+            _cleanup_label(
+                rs, rs.sh, label
+            )  # catches early pytest.skip in _establish_public_session
