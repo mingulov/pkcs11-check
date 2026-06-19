@@ -812,3 +812,62 @@ def test_ffi_length_eddsa_context_child_uses_edwards_keygen(
     assert all("gen_ec_keypair" not in script for script in scripts)
     assert all("SETUP_XFAIL:" in script for script in scripts)
     assert all("KEYPAIR_RUNTIME_REJECT_RVS" in script for script in scripts)
+
+
+# ---------------------------------------------------------------------------
+# Wave 4: TestUpdateOutputGuard + TestContinueAfterNullOutputQuery regressions
+# ---------------------------------------------------------------------------
+
+
+def test_ffi_length_encrypt_update_guard_child_marks_setup_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C_EncryptUpdate guard probe must classify setup rejects in child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    scripts: list[str] = []
+
+    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        scripts.append(script)
+        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+
+    monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+
+    with pytest.raises(pytest.xfail.Exception):
+        test_ffi_length_boundary.TestUpdateOutputGuard().test_encrypt_update_one_byte_output_preserves_guard(
+            _RawSession(),
+            cfg,
+        )
+
+    assert len(scripts) == 1
+    assert "SETUP_XFAIL:" in scripts[0]
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
+    assert "C_EncryptUpdate" in scripts[0]
+
+
+def test_ffi_length_encrypt_final_continuation_child_marks_setup_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C_EncryptFinal continuation probe must classify setup rejects in child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    scripts: list[str] = []
+
+    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        scripts.append(script)
+        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+
+    monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+
+    with pytest.raises(pytest.xfail.Exception):
+        test_ffi_length_boundary.TestContinueAfterNullOutputQuery().test_encrypt_final_continuation_after_size_query(
+            _RawSession(),
+            cfg,
+        )
+
+    assert len(scripts) == 1
+    assert "SETUP_XFAIL:" in scripts[0]
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
+    assert "C_EncryptFinal" in scripts[0]

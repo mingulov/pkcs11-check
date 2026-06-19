@@ -18,6 +18,7 @@ import pytest
 
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_DERIVE,
     CKA_ENCRYPT,
@@ -37,6 +38,8 @@ from pkcs11_check.raw.types_std import (
     CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OK,
+    CKR_OPERATION_NOT_INITIALIZED,
     CKR_SIGNATURE_LEN_RANGE,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
@@ -5452,4 +5455,594 @@ cleanup()
             rv,
             _KDF_LENGTH_REJECT_RVS,
             label=f"C_Sign(EDDSA, ulContextDataLen={ctx_len:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Wave 4: Update output guard + continuation-after-NULL-output probes
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateOutputGuard:
+    """``C_EncryptUpdate`` / ``C_DecryptUpdate`` with a 1-byte declared output.
+
+    Probe: ``C_<Enc|Dec>ryptInit`` → ``C_<Enc|Dec>ryptUpdate(NULL, &len)`` size
+    query → ``C_<Enc|Dec>ryptUpdate`` continuation with a 1-byte guard-backed
+    output buffer.  Per PKCS#11, the NULL-output size query does NOT terminate
+    the operation.  The continuation real call must return ``CKR_BUFFER_TOO_SMALL``
+    with the required length and must not overwrite the guard bytes.
+    """
+
+    def test_encrypt_update_one_byte_output_preserves_guard(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """``C_EncryptUpdate`` with one declared output byte preserves guard bytes."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB"):
+            pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs, 256, purpose="C_EncryptUpdate guard probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + """
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
+)
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+
+try:
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_ECB
+    mech.pParameter = None
+    mech.ulParameterLen = 0
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{rv:08x}", flush=True)
+    if rv == CKR_OK:
+        buf = (ctypes.c_ubyte * 16)(*range(16))
+        needed = CK_ULONG(0)
+        rv_q = raw.C_EncryptUpdate(sh, buf, 16, None, ctypes.byref(needed))
+        print(f"QUERY_RV:0x{rv_q:08x}", flush=True)
+        print(f"NEEDED:{needed.value}", flush=True)
+        if rv_q == CKR_OK:
+            GUARD = 0xE1
+            GUARD_SIZE = 32
+
+            class UpdateProbe(ctypes.Structure):
+                _fields_ = [
+                    ("data", ctypes.c_ubyte * 1),
+                    ("guard", ctypes.c_ubyte * GUARD_SIZE),
+                ]
+
+            probe = UpdateProbe()
+            for idx in range(GUARD_SIZE):
+                probe.guard[idx] = GUARD
+            out_len = CK_ULONG(1)
+            rv2 = raw.C_EncryptUpdate(
+                sh, buf, 16,
+                ctypes.cast(probe.data, ctypes.POINTER(ctypes.c_ubyte)),
+                ctypes.byref(out_len),
+            )
+            print(f"FINAL_RV:0x{rv2:08x}", flush=True)
+            print(f"LEN:{out_len.value}", flush=True)
+            overwritten = sum(1 for byte in probe.guard if byte != GUARD)
+            print(f"OVERWRITTEN:{overwritten}", flush=True)
+            assert overwritten == 0, (
+                "C_EncryptUpdate wrote past the declared one-byte output buffer: "
+                f"{overwritten} guard byte(s) changed"
+            )
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script, timeout=10, pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc, stdout, stderr,
+            context="C_EncryptUpdate one-byte output buffer guard",
+        )
+        self._classify_update_guard(stdout, "C_EncryptUpdate", "Encrypt")
+
+    def test_decrypt_update_one_byte_output_preserves_guard(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """``C_DecryptUpdate`` with one declared output byte preserves guard bytes."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB"):
+            pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs, 256, purpose="C_DecryptUpdate guard probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + """
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
+)
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+
+try:
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_ECB
+    mech.pParameter = None
+    mech.ulParameterLen = 0
+
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:encrypt setup (C_EncryptInit) rejected: rv=0x{rv:08x}")
+        raise SystemExit(0)
+    pt_buf = (ctypes.c_ubyte * 16)(*range(16))
+    ct_buf = (ctypes.c_ubyte * 16)()
+    ct_len = CK_ULONG(16)
+    rv = raw.C_Encrypt(sh, pt_buf, 16, ct_buf, ctypes.byref(ct_len))
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:encrypt setup (C_Encrypt) rejected: rv=0x{rv:08x}")
+        raise SystemExit(0)
+
+    dec_rv = raw.C_DecryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{dec_rv:08x}", flush=True)
+    if dec_rv == CKR_OK:
+        needed = CK_ULONG(0)
+        rv_q = raw.C_DecryptUpdate(sh, ct_buf, 16, None, ctypes.byref(needed))
+        print(f"QUERY_RV:0x{rv_q:08x}", flush=True)
+        print(f"NEEDED:{needed.value}", flush=True)
+        if rv_q == CKR_OK:
+            GUARD = 0xD2
+            GUARD_SIZE = 32
+
+            class UpdateProbe(ctypes.Structure):
+                _fields_ = [
+                    ("data", ctypes.c_ubyte * 1),
+                    ("guard", ctypes.c_ubyte * GUARD_SIZE),
+                ]
+
+            probe = UpdateProbe()
+            for idx in range(GUARD_SIZE):
+                probe.guard[idx] = GUARD
+            out_len = CK_ULONG(1)
+            rv2 = raw.C_DecryptUpdate(
+                sh, ct_buf, 16,
+                ctypes.cast(probe.data, ctypes.POINTER(ctypes.c_ubyte)),
+                ctypes.byref(out_len),
+            )
+            print(f"FINAL_RV:0x{rv2:08x}", flush=True)
+            print(f"LEN:{out_len.value}", flush=True)
+            overwritten = sum(1 for byte in probe.guard if byte != GUARD)
+            print(f"OVERWRITTEN:{overwritten}", flush=True)
+            assert overwritten == 0, (
+                "C_DecryptUpdate wrote past the declared one-byte output buffer: "
+                f"{overwritten} guard byte(s) changed"
+            )
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script, timeout=10, pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc, stdout, stderr,
+            context="C_DecryptUpdate one-byte output buffer guard",
+        )
+        self._classify_update_guard(stdout, "C_DecryptUpdate", "Decrypt")
+
+    @staticmethod
+    def _classify_update_guard(stdout: str, op: str, side: str) -> None:
+        """Shared parent-side classification for the update guard probes."""
+        if "SETUP_XFAIL:" in stdout:
+            classify(
+                "not_operational",
+                label=f"{op} guard probe setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
+        init_rv = _parse_prefixed_int(stdout, "INIT_RV:")
+        if init_rv != CKR_OK:
+            classify(
+                "not_operational",
+                label=f"{op} guard probe",
+                summary=f"C_{side}Init returned {ckr_name(init_rv)}",
+            )
+        query_rv = _parse_prefixed_int(stdout, "QUERY_RV:")
+        if query_rv != CKR_OK:
+            classify(
+                "not_operational",
+                label=f"{op} guard probe",
+                summary=f"{op} size query returned {ckr_name(query_rv)}",
+            )
+        final_rv = _parse_prefixed_int(stdout, "FINAL_RV:")
+        classify_negative_rv(
+            final_rv,
+            (CKR_BUFFER_TOO_SMALL,),
+            label=f"{op} with a one-byte output buffer",
+        )
+
+
+class TestContinueAfterNullOutputQuery:
+    """Continuation real call after a NULL-output size query must succeed.
+
+    Per PKCS#11, a NULL-output size query (``C_*Update(NULL, &len)`` or
+    ``C_*Final(NULL, &len)``) does NOT terminate the active operation.  The
+    caller should make the real call again with a real output buffer WITHOUT
+    re-initializing.  If the continuation returns ``CKR_OPERATION_NOT_INITIALIZED``,
+    the module incorrectly terminated the operation on the size query -- a spec
+    violation (lifecycle self-contradiction).
+    """
+
+    def test_encrypt_update_continuation_after_size_query(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """``C_EncryptUpdate`` real call after NULL-output size query succeeds."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB"):
+            pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs, 256, purpose="C_EncryptUpdate continuation probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + """
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
+)
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+
+try:
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_ECB
+    mech.pParameter = None
+    mech.ulParameterLen = 0
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{rv:08x}", flush=True)
+    if rv == CKR_OK:
+        buf = (ctypes.c_ubyte * 16)(*range(16))
+        needed = CK_ULONG(0)
+        rv_q = raw.C_EncryptUpdate(sh, buf, 16, None, ctypes.byref(needed))
+        print(f"QUERY_RV:0x{rv_q:08x}", flush=True)
+        if rv_q == CKR_OK:
+            real_buf = (ctypes.c_ubyte * 64)()
+            real_len = CK_ULONG(64)
+            rv2 = raw.C_EncryptUpdate(sh, buf, 16, real_buf, ctypes.byref(real_len))
+            print(f"CONTINUATION_RV:0x{rv2:08x}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script, timeout=10, pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc, stdout, stderr,
+            context="C_EncryptUpdate continuation after NULL-output size query",
+        )
+        self._classify_continuation(
+            stdout, "C_EncryptUpdate", has_update_step=False,
+        )
+
+    def test_decrypt_update_continuation_after_size_query(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """``C_DecryptUpdate`` real call after NULL-output size query succeeds."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB"):
+            pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs, 256, purpose="C_DecryptUpdate continuation probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + """
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
+)
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+
+try:
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_ECB
+    mech.pParameter = None
+    mech.ulParameterLen = 0
+
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:encrypt setup (C_EncryptInit) rejected: rv=0x{rv:08x}")
+        raise SystemExit(0)
+    pt_buf = (ctypes.c_ubyte * 16)(*range(16))
+    ct_buf = (ctypes.c_ubyte * 16)()
+    ct_len = CK_ULONG(16)
+    rv = raw.C_Encrypt(sh, pt_buf, 16, ct_buf, ctypes.byref(ct_len))
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:encrypt setup (C_Encrypt) rejected: rv=0x{rv:08x}")
+        raise SystemExit(0)
+
+    dec_rv = raw.C_DecryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{dec_rv:08x}", flush=True)
+    if dec_rv == CKR_OK:
+        needed = CK_ULONG(0)
+        rv_q = raw.C_DecryptUpdate(sh, ct_buf, 16, None, ctypes.byref(needed))
+        print(f"QUERY_RV:0x{rv_q:08x}", flush=True)
+        if rv_q == CKR_OK:
+            real_buf = (ctypes.c_ubyte * 64)()
+            real_len = CK_ULONG(64)
+            rv2 = raw.C_DecryptUpdate(sh, ct_buf, 16, real_buf, ctypes.byref(real_len))
+            print(f"CONTINUATION_RV:0x{rv2:08x}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script, timeout=10, pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc, stdout, stderr,
+            context="C_DecryptUpdate continuation after NULL-output size query",
+        )
+        self._classify_continuation(
+            stdout, "C_DecryptUpdate", has_update_step=False,
+        )
+
+    def test_encrypt_final_continuation_after_size_query(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """``C_EncryptFinal`` real call after NULL-output size query succeeds."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB"):
+            pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs, 256, purpose="C_EncryptFinal continuation probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + """
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
+)
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+
+try:
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_ECB
+    mech.pParameter = None
+    mech.ulParameterLen = 0
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{rv:08x}", flush=True)
+    if rv == CKR_OK:
+        buf = (ctypes.c_ubyte * 16)(*range(16))
+        upd_buf = (ctypes.c_ubyte * 16)()
+        upd_len = CK_ULONG(16)
+        rv_u = raw.C_EncryptUpdate(sh, buf, 16, upd_buf, ctypes.byref(upd_len))
+        print(f"UPDATE_RV:0x{rv_u:08x}", flush=True)
+        if rv_u == CKR_OK:
+            needed = CK_ULONG(0)
+            rv_q = raw.C_EncryptFinal(sh, None, ctypes.byref(needed))
+            print(f"QUERY_RV:0x{rv_q:08x}", flush=True)
+            if rv_q == CKR_OK:
+                real_buf = (ctypes.c_ubyte * 64)()
+                real_len = CK_ULONG(64)
+                rv2 = raw.C_EncryptFinal(sh, real_buf, ctypes.byref(real_len))
+                print(f"CONTINUATION_RV:0x{rv2:08x}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script, timeout=10, pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc, stdout, stderr,
+            context="C_EncryptFinal continuation after NULL-output size query",
+        )
+        self._classify_continuation(
+            stdout, "C_EncryptFinal", has_update_step=True,
+        )
+
+    def test_decrypt_final_continuation_after_size_query(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """``C_DecryptFinal`` real call after NULL-output size query succeeds."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB"):
+            pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs, 256, purpose="C_DecryptFinal continuation probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + """
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
+)
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+
+try:
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_ECB
+    mech.pParameter = None
+    mech.ulParameterLen = 0
+
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:encrypt setup (C_EncryptInit) rejected: rv=0x{rv:08x}")
+        raise SystemExit(0)
+    pt_buf = (ctypes.c_ubyte * 16)(*range(16))
+    ct_buf = (ctypes.c_ubyte * 16)()
+    ct_len = CK_ULONG(16)
+    rv = raw.C_Encrypt(sh, pt_buf, 16, ct_buf, ctypes.byref(ct_len))
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:encrypt setup (C_Encrypt) rejected: rv=0x{rv:08x}")
+        raise SystemExit(0)
+
+    dec_rv = raw.C_DecryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{dec_rv:08x}", flush=True)
+    if dec_rv == CKR_OK:
+        upd_buf = (ctypes.c_ubyte * 16)()
+        upd_len = CK_ULONG(16)
+        rv_u = raw.C_DecryptUpdate(sh, ct_buf, 16, upd_buf, ctypes.byref(upd_len))
+        print(f"UPDATE_RV:0x{rv_u:08x}", flush=True)
+        if rv_u == CKR_OK:
+            needed = CK_ULONG(0)
+            rv_q = raw.C_DecryptFinal(sh, None, ctypes.byref(needed))
+            print(f"QUERY_RV:0x{rv_q:08x}", flush=True)
+            if rv_q == CKR_OK:
+                real_buf = (ctypes.c_ubyte * 64)()
+                real_len = CK_ULONG(64)
+                rv2 = raw.C_DecryptFinal(sh, real_buf, ctypes.byref(real_len))
+                print(f"CONTINUATION_RV:0x{rv2:08x}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script, timeout=10, pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc, stdout, stderr,
+            context="C_DecryptFinal continuation after NULL-output size query",
+        )
+        self._classify_continuation(
+            stdout, "C_DecryptFinal", has_update_step=True,
+        )
+
+    @staticmethod
+    def _classify_continuation(
+        stdout: str, op: str, *, has_update_step: bool,
+    ) -> None:
+        """Shared parent-side classification for continuation probes."""
+        if "SETUP_XFAIL:" in stdout:
+            classify(
+                "not_operational",
+                label=f"{op} continuation probe setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
+        init_rv = _parse_prefixed_int(stdout, "INIT_RV:")
+        if init_rv != CKR_OK:
+            classify(
+                "not_operational",
+                label=f"{op} continuation probe",
+                summary=f"Init returned {ckr_name(init_rv)}",
+            )
+        if has_update_step:
+            update_rv = _parse_prefixed_int(stdout, "UPDATE_RV:")
+            if update_rv != CKR_OK:
+                classify(
+                    "not_operational",
+                    label=f"{op} continuation probe",
+                    summary=f"Update returned {ckr_name(update_rv)}",
+                )
+        query_rv = _parse_prefixed_int(stdout, "QUERY_RV:")
+        if query_rv != CKR_OK:
+            classify(
+                "not_operational",
+                label=f"{op} continuation probe",
+                summary=f"NULL-output size query returned {ckr_name(query_rv)}",
+            )
+        continuation_rv = _parse_prefixed_int(stdout, "CONTINUATION_RV:")
+        if continuation_rv == CKR_OK:
+            return
+        if continuation_rv == CKR_OPERATION_NOT_INITIALIZED:
+            classify(
+                "self_contradiction",
+                kind="lifecycle",
+                label=f"{op} continuation after NULL-output size query",
+                summary=(
+                    f"{op} returned {ckr_name(continuation_rv)} on the "
+                    f"continuation real call after a NULL-output size query -- "
+                    f"the size query must NOT terminate the operation "
+                    f"(PKCS#11 spec violation)"
+                ),
+            )
+        classify(
+            "honest_deviation",
+            label=f"{op} continuation after NULL-output size query",
+            summary=f"{op} continuation returned {ckr_name(continuation_rv)}",
         )
