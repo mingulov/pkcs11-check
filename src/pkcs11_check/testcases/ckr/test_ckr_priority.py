@@ -16,7 +16,6 @@ import pytest
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import destroy_quietly
-from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_RSA_PKCS,
@@ -29,6 +28,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.conftest import (
     classify_lifecycle_effect,
+    classify_negative_rv,
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
 )
@@ -93,14 +93,11 @@ class TestErrorPriority:
                     actual=rv,
                     summary="Should have rejected RSA key with AES-ECB",
                 )
-            assert (
-                rv
-                in (
-                    CKR_KEY_TYPE_INCONSISTENT,
-                    CKR_MECHANISM_INVALID,
-                )
-                or rv != 0
-            ), f"Unexpected CKR {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_KEY_TYPE_INCONSISTENT, CKR_MECHANISM_INVALID),
+                label="C_EncryptInit:RSA-key-AES-ECB:rejection",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, _priv)
@@ -126,13 +123,10 @@ class TestErrorPriority:
                     actual=rv,
                     summary="Should have rejected AES key with RSA mechanism",
                 )
-            assert (
-                rv
-                in (
-                    CKR_MECHANISM_INVALID,
-                    CKR_KEY_TYPE_INCONSISTENT,
-                )
-                or rv != 0
-            ), f"Unexpected CKR {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_MECHANISM_INVALID, CKR_KEY_TYPE_INCONSISTENT),
+                label="C_EncryptInit:AES-key-RSA-mechanism:rejection",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

@@ -35,6 +35,8 @@ from pkcs11_check.raw.types_std import (
     CKF_SERIAL_SESSION,
     CKM_AES_KEY_GEN,
     CKM_SHA256,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_OK,
     CKR_SESSION_CLOSED,
@@ -202,16 +204,28 @@ class TestSoftHSM2IssueRegressions:
         """Generate RSA with various sizes - verify minimum is enforced."""
         rs = p11_raw_session
 
-        # Very small RSA should be rejected
+        # Very small RSA should be rejected; acceptance of a weak key is a policy failure.
         try:
             from pkcs11_check.raw.recipes import gen_rsa_keypair
 
             pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 512)
-            # If accepted, that's a policy choice
+            # Provider accepted 512-bit RSA: record as policy violation.
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, pub)
-        except AssertionError:
-            pass  # Correct to reject small RSA
+            fail_as(
+                "accepted_invalid",
+                kind="policy",
+                label="RSA-512-keygen:weak-key-accepted",
+                operation="C_GenerateKeyPair",
+                summary="Module accepted 512-bit RSA keygen; key is cryptographically weak",
+            )
+        except AssertionError as exc:
+            # Correct to reject small RSA; route rejection through classifier.
+            classify_negative_rv(
+                getattr(exc, "rv", 0),
+                (CKR_KEY_SIZE_RANGE, CKR_ATTRIBUTE_VALUE_INVALID),
+                label="RSA-512-keygen:size-rejection",
+            )
 
         # Standard size should work
         from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail

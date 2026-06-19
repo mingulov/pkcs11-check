@@ -54,6 +54,7 @@ from pkcs11_check.testcases.conftest import (
     gen_rsa_keypair_or_xfail,
     import_secret_key_negotiated,
     is_known_error,
+    xfail_if_known_ckr,
 )
 
 pytestmark = [pytest.mark.security]
@@ -532,8 +533,12 @@ class TestKeyGenMechanism:
                     operation="C_SetAttributeValue",
                     summary="Module accepted C_SetAttributeValue on CKA_KEY_GEN_MECHANISM",
                 )
-            except AssertionError:
-                pass  # Expected: module rejected the write
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    (CKR_ATTRIBUTE_READ_ONLY, CKR_ATTRIBUTE_VALUE_INVALID),
+                    "CKA_KEY_GEN_MECHANISM:read-only-write rejected",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
