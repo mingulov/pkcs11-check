@@ -19,6 +19,7 @@ reject = xfail (nonspec).
 
 from __future__ import annotations
 
+import ctypes
 from ctypes import byref, sizeof
 from typing import Any
 
@@ -33,7 +34,7 @@ from pkcs11_check.raw.pack import (
     template,
 )
 from pkcs11_check.raw.pack_mechanisms import mech_hkdf
-from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key, wrap_key
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
@@ -61,6 +62,7 @@ from pkcs11_check.raw.types_std import (
     CKA_WRAP,
     CKK_AES,
     CKK_RSA,
+    CKM_AES_KEY_WRAP,
     CKM_HKDF_DERIVE,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SHA256,
@@ -74,7 +76,7 @@ from pkcs11_check.testcases.ckr._malformed_attrs import (
     make_bool_attr_overlong,
     make_ulong_attr_with_length,
 )
-from pkcs11_check.testcases.conftest import classify_negative_rv
+from pkcs11_check.testcases.conftest import classify_negative_rv, gen_aes_key_or_xfail
 
 pytestmark = pytest.mark.security
 
@@ -418,4 +420,81 @@ class TestWildOversizedAttrInCreate:
             rv,
             TEMPLATE_ERRORS,
             label="C_CreateObject with wildly oversized CKA_VALUE_LEN ulong attribute",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Task 7 (C2 MVP): Bool-overlong in C_CopyObject + C_UnwrapKey (new contexts)
+# ---------------------------------------------------------------------------
+
+
+class TestBoolOverlongInUnwrapCopy:
+    """A CK_ULONG-sized boolean in unwrap/copy templates must be rejected."""
+
+    def test_op_permission_bool_overlong_in_copy(self, p11_raw_session: Any) -> None:
+        """C_CopyObject must reject a CK_ULONG-sized CKA_ENCRYPT boolean."""
+        rs = p11_raw_session
+        base = template(
+            attr_ulong(CKA_CLASS, CKO_DATA),
+            attr_bytes(CKA_LABEL, b"copy-bool-overlong"),
+            attr_bytes(CKA_VALUE, b"value"),
+        )
+        src_h = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_CreateObject(rs.sh, base.ptr, base.count, byref(src_h))
+        if rv != CKR_OK:
+            classify_negative_rv(rv, TEMPLATE_ERRORS, label="C_CreateObject DATA setup")
+            return
+        try:
+            new_attrs = template(attr_bool(CKA_ENCRYPT, False))
+            _storage = make_bool_attr_overlong(new_attrs, 3)
+            dst_h = CK_OBJECT_HANDLE(0)
+            rv = rs.raw.C_CopyObject(
+                rs.sh, src_h.value, new_attrs.ptr, new_attrs.count, byref(dst_h)
+            )
+            if rv == CKR_OK:
+                destroy_quietly(rs.raw, rs.sh, dst_h.value)
+            classify_negative_rv(
+                rv,
+                TEMPLATE_ERRORS,
+                label="C_CopyObject with CK_ULONG-sized CKA_ENCRYPT boolean",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, src_h.value)
+
+    def test_op_permission_bool_overlong_in_unwrap(self, p11_raw_session: Any) -> None:
+        """C_UnwrapKey must reject a CK_ULONG-sized CKA_ENCRYPT boolean in the key template."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_WRAP"):
+            pytest.skip("CKM_AES_KEY_WRAP not advertised")
+        kek = gen_aes_key_or_xfail(
+            rs, 256, attrs={CKA_WRAP: True, CKA_UNWRAP: True}, purpose="unwrap-bool-overlong KEK"
+        )
+        target = gen_aes_key_or_xfail(
+            rs, 128, attrs={CKA_EXTRACTABLE: True}, purpose="unwrap-bool-overlong target"
+        )
+        wrapped = wrap_key(rs.raw, rs.sh, kek, target, CKM_AES_KEY_WRAP)
+        key_tmpl = template(
+            attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_AES),
+            attr_ulong(CKA_VALUE_LEN, 16),
+            attr_bool(CKA_ENCRYPT, False),
+        )
+        _storage = make_bool_attr_overlong(key_tmpl, 3)
+        out_h = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_UnwrapKey(
+            rs.sh,
+            mech_simple(CKM_AES_KEY_WRAP).byref(),
+            kek,
+            (ctypes.c_ubyte * len(wrapped))(*wrapped),
+            len(wrapped),
+            key_tmpl.ptr,
+            key_tmpl.count,
+            byref(out_h),
+        )
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, out_h.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label="C_UnwrapKey with CK_ULONG-sized CKA_ENCRYPT boolean in key template",
         )
