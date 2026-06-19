@@ -60,8 +60,8 @@ class TestDigestInitErrors:
     def test_mechanism_param_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """SHA-256 with unexpected parameter -> CKR_MECHANISM_PARAM_INVALID.
 
-        SHA-256 takes no parameters. Providing one should error.
-        Note: some modules may ignore the param.
+        SHA-256 takes no parameters. Providing one must be rejected; accepting
+        it is an accepted-invalid (policy) finding, not a silent pass.
         """
         rs = p11_raw_session
         exp = CKR_DIGEST["init_mechanism_param_invalid"]
@@ -70,7 +70,12 @@ class TestDigestInitErrors:
         mech = mech_bytes(CKM_SHA256, b"\x00" * 16)
         rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
         if rv == CKR_OK:
-            # Some modules/wrappers ignore unknown params for hash mechanisms
-            pass
-        else:
-            assert_ckr(exp, rv, ckr_strict)
+            classify(
+                "accepted_invalid",
+                kind="policy",
+                label="C_DigestInit:SHA256-with-bogus-param",
+                operation="C_DigestInit",
+                actual=rv,
+                summary="Should have rejected SHA-256 initialized with a 16-byte parameter",
+            )
+        assert_ckr(exp, rv, ckr_strict)

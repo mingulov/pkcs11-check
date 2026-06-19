@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, fail_as
 from pkcs11_check.raw.bootstrap import (
     login_user,
 )
@@ -712,11 +712,25 @@ class TestBoundaryLengthCrypto:
             except AssertionError:
                 pass  # Some modules are stricter
 
-            # Over max - must reject
+            # Over max - must reject. RSA-2048 PKCS#1 v1.5 max plaintext is 245
+            # bytes (256 - 11); 246 bytes is over-max and acceptance is a
+            # crypto-correctness break (accepted_invalid), not a silent pass.
             try:
                 encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS, b"\x42" * 246)
-            except AssertionError:
-                pass  # Correct: DataLenRange or similar
+            except AssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (CKR_DATA_LEN_RANGE, CKR_ARGUMENTS_BAD, CKR_ENCRYPTED_DATA_LEN_RANGE),
+                    label="RSA-PKCS over-max encrypt (246 bytes)",
+                    kind="crypto",
+                )
+            else:
+                fail_as(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="RSA-PKCS over-max encrypt (246 bytes)",
+                    summary="RSA-PKCS accepted 246-byte plaintext (max 245 for RSA-2048)",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

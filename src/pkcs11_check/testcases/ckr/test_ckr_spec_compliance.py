@@ -303,14 +303,15 @@ class TestCKRObjectCompliance:
         tmpl[0].pValue = None
         tmpl[0].ulValueLen = 0
         rv = rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
-        if rv == CKR_OK:
-            pass  # Some modules don't detect - that's a deviation but not crash
-        else:
-            _check_ckr(
-                "C_GetAttributeValue(destroyed)",
-                CKR_OBJECT_HANDLE_INVALID,
-                rv,
-            )
+        # Use-after-destroy read: spec requires CKR_OBJECT_HANDLE_INVALID.
+        # CKR_OK means the module served a stale handle (lifecycle
+        # self-contradiction) -- fail, do not silently pass.
+        classify_negative_rv(
+            rv,
+            (CKR_OBJECT_HANDLE_INVALID,),
+            label="C_GetAttributeValue on destroyed handle",
+            kind="lifecycle",
+        )
 
 
 class TestCKRVerifyCompliance:

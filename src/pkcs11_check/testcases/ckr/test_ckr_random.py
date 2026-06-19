@@ -12,10 +12,12 @@ import pytest
 
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
+    CKR_ARGUMENTS_BAD,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
     CKR_RANDOM_SEED_NOT_SUPPORTED,
 )
+from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = pytest.mark.access
 
@@ -43,8 +45,14 @@ class TestGenerateRandomErrors:
         rs = p11_raw_session
         buf = (ctypes.c_ubyte * 1)()  # minimal buffer
         rv = rs.raw.C_GenerateRandom(rs.sh, buf, CK_ULONG(0))
-        # Module may accept zero-length or reject - both acceptable
-        assert rv == CKR_OK or rv != 0
+        # Zero-length is a genuinely ambiguous edge case: spec-correct to accept
+        # (CKR_OK) or to reject with CKR_ARGUMENTS_BAD. Anything else is a deviation.
+        classify_negative_rv(
+            rv,
+            (CKR_ARGUMENTS_BAD,),
+            label="C_GenerateRandom with zero length",
+            allow_ok=True,
+        )
 
     @pytest.mark.slow
     def test_generate_random_large(self, p11_raw_session: Any) -> None:
