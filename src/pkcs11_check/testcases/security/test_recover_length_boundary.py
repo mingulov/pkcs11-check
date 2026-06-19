@@ -6,6 +6,9 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check import compliance
+from pkcs11_check.classification import fail_as
+from pkcs11_check.compliance import ComplianceLevel
 from pkcs11_check.raw.types_std import (
     CKR_BUFFER_TOO_SMALL,
     CKR_DATA_LEN_RANGE,
@@ -489,9 +492,25 @@ cleanup()
         if rv == CKR_BUFFER_TOO_SMALL:
             needed = _parse_output_value(stdout, "NEEDED:")
             out_len = _parse_output_value(stdout, "LEN:")
-            assert out_len == needed, (
-                f"C_VerifyRecover reported required length {out_len}, expected {needed}"
-            )
+            # PKCS#11 v3.2 §5.2: both the NULL-size-query length and the
+            # CKR_BUFFER_TOO_SMALL *pulBufLen may over-estimate, so they need not be
+            # equal. Only a length that does not exceed the 1-byte probe buffer is a
+            # self-contradiction (module said "too small" yet needs <= 1 byte).
+            if out_len <= 1:
+                fail_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label="C_VerifyRecover one-byte output buffer length",
+                    actual=out_len,
+                    summary=f"CKR_BUFFER_TOO_SMALL but reported needed length {out_len} <= 1",
+                )
+            elif out_len != needed:
+                compliance.note(
+                    "C_VerifyRecover size-query length "
+                    f"{needed} != BUFFER_TOO_SMALL length {out_len} "
+                    "(both spec-legal over-estimates)",
+                    ComplianceLevel.EXTENDED,
+                )
         else:
             classify_negative_rv(
                 rv,
@@ -596,9 +615,25 @@ cleanup()
         if rv == CKR_BUFFER_TOO_SMALL:
             needed = _parse_output_value(stdout, "NEEDED:")
             out_len = _parse_output_value(stdout, "LEN:")
-            assert out_len == needed, (
-                f"C_SignRecover reported required length {out_len}, expected {needed}"
-            )
+            # PKCS#11 v3.2 §5.2: both the NULL-size-query length and the
+            # CKR_BUFFER_TOO_SMALL *pulBufLen may over-estimate, so they need not be
+            # equal. Only a length that does not exceed the 1-byte probe buffer is a
+            # self-contradiction (module said "too small" yet needs <= 1 byte).
+            if out_len <= 1:
+                fail_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label="C_SignRecover one-byte output buffer length",
+                    actual=out_len,
+                    summary=f"CKR_BUFFER_TOO_SMALL but reported needed length {out_len} <= 1",
+                )
+            elif out_len != needed:
+                compliance.note(
+                    "C_SignRecover size-query length "
+                    f"{needed} != BUFFER_TOO_SMALL length {out_len} "
+                    "(both spec-legal over-estimates)",
+                    ComplianceLevel.EXTENDED,
+                )
         else:
             classify_negative_rv(
                 rv,
