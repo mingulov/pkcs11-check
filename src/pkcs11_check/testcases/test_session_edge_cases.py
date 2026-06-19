@@ -201,26 +201,34 @@ class TestSoftHSM2IssueRegressions:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_rsa_keygen_minimum_size(self, p11_raw_session: Any) -> None:
-        """Generate RSA with various sizes - verify minimum is enforced."""
+        """Generate RSA with various sizes - verify minimum enforcement behaviour.
+
+        PKCS#11 mandates no minimum RSA key size, so accepting a 512-bit key is
+        spec-legal (if not recommended).  Rejection with CKR_KEY_SIZE_RANGE or
+        CKR_ATTRIBUTE_VALUE_INVALID is also acceptable.  We record acceptance as a
+        not-recommended deviation via compliance.note; we never fail_as here.
+        """
         rs = p11_raw_session
 
-        # Very small RSA should be rejected; acceptance of a weak key is a policy failure.
+        # Very small RSA: acceptance is spec-legal but not recommended;
+        # rejection is equally valid.
         try:
+            from pkcs11_check.compliance import ComplianceLevel
+            from pkcs11_check.compliance import note as compliance_note
             from pkcs11_check.raw.recipes import gen_rsa_keypair
 
             pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 512)
-            # Provider accepted 512-bit RSA: record as policy violation.
+            # Provider accepted 512-bit RSA: spec-legal but not recommended.
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, pub)
-            fail_as(
-                "accepted_invalid",
-                kind="policy",
-                label="RSA-512-keygen:weak-key-accepted",
-                operation="C_GenerateKeyPair",
-                summary="Module accepted 512-bit RSA keygen; key is cryptographically weak",
+            compliance_note(
+                "Module generated a 512-bit RSA key on explicit request; "
+                "PKCS#11 imposes no minimum size but 512-bit RSA is cryptographically weak",
+                ComplianceLevel.NOT_RECOMMENDED,
+                reference="PKCS#11 v2.40 §2.1 (no mandated minimum); NIST SP 800-131Ar2 §2",
             )
         except AssertionError as exc:
-            # Correct to reject small RSA; route rejection through classifier.
+            # Rejection of a small RSA key is acceptable; route through classifier.
             classify_negative_rv(
                 getattr(exc, "rv", 0),
                 (CKR_KEY_SIZE_RANGE, CKR_ATTRIBUTE_VALUE_INVALID),
