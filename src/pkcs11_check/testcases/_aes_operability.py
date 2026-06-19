@@ -97,9 +97,7 @@ def cmac_operability(rs: Any) -> OperabilityResult:
                     Operability.NOT_OPERATIONAL, f"canonical CMAC verify rejected: {exc}"
                 )
             if not ok:
-                return OperabilityResult(
-                    Operability.NOT_OPERATIONAL, "own CMAC tag verifies False"
-                )
+                return OperabilityResult(Operability.NOT_OPERATIONAL, "own CMAC tag verifies False")
             return OperabilityResult(Operability.OPERATIONAL, "CMAC sign+verify OK")
         finally:
             if key:
@@ -132,9 +130,7 @@ def gmac_operability(rs: Any) -> OperabilityResult:
                 )
             param = mech_bytes(CKM_AES_GMAC, _PROBE_IV_12)
             try:
-                tag = sign_single(
-                    rs.raw, rs.sh, key, CKM_AES_GMAC, _PROBE_AAD, mech_param=param
-                )
+                tag = sign_single(rs.raw, rs.sh, key, CKM_AES_GMAC, _PROBE_AAD, mech_param=param)
             except CkrAssertionError as exc:
                 return OperabilityResult(
                     Operability.NOT_OPERATIONAL, f"canonical GMAC sign rejected: {exc}"
@@ -148,9 +144,7 @@ def gmac_operability(rs: Any) -> OperabilityResult:
                     Operability.NOT_OPERATIONAL, f"canonical GMAC verify rejected: {exc}"
                 )
             if not ok:
-                return OperabilityResult(
-                    Operability.NOT_OPERATIONAL, "own GMAC tag verifies False"
-                )
+                return OperabilityResult(Operability.NOT_OPERATIONAL, "own GMAC tag verifies False")
             return OperabilityResult(Operability.OPERATIONAL, "GMAC sign+verify OK")
         finally:
             if key:
@@ -177,9 +171,7 @@ def kwp_encrypt_operability(rs: Any) -> OperabilityResult:
                     },
                 )
             except CkrAssertionError as exc:
-                return OperabilityResult(
-                    Operability.INCONCLUSIVE, f"KWP key staging failed: {exc}"
-                )
+                return OperabilityResult(Operability.INCONCLUSIVE, f"KWP key staging failed: {exc}")
             try:
                 wrapped = encrypt_single(
                     rs.raw,
@@ -204,9 +196,7 @@ def kwp_encrypt_operability(rs: Any) -> OperabilityResult:
                     Operability.OPERATIONAL, "KWP encrypt OK (ground-truth skipped)"
                 )
             if wrapped != expected:
-                return OperabilityResult(
-                    Operability.WRONG_OUTPUT, "canonical KWP output mismatch"
-                )
+                return OperabilityResult(Operability.WRONG_OUTPUT, "canonical KWP output mismatch")
             return OperabilityResult(Operability.OPERATIONAL, "KWP encrypt OK")
         finally:
             if key:
@@ -234,14 +224,10 @@ def xts_encrypt_operability(rs: Any) -> OperabilityResult:
                     },
                 )
             except (CkrAssertionError, AttributeError) as exc:
-                return OperabilityResult(
-                    Operability.INCONCLUSIVE, f"XTS key staging failed: {exc}"
-                )
+                return OperabilityResult(Operability.INCONCLUSIVE, f"XTS key staging failed: {exc}")
             param = mech_bytes(CKM_AES_XTS, _PROBE_XTS_TWEAK)
             try:
-                ct = encrypt_single(
-                    rs.raw, rs.sh, key, CKM_AES_XTS, _PROBE_MSG, mech_param=param
-                )
+                ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_XTS, _PROBE_MSG, mech_param=param)
             except CkrAssertionError as exc:
                 return OperabilityResult(
                     Operability.NOT_OPERATIONAL, f"canonical XTS encrypt rejected: {exc}"
@@ -257,9 +243,7 @@ def xts_encrypt_operability(rs: Any) -> OperabilityResult:
                     Operability.OPERATIONAL, "XTS encrypt OK (ground-truth skipped)"
                 )
             if ct != expected:
-                return OperabilityResult(
-                    Operability.WRONG_OUTPUT, "canonical XTS output mismatch"
-                )
+                return OperabilityResult(Operability.WRONG_OUTPUT, "canonical XTS output mismatch")
             return OperabilityResult(Operability.OPERATIONAL, "XTS encrypt OK")
         finally:
             if key:
@@ -341,9 +325,7 @@ def kw_unwrap_operability(rs: Any) -> OperabilityResult:
                     Operability.INCONCLUSIVE, f"KW recovered value read failed: {exc}"
                 )
             if recovered_attrs.get(CKA_VALUE) != _PROBE_KEY2:
-                return OperabilityResult(
-                    Operability.WRONG_OUTPUT, "KW roundtrip value mismatch"
-                )
+                return OperabilityResult(Operability.WRONG_OUTPUT, "KW roundtrip value mismatch")
             return OperabilityResult(Operability.OPERATIONAL, "KW wrap+unwrap OK")
         finally:
             if wrap_key_h:

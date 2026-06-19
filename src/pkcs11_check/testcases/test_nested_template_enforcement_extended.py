@@ -38,7 +38,7 @@ from pkcs11_check.raw.pack import (
     template,
 )
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
-from pkcs11_check.raw.rv import ckr_name, expect_rv
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
     CK_OBJECT_HANDLE,
@@ -158,9 +158,7 @@ class TestOaepUnwrapTemplateEnforcement:
     asymmetric unwrap path where the unwrapping key is an RSA private key.
     """
 
-    def test_oaep_unwrap_template_enforces_created_object_label(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_oaep_unwrap_template_enforces_created_object_label(self, p11_raw_session: Any) -> None:
         """CKA_UNWRAP_TEMPLATE on an RSA private key must block OAEP-unwrap to a violating label."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
@@ -175,9 +173,7 @@ class TestOaepUnwrapTemplateEnforcement:
         nested_template = template(attr_bytes(CKA_LABEL, allowed_label))
 
         keygen_mech = mech_simple(CKM_RSA_PKCS_KEY_PAIR_GEN)
-        wrap_mech = mech_oaep(
-            CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA_1, mgf=CKG_MGF1_SHA1
-        )
+        wrap_mech = mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA_1, mgf=CKG_MGF1_SHA1)
 
         pub_rsa = CK_OBJECT_HANDLE(0)
         priv_rsa = CK_OBJECT_HANDLE(0)
@@ -215,18 +211,18 @@ class TestOaepUnwrapTemplateEnforcement:
             )
             if rv != CKR_OK:
                 if rv in _TEMPLATE_ATTR_SETUP_REJECT_RVS:
-                    pytest.skip(
-                        f"CKA_UNWRAP_TEMPLATE not supported at RSA keygen: {ckr_name(rv)}"
-                    )
-                expect_rv(
-                    rv, CKR_OK, context="CKA_UNWRAP_TEMPLATE RSA keypair generation"
+                    pytest.skip(f"CKA_UNWRAP_TEMPLATE not supported at RSA keygen: {ckr_name(rv)}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKA_UNWRAP_TEMPLATE keypair/object setup",
+                    actual=rv,
+                    summary=f"setup rejected with unexpected {ckr_name(rv)}",
                 )
 
             claimed = False
             try:
-                attrs = read_attributes(
-                    rs.raw, rs.sh, priv_rsa.value, [CKA_UNWRAP_TEMPLATE]
-                )
+                attrs = read_attributes(rs.raw, rs.sh, priv_rsa.value, [CKA_UNWRAP_TEMPLATE])
                 raw_template = attrs.get(CKA_UNWRAP_TEMPLATE)
                 claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
                     CK_ATTRIBUTE
@@ -373,9 +369,7 @@ class TestEcdhDeriveTemplateEnforcement:
     mechanism is ``CKM_ECDH1_DERIVE``.
     """
 
-    def test_ecdh_derive_template_enforces_created_object_label(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_ecdh_derive_template_enforces_created_object_label(self, p11_raw_session: Any) -> None:
         """CKA_DERIVE_TEMPLATE on an EC private key must block ECDH derive to a violating label."""
         rs = p11_raw_session
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
@@ -426,18 +420,18 @@ class TestEcdhDeriveTemplateEnforcement:
             )
             if rv != CKR_OK:
                 if rv in _TEMPLATE_ATTR_SETUP_REJECT_RVS:
-                    pytest.skip(
-                        f"CKA_DERIVE_TEMPLATE not supported at EC keygen: {ckr_name(rv)}"
-                    )
-                expect_rv(
-                    rv, CKR_OK, context="CKA_DERIVE_TEMPLATE EC base-keypair generation"
+                    pytest.skip(f"CKA_DERIVE_TEMPLATE not supported at EC keygen: {ckr_name(rv)}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKA_DERIVE_TEMPLATE keypair/object setup",
+                    actual=rv,
+                    summary=f"setup rejected with unexpected {ckr_name(rv)}",
                 )
 
             claimed = False
             try:
-                attrs = read_attributes(
-                    rs.raw, rs.sh, priv_base.value, [CKA_DERIVE_TEMPLATE]
-                )
+                attrs = read_attributes(rs.raw, rs.sh, priv_base.value, [CKA_DERIVE_TEMPLATE])
                 raw_template = attrs.get(CKA_DERIVE_TEMPLATE)
                 claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
                     CK_ATTRIBUTE
@@ -483,9 +477,7 @@ class TestEcdhDeriveTemplateEnforcement:
 
             peer_point = b""
             try:
-                peer_attrs = read_attributes(
-                    rs.raw, rs.sh, pub_peer.value, [CKA_EC_POINT]
-                )
+                peer_attrs = read_attributes(rs.raw, rs.sh, pub_peer.value, [CKA_EC_POINT])
                 peer_point = peer_attrs.get(CKA_EC_POINT, b"")
             except (AssertionError, KeyError):
                 pass
@@ -497,9 +489,7 @@ class TestEcdhDeriveTemplateEnforcement:
                     summary="Could not read CKA_EC_POINT from peer public key",
                 )
 
-            derive_mech = mech_ecdh(
-                CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=peer_point
-            )
+            derive_mech = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=peer_point)
             matching_tmpl = template(
                 attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
                 attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
@@ -582,9 +572,7 @@ class TestHkdfDeriveTemplateEnforcement:
     ``CKM_HKDF_DERIVE``.
     """
 
-    def test_hkdf_derive_template_enforces_created_object_label(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_hkdf_derive_template_enforces_created_object_label(self, p11_raw_session: Any) -> None:
         """CKA_DERIVE_TEMPLATE on a generic-secret base blocks HKDF derive to a violating label."""
         rs = p11_raw_session
         if not rs.has_mechanism("HKDF_DERIVE"):
@@ -620,13 +608,17 @@ class TestHkdfDeriveTemplateEnforcement:
                     pytest.skip(
                         f"CKA_DERIVE_TEMPLATE not supported at base-key import: {ckr_name(rv)}"
                     )
-                expect_rv(rv, CKR_OK, context="CKA_DERIVE_TEMPLATE HKDF base-key import")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKA_DERIVE_TEMPLATE keypair/object setup",
+                    actual=rv,
+                    summary=f"setup rejected with unexpected {ckr_name(rv)}",
+                )
 
             claimed = False
             try:
-                attrs = read_attributes(
-                    rs.raw, rs.sh, base_key.value, [CKA_DERIVE_TEMPLATE]
-                )
+                attrs = read_attributes(rs.raw, rs.sh, base_key.value, [CKA_DERIVE_TEMPLATE])
                 raw_template = attrs.get(CKA_DERIVE_TEMPLATE)
                 claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
                     CK_ATTRIBUTE

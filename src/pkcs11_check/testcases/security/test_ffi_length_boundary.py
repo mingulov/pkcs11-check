@@ -5483,7 +5483,9 @@ class TestUpdateOutputGuard:
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
         setup_key = gen_aes_key_or_xfail(
-            rs, 256, purpose="C_EncryptUpdate guard probe setup",
+            rs,
+            256,
+            purpose="C_EncryptUpdate guard probe setup",
         )
         destroy_returned_handles(rs, setup_key)
 
@@ -5551,10 +5553,14 @@ cleanup()
 """
         )
         rc, stdout, stderr = run_with_coverage(
-            script, timeout=10, pin=pin_from_config(p11_config),
+            script,
+            timeout=10,
+            pin=pin_from_config(p11_config),
         )
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context="C_EncryptUpdate one-byte output buffer guard",
         )
         self._classify_update_guard(stdout, "C_EncryptUpdate", "Encrypt")
@@ -5569,7 +5575,9 @@ cleanup()
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
         setup_key = gen_aes_key_or_xfail(
-            rs, 256, purpose="C_DecryptUpdate guard probe setup",
+            rs,
+            256,
+            purpose="C_DecryptUpdate guard probe setup",
         )
         destroy_returned_handles(rs, setup_key)
 
@@ -5649,10 +5657,14 @@ cleanup()
 """
         )
         rc, stdout, stderr = run_with_coverage(
-            script, timeout=10, pin=pin_from_config(p11_config),
+            script,
+            timeout=10,
+            pin=pin_from_config(p11_config),
         )
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context="C_DecryptUpdate one-byte output buffer guard",
         )
         self._classify_update_guard(stdout, "C_DecryptUpdate", "Decrypt")
@@ -5709,7 +5721,9 @@ class TestContinueAfterNullOutputQuery:
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
         setup_key = gen_aes_key_or_xfail(
-            rs, 256, purpose="C_EncryptUpdate continuation probe setup",
+            rs,
+            256,
+            purpose="C_EncryptUpdate continuation probe setup",
         )
         destroy_returned_handles(rs, setup_key)
 
@@ -5754,14 +5768,20 @@ cleanup()
 """
         )
         rc, stdout, stderr = run_with_coverage(
-            script, timeout=10, pin=pin_from_config(p11_config),
+            script,
+            timeout=10,
+            pin=pin_from_config(p11_config),
         )
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context="C_EncryptUpdate continuation after NULL-output size query",
         )
         self._classify_continuation(
-            stdout, "C_EncryptUpdate", has_update_step=False,
+            stdout,
+            "C_EncryptUpdate",
+            has_update_step=False,
         )
 
     def test_decrypt_update_continuation_after_size_query(
@@ -5774,7 +5794,9 @@ cleanup()
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
         setup_key = gen_aes_key_or_xfail(
-            rs, 256, purpose="C_DecryptUpdate continuation probe setup",
+            rs,
+            256,
+            purpose="C_DecryptUpdate continuation probe setup",
         )
         destroy_returned_handles(rs, setup_key)
 
@@ -5831,14 +5853,20 @@ cleanup()
 """
         )
         rc, stdout, stderr = run_with_coverage(
-            script, timeout=10, pin=pin_from_config(p11_config),
+            script,
+            timeout=10,
+            pin=pin_from_config(p11_config),
         )
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context="C_DecryptUpdate continuation after NULL-output size query",
         )
         self._classify_continuation(
-            stdout, "C_DecryptUpdate", has_update_step=False,
+            stdout,
+            "C_DecryptUpdate",
+            has_update_step=False,
         )
 
     def test_encrypt_final_continuation_after_size_query(
@@ -5851,7 +5879,9 @@ cleanup()
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
         setup_key = gen_aes_key_or_xfail(
-            rs, 256, purpose="C_EncryptFinal continuation probe setup",
+            rs,
+            256,
+            purpose="C_EncryptFinal continuation probe setup",
         )
         destroy_returned_handles(rs, setup_key)
 
@@ -5901,14 +5931,20 @@ cleanup()
 """
         )
         rc, stdout, stderr = run_with_coverage(
-            script, timeout=10, pin=pin_from_config(p11_config),
+            script,
+            timeout=10,
+            pin=pin_from_config(p11_config),
         )
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context="C_EncryptFinal continuation after NULL-output size query",
         )
         self._classify_continuation(
-            stdout, "C_EncryptFinal", has_update_step=True,
+            stdout,
+            "C_EncryptFinal",
+            has_update_step=True,
         )
 
     def test_decrypt_final_continuation_after_size_query(
@@ -5921,7 +5957,9 @@ cleanup()
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
         setup_key = gen_aes_key_or_xfail(
-            rs, 256, purpose="C_DecryptFinal continuation probe setup",
+            rs,
+            256,
+            purpose="C_DecryptFinal continuation probe setup",
         )
         destroy_returned_handles(rs, setup_key)
 
@@ -5983,19 +6021,28 @@ cleanup()
 """
         )
         rc, stdout, stderr = run_with_coverage(
-            script, timeout=10, pin=pin_from_config(p11_config),
+            script,
+            timeout=10,
+            pin=pin_from_config(p11_config),
         )
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context="C_DecryptFinal continuation after NULL-output size query",
         )
         self._classify_continuation(
-            stdout, "C_DecryptFinal", has_update_step=True,
+            stdout,
+            "C_DecryptFinal",
+            has_update_step=True,
         )
 
     @staticmethod
     def _classify_continuation(
-        stdout: str, op: str, *, has_update_step: bool,
+        stdout: str,
+        op: str,
+        *,
+        has_update_step: bool,
     ) -> None:
         """Shared parent-side classification for continuation probes."""
         if "SETUP_XFAIL:" in stdout:

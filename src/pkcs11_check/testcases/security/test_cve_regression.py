@@ -79,12 +79,15 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
     CKR_KEY_NOT_WRAPPABLE,
+    CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_WRAPPED_KEY_LEN_RANGE,
 )
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
@@ -225,16 +228,22 @@ class TestCKATrusted:
                     CKA_TRUSTED: True,
                 },
             )
-            # If accepted, verify the object was created
             assert obj != 0
             destroy_quietly(rs.raw, rs.sh, obj)
-        except AssertionError as e:
-            # expect_rv raises AssertionError on CKR error -- check if template error
-            err_str = str(e)
-            if any(ckr_name(rv) in err_str for rv in _TEMPLATE_REJECT_RVS):
-                pass  # Some modules reject CKA_TRUSTED - that's fine
-            else:
-                raise
+        except AssertionError as exc:
+            reject_or_classify(
+                exc,
+                _TEMPLATE_REJECT_RVS,
+                kind="policy",
+                label="C_CreateObject CKA_TRUSTED=True data object on a user session",
+            )
+            return
+        reject_or_classify(
+            None,
+            _TEMPLATE_REJECT_RVS,
+            kind="policy",
+            label="C_CreateObject CKA_TRUSTED=True data object on a user session",
+        )
 
 
 class TestCKADeriveOnEC:
@@ -702,15 +711,32 @@ class TestBoundaryLengthCrypto:
             # Empty data - some modules reject
             try:
                 encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS, b"")
-            except AssertionError:
-                pass  # Any CKR error is acceptable for empty data
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    (CKR_DATA_LEN_RANGE, CKR_ARGUMENTS_BAD, CKR_DATA_INVALID),
+                    "RSA-PKCS encrypt of empty data rejected",
+                )
 
             # Max data for RSA-2048 PKCS#1 v1.5: 245 bytes (256 - 11)
             try:
                 ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS, b"\x42" * 245)
-                assert len(ct) == 256
-            except AssertionError:
-                pass  # Some modules are stricter
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    (CKR_DATA_LEN_RANGE, CKR_ARGUMENTS_BAD),
+                    "RSA-2048 PKCS#1 encrypt of max-length (245B) data rejected",
+                )
+            else:
+                if len(ct) != 256:
+                    fail_as(
+                        "wrong_result",
+                        kind="crypto",
+                        label="RSA-2048 PKCS#1 encrypt output length",
+                        actual=len(ct),
+                        expected=256,
+                        summary="RSA-2048 ciphertext is not 256 bytes",
+                    )
 
             # Over max - must reject. RSA-2048 PKCS#1 v1.5 max plaintext is 245
             # bytes (256 - 11); 246 bytes is over-max and acceptance is a
@@ -826,9 +852,20 @@ class TestSoftHSM2Issue596:
                     des3_key,
                     CKM_AES_KEY_WRAP,
                 )
-                assert len(wrapped) > 0  # Wrap succeeded
-            except AssertionError:
-                pass  # Acceptable: 3DES key size may not align with AES-KW
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    (CKR_KEY_SIZE_RANGE, CKR_WRAPPED_KEY_LEN_RANGE, CKR_KEY_HANDLE_INVALID),
+                    "3DES key wrap under AES-KEY-WRAP rejected",
+                )
+            else:
+                if len(wrapped) == 0:
+                    fail_as(
+                        "wrong_result",
+                        kind="crypto",
+                        label="AES-KEY-WRAP of 3DES key",
+                        summary="wrap returned empty ciphertext",
+                    )
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
             destroy_quietly(rs.raw, rs.sh, des3_key)

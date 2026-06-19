@@ -206,9 +206,7 @@ def test_aes_cmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
         if result == "valid":
             _xfail_if_aes_runtime_reject(exc, f"AES-CMAC {vec_id}")
         # invalid vector: gate on operability (vacuous-reject fix).
-        xfail_vacuous_reject(
-            cmac_operability(rs), label=f"AES-CMAC {vec_id} invalid reject"
-        )
+        xfail_vacuous_reject(cmac_operability(rs), label=f"AES-CMAC {vec_id} invalid reject")
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
@@ -327,9 +325,7 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
                 vector_id=vec.get("_vector_id"),
             )
         # invalid vector: gate on operability (vacuous-reject fix).
-        xfail_vacuous_reject(
-            kw_unwrap_operability(rs), label=f"AES-KW {vec_id} invalid reject"
-        )
+        xfail_vacuous_reject(kw_unwrap_operability(rs), label=f"AES-KW {vec_id} invalid reject")
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, wrap_key_h)
@@ -436,9 +432,7 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
         if result == "valid":
             _xfail_if_aes_runtime_reject(exc, f"AES-KWP {vec_id}")
         # invalid vector: gate on operability (vacuous-reject fix).
-        xfail_vacuous_reject(
-            kwp_encrypt_operability(rs), label=f"AES-KWP {vec_id} invalid reject"
-        )
+        xfail_vacuous_reject(kwp_encrypt_operability(rs), label=f"AES-KWP {vec_id} invalid reject")
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, wrap_key_h)
@@ -646,9 +640,7 @@ def test_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
             )
         # invalid vector: gate on operability (vacuous-reject fix).
         if isinstance(exc, AssertionError):
-            xfail_vacuous_reject(
-                gmac_operability(rs), label=f"AES-GMAC {vec_id} invalid reject"
-            )
+            xfail_vacuous_reject(gmac_operability(rs), label=f"AES-GMAC {vec_id} invalid reject")
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)

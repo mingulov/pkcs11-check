@@ -31,7 +31,6 @@ from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
     find_objects,
-    gen_aes_key,
     gen_ec_keypair,
     read_attributes,
     unwrap_key,
@@ -71,10 +70,13 @@ from pkcs11_check.raw.types_std import (
     CKU_USER,
 )
 from pkcs11_check.testcases.conftest import (
+    KEYPAIR_RUNTIME_REJECT_RVS,
     classify_policy_enforcement,
+    gen_aes_key_or_xfail,
     get_pin_bytes,
     is_known_error,
     reject_or_classify,
+    xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.security
@@ -170,9 +172,8 @@ class TestPublicSessionPrivateCreation:
         label = f"pub-unwrap-priv-{id(self)}"
 
         # Setup on the logged-in fixture session: public KEK + extractable target.
-        kek = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        kek = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={
                 CKA_TOKEN: True,
@@ -182,10 +183,10 @@ class TestPublicSessionPrivateCreation:
                 CKA_LABEL: label,
                 CKA_EXTRACTABLE: True,
             },
+            purpose="public-session unwrap KEK setup",
         )
-        target = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        target = gen_aes_key_or_xfail(
+            rs,
             128,
             attrs={
                 CKA_TOKEN: True,
@@ -193,6 +194,7 @@ class TestPublicSessionPrivateCreation:
                 CKA_EXTRACTABLE: True,
                 CKA_LABEL: label,
             },
+            purpose="public-session unwrap target setup",
         )
         wrapped = wrap_key(rs.raw, rs.sh, kek, target, CKM_AES_KEY_WRAP)
 
@@ -272,7 +274,11 @@ class TestPublicSessionPrivateCreation:
                 },
             )
         except AssertionError as exc:
-            pytest.skip(f"Module cannot stage a non-private EC keypair for ECDH setup: {exc}")
+            xfail_if_known_ckr(
+                exc,
+                KEYPAIR_RUNTIME_REJECT_RVS,
+                "EC keypair staging for public-session ECDH setup is not operational",
+            )
         peer_point = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT]).get(CKA_EC_POINT)
         if peer_point is None:
             pytest.skip("Module did not return CKA_EC_POINT for the staged EC public key")
@@ -335,9 +341,8 @@ class TestPublicSessionPrivateCreation:
         label = f"pub-derive-hkdf-{id(self)}"
 
         # Setup on the logged-in fixture session: derive-capable public secret key.
-        gen_aes_key(
-            rs.raw,
-            rs.sh,
+        gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={
                 CKA_TOKEN: True,
@@ -346,6 +351,7 @@ class TestPublicSessionPrivateCreation:
                 CKA_LABEL: label,
                 CKA_EXTRACTABLE: True,
             },
+            purpose="public-session HKDF base setup",
         )
         # Re-fetch the handle so cleanup in finally matches what we use.
         setup_tmpl = template_from_dict({CKA_LABEL: label, CKA_KEY_TYPE: CKK_AES})

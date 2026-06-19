@@ -15,7 +15,7 @@ import pytest
 
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_simple
-from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair
+from pkcs11_check.raw.recipes import destroy_quietly
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
@@ -27,7 +27,11 @@ from pkcs11_check.raw.types_std import (
     CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
 )
-from pkcs11_check.testcases.conftest import classify_lifecycle_effect, gen_aes_key_or_xfail
+from pkcs11_check.testcases.conftest import (
+    classify_lifecycle_effect,
+    gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
+)
 
 pytestmark = pytest.mark.access
 
@@ -75,7 +79,7 @@ class TestErrorPriority:
         KEY_TYPE_INCONSISTENT should be returned at Init before data is checked.
         """
         rs = p11_raw_session
-        pub, _priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, _priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub)

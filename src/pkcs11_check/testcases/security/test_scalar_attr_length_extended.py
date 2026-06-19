@@ -137,10 +137,7 @@ class TestOperationPermissionBoolOverlong:
         classify_negative_rv(
             rv,
             TEMPLATE_ERRORS,
-            label=(
-                f"C_CreateObject with CK_ULONG-sized {ckr_name(attr_type)} "
-                f"boolean attribute"
-            ),
+            label=(f"C_CreateObject with CK_ULONG-sized {ckr_name(attr_type)} boolean attribute"),
         )
 
 
@@ -189,10 +186,7 @@ class TestSensitivityBoolOverlong:
         classify_negative_rv(
             rv,
             TEMPLATE_ERRORS,
-            label=(
-                f"C_CreateObject with CK_ULONG-sized {ckr_name(attr_type)} "
-                f"boolean attribute"
-            ),
+            label=(f"C_CreateObject with CK_ULONG-sized {ckr_name(attr_type)} boolean attribute"),
         )
 
 
@@ -253,10 +247,7 @@ class TestRsaModulusBitsInKeygen:
         classify_negative_rv(
             rv,
             TEMPLATE_ERRORS,
-            label=(
-                f"C_GenerateKeyPair(RSA) with {case_name} CKA_MODULUS_BITS "
-                f"CK_ULONG attribute"
-            ),
+            label=(f"C_GenerateKeyPair(RSA) with {case_name} CKA_MODULUS_BITS CK_ULONG attribute"),
         )
 
 
@@ -302,10 +293,7 @@ class TestRsaPublicKeyAttrOverlong:
         classify_negative_rv(
             rv,
             TEMPLATE_ERRORS,
-            label=(
-                f"C_CreateObject with wildly oversized CKA_{attr_name.upper()} "
-                f"bytes attribute"
-            ),
+            label=(f"C_CreateObject with wildly oversized CKA_{attr_name.upper()} bytes attribute"),
         )
 
 
@@ -365,10 +353,7 @@ class TestDeriveKeyAttrLengthMismatch:
             classify_negative_rv(
                 rv,
                 TEMPLATE_ERRORS,
-                label=(
-                    f"C_DeriveKey(HKDF) with {case_name} CKA_VALUE_LEN "
-                    f"CK_ULONG attribute"
-                ),
+                label=(f"C_DeriveKey(HKDF) with {case_name} CKA_VALUE_LEN CK_ULONG attribute"),
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)

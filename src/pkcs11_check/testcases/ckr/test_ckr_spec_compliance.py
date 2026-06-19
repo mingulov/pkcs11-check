@@ -28,7 +28,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     encrypt_single,
-    gen_rsa_keypair,
     read_attributes,
     sign_single,
 )
@@ -66,6 +65,7 @@ from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     classify_policy_enforcement,
     gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
 )
 
 pytestmark = pytest.mark.access
@@ -320,7 +320,7 @@ class TestCKRVerifyCompliance:
     def test_bad_signature_returns_signature_invalid(self, p11_raw_session: Any) -> None:
         """Tampered signature -> CKR_SIGNATURE_INVALID (spec)."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             data = b"spec compliance test"
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)

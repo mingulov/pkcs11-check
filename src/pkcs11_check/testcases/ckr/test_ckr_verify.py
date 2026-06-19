@@ -14,7 +14,6 @@ from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    gen_rsa_keypair,
     sign_single,
 )
 from pkcs11_check.raw.rv import ckr_name
@@ -28,6 +27,7 @@ from pkcs11_check.testcases.ckr._ckr_spec import CKR_VERIFY, assert_ckr
 from pkcs11_check.testcases.conftest import (
     classify_lifecycle_effect,
     gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
     skip_unless_mechanism_flag,
 )
 
@@ -40,7 +40,7 @@ class TestVerifyInitErrors:
     def test_mechanism_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Using encrypt mechanism for verify -> CKR_MECHANISM_INVALID."""
         rs = p11_raw_session
-        pub, _priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, _priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub)
@@ -76,7 +76,7 @@ class TestVerifyInitErrors:
     def test_key_handle_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Verify with destroyed key handle -> CKR_KEY_HANDLE_INVALID."""
         rs = p11_raw_session
-        pub, _priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, _priv = gen_rsa_keypair_or_xfail(rs, 2048)
         destroy_quietly(rs.raw, rs.sh, _priv)
         destroy_rv = rs.raw.C_DestroyObject(rs.sh, pub)
         mech = mech_simple(CKM_SHA256_RSA_PKCS)
@@ -100,7 +100,7 @@ class TestVerifyErrors:
         """Tampered RSA signature -> CKR_SIGNATURE_INVALID."""
         rs = p11_raw_session
         skip_unless_mechanism_flag(rs, CKM_SHA256_RSA_PKCS, int(CKF_VERIFY))
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             data = b"CKR compliance test data"
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
@@ -145,7 +145,7 @@ class TestVerifyErrors:
         """RSA signature with wrong length -> CKR_SIGNATURE_LEN_RANGE."""
         rs = p11_raw_session
         skip_unless_mechanism_flag(rs, CKM_SHA256_RSA_PKCS, int(CKF_VERIFY))
-        pub, _priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, _priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             exp = CKR_VERIFY["signature_len_range"]
             data = b"CKR compliance test data"
