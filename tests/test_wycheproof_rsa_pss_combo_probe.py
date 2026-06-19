@@ -33,16 +33,41 @@ def _fresh_cache() -> None:
     reset_operability_cache()
 
 
+def _wire_probe(
+    monkeypatch: Any,
+    *,
+    keygen: Any,
+    sign: Any = lambda *_a, **_kw: b"sig",
+    verify: Any = lambda *_a, **_kw: True,
+) -> None:
+    """Monkey-patch the PSS combo probe's internal recipe calls.
+
+    After the Wave 0b extraction the probe lives in ``_rsa_pss_operability``;
+    its internal ``gen_rsa_keypair`` / ``sign_single`` / ``verify_single``
+    references resolve there, not on the wycheproof consumer module.
+    """
+    from pkcs11_check.testcases import _rsa_pss_operability as probe_mod
+
+    monkeypatch.setattr(probe_mod, "gen_rsa_keypair", keygen)
+    monkeypatch.setattr(probe_mod, "sign_single", sign)
+    monkeypatch.setattr(probe_mod, "verify_single", verify)
+    monkeypatch.setattr(probe_mod, "mech_pss", lambda *_a, **_kw: object())
+    monkeypatch.setattr(probe_mod, "destroy_quietly", lambda *_a, **_kw: None)
+
+
 def test_rsa_pss_valid_rejected_xfails_when_combo_not_operational(monkeypatch: Any) -> None:
     """End-to-end: valid-vector rejected + roundtrip-fails => xfail, not fail."""
     rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _n: True)
     monkeypatch.setattr(twrp, "import_rsa_public_key_negotiated", lambda *_a, **_kw: 99)
     # The wycheproof verify of the test vector -> False (provider rejects).
-    # The probe verify -> False (provider can't verify its own sig either).
     monkeypatch.setattr(twrp, "verify_single", lambda *_a, **_kw: False)
-    monkeypatch.setattr(twrp, "gen_rsa_keypair", lambda *_a, **_kw: (10, 11))
-    monkeypatch.setattr(twrp, "sign_single", lambda *_a, **_kw: b"sig")
-    monkeypatch.setattr(twrp, "destroy_quietly", lambda *_a, **_kw: None)
+    # The probe verify -> False (provider can't verify its own sig either).
+    _wire_probe(
+        monkeypatch,
+        keygen=lambda *_a, **_kw: (10, 11),
+        sign=lambda *_a, **_kw: b"sig",
+        verify=lambda *_a, **_kw: False,
+    )
     monkeypatch.setattr(twrp, "generate_random", lambda *_a, **_kw: b"\x00" * 64)
 
     vec = {
@@ -64,11 +89,13 @@ def test_rsa_pss_valid_rejected_fails_when_combo_operational(monkeypatch: Any) -
     rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _n: True)
     monkeypatch.setattr(twrp, "import_rsa_public_key_negotiated", lambda *_a, **_kw: 99)
     # Drive vector-verify = False but probe-verify = True (operational).
-    verify_results = iter([False, True])
-    monkeypatch.setattr(twrp, "verify_single", lambda *_a, **_kw: next(verify_results))
-    monkeypatch.setattr(twrp, "gen_rsa_keypair", lambda *_a, **_kw: (10, 11))
-    monkeypatch.setattr(twrp, "sign_single", lambda *_a, **_kw: b"sig")
-    monkeypatch.setattr(twrp, "destroy_quietly", lambda *_a, **_kw: None)
+    monkeypatch.setattr(twrp, "verify_single", lambda *_a, **_kw: False)
+    _wire_probe(
+        monkeypatch,
+        keygen=lambda *_a, **_kw: (10, 11),
+        sign=lambda *_a, **_kw: b"sig",
+        verify=lambda *_a, **_kw: True,
+    )
     monkeypatch.setattr(twrp, "generate_random", lambda *_a, **_kw: b"\x00" * 64)
 
     vec = {
@@ -111,15 +138,14 @@ def test_plain_assertion_from_probe_propagates_not_xfail(monkeypatch: Any) -> No
     # that happens to mention a CKR constant in its message).  The substring-
     # match fallback in xfail_if_known_ckr would fire on this, converting the
     # harness bug into an xfail — the test pins that this must NOT happen.
-    monkeypatch.setattr(
-        twrp,
-        "gen_rsa_keypair",
-        lambda *_a, **_kw: (_ for _ in ()).throw(
+    _wire_probe(
+        monkeypatch,
+        keygen=lambda *_a, **_kw: (_ for _ in ()).throw(
             AssertionError("harness internal: CKR_FUNCTION_FAILED not expected here")
         ),
+        sign=lambda *_a, **_kw: b"sig",
+        verify=lambda *_a, **_kw: True,
     )
-    monkeypatch.setattr(twrp, "sign_single", lambda *_a, **_kw: b"sig")
-    monkeypatch.setattr(twrp, "destroy_quietly", lambda *_a, **_kw: None)
     monkeypatch.setattr(twrp, "generate_random", lambda *_a, **_kw: b"\x00" * 64)
 
     vec = {

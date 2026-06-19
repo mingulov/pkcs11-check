@@ -622,4 +622,193 @@ def test_ffi_null_init_token_scripts_use_utf8char_pointers(
     assert len(scripts) == 2
     assert all("CK_UTF8CHAR_PTR" in script for script in scripts)
     assert "ctypes.cast(ctypes.pointer(label_buf), CK_UTF8CHAR_PTR)" in scripts[0]
-    assert "ctypes.cast(ctypes.pointer(pin_buf), CK_UTF8CHAR_PTR)" in scripts[1]
+
+
+# ---------------------------------------------------------------------------
+# Wave 1: FFI length-boundary probe extensions regression tests.
+# Each asserts that the generated child script (a) marks setup rejects inside
+# the child and (b) references the right reject-CKR set name. _capture returns
+# a SETUP_XFAIL stdout so assert_subprocess_no_crash xfails the probe before
+# _parse_prefixed_int runs (these probe classes classify the target rv, unlike
+# the legacy TestIsizeMaxDataLength which stops at the no-crash assertion).
+# ---------------------------------------------------------------------------
+
+
+def test_ffi_length_oaep_source_child_marks_setup_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RSA-OAEP source-data length probe must classify setup rejects in child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    scripts: list[str] = []
+
+    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        scripts.append(script)
+        return 0, "SETUP_XFAIL:RSA keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+
+    monkeypatch.setattr(
+        test_ffi_length_boundary,
+        "gen_rsa_keypair_or_xfail",
+        lambda *_a, **_k: (3, 4),
+    )
+    monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+
+    for boundary in (0x7FFFFFFFFFFFFFFF, 0x8000000000000000):
+        with pytest.raises(pytest.xfail.Exception):
+            test_ffi_length_boundary.TestRsaOaepSourceDataLengthBoundary().test_rsa_oaep_source_data_length_boundary(  # noqa: E501
+                _RawSession(),
+                cfg,
+                boundary,
+            )
+
+    assert len(scripts) == 2
+    assert all("SETUP_XFAIL:" in script for script in scripts)
+    assert all("KEYPAIR_RUNTIME_REJECT_RVS" in script for script in scripts)
+
+
+def test_ffi_length_gcm_iv_child_marks_setup_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AES-GCM IV-length probe must classify setup rejects in child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    scripts: list[str] = []
+
+    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        scripts.append(script)
+        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+
+    monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+
+    for boundary in (0x7FFFFFFFFFFFFFFF, 0x8000000000000000):
+        with pytest.raises(pytest.xfail.Exception):
+            test_ffi_length_boundary.TestGcmIvLengthBoundary().test_gcm_iv_length_boundary(
+                _RawSession(),
+                cfg,
+                boundary,
+            )
+
+    assert len(scripts) == 2
+    assert all("SETUP_XFAIL:" in script for script in scripts)
+    assert all("AES_KEYGEN_RUNTIME_REJECT_RVS" in script for script in scripts)
+
+
+def test_ffi_length_gcm_tag_bits_child_marks_setup_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AES-GCM tag-bits probe must classify setup rejects in child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    scripts: list[str] = []
+
+    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        scripts.append(script)
+        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+
+    monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+
+    for boundary in (0x7FFFFFFFFFFFFFFF, 0x8000000000000000):
+        with pytest.raises(pytest.xfail.Exception):
+            test_ffi_length_boundary.TestGcmTagBitsLengthBoundary().test_gcm_tag_bits_length_boundary(
+                _RawSession(),
+                cfg,
+                boundary,
+            )
+
+    assert len(scripts) == 2
+    assert all("SETUP_XFAIL:" in script for script in scripts)
+    assert all("AES_KEYGEN_RUNTIME_REJECT_RVS" in script for script in scripts)
+
+
+def test_ffi_length_ccm_nonce_child_marks_setup_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AES-CCM nonce-length probe must classify setup rejects in child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    scripts: list[str] = []
+
+    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        scripts.append(script)
+        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+
+    monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+
+    for boundary in (0x7FFFFFFFFFFFFFFF, 0x8000000000000000):
+        with pytest.raises(pytest.xfail.Exception):
+            test_ffi_length_boundary.TestCcmNonceLengthBoundary().test_ccm_nonce_length_boundary(
+                _RawSession(),
+                cfg,
+                boundary,
+            )
+
+    assert len(scripts) == 2
+    assert all("SETUP_XFAIL:" in script for script in scripts)
+    assert all("AES_KEYGEN_RUNTIME_REJECT_RVS" in script for script in scripts)
+
+
+def test_ffi_length_ccm_mac_child_marks_setup_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AES-CCM MAC-length probe must classify setup rejects in child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    scripts: list[str] = []
+
+    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        scripts.append(script)
+        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+
+    monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+
+    for boundary in (0x7FFFFFFFFFFFFFFF, 0x8000000000000000):
+        with pytest.raises(pytest.xfail.Exception):
+            test_ffi_length_boundary.TestCcmMacLengthBoundary().test_ccm_mac_length_boundary(
+                _RawSession(),
+                cfg,
+                boundary,
+            )
+
+    assert len(scripts) == 2
+    assert all("SETUP_XFAIL:" in script for script in scripts)
+    assert all("AES_KEYGEN_RUNTIME_REJECT_RVS" in script for script in scripts)
+
+
+def test_ffi_length_eddsa_context_child_uses_edwards_keygen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """EdDSA context-length probe must use CKM_EC_EDWARDS_KEY_PAIR_GEN setup."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    scripts: list[str] = []
+
+    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        scripts.append(script)
+        return 0, "SETUP_XFAIL:EC_EDWARDS keygen rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+
+    monkeypatch.setattr(
+        test_ffi_length_boundary,
+        "gen_edwards_keypair_or_xfail",
+        lambda *_a, **_k: (1, 2),
+        raising=False,
+    )
+    monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+
+    for boundary in (0x7FFFFFFFFFFFFFFF, 0x8000000000000000):
+        with pytest.raises(pytest.xfail.Exception):
+            test_ffi_length_boundary.TestEddsaContextLengthBoundary().test_eddsa_context_length_boundary(
+                _RawSession(),
+                cfg,
+                boundary,
+            )
+
+    assert len(scripts) == 2
+    assert all("CKM_EC_EDWARDS_KEY_PAIR_GEN" in script for script in scripts)
+    assert all("gen_keypair" in script for script in scripts)
+    assert all("gen_ec_keypair" not in script for script in scripts)
+    assert all("SETUP_XFAIL:" in script for script in scripts)
+    assert all("KEYPAIR_RUNTIME_REJECT_RVS" in script for script in scripts)

@@ -30,6 +30,28 @@ from pkcs11_check.testcases.acvp.aes import test_wrap as wrap
 from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa_pss as pss
 
 
+def _wire_pss_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    gen: Any,
+    sign: Any = lambda *_a, **_k: b"sig",
+    verify: Any = lambda *_a, **_k: True,
+) -> None:
+    """Monkey-patch the PSS combo probe's internal recipe calls.
+
+    After the Wave 0b extraction the probe lives in ``_rsa_pss_operability``;
+    its internal ``gen_rsa_keypair`` / ``sign_single`` / ``verify_single``
+    references resolve there, not on the wycheproof consumer module.
+    """
+    from pkcs11_check.testcases import _rsa_pss_operability as probe_mod
+
+    monkeypatch.setattr(probe_mod, "gen_rsa_keypair", gen)
+    monkeypatch.setattr(probe_mod, "sign_single", sign)
+    monkeypatch.setattr(probe_mod, "verify_single", verify)
+    monkeypatch.setattr(probe_mod, "mech_pss", lambda *_a, **_k: object())
+    monkeypatch.setattr(probe_mod, "destroy_quietly", lambda *_a, **_k: None)
+
+
 @pytest.fixture(autouse=True)
 def _fresh_cache() -> None:
     reset_operability_cache()
@@ -447,10 +469,11 @@ def test_pss_invalid_reject_on_dead_combo_xfails(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(pss, "import_rsa_public_key_negotiated", lambda *a, **k: 7)
     monkeypatch.setattr(pss, "verify_single", reject_vector_verify)
-    monkeypatch.setattr(pss, "gen_rsa_keypair", lambda *a, **k: (7, 8))
-    monkeypatch.setattr(pss, "sign_single", refuse_combo_sign)
     monkeypatch.setattr(pss, "destroy_quietly", lambda *a, **k: None)
     monkeypatch.setattr(pss, "mech_pss", lambda *a, **k: object())
+    _wire_pss_probe(
+        monkeypatch, gen=lambda *a, **k: (7, 8), sign=refuse_combo_sign,
+    )
     rs = SimpleNamespace(
         raw=object(), sh=1, has_mechanism=lambda name: True, has_mechanism_flag=lambda _m, _f: True
     )
@@ -481,9 +504,9 @@ def test_pss_invalid_reject_on_inconclusive_combo_passes(
 
     monkeypatch.setattr(pss, "import_rsa_public_key_negotiated", lambda *a, **k: 7)
     monkeypatch.setattr(pss, "verify_single", reject_vector_verify)
-    monkeypatch.setattr(pss, "gen_rsa_keypair", refuse_keygen)
     monkeypatch.setattr(pss, "destroy_quietly", lambda *a, **k: None)
     monkeypatch.setattr(pss, "mech_pss", lambda *a, **k: object())
+    _wire_pss_probe(monkeypatch, gen=refuse_keygen)
     rs = SimpleNamespace(
         raw=object(), sh=1, has_mechanism=lambda name: True, has_mechanism_flag=lambda _m, _f: True
     )
@@ -512,10 +535,9 @@ def test_pss_invalid_verify_false_on_dead_combo_xfails(monkeypatch: pytest.Monke
     # but only after sign_single, which refuses first.
     monkeypatch.setattr(pss, "import_rsa_public_key_negotiated", lambda *a, **k: 7)
     monkeypatch.setattr(pss, "verify_single", lambda *a, **k: False)
-    monkeypatch.setattr(pss, "gen_rsa_keypair", lambda *a, **k: (7, 8))
-    monkeypatch.setattr(pss, "sign_single", refuse_combo_sign)
     monkeypatch.setattr(pss, "destroy_quietly", lambda *a, **k: None)
     monkeypatch.setattr(pss, "mech_pss", lambda *a, **k: object())
+    _wire_pss_probe(monkeypatch, gen=lambda *a, **k: (7, 8), sign=refuse_combo_sign)
     rs = SimpleNamespace(
         raw=object(), sh=1, has_mechanism=lambda name: True, has_mechanism_flag=lambda _m, _f: True
     )
@@ -569,10 +591,9 @@ def test_pss_acceptable_reject_on_dead_combo_passes(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(pss, "import_rsa_public_key_negotiated", lambda *a, **k: 7)
     monkeypatch.setattr(pss, "verify_single", reject_vector_verify)
-    monkeypatch.setattr(pss, "gen_rsa_keypair", lambda *a, **k: (7, 8))
-    monkeypatch.setattr(pss, "sign_single", refuse_combo_sign)
     monkeypatch.setattr(pss, "destroy_quietly", lambda *a, **k: None)
     monkeypatch.setattr(pss, "mech_pss", lambda *a, **k: object())
+    _wire_pss_probe(monkeypatch, gen=lambda *a, **k: (7, 8), sign=refuse_combo_sign)
     rs = SimpleNamespace(
         raw=object(), sh=1, has_mechanism=lambda name: True, has_mechanism_flag=lambda _m, _f: True
     )

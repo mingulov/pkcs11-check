@@ -4801,3 +4801,655 @@ cleanup()
                 f"C_DeriveKey(SP800_108_COUNTER_KDF, additional-derived-key count={data_len:#x})"
             ),
         )
+
+
+# ---------------------------------------------------------------------------
+# Wave 1: nested mechanism-parameter length-boundary probes
+# (RSA-OAEP source-data, GCM IV / tag-bits, CCM nonce / MAC, EdDSA context)
+# Each probe pairs a tiny real buffer with an impossible (isize::MAX /
+# isize::MAX+1) *claimed* length. Crash/hang is a finding; CKR_OK accepts a
+# nonsensical length; clean reject is the only passing verdict.
+# ---------------------------------------------------------------------------
+
+
+class TestRsaOaepSourceDataLengthBoundary:
+    """RSA-OAEP ulSourceDataLen must not turn a tiny source buffer into a huge read.
+
+    CK_RSA_PKCS_OAEP_PARAMS.pSourceData/ulSourceDataLen are caller-controlled. A
+    module that reads ulSourceDataLen bytes from pSourceData without
+    bounds-checking over-reads when the claimed length is impossible. Drive
+    C_EncryptInit + C_Encrypt with a tiny real source buffer and isize::MAX /
+    isize::MAX+1 claimed lengths; crash/hang is a finding and CKR_OK accepts a
+    nonsensical length.
+    """
+
+    @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
+    def test_rsa_oaep_source_data_length_boundary(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        data_len: int,
+    ) -> None:
+        """C_EncryptInit/C_Encrypt(RSA_PKCS_OAEP) with tiny pSourceData + huge ulSourceDataLen."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
+        if not rs.has_mechanism("RSA_PKCS_OAEP"):
+            pytest.skip("CKM_RSA_PKCS_OAEP not supported")
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
+            2048,
+            public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+            private_attrs={CKA_TOKEN: False},
+        )
+        destroy_returned_handles(rs, pub, priv)
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + f"""
+import ctypes
+from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM,
+    CK_RSA_PKCS_OAEP_PARAMS,
+    CK_ULONG,
+    CKA_ENCRYPT,
+    CKA_TOKEN,
+    CKG_MGF1_SHA256,
+    CKM_SHA256,
+    CKM_RSA_PKCS_OAEP,
+    CKR_OK,
+    CKZ_DATA_SPECIFIED,
+)
+
+pub = priv = 0
+try:
+    pub, priv = gen_rsa_keypair(
+        raw,
+        sh,
+        2048,
+        public_attrs={{CKA_ENCRYPT: True, CKA_TOKEN: False}},
+        private_attrs={{CKA_TOKEN: False}},
+    )
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "RSA keypair generation rejected",
+    )
+
+try:
+    src = (ctypes.c_ubyte * 16)(*range(16))
+    params = CK_RSA_PKCS_OAEP_PARAMS()
+    params.hashAlg = CKM_SHA256
+    params.mgf = CKG_MGF1_SHA256
+    params.source = CKZ_DATA_SPECIFIED
+    params.pSourceData = ctypes.cast(src, ctypes.c_void_p)
+    params.ulSourceDataLen = {data_len}
+
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_RSA_PKCS_OAEP
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), pub)
+    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
+    if rv == CKR_OK:
+        pt = (ctypes.c_ubyte * 16)(*range(16))
+        out_len = CK_ULONG(512)
+        out = (ctypes.c_ubyte * 512)()
+        print("TARGET_CALL:C_Encrypt(RSA_PKCS_OAEP,ulSourceDataLen={data_len:#x})", flush=True)
+        rv = raw.C_Encrypt(sh, pt, 16, out, ctypes.byref(out_len))
+    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
+    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
+finally:
+    destroy_quietly(raw, sh, pub)
+    destroy_quietly(raw, sh, priv)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Encrypt(RSA_PKCS_OAEP, ulSourceDataLen={data_len:#x})",
+        )
+        if "SETUP_XFAIL:" in stdout:
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Encrypt(RSA_PKCS_OAEP, ulSourceDataLen={data_len:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestGcmIvLengthBoundary
+# ---------------------------------------------------------------------------
+
+
+class TestGcmIvLengthBoundary:
+    """AES-GCM ulIvLen must not turn a tiny IV buffer into a huge read.
+
+    CK_AES_GCM_PARAMS.pIv/ulIvLen are caller-controlled. A module that reads
+    ulIvLen bytes from pIv without bounds-checking over-reads when the claimed
+    length is impossible. Drive C_EncryptInit + C_Encrypt with a tiny real IV
+    buffer and isize::MAX / isize::MAX+1 claimed lengths; crash/hang is a
+    finding and CKR_OK accepts a nonsensical length.
+    """
+
+    @pytest.mark.parametrize("iv_len", _ISIZE_BOUNDARY_LENGTHS)
+    def test_gcm_iv_length_boundary(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        iv_len: int,
+    ) -> None:
+        """C_EncryptInit/C_Encrypt(AES_GCM) with tiny pIv + huge ulIvLen."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("CKM_AES_GCM not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-GCM IV-length crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + f"""
+import ctypes
+from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_AES_GCM_PARAMS,
+    CK_MECHANISM,
+    CK_ULONG,
+    CKM_AES_GCM,
+    CKR_OK,
+)
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+try:
+    iv = (ctypes.c_ubyte * 12)(*range(12))
+    params = CK_AES_GCM_PARAMS()
+    params.pIv = ctypes.cast(iv, ctypes.c_void_p)
+    params.ulIvLen = {iv_len}
+    params.ulIvBits = 96
+    params.pAAD = None
+    params.ulAADLen = 0
+    params.ulTagBits = 128
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_GCM
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
+    if rv == CKR_OK:
+        pt = (ctypes.c_ubyte * 16)(*range(16))
+        out_len = CK_ULONG(64)
+        out = (ctypes.c_ubyte * 64)()
+        print("TARGET_CALL:C_Encrypt(AES_GCM,ulIvLen={iv_len:#x})", flush=True)
+        rv = raw.C_Encrypt(sh, pt, 16, out, ctypes.byref(out_len))
+    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
+    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Encrypt(AES_GCM, ulIvLen={iv_len:#x})",
+        )
+        if "SETUP_XFAIL:" in stdout:
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Encrypt(AES_GCM, ulIvLen={iv_len:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestGcmTagBitsLengthBoundary
+# ---------------------------------------------------------------------------
+
+
+class TestGcmTagBitsLengthBoundary:
+    """AES-GCM ulTagBits must reject impossible values safely.
+
+    CK_AES_GCM_PARAMS.ulTagBits is a caller-controlled CK_ULONG. Valid tag
+    lengths are {128, 120, 112, 104, 96, 64, 32} per SP800-38D; isize::MAX /
+    isize::MAX+1 is impossible. A module that uses the value without
+    bounds-checking can over-allocate or write a nonsensical tag. Drive
+    C_EncryptInit + C_Encrypt with isize::MAX / isize::MAX+1 ulTagBits; crash is
+    a finding and CKR_OK accepts a nonsensical length.
+    """
+
+    @pytest.mark.parametrize("tag_bits", _ISIZE_BOUNDARY_LENGTHS)
+    def test_gcm_tag_bits_length_boundary(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        tag_bits: int,
+    ) -> None:
+        """C_EncryptInit/C_Encrypt(AES_GCM) with impossible ulTagBits."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("CKM_AES_GCM not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-GCM tag-bits crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + f"""
+import ctypes
+from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_AES_GCM_PARAMS,
+    CK_MECHANISM,
+    CK_ULONG,
+    CKM_AES_GCM,
+    CKR_OK,
+)
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+try:
+    iv = (ctypes.c_ubyte * 12)(*range(12))
+    params = CK_AES_GCM_PARAMS()
+    params.pIv = ctypes.cast(iv, ctypes.c_void_p)
+    params.ulIvLen = 12
+    params.ulIvBits = 96
+    params.pAAD = None
+    params.ulAADLen = 0
+    params.ulTagBits = {tag_bits}
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_GCM
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
+    if rv == CKR_OK:
+        pt = (ctypes.c_ubyte * 16)(*range(16))
+        out_len = CK_ULONG(64)
+        out = (ctypes.c_ubyte * 64)()
+        print("TARGET_CALL:C_Encrypt(AES_GCM,ulTagBits={tag_bits:#x})", flush=True)
+        rv = raw.C_Encrypt(sh, pt, 16, out, ctypes.byref(out_len))
+    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
+    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Encrypt(AES_GCM, ulTagBits={tag_bits:#x})",
+        )
+        if "SETUP_XFAIL:" in stdout:
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Encrypt(AES_GCM, ulTagBits={tag_bits:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestCcmNonceLengthBoundary
+# ---------------------------------------------------------------------------
+
+
+class TestCcmNonceLengthBoundary:
+    """AES-CCM ulNonceLen must reject impossible values safely.
+
+    CK_AES_CCM_PARAMS.ulNonceLen is a caller-controlled CK_ULONG. NIST SP800-38C
+    restricts nonce size to the range [7, 13]; isize::MAX / isize::MAX+1 is
+    impossible. A module that uses the value without bounds-checking can
+    over-read or over-allocate. Drive C_EncryptInit + C_Encrypt with isize::MAX
+    / isize::MAX+1 ulNonceLen and a tiny real pNonce (13 bytes); crash is a
+    finding and CKR_OK accepts a nonsensical length.
+    """
+
+    @pytest.mark.parametrize("nonce_len", _ISIZE_BOUNDARY_LENGTHS)
+    def test_ccm_nonce_length_boundary(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        nonce_len: int,
+    ) -> None:
+        """C_EncryptInit/C_Encrypt(AES_CCM) with tiny pNonce + huge ulNonceLen."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CCM"):
+            pytest.skip("CKM_AES_CCM not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-CCM nonce-length crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + f"""
+import ctypes
+from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_AES_CCM_PARAMS,
+    CK_MECHANISM,
+    CK_ULONG,
+    CKM_AES_CCM,
+    CKR_OK,
+)
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+try:
+    nonce = (ctypes.c_ubyte * 13)(*range(13))
+    params = CK_AES_CCM_PARAMS()
+    params.ulDataLen = 16
+    params.pNonce = ctypes.cast(nonce, ctypes.c_void_p)
+    params.ulNonceLen = {nonce_len}
+    params.pAAD = None
+    params.ulAADLen = 0
+    params.ulMACLen = 16
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_CCM
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
+    if rv == CKR_OK:
+        pt = (ctypes.c_ubyte * 16)(*range(16))
+        out_len = CK_ULONG(64)
+        out = (ctypes.c_ubyte * 64)()
+        print("TARGET_CALL:C_Encrypt(AES_CCM,ulNonceLen={nonce_len:#x})", flush=True)
+        rv = raw.C_Encrypt(sh, pt, 16, out, ctypes.byref(out_len))
+    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
+    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Encrypt(AES_CCM, ulNonceLen={nonce_len:#x})",
+        )
+        if "SETUP_XFAIL:" in stdout:
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Encrypt(AES_CCM, ulNonceLen={nonce_len:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestCcmMacLengthBoundary
+# ---------------------------------------------------------------------------
+
+
+class TestCcmMacLengthBoundary:
+    """AES-CCM ulMACLen must reject impossible values safely.
+
+    CK_AES_CCM_PARAMS.ulMACLen is a caller-controlled CK_ULONG. NIST SP800-38C
+    restricts the MAC length to the set {4, 6, 8, 10, 12, 14, 16}; isize::MAX /
+    isize::MAX+1 is impossible. A module that uses the value without
+    bounds-checking can over-allocate or write a nonsensical tag. Drive
+    C_EncryptInit + C_Encrypt with isize::MAX / isize::MAX+1 ulMACLen; crash is
+    a finding and CKR_OK accepts a nonsensical length.
+    """
+
+    @pytest.mark.parametrize("mac_len", _ISIZE_BOUNDARY_LENGTHS)
+    def test_ccm_mac_length_boundary(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        mac_len: int,
+    ) -> None:
+        """C_EncryptInit/C_Encrypt(AES_CCM) with impossible ulMACLen."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CCM"):
+            pytest.skip("CKM_AES_CCM not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-CCM MAC-length crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + f"""
+import ctypes
+from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_AES_CCM_PARAMS,
+    CK_MECHANISM,
+    CK_ULONG,
+    CKM_AES_CCM,
+    CKR_OK,
+)
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+try:
+    nonce = (ctypes.c_ubyte * 13)(*range(13))
+    params = CK_AES_CCM_PARAMS()
+    params.ulDataLen = 16
+    params.pNonce = ctypes.cast(nonce, ctypes.c_void_p)
+    params.ulNonceLen = 13
+    params.pAAD = None
+    params.ulAADLen = 0
+    params.ulMACLen = {mac_len}
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_CCM
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
+    if rv == CKR_OK:
+        pt = (ctypes.c_ubyte * 16)(*range(16))
+        out_len = CK_ULONG(64)
+        out = (ctypes.c_ubyte * 64)()
+        print("TARGET_CALL:C_Encrypt(AES_CCM,ulMACLen={mac_len:#x})", flush=True)
+        rv = raw.C_Encrypt(sh, pt, 16, out, ctypes.byref(out_len))
+    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
+    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Encrypt(AES_CCM, ulMACLen={mac_len:#x})",
+        )
+        if "SETUP_XFAIL:" in stdout:
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _MESSAGE_LENGTH_REJECT_RVS,
+            label=f"C_Encrypt(AES_CCM, ulMACLen={mac_len:#x})",
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestEddsaContextLengthBoundary
+# ---------------------------------------------------------------------------
+
+
+class TestEddsaContextLengthBoundary:
+    """EdDSA ulContextDataLen must not turn a tiny context buffer into a huge read.
+
+    CK_EDDSA_PARAMS.pContextData/ulContextDataLen are caller-controlled. A module
+    that reads ulContextDataLen bytes from pContextData without bounds-checking
+    over-reads when the claimed length is impossible. Drive C_SignInit + C_Sign
+    with a tiny real context buffer and isize::MAX / isize::MAX+1 claimed
+    lengths; crash/hang is a finding and CKR_OK accepts a nonsensical length.
+    """
+
+    @pytest.mark.parametrize("ctx_len", _ISIZE_BOUNDARY_LENGTHS)
+    def test_eddsa_context_length_boundary(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        ctx_len: int,
+    ) -> None:
+        """C_SignInit/C_Sign(EDDSA) with tiny pContextData + huge ulContextDataLen."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("EDDSA"):
+            pytest.skip("CKM_EDDSA not supported")
+        curve_oid = encode_named_curve_parameters("ed25519")
+        pub, priv = gen_edwards_keypair_or_xfail(
+            rs,
+            curve_oid,
+            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+        )
+        destroy_returned_handles(rs, pub, priv)
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + f"""
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_EDDSA_PARAMS, CK_MECHANISM, CK_ULONG, CKM_EDDSA,
+    CKM_EC_EDWARDS_KEY_PAIR_GEN, CKA_EC_PARAMS, CKA_SIGN, CKA_TOKEN,
+    CKA_VERIFY, CKR_OK,
+)
+from pkcs11_check.raw.pack import attr_bytes
+from pkcs11_check.raw.recipes import gen_keypair, destroy_quietly
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.ec import encode_named_curve_parameters
+
+curve_oid = encode_named_curve_parameters("ed25519")
+pub = priv = 0
+try:
+    pub, priv = gen_keypair(
+        raw, sh, CKM_EC_EDWARDS_KEY_PAIR_GEN,
+        pub_base=[attr_bytes(CKA_EC_PARAMS, curve_oid)],
+        priv_base=[],
+        public_attrs={{CKA_VERIFY: True, CKA_TOKEN: False}},
+        private_attrs={{CKA_SIGN: True, CKA_TOKEN: False}},
+        pub_skip={{CKA_EC_PARAMS}},
+    )
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "EC_EDWARDS keypair generation rejected",
+    )
+try:
+    ctx = (ctypes.c_ubyte * 16)(*range(16))
+    params = CK_EDDSA_PARAMS()
+    params.phFlag = 0
+    params.pContextData = ctypes.cast(ctx, ctypes.c_void_p)
+    params.ulContextDataLen = {ctx_len}
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_EDDSA
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+    rv = raw.C_SignInit(sh, ctypes.byref(mech), priv)
+    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
+    if rv == CKR_OK:
+        msg = (ctypes.c_ubyte * 16)(*range(16))
+        sig_len = CK_ULONG(128)
+        sig = (ctypes.c_ubyte * 128)()
+        print("TARGET_CALL:C_Sign(EDDSA,ulContextDataLen={ctx_len:#x})", flush=True)
+        rv = raw.C_Sign(sh, msg, 16, sig, ctypes.byref(sig_len))
+    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
+    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
+finally:
+    destroy_quietly(raw, sh, pub)
+    destroy_quietly(raw, sh, priv)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Sign(EDDSA, ulContextDataLen={ctx_len:#x})",
+        )
+        if "SETUP_XFAIL:" in stdout:
+            classify(
+                "not_operational",
+                label="FFI length-boundary setup",
+                summary=stdout.split("SETUP_XFAIL:", maxsplit=1)[1].splitlines()[0],
+            )
+        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            rv,
+            _KDF_LENGTH_REJECT_RVS,
+            label=f"C_Sign(EDDSA, ulContextDataLen={ctx_len:#x})",
+        )

@@ -20,8 +20,9 @@ import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKR_DEVICE_ERROR
+from pkcs11_check.testcases import _rsa_pss_operability as mod
 from pkcs11_check.testcases._operability import Operability, reset_operability_cache
-from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa_pss as mod
+from pkcs11_check.testcases._rsa_pss_operability import pss_combo_operability
 
 
 @pytest.fixture(autouse=True)
@@ -54,31 +55,31 @@ def _refuse(*_a: Any, **_k: Any) -> Any:
 def test_keygen_refusal_is_inconclusive(monkeypatch: pytest.MonkeyPatch) -> None:
     """RSA-2048 keypair generation refusal is staging -> INCONCLUSIVE."""
     _wire(monkeypatch, keygen=_refuse)
-    result = mod._pss_combo_operability(_rs(), 0x0D, 0x0220, 0x02, 32)
+    result = pss_combo_operability(_rs(), 0x0D, 0x0220, 0x02, 32)
     assert result.status is Operability.INCONCLUSIVE
 
 
 def test_sign_refusal_is_not_operational(monkeypatch: pytest.MonkeyPatch) -> None:
     _wire(monkeypatch, keygen=lambda *a, **k: (7, 8), sign=_refuse)
-    result = mod._pss_combo_operability(_rs(), 0x0D, 0x0220, 0x02, 32)
+    result = pss_combo_operability(_rs(), 0x0D, 0x0220, 0x02, 32)
     assert result.status is Operability.NOT_OPERATIONAL
 
 
 def test_verify_refusal_is_not_operational(monkeypatch: pytest.MonkeyPatch) -> None:
     _wire(monkeypatch, keygen=lambda *a, **k: (7, 8), verify=_refuse)
-    result = mod._pss_combo_operability(_rs(), 0x0D, 0x0220, 0x02, 32)
+    result = pss_combo_operability(_rs(), 0x0D, 0x0220, 0x02, 32)
     assert result.status is Operability.NOT_OPERATIONAL
 
 
 def test_verify_false_is_not_operational(monkeypatch: pytest.MonkeyPatch) -> None:
     _wire(monkeypatch, keygen=lambda *a, **k: (7, 8), verify=lambda *a, **k: False)
-    result = mod._pss_combo_operability(_rs(), 0x0D, 0x0220, 0x02, 32)
+    result = pss_combo_operability(_rs(), 0x0D, 0x0220, 0x02, 32)
     assert result.status is Operability.NOT_OPERATIONAL
 
 
 def test_roundtrip_is_operational(monkeypatch: pytest.MonkeyPatch) -> None:
     _wire(monkeypatch, keygen=lambda *a, **k: (7, 8), verify=lambda *a, **k: True)
-    result = mod._pss_combo_operability(_rs(), 0x0D, 0x0220, 0x02, 32)
+    result = pss_combo_operability(_rs(), 0x0D, 0x0220, 0x02, 32)
     assert result.status is Operability.OPERATIONAL
 
 
@@ -90,7 +91,7 @@ def test_plain_assertion_error_propagates_uncached(monkeypatch: pytest.MonkeyPat
 
     _wire(monkeypatch, keygen=lambda *a, **k: (7, 8), sign=buggy_sign)
     with pytest.raises(AssertionError, match="harness bug"):
-        mod._pss_combo_operability(_rs(), 0x0D, 0x0220, 0x02, 32)
+        pss_combo_operability(_rs(), 0x0D, 0x0220, 0x02, 32)
 
     from pkcs11_check.testcases._operability import _CACHE
 
@@ -118,9 +119,9 @@ def test_different_salt_lengths_produce_distinct_cache_entries(
 
     rs = _rs()
     # First call: sLen=20
-    r1 = mod._pss_combo_operability(rs, 0x0D, 0x0220, 0x01, 20)
+    r1 = pss_combo_operability(rs, 0x0D, 0x0220, 0x01, 20)
     # Second call: same mech/hash/mgf, different sLen=32
-    r2 = mod._pss_combo_operability(rs, 0x0D, 0x0220, 0x01, 32)
+    r2 = pss_combo_operability(rs, 0x0D, 0x0220, 0x01, 32)
 
     # Both must be OPERATIONAL (two separate successful probes)
     assert r1.status is Operability.OPERATIONAL
