@@ -105,7 +105,7 @@ from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
 )
 
-pytestmark = [pytest.mark.compliance]
+pytestmark = pytest.mark.compliance
 
 # Setup-reject CKRs shared across all template-attribute probes (mirrors
 # test_remaining_gaps.py:130-143 — the same set used for the AES-only paths).
@@ -170,7 +170,10 @@ class TestOaepUnwrapTemplateEnforcement:
 
         allowed_label = b"pkcs11-check-oaep-unwrap-template-allowed"
         denied_label = b"pkcs11-check-oaep-unwrap-template-denied"
-        nested_template = template(attr_bytes(CKA_LABEL, allowed_label))
+        nested_template = template(
+            attr_bytes(CKA_LABEL, allowed_label),
+            attr_ulong(CKA_KEY_TYPE, CKK_AES),
+        )
 
         keygen_mech = mech_simple(CKM_RSA_PKCS_KEY_PAIR_GEN)
         wrap_mech = mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA_1, mgf=CKG_MGF1_SHA1)
@@ -380,7 +383,10 @@ class TestEcdhDeriveTemplateEnforcement:
         allowed_label = b"pkcs11-check-ecdh-derive-template-allowed"
         denied_label = b"pkcs11-check-ecdh-derive-template-denied"
         curve_oid = encode_named_curve_parameters("secp256r1")
-        nested_template = template(attr_bytes(CKA_LABEL, allowed_label))
+        nested_template = template(
+            attr_bytes(CKA_LABEL, allowed_label),
+            attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
+        )
 
         keygen_mech = mech_simple(CKM_EC_KEY_PAIR_GEN)
 
@@ -581,7 +587,10 @@ class TestHkdfDeriveTemplateEnforcement:
         allowed_label = b"pkcs11-check-hkdf-derive-template-allowed"
         denied_label = b"pkcs11-check-hkdf-derive-template-denied"
         base_value = b"A" * 32
-        nested_template = template(attr_bytes(CKA_LABEL, allowed_label))
+        nested_template = template(
+            attr_bytes(CKA_LABEL, allowed_label),
+            attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
+        )
 
         base_key = CK_OBJECT_HANDLE(0)
         matching_derived = 0
