@@ -49,17 +49,23 @@ from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKA_ALWAYS_SENSITIVE,
     CKA_CLASS,
+    CKA_COEFFICIENT,
     CKA_DECRYPT,
     CKA_DERIVE,
     CKA_EC_POINT,
     CKA_ENCRYPT,
+    CKA_EXPONENT_1,
+    CKA_EXPONENT_2,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_LABEL,
     CKA_MODULUS,
     CKA_MODULUS_BITS,
     CKA_NEVER_EXTRACTABLE,
+    CKA_PRIME_1,
+    CKA_PRIME_2,
     CKA_PRIVATE,
+    CKA_PRIVATE_EXPONENT,
     CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
     CKA_SIGN,
@@ -80,6 +86,7 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SHA256,
     CKO_DATA,
+    CKO_PRIVATE_KEY,
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
     CKR_OK,
@@ -89,7 +96,11 @@ from pkcs11_check.testcases.ckr._malformed_attrs import (
     make_bool_attr_overlong,
     make_ulong_attr_with_length,
 )
-from pkcs11_check.testcases.conftest import classify_negative_rv, gen_aes_key_or_xfail
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    gen_aes_key_or_xfail,
+    skip_unless_create_object_supported,
+)
 
 pytestmark = pytest.mark.security
 
@@ -710,3 +721,105 @@ class TestBoolOverlongInGenerateDerive:
             destroy_quietly(rs.raw, rs.sh, priv_a)
             destroy_quietly(rs.raw, rs.sh, pub_b)
             destroy_quietly(rs.raw, rs.sh, priv_b)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 (C2 matrix): RSA private-part oversize (CKA_PRIME_1/2, CKA_EXPONENT_1)
+# in C_CreateObject — completes the C2 attribute-width matrix.
+# ---------------------------------------------------------------------------
+
+
+def _rsa_crt_components() -> dict[str, bytes]:
+    """Generate a fresh RSA-2048 key and return its CRT components as bytes.
+
+    Uses the ``cryptography`` library (already a framework dependency via
+    Wycheproof / cross-verify tests) so no static vectors need maintaining.
+    The key is generated once per probe call; probe isolation ensures each
+    parametrize variant gets its own key.
+    """
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+
+    key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    priv = key.private_numbers()
+    pub = priv.public_numbers
+    # Export each component as big-endian bytes; 256 bytes for 2048-bit modulus/d,
+    # 128 bytes for the 1024-bit CRT halves.
+    return {
+        "n": pub.n.to_bytes(256, "big"),
+        "e": pub.e.to_bytes(3, "big"),
+        "d": priv.d.to_bytes(256, "big"),
+        "p": priv.p.to_bytes(128, "big"),
+        "q": priv.q.to_bytes(128, "big"),
+        "dmp1": priv.dmp1.to_bytes(128, "big"),
+        "dmq1": priv.dmq1.to_bytes(128, "big"),
+        "iqmp": priv.iqmp.to_bytes(128, "big"),
+    }
+
+
+class TestRsaPrivatePartOversize:
+    """RSA CRT private-part attributes (CKA_PRIME_1, CKA_PRIME_2, CKA_EXPONENT_1)
+    declared with a wildly oversized ``ulValueLen`` in a ``C_CreateObject``
+    (RSA private-key import) template must be rejected cleanly.
+
+    Each probe builds an otherwise-valid RSA-2048 private-key import template
+    and corrupts exactly ONE CRT component's declared length to
+    ``0xFFFFFFFF``, keeping the real buffer small (the actual component bytes).
+    ``CKR_OK`` on a malformed declared length is the finding (accepted_invalid).
+    """
+
+    @pytest.mark.parametrize(
+        ("target_attr", "attr_name"),
+        [
+            pytest.param(CKA_PRIME_1, "prime_1", id="prime-1"),
+            pytest.param(CKA_PRIME_2, "prime_2", id="prime-2"),
+            pytest.param(CKA_EXPONENT_1, "exponent_1", id="exponent-1"),
+        ],
+    )
+    def test_rsa_private_part_wild_oversized_in_create(
+        self,
+        p11_raw_session: Any,
+        target_attr: int,
+        attr_name: str,
+    ) -> None:
+        """C_CreateObject must reject an RSA private-key template with a wildly
+        oversized declared ulValueLen on one of the CRT private-part attributes."""
+        rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
+
+        k = _rsa_crt_components()
+
+        def _bytes(attr_type: int, data: bytes, *, corrupt: bool = False) -> Any:
+            """Build an attr_bytes item; oversized length on the corrupted attr."""
+            if corrupt:
+                return attr_bytes(
+                    attr_type, data, length=LengthArg.explicit_value(_WILD_OVERSIZED_LENGTH)
+                )
+            return attr_bytes(attr_type, data)
+
+        tmpl = template(
+            attr_ulong(CKA_CLASS, CKO_PRIVATE_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_RSA),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, True),
+            _bytes(CKA_MODULUS, k["n"]),
+            _bytes(CKA_PUBLIC_EXPONENT, k["e"]),
+            _bytes(CKA_PRIVATE_EXPONENT, k["d"]),
+            _bytes(CKA_PRIME_1, k["p"], corrupt=(target_attr == CKA_PRIME_1)),
+            _bytes(CKA_PRIME_2, k["q"], corrupt=(target_attr == CKA_PRIME_2)),
+            _bytes(CKA_EXPONENT_1, k["dmp1"], corrupt=(target_attr == CKA_EXPONENT_1)),
+            _bytes(CKA_EXPONENT_2, k["dmq1"]),
+            _bytes(CKA_COEFFICIENT, k["iqmp"]),
+        )
+        handle = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, handle.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label=(
+                f"C_CreateObject(RSA private key) with wildly oversized"
+                f" CKA_{attr_name.upper()} ulValueLen"
+            ),
+        )
