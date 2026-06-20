@@ -59,6 +59,10 @@ from pkcs11_check.testcases.conftest import (
     gen_edwards_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
 )
+from pkcs11_check.testcases.security._boundary_values import (
+    TRUNCATION_LOW0,
+    TRUNCATION_LOW8,
+)
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess]
@@ -202,6 +206,8 @@ def import_hmac_key(*, sign=False, verify=False):
 _ISIZE_BOUNDARY_LENGTHS = [
     pytest.param(_ISIZE_MAX_64, id="isize_max"),
     pytest.param(_ISIZE_MAX_PLUS_1_64, id="isize_max_plus_1"),
+    pytest.param(TRUNCATION_LOW0, id="trunc_low0"),
+    pytest.param(TRUNCATION_LOW8, id="trunc_low8"),
 ]
 
 

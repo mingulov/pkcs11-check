@@ -1097,3 +1097,17 @@ def test_no_dead_setup_xfail_classify_blocks() -> None:
     """No probe may keep an unreachable `if \"SETUP_XFAIL:\" in stdout: classify(...)`."""
     src = inspect.getsource(test_ffi_length_boundary)
     assert 'if "SETUP_XFAIL:" in stdout:' not in src
+
+
+def test_isize_boundary_lengths_includes_truncation_ids() -> None:
+    """_ISIZE_BOUNDARY_LENGTHS must carry all four expected param ids.
+
+    The truncation ids (trunc_low0, trunc_low8) extend the original isize-boundary
+    ids so that the ~33 parametrized probes also detect 64-bit→32-bit truncation.
+    This meta-test ensures that coverage cannot silently regress.
+    """
+    ids = [p.id for p in test_ffi_length_boundary._ISIZE_BOUNDARY_LENGTHS]
+    assert "isize_max" in ids, "original isize_max param must be present"
+    assert "isize_max_plus_1" in ids, "original isize_max_plus_1 param must be present"
+    assert "trunc_low0" in ids, "truncation probe trunc_low0 (1<<32, low32=0) must be present"
+    assert "trunc_low8" in ids, "truncation probe trunc_low8 ((1<<32)+8, low32=8) must be present"
