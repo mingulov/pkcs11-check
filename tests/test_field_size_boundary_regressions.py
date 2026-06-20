@@ -64,7 +64,6 @@ def test_rsa_modulus_bits_oversize_child_marks_setup_reject(
 
     assert len(scripts) == 1
     script = scripts[0]
-    assert "SETUP_XFAIL:" not in script or "AES_KEYGEN_RUNTIME_REJECT_RVS" in script or True
     assert "CKM_RSA_PKCS_KEY_PAIR_GEN" in script
     assert "CKA_MODULUS_BITS" in script
     assert "TARGET_RV:" in script

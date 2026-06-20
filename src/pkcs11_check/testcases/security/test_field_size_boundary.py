@@ -6,7 +6,7 @@ WS2 Phase 3: close the remaining field-level gaps not covered by Phase 1
 Probed fields
 -------------
 1. CKA_MODULUS_BITS oversized VALUE in C_GenerateKeyPair(RSA)
-   - Declares CKA_MODULUS_BITS = TRUNCATION_LOW8 = (1<<32)+2048 (low32 = 2048).
+   - Declares CKA_MODULUS_BITS = _MODULUS_BITS_TRUNC = (1<<32)+2048 (low32 = 2048).
    - A 32-bit-truncating provider truncates to 2048 and may generate a key → CKR_OK =
      accepted_invalid (impossible 64-bit value was accepted).
    - A correct provider rejects (CKR_ATTRIBUTE_VALUE_INVALID / CKR_KEY_SIZE_RANGE /
@@ -130,28 +130,6 @@ def _parse_prefixed_int(output: str, prefix: str) -> int:
     raise AssertionError(f"Missing {prefix!r} line in subprocess output: {output[-300:]}")
 
 
-# Shared setup-reject helper injected into every child script.
-_CHILD_SETUP_REJECT_HELPERS = """
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.testcases.conftest import (
-    AES_KEYGEN_RUNTIME_REJECT_RVS,
-    KEYPAIR_RUNTIME_REJECT_RVS,
-    is_known_error,
-)
-
-
-def setup_xfail_if_known_ckr(exc, known_ckrs, purpose):
-    if is_known_error(exc, known_ckrs):
-        rv = getattr(exc, "rv", None)
-        detail = ckr_name(rv) if rv is not None else str(exc)
-        print(f"SETUP_XFAIL:{purpose}: {detail}")
-        cleanup()
-        raise SystemExit(0)
-    raise exc
-
-"""
-
-
 # ---------------------------------------------------------------------------
 # 1. CKA_MODULUS_BITS oversized value in C_GenerateKeyPair(RSA)
 # ---------------------------------------------------------------------------
@@ -182,7 +160,6 @@ class TestRsaModulusBitsOversizedValue:
         preamble = _preamble(p11_config)
         script = (
             preamble
-            + _CHILD_SETUP_REJECT_HELPERS
             + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -272,7 +249,6 @@ class TestPrimeBitsOversizedValue:
         preamble = _preamble(p11_config)
         script = (
             preamble
-            + _CHILD_SETUP_REJECT_HELPERS
             + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -343,7 +319,6 @@ cleanup()
         preamble = _preamble(p11_config)
         script = (
             preamble
-            + _CHILD_SETUP_REJECT_HELPERS
             + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -442,7 +417,6 @@ class TestGenerateKeyValueLenTruncation:
         preamble = _preamble(p11_config)
         script = (
             preamble
-            + _CHILD_SETUP_REJECT_HELPERS
             + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -529,7 +503,7 @@ class TestFindObjectsCountTruncation:
 
     def test_find_objects_oversized_count_survives(
         self,
-        p11_raw_session: Any,
+        p11_raw_session: Any,  # ensures module loaded + session open before subprocess probe
         p11_config: Any,
     ) -> None:
         """C_FindObjects must not crash with ulMaxObjectCount=TRUNCATION_LOW8."""
