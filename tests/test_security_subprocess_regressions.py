@@ -13,6 +13,7 @@ from pkcs11_check.testcases.security import (
     test_error_path_rsa,
     test_ffi_length_boundary,
     test_ffi_null_pointer,
+    test_output_length_truncation,
     test_recover_length_boundary,
 )
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
@@ -1111,3 +1112,139 @@ def test_isize_boundary_lengths_includes_truncation_ids() -> None:
     assert "isize_max_plus_1" in ids, "original isize_max_plus_1 param must be present"
     assert "trunc_low0" in ids, "truncation probe trunc_low0 (1<<32, low32=0) must be present"
     assert "trunc_low8" in ids, "truncation probe trunc_low8 ((1<<32)+8, low32=8) must be present"
+
+
+# ---------------------------------------------------------------------------
+# WS2 Phase 2 (Family B): demand-zero output-write truncation oracle for
+# C_Encrypt / C_Decrypt.  Each meta-test drives the probe with a monkeypatched
+# run_with_coverage, asserts the generated child script (a) marks setup rejects
+# inside the child (-> xfail, not a spurious probe failure), (b) carries the op
+# name and the demand-zero oracle markers, and (c) compiles as valid Python.
+# ---------------------------------------------------------------------------
+
+_OUTPUT_TRUNCATION_PROBES = [
+    pytest.param(
+        "TestEncryptOutputLengthTruncation",
+        "test_encrypt_oversized_length_rejects_or_honors",
+        "C_Encrypt",
+        id="encrypt",
+    ),
+    pytest.param(
+        "TestDecryptOutputLengthTruncation",
+        "test_decrypt_oversized_length_rejects_or_honors",
+        "C_Decrypt",
+        id="decrypt",
+    ),
+]
+
+
+@pytest.mark.parametrize("cls_name,method_name,op_fn", _OUTPUT_TRUNCATION_PROBES)
+def test_output_truncation_child_marks_setup_reject_and_carries_oracle(
+    monkeypatch: pytest.MonkeyPatch,
+    cls_name: str,
+    method_name: str,
+    op_fn: str,
+) -> None:
+    """C_Encrypt/C_Decrypt output-truncation child scripts must be well-formed.
+
+    The child must classify keygen setup rejects (SETUP_XFAIL + the AES keygen
+    reject-set), drive the named op into a demand-zero (MAP_ANONYMOUS) oversize
+    buffer, sample the probe offset (UNDERFILL), and compile.  We return a
+    SETUP_XFAIL stdout so the probe xfails before the parent parses TARGET_RV.
+    """
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    scripts: list[str] = []
+
+    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        scripts.append(script)
+        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+
+    monkeypatch.setattr(test_output_length_truncation, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_output_length_truncation, "destroy_returned_handles", lambda *_a: None)
+    monkeypatch.setattr(test_output_length_truncation, "run_with_coverage", _capture)
+
+    cls = getattr(test_output_length_truncation, cls_name)
+    method = getattr(cls(), method_name)
+    with pytest.raises(pytest.xfail.Exception):
+        method(_RawSession(), cfg)
+
+    assert len(scripts) == 1
+    script = scripts[0]
+    # Setup-reject protocol present (keygen rejects -> child SETUP_XFAIL, not a fail).
+    assert "SETUP_XFAIL:" in script
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in script
+    # The probed op is wired in.
+    assert op_fn in script
+    # Demand-zero output oracle markers (mirrors the random-length template).
+    assert "MAP_ANONYMOUS" in script
+    assert "MAP_PRIVATE" in script
+    assert "UNDERFILL:" in script
+    assert "PROBE_OFF" in script
+    assert "CKM_AES_CTR" in script
+    # The full 64-bit oversize length, not a truncated value, is what gets passed.
+    assert str(test_output_length_truncation.OVERSIZE_WRITE_LEN) in script
+    # The generated child script must be valid Python.
+    compile(script, f"<output-truncation-{op_fn}-child>", "exec")
+
+
+@pytest.mark.parametrize("cls_name,method_name,op_fn", _OUTPUT_TRUNCATION_PROBES)
+def test_output_truncation_probe_xfails_setup_before_child(
+    monkeypatch: pytest.MonkeyPatch,
+    cls_name: str,
+    method_name: str,
+    op_fn: str,
+) -> None:
+    """Output-truncation probes must preflight keygen setup before spawning a child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+
+    def _xfail_setup(*_args: object, **_kwargs: object) -> int:
+        pytest.xfail("AES setup unavailable")
+
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        pytest.fail("child spawned before setup preflight")
+
+    monkeypatch.setattr(
+        test_output_length_truncation,
+        "gen_aes_key_or_xfail",
+        _xfail_setup,
+        raising=False,
+    )
+    monkeypatch.setattr(test_output_length_truncation, "run_with_coverage", _child_should_not_run)
+
+    cls = getattr(test_output_length_truncation, cls_name)
+    method = getattr(cls(), method_name)
+    with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
+        method(_RawSession(), cfg)
+
+
+def test_output_truncation_oracle_polarity_is_underfill_means_fail() -> None:
+    """The output oracle must keep underfill=>accepted_invalid, honored=>note polarity.
+
+    Guards against a future edit silently inverting the demand-zero oracle (which
+    would either false-fail compliant providers or hide real truncation).  The
+    shared classifier routes UNDERFILL through classify_negative_rv (the
+    accepted_invalid path on CKR_OK) and a non-zero probe through compliance.note.
+    """
+    src = inspect.getsource(test_output_length_truncation._classify_oracle)
+    assert "classify_negative_rv(" in src, "underfill path must classify (accepted_invalid on OK)"
+    assert "silent under-fill" in src, "underfill label must describe the truncation finding"
+    assert "note(" in src, "honored (non-zero probe) path must record a compliance note, not fail"
+
+
+def test_output_truncation_skips_wrapkey_and_generatekey() -> None:
+    """C_WrapKey / C_GenerateKey must NOT get a demand-zero output probe.
+
+    Their written length is governed by the key object, not a caller input length
+    the caller can inflate, so the output oracle cannot prove truncation and would
+    only false-fail compliant providers.  The module must document this and expose
+    no such probe (the only oracle ops are C_Encrypt / C_Decrypt).
+    """
+    src = inspect.getsource(test_output_length_truncation)
+    # No WrapKey/GenerateKey op is driven through the oracle.
+    assert "C_WrapKey" not in src or "NOT a Family-B target" in src
+    assert "raw.C_WrapKey(" not in src, "C_WrapKey must not be probed by the output oracle"
+    assert "raw.C_GenerateKey(" not in src, "C_GenerateKey must not be probed by the output oracle"
+    # The rationale for the skip is documented in the module.
+    assert "NOT a Family-B target" in src
+    assert "does NOT satisfy it" in src
+    assert "C_GenerateKey" in src
