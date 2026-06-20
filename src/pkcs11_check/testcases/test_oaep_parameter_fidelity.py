@@ -10,6 +10,10 @@ Two directions (spec G5):
 - Decrypt-direction correctness: local encrypts a known ciphertext with the
   requested params; the module decrypts. A DIFFERENT plaintext -> wrong_result
   (clean crypto-break signal); a clean error -> not_operational; correct -> pass.
+- Mismatch probe (WS4-P2): CKM_RSA_PKCS_OAEP with hashAlg=SHA-1, mgf=MGF1-SHA256
+  (internally inconsistent: the hash and MGF algorithms don't match). A clean
+  reject is correct (xfail/not_operational); acceptance triggers the fidelity
+  oracle to recover actual params and report honest_deviation.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from pkcs11_check.raw.types_std import (
     CKG_MGF1_SHA256,
     CKM_RSA_PKCS_OAEP,
     CKM_SHA256,
+    CKM_SHA_1,
     CKR_ARGUMENTS_BAD,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_HANDLE_INVALID,
@@ -218,6 +223,98 @@ class TestOaepParameterFidelity:
                     mechanism="CKM_RSA_PKCS_OAEP",
                     summary=f"{label}: module decrypted OAEP to the WRONG plaintext",
                 )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, priv_h)
+            destroy_quietly(rs.raw, rs.sh, pub_h)
+
+
+class TestOaepParamMismatch:
+    """OAEP mechanism-parameter MISMATCH probe (WS4-P2).
+
+    Supply CKM_RSA_PKCS_OAEP with hashAlg=CKM_SHA_1 but mgf=CKG_MGF1_SHA256.
+    SHA-1 hash with SHA-256 MGF is internally inconsistent: PKCS#11 v2.40 §2.1.8
+    requires that the MGF hash match the OAEP hash when the standard suite is used.
+    A conformant module MUST reject this combination.
+
+    Three-state classification (same as TestOaepParameterFidelity):
+    - Module rejects with a clean CKR -> xfail(not_operational) -- correct.
+    - Module encrypts: recover_oaep_params tries all (hash, mgf) combinations
+      against the ciphertext.  The recovered (actual_hash, actual_mgf) are
+      compared to what was requested.  conforms=False by construction (any
+      acceptance of a malformed param struct is a deviation).
+    - No candidate recovers the plaintext -> not_operational (interpretable=False).
+    """
+
+    def test_oaep_hash_mgf_mismatch(self, p11_raw_session: Any) -> None:
+        """CKM_RSA_PKCS_OAEP + hashAlg=SHA-1, mgf=MGF1-SHA256 (inconsistent pair)."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS_OAEP"):
+            pytest.skip("CKM_RSA_PKCS_OAEP not supported")
+        label = "OAEP:mismatch hashAlg=SHA-1/mgf=MGF1-SHA256 (inconsistent)"
+        priv_h = pub_h = 0
+        try:
+            try:
+                k, priv_h, pub_h = _import_known_keypair(rs)
+            except AssertionError as exc:
+                pytest.skip(f"RSA keypair import refused: {exc}")
+            # hashAlg=SHA-1 with mgf=MGF1-SHA256: the hash and MGF algorithms
+            # are internally inconsistent (standard OAEP requires them to match).
+            mech_param = mech_oaep(
+                CKM_RSA_PKCS_OAEP,
+                hash_mech=CKM_SHA_1,
+                mgf=CKG_MGF1_SHA256,
+                source_data=None,
+            )
+            try:
+                ct = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    pub_h,
+                    CKM_RSA_PKCS_OAEP,
+                    _PLAINTEXT,
+                    mech_param=mech_param,
+                    output_overhead=256,
+                )
+            except AssertionError as exc:
+                if is_known_error(exc, _OAEP_REFUSED):
+                    xfail_as(
+                        "not_operational",
+                        kind="lifecycle",
+                        label=label,
+                        operation="C_Encrypt",
+                        mechanism="CKM_RSA_PKCS_OAEP",
+                        summary=not_operational_reason(
+                            label, f"OAEP mismatch params refused: {exc}"
+                        ),
+                    )
+                raise
+            # Module encrypted despite the mismatch: recover what it actually used.
+            recovered = recover_oaep_params(k, ct, _PLAINTEXT, _OAEP_HASHES, _OAEP_HASHES, (None,))
+            if recovered is None:
+                result = FidelityResult(
+                    valid=False,
+                    conforms=False,
+                    interpretable=False,
+                    requested={"hash": "sha1 (mismatched vs mgf=sha256)", "mgf": "sha256"},
+                    actual={"hash": None, "mgf": None},
+                    detail="OAEP mismatch: params not recoverable from candidate set",
+                )
+            else:
+                alg, mgf, _lab = recovered
+                # conforms=False by construction: accepting internally-inconsistent
+                # (hashAlg, mgf) is a spec violation regardless of which params were
+                # actually used.
+                result = FidelityResult(
+                    valid=True,
+                    conforms=False,
+                    interpretable=True,
+                    requested={"hash": "sha1 (mismatched vs mgf=sha256)", "mgf": "sha256"},
+                    actual={"hash": alg.name, "mgf": mgf.name},
+                    detail="OAEP hash/mgf mismatch accepted",
+                )
+            classify_fidelity(
+                result, label=label, operation="C_Encrypt", mechanism="CKM_RSA_PKCS_OAEP"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_h)
             destroy_quietly(rs.raw, rs.sh, pub_h)

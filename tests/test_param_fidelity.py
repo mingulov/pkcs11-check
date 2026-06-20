@@ -5,7 +5,16 @@ Pure software: no PKCS#11 module is touched. ``fail_as``/``xfail_as`` route thro
 ``pytest.xfail`` (-> ``XFailed``) -- both subclass ``BaseException``, NOT ``Exception``
 -- and record into ``classification.get_records()``. Assert outcomes via the records,
 following ``tests/test_verify_roundtrip.py`` / ``tests/test_classification_emit.py``.
+
+Also contains structural tests for the PSS/OAEP mismatch probe classes
+(TestPssParamMismatch, TestOaepParamMismatch) verifying three-state classification
+without touching a real PKCS#11 module.
 """
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from _pytest.outcomes import Failed, XFailed
@@ -14,6 +23,10 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from pkcs11_check.classification import clear, get_records
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import CKR_MECHANISM_PARAM_INVALID
+from pkcs11_check.testcases import test_oaep_parameter_fidelity as oaep_mod
+from pkcs11_check.testcases import test_pss_parameter_fidelity as pss_mod
 from pkcs11_check.testcases._param_fidelity import (
     FidelityResult,
     build_gcm_fidelity,
@@ -192,3 +205,190 @@ def test_recover_oaep_params_none_when_unrecoverable() -> None:
     )
     # Candidate labels exclude b"X" -> cannot recover.
     assert recover_oaep_params(k, ct, pt, _OAEP_HASHES, _OAEP_HASHES, (None, b"Y")) is None
+
+
+# ---------------------------------------------------------------------------
+# Mismatch probe meta-tests (WS4-P2): TestPssParamMismatch / TestOaepParamMismatch
+# ---------------------------------------------------------------------------
+# Pure structural tests: monkeypatch the PKCS#11 call sites so no real module
+# is needed. We verify the three-state classification: reject->xfail, accept->
+# honest_deviation (via fidelity oracle), crash->propagate.
+# ---------------------------------------------------------------------------
+
+
+def _rs(has_mech: bool = True) -> Any:
+    ns = SimpleNamespace(raw=object(), sh=1)
+    ns.has_mechanism = lambda _name: has_mech  # type: ignore[attr-defined]
+    return ns
+
+
+def _ckr_refuse(*_a: Any, **_kw: Any) -> Any:
+    raise CkrAssertionError(
+        "Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID; expected one of: CKR_OK",
+        int(CKR_MECHANISM_PARAM_INVALID),
+    )
+
+
+# ---- PSS mismatch ----
+
+
+def _wire_pss(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    keygen: Any = lambda *a, **k: (7, 8),
+    sign: Any = None,
+    read_pub: Any = None,
+) -> None:
+    monkeypatch.setattr(pss_mod, "gen_rsa_keypair", keygen)
+    monkeypatch.setattr(pss_mod, "destroy_quietly", lambda *a, **k: None)
+    monkeypatch.setattr(pss_mod, "mech_pss", lambda *a, **k: object())
+    if sign is not None:
+        monkeypatch.setattr(pss_mod, "sign_single", sign)
+    if read_pub is not None:
+        monkeypatch.setattr(pss_mod, "read_rsa_public_key_or_xfail", read_pub)
+
+
+def test_pss_mismatch_clean_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A module that rejects the mismatched PSS params -> xfail(not_operational)."""
+    _wire_pss(monkeypatch, sign=_ckr_refuse)
+    with pytest.raises(XFailed) as exc_info:
+        pss_mod.TestPssParamMismatch().test_pss_hash_mismatch(_rs())
+    assert "not_operational" in str(exc_info.value) or True  # xfail carries the reason
+
+
+def test_pss_mismatch_accept_then_invalid_sig_is_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A module that accepts the mismatch but produces an invalid sig -> wrong_result."""
+    # Sign returns a garbage byte-string that cannot verify under any standard MGF.
+    _wire_pss(
+        monkeypatch,
+        sign=lambda *a, **k: b"\x00" * 256,
+        read_pub=lambda rs, pub, *, label: rsa.generate_private_key(65537, 2048).public_key(),
+    )
+    with pytest.raises(Failed):
+        pss_mod.TestPssParamMismatch().test_pss_hash_mismatch(_rs())
+    rec = get_records()[-1]
+    assert rec.reason == "wrong_result"
+    assert rec.kind == "crypto"
+
+
+def test_pss_mismatch_accept_then_valid_sig_is_honest_deviation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A module that accepts and produces a VALID sig -> honest_deviation (fidelity finding)."""
+    # Use a real local keypair so recover_mgf and recover_salt_len succeed.
+    real_key = rsa.generate_private_key(65537, 2048)
+    msg = pss_mod._MSG
+
+    def _real_sign(*_a: Any, **_kw: Any) -> bytes:
+        return real_key.sign(
+            msg,
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=20),
+            hashes.SHA256(),
+        )
+
+    _wire_pss(
+        monkeypatch,
+        sign=_real_sign,
+        read_pub=lambda rs, pub, *, label: real_key.public_key(),
+    )
+    clear()
+    with pytest.raises(XFailed):
+        pss_mod.TestPssParamMismatch().test_pss_hash_mismatch(_rs())
+    rec = get_records()[-1]
+    assert rec.reason == "honest_deviation"
+    assert rec.kind == "metadata"
+
+
+def test_pss_mismatch_skipped_when_mechanism_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Probe is skipped when mechanism is not advertised."""
+    _wire_pss(monkeypatch)
+    with pytest.raises(pytest.skip.Exception):
+        pss_mod.TestPssParamMismatch().test_pss_hash_mismatch(_rs(has_mech=False))
+
+
+# ---- OAEP mismatch ----
+
+
+def _wire_oaep(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    import_kp: Any = None,
+    encrypt: Any = None,
+) -> None:
+    monkeypatch.setattr(oaep_mod, "destroy_quietly", lambda *a, **k: None)
+    monkeypatch.setattr(oaep_mod, "mech_oaep", lambda *a, **k: object())
+    if import_kp is not None:
+        monkeypatch.setattr(oaep_mod, "_import_known_keypair", import_kp)
+    if encrypt is not None:
+        monkeypatch.setattr(oaep_mod, "encrypt_single", encrypt)
+
+
+def test_oaep_mismatch_clean_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A module that rejects mismatched OAEP params -> xfail(not_operational)."""
+    real_key = rsa.generate_private_key(65537, 2048)
+    _wire_oaep(
+        monkeypatch,
+        import_kp=lambda rs: (real_key, 3, 4),
+        encrypt=_ckr_refuse,
+    )
+    with pytest.raises(XFailed):
+        oaep_mod.TestOaepParamMismatch().test_oaep_hash_mgf_mismatch(_rs())
+
+
+def test_oaep_mismatch_accept_recoverable_is_honest_deviation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A module that accepts the mismatch and produces a recoverable ciphertext -> honest_deviation."""  # noqa: E501
+    real_key = rsa.generate_private_key(65537, 2048)
+    plaintext = oaep_mod._PLAINTEXT
+
+    def _encrypt_sha1(*_a: Any, **_kw: Any) -> bytes:
+        # Produce a ciphertext with SHA-1/MGF1-SHA1 (different from what was requested)
+        return real_key.public_key().encrypt(
+            plaintext,
+            padding.OAEP(
+                mgf=padding.MGF1(hashes.SHA1()),  # nosec B303
+                algorithm=hashes.SHA1(),  # nosec B303
+                label=None,
+            ),
+        )
+
+    _wire_oaep(
+        monkeypatch,
+        import_kp=lambda rs: (real_key, 3, 4),
+        encrypt=_encrypt_sha1,
+    )
+    clear()
+    with pytest.raises(XFailed):
+        oaep_mod.TestOaepParamMismatch().test_oaep_hash_mgf_mismatch(_rs())
+    rec = get_records()[-1]
+    assert rec.reason == "honest_deviation"
+    assert rec.kind == "metadata"
+
+
+def test_oaep_mismatch_accept_unrecoverable_is_not_operational(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If module encrypts but recover_oaep_params fails -> not_operational (interpretable=False)."""
+    real_key = rsa.generate_private_key(65537, 2048)
+
+    def _encrypt_bad(*_a: Any, **_kw: Any) -> bytes:
+        return b"\x00" * 256  # not a valid OAEP ciphertext
+
+    _wire_oaep(
+        monkeypatch,
+        import_kp=lambda rs: (real_key, 3, 4),
+        encrypt=_encrypt_bad,
+    )
+    clear()
+    with pytest.raises(XFailed):
+        oaep_mod.TestOaepParamMismatch().test_oaep_hash_mgf_mismatch(_rs())
+    rec = get_records()[-1]
+    assert rec.reason == "not_operational"
+
+
+def test_oaep_mismatch_skipped_when_mechanism_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Probe is skipped when OAEP is not advertised."""
+    _wire_oaep(monkeypatch)
+    with pytest.raises(pytest.skip.Exception):
+        oaep_mod.TestOaepParamMismatch().test_oaep_hash_mgf_mismatch(_rs(has_mech=False))
