@@ -1248,3 +1248,66 @@ def test_output_truncation_skips_wrapkey_and_generatekey() -> None:
     assert "NOT a Family-B target" in src
     assert "does NOT satisfy it" in src
     assert "C_GenerateKey" in src
+
+
+# ---------------------------------------------------------------------------
+# WS4 Phase 1: TestSingleShotOutputGuard regressions
+# ---------------------------------------------------------------------------
+
+
+def test_ffi_length_encrypt_single_shot_guard_child_marks_setup_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C_Encrypt single-shot guard probe must classify setup rejects in child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    scripts: list[str] = []
+
+    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        scripts.append(script)
+        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+
+    monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+
+    with pytest.raises(pytest.xfail.Exception):
+        test_ffi_length_boundary.TestSingleShotOutputGuard().test_encrypt_one_byte_output_preserves_guard(
+            _RawSession(),
+            cfg,
+        )
+
+    assert len(scripts) == 1
+    assert "SETUP_XFAIL:" in scripts[0]
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
+    assert "C_Encrypt" in scripts[0]
+    assert "GUARD_OVERWRITE" in scripts[0]
+    compile(scripts[0], "<child-encrypt-guard>", "exec")
+
+
+def test_ffi_length_decrypt_single_shot_guard_child_marks_setup_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C_Decrypt single-shot guard probe must classify setup rejects in child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    scripts: list[str] = []
+
+    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        scripts.append(script)
+        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+
+    monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+
+    with pytest.raises(pytest.xfail.Exception):
+        test_ffi_length_boundary.TestSingleShotOutputGuard().test_decrypt_one_byte_output_preserves_guard(
+            _RawSession(),
+            cfg,
+        )
+
+    assert len(scripts) == 1
+    assert "SETUP_XFAIL:" in scripts[0]
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
+    assert "C_Decrypt" in scripts[0]
+    assert "GUARD_OVERWRITE" in scripts[0]
+    compile(scripts[0], "<child-decrypt-guard>", "exec")
