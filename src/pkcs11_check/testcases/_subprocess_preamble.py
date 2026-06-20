@@ -29,6 +29,23 @@ from pkcs11_check.testcases._subprocess_trace import record_subprocess_rv_trace
 # already applied to PIN-bearing env keys in ``core/file_runner.py``.
 _P11CHECK_PIN_ENV = "_P11CHECK_PIN"
 
+# A probe subprocess that hangs (the module did not return on the probe input)
+# is surfaced via this marker on stderr + a sentinel returncode, so the parent's
+# assert_subprocess_completed classifies the hang as a crash-class finding rather
+# than letting subprocess.TimeoutExpired escape as a record-less runtime-gate leak.
+SUBPROCESS_TIMEOUT_MARKER = "_P11CHECK_SUBPROCESS_TIMEOUT"
+SUBPROCESS_TIMEOUT_RC = 124  # conventional timeout exit code (GNU timeout)
+
+
+def _as_text(stream: str | bytes | None) -> str:
+    """Decode a possibly-bytes subprocess stream to text (TimeoutExpired captures)."""
+    if stream is None:
+        return ""
+    if isinstance(stream, bytes):
+        return stream.decode(errors="replace")
+    return stream
+
+
 _subprocess_call_counts: Counter[str] = Counter()
 _subprocess_mechanism_counts: Counter[str] = Counter()
 
@@ -65,13 +82,24 @@ def run_with_coverage(
     if pin is not None:
         env[_P11CHECK_PIN_ENV] = pin
 
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env=env,
-    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+        rc, out, err = result.returncode, result.stdout, result.stderr
+    except subprocess.TimeoutExpired as exc:
+        # The module hung on the probe input: the child is killed, but
+        # TimeoutExpired must NOT escape as a record-less runtime-gate leak.
+        # Surface a timeout marker on stderr so assert_subprocess_completed
+        # classifies the hang as a (crash-class) finding -- a module must reject
+        # impossible inputs, not hang on them.
+        out = _as_text(exc.stdout)
+        err = (_as_text(exc.stderr) + f"\n{SUBPROCESS_TIMEOUT_MARKER}:{timeout}s").strip()
+        rc = SUBPROCESS_TIMEOUT_RC
 
     try:
         with open(cov_path) as f:
@@ -87,8 +115,8 @@ def run_with_coverage(
         except OSError:
             pass
 
-    record_subprocess_rv_trace(result.stdout, result.stderr)
-    return result.returncode, result.stdout.strip(), result.stderr.strip()
+    record_subprocess_rv_trace(out, err)
+    return rc, out.strip(), err.strip()
 
 
 def get_preamble_subprocess_coverage() -> tuple[Counter[str], Counter[str]]:

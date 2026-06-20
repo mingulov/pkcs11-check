@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from pkcs11_check.classification import classify
+from pkcs11_check.testcases._subprocess_preamble import SUBPROCESS_TIMEOUT_MARKER
 from pkcs11_check.testcases._subprocess_trace import (
     RV_TRACE_MARKER,
     record_subprocess_rv_trace,
@@ -30,6 +31,22 @@ def assert_subprocess_completed(
 ) -> None:
     """Fail if a crash-survival subprocess crashed or failed internally."""
     record_subprocess_rv_trace(stdout, stderr)
+    if SUBPROCESS_TIMEOUT_MARKER in stderr:
+        # The module hung on the probe input (subprocess timed out without
+        # returning). A conformant module must reject an impossible input, not
+        # hang on it -- classify as a crash-class finding, never a record-less
+        # runtime-gate leak. (Checked first: the sentinel rc is incidental.)
+        classify(
+            "crash",
+            label=context,
+            summary=(
+                f"{context}: module hung -- subprocess timed out without returning "
+                f"on the probe input (must reject impossible inputs, not hang)\n"
+                f"stdout: {_format_subprocess_stream(stdout)}\n"
+                f"stderr: {_format_subprocess_stream(stderr)}"
+            ),
+        )
+        return
     if rc < 0:
         classify(
             "crash",

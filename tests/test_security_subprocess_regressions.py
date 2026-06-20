@@ -1311,3 +1311,34 @@ def test_ffi_length_decrypt_single_shot_guard_child_marks_setup_reject(
     assert "C_Decrypt" in scripts[0]
     assert "GUARD_OVERWRITE" in scripts[0]
     compile(scripts[0], "<child-decrypt-guard>", "exec")
+
+
+def test_run_with_coverage_hang_classifies_not_unclassified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A subprocess hang (module did not return) must classify as a crash-class
+    finding, never escape as an unclassified TimeoutExpired leak.
+
+    Regression for the kryoptic CKA_VALUE_LEN=(1<<32)+8 hang found by the
+    softhsm2/kryoptic pool validation: the module tried to allocate ~4 GiB and
+    hung, and run_with_coverage's TimeoutExpired previously leaked unclassified.
+    """
+    import subprocess as _sp
+
+    from pkcs11_check.testcases._subprocess_preamble import (
+        SUBPROCESS_TIMEOUT_MARKER,
+        SUBPROCESS_TIMEOUT_RC,
+        run_with_coverage,
+    )
+    from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
+
+    def _raise_timeout(*_a: object, **_k: object) -> object:
+        raise _sp.TimeoutExpired(cmd="x", timeout=10, output="partial", stderr="")
+
+    monkeypatch.setattr(_sp, "run", _raise_timeout)
+    rc, _out, err = run_with_coverage("print('unused')", timeout=10)
+    assert rc == SUBPROCESS_TIMEOUT_RC
+    assert SUBPROCESS_TIMEOUT_MARKER in err
+    # The parent must turn the hang into a recorded (crash-class) finding.
+    with pytest.raises(pytest.fail.Exception):
+        assert_subprocess_completed(rc, _out, err, context="probe hang regression")
