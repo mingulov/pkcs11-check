@@ -59,6 +59,10 @@ from pkcs11_check.testcases.conftest import (
     gen_edwards_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
 )
+from pkcs11_check.testcases.security._boundary_values import (
+    TRUNCATION_LOW0,
+    TRUNCATION_LOW8,
+)
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess]
@@ -202,6 +206,8 @@ def import_hmac_key(*, sign=False, verify=False):
 _ISIZE_BOUNDARY_LENGTHS = [
     pytest.param(_ISIZE_MAX_64, id="isize_max"),
     pytest.param(_ISIZE_MAX_PLUS_1_64, id="isize_max_plus_1"),
+    pytest.param(TRUNCATION_LOW0, id="trunc_low0"),
+    pytest.param(TRUNCATION_LOW8, id="trunc_low8"),
 ]
 
 
@@ -6112,4 +6118,227 @@ cleanup()
             "honest_deviation",
             label=f"{op} continuation after NULL-output size query",
             summary=f"{op} continuation returned {ckr_name(continuation_rv)}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestSingleShotOutputGuard
+# ---------------------------------------------------------------------------
+
+
+class TestSingleShotOutputGuard:
+    """``C_Encrypt`` / ``C_Decrypt`` single-shot with a 1-byte declared output.
+
+    Probe: ``C_<Enc|Dec>ryptInit`` then ``C_<Enc|Dec>rypt`` with a 1-byte
+    guard-backed output buffer declaring ``ulEncryptedDataLen=1`` /
+    ``ulDataLen=1``.  The module must return ``CKR_BUFFER_TOO_SMALL`` and must
+    NOT write past the single declared output byte.  Any guard-byte overwrite
+    is an out-of-bounds write finding.
+    """
+
+    def test_encrypt_one_byte_output_preserves_guard(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """``C_Encrypt`` with one declared output byte preserves guard bytes."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB"):
+            pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_Encrypt single-shot guard probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + """
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
+)
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+
+try:
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_AES_ECB
+    mech.pParameter = None
+    mech.ulParameterLen = 0
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"INIT_RV:0x{rv:08x}", flush=True)
+    if rv == CKR_OK:
+        GUARD = 0xC3
+        GUARD_SIZE = 32
+
+        class SingleShotProbe(ctypes.Structure):
+            _fields_ = [
+                ("data", ctypes.c_ubyte * 1),
+                ("guard", ctypes.c_ubyte * GUARD_SIZE),
+            ]
+
+        probe = SingleShotProbe()
+        for idx in range(GUARD_SIZE):
+            probe.guard[idx] = GUARD
+        pt_buf = (ctypes.c_ubyte * 16)(*range(16))
+        out_len = CK_ULONG(1)
+        rv2 = raw.C_Encrypt(
+            sh, pt_buf, 16,
+            ctypes.cast(probe.data, ctypes.POINTER(ctypes.c_ubyte)),
+            ctypes.byref(out_len),
+        )
+        print(f"TARGET_RV:0x{rv2:08x}", flush=True)
+        overwritten = sum(1 for byte in probe.guard if byte != GUARD)
+        if overwritten != 0:
+            print(f"GUARD_OVERWRITE:{overwritten}")
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script,
+            timeout=10,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context="C_Encrypt single-shot one-byte output buffer guard",
+        )
+        self._classify_single_shot_guard(stdout, "C_Encrypt", "Encrypt")
+
+    def test_decrypt_one_byte_output_preserves_guard(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """``C_Decrypt`` with one declared output byte preserves guard bytes."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB"):
+            pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_Decrypt single-shot guard probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + """
+import ctypes
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
+)
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+
+try:
+    # Produce a valid AES-ECB ciphertext block to use as decrypt input.
+    enc_mech = CK_MECHANISM()
+    enc_mech.mechanism = CKM_AES_ECB
+    enc_mech.pParameter = None
+    enc_mech.ulParameterLen = 0
+    rv = raw.C_EncryptInit(sh, ctypes.byref(enc_mech), key)
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:encrypt setup (C_EncryptInit) rejected: rv=0x{rv:08x}")
+        raise SystemExit(0)
+    pt_buf = (ctypes.c_ubyte * 16)(*range(16))
+    ct_buf = (ctypes.c_ubyte * 16)()
+    ct_len = CK_ULONG(16)
+    rv = raw.C_Encrypt(sh, pt_buf, 16, ct_buf, ctypes.byref(ct_len))
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:encrypt setup (C_Encrypt) rejected: rv=0x{rv:08x}")
+        raise SystemExit(0)
+
+    dec_mech = CK_MECHANISM()
+    dec_mech.mechanism = CKM_AES_ECB
+    dec_mech.pParameter = None
+    dec_mech.ulParameterLen = 0
+    dec_rv = raw.C_DecryptInit(sh, ctypes.byref(dec_mech), key)
+    print(f"INIT_RV:0x{dec_rv:08x}", flush=True)
+    if dec_rv == CKR_OK:
+        GUARD = 0xD4
+        GUARD_SIZE = 32
+
+        class SingleShotProbe(ctypes.Structure):
+            _fields_ = [
+                ("data", ctypes.c_ubyte * 1),
+                ("guard", ctypes.c_ubyte * GUARD_SIZE),
+            ]
+
+        probe = SingleShotProbe()
+        for idx in range(GUARD_SIZE):
+            probe.guard[idx] = GUARD
+        out_len = CK_ULONG(1)
+        rv2 = raw.C_Decrypt(
+            sh, ct_buf, 16,
+            ctypes.cast(probe.data, ctypes.POINTER(ctypes.c_ubyte)),
+            ctypes.byref(out_len),
+        )
+        print(f"TARGET_RV:0x{rv2:08x}", flush=True)
+        overwritten = sum(1 for byte in probe.guard if byte != GUARD)
+        if overwritten != 0:
+            print(f"GUARD_OVERWRITE:{overwritten}")
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script,
+            timeout=10,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context="C_Decrypt single-shot one-byte output buffer guard",
+        )
+        self._classify_single_shot_guard(stdout, "C_Decrypt", "Decrypt")
+
+    @staticmethod
+    def _classify_single_shot_guard(stdout: str, op: str, side: str) -> None:
+        """Shared parent-side classification for the single-shot guard probes."""
+        if "GUARD_OVERWRITE:" in stdout:
+            fail_as(
+                "wrong_result",
+                kind="crypto",
+                label=f"{op} output-buffer guard byte overwritten",
+                actual=_parse_prefixed_int(stdout, "GUARD_OVERWRITE:"),
+                summary=f"single-shot {op} wrote past the requested output length (OOB write)",
+            )
+        init_rv = _parse_prefixed_int(stdout, "INIT_RV:")
+        if init_rv != CKR_OK:
+            classify(
+                "not_operational",
+                label=f"{op} single-shot guard probe",
+                summary=f"C_{side}Init returned {ckr_name(init_rv)}",
+            )
+        target_rv = _parse_prefixed_int(stdout, "TARGET_RV:")
+        classify_negative_rv(
+            target_rv,
+            (CKR_BUFFER_TOO_SMALL,),
+            label=f"{op} with a one-byte output buffer",
         )

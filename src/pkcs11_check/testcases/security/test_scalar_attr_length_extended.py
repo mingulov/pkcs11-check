@@ -25,32 +25,47 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import (
     LengthArg,
     attr_bool,
     attr_bytes,
     attr_ulong,
+    mech_ecdh,
     mech_simple,
     template,
 )
 from pkcs11_check.raw.pack_mechanisms import mech_hkdf
-from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key, wrap_key
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    gen_aes_key,
+    gen_ec_keypair,
+    read_attributes,
+    wrap_key,
+)
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
     CKA_ALWAYS_SENSITIVE,
     CKA_CLASS,
+    CKA_COEFFICIENT,
     CKA_DECRYPT,
     CKA_DERIVE,
+    CKA_EC_POINT,
     CKA_ENCRYPT,
+    CKA_EXPONENT_1,
+    CKA_EXPONENT_2,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_LABEL,
     CKA_MODULUS,
     CKA_MODULUS_BITS,
     CKA_NEVER_EXTRACTABLE,
+    CKA_PRIME_1,
+    CKA_PRIME_2,
     CKA_PRIVATE,
+    CKA_PRIVATE_EXPONENT,
     CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
     CKA_SIGN,
@@ -60,13 +75,18 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKA_VERIFY,
     CKA_WRAP,
+    CKD_NULL,
     CKK_AES,
+    CKK_GENERIC_SECRET,
     CKK_RSA,
+    CKM_AES_KEY_GEN,
     CKM_AES_KEY_WRAP,
+    CKM_ECDH1_DERIVE,
     CKM_HKDF_DERIVE,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SHA256,
     CKO_DATA,
+    CKO_PRIVATE_KEY,
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
     CKR_OK,
@@ -76,7 +96,11 @@ from pkcs11_check.testcases.ckr._malformed_attrs import (
     make_bool_attr_overlong,
     make_ulong_attr_with_length,
 )
-from pkcs11_check.testcases.conftest import classify_negative_rv, gen_aes_key_or_xfail
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    gen_aes_key_or_xfail,
+    skip_unless_create_object_supported,
+)
 
 pytestmark = pytest.mark.security
 
@@ -446,7 +470,8 @@ class TestBoolOverlongInUnwrapCopy:
             return
         try:
             new_attrs = template(attr_bool(CKA_ENCRYPT, False))
-            _storage = make_bool_attr_overlong(new_attrs, 3)
+            # new_attrs has a single attribute (CKA_ENCRYPT) at slot 0; corrupt that.
+            _storage = make_bool_attr_overlong(new_attrs, 0)
             dst_h = CK_OBJECT_HANDLE(0)
             rv = rs.raw.C_CopyObject(
                 rs.sh, src_h.value, new_attrs.ptr, new_attrs.count, byref(dst_h)
@@ -497,4 +522,305 @@ class TestBoolOverlongInUnwrapCopy:
             rv,
             TEMPLATE_ERRORS,
             label="C_UnwrapKey with CK_ULONG-sized CKA_ENCRYPT boolean in key template",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 (C2 matrix): Bool-overlong in C_GenerateKey / C_GenerateKeyPair /
+# C_DeriveKey  — the 3 remaining template contexts not yet covered by MVP.
+# ---------------------------------------------------------------------------
+
+
+class TestBoolOverlongInGenerateDerive:
+    """A CK_ULONG-sized boolean in generate / generate-keypair / derive
+    templates must be rejected; accepting it (CKR_OK) is the finding
+    (accepted_invalid).  Mirrors :class:`TestBoolOverlongInUnwrapCopy`.
+    """
+
+    # ------------------------------------------------------------------
+    # 1. C_GenerateKey (AES)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "attr_type",
+        [
+            CKA_ENCRYPT,
+            CKA_SENSITIVE,
+        ],
+        ids=["encrypt", "sensitive"],
+    )
+    def test_bool_overlong_in_generate_aes_key(
+        self,
+        p11_raw_session: Any,
+        attr_type: int,
+    ) -> None:
+        """C_GenerateKey(AES) must reject a CK_ULONG-sized operation bool."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
+            pytest.skip("CKM_AES_KEY_GEN not advertised")
+        mech = mech_simple(CKM_AES_KEY_GEN)
+        keygen_tmpl = template(
+            attr_ulong(CKA_VALUE_LEN, 32),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(attr_type, False),
+        )
+        # Corrupt slot 2 (the attr_type bool) to CK_ULONG-sized storage.
+        _storage = make_bool_attr_overlong(keygen_tmpl, 2)
+        out_h = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKey(
+            rs.sh, mech.byref(), keygen_tmpl.ptr, keygen_tmpl.count, byref(out_h)
+        )
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, out_h.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label=(
+                f"C_GenerateKey(AES) with CK_ULONG-sized {ckr_name(attr_type)} boolean attribute"
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # 2. C_GenerateKeyPair (RSA) — overlong bool in private-key template
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "attr_type",
+        [
+            CKA_SIGN,
+            CKA_SENSITIVE,
+        ],
+        ids=["sign", "sensitive"],
+    )
+    def test_bool_overlong_in_generate_rsa_keypair(
+        self,
+        p11_raw_session: Any,
+        attr_type: int,
+    ) -> None:
+        """C_GenerateKeyPair(RSA) must reject a CK_ULONG-sized bool in the priv template."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not advertised")
+        mech = mech_simple(CKM_RSA_PKCS_KEY_PAIR_GEN)
+        pub_tmpl = template(
+            attr_ulong(CKA_MODULUS_BITS, 2048),
+            attr_bytes(CKA_PUBLIC_EXPONENT, b"\x01\x00\x01"),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_VERIFY, True),
+        )
+        priv_tmpl = template(
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_PRIVATE, True),
+            attr_bool(attr_type, False),
+        )
+        # Corrupt slot 2 (attr_type bool) in the private template.
+        _storage = make_bool_attr_overlong(priv_tmpl, 2)
+        pub = CK_OBJECT_HANDLE(0)
+        priv = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            pub_tmpl.ptr,
+            pub_tmpl.count,
+            priv_tmpl.ptr,
+            priv_tmpl.count,
+            byref(pub),
+            byref(priv),
+        )
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, pub.value)
+            destroy_quietly(rs.raw, rs.sh, priv.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label=(
+                f"C_GenerateKeyPair(RSA) priv-tmpl with CK_ULONG-sized"
+                f" {ckr_name(attr_type)} boolean attribute"
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # 3. C_DeriveKey (ECDH1) — overlong bool in the derived-key template
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "attr_type",
+        [
+            CKA_ENCRYPT,
+            CKA_SENSITIVE,
+        ],
+        ids=["encrypt", "sensitive"],
+    )
+    def test_bool_overlong_in_derive_ecdh(
+        self,
+        p11_raw_session: Any,
+        attr_type: int,
+    ) -> None:
+        """C_DeriveKey(ECDH1) must reject a CK_ULONG-sized bool in the derived-key template."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("ECDH1_DERIVE"):
+            pytest.skip("CKM_ECDH1_DERIVE not advertised")
+        if not (rs.has_mechanism("EC_KEY_PAIR_GEN") or rs.has_mechanism("ECDSA_KEY_PAIR_GEN")):
+            pytest.skip("EC_KEY_PAIR_GEN not advertised — cannot set up ECDH base key")
+        curve_oid = encode_named_curve_parameters("secp256r1")
+        pub_a, priv_a = gen_ec_keypair(
+            rs.raw,
+            rs.sh,
+            curve_oid,
+            private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+            public_attrs={CKA_TOKEN: False},
+        )
+        pub_b, priv_b = gen_ec_keypair(
+            rs.raw,
+            rs.sh,
+            curve_oid,
+            private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+            public_attrs={CKA_TOKEN: False},
+        )
+        try:
+            # Read peer public point (raw bytes from DER OCTET STRING).
+            from pkcs11_check.raw.der import decode_ec_point
+
+            attrs_b = read_attributes(rs.raw, rs.sh, pub_b, [CKA_EC_POINT])
+            raw_point = attrs_b[CKA_EC_POINT]
+            assert isinstance(raw_point, bytes)
+            # Unwrap DER OCTET STRING wrapper if present (Weierstrass curve).
+            if raw_point and raw_point[0] == 0x04:
+                peer_point = decode_ec_point(raw_point)
+            else:
+                peer_point = raw_point
+            ecdh_mech = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=peer_point)
+            out_tmpl = template(
+                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+                attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
+                attr_ulong(CKA_VALUE_LEN, 32),
+                attr_bool(attr_type, False),
+            )
+            # Corrupt slot 3 (attr_type bool) in the derived-key template.
+            _storage = make_bool_attr_overlong(out_tmpl, 3)
+            derived = CK_OBJECT_HANDLE(0)
+            rv = rs.raw.C_DeriveKey(
+                rs.sh,
+                ecdh_mech.byref(),
+                priv_a,
+                out_tmpl.ptr,
+                out_tmpl.count,
+                byref(derived),
+            )
+            if rv == CKR_OK:
+                destroy_quietly(rs.raw, rs.sh, derived.value)
+            classify_negative_rv(
+                rv,
+                TEMPLATE_ERRORS,
+                label=(
+                    f"C_DeriveKey(ECDH1) with CK_ULONG-sized"
+                    f" {ckr_name(attr_type)} boolean attribute in derived-key template"
+                ),
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub_a)
+            destroy_quietly(rs.raw, rs.sh, priv_a)
+            destroy_quietly(rs.raw, rs.sh, pub_b)
+            destroy_quietly(rs.raw, rs.sh, priv_b)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 (C2 matrix): RSA private-part oversize (CKA_PRIME_1/2, CKA_EXPONENT_1)
+# in C_CreateObject — completes the C2 attribute-width matrix.
+# ---------------------------------------------------------------------------
+
+
+def _rsa_crt_components() -> dict[str, bytes]:
+    """Generate a fresh RSA-2048 key and return its CRT components as bytes.
+
+    Uses the ``cryptography`` library (already a framework dependency via
+    Wycheproof / cross-verify tests) so no static vectors need maintaining.
+    The key is generated once per probe call; probe isolation ensures each
+    parametrize variant gets its own key.
+    """
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+
+    key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    priv = key.private_numbers()
+    pub = priv.public_numbers
+    # Export each component as big-endian bytes; 256 bytes for 2048-bit modulus/d,
+    # 128 bytes for the 1024-bit CRT halves.
+    return {
+        "n": pub.n.to_bytes(256, "big"),
+        "e": pub.e.to_bytes(3, "big"),
+        "d": priv.d.to_bytes(256, "big"),
+        "p": priv.p.to_bytes(128, "big"),
+        "q": priv.q.to_bytes(128, "big"),
+        "dmp1": priv.dmp1.to_bytes(128, "big"),
+        "dmq1": priv.dmq1.to_bytes(128, "big"),
+        "iqmp": priv.iqmp.to_bytes(128, "big"),
+    }
+
+
+class TestRsaPrivatePartOversize:
+    """RSA CRT private-part attributes (CKA_PRIME_1, CKA_PRIME_2, CKA_EXPONENT_1)
+    declared with a wildly oversized ``ulValueLen`` in a ``C_CreateObject``
+    (RSA private-key import) template must be rejected cleanly.
+
+    Each probe builds an otherwise-valid RSA-2048 private-key import template
+    and corrupts exactly ONE CRT component's declared length to
+    ``0xFFFFFFFF``, keeping the real buffer small (the actual component bytes).
+    ``CKR_OK`` on a malformed declared length is the finding (accepted_invalid).
+    """
+
+    @pytest.mark.parametrize(
+        ("target_attr", "attr_name"),
+        [
+            pytest.param(CKA_PRIME_1, "prime_1", id="prime-1"),
+            pytest.param(CKA_PRIME_2, "prime_2", id="prime-2"),
+            pytest.param(CKA_EXPONENT_1, "exponent_1", id="exponent-1"),
+        ],
+    )
+    def test_rsa_private_part_wild_oversized_in_create(
+        self,
+        p11_raw_session: Any,
+        target_attr: int,
+        attr_name: str,
+    ) -> None:
+        """C_CreateObject must reject an RSA private-key template with a wildly
+        oversized declared ulValueLen on one of the CRT private-part attributes."""
+        rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
+
+        k = _rsa_crt_components()
+
+        def _bytes(attr_type: int, data: bytes, *, corrupt: bool = False) -> Any:
+            """Build an attr_bytes item; oversized length on the corrupted attr."""
+            if corrupt:
+                return attr_bytes(
+                    attr_type, data, length=LengthArg.explicit_value(_WILD_OVERSIZED_LENGTH)
+                )
+            return attr_bytes(attr_type, data)
+
+        tmpl = template(
+            attr_ulong(CKA_CLASS, CKO_PRIVATE_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_RSA),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, True),
+            _bytes(CKA_MODULUS, k["n"]),
+            _bytes(CKA_PUBLIC_EXPONENT, k["e"]),
+            _bytes(CKA_PRIVATE_EXPONENT, k["d"]),
+            _bytes(CKA_PRIME_1, k["p"], corrupt=(target_attr == CKA_PRIME_1)),
+            _bytes(CKA_PRIME_2, k["q"], corrupt=(target_attr == CKA_PRIME_2)),
+            _bytes(CKA_EXPONENT_1, k["dmp1"], corrupt=(target_attr == CKA_EXPONENT_1)),
+            _bytes(CKA_EXPONENT_2, k["dmq1"]),
+            _bytes(CKA_COEFFICIENT, k["iqmp"]),
+        )
+        handle = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, handle.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label=(
+                f"C_CreateObject(RSA private key) with wildly oversized"
+                f" CKA_{attr_name.upper()} ulValueLen"
+            ),
         )
