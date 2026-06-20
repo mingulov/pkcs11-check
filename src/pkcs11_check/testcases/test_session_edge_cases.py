@@ -229,8 +229,12 @@ class TestSoftHSM2IssueRegressions:
             )
         except AssertionError as exc:
             # Rejection of a small RSA key is acceptable; route through classifier.
+            # A non-CkrAssertionError has no .rv; propagate it as a real failure
+            # rather than passing CKR_OK (0) which would mis-route to accepted_invalid.
+            if not hasattr(exc, "rv"):
+                raise
             classify_negative_rv(
-                getattr(exc, "rv", 0),
+                exc.rv,
                 (CKR_KEY_SIZE_RANGE, CKR_ATTRIBUTE_VALUE_INVALID),
                 label="RSA-512-keygen:size-rejection",
             )
