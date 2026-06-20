@@ -470,7 +470,8 @@ class TestBoolOverlongInUnwrapCopy:
             return
         try:
             new_attrs = template(attr_bool(CKA_ENCRYPT, False))
-            _storage = make_bool_attr_overlong(new_attrs, 3)
+            # new_attrs has a single attribute (CKA_ENCRYPT) at slot 0; corrupt that.
+            _storage = make_bool_attr_overlong(new_attrs, 0)
             dst_h = CK_OBJECT_HANDLE(0)
             rv = rs.raw.C_CopyObject(
                 rs.sh, src_h.value, new_attrs.ptr, new_attrs.count, byref(dst_h)
