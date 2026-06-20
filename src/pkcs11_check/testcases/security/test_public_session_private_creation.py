@@ -1,10 +1,11 @@
 """Public-session private-object creation rejection probes (Wave 2).
 
 PKCS#11 requires an authenticated (CKU_USER) session to create private
-(``CKA_PRIVATE=True``) objects. The ``C_CreateObject`` and ``C_GenerateKey``
-paths are covered by ``test_access_levels.py``; this file covers the remaining
-creation paths -- ``C_UnwrapKey``, ``C_DeriveKey`` (ECDH + HKDF), and
-``C_CopyObject`` -- to confirm the rule holds uniformly.
+(``CKA_PRIVATE=True``) objects. ``test_access_levels.py`` covers
+``C_CreateObject`` and ``C_GenerateKey`` in the context of private-object
+*visibility* access-level tests; this file focuses on the creation-rejection
+rule for the remaining creation paths -- ``C_UnwrapKey``, ``C_DeriveKey``
+(ECDH + HKDF), and ``C_CopyObject`` -- to confirm the rule holds uniformly.
 
 Each probe clears the token-wide login (login is per-token, not per-session),
 then attempts the creation on a public session. A module that creates a usable

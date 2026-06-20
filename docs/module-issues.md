@@ -2109,3 +2109,9 @@ own hardcoded canned values for every `C_GetAttributeValue` query.
   Detected by: `test_limbo_import.py::test_import_limbo_failure_cert_raw` (175 failures,
   pool baseline `artifacts2/pkcs11-mock-pooled/report.jsonl`). Determination: 2026-06-10
   triage session.
+
+---
+
+## Triage notes (cross-module)
+
+- **`test_cve_regression.py::test_create_trusted_data_object` hard-fails (`accepted_invalid`, kind=policy) when a USER session accepts `CKA_TRUSTED=True` on a `CKO_DATA` object** — expected behavior; any module that creates the object succeeds (CKR_OK) without rejecting the invalid trust-escalation is a genuine policy finding, not a harness false-positive.

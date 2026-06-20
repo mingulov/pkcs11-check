@@ -70,7 +70,9 @@ def _run_raw_test(module_path: str, pin: str | None, test_code: str) -> tuple[in
         raw = RawPKCS11.from_lib("{module_path}")
 {ckr_subprocess_rv_trace_setup(indent="        ")}
         rv = raw.C_Initialize(None)
-        assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), f"Init failed: 0x{{rv:08x}}"
+        assert rv in (  # audit-ok: init idempotency
+            CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED
+        ), f"Init failed: 0x{{rv:08x}}"
 
         # Get first slot
         slot_count = ctypes.c_ulong(0)

@@ -210,7 +210,7 @@ def subprocess_session_preamble(
         f"    _atexit.register(_p11check_emit_rv_trace)\n"
         f"\n"
         f"rv = raw.C_Initialize(None)\n"
-        f"assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), "
+        f"assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), "  # audit-ok: init idempotency
         f'f"C_Initialize: 0x{{rv:08x}}"\n'
         f"\n"
         f"{slot_discovery}\n"

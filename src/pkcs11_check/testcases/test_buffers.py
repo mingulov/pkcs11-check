@@ -43,7 +43,11 @@ from pkcs11_check.raw.types_std import (
     CKR_BUFFER_TOO_SMALL,
     CKR_OK,
 )
-from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail, require_operational_aes_keygen
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    gen_rsa_keypair_or_xfail,
+    require_operational_aes_keygen,
+)
 
 pytestmark = pytest.mark.boundary
 
@@ -517,6 +521,10 @@ class TestOutputBufferEdgeCases:
         rv = int(rs.raw.C_GenerateRandom(rs.sh, buf, 0))
         # Either CKR_OK (zero-length read is a no-op) or CKR_ARGUMENTS_BAD
         # (some modules treat 0-length as bad arg) is acceptable.
-        assert rv in (CKR_OK, CKR_ARGUMENTS_BAD), (
-            f"C_GenerateRandom(buf, 0) returned 0x{rv:08x}; expected CKR_OK or CKR_ARGUMENTS_BAD"
+        # Spec §5.19 does not carve out zero-length; allow_ok=True since success is spec-legal.
+        classify_negative_rv(
+            rv,
+            (CKR_ARGUMENTS_BAD,),
+            label="C_GenerateRandom zero length",
+            allow_ok=True,
         )

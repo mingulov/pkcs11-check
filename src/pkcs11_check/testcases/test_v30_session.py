@@ -591,7 +591,10 @@ class TestLoginLogoutCycle:
         sh2 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             rv = _raw_login(rs.raw, sh2, CKU_USER, pin)
-            assert rv in (CKR_OK, CKR_USER_ALREADY_LOGGED_IN), f"C_Login failed: {ckr_name(rv)}"
+            assert rv in (  # audit-ok: positive-op login idempotency
+                CKR_OK,
+                CKR_USER_ALREADY_LOGGED_IN,
+            ), f"C_Login failed: {ckr_name(rv)}"
 
             # Verify the session is functional after login.
             key = gen_aes_key_or_xfail(rs, 128, sh=sh2)
@@ -599,7 +602,10 @@ class TestLoginLogoutCycle:
             destroy_quietly(rs.raw, sh2, key)
 
             rv = _raw_logout(rs.raw, sh2)
-            assert rv in (CKR_OK, CKR_USER_NOT_LOGGED_IN), f"C_Logout failed: {ckr_name(rv)}"
+            assert rv in (  # audit-ok: positive-op logout idempotency
+                CKR_OK,
+                CKR_USER_NOT_LOGGED_IN,
+            ), f"C_Logout failed: {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, sh2)
 
@@ -642,7 +648,10 @@ class TestLoginLogoutCycle:
 
             if logged_in:
                 rv = _raw_logout(rs.raw, sh2)
-                assert rv in (CKR_OK, CKR_USER_NOT_LOGGED_IN), f"C_Logout failed: {ckr_name(rv)}"
+                assert rv in (  # audit-ok: positive-op logout idempotency
+                    CKR_OK,
+                    CKR_USER_NOT_LOGGED_IN,
+                ), f"C_Logout failed: {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, sh2)
 
@@ -668,9 +677,10 @@ class TestLoginLogoutCycle:
         try:
             # First login.
             rv = _raw_login(rs.raw, sh2, CKU_USER, pin)
-            assert rv in (CKR_OK, CKR_USER_ALREADY_LOGGED_IN), (
-                f"First C_Login failed: {ckr_name(rv)}"
-            )
+            assert rv in (  # audit-ok: positive-op login idempotency
+                CKR_OK,
+                CKR_USER_ALREADY_LOGGED_IN,
+            ), f"First C_Login failed: {ckr_name(rv)}"
 
             # Second login via C_LoginUser must be rejected.
             rv2 = _raw_login_user(rs.raw, sh2, CKU_USER, pin, b"")
@@ -863,7 +873,9 @@ class TestSessionCancel:
             f"""\
 
             rv = raw.C_Initialize(None)
-            assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), f"C_Initialize: 0x{{rv:08x}}"
+            assert rv in (  # audit-ok: init idempotency
+                CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED
+            ), f"C_Initialize: 0x{{rv:08x}}"
 
             session_handle = c_ulong(0)
             slot_ids = get_slot_ids(raw)
@@ -882,7 +894,9 @@ class TestSessionCancel:
                 pin = _pin.encode()
                 pin_buf = (c_ubyte * len(pin))(*pin)
                 rv = raw.C_Login(hSession, CKU_USER, pin_buf, len(pin))
-                assert rv in (CKR_OK, CKR_USER_ALREADY_LOGGED_IN), f"C_Login: 0x{{rv:08x}}"
+                assert rv in (  # audit-ok: login idempotency
+                    CKR_OK, CKR_USER_ALREADY_LOGGED_IN
+                ), f"C_Login: 0x{{rv:08x}}"
 
             mech = CK_MECHANISM(CKM_SHA256, None, 0)
             rv = raw.C_DigestInit(hSession, pointer(mech))

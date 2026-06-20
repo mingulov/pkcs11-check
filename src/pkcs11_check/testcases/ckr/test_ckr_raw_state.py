@@ -93,7 +93,7 @@ def _template_ptr(attrs):
 raw = RawPKCS11.from_lib("{module}")
 {rv_trace_setup}
 rv = raw.C_Initialize(None)
-assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)
+assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)  # audit-ok: positive-op init idempotency
 
 sh = open_session(raw, get_slot_ids(raw)[0], CKF_SERIAL_SESSION | CKF_RW_SESSION)
 {cleanup_setup}

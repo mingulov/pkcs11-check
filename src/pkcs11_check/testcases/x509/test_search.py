@@ -101,17 +101,17 @@ class TestCertificateSearchExtended:
                 a = read_attributes(rs.raw, rs.sh, h, [CKA_SUBJECT])
                 subject = a[CKA_SUBJECT]
             except AssertionError:
-                pass
+                pass  # audit-ok: CKR error reading CKA_SUBJECT is acceptable; search skipped
             try:
                 a = read_attributes(rs.raw, rs.sh, h, [CKA_ISSUER])
                 issuer = a[CKA_ISSUER]
             except AssertionError:
-                pass
+                pass  # audit-ok: CKR error reading CKA_ISSUER is acceptable; search skipped
             try:
                 a = read_attributes(rs.raw, rs.sh, h, [CKA_SERIAL_NUMBER])
                 serial = a[CKA_SERIAL_NUMBER]
             except AssertionError:
-                pass
+                pass  # audit-ok: CKR error reading CKA_SERIAL_NUMBER is acceptable; search skipped
 
             # Search by subject
             if subject:

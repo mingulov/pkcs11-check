@@ -217,7 +217,6 @@ class TestOaepUnwrapTemplateEnforcement:
                     pytest.skip(f"CKA_UNWRAP_TEMPLATE not supported at RSA keygen: {ckr_name(rv)}")
                 classify(
                     "not_operational",
-                    kind="crypto",
                     label="CKA_UNWRAP_TEMPLATE keypair/object setup",
                     actual=rv,
                     summary=f"setup rejected with unexpected {ckr_name(rv)}",
@@ -252,7 +251,6 @@ class TestOaepUnwrapTemplateEnforcement:
             if rv != CKR_OK:
                 classify(
                     "not_operational",
-                    kind="crypto",
                     label="CKM_RSA_PKCS_OAEP:C_WrapKey (source key size query)",
                     operation="C_WrapKey",
                     mechanism="CKM_RSA_PKCS_OAEP",
@@ -274,7 +272,6 @@ class TestOaepUnwrapTemplateEnforcement:
             if rv != CKR_OK:
                 classify(
                     "not_operational",
-                    kind="crypto",
                     label="CKM_RSA_PKCS_OAEP:C_WrapKey (source key real)",
                     operation="C_WrapKey",
                     mechanism="CKM_RSA_PKCS_OAEP",
@@ -307,7 +304,6 @@ class TestOaepUnwrapTemplateEnforcement:
             if rv != CKR_OK:
                 classify(
                     "not_operational",
-                    kind="crypto",
                     label="CKM_RSA_PKCS_OAEP:C_UnwrapKey (matching template)",
                     operation="C_UnwrapKey",
                     mechanism="CKM_RSA_PKCS_OAEP",
@@ -429,7 +425,6 @@ class TestEcdhDeriveTemplateEnforcement:
                     pytest.skip(f"CKA_DERIVE_TEMPLATE not supported at EC keygen: {ckr_name(rv)}")
                 classify(
                     "not_operational",
-                    kind="crypto",
                     label="CKA_DERIVE_TEMPLATE keypair/object setup",
                     actual=rv,
                     summary=f"setup rejected with unexpected {ckr_name(rv)}",
@@ -473,7 +468,6 @@ class TestEcdhDeriveTemplateEnforcement:
             if rv != CKR_OK:
                 classify(
                     "not_operational",
-                    kind="crypto",
                     label="CKM_EC_KEY_PAIR_GEN (peer keypair)",
                     operation="C_GenerateKeyPair",
                     mechanism="CKM_EC_KEY_PAIR_GEN",
@@ -486,11 +480,10 @@ class TestEcdhDeriveTemplateEnforcement:
                 peer_attrs = read_attributes(rs.raw, rs.sh, pub_peer.value, [CKA_EC_POINT])
                 peer_point = peer_attrs.get(CKA_EC_POINT, b"")
             except (AssertionError, KeyError):
-                pass
+                pass  # audit-ok: CKA_EC_POINT read fails → not_operational classified below
             if not peer_point:
                 classify(
                     "not_operational",
-                    kind="crypto",
                     label="CKA_EC_POINT readback (peer public)",
                     summary="Could not read CKA_EC_POINT from peer public key",
                 )
@@ -515,7 +508,6 @@ class TestEcdhDeriveTemplateEnforcement:
             if rv != CKR_OK:
                 classify(
                     "not_operational",
-                    kind="crypto",
                     label="CKM_ECDH1_DERIVE:C_DeriveKey (matching template)",
                     operation="C_DeriveKey",
                     mechanism="CKM_ECDH1_DERIVE",
@@ -619,7 +611,6 @@ class TestHkdfDeriveTemplateEnforcement:
                     )
                 classify(
                     "not_operational",
-                    kind="crypto",
                     label="CKA_DERIVE_TEMPLATE keypair/object setup",
                     actual=rv,
                     summary=f"setup rejected with unexpected {ckr_name(rv)}",
@@ -655,7 +646,6 @@ class TestHkdfDeriveTemplateEnforcement:
             if rv != CKR_OK:
                 classify(
                     "not_operational",
-                    kind="crypto",
                     label="CKM_HKDF_DERIVE:C_DeriveKey (matching template)",
                     operation="C_DeriveKey",
                     mechanism="CKM_HKDF_DERIVE",

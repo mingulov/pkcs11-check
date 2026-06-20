@@ -154,9 +154,13 @@ class TestInitArgsMatrix:
         # Acceptable: CKR_OK (no-lock mode honored) or CKR_CANT_LOCK
         # (module insists on locking).  Not acceptable: segfault.
         assert rv is not None, f"No RV produced. Stdout: {stdout!r} Stderr: {stderr!r}"
-        assert rv in (CKR_OK, CKR_CANT_LOCK), (
-            f"C_Initialize(empty struct) returned 0x{rv:08x}; expected CKR_OK or CKR_CANT_LOCK"
-        )
+        assert (
+            rv
+            in (  # audit-ok: positive-op init — CKR_OK is success; CKR_CANT_LOCK is spec-legal
+                CKR_OK,
+                CKR_CANT_LOCK,
+            )
+        ), f"C_Initialize(empty struct) returned 0x{rv:08x}; expected CKR_OK or CKR_CANT_LOCK"
 
     def test_init_os_locking_only(self, p11_config: Any) -> None:
         """Mode C: CKF_OS_LOCKING_OK set, no callbacks.
@@ -233,9 +237,13 @@ class TestInitArgsMatrix:
         # Spec permits CKR_OK (callbacks accepted) or CKR_CANT_LOCK
         # (module unable to honor caller-supplied locking).
         assert rv is not None
-        assert rv in (CKR_OK, CKR_CANT_LOCK), (
-            f"C_Initialize(app callbacks) returned 0x{rv:08x}; expected CKR_OK or CKR_CANT_LOCK"
-        )
+        assert (
+            rv
+            in (  # audit-ok: positive-op init — CKR_OK is success; CKR_CANT_LOCK is spec-legal
+                CKR_OK,
+                CKR_CANT_LOCK,
+            )
+        ), f"C_Initialize(app callbacks) returned 0x{rv:08x}; expected CKR_OK or CKR_CANT_LOCK"
 
     def test_init_both_callbacks_and_os_locking_ok(self, p11_config: Any) -> None:
         """Mode E: callbacks set AND CKF_OS_LOCKING_OK set.
@@ -282,7 +290,13 @@ class TestInitArgsMatrix:
             )
         rv = _parse_rv(stdout)
         assert rv is not None
-        assert rv in (CKR_OK, CKR_CANT_LOCK), (
+        assert (
+            rv
+            in (  # audit-ok: positive-op init — CKR_OK is success; CKR_CANT_LOCK is spec-legal
+                CKR_OK,
+                CKR_CANT_LOCK,
+            )
+        ), (
             f"C_Initialize(callbacks + OS_LOCKING_OK) returned 0x{rv:08x}; "
             f"expected CKR_OK or CKR_CANT_LOCK"
         )

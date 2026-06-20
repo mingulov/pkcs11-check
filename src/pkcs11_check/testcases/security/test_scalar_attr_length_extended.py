@@ -424,7 +424,7 @@ class TestWildOversizedAttrInCreate:
 
 
 # ---------------------------------------------------------------------------
-# Task 7 (C2 MVP): Bool-overlong in C_CopyObject + C_UnwrapKey (new contexts)
+# Bool-overlong in C_CopyObject + C_UnwrapKey (new contexts)
 # ---------------------------------------------------------------------------
 
 

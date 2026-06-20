@@ -41,7 +41,10 @@ class TestInterfaceVersion:
 
         raw = RawPKCS11.from_lib(str(module_path))
         rv = raw.C_Initialize(None)
-        assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), f"C_Initialize: 0x{rv:08x}"
+        assert rv in (  # audit-ok: positive-op init idempotency
+            CKR_OK,
+            CKR_CRYPTOKI_ALREADY_INITIALIZED,
+        ), f"C_Initialize: 0x{rv:08x}"
         try:
             fnames = raw.available_function_names()
             # v2.40 functions are always present; v3.0+ have C_GetInterfaceList

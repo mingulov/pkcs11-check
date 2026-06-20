@@ -16,6 +16,7 @@ from pkcs11_check.raw.recipes import (
     gen_rsa_keypair,
     generate_random,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_ENCAPSULATE,
@@ -24,6 +25,10 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKO_DATA,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 
 pytestmark = pytest.mark.security
@@ -158,12 +163,13 @@ class TestV240V32AttributeMix:
         p11_raw_session: Any,
         p11_interface_version: str,
     ) -> None:
-        """v3.2-only attributes on v2.40 module - must reject, not crash."""
+        """v3.2-only attributes on v2.40 module - must not crash."""
         if p11_interface_version not in ("2.40",):
             pytest.skip("Only relevant for v2.40 modules")
 
         rs = p11_raw_session
-        # Try creating key with a v3.2-only attribute
+        # CKA_TOKEN=False is spec-legal on a keygen template (creates session key).
+        # Crash-guard only: both acceptance and rejection are valid outcomes.
         try:
             gen_rsa_keypair(
                 rs.raw,
@@ -171,15 +177,20 @@ class TestV240V32AttributeMix:
                 2048,
                 public_attrs={CKA_TOKEN: False},
             )
-        except (AssertionError, TypeError, AttributeError):
-            pass
+        except CkrAssertionError:
+            pass  # audit-ok: spec-legal rejection (token-only policy) — crash is the finding
+        except (TypeError, AttributeError):
+            pass  # audit-ok: harness binding error on v3.2 attr type — not a module reject
 
     def test_encapsulate_attr_on_non_pqc(
         self,
         p11_raw_session: Any,
     ) -> None:
-        """CKA_ENCAPSULATE on non-PQC key - must reject, not crash."""
+        """CKA_ENCAPSULATE on non-PQC AES key - must reject, not crash."""
+        from pkcs11_check.testcases.conftest import reject_or_classify
+
         rs = p11_raw_session
+        exc: CkrAssertionError | None = None
         try:
             gen_aes_key(
                 rs.raw,
@@ -187,5 +198,17 @@ class TestV240V32AttributeMix:
                 256,
                 attrs={CKA_ENCAPSULATE: True},
             )
-        except (AssertionError, TypeError, AttributeError):
-            pass
+        except CkrAssertionError as _exc:
+            exc = _exc
+        except (TypeError, AttributeError):
+            pass  # audit-ok: harness binding error on v3.2 attr type — not a module reject
+        reject_or_classify(
+            exc,
+            (
+                CKR_TEMPLATE_INCONSISTENT,
+                CKR_ATTRIBUTE_TYPE_INVALID,
+                CKR_ATTRIBUTE_VALUE_INVALID,
+                CKR_FUNCTION_NOT_SUPPORTED,
+            ),
+            label="CKA_ENCAPSULATE=True on AES keygen (non-PQC key)",
+        )

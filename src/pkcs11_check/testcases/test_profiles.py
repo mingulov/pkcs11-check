@@ -142,7 +142,7 @@ class TestProfileObjects:
                 else:
                     pids.add(int(raw_val))
             except (AssertionError, KeyError):
-                pass
+                pass  # audit-ok: CKA_PROFILE_ID unreadable → honest_deviation classified below
         standard = {CKP_BASELINE_PROVIDER, CKP_EXTENDED_PROVIDER}
         if not pids & standard:
             classify(
