@@ -185,7 +185,7 @@ print("OK")
             """\
 rv = raw.C_DigestInit(sh, null_pointer().pointer)
 print(f"CKR:0x{rv:08x}")
-assert rv in (CKR_ARGUMENTS_BAD, CKR_OK), f"Got 0x{rv:08x}"  # NULL mech cancel
+assert rv in (CKR_ARGUMENTS_BAD, CKR_OK), f"Got 0x{rv:08x}"  # audit-ok: cancel, CKR_OK per v3+
 print("OK")
 """,
         )

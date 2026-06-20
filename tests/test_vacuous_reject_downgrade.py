@@ -472,7 +472,9 @@ def test_pss_invalid_reject_on_dead_combo_xfails(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(pss, "destroy_quietly", lambda *a, **k: None)
     monkeypatch.setattr(pss, "mech_pss", lambda *a, **k: object())
     _wire_pss_probe(
-        monkeypatch, gen=lambda *a, **k: (7, 8), sign=refuse_combo_sign,
+        monkeypatch,
+        gen=lambda *a, **k: (7, 8),
+        sign=refuse_combo_sign,
     )
     rs = SimpleNamespace(
         raw=object(), sh=1, has_mechanism=lambda name: True, has_mechanism_flag=lambda _m, _f: True

@@ -19,6 +19,7 @@ from pkcs11_check.raw.types_std import (
     CKR_SAVED_STATE_INVALID,
     CKR_STATE_UNSAVEABLE,
 )
+from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = pytest.mark.access
 
@@ -56,4 +57,4 @@ class TestSetOperationStateErrors:
             CKR_FUNCTION_NOT_SUPPORTED,
         )
         # Any non-OK error is acceptable; spec-mandated is CKR_SAVED_STATE_INVALID
-        assert rv in acceptable or rv != 0, f"Unexpected CKR 0x{rv:08x} from C_SetOperationState"
+        classify_negative_rv(rv, tuple(acceptable), label="C_SetOperationState")

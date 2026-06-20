@@ -44,7 +44,10 @@ class TestReinitialize:
         # Load and initialize
         raw = RawPKCS11.from_lib(str(module_path))
         rv = raw.C_Initialize(None)
-        assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)
+        assert rv in (  # audit-ok: positive-op init idempotency
+            CKR_OK,
+            CKR_CRYPTOKI_ALREADY_INITIALIZED,
+        )
 
         try:
             slots = get_slot_ids(raw)
@@ -86,7 +89,10 @@ class TestReinitialize:
 
         raw = RawPKCS11.from_lib(str(module_path))
         rv = raw.C_Initialize(None)
-        assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)
+        assert rv in (  # audit-ok: positive-op init idempotency
+            CKR_OK,
+            CKR_CRYPTOKI_ALREADY_INITIALIZED,
+        )
 
         slots = get_slot_ids(raw)
         slot_idx = p11_config.slot if p11_config.slot is not None else 0
@@ -184,9 +190,10 @@ class TestReinitialize:
             for i in range(1, 10000):
                 rv = int(raw.C_Initialize(None))
                 # Idempotent C_Initialize: ALREADY_INITIALIZED expected; CKR_OK tolerated.
-                assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), (
-                    f"C_Initialize #{i} returned {ckr_name(rv)}"
-                )
+                assert rv in (  # audit-ok: positive-op init idempotency
+                    CKR_OK,
+                    CKR_CRYPTOKI_ALREADY_INITIALIZED,
+                ), f"C_Initialize #{i} returned {ckr_name(rv)}"
         finally:
             raw.C_Finalize(None)  # collect/undo the accumulated init -- once, at the end
 
