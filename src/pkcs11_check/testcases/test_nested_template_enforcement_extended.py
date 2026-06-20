@@ -486,7 +486,7 @@ class TestEcdhDeriveTemplateEnforcement:
                 peer_attrs = read_attributes(rs.raw, rs.sh, pub_peer.value, [CKA_EC_POINT])
                 peer_point = peer_attrs.get(CKA_EC_POINT, b"")
             except (AssertionError, KeyError):
-                pass
+                pass  # audit-ok: CKA_EC_POINT read fails → not_operational classified below
             if not peer_point:
                 classify(
                     "not_operational",
