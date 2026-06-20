@@ -84,10 +84,12 @@ _P11_MODULE: pytest.StashKey[Any] = pytest.StashKey()
 # normal-teardown C_Finalize must run at most once per process.
 _TEARDOWN_FINALIZED: pytest.StashKey[bool] = pytest.StashKey()
 
-# Bounded budget (seconds) for the normal-teardown C_Finalize. A misbehaving
-# module that hangs in C_Finalize is abandoned by a SIGALRM watchdog and the
-# event recorded as a timeout, rather than hanging the whole unit until the
-# outer subprocess deadline fires and mis-attributes a timeout to a passed unit.
+# Bounded budget (seconds) for the normal-teardown C_Finalize.
+# The SIGALRM watchdog bounds a *Python-level* hang (e.g. a spin-wait in a
+# ctypes callback or a Python-side stall that yields to the eval loop).  It
+# does NOT interrupt a module stuck inside native C code: SIGALRM only
+# delivers to the CPython eval loop, so pure-C hangs inside the C_Finalize
+# dlsym are backstopped by the outer per-file subprocess deadline instead.
 _TEARDOWN_FINALIZE_TIMEOUT_S = 5
 
 _SCENARIO_BY_FIXTURE: dict[str, str] = {
@@ -1054,10 +1056,12 @@ def _finalize_on_teardown(config: pytest.Config, raw: Any) -> None:
     a compliant provider) and never silently swallowed (no hidden finding).
 
     Mirrors the best-effort shape of ``P11Module.reinitialize()``
-    (``core/loader.py``). A hang is bounded by a SIGALRM watchdog so the outer
-    subprocess deadline never mis-attributes a timeout to an already-passed
-    unit; on platforms without ``SIGALRM`` the call runs unguarded-for-hang
-    (still guarded for rv / raise).
+    (``core/loader.py``). A Python-level hang (spin-wait in a ctypes callback
+    or any stall that yields to the CPython eval loop) is bounded by a SIGALRM
+    watchdog (``_TEARDOWN_FINALIZE_TIMEOUT_S``).  A module stuck *inside* native
+    C code is NOT interrupted by SIGALRM -- that is backstopped by the outer
+    per-file subprocess deadline.  On platforms without ``SIGALRM`` the call
+    runs unguarded-for-hang (still guarded for rv / raise).
     """
     from pkcs11_check.raw.rv import ckr_name
 
@@ -1081,6 +1085,9 @@ def _finalize_on_teardown(config: pytest.Config, raw: Any) -> None:
         threading.current_thread() is threading.main_thread()
     )
     previous_handler: Any = None
+    # Saved return value of setitimer when we arm the watchdog; used in
+    # finally to *restore* any pre-existing ITIMER_REAL rather than zero it.
+    old_timer: tuple[float, float] | None = None
 
     def _on_alarm(_signum: int, _frame: Any) -> None:
         raise _TeardownFinalizeTimeoutError
@@ -1088,7 +1095,8 @@ def _finalize_on_teardown(config: pytest.Config, raw: Any) -> None:
     try:
         if use_watchdog:
             previous_handler = signal.signal(signal.SIGALRM, _on_alarm)
-            signal.setitimer(signal.ITIMER_REAL, float(_TEARDOWN_FINALIZE_TIMEOUT_S))
+            # setitimer returns (old_value, old_interval); capture to restore.
+            old_timer = signal.setitimer(signal.ITIMER_REAL, float(_TEARDOWN_FINALIZE_TIMEOUT_S))
         rv_int = int(raw.C_Finalize(None))
         rv = rv_int
         rv_name = ckr_name(rv_int)
@@ -1106,8 +1114,10 @@ def _finalize_on_teardown(config: pytest.Config, raw: Any) -> None:
         outcome = "error"
         error = f"{type(exc).__name__}: {exc}"
     finally:
-        if use_watchdog:
-            signal.setitimer(signal.ITIMER_REAL, 0.0)
+        if use_watchdog and old_timer is not None:
+            # Restore the previous timer (value, interval), not unconditionally
+            # zero -- cancelling an outer ITIMER_REAL would be a silent hazard.
+            signal.setitimer(signal.ITIMER_REAL, *old_timer)
             if previous_handler is not None:
                 signal.signal(signal.SIGALRM, previous_handler)
 

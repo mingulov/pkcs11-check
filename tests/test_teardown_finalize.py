@@ -26,7 +26,7 @@ from __future__ import annotations
 import signal
 import threading
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -123,7 +123,8 @@ def _teardown_records(report_log: _FakeReportLogPlugin) -> list[dict[str, object
 
 
 def _run(config: SimpleNamespace) -> None:
-    plugin_mod.pytest_sessionfinish(SimpleNamespace(config=config), 0)
+    # SimpleNamespace is intentional: hermetic fake; cast to satisfy Pyright.
+    plugin_mod.pytest_sessionfinish(cast(pytest.Session, SimpleNamespace(config=config)), 0)
 
 
 # --------------------------------------------------------------------------
