@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import tempfile
+import threading
 from collections import Counter
 from pathlib import Path
 from typing import Any, cast
@@ -75,6 +77,20 @@ _BOOTSTRAP_FUNCTION_COUNTS: pytest.StashKey[dict[str, int]] = pytest.StashKey()
 _BOOTSTRAP_COLLECTED: pytest.StashKey[bool] = pytest.StashKey()
 _MODULE_SESSION_HEALTH_METRICS: pytest.StashKey[dict[str, int | float]] = pytest.StashKey()
 _LAST_RV_TRACE: pytest.StashKey[list[dict[str, Any]]] = pytest.StashKey()
+# Live P11Module (carries reinit_count) -- populated opportunistically in
+# pytest_runtest_teardown so the teardown-finalize record is self-describing.
+_P11_MODULE: pytest.StashKey[Any] = pytest.StashKey()
+# Guard flag: pytest_sessionfinish may be entered more than once; the
+# normal-teardown C_Finalize must run at most once per process.
+_TEARDOWN_FINALIZED: pytest.StashKey[bool] = pytest.StashKey()
+
+# Bounded budget (seconds) for the normal-teardown C_Finalize.
+# The SIGALRM watchdog bounds a *Python-level* hang (e.g. a spin-wait in a
+# ctypes callback or a Python-side stall that yields to the eval loop).  It
+# does NOT interrupt a module stuck inside native C code: SIGALRM only
+# delivers to the CPython eval loop, so pure-C hangs inside the C_Finalize
+# dlsym are backstopped by the outer per-file subprocess deadline instead.
+_TEARDOWN_FINALIZE_TIMEOUT_S = 5
 
 _SCENARIO_BY_FIXTURE: dict[str, str] = {
     "mech_wrap_entry": WRAP_ROUNDTRIP,
@@ -924,6 +940,12 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
 
     funcargs = getattr(item, "funcargs", None)
     if funcargs and isinstance(funcargs, dict):
+        # Stash the live P11Module (carries reinit_count) once, so the
+        # teardown-finalize record can report it. Cheap and side-effect free.
+        if _P11_MODULE not in session.config.stash:
+            module = funcargs.get("p11_module")
+            if module is not None:
+                session.config.stash[_P11_MODULE] = module
         for name in ("p11_raw_session", "p11_session", "p11_module_session"):
             rs = funcargs.get(name)
             if rs is not None and hasattr(rs, "raw"):
@@ -1017,6 +1039,101 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
                     detail_counts[detail_str] += 1
     except (KeyError, ImportError):
         pass
+
+
+class _TeardownFinalizeTimeoutError(Exception):
+    """Raised by the SIGALRM watchdog when a teardown C_Finalize overruns."""
+
+
+def _finalize_on_teardown(config: pytest.Config, raw: Any) -> None:
+    """Call ``C_Finalize`` once on normal per-process teardown.
+
+    Runs at ``pytest_sessionfinish`` -- AFTER every test outcome and the
+    coverage report are already recorded -- so it CANNOT change any test's
+    verdict (segfault-survival model). A non-OK rv, an exception, or a hang is
+    *recorded* via an additive ``TeardownFinalize`` report-log record, never via
+    ``classify()`` / ``pytest.fail`` / ``pytest.xfail`` (no false-accusation of
+    a compliant provider) and never silently swallowed (no hidden finding).
+
+    Mirrors the best-effort shape of ``P11Module.reinitialize()``
+    (``core/loader.py``). A Python-level hang (spin-wait in a ctypes callback
+    or any stall that yields to the CPython eval loop) is bounded by a SIGALRM
+    watchdog (``_TEARDOWN_FINALIZE_TIMEOUT_S``).  A module stuck *inside* native
+    C code is NOT interrupted by SIGALRM -- that is backstopped by the outer
+    per-file subprocess deadline.  On platforms without ``SIGALRM`` the call
+    runs unguarded-for-hang (still guarded for rv / raise).
+    """
+    from pkcs11_check.raw.rv import ckr_name
+
+    # Idempotency: at most one normal-teardown finalize per process.
+    if config.stash.get(_TEARDOWN_FINALIZED, False):
+        return
+    config.stash[_TEARDOWN_FINALIZED] = True
+
+    module = config.stash.get(_P11_MODULE, None)
+    reinit_count = getattr(module, "reinit_count", None)
+
+    outcome = "ok"
+    rv: int | None = None
+    rv_name: str | None = None
+    error: str | None = None
+
+    # SIGALRM watchdog: POSIX-only, and signal.signal/setitimer only work on the
+    # main thread. Off the main thread or on a SIGALRM-less platform, the call
+    # runs unguarded-for-hang (still guarded for non-OK rv and for any raise).
+    use_watchdog = hasattr(signal, "SIGALRM") and (
+        threading.current_thread() is threading.main_thread()
+    )
+    previous_handler: Any = None
+    # Saved return value of setitimer when we arm the watchdog; used in
+    # finally to *restore* any pre-existing ITIMER_REAL rather than zero it.
+    old_timer: tuple[float, float] | None = None
+
+    def _on_alarm(_signum: int, _frame: Any) -> None:
+        raise _TeardownFinalizeTimeoutError
+
+    try:
+        if use_watchdog:
+            previous_handler = signal.signal(signal.SIGALRM, _on_alarm)
+            # setitimer returns (old_value, old_interval); capture to restore.
+            old_timer = signal.setitimer(signal.ITIMER_REAL, float(_TEARDOWN_FINALIZE_TIMEOUT_S))
+        rv_int = int(raw.C_Finalize(None))
+        rv = rv_int
+        rv_name = ckr_name(rv_int)
+        if rv_int != int(CKR_OK):
+            outcome = "error"
+    except _TeardownFinalizeTimeoutError:
+        outcome = "timeout"
+        error = f"C_Finalize exceeded {_TEARDOWN_FINALIZE_TIMEOUT_S}s teardown budget"
+    except Exception as exc:  # noqa: BLE001
+        # Best-effort teardown (mirrors P11Module.reinitialize): a non-OK rv is
+        # handled above; any raise -- AttributeError / OSError /
+        # ctypes.ArgumentError / a module-specific ctypes fault -- is recorded
+        # here with its exact text, never propagated (it would abort report
+        # writing) and never turned into a test verdict.
+        outcome = "error"
+        error = f"{type(exc).__name__}: {exc}"
+    finally:
+        if use_watchdog and old_timer is not None:
+            # Restore the previous timer (value, interval), not unconditionally
+            # zero -- cancelling an outer ITIMER_REAL would be a silent hazard.
+            signal.setitimer(signal.ITIMER_REAL, *old_timer)
+            if previous_handler is not None:
+                signal.signal(signal.SIGALRM, previous_handler)
+
+    record: dict[str, Any] = {
+        "$report_type": "TeardownFinalize",
+        "outcome": outcome,
+        "rv": rv,
+        "rv_name": rv_name,
+        "reinit_count": reinit_count,
+    }
+    if error is not None:
+        record["error"] = error
+
+    report_log_plugin = getattr(config, "_report_log_plugin", None)
+    if report_log_plugin is not None and hasattr(report_log_plugin, "_write_json_data"):
+        report_log_plugin._write_json_data(record)
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
@@ -1150,3 +1267,10 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
                 **coverage_data,
             }
         )
+
+    # Release per-process module resources: C_Finalize the live library on
+    # normal teardown. MUST be last -- after every test outcome AND the coverage
+    # report (which reads `raw`) are recorded -- so a slow/failing/crashing
+    # C_Finalize cannot change any test's verdict (segfault-survival model). The
+    # event is recorded only via the additive TeardownFinalize record.
+    _finalize_on_teardown(config, raw)
