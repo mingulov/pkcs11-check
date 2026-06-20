@@ -17,6 +17,21 @@ _OR_RV_NE_ZERO = re.compile(r"\bor\s+rv\s*!=\s*0\b")
 _TUPLE_EXCEPT_ASSERTION = re.compile(r"^\s*except\s*\(")
 
 
+def _swallow_pass(lines: list[str], i: int) -> bool:
+    """True if the ``except`` at line ``i`` swallows with a bare ``pass``.
+
+    Skips blank AND comment-only lines between the ``except`` and its body (so a
+    ``# comment`` cannot be used to evade detection), and treats a ``# audit-ok:``
+    on any line from the ``except`` through the ``pass`` (inclusive) as an exemption.
+    """
+    j = i + 1
+    while j < len(lines) and (not lines[j].strip() or lines[j].lstrip().startswith("#")):
+        j += 1
+    if j >= len(lines) or lines[j].strip() != "pass":
+        return False
+    return not any("# audit-ok:" in lines[k] for k in range(i, j + 1))
+
+
 def _flag(path: Path) -> list[str]:
     lines = path.read_text().splitlines()
     hits: list[str] = []
@@ -28,17 +43,14 @@ def _flag(path: Path) -> list[str]:
             continue
         stripped = line.strip()
 
-        # ── bare `except AssertionError:` whose next non-blank line is `pass` ──
+        # ── bare `except AssertionError:` whose next code line is `pass` ──
         if stripped == "except AssertionError:":
-            j = i + 1
-            while j < len(lines) and not lines[j].strip():
-                j += 1
-            if j < len(lines) and lines[j].strip() == "pass" and "# audit-ok:" not in lines[j]:
+            if _swallow_pass(lines, i):
                 hits.append(f"{path}:{i + 1}: `except AssertionError: pass` swallows a finding")
             i += 1
             continue
 
-        # ── tuple-form `except (…AssertionError…):` whose next non-blank line is bare `pass` ──
+        # ── tuple-form `except (…AssertionError…):` whose next code line is bare `pass` ──
         # Only the swallow-with-pass form is a leak; `as exc:` and non-pass bodies are fine.
         if (
             _TUPLE_EXCEPT_ASSERTION.match(line)
@@ -46,10 +58,7 @@ def _flag(path: Path) -> list[str]:
             and " as " not in line
             and line.rstrip().endswith(":")
         ):
-            j = i + 1
-            while j < len(lines) and not lines[j].strip():
-                j += 1
-            if j < len(lines) and lines[j].strip() == "pass" and "# audit-ok:" not in lines[j]:
+            if _swallow_pass(lines, i):
                 hits.append(
                     f"{path}:{i + 1}: tuple-form `except (…AssertionError…): pass`"
                     " swallows a finding"

@@ -743,6 +743,7 @@ class TestAlwaysAuthenticate:
                 sign_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, data)
             except AssertionError:
                 # Module may require context-specific login even for the first op
+                # audit-ok: first-op-after-login re-auth is impl-defined; both outcomes legal
                 pass
         finally:
             destroy_quietly(rs.raw, rs.sh, priv)

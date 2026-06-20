@@ -620,6 +620,7 @@ class TestSOSessionCapabilities:
                 set_pin(rs.raw, restore_sh, new_pin, pin_bytes)
             except AssertionError:
                 # Best-effort restore; if it fails, token may need re-init
+                # audit-ok: best-effort PIN restore in teardown, not a module finding
                 pass
             finally:
                 _logout_safe(rs.raw, restore_sh)
@@ -1123,6 +1124,7 @@ class TestAlwaysAuthenticate:
                 )
             except AssertionError:
                 # Expected: module enforces re-auth
+                # audit-ok: re-auth enforcement is the expected path; lenient case note()'d above
                 pass
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_h)
