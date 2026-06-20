@@ -10,10 +10,12 @@ Two directions (spec G5):
 - Decrypt-direction correctness: local encrypts a known ciphertext with the
   requested params; the module decrypts. A DIFFERENT plaintext -> wrong_result
   (clean crypto-break signal); a clean error -> not_operational; correct -> pass.
-- Mismatch probe (WS4-P2): CKM_RSA_PKCS_OAEP with hashAlg=SHA-1, mgf=MGF1-SHA256
-  (internally inconsistent: the hash and MGF algorithms don't match). A clean
-  reject is correct (xfail/not_operational); acceptance triggers the fidelity
-  oracle to recover actual params and report honest_deviation.
+- Source-param self-contradiction probe (WS4-P2): CKM_RSA_PKCS_OAEP with
+  source=CKZ_DATA_SPECIFIED, pSourceData=NULL, ulSourceDataLen=4. The OASIS
+  PKCS#11 spec (v2.40/v3.0, CK_RSA_PKCS_OAEP_PARAMS table) states: "If the
+  parameter is empty, pSourceData must be NULL and ulSourceDataLen must be zero."
+  A non-zero ulSourceDataLen with a NULL pointer is therefore a self-contradictory
+  struct that a conformant module MUST reject.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from pkcs11_check.classification import fail_as, xfail_as
-from pkcs11_check.raw.pack_mechanisms import mech_oaep
+from pkcs11_check.raw.pack_mechanisms import mech_oaep, mech_oaep_source_contradiction
 from pkcs11_check.raw.recipes import decrypt_single, destroy_quietly, encrypt_single
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
@@ -34,7 +36,6 @@ from pkcs11_check.raw.types_std import (
     CKG_MGF1_SHA256,
     CKM_RSA_PKCS_OAEP,
     CKM_SHA256,
-    CKM_SHA_1,
     CKR_ARGUMENTS_BAD,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_HANDLE_INVALID,
@@ -229,41 +230,50 @@ class TestOaepParameterFidelity:
 
 
 class TestOaepParamMismatch:
-    """OAEP mechanism-parameter MISMATCH probe (WS4-P2).
+    """OAEP source-parameter self-contradiction probe (WS4-P2).
 
-    Supply CKM_RSA_PKCS_OAEP with hashAlg=CKM_SHA_1 but mgf=CKG_MGF1_SHA256.
-    SHA-1 hash with SHA-256 MGF is internally inconsistent: PKCS#11 v2.40 §2.1.8
-    requires that the MGF hash match the OAEP hash when the standard suite is used.
-    A conformant module MUST reject this combination.
+    Supply CKM_RSA_PKCS_OAEP with a self-contradictory CK_RSA_PKCS_OAEP_PARAMS:
+    source=CKZ_DATA_SPECIFIED, pSourceData=NULL, ulSourceDataLen=4.
+
+    The OASIS PKCS#11 spec (v2.40 and v3.0, CK_RSA_PKCS_OAEP_PARAMS table) states:
+    "If the parameter is empty, pSourceData must be NULL and ulSourceDataLen must
+    be zero."  Setting ulSourceDataLen=4 while pSourceData=NULL violates this
+    constraint: the struct claims 4 bytes of encoding parameter data but supplies no
+    pointer.  A conformant module MUST reject this with CKR_MECHANISM_PARAM_INVALID
+    or CKR_ARGUMENTS_BAD.
+
+    Note: independent hashAlg/mgf choices are NOT forbidden by the spec — only the
+    hash-specific PSS mechanism (CKM_SHA*_RSA_PKCS_PSS) has an explicit hash
+    consistency requirement. This probe uses a genuine struct self-contradiction
+    instead.
 
     Three-state classification (same as TestOaepParameterFidelity):
     - Module rejects with a clean CKR -> xfail(not_operational) -- correct.
     - Module encrypts: recover_oaep_params tries all (hash, mgf) combinations
-      against the ciphertext.  The recovered (actual_hash, actual_mgf) are
-      compared to what was requested.  conforms=False by construction (any
-      acceptance of a malformed param struct is a deviation).
+      against the ciphertext.  conforms=False by construction (accepting a
+      self-contradictory param struct is a spec violation regardless of output).
     - No candidate recovers the plaintext -> not_operational (interpretable=False).
     """
 
-    def test_oaep_hash_mgf_mismatch(self, p11_raw_session: Any) -> None:
-        """CKM_RSA_PKCS_OAEP + hashAlg=SHA-1, mgf=MGF1-SHA256 (inconsistent pair)."""
+    def test_oaep_source_param_self_contradiction(self, p11_raw_session: Any) -> None:
+        """CKM_RSA_PKCS_OAEP + source=CKZ_DATA_SPECIFIED, pSourceData=NULL, ulSourceDataLen=4."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("CKM_RSA_PKCS_OAEP not supported")
-        label = "OAEP:mismatch hashAlg=SHA-1/mgf=MGF1-SHA256 (inconsistent)"
+        label = "OAEP:source-contradiction CKZ_DATA_SPECIFIED/pSourceData=NULL/len=4"
         priv_h = pub_h = 0
         try:
             try:
                 k, priv_h, pub_h = _import_known_keypair(rs)
             except AssertionError as exc:
                 pytest.skip(f"RSA keypair import refused: {exc}")
-            # hashAlg=SHA-1 with mgf=MGF1-SHA256: the hash and MGF algorithms
-            # are internally inconsistent (standard OAEP requires them to match).
-            mech_param = mech_oaep(
+            # Spec-illegal: source=CKZ_DATA_SPECIFIED, pSourceData=NULL, ulSourceDataLen=4.
+            # OASIS spec requires "if the parameter is empty, pSourceData must be NULL
+            # and ulSourceDataLen must be zero" — nonzero len with NULL pointer contradicts this.
+            mech_param = mech_oaep_source_contradiction(
                 CKM_RSA_PKCS_OAEP,
-                hash_mech=CKM_SHA_1,
+                hash_mech=CKM_SHA256,
                 mgf=CKG_MGF1_SHA256,
-                source_data=None,
             )
             try:
                 ct = encrypt_single(
@@ -284,33 +294,33 @@ class TestOaepParamMismatch:
                         operation="C_Encrypt",
                         mechanism="CKM_RSA_PKCS_OAEP",
                         summary=not_operational_reason(
-                            label, f"OAEP mismatch params refused: {exc}"
+                            label, f"OAEP self-contradiction params refused: {exc}"
                         ),
                     )
                 raise
-            # Module encrypted despite the mismatch: recover what it actually used.
+            # Module encrypted despite the self-contradictory param struct.
+            # Recover what params it actually used (if any standard combo matches).
             recovered = recover_oaep_params(k, ct, _PLAINTEXT, _OAEP_HASHES, _OAEP_HASHES, (None,))
             if recovered is None:
                 result = FidelityResult(
                     valid=False,
                     conforms=False,
                     interpretable=False,
-                    requested={"hash": "sha1 (mismatched vs mgf=sha256)", "mgf": "sha256"},
+                    requested={"source": "CKZ_DATA_SPECIFIED", "pSourceData": "NULL", "len": 4},
                     actual={"hash": None, "mgf": None},
-                    detail="OAEP mismatch: params not recoverable from candidate set",
+                    detail="OAEP source-contradiction: output not recoverable from candidate set",
                 )
             else:
                 alg, mgf, _lab = recovered
-                # conforms=False by construction: accepting internally-inconsistent
-                # (hashAlg, mgf) is a spec violation regardless of which params were
-                # actually used.
+                # conforms=False by construction: accepting a self-contradictory param
+                # struct (NULL pointer with nonzero length) is a spec violation.
                 result = FidelityResult(
                     valid=True,
                     conforms=False,
                     interpretable=True,
-                    requested={"hash": "sha1 (mismatched vs mgf=sha256)", "mgf": "sha256"},
+                    requested={"source": "CKZ_DATA_SPECIFIED", "pSourceData": "NULL", "len": 4},
                     actual={"hash": alg.name, "mgf": mgf.name},
-                    detail="OAEP hash/mgf mismatch accepted",
+                    detail="OAEP source self-contradiction accepted by module",
                 )
             classify_fidelity(
                 result, label=label, operation="C_Encrypt", mechanism="CKM_RSA_PKCS_OAEP"

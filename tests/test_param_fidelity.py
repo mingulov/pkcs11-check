@@ -208,7 +208,8 @@ def test_recover_oaep_params_none_when_unrecoverable() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Mismatch probe meta-tests (WS4-P2): TestPssParamMismatch / TestOaepParamMismatch
+# Mismatch/contradiction probe meta-tests (WS4-P2):
+#   TestPssParamMismatch / TestOaepParamMismatch
 # ---------------------------------------------------------------------------
 # Pure structural tests: monkeypatch the PKCS#11 call sites so no real module
 # is needed. We verify the three-state classification: reject->xfail, accept->
@@ -250,10 +251,11 @@ def _wire_pss(
 
 def test_pss_mismatch_clean_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) -> None:
     """A module that rejects the mismatched PSS params -> xfail(not_operational)."""
+    clear()
     _wire_pss(monkeypatch, sign=_ckr_refuse)
-    with pytest.raises(XFailed) as exc_info:
+    with pytest.raises(XFailed):
         pss_mod.TestPssParamMismatch().test_pss_hash_mismatch(_rs())
-    assert "not_operational" in str(exc_info.value) or True  # xfail carries the reason
+    assert get_records()[-1].reason == "not_operational"
 
 
 def test_pss_mismatch_accept_then_invalid_sig_is_fail(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -306,7 +308,7 @@ def test_pss_mismatch_skipped_when_mechanism_absent(monkeypatch: pytest.MonkeyPa
         pss_mod.TestPssParamMismatch().test_pss_hash_mismatch(_rs(has_mech=False))
 
 
-# ---- OAEP mismatch ----
+# ---- OAEP source-param self-contradiction ----
 
 
 def _wire_oaep(
@@ -316,7 +318,7 @@ def _wire_oaep(
     encrypt: Any = None,
 ) -> None:
     monkeypatch.setattr(oaep_mod, "destroy_quietly", lambda *a, **k: None)
-    monkeypatch.setattr(oaep_mod, "mech_oaep", lambda *a, **k: object())
+    monkeypatch.setattr(oaep_mod, "mech_oaep_source_contradiction", lambda *a, **k: object())
     if import_kp is not None:
         monkeypatch.setattr(oaep_mod, "_import_known_keypair", import_kp)
     if encrypt is not None:
@@ -324,7 +326,8 @@ def _wire_oaep(
 
 
 def test_oaep_mismatch_clean_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A module that rejects mismatched OAEP params -> xfail(not_operational)."""
+    """A module that rejects the self-contradictory OAEP params -> xfail(not_operational)."""
+    clear()
     real_key = rsa.generate_private_key(65537, 2048)
     _wire_oaep(
         monkeypatch,
@@ -332,18 +335,19 @@ def test_oaep_mismatch_clean_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) ->
         encrypt=_ckr_refuse,
     )
     with pytest.raises(XFailed):
-        oaep_mod.TestOaepParamMismatch().test_oaep_hash_mgf_mismatch(_rs())
+        oaep_mod.TestOaepParamMismatch().test_oaep_source_param_self_contradiction(_rs())
+    assert get_records()[-1].reason == "not_operational"
 
 
 def test_oaep_mismatch_accept_recoverable_is_honest_deviation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A module that accepts the mismatch and produces a recoverable ciphertext -> honest_deviation."""  # noqa: E501
+    """A module accepting the self-contradictory struct with recoverable output -> honest_deviation."""  # noqa: E501
     real_key = rsa.generate_private_key(65537, 2048)
     plaintext = oaep_mod._PLAINTEXT
 
     def _encrypt_sha1(*_a: Any, **_kw: Any) -> bytes:
-        # Produce a ciphertext with SHA-1/MGF1-SHA1 (different from what was requested)
+        # Produce a valid ciphertext (module accepted the self-contradictory struct)
         return real_key.public_key().encrypt(
             plaintext,
             padding.OAEP(
@@ -360,7 +364,7 @@ def test_oaep_mismatch_accept_recoverable_is_honest_deviation(
     )
     clear()
     with pytest.raises(XFailed):
-        oaep_mod.TestOaepParamMismatch().test_oaep_hash_mgf_mismatch(_rs())
+        oaep_mod.TestOaepParamMismatch().test_oaep_source_param_self_contradiction(_rs())
     rec = get_records()[-1]
     assert rec.reason == "honest_deviation"
     assert rec.kind == "metadata"
@@ -382,7 +386,7 @@ def test_oaep_mismatch_accept_unrecoverable_is_not_operational(
     )
     clear()
     with pytest.raises(XFailed):
-        oaep_mod.TestOaepParamMismatch().test_oaep_hash_mgf_mismatch(_rs())
+        oaep_mod.TestOaepParamMismatch().test_oaep_source_param_self_contradiction(_rs())
     rec = get_records()[-1]
     assert rec.reason == "not_operational"
 
@@ -391,4 +395,6 @@ def test_oaep_mismatch_skipped_when_mechanism_absent(monkeypatch: pytest.MonkeyP
     """Probe is skipped when OAEP is not advertised."""
     _wire_oaep(monkeypatch)
     with pytest.raises(pytest.skip.Exception):
-        oaep_mod.TestOaepParamMismatch().test_oaep_hash_mgf_mismatch(_rs(has_mech=False))
+        oaep_mod.TestOaepParamMismatch().test_oaep_source_param_self_contradiction(
+            _rs(has_mech=False)
+        )

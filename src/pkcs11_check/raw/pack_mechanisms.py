@@ -527,6 +527,36 @@ def mech_oaep(
     )
 
 
+def mech_oaep_source_contradiction(
+    mechanism_type: CKM | int,
+    *,
+    hash_mech: CKM | int,
+    mgf: CKG | int,
+) -> PackedMechanism:
+    """Pack a self-contradictory CK_RSA_PKCS_OAEP_PARAMS for probe use only.
+
+    Sets source=CKZ_DATA_SPECIFIED, pSourceData=NULL, ulSourceDataLen=4.
+    The OASIS PKCS#11 spec (v2.40/v3.0, CK_RSA_PKCS_OAEP_PARAMS table) states:
+    "If the parameter is empty, pSourceData must be NULL and ulSourceDataLen must
+    be zero."  A non-zero ulSourceDataLen with a NULL pointer violates this rule:
+    the struct claims 4 bytes of encoding parameter data but provides no pointer.
+    A conformant module MUST reject this with CKR_MECHANISM_PARAM_INVALID or
+    CKR_ARGUMENTS_BAD; acceptance is a spec violation.
+    """
+    params = CK_RSA_PKCS_OAEP_PARAMS()
+    params.hashAlg = hash_mech
+    params.mgf = mgf
+    params.source = CKZ_DATA_SPECIFIED
+    params.pSourceData = None  # NULL pointer
+    params.ulSourceDataLen = 4  # contradicts NULL pointer
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_oaep_source_contradiction",
+        sub_mechanisms={"hashAlg": hash_mech, "mgf": mgf},
+    )
+
+
 def mech_ecdh(
     mechanism_type: CKM | int,
     *,
@@ -1507,6 +1537,7 @@ __all__ = [
     "mech_ike_prf_derive",
     "mech_kmac",
     "mech_oaep",
+    "mech_oaep_source_contradiction",
     "mech_pbe",
     "mech_pbkdf2",
     "mech_pss",
