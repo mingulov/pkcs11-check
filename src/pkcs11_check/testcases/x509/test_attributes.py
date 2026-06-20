@@ -109,12 +109,19 @@ class TestCertificateAttributes:
                     kind="metadata",
                 )
 
-            # CKA_CERTIFICATE_TYPE MUST be X_509
+            # CKA_CERTIFICATE_TYPE MUST be X_509 for a CKO_CERTIFICATE object
             try:
                 ct = read_attributes(rs.raw, rs.sh, h, [CKA_CERTIFICATE_TYPE])
-                assert ct[CKA_CERTIFICATE_TYPE] == CKC_X_509
             except AssertionError:
-                pass
+                pass  # audit-ok: CKR error reading CKA_CERTIFICATE_TYPE is acceptable
+            else:
+                assert_correct(
+                    actual=ct.get(CKA_CERTIFICATE_TYPE),
+                    expected=CKC_X_509,
+                    label="X509:CKA_CERTIFICATE_TYPE must be CKC_X_509",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
 
             # Check extraction of other fields
             for attr_id in [
@@ -135,7 +142,7 @@ class TestCertificateAttributes:
                             ComplianceLevel.NOT_RECOMMENDED,
                         )
                 except AssertionError:
-                    pass
+                    pass  # audit-ok: CKR error reading optional derived attr is acceptable
 
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
@@ -184,8 +191,8 @@ class TestCertificateAttributes:
                         ComplianceLevel.NOT_RECOMMENDED,
                     )
             except AssertionError:
-                pass
+                pass  # audit-ok: CKR error reading CKA_TRUSTED is acceptable
             finally:
                 destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError:
-            pass  # Expected for security-conscious modules
+            pass  # audit-ok: rejection is expected for security-conscious modules

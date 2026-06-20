@@ -112,7 +112,7 @@ def test_exhaustive_cert_import_no_crash(
         try:
             get_object_size(rs.raw, rs.sh, h)
         except AssertionError:
-            pass
+            pass  # audit-ok: CKR error from C_GetObjectSize is acceptable; crash is the finding
     finally:
         destroy_quietly(rs.raw, rs.sh, h)
 
@@ -169,6 +169,6 @@ def test_exhaustive_crl_import_no_crash(
         try:
             get_object_size(rs.raw, rs.sh, h)
         except AssertionError:
-            pass
+            pass  # audit-ok: CKR error from C_GetObjectSize is acceptable; crash is the finding
     finally:
         destroy_quietly(rs.raw, rs.sh, h)
