@@ -18,20 +18,25 @@ from pkcs11_check.raw.pack import PackedMechanism
 from pkcs11_check.raw.pack_mechanisms import mech_oaep, mech_rsa_aes_key_wrap
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKA_CERTIFICATE_TYPE,
     CKA_CLASS,
     CKA_DECRYPT,
     CKA_EC_PARAMS,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
+    CKA_ID,
     CKA_KEY_TYPE,
+    CKA_LABEL,
     CKA_MODULUS,
     CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
+    CKA_SUBJECT,
     CKA_TOKEN,
     CKA_UNWRAP,
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKA_WRAP,
+    CKC_X_509,
     CKG,
     CKG_MGF1_SHA1,
     CKG_MGF1_SHA256,
@@ -43,6 +48,8 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS_OAEP,
     CKM_SHA256,
     CKM_SHA_1,
+    CKO_CERTIFICATE,
+    CKO_DATA,
     CKO_PRIVATE_KEY,
     CKO_SECRET_KEY,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -243,7 +250,18 @@ class ProvisioningProfile:
         """Return a cached verdict ∈ {create_available, create_absent, create_prohibited}."""
         if obj_class in self._verdicts:
             return self._verdicts[obj_class]
-        v = self._probe_secret() if obj_class == "secret" else self._probe_private(obj_class)
+        if obj_class == "secret":
+            v = self._probe_secret()
+        elif obj_class == "private":
+            v = self._probe_private(obj_class)
+        elif obj_class == "public":
+            v = self._probe_public()
+        elif obj_class == "cert":
+            v = self._probe_cert()
+        elif obj_class == "data":
+            v = self._probe_data()
+        else:
+            v = self._probe_private(obj_class)
         self._verdicts[obj_class] = v
         return v
 
@@ -315,6 +333,137 @@ class ProvisioningProfile:
         destroy_quietly(self.rs.raw, self.rs.sh, h)
         return "create_available"
 
+    def _probe_public(self) -> str:
+        """Probe EC P-256 public-key import; map outcome to a create verdict.
+
+        Generates a throwaway P-256 key pair in software and imports only the
+        public key via ``import_ec_public_key`` (C_CreateObject).  Maps the
+        outcome:
+        - success → destroy the key and return ``"create_available"``
+        - ``CKR_FUNCTION_NOT_SUPPORTED`` → ``"create_absent"``
+        - rv in ``_CREATE_PROHIBITED_RVS`` → ``"create_prohibited"``
+        - any other CKR → re-raise (real finding)
+        """
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        from pkcs11_check.raw.recipes import destroy_quietly, import_ec_public_key
+
+        pub = ec.generate_private_key(ec.SECP256R1()).public_key()
+        raw_point = pub.public_bytes(
+            serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint
+        )
+        # DER OCTET STRING wrapper: tag 0x04, length, value
+        ec_point = bytes([0x04, len(raw_point)]) + raw_point
+        ec_params = bytes.fromhex("06082a8648ce3d030107")  # P-256 named-curve OID
+
+        try:
+            h = import_ec_public_key(
+                self.rs.raw,
+                self.rs.sh,
+                ec_params=ec_params,
+                ec_point=ec_point,
+            )
+        except CkrAssertionError as exc:
+            if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
+                return "create_absent"
+            if exc.rv in _CREATE_PROHIBITED_RVS:
+                return "create_prohibited"
+            raise
+        destroy_quietly(self.rs.raw, self.rs.sh, h)
+        return "create_available"
+
+    def _probe_cert(self) -> str:
+        """Probe X.509 certificate import; map outcome to a create verdict.
+
+        Builds a minimal self-signed DER certificate in software and creates
+        it as a ``CKO_CERTIFICATE`` via ``create_object`` (C_CreateObject).
+        Maps the outcome:
+        - success → destroy the object and return ``"create_available"``
+        - ``CKR_FUNCTION_NOT_SUPPORTED`` → ``"create_absent"``
+        - rv in ``_CREATE_PROHIBITED_RVS`` → ``"create_prohibited"``
+        - any other CKR → re-raise (real finding)
+        """
+        import datetime
+
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.x509.oid import NameOID
+
+        from pkcs11_check.raw.recipes import create_object, destroy_quietly
+
+        key = ec.generate_private_key(ec.SECP256R1())
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "prov-probe")])
+        nb = datetime.datetime(2020, 1, 1)
+        na = datetime.datetime(2030, 1, 1)
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(name)
+            .issuer_name(name)
+            .public_key(key.public_key())
+            .serial_number(1)
+            .not_valid_before(nb)
+            .not_valid_after(na)
+            .sign(key, hashes.SHA256())
+        )
+        der = cert.public_bytes(serialization.Encoding.DER)
+        subject_der = name.public_bytes()
+
+        try:
+            h = create_object(
+                self.rs.raw,
+                self.rs.sh,
+                {
+                    CKA_CLASS: CKO_CERTIFICATE,
+                    CKA_CERTIFICATE_TYPE: CKC_X_509,
+                    CKA_VALUE: der,
+                    CKA_SUBJECT: subject_der,
+                    CKA_ID: b"\x01",
+                    CKA_TOKEN: False,
+                },
+            )
+        except CkrAssertionError as exc:
+            if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
+                return "create_absent"
+            if exc.rv in _CREATE_PROHIBITED_RVS:
+                return "create_prohibited"
+            raise
+        destroy_quietly(self.rs.raw, self.rs.sh, h)
+        return "create_available"
+
+    def _probe_data(self) -> str:
+        """Probe CKO_DATA object creation; map outcome to a create verdict.
+
+        Creates a minimal ``CKO_DATA`` object via ``create_object``
+        (C_CreateObject).  Maps the outcome:
+        - success → destroy the object and return ``"create_available"``
+        - ``CKR_FUNCTION_NOT_SUPPORTED`` → ``"create_absent"``
+        - rv in ``_CREATE_PROHIBITED_RVS`` → ``"create_prohibited"``
+        - any other CKR → re-raise (real finding)
+        """
+        from pkcs11_check.raw.recipes import create_object, destroy_quietly
+
+        try:
+            h = create_object(
+                self.rs.raw,
+                self.rs.sh,
+                {
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: b"prov-probe",
+                    CKA_VALUE: b"\x00",
+                    CKA_TOKEN: False,
+                },
+            )
+        except CkrAssertionError as exc:
+            if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
+                return "create_absent"
+            if exc.rv in _CREATE_PROHIBITED_RVS:
+                return "create_prohibited"
+            raise
+        destroy_quietly(self.rs.raw, self.rs.sh, h)
+        return "create_available"
+
 
 def profile_for(rs: Any) -> ProvisioningProfile:
     """Return (cached) ``ProvisioningProfile`` for the given session handle."""
@@ -323,6 +472,19 @@ def profile_for(rs: Any) -> ProvisioningProfile:
         prof = ProvisioningProfile(rs=rs)
         _PROFILE_CACHE[rs.sh] = prof
     return prof
+
+
+def skip_unless_can_create(rs: Any, obj_class: str) -> None:
+    """Skip cleanly when the module cannot create *obj_class* objects via C_CreateObject.
+
+    Uses the valid-material per-class create probe (more robust than an empty-template
+    probe).  ``create_available`` returns (the caller creates normally and any failure
+    surfaces as a real finding); ``create_absent``/``create_prohibited`` skip.
+    """
+    verdict = profile_for(rs).create_verdict(obj_class)
+    if verdict in ("create_absent", "create_prohibited"):
+        record_provisioning_event(obj_class, "skipped_no_path")
+        pytest.skip(f"Module does not support C_CreateObject for {obj_class} objects ({verdict})")
 
 
 def select_strategy(
