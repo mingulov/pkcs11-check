@@ -1378,3 +1378,305 @@ def _external_or_skip(
         return handle
     record_provisioning_event(obj_class, "skipped_no_path")
     pytest.skip(skip_msg)
+
+
+# ---------------------------------------------------------------------------
+# provision_public_key — create → external → skip (no unwrap path)
+# ---------------------------------------------------------------------------
+
+
+def provision_public_key(
+    rs: Any,
+    cfg: Any,
+    *,
+    key_type: int,
+    attrs: dict[Any, Any],
+    label: str,
+    ec_params: bytes | None = None,
+    ec_point: bytes | None = None,
+    rsa_n: bytes | None = None,
+    rsa_e: bytes | None = None,
+) -> int:
+    """Provision a public key into the token by the best available means.
+
+    Resolution order (create → external → skip):
+
+    1. Probe create availability.  When the module supports C_CreateObject for public
+       keys, call the negotiated public importer and return the handle.
+
+    2. Else (create_absent / create_prohibited):
+       - Build a SPKI DER blob from the supplied key material for the external tier.
+         RSA: ``rsa_n`` / ``rsa_e`` → ``RSAPublicNumbers(...).public_key()``.
+         EC:  ``ec_params`` / ``ec_point`` → decoded public key via *cryptography*.
+         On any encoding failure the best-effort fallback is ``ec_point or b""``.
+       - Attempt ``external_provision``; if it returns a handle, record and return it.
+       - No handle → ``record_provisioning_event("public", "skipped_no_path")``
+         + ``pytest.skip``.
+
+    Public keys have NO unwrap path; ``force-unwrap`` mode does not apply.
+
+    Args:
+        rs:        Session record with ``.raw``, ``.sh``, and ``has_mechanism``.
+        cfg:       Config carrying external-provision settings.
+        key_type:  ``CKK_*`` bare int constant (e.g. ``CKK_RSA``, ``CKK_EC``).
+        attrs:     Usage-flag attributes for the resulting object (e.g. ``CKA_VERIFY``).
+        label:     Human-readable label used in skip messages.
+        ec_params: DER-encoded curve OID (EC keys).
+        ec_point:  DER OCTET STRING-wrapped X9.62 uncompressed point (EC keys).
+        rsa_n:     RSA modulus bytes, big-endian (RSA keys).
+        rsa_e:     RSA public exponent bytes, big-endian (RSA keys).
+
+    Returns:
+        Object handle (int) of the provisioned public key.
+
+    Raises:
+        pytest.skip.Exception: When the module has no create path and external
+            provisioning is not configured or fails.
+    """
+    verdict = profile_for(rs).create_verdict("public")
+    if verdict == "create_available":
+        record_provisioning_event("public", "ran_via_create")
+        if rsa_n is not None and rsa_e is not None:
+            from pkcs11_check.testcases.conftest import import_rsa_public_key_negotiated
+
+            return import_rsa_public_key_negotiated(rs, n=rsa_n, e=rsa_e, attrs=attrs)
+        # EC (or other) path
+        from pkcs11_check.testcases.conftest import import_ec_public_key_negotiated
+
+        return import_ec_public_key_negotiated(
+            rs, ec_params=ec_params or b"", ec_point=ec_point or b"", key_type=key_type, attrs=attrs
+        )
+
+    # Build SPKI DER for the external tier (best-effort; encoding failure → raw fallback).
+    try:
+        if rsa_n is not None and rsa_e is not None:
+            from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+
+            material: bytes = (
+                _rsa.RSAPublicNumbers(int.from_bytes(rsa_e, "big"), int.from_bytes(rsa_n, "big"))
+                .public_key()
+                .public_bytes(_Encoding.DER, _PublicFormat.SubjectPublicKeyInfo)
+            )
+        elif ec_params is not None and ec_point is not None:
+            from cryptography.hazmat.primitives.asymmetric import ec as _ec
+
+            # Decode OID from DER: skip tag(0x06)+length bytes → OID value bytes
+            oid_der = ec_params
+            if len(oid_der) >= 2 and oid_der[0] == 0x06:
+                from cryptography.hazmat.primitives.asymmetric.ec import (
+                    get_curve_for_oid,
+                )
+                from cryptography.x509 import ObjectIdentifier
+
+                oid_len = oid_der[1]
+                oid_bytes = oid_der[2 : 2 + oid_len]
+                curve_oid = ObjectIdentifier(".".join(str(x) for x in _decode_oid_value(oid_bytes)))
+                curve = get_curve_for_oid(curve_oid)()
+                # Strip DER OCTET STRING wrapper from ec_point if present (tag 0x04 + len)
+                raw_point: bytes
+                if len(ec_point) >= 2 and ec_point[0] == 0x04 and ec_point[1] == len(ec_point) - 2:
+                    raw_point = ec_point[2:]
+                else:
+                    raw_point = ec_point
+                from cryptography.hazmat.primitives.serialization import (
+                    Encoding as _CryptoEnc,
+                )
+                from cryptography.hazmat.primitives.serialization import PublicFormat
+
+                ec_pub = _ec.EllipticCurvePublicKey.from_encoded_point(curve, raw_point)
+                material = ec_pub.public_bytes(_CryptoEnc.DER, PublicFormat.SubjectPublicKeyInfo)
+            else:
+                material = ec_point if ec_point is not None else b""
+        else:
+            material = b""
+    except Exception:  # noqa: BLE001
+        # Best-effort: encoding failure must not block the external command attempt.
+        material = ec_point if ec_point is not None else b""
+
+    return _external_or_skip(
+        rs,
+        cfg,
+        material=material,
+        label=label,
+        key_type=key_type,
+        obj_class="public",
+        skip_msg=(
+            f"{label}: no provisioning path for public key"
+            " (no C_CreateObject; external not configured/failed)"
+        ),
+    )
+
+
+def _decode_oid_value(oid_bytes: bytes) -> list[int]:
+    """Decode the value bytes of a DER OID into a list of integer arcs.
+
+    The first byte encodes the first two arcs as ``40 * arc0 + arc1``.
+    Subsequent arcs are base-128 big-endian encoded (high bit = continuation).
+    """
+    arcs: list[int] = []
+    # First byte encodes arc0 and arc1
+    first = oid_bytes[0]
+    arcs.append(first // 40)
+    arcs.append(first % 40)
+    i = 1
+    while i < len(oid_bytes):
+        val = 0
+        while i < len(oid_bytes):
+            b = oid_bytes[i]
+            i += 1
+            val = (val << 7) | (b & 0x7F)
+            if not (b & 0x80):
+                break
+        arcs.append(val)
+    return arcs
+
+
+# ---------------------------------------------------------------------------
+# provision_certificate — create → external → skip (no unwrap path)
+# ---------------------------------------------------------------------------
+
+
+def provision_certificate(
+    rs: Any,
+    cfg: Any,
+    *,
+    value: bytes,
+    attrs: dict[Any, Any],
+    label: str,
+) -> int:
+    """Provision a certificate object into the token by the best available means.
+
+    Resolution order (create → external → skip):
+
+    1. Probe create availability.  When the module supports C_CreateObject for
+       certificate objects, call ``create_object`` with the canonical
+       ``{CKA_CLASS: CKO_CERTIFICATE, CKA_CERTIFICATE_TYPE: CKC_X_509,
+       CKA_VALUE: value, CKA_TOKEN: False, **attrs}`` template and return the handle.
+
+    2. Else (create_absent / create_prohibited):
+       - Pass ``value`` (the DER-encoded certificate) to the external tier.
+       - On success record and return the handle.
+       - No handle → ``record_provisioning_event("cert", "skipped_no_path")``
+         + ``pytest.skip``.
+
+    Certificate objects have NO unwrap path.
+
+    Args:
+        rs:    Session record with ``.raw``, ``.sh``, and ``has_mechanism``.
+        cfg:   Config carrying external-provision settings.
+        value: DER-encoded X.509 certificate bytes.
+        attrs: Additional attributes for the resulting object
+               (e.g. ``CKA_LABEL``, ``CKA_SUBJECT``, ``CKA_TOKEN``).
+        label: Human-readable label used in skip messages.
+
+    Returns:
+        Object handle (int) of the provisioned certificate.
+
+    Raises:
+        pytest.skip.Exception: When the module has no create path and external
+            provisioning is not configured or fails.
+    """
+    from pkcs11_check.raw.recipes import create_object
+
+    verdict = profile_for(rs).create_verdict("cert")
+    if verdict == "create_available":
+        record_provisioning_event("cert", "ran_via_create")
+        return create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_CERTIFICATE,
+                CKA_CERTIFICATE_TYPE: CKC_X_509,
+                CKA_VALUE: value,
+                CKA_TOKEN: False,
+                **attrs,
+            },
+        )
+
+    return _external_or_skip(
+        rs,
+        cfg,
+        material=value,
+        label=label,
+        key_type=0,
+        obj_class="cert",
+        skip_msg=(
+            f"{label}: no provisioning path for cert"
+            " (no C_CreateObject; external not configured/failed)"
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# provision_data — create → external → skip (no unwrap path)
+# ---------------------------------------------------------------------------
+
+
+def provision_data(
+    rs: Any,
+    cfg: Any,
+    *,
+    value: bytes,
+    attrs: dict[Any, Any],
+    label: str,
+) -> int:
+    """Provision a CKO_DATA object into the token by the best available means.
+
+    Resolution order (create → external → skip):
+
+    1. Probe create availability.  When the module supports C_CreateObject for
+       data objects, call ``create_object`` with the canonical
+       ``{CKA_CLASS: CKO_DATA, CKA_VALUE: value, CKA_TOKEN: False, **attrs}``
+       template and return the handle.
+
+    2. Else (create_absent / create_prohibited):
+       - Pass ``value`` to the external tier.
+       - On success record and return the handle.
+       - No handle → ``record_provisioning_event("data", "skipped_no_path")``
+         + ``pytest.skip``.
+
+    Data objects have NO unwrap path.
+
+    Args:
+        rs:    Session record with ``.raw``, ``.sh``, and ``has_mechanism``.
+        cfg:   Config carrying external-provision settings.
+        value: Raw data bytes.
+        attrs: Additional attributes for the resulting object
+               (e.g. ``CKA_LABEL``, ``CKA_TOKEN``, ``CKA_PRIVATE``).
+        label: Human-readable label used in skip messages.
+
+    Returns:
+        Object handle (int) of the provisioned data object.
+
+    Raises:
+        pytest.skip.Exception: When the module has no create path and external
+            provisioning is not configured or fails.
+    """
+    from pkcs11_check.raw.recipes import create_object
+
+    verdict = profile_for(rs).create_verdict("data")
+    if verdict == "create_available":
+        record_provisioning_event("data", "ran_via_create")
+        return create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_VALUE: value,
+                CKA_TOKEN: False,
+                **attrs,
+            },
+        )
+
+    return _external_or_skip(
+        rs,
+        cfg,
+        material=value,
+        label=label,
+        key_type=0,
+        obj_class="data",
+        skip_msg=(
+            f"{label}: no provisioning path for data"
+            " (no C_CreateObject; external not configured/failed)"
+        ),
+    )
