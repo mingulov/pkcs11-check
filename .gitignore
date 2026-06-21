@@ -18,3 +18,5 @@ artifacts*/
 local-builds/bouncyhsm/
 local-builds/data/
 .worktrees/
+.superpowers/
+*.report-records/

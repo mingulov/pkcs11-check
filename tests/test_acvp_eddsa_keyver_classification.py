@@ -132,13 +132,14 @@ def test_eddsa_siggen_sign_runtime_reject_is_xfail(monkeypatch: pytest.MonkeyPat
         "msg": b"message",
         "expected_sig": b"signature",
     }
-    monkeypatch.setattr(test_acvp_eddsa, "import_ec_private_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_acvp_eddsa, "provision_ec_private_key", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(test_acvp_eddsa, "sign_single", _device_error)
     monkeypatch.setattr(test_acvp_eddsa, "destroy_quietly", lambda *_args: None)
 
     with pytest.raises(pytest.xfail.Exception, match="CKR_DEVICE_ERROR"):
         test_acvp_eddsa.test_acvp_eddsa_siggen(
             _session(),
+            None,
             "EDDSA-SigGen-ED-25519-tc41",
             vec,
         )

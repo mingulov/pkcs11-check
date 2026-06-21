@@ -292,17 +292,17 @@ def test_a15_public_site_xfails_real_function(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_a15_private_site_xfails_real_function(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A15: the raw private-key site xfails on a broad import CKR (no negotiated importer)."""
+    """A15: the private-key site xfails on a broad import CKR (provision_ec_private_key path)."""
     from pkcs11_check.testcases import test_cctv_rfc6979 as cctv
 
-    monkeypatch.setattr(cctv, "import_ec_private_key", _raiser(_ATTR_INVALID))
+    monkeypatch.setattr(cctv, "provision_ec_private_key", _raiser(_ATTR_INVALID))
     monkeypatch.setattr(
         cctv.pytest, "skip", lambda message: pytest.fail(f"unexpected skip: {message}")
     )
 
     try:
         with pytest.raises(pytest.xfail.Exception, match="ECDSA_SHA256:key-import"):
-            cctv.test_rfc6979_ecdsa_sign_deterministic(_session())
+            cctv.test_rfc6979_ecdsa_sign_deterministic(_session(), None)
     except pytest.skip.Exception as exc:
         pytest.fail(f"skipped instead of xfailing: {exc}")
 

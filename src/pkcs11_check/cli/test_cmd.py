@@ -17,9 +17,11 @@ from pkcs11_check.config import P11TestConfig
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.file_runner import (
     IsolatedReportConfig,
+    _emit_external_provision_banner,
     discover_auto_isolation_units,
     discover_pytest_units,
     extract_coverage_from_jsonl,
+    extract_provisioning_from_jsonl,
     extract_quality_report_records_from_jsonl,
     load_run_state,
     postprocess_jsonl_to_unified,
@@ -76,6 +78,16 @@ def _build_pytest_args(
     output_file: str | None,
     include_machine_report_args: bool,
     verbose: bool,
+    key_inject: str,
+    wrap_key_source: str,
+    wrap_key_label: str | None,
+    wrap_key_handle: int | None,
+    wrap_key_value: str | None,
+    wrap_mech: str | None,
+    wrap_rsa_bits: int,
+    wrap_oaep_hash: str,
+    allow_external_provision: bool,
+    external_provision_cmd: str | None,
 ) -> list[str]:
     args: list[str] = []
     args.extend(["--p11-module", str(module)])
@@ -96,6 +108,27 @@ def _build_pytest_args(
         args.append(f"--p11-rv-trace-compact={rv_trace_compact}")
     elif rv_trace:
         args.append("--p11-rv-trace")
+
+    if key_inject != "off":
+        args.extend(["--p11-key-inject", key_inject])
+    if wrap_key_source != "bootstrap":
+        args.extend(["--p11-wrap-key-source", wrap_key_source])
+    if wrap_key_label is not None:
+        args.extend(["--p11-wrap-key-label", wrap_key_label])
+    if wrap_key_handle is not None:
+        args.extend(["--p11-wrap-key-handle", str(wrap_key_handle)])
+    if wrap_key_value is not None:
+        args.extend(["--p11-wrap-key-value", wrap_key_value])
+    if wrap_mech is not None:
+        args.extend(["--p11-wrap-mech", wrap_mech])
+    if wrap_rsa_bits != 2048:
+        args.extend(["--p11-wrap-rsa-bits", str(wrap_rsa_bits)])
+    if wrap_oaep_hash != "auto":
+        args.extend(["--p11-wrap-oaep-hash", wrap_oaep_hash])
+    if allow_external_provision:
+        args.append("--p11-allow-external-provision")
+    if external_provision_cmd is not None:
+        args.extend(["--p11-external-provision-cmd", external_provision_cmd])
 
     if marker:
         args.extend(["-m", marker])
@@ -212,6 +245,72 @@ def test_command(
         help="Keep only the last N CK_RV trace entries per test (implies --rv-trace)",
         rich_help_panel="CK_RV tracing",
     ),
+    key_inject: str = typer.Option(
+        "off",
+        "--key-inject",
+        help="Key-provisioning injection mode: off, unwrap, force-unwrap",
+        rich_help_panel="Key provisioning",
+    ),
+    wrap_key_source: str = typer.Option(
+        "bootstrap",
+        "--wrap-key-source",
+        help="Wrapping KEK source: bootstrap (auto-generate) or configured",
+        rich_help_panel="Key provisioning",
+    ),
+    wrap_key_label: str | None = typer.Option(
+        None,
+        "--wrap-key-label",
+        help="Label of the configured wrapping key",
+        rich_help_panel="Key provisioning",
+    ),
+    wrap_key_handle: int | None = typer.Option(
+        None,
+        "--wrap-key-handle",
+        help="Handle of the configured wrapping key",
+        rich_help_panel="Key provisioning",
+    ),
+    wrap_key_value: str | None = typer.Option(
+        None,
+        "--wrap-key-value",
+        help="Hex value of a symmetric configured KEK",
+        rich_help_panel="Key provisioning",
+    ),
+    wrap_mech: str | None = typer.Option(
+        None,
+        "--wrap-mech",
+        help="Override auto-selected unwrap mechanism (e.g. CKM_RSA_AES_KEY_WRAP)",
+        rich_help_panel="Key provisioning",
+    ),
+    wrap_rsa_bits: int = typer.Option(
+        2048,
+        "--wrap-rsa-bits",
+        help="RSA key size in bits for bootstrap wrapping key",
+        rich_help_panel="Key provisioning",
+    ),
+    wrap_oaep_hash: str = typer.Option(
+        "auto",
+        "--wrap-oaep-hash",
+        help="OAEP hash for wrapping: auto (probe; prefer sha256, fall back sha1), sha1, or sha256",
+        rich_help_panel="Key provisioning",
+    ),
+    allow_external_provision: bool = typer.Option(
+        False,
+        "--allow-external-provision",
+        help=(
+            "Strict acknowledgement enabling external-tool provisioning "
+            "(requires --external-provision-cmd)"
+        ),
+        rich_help_panel="Key provisioning",
+    ),
+    external_provision_cmd: str | None = typer.Option(
+        None,
+        "--external-provision-cmd",
+        help=(
+            "Operator command template loading a key into the backend; "
+            "placeholders {keyfile} {label} {key_type} {key_class}"
+        ),
+        rich_help_panel="Key provisioning",
+    ),
     targets: list[str] = typer.Argument(None, help="Optional pytest paths or nodeids"),
 ) -> None:
     """Run the PKCS#11 test suite against a module."""
@@ -274,6 +373,16 @@ def test_command(
         output_file=output_file,
         include_machine_report_args=isolation == "none",
         verbose=verbose,
+        key_inject=key_inject,
+        wrap_key_source=wrap_key_source,
+        wrap_key_label=wrap_key_label,
+        wrap_key_handle=wrap_key_handle,
+        wrap_key_value=wrap_key_value,
+        wrap_mech=wrap_mech,
+        wrap_rsa_bits=wrap_rsa_bits,
+        wrap_oaep_hash=wrap_oaep_hash,
+        allow_external_provision=allow_external_provision,
+        external_provision_cmd=external_provision_cmd,
     )
     pytest_args.extend(["--p11-manifest", str(manifest_path)])
     report_config = _isolated_report_config(output, output_file) if isolation != "none" else None
@@ -287,6 +396,16 @@ def test_command(
                 slot=slot,
                 destructive=destructive,
                 pin=SecretStr(pin) if pin is not None else None,
+                key_inject=key_inject,
+                wrap_key_source=wrap_key_source,
+                wrap_key_label=wrap_key_label,
+                wrap_key_handle=wrap_key_handle,
+                wrap_key_value=wrap_key_value,
+                wrap_mech=wrap_mech,
+                wrap_rsa_bits=wrap_rsa_bits,
+                wrap_oaep_hash=wrap_oaep_hash,
+                allow_external_provision=allow_external_provision,
+                external_provision_cmd=external_provision_cmd,
             )
             baseline = None
             if not ignore_disabled_tests:
@@ -420,6 +539,12 @@ def test_command(
             if coverage_data:
                 coverage_path = unified_path.parent / "coverage.json"
                 coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
+            provisioning_data = extract_provisioning_from_jsonl(jsonl_p)
+            if provisioning_data is not None:
+                provisioning_path = unified_path.parent / "provisioning.json"
+                provisioning_path.write_text(json.dumps(provisioning_data, indent=2) + "\n")
+                if provisioning_data["totals"].get("ran_via_external", 0) > 0:
+                    _emit_external_provision_banner(provisioning_data["totals"]["ran_via_external"])
             results_payload = postprocess_jsonl_to_unified(jsonl_p, unified_path)
             quality_path = unified_path.parent / "quality.json"
             write_quality_json_report(

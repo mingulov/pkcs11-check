@@ -20,7 +20,6 @@ from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_ec_keypair,
-    import_ec_public_key,
     sign_single,
     verify_single,
 )
@@ -29,6 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_VERIFY,
     CKF_VERIFY,
+    CKK_EC,
     CKM,
     CKM_ECDSA_SHA256,
     CKM_ECDSA_SHA384,
@@ -51,6 +51,7 @@ from pkcs11_check.testcases._ec_export import (
 )
 from pkcs11_check.testcases._local_verify import ecdsa_local, verify_roundtrip
 from pkcs11_check.testcases._operability import not_operational_reason
+from pkcs11_check.testcases._provisioning import provision_public_key
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.acvp._duplicates import (
     mark_duplicate_pkcs11_inputs,
@@ -298,7 +299,9 @@ _DET_ECDSA_VECTORS = _load_ecdsa_siggen_vectors(det=True)
 @pytest.mark.parametrize(
     "vec_id,vec", _ECDSA_SIGVER_VECTORS, ids=[v[0] for v in _ECDSA_SIGVER_VECTORS]
 )
-def test_acvp_ecdsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_ecdsa_sigver(
+    p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[str, Any]
+) -> None:
     """ECDSA signature verification from NIST ACVP FIPS 186-5 vectors."""
     rs = p11_module_session
     mech_int: CKM = cast(CKM, vec["mech_int"])
@@ -309,12 +312,14 @@ def test_acvp_ecdsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, 
     pub_key = 0
     try:
         try:
-            pub_key = import_ec_public_key(
-                rs.raw,
-                rs.sh,
+            pub_key = provision_public_key(
+                rs,
+                p11_config,
                 ec_params=vec["ec_params"],
                 ec_point=vec["ec_point_der"],
+                key_type=CKK_EC,
                 attrs={CKA_VERIFY: True},
+                label="acvp ecdsa verify",
             )
         except AssertionError as exc:
             if is_known_error(exc, _EC_CURVE_ABSENT_RVS):

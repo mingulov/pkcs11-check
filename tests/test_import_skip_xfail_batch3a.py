@@ -124,11 +124,11 @@ def test_a9_rsa_private_import_site_xfails_real_function(monkeypatch: pytest.Mon
     """A9 RSA: the real _run_asymmetric_sign_kat RSA branch xfails on a broad import CKR.
 
     Drives the production function (not just the helper) so the swap to
-    import_rsa_private_key_negotiated + helper routing is exercised end-to-end.
+    provision_rsa_private_key + helper routing is exercised end-to-end.
     """
     from pkcs11_check.testcases import test_mech_sign as tms
 
-    monkeypatch.setattr(tms, "import_rsa_private_key_negotiated", _raiser(_KEY_SIZE_RANGE))
+    monkeypatch.setattr(tms, "provision_rsa_private_key", _raiser(_KEY_SIZE_RANGE))
 
     vec = {
         "n_hex": "aa" * 256,
@@ -146,7 +146,7 @@ def test_a9_rsa_private_import_site_xfails_real_function(monkeypatch: pytest.Mon
 
     try:
         with pytest.raises(pytest.xfail.Exception, match="SHA256_RSA_PKCS:key-import"):
-            tms._run_asymmetric_sign_kat(_session(), entry, entry.config, vec)
+            tms._run_asymmetric_sign_kat(_session(), entry, entry.config, vec, None)
     except pytest.skip.Exception as exc:
         pytest.fail(f"skipped instead of xfailing: {exc}")
 
@@ -156,10 +156,9 @@ def test_a9_ec_private_import_broad_reject_xfails_after_batch3b() -> None:
 
     Batch 3b removed ``_skip_kat_import_capability_reject`` and routed the EC
     private KAT import through ``_xfail_ec_kat_import_not_operational``: a broad
-    import-failure CKR is now "advertised but not operational" -> xfail (there is
-    no negotiated EC-private importer; the raw single-template import IS the spec
-    path -- D2, b56c3f8c). The curve-absence -> skip split is pinned in
-    tests/test_import_skip_xfail_batch3b.py.
+    import-failure CKR is now "advertised but not operational" -> xfail (the EC
+    private key now routes through ``provision_ec_private_key``). The
+    curve-absence -> skip split is pinned in tests/test_import_skip_xfail_batch3b.py.
     """
     from pkcs11_check.testcases import test_mech_sign as tms
 
@@ -225,10 +224,10 @@ def test_a10_siggen_import_helper_propagates_non_ckr(monkeypatch: pytest.MonkeyP
     from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa_siggen as sg
 
     vec_id, vec = sg._ALL_SIGGEN_VECTORS[0]
-    monkeypatch.setattr(sg, "import_rsa_private_key_negotiated", _raiser(_NON_CKR))
+    monkeypatch.setattr(sg, "provision_rsa_private_key", _raiser(_NON_CKR))
 
     with pytest.raises(AssertionError, match="KAT sign mismatch"):
-        sg.test_rsa_pkcs1_siggen(_session(), vec_id, vec)
+        sg.test_rsa_pkcs1_siggen(_session(), None, vec_id, vec)
 
 
 def test_a10_siggen_real_function_xfails_on_broad_ckr(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -236,13 +235,13 @@ def test_a10_siggen_real_function_xfails_on_broad_ckr(monkeypatch: pytest.Monkey
     from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa_siggen as sg
 
     vec_id, vec = sg._ALL_SIGGEN_VECTORS[0]
-    monkeypatch.setattr(sg, "import_rsa_private_key_negotiated", _raiser(_ATTR_INVALID))
+    monkeypatch.setattr(sg, "provision_rsa_private_key", _raiser(_ATTR_INVALID))
     monkeypatch.setattr(
         sg.pytest, "skip", lambda message: pytest.fail(f"unexpected skip: {message}")
     )
 
     with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
-        sg.test_rsa_pkcs1_siggen(_session(), vec_id, vec)
+        sg.test_rsa_pkcs1_siggen(_session(), None, vec_id, vec)
 
 
 # ===========================================================================
@@ -277,11 +276,11 @@ def test_a11_oaep_import_helper_propagates_non_ckr(monkeypatch: pytest.MonkeyPat
 
     oa._UNSUPPORTED_RSA_KEY_SIZES.clear()
     vec_id, vec = _first_valid_oaep_vector(oa)
-    monkeypatch.setattr(oa, "import_rsa_private_key_negotiated", _raiser(_NON_CKR))
+    monkeypatch.setattr(oa, "provision_rsa_private_key", _raiser(_NON_CKR))
 
     try:
         with pytest.raises(AssertionError, match="KAT sign mismatch"):
-            oa.test_rsa_oaep(_session(), vec_id, vec)
+            oa.test_rsa_oaep(_session(), None, vec_id, vec)
     finally:
         oa._UNSUPPORTED_RSA_KEY_SIZES.clear()
 
@@ -307,7 +306,7 @@ def test_a11_oaep_cached_keysize_early_exit_xfails(monkeypatch: pytest.MonkeyPat
 
     try:
         with pytest.raises(pytest.xfail.Exception, match="not operational \\(cached\\)"):
-            oa.test_rsa_oaep(_session(), vec_id, vec)
+            oa.test_rsa_oaep(_session(), None, vec_id, vec)
     finally:
         oa._UNSUPPORTED_RSA_KEY_SIZES.clear()
     del key_bits  # silence unused (documents the cache-key derivation)
@@ -339,7 +338,13 @@ def test_negotiation_genuinely_exhausts_before_xfail(monkeypatch: pytest.MonkeyP
     then re-raises after exhaustion. The OAEP test must then xfail
     'advertised but not operational'. We count the create_object calls to prove
     more than one storage variant was actually attempted.
+
+    The provisioning profile probe also calls create_object (via import_secret_key),
+    so we additionally force a create_available profile to ensure provision_rsa_private_key
+    delegates to import_rsa_private_key_negotiated, which is where negotiation exhaustion
+    and the xfail happen.
     """
+    from pkcs11_check.testcases._provisioning import ProvisioningProfile
     from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa_oaep as oa
 
     calls: list[dict[Any, Any]] = []
@@ -355,14 +360,25 @@ def test_negotiation_genuinely_exhausts_before_xfail(monkeypatch: pytest.MonkeyP
         oa.pytest, "skip", lambda message: pytest.fail(f"unexpected skip: {message}")
     )
 
+    # Force the profile to report create_available so provision_rsa_private_key delegates
+    # to import_rsa_private_key_negotiated (where negotiation exhaustion and xfail happen).
+    fake_session = _session()
+    fake_profile = ProvisioningProfile(rs=fake_session)
+    fake_profile._verdicts["private"] = "create_available"  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._provisioning._PROFILE_CACHE",
+        {fake_session.sh: fake_profile},
+    )
+
     vec_id, vec = _first_valid_oaep_vector(oa)
     oa._UNSUPPORTED_RSA_KEY_SIZES.clear()
 
     try:
         with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_OAEP:key-import"):
-            oa.test_rsa_oaep(_session(), vec_id, vec)
+            oa.test_rsa_oaep(fake_session, None, vec_id, vec)
     finally:
         oa._UNSUPPORTED_RSA_KEY_SIZES.clear()
+        monkeypatch.setattr("pkcs11_check.testcases._provisioning._PROFILE_CACHE", {})
 
     # Negotiation REALLY walked the storage variants (canonical + at least one
     # retry) before exhausting -- not a single-shot failure.
@@ -454,7 +470,7 @@ def test_f1_kat_vector_site_xfails_on_broad_ckr(monkeypatch: pytest.MonkeyPatch)
 
     try:
         with pytest.raises(pytest.xfail.Exception, match="AES_CMAC:key-import"):
-            tms.TestMechSignKAT().test_kat_vector(_session(), entry)
+            tms.TestMechSignKAT().test_kat_vector(_session(), entry, None)
     except pytest.skip.Exception as exc:
         pytest.fail(f"skipped instead of xfailing: {exc}")
 
@@ -490,7 +506,7 @@ def test_f5_priv_key_destroyed_before_pub_import_xfail(
         destroyed.append(handle)
 
     # Priv import succeeds, pub import refuses with a broad CKR.
-    monkeypatch.setattr(tms, "import_rsa_private_key_negotiated", lambda *_a, **_kw: fake_priv)
+    monkeypatch.setattr(tms, "provision_rsa_private_key", lambda *_a, **_kw: fake_priv)
     monkeypatch.setattr(tms, "import_rsa_public_key_negotiated", _raiser(_KEY_SIZE_RANGE))
     monkeypatch.setattr(tms, "destroy_quietly", _fake_destroy)
 
@@ -510,7 +526,7 @@ def test_f5_priv_key_destroyed_before_pub_import_xfail(
     entry = _kat_rsa_entry()
 
     with pytest.raises(pytest.xfail.Exception, match="SHA256_RSA_PKCS:key-import"):
-        tms._run_asymmetric_sign_kat(_session(), entry, entry.config, vec)
+        tms._run_asymmetric_sign_kat(_session(), entry, entry.config, vec, None)
 
     assert fake_priv in destroyed, (
         f"priv handle {fake_priv:#x} was NOT destroyed before xfail; destroyed handles: {destroyed}"

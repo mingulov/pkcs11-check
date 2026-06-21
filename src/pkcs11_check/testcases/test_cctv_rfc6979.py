@@ -24,7 +24,6 @@ from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    import_ec_private_key,
     sign_single,
     verify_single,
 )
@@ -32,6 +31,7 @@ from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_VERIFY,
+    CKK_EC,
     CKM_ECDSA_SHA256,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -51,6 +51,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._operability import not_operational_reason
+from pkcs11_check.testcases._provisioning import provision_ec_private_key
 from pkcs11_check.testcases.conftest import (
     import_ec_public_key_negotiated,
     is_known_error,
@@ -85,9 +86,8 @@ _EC_POINT_DER = bytes([0x04, len(_RAW_POINT)]) + _RAW_POINT  # len=65, fits in 1
 # genuine-capability-absence branch (the P-256 curve is not supported) stays a
 # skip; a broad import-failure branch on a module that ADVERTISES ECDSA_SHA256 is
 # "advertised but not operational" -> xfail. The public-key site negotiates
-# storage shapes via import_ec_public_key_negotiated; the private-key site uses
-# the raw single-template import_ec_private_key (no negotiated EC-private importer
-# exists -- the canonical raw import IS the spec path; D2, commit b56c3f8c).
+# storage shapes via import_ec_public_key_negotiated; the private-key site routes
+# through provision_ec_private_key (create or unwrap depending on module).
 _CCTV_EC_CURVE_UNSUPPORTED_CKRS = (
     CKR_CURVE_NOT_SUPPORTED,
     CKR_DOMAIN_PARAMS_INVALID,
@@ -127,8 +127,8 @@ def _skip_or_xfail_cctv_ec_import_reject(exc: AssertionError, label: str) -> NoR
     keep the capability skip. A broad import-failure CKR on a module that
     ADVERTISES ECDSA_SHA256 (the ``has_mechanism("ECDSA_SHA256")`` gate passed
     upstream) is "advertised but not operational" -> xfail per the classification
-    model -- for both the negotiated public-key site and the raw single-template
-    private-key site (D2: the canonical raw EC-private import IS the spec path).
+    model -- for both the negotiated public-key site and the private-key site
+    (routed through ``provision_ec_private_key``).
     The existing runtime-reject branch is preserved. Non-CKR AssertionErrors
     propagate (harness/coding bug).
     """
@@ -211,7 +211,7 @@ def test_rfc6979_ecdsa_verify(p11_raw_session: Any) -> None:
             destroy_quietly(rs.raw, rs.sh, pub_key)
 
 
-def test_rfc6979_ecdsa_sign_deterministic(p11_raw_session: Any) -> None:
+def test_rfc6979_ecdsa_sign_deterministic(p11_raw_session: Any, p11_config: Any) -> None:
     """Sign with the RFC 6979 private key and compare to the expected signature.
 
     The CCTV vector exercises the P-256 rejection-sampling path (first k
@@ -226,12 +226,15 @@ def test_rfc6979_ecdsa_sign_deterministic(p11_raw_session: Any) -> None:
     priv_key = 0
     try:
         try:
-            priv_key = import_ec_private_key(
-                rs.raw,
-                rs.sh,
+            # Routes through provision_ec_private_key (create or unwrap depending on module).
+            priv_key = provision_ec_private_key(
+                rs,
+                p11_config,
                 ec_params=_EC_PARAMS,
                 value=_PRIV_D,
+                key_type=CKK_EC,
                 attrs={CKA_SIGN: True},
+                label="cctv RFC6979 ECDSA KAT",
             )
         except AssertionError as e:
             _skip_or_xfail_cctv_ec_import_reject(e, "P-256 private-key")

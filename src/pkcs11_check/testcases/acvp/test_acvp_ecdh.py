@@ -53,10 +53,10 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._provisioning import provision_ec_private_key
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     classify_lifecycle_effect,
-    import_ec_private_key_negotiated,
     is_known_error,
     xfail_if_known_ckr,
 )
@@ -290,7 +290,7 @@ _ECDH_VECTORS = _load_all_ecdh_vectors()
 
 @pytest.mark.parametrize("vec_id, vec", _ECDH_VECTORS, ids=[v[0] for v in _ECDH_VECTORS])
 def test_acvp_ecdh_shared_secret(
-    p11_module_session: RawSession, vec_id: str, vec: dict[str, Any]
+    p11_module_session: RawSession, p11_config: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """ECDH shared secret derivation test using Wycheproof vectors.
 
@@ -313,16 +313,18 @@ def test_acvp_ecdh_shared_secret(
 
     try:
         try:
-            priv_key = import_ec_private_key_negotiated(
+            priv_key = provision_ec_private_key(
                 rs,
+                p11_config,
                 ec_params=ec_params,
                 value=vec["private_key"],
-                key_type=int(CKK_EC),
+                key_type=CKK_EC,
                 attrs={
                     CKA_DERIVE: True,
                     CKA_SENSITIVE: False,
                     CKA_EXTRACTABLE: True,
                 },
+                label="acvp ECDH shared-secret KAT",
             )
         except AssertionError as exc:
             _skip_if_ec_capability_reject(exc, f"Curve {curve} private key import")

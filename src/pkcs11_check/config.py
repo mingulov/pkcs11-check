@@ -46,6 +46,25 @@ class P11TestConfig(BaseSettings):
     rv_trace: bool = False
     rv_trace_compact: int | None = None
 
+    # Key-provisioning injection (see docs/.../key-provisioning-injection-design.md).
+    # off: create->skip. unwrap: create->unwrap->skip. force-unwrap: unwrap->skip (no create).
+    key_inject: str = "off"
+    wrap_key_source: str = "bootstrap"  # bootstrap | configured
+    wrap_key_label: str | None = None
+    wrap_key_handle: int | None = None
+    wrap_key_value: str | None = None  # hex; only for a symmetric configured KEK
+    # override auto-selected unwrap mechanism (e.g. "CKM_RSA_AES_KEY_WRAP")
+    wrap_mech: str | None = None
+    wrap_rsa_bits: int = 2048
+    wrap_oaep_hash: str = "auto"  # OAEP hash for wrapping: "auto" (probe), "sha1", or "sha256"
+
+    # External-tool provisioning tier (Phase 6).
+    # allow_external_provision: strict opt-in acknowledgement flag.
+    # external_provision_cmd: operator command template; placeholders: {keyfile} {label}
+    #   {key_type} {key_class}.
+    allow_external_provision: bool = False
+    external_provision_cmd: str | None = None
+
     @classmethod
     def settings_customise_sources(
         cls,

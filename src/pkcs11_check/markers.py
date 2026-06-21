@@ -80,4 +80,5 @@ MARKER_DEFINITIONS: list[MarkerDef] = [
     MarkerDef("state_machine", "Operation state machine violation test"),
     MarkerDef("flag_validation", "CKF_* flag correctness test"),
     MarkerDef("digest", "Digest/hash mechanism test"),
+    MarkerDef("provisioning", "Key-provisioning (C_CreateObject / unwrap injection) test"),
 ]

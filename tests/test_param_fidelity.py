@@ -331,11 +331,11 @@ def test_oaep_mismatch_clean_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) ->
     real_key = rsa.generate_private_key(65537, 2048)
     _wire_oaep(
         monkeypatch,
-        import_kp=lambda rs: (real_key, 3, 4),
+        import_kp=lambda rs, cfg: (real_key, 3, 4),
         encrypt=_ckr_refuse,
     )
     with pytest.raises(XFailed):
-        oaep_mod.TestOaepParamMismatch().test_oaep_source_param_self_contradiction(_rs())
+        oaep_mod.TestOaepParamMismatch().test_oaep_source_param_self_contradiction(_rs(), None)
     assert get_records()[-1].reason == "not_operational"
 
 
@@ -359,12 +359,12 @@ def test_oaep_mismatch_accept_recoverable_is_honest_deviation(
 
     _wire_oaep(
         monkeypatch,
-        import_kp=lambda rs: (real_key, 3, 4),
+        import_kp=lambda rs, cfg: (real_key, 3, 4),
         encrypt=_encrypt_sha1,
     )
     clear()
     with pytest.raises(XFailed):
-        oaep_mod.TestOaepParamMismatch().test_oaep_source_param_self_contradiction(_rs())
+        oaep_mod.TestOaepParamMismatch().test_oaep_source_param_self_contradiction(_rs(), None)
     rec = get_records()[-1]
     assert rec.reason == "honest_deviation"
     assert rec.kind == "metadata"
@@ -381,12 +381,12 @@ def test_oaep_mismatch_accept_unrecoverable_is_not_operational(
 
     _wire_oaep(
         monkeypatch,
-        import_kp=lambda rs: (real_key, 3, 4),
+        import_kp=lambda rs, cfg: (real_key, 3, 4),
         encrypt=_encrypt_bad,
     )
     clear()
     with pytest.raises(XFailed):
-        oaep_mod.TestOaepParamMismatch().test_oaep_source_param_self_contradiction(_rs())
+        oaep_mod.TestOaepParamMismatch().test_oaep_source_param_self_contradiction(_rs(), None)
     rec = get_records()[-1]
     assert rec.reason == "not_operational"
 
@@ -396,5 +396,5 @@ def test_oaep_mismatch_skipped_when_mechanism_absent(monkeypatch: pytest.MonkeyP
     _wire_oaep(monkeypatch)
     with pytest.raises(pytest.skip.Exception):
         oaep_mod.TestOaepParamMismatch().test_oaep_source_param_self_contradiction(
-            _rs(has_mech=False)
+            _rs(has_mech=False), None
         )

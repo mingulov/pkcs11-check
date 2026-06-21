@@ -44,7 +44,7 @@ def test_rfc6979_private_import_runtime_reject_is_xfail(
     def _import_reject(*_args: Any, **_kwargs: Any) -> int:
         raise CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
 
-    monkeypatch.setattr(test_cctv_rfc6979, "import_ec_private_key", _import_reject)
+    monkeypatch.setattr(test_cctv_rfc6979, "provision_ec_private_key", _import_reject)
     monkeypatch.setattr(
         test_cctv_rfc6979.pytest,
         "skip",
@@ -52,15 +52,15 @@ def test_rfc6979_private_import_runtime_reject_is_xfail(
     )
 
     with pytest.raises(pytest.xfail.Exception, match="P-256 private-key import is not operational"):
-        test_cctv_rfc6979.test_rfc6979_ecdsa_sign_deterministic(_EcdsaSession())
+        test_cctv_rfc6979.test_rfc6979_ecdsa_sign_deterministic(_EcdsaSession(), None)
 
 
 def test_rfc6979_signature_mismatch_is_explicit_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(test_cctv_rfc6979, "import_ec_private_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_cctv_rfc6979, "provision_ec_private_key", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(test_cctv_rfc6979, "sign_single", lambda *_args, **_kwargs: b"wrong")
     monkeypatch.setattr(test_cctv_rfc6979, "destroy_quietly", lambda *_args: None)
 
     with pytest.raises(pytest.xfail.Exception, match="does not use RFC 6979 deterministic k"):
-        test_cctv_rfc6979.test_rfc6979_ecdsa_sign_deterministic(_EcdsaSession())
+        test_cctv_rfc6979.test_rfc6979_ecdsa_sign_deterministic(_EcdsaSession(), None)

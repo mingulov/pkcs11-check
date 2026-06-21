@@ -35,6 +35,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._provisioning import provision_rsa_private_key
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     import_rsa_private_key_negotiated,
@@ -182,16 +183,17 @@ class TestRSAPrivateKeyImport:
         finally:
             destroy_quietly(rs.raw, rs.sh, imported)
 
-    def test_imported_private_key_signs(self, p11_raw_session: Any) -> None:
+    def test_imported_private_key_signs(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Sign with imported PKCS#11 private key, verify with cryptography."""
         rs = p11_raw_session
         skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
         crypto_key = _generate_rsa_key()
         comp = _export_rsa_components(crypto_key)
 
-        # Import private key into PKCS#11
-        p11_priv = import_rsa_private_key_negotiated(
+        # Provision private key into PKCS#11 (create or unwrap depending on module)
+        p11_priv = provision_rsa_private_key(
             rs,
+            p11_config,
             n=comp["modulus"],
             e=comp["public_exponent"],
             d=comp["private_exponent"],
@@ -201,6 +203,7 @@ class TestRSAPrivateKeyImport:
             dmq1=comp["exponent_2"],
             iqmp=comp["coefficient"],
             attrs={CKA_SIGN: True},
+            label="rsa-key-import sign roundtrip",
         )
         try:
             # Sign with PKCS#11
