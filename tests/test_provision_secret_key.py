@@ -37,8 +37,6 @@ from pkcs11_check.raw.types_std import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-_RSA_PUB_DER_STUB = b"\x30" + b"\x00" * 15  # minimal non-empty bytes stub
-
 
 def _make_rs(sh: int, *, has_mech: bool = True) -> Any:
     """Synthetic RS object; has_mechanism always returns has_mech."""
@@ -66,16 +64,6 @@ def _make_cfg(key_inject: str, wrap_rsa_bits: int = 2048) -> Any:
         key_inject=key_inject,
         wrap_rsa_bits=wrap_rsa_bits,
     )
-
-
-def _make_wrap_ctx(priv_handle: int = 99) -> _prov.WrapContext:
-    """WrapContext with a stub RSA DER so strategy.wrap() can be called."""
-    from cryptography.hazmat.primitives.asymmetric import rsa as _crypto_rsa
-    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-
-    priv = _crypto_rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    der = priv.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
-    return _prov.WrapContext(rsa_pub_der=der, unwrapping_key_handle=priv_handle)
 
 
 _AES_VALUE = bytes(range(32))
@@ -122,7 +110,7 @@ def test_create_available_off_calls_import(monkeypatch: pytest.MonkeyPatch) -> N
 
     rs = _make_rs(sh=200)
     cfg = _make_cfg("off")
-    h = provision_secret_key(rs, cfg, int(CKK_AES), _AES_VALUE, _AES_ATTRS, label="t")
+    h = provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
 
     assert h == 55, "must return import_secret_key's handle"
     assert len(import_called) >= 1, "import_secret_key must be called"
@@ -160,7 +148,7 @@ def test_create_available_unwrap_still_uses_create(monkeypatch: pytest.MonkeyPat
 
     rs = _make_rs(sh=201)
     cfg = _make_cfg("unwrap")
-    h = provision_secret_key(rs, cfg, int(CKK_AES), _AES_VALUE, _AES_ATTRS, label="t")
+    h = provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
 
     assert h == 66
     assert not unwrap_called, "unwrap_key must NOT be called when create is available"
@@ -177,7 +165,7 @@ def test_create_absent_off_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
 
     def fake_import_absent(raw: Any, sh: int, key_type: Any, value: bytes, attrs: Any) -> int:
-        raise CkrAssertionError("not supported", int(CKR_FUNCTION_NOT_SUPPORTED))
+        raise CkrAssertionError("not supported", CKR_FUNCTION_NOT_SUPPORTED)
 
     def fake_destroy(raw: Any, sh: int, handle: int) -> None:
         pass
@@ -191,7 +179,7 @@ def test_create_absent_off_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     rs = _make_rs(sh=202)
     cfg = _make_cfg("off")
     with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_secret_key(rs, cfg, int(CKK_AES), _AES_VALUE, _AES_ATTRS, label="t")
+        provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
 
     assert "C_CreateObject" in str(exc_info.value)
 
@@ -207,7 +195,7 @@ def test_create_absent_unwrap_path_returns_handle(monkeypatch: pytest.MonkeyPatc
     from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
 
     def fake_import_absent(raw: Any, sh: int, key_type: Any, value: bytes, attrs: Any) -> int:
-        raise CkrAssertionError("not supported", int(CKR_FUNCTION_NOT_SUPPORTED))
+        raise CkrAssertionError("not supported", CKR_FUNCTION_NOT_SUPPORTED)
 
     def fake_destroy(raw: Any, sh: int, handle: int) -> None:
         pass
@@ -234,7 +222,7 @@ def test_create_absent_unwrap_path_returns_handle(monkeypatch: pytest.MonkeyPatc
     def fake_read_attributes(
         raw: Any, session: int, handle: int, attr_types: Any
     ) -> dict[int, Any]:
-        return {int(CKA_VALUE): _AES_VALUE}
+        return {CKA_VALUE: _AES_VALUE}
 
     # gen_rsa_keypair for build_wrap_context bootstrap
     from cryptography.hazmat.primitives.asymmetric import rsa as _crypto_rsa
@@ -260,9 +248,9 @@ def test_create_absent_unwrap_path_returns_handle(monkeypatch: pytest.MonkeyPatc
         if handle == 10:  # RSA pub key for build_wrap_context
             from pkcs11_check.raw.types_std import CKA_MODULUS, CKA_PUBLIC_EXPONENT
 
-            return {int(CKA_MODULUS): _n_bytes, int(CKA_PUBLIC_EXPONENT): _e_bytes}
+            return {CKA_MODULUS: _n_bytes, CKA_PUBLIC_EXPONENT: _e_bytes}
         # handle == 77: the unwrapped key, integrity check
-        return {int(CKA_VALUE): _AES_VALUE}
+        return {CKA_VALUE: _AES_VALUE}
 
     monkeypatch.setattr("pkcs11_check.raw.recipes.import_secret_key", fake_import_absent)
     monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy)
@@ -275,14 +263,14 @@ def test_create_absent_unwrap_path_returns_handle(monkeypatch: pytest.MonkeyPatc
 
     rs = _make_rs(sh=203, has_mech=True)
     cfg = _make_cfg("unwrap")
-    h = provision_secret_key(rs, cfg, int(CKK_AES), _AES_VALUE, _AES_ATTRS, label="t")
+    h = provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
 
     assert h == 77, "must return unwrap_key's handle"
     assert len(unwrap_calls) == 1, "unwrap_key must be called exactly once"
     call = unwrap_calls[0]
     from pkcs11_check.raw.types_std import CKM_RSA_AES_KEY_WRAP
 
-    assert call["mechanism"] == int(CKM_RSA_AES_KEY_WRAP), "RSA-AES-KeyWrap envelope expected"
+    assert call["mechanism"] == CKM_RSA_AES_KEY_WRAP, "RSA-AES-KeyWrap envelope expected"
     assert len(call["wrapped_key"]) > 0, "blob must be non-empty"
 
 
@@ -335,8 +323,8 @@ def test_force_unwrap_skips_import(monkeypatch: pytest.MonkeyPatch) -> None:
         if handle == 20:
             from pkcs11_check.raw.types_std import CKA_MODULUS, CKA_PUBLIC_EXPONENT
 
-            return {int(CKA_MODULUS): _n_bytes, int(CKA_PUBLIC_EXPONENT): _e_bytes}
-        return {int(CKA_VALUE): _AES_VALUE}
+            return {CKA_MODULUS: _n_bytes, CKA_PUBLIC_EXPONENT: _e_bytes}
+        return {CKA_VALUE: _AES_VALUE}
 
     monkeypatch.setattr("pkcs11_check.raw.recipes.import_secret_key", fake_import)
     monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy)
@@ -349,7 +337,7 @@ def test_force_unwrap_skips_import(monkeypatch: pytest.MonkeyPatch) -> None:
 
     rs = _make_rs(sh=204, has_mech=True)
     cfg = _make_cfg("force-unwrap")
-    h = provision_secret_key(rs, cfg, int(CKK_AES), _AES_VALUE, _AES_ATTRS, label="t")
+    h = provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
 
     assert h == 88
     # import_secret_key may be called for the probe ONLY (via _probe_secret during
@@ -359,7 +347,7 @@ def test_force_unwrap_skips_import(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(unwrap_calls) == 1
     from pkcs11_check.raw.types_std import CKM_RSA_AES_KEY_WRAP
 
-    assert unwrap_calls[0]["mechanism"] == int(CKM_RSA_AES_KEY_WRAP)
+    assert unwrap_calls[0]["mechanism"] == CKM_RSA_AES_KEY_WRAP
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +363,7 @@ def test_force_unwrap_no_ctx_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_gen_rsa_keypair(
         raw: Any, session: int, bits: int = 2048, **kwargs: Any
     ) -> tuple[int, int]:
-        raise CkrAssertionError("size range", int(CKR_KEY_SIZE_RANGE))
+        raise CkrAssertionError("size range", CKR_KEY_SIZE_RANGE)
 
     monkeypatch.setattr("pkcs11_check.raw.recipes.gen_rsa_keypair", fake_gen_rsa_keypair)
     _reset_cache()
@@ -385,7 +373,7 @@ def test_force_unwrap_no_ctx_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     rs = _make_rs(sh=205, has_mech=True)
     cfg = _make_cfg("force-unwrap")
     with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_secret_key(rs, cfg, int(CKK_AES), _AES_VALUE, _AES_ATTRS, label="t")
+        provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
 
     assert "no wrapping path" in str(exc_info.value)
 
@@ -401,7 +389,7 @@ def test_value_mismatch_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
 
     def fake_import_absent(raw: Any, sh: int, key_type: Any, value: bytes, attrs: Any) -> int:
-        raise CkrAssertionError("not supported", int(CKR_FUNCTION_NOT_SUPPORTED))
+        raise CkrAssertionError("not supported", CKR_FUNCTION_NOT_SUPPORTED)
 
     def fake_destroy(raw: Any, sh: int, handle: int) -> None:
         pass
@@ -436,9 +424,9 @@ def test_value_mismatch_skips(monkeypatch: pytest.MonkeyPatch) -> None:
         if handle == 30:
             from pkcs11_check.raw.types_std import CKA_MODULUS, CKA_PUBLIC_EXPONENT
 
-            return {int(CKA_MODULUS): _n_bytes, int(CKA_PUBLIC_EXPONENT): _e_bytes}
+            return {CKA_MODULUS: _n_bytes, CKA_PUBLIC_EXPONENT: _e_bytes}
         # Return WRONG value to trigger mismatch
-        return {int(CKA_VALUE): b"\xff" * 32}
+        return {CKA_VALUE: b"\xff" * 32}
 
     monkeypatch.setattr("pkcs11_check.raw.recipes.import_secret_key", fake_import_absent)
     monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy)
@@ -452,7 +440,7 @@ def test_value_mismatch_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     rs = _make_rs(sh=206, has_mech=True)
     cfg = _make_cfg("unwrap")
     with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_secret_key(rs, cfg, int(CKK_AES), _AES_VALUE, _AES_ATTRS, label="t")
+        provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
 
     assert "mismatch" in str(exc_info.value)
 
@@ -468,7 +456,7 @@ def test_no_strategy_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
 
     def fake_import_absent(raw: Any, sh: int, key_type: Any, value: bytes, attrs: Any) -> int:
-        raise CkrAssertionError("not supported", int(CKR_FUNCTION_NOT_SUPPORTED))
+        raise CkrAssertionError("not supported", CKR_FUNCTION_NOT_SUPPORTED)
 
     def fake_destroy(raw: Any, sh: int, handle: int) -> None:
         pass
@@ -490,7 +478,7 @@ def test_no_strategy_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     ) -> dict[int, Any]:
         from pkcs11_check.raw.types_std import CKA_MODULUS, CKA_PUBLIC_EXPONENT
 
-        return {int(CKA_MODULUS): _n_bytes, int(CKA_PUBLIC_EXPONENT): _e_bytes}
+        return {CKA_MODULUS: _n_bytes, CKA_PUBLIC_EXPONENT: _e_bytes}
 
     monkeypatch.setattr("pkcs11_check.raw.recipes.import_secret_key", fake_import_absent)
     monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy)
@@ -504,7 +492,7 @@ def test_no_strategy_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     rs = _make_rs(sh=207, has_mech=False)
     cfg = _make_cfg("unwrap")
     with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_secret_key(rs, cfg, int(CKK_AES), _AES_VALUE, _AES_ATTRS, label="t")
+        provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
 
     assert "no usable wrap mechanism" in str(exc_info.value)
 
@@ -520,7 +508,7 @@ def test_unwrap_template_strips_value_attrs(monkeypatch: pytest.MonkeyPatch) -> 
     from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
 
     def fake_import_absent(raw: Any, sh: int, key_type: Any, value: bytes, attrs: Any) -> int:
-        raise CkrAssertionError("not supported", int(CKR_FUNCTION_NOT_SUPPORTED))
+        raise CkrAssertionError("not supported", CKR_FUNCTION_NOT_SUPPORTED)
 
     def fake_destroy(raw: Any, sh: int, handle: int) -> None:
         pass
@@ -558,8 +546,8 @@ def test_unwrap_template_strips_value_attrs(monkeypatch: pytest.MonkeyPatch) -> 
         if handle == 50:
             from pkcs11_check.raw.types_std import CKA_MODULUS, CKA_PUBLIC_EXPONENT
 
-            return {int(CKA_MODULUS): _n_bytes, int(CKA_PUBLIC_EXPONENT): _e_bytes}
-        return {int(CKA_VALUE): _AES_VALUE}
+            return {CKA_MODULUS: _n_bytes, CKA_PUBLIC_EXPONENT: _e_bytes}
+        return {CKA_VALUE: _AES_VALUE}
 
     monkeypatch.setattr("pkcs11_check.raw.recipes.import_secret_key", fake_import_absent)
     monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy)
@@ -572,12 +560,12 @@ def test_unwrap_template_strips_value_attrs(monkeypatch: pytest.MonkeyPatch) -> 
 
     rs = _make_rs(sh=208, has_mech=True)
     cfg = _make_cfg("unwrap")
-    provision_secret_key(rs, cfg, int(CKK_AES), _AES_VALUE, _AES_ATTRS_WITH_VALUE, label="t")
+    provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS_WITH_VALUE, label="t")
 
     assert len(unwrap_calls) == 1
     template_attrs = unwrap_calls[0]["attrs"]
-    assert int(CKA_VALUE) not in template_attrs, "CKA_VALUE must be stripped from unwrap template"
-    assert int(CKA_VALUE_LEN) not in template_attrs, (
+    assert CKA_VALUE not in template_attrs, "CKA_VALUE must be stripped from unwrap template"
+    assert CKA_VALUE_LEN not in template_attrs, (
         "CKA_VALUE_LEN must be stripped from unwrap template"
     )
 
@@ -593,7 +581,7 @@ def test_sensitive_key_skips_integrity_readback(monkeypatch: pytest.MonkeyPatch)
     from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
 
     def fake_import_absent(raw: Any, sh: int, key_type: Any, value: bytes, attrs: Any) -> int:
-        raise CkrAssertionError("not supported", int(CKR_FUNCTION_NOT_SUPPORTED))
+        raise CkrAssertionError("not supported", CKR_FUNCTION_NOT_SUPPORTED)
 
     def fake_destroy(raw: Any, sh: int, handle: int) -> None:
         pass
@@ -630,7 +618,7 @@ def test_sensitive_key_skips_integrity_readback(monkeypatch: pytest.MonkeyPatch)
         read_calls.append(handle)
         from pkcs11_check.raw.types_std import CKA_MODULUS, CKA_PUBLIC_EXPONENT
 
-        return {int(CKA_MODULUS): _n_bytes, int(CKA_PUBLIC_EXPONENT): _e_bytes}
+        return {CKA_MODULUS: _n_bytes, CKA_PUBLIC_EXPONENT: _e_bytes}
 
     monkeypatch.setattr("pkcs11_check.raw.recipes.import_secret_key", fake_import_absent)
     monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy)
@@ -644,7 +632,7 @@ def test_sensitive_key_skips_integrity_readback(monkeypatch: pytest.MonkeyPatch)
     rs = _make_rs(sh=209, has_mech=True)
     cfg = _make_cfg("unwrap")
     sensitive_attrs = {**_AES_ATTRS, CKA_SENSITIVE: True}
-    h = provision_secret_key(rs, cfg, int(CKK_AES), _AES_VALUE, sensitive_attrs, label="t")
+    h = provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, sensitive_attrs, label="t")
 
     assert h == 92
     # read_attributes called for RSA pub key (handle=60) but NOT for the unwrapped key (92)

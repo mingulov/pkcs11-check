@@ -69,7 +69,7 @@ class WrapStrategy(Protocol):
 
 class RsaAesKeyWrap:
     name = "rsa_aes_key_wrap"
-    unwrap_mech = int(CKM_RSA_AES_KEY_WRAP)
+    unwrap_mech: int = CKM_RSA_AES_KEY_WRAP
 
     def usable(self, profile: Any) -> bool:
         return bool(profile.supports_unwrap_mech(self.unwrap_mech))
@@ -87,7 +87,7 @@ class RsaAesKeyWrap:
 
 class RsaOaep:
     name = "rsa_oaep"
-    unwrap_mech = int(CKM_RSA_PKCS_OAEP)
+    unwrap_mech: int = CKM_RSA_PKCS_OAEP
 
     def usable(self, profile: Any) -> bool:
         return bool(profile.supports_unwrap_mech(self.unwrap_mech))
@@ -101,12 +101,12 @@ class RsaOaep:
         return sw_wrap.rsa_oaep_wrap(ctx.rsa_pub_der, target)
 
     def unwrap_mech_param(self, ctx: WrapContext) -> PackedMechanism:
-        return mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=int(CKM_SHA256), mgf=int(CKG_MGF1_SHA256))
+        return mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA256, mgf=CKG_MGF1_SHA256)
 
 
 class AesKwp:
     name = "aes_kwp"
-    unwrap_mech = int(CKM_AES_KEY_WRAP_KWP)
+    unwrap_mech: int = CKM_AES_KEY_WRAP_KWP
 
     def usable(self, profile: Any) -> bool:
         return bool(profile.supports_unwrap_mech(self.unwrap_mech))
@@ -175,7 +175,7 @@ class ProvisioningProfile:
             h = import_secret_key(
                 self.rs.raw,
                 self.rs.sh,
-                int(CKK_AES),
+                CKK_AES,
                 b"\x00" * 16,
                 attrs={
                     CKA_TOKEN: False,
@@ -396,7 +396,7 @@ def provision_secret_key(
         pytest.skip(f"{label}: no wrapping path: no usable wrap mechanism for this target size")
 
     blob = strategy.wrap(ctx, value)
-    unwrap_template = {k: v for k, v in attrs.items() if int(k) not in _VALUE_BEARING}
+    unwrap_template = {k: v for k, v in attrs.items() if k not in _VALUE_BEARING}
     handle = unwrap_key(
         rs.raw,
         rs.sh,
@@ -411,7 +411,7 @@ def provision_secret_key(
     is_sensitive = attrs.get(CKA_SENSITIVE)
     if not is_sensitive:
         read_back = read_attributes(rs.raw, rs.sh, handle, (CKA_VALUE,))
-        actual = read_back.get(int(CKA_VALUE))
+        actual = read_back.get(CKA_VALUE)
         if actual != value:
             pytest.skip(
                 f"{label}: provisioned key value mismatch "
