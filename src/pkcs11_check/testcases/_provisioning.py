@@ -56,6 +56,33 @@ from pkcs11_check.raw.types_std import (
 
 
 @dataclass(frozen=True)
+class ProvisioningEvent:
+    obj_class: str  # "secret" | "private" | "public" | "cert" | "data"
+    method: str  # "ran_via_create" | "ran_via_unwrap" | "ran_via_external" | "skipped_no_path"
+
+
+_provisioning_events: list[ProvisioningEvent] = []
+
+
+def record_provisioning_event(obj_class: str, method: str) -> None:
+    """Append a ProvisioningEvent; best-effort — never raises (observability never breaks tests)."""
+    try:
+        _provisioning_events.append(ProvisioningEvent(obj_class, method))
+    except Exception:  # noqa: BLE001
+        return  # observability must never break a test; swallow silently
+
+
+def get_provisioning_events() -> list[ProvisioningEvent]:
+    """Return a copy of the current event list."""
+    return list(_provisioning_events)
+
+
+def clear_provisioning_events() -> None:
+    """Clear all accumulated provisioning events."""
+    _provisioning_events.clear()
+
+
+@dataclass(frozen=True)
 class WrapContext:
     rsa_pub_der: bytes | None  # bootstrap/configured RSA unwrap key public part
     rsa_unwrap_handle: int | None = None  # RSA private key handle for C_UnwrapKey
@@ -603,28 +630,34 @@ def provision_secret_key(
     if mode != "force-unwrap":
         verdict = profile_for(rs).create_verdict("secret")
         if verdict == "create_available":
+            record_provisioning_event("secret", "ran_via_create")
             return import_secret_key(rs.raw, rs.sh, key_type, value, attrs)
 
     # ------------------------------------------------------------------
     # Unwrap path (or forced)
     # ------------------------------------------------------------------
     if mode == "off":
+        record_provisioning_event("secret", "skipped_no_path")
         pytest.skip(f"{label}: Module does not implement C_CreateObject")
 
     ctx = build_wrap_context(rs, cfg)
     if ctx is None:
+        record_provisioning_event("secret", "skipped_no_path")
         pytest.skip(f"{label}: no wrapping path")
 
     strategy = next((s for s in DEFAULT_STRATEGIES if s.name == ctx.strategy_name), None)
     if strategy is None:
+        record_provisioning_event("secret", "skipped_no_path")
         pytest.skip(f"{label}: no wrapping path: resolved strategy not found")
 
     cap = strategy.max_target_size(ctx)
     if cap is not None and len(value) > cap:
+        record_provisioning_event("secret", "skipped_no_path")
         pytest.skip(f"{label}: no wrapping path: no usable wrap mechanism for this target size")
 
     unwrap_handle = strategy.unwrapping_key_handle(ctx)
     if unwrap_handle is None:
+        record_provisioning_event("secret", "skipped_no_path")
         pytest.skip(f"{label}: no wrapping path: resolved strategy has no unwrap handle")
     blob = strategy.wrap(ctx, value)
     unwrap_template = {k: v for k, v in attrs.items() if k not in _VALUE_BEARING}
@@ -648,11 +681,13 @@ def provision_secret_key(
         read_back = read_attributes(rs.raw, rs.sh, handle, (CKA_VALUE,))
         actual = read_back.get(CKA_VALUE)
         if actual != value:
+            record_provisioning_event("secret", "skipped_no_path")
             pytest.skip(
                 f"{label}: provisioned key value mismatch "
                 f"(expected {value.hex()!r}, got {actual!r})"
             )
 
+    record_provisioning_event("secret", "ran_via_unwrap")
     return handle
 
 
@@ -730,6 +765,7 @@ def provision_rsa_private_key(
         if verdict == "create_available":
             from pkcs11_check.testcases.conftest import import_rsa_private_key_negotiated
 
+            record_provisioning_event("private", "ran_via_create")
             return import_rsa_private_key_negotiated(
                 rs, n=n, e=e, d=d, p=p, q=q, dmp1=dmp1, dmq1=dmq1, iqmp=iqmp, attrs=attrs
             )
@@ -738,24 +774,29 @@ def provision_rsa_private_key(
     # Unwrap path (or forced)
     # ------------------------------------------------------------------
     if mode == "off":
+        record_provisioning_event("private", "skipped_no_path")
         pytest.skip(f"{label}: Module does not implement C_CreateObject")
 
     ctx = build_wrap_context(rs, cfg)
     if ctx is None:
+        record_provisioning_event("private", "skipped_no_path")
         pytest.skip(f"{label}: no wrapping path")
 
     strategy = next((s for s in DEFAULT_STRATEGIES if s.name == ctx.strategy_name), None)
     if strategy is None:
+        record_provisioning_event("private", "skipped_no_path")
         pytest.skip(f"{label}: no wrapping path: resolved strategy not found")
 
     pkcs8 = rsa_pkcs8_from_crt(n=n, e=e, d=d, p=p, q=q, dmp1=dmp1, dmq1=dmq1, iqmp=iqmp)
 
     cap = strategy.max_target_size(ctx)
     if cap is not None and len(pkcs8) > cap:
+        record_provisioning_event("private", "skipped_no_path")
         pytest.skip(f"{label}: no wrapping path: no usable wrap mechanism for this target size")
 
     unwrap_handle = strategy.unwrapping_key_handle(ctx)
     if unwrap_handle is None:
+        record_provisioning_event("private", "skipped_no_path")
         pytest.skip(f"{label}: no wrapping path: resolved strategy has no unwrap handle")
 
     blob = strategy.wrap(ctx, pkcs8)
@@ -778,6 +819,7 @@ def provision_rsa_private_key(
         f"{label}: private key provisioned via C_UnwrapKey ({ctx.strategy_name})",
         ComplianceLevel.STANDARD,
     )
+    record_provisioning_event("private", "ran_via_unwrap")
     return handle
 
 
@@ -853,6 +895,7 @@ def provision_ec_private_key(
         if verdict == "create_available":
             from pkcs11_check.testcases.conftest import import_ec_private_key_negotiated
 
+            record_provisioning_event("private", "ran_via_create")
             return import_ec_private_key_negotiated(
                 rs, ec_params=ec_params, value=value, key_type=key_type, attrs=attrs
             )
@@ -861,14 +904,17 @@ def provision_ec_private_key(
     # Unwrap path (or forced)
     # ------------------------------------------------------------------
     if mode == "off":
+        record_provisioning_event("private", "skipped_no_path")
         pytest.skip(f"{label}: Module does not implement C_CreateObject")
 
     ctx = build_wrap_context(rs, cfg)
     if ctx is None:
+        record_provisioning_event("private", "skipped_no_path")
         pytest.skip(f"{label}: no wrapping path")
 
     strategy = next((s for s in DEFAULT_STRATEGIES if s.name == ctx.strategy_name), None)
     if strategy is None:
+        record_provisioning_event("private", "skipped_no_path")
         pytest.skip(f"{label}: no wrapping path: resolved strategy not found")
 
     try:
@@ -876,14 +922,17 @@ def provision_ec_private_key(
 
         pkcs8 = ec_pkcs8_from_private(scalar=value, ec_params=ec_params, key_type=key_type)
     except ValueError:
+        record_provisioning_event("private", "skipped_no_path")
         pytest.skip(f"{label}: no PKCS#8 encoding for this key type")
 
     cap = strategy.max_target_size(ctx)
     if cap is not None and len(pkcs8) > cap:
+        record_provisioning_event("private", "skipped_no_path")
         pytest.skip(f"{label}: no wrapping path: no usable wrap mechanism for this target size")
 
     unwrap_handle = strategy.unwrapping_key_handle(ctx)
     if unwrap_handle is None:
+        record_provisioning_event("private", "skipped_no_path")
         pytest.skip(f"{label}: no wrapping path: resolved strategy has no unwrap handle")
 
     blob = strategy.wrap(ctx, pkcs8)
@@ -906,4 +955,5 @@ def provision_ec_private_key(
         f"{label}: private key provisioned via C_UnwrapKey ({ctx.strategy_name})",
         ComplianceLevel.STANDARD,
     )
+    record_provisioning_event("private", "ran_via_unwrap")
     return handle
