@@ -18,9 +18,11 @@ from pkcs11_check.raw.pack import PackedMechanism
 from pkcs11_check.raw.pack_mechanisms import mech_oaep, mech_rsa_aes_key_wrap
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
     CKA_MODULUS,
     CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
@@ -35,6 +37,7 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_AES_KEY_WRAP,
     CKM_RSA_PKCS_OAEP,
     CKM_SHA256,
+    CKO_SECRET_KEY,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
@@ -397,6 +400,10 @@ def provision_secret_key(
 
     blob = strategy.wrap(ctx, value)
     unwrap_template = {k: v for k, v in attrs.items() if k not in _VALUE_BEARING}
+    # C_UnwrapKey requires the new key's class and type in the template; add them
+    # if the caller didn't already supply them (setdefault is a no-op otherwise).
+    unwrap_template.setdefault(CKA_CLASS, CKO_SECRET_KEY)
+    unwrap_template.setdefault(CKA_KEY_TYPE, key_type)
     handle = unwrap_key(
         rs.raw,
         rs.sh,

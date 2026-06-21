@@ -24,13 +24,16 @@ import pytest
 import pkcs11_check.testcases._provisioning as _prov
 from pkcs11_check.raw.pack import PackedMechanism
 from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
+    CKA_KEY_TYPE,
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKK_AES,
+    CKO_SECRET_KEY,
 )
 
 # ---------------------------------------------------------------------------
@@ -637,3 +640,88 @@ def test_sensitive_key_skips_integrity_readback(monkeypatch: pytest.MonkeyPatch)
     assert h == 92
     # read_attributes called for RSA pub key (handle=60) but NOT for the unwrapped key (92)
     assert 92 not in read_calls, "read_attributes must NOT be called for sensitive key integrity"
+
+
+# ---------------------------------------------------------------------------
+# (k) unwrap template includes CKA_CLASS and CKA_KEY_TYPE (regression: real
+#     modules return CKR_ARGUMENTS_BAD when these are absent)
+# ---------------------------------------------------------------------------
+
+
+def test_unwrap_template_includes_class_and_key_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C_UnwrapKey template must contain CKA_CLASS==CKO_SECRET_KEY and CKA_KEY_TYPE==key_type.
+
+    Without these a real module (softhsm2, etc.) returns CKR_ARGUMENTS_BAD or
+    CKR_TEMPLATE_INCOMPLETE.  The fake unwrap captures attrs and asserts both are present.
+    """
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
+
+    def fake_import_absent(raw: Any, sh: int, key_type: Any, value: bytes, attrs: Any) -> int:
+        raise CkrAssertionError("not supported", CKR_FUNCTION_NOT_SUPPORTED)
+
+    def fake_destroy(raw: Any, sh: int, handle: int) -> None:
+        pass
+
+    unwrap_calls: list[dict[str, Any]] = []
+
+    def fake_unwrap(
+        raw: Any,
+        sh: int,
+        unwrapping_key: int,
+        wrapped_key: bytes,
+        mechanism: Any,
+        attrs: Any = None,
+        *,
+        mech_param: PackedMechanism | None = None,
+    ) -> int:
+        unwrap_calls.append({"attrs": dict(attrs) if attrs else {}})
+        return 93
+
+    from cryptography.hazmat.primitives.asymmetric import rsa as _crypto_rsa
+
+    _priv = _crypto_rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _pub_nums = _priv.public_key().public_numbers()
+    _n_bytes = _pub_nums.n.to_bytes((_pub_nums.n.bit_length() + 7) // 8, "big")
+    _e_bytes = _pub_nums.e.to_bytes((_pub_nums.e.bit_length() + 7) // 8, "big")
+
+    def fake_gen_rsa_keypair(
+        raw: Any, session: int, bits: int = 2048, **kwargs: Any
+    ) -> tuple[int, int]:
+        return 70, 71
+
+    def fake_read_attributes(
+        raw: Any, session: int, handle: int, attr_types: Any
+    ) -> dict[int, Any]:
+        if handle == 70:
+            from pkcs11_check.raw.types_std import CKA_MODULUS, CKA_PUBLIC_EXPONENT
+
+            return {CKA_MODULUS: _n_bytes, CKA_PUBLIC_EXPONENT: _e_bytes}
+        return {CKA_VALUE: _AES_VALUE}
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.import_secret_key", fake_import_absent)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.unwrap_key", fake_unwrap)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.gen_rsa_keypair", fake_gen_rsa_keypair)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.read_attributes", fake_read_attributes)
+    _reset_cache()
+
+    from pkcs11_check.testcases._provisioning import provision_secret_key
+
+    rs = _make_rs(sh=210, has_mech=True)
+    cfg = _make_cfg("unwrap")
+    provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
+
+    assert len(unwrap_calls) == 1, "unwrap_key must be called exactly once"
+    template_attrs = unwrap_calls[0]["attrs"]
+    assert CKA_CLASS in template_attrs, "CKA_CLASS must be present in unwrap template"
+    assert template_attrs[CKA_CLASS] == CKO_SECRET_KEY, (
+        f"CKA_CLASS must be CKO_SECRET_KEY, got {template_attrs[CKA_CLASS]!r}"
+    )
+    assert CKA_KEY_TYPE in template_attrs, "CKA_KEY_TYPE must be present in unwrap template"
+    assert template_attrs[CKA_KEY_TYPE] == CKK_AES, (
+        f"CKA_KEY_TYPE must equal the passed key_type (CKK_AES), "
+        f"got {template_attrs[CKA_KEY_TYPE]!r}"
+    )
