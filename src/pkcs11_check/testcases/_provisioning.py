@@ -1127,3 +1127,124 @@ def provision_ec_private_key(
     )
     record_provisioning_event("private", "ran_via_unwrap")
     return handle
+
+
+# ---------------------------------------------------------------------------
+# external_provision — operator-command provisioning tier (Task 2)
+# ---------------------------------------------------------------------------
+
+#: Maximum seconds to wait for the operator-supplied provisioning command.
+_EXTERNAL_CMD_TIMEOUT: int = 120
+
+
+def external_provision(
+    rs: Any,
+    cfg: Any,
+    *,
+    material: bytes,
+    label: str,
+    key_type: int,
+    obj_class: str,
+) -> int | None:
+    """Provision an object via the operator's external command. Returns a handle, or None.
+
+    INERT (returns None immediately) unless BOTH cfg.allow_external_provision is True
+    AND cfg.external_provision_cmd is a non-empty template. Writes ``material`` to a
+    0600 temp file; substitutes {keyfile}/{label}/{key_type}/{key_class} into the
+    command; runs it with a timeout; resolves the loaded object by CKA_LABEL via
+    C_FindObjects. On success records a provisioning event + compliance.note and
+    returns the handle. Any failure (timeout / non-zero exit / not found / exception)
+    returns None — the caller decides whether to skip. NEVER raises.
+    """
+    import os
+    import shlex
+    import subprocess
+    import tempfile
+
+    # Gate: both flags must be set and non-empty.
+    if not getattr(cfg, "allow_external_provision", False) or not getattr(
+        cfg, "external_provision_cmd", None
+    ):
+        return None
+
+    template: str = cfg.external_provision_cmd
+
+    # Create the temp file with mode 0600 before writing anything.
+    try:
+        fd, path = tempfile.mkstemp()
+        os.fchmod(fd, 0o600)
+        os.write(fd, material)
+        os.close(fd)
+    except Exception:  # noqa: BLE001
+        return None
+
+    try:
+        # Build and run the command.
+        try:
+            cmd_str = template.format(
+                keyfile=path,
+                label=label,
+                key_type=str(key_type),
+                key_class=obj_class,
+            )
+            args = shlex.split(cmd_str)
+        except Exception:  # noqa: BLE001
+            return None
+
+        try:
+            proc = subprocess.run(
+                args,
+                capture_output=True,
+                timeout=_EXTERNAL_CMD_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            return None
+        except (OSError, Exception):  # noqa: BLE001
+            return None
+
+        if proc.returncode != 0:
+            return None
+
+        # Resolve the loaded object by CKA_LABEL.
+        try:
+            from pkcs11_check.raw.pack import template_from_dict
+            from pkcs11_check.raw.recipes import find_objects
+
+            lbl_bytes: bytes = label.encode() if isinstance(label, str) else label
+            tmpl = template_from_dict({CKA_LABEL: lbl_bytes})
+            handles = find_objects(rs.raw, rs.sh, tmpl)
+        except Exception:  # noqa: BLE001
+            return None
+
+        if not handles:
+            return None
+
+        handle = handles[0]
+
+        # Record success.
+        record_provisioning_event(obj_class, "ran_via_external")
+        try:
+            from pkcs11_check.compliance import ComplianceLevel, note
+
+            note(
+                f"{label}: provisioned externally via operator command ({obj_class})"
+                " — NOT a PKCS#11-API capability",
+                ComplianceLevel.CRITICAL,
+            )
+        except Exception:  # noqa: BLE001
+            return handle  # compliance notes are best-effort; don't let them block success
+
+        return handle
+
+    finally:
+        # Best-effort: overwrite the file with zeros then unlink.
+        try:
+            with open(path, "r+b") as fh:
+                fh.write(b"\x00" * len(material))
+                fh.flush()
+        except OSError:
+            pass  # best-effort zeroing; unlink still attempted below
+        try:
+            os.unlink(path)
+        except OSError:
+            pass  # best-effort unlink; file may already be gone
