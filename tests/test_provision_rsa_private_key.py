@@ -331,6 +331,165 @@ def test_force_unwrap_uses_pkcs8_payload_and_template(
 
 
 # ---------------------------------------------------------------------------
+# (e) create_available + negotiated-import RAISES -> exception propagates, no unwrap
+# ---------------------------------------------------------------------------
+
+
+def test_create_available_failure_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """create_available + import_rsa_private_key_negotiated raises -> propagates, no unwrap."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED
+
+    build_ctx_called: list[Any] = []
+
+    def fake_negotiated_raises(
+        rs: Any,
+        *,
+        n: bytes,
+        e: bytes,
+        d: bytes,
+        p: bytes,
+        q: bytes,
+        dmp1: bytes,
+        dmq1: bytes,
+        iqmp: bytes,
+        attrs: Any = None,
+        purpose: str = "",
+    ) -> int:
+        raise CkrAssertionError("function failed", CKR_FUNCTION_FAILED)
+
+    def fake_build_ctx(rs: Any, cfg: Any) -> None:
+        build_ctx_called.append(True)
+        return None
+
+    def fake_ec_import(raw: Any, sh: int, **kwargs: Any) -> int:
+        # probe for create_verdict("private") → "create_available"
+        return 999
+
+    def fake_destroy(raw: Any, sh: int, handle: int) -> None:
+        pass
+
+    monkeypatch.setattr(
+        "pkcs11_check.testcases.conftest.import_rsa_private_key_negotiated",
+        fake_negotiated_raises,
+    )
+    monkeypatch.setattr(_prov, "build_wrap_context", fake_build_ctx)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.import_ec_private_key", fake_ec_import)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy)
+    _reset_cache()
+
+    from pkcs11_check.testcases._provisioning import provision_rsa_private_key
+
+    rs = _make_rs(sh=304)
+    cfg = _make_cfg("unwrap")
+    with pytest.raises(CkrAssertionError):
+        provision_rsa_private_key(
+            rs,
+            cfg,
+            n=RSA_N,
+            e=RSA_E,
+            d=RSA_D,
+            p=RSA_P,
+            q=RSA_Q,
+            dmp1=RSA_DMP1,
+            dmq1=RSA_DMQ1,
+            iqmp=RSA_IQMP,
+            attrs=_RSA_ATTRS,
+            label="t",
+        )
+
+    assert not build_ctx_called, "build_wrap_context must NOT be called when create path raises"
+
+
+# ---------------------------------------------------------------------------
+# (f) force-unwrap -> import_rsa_private_key_negotiated is NEVER called
+# ---------------------------------------------------------------------------
+
+
+def test_force_unwrap_does_not_call_create(monkeypatch: pytest.MonkeyPatch) -> None:
+    """force-unwrap must NOT call import_rsa_private_key_negotiated."""
+    negotiated_called: list[Any] = []
+
+    def fake_negotiated_not_called(rs: Any, **kwargs: Any) -> int:
+        negotiated_called.append(True)
+        return 0
+
+    fake_ctx = _prov.WrapContext(
+        rsa_pub_der=b"\x00" * 32,
+        rsa_unwrap_handle=555,
+        aes_kek_handle=None,
+        sym_kek=None,
+        aes_bits=256,
+        oaep_hash="sha1",
+        strategy_name="RSA_AES_KEY_WRAP",
+    )
+
+    class FakeStrategy:
+        name = "RSA_AES_KEY_WRAP"
+        unwrap_mech = 0x00000250
+
+        def usable(self, profile: Any) -> bool:
+            return True
+
+        def max_target_size(self, ctx: _prov.WrapContext) -> int | None:
+            return None
+
+        def wrap(self, ctx: _prov.WrapContext, target: bytes) -> bytes:
+            return b"FAKEBLOB:" + target
+
+        def unwrap_mech_param(self, ctx: _prov.WrapContext) -> PackedMechanism | None:
+            return None
+
+        def unwrapping_key_handle(self, ctx: _prov.WrapContext) -> int | None:
+            return 555
+
+    def fake_unwrap(
+        raw: Any,
+        sh: int,
+        unwrapping_key: int,
+        wrapped_key: bytes,
+        mechanism: Any,
+        attrs: Any = None,
+        *,
+        mech_param: PackedMechanism | None = None,
+    ) -> int:
+        return 201
+
+    monkeypatch.setattr(
+        "pkcs11_check.testcases.conftest.import_rsa_private_key_negotiated",
+        fake_negotiated_not_called,
+    )
+    monkeypatch.setattr(_prov, "build_wrap_context", lambda rs, cfg: fake_ctx)
+    monkeypatch.setattr(_prov, "DEFAULT_STRATEGIES", [FakeStrategy()])
+    monkeypatch.setattr("pkcs11_check.raw.recipes.unwrap_key", fake_unwrap)
+    _reset_cache()
+
+    from pkcs11_check.testcases._provisioning import provision_rsa_private_key
+
+    rs = _make_rs(sh=305, has_mech=True)
+    cfg = _make_cfg("force-unwrap")
+    h = provision_rsa_private_key(
+        rs,
+        cfg,
+        n=RSA_N,
+        e=RSA_E,
+        d=RSA_D,
+        p=RSA_P,
+        q=RSA_Q,
+        dmp1=RSA_DMP1,
+        dmq1=RSA_DMQ1,
+        iqmp=RSA_IQMP,
+        attrs=_RSA_ATTRS,
+        label="t",
+    )
+
+    assert h == 201, "must return unwrap_key's handle"
+    assert not negotiated_called, (
+        "import_rsa_private_key_negotiated must NOT be called in force-unwrap mode"
+    )
+
+
+# ---------------------------------------------------------------------------
 # (c) mode "off" + create-absent -> pytest.skip("...C_CreateObject...")
 # ---------------------------------------------------------------------------
 
