@@ -55,10 +55,12 @@ from pkcs11_check.raw.types_std import (
 @dataclass(frozen=True)
 class WrapContext:
     rsa_pub_der: bytes | None  # bootstrap/configured RSA unwrap key public part
-    unwrapping_key_handle: int  # in-token handle used by C_UnwrapKey
-    sym_kek: bytes | None = None  # symmetric KEK value (configured/readable), for AES-KWP
+    rsa_unwrap_handle: int | None = None  # RSA private key handle for C_UnwrapKey
+    aes_kek_handle: int | None = None  # AES KEK handle for C_UnwrapKey (AES-KWP path)
+    sym_kek: bytes | None = None  # symmetric KEK value (readable AES key bytes)
     aes_bits: int = 256
     oaep_hash: str = "sha1"  # OAEP hash algorithm: "sha1" or "sha256"
+    strategy_name: str | None = None  # resolved winning strategy name
 
 
 @runtime_checkable
@@ -73,6 +75,10 @@ class WrapStrategy(Protocol):
     def wrap(self, ctx: WrapContext, target: bytes) -> bytes: ...
 
     def unwrap_mech_param(self, ctx: WrapContext) -> PackedMechanism | None: ...
+
+    def unwrapping_key_handle(self, ctx: WrapContext) -> int | None: ...
+
+    def has_material(self, ctx: WrapContext) -> bool: ...
 
 
 class RsaAesKeyWrap:
@@ -93,6 +99,12 @@ class RsaAesKeyWrap:
 
     def unwrap_mech_param(self, ctx: WrapContext) -> PackedMechanism:
         return mech_rsa_aes_key_wrap(aes_bits=ctx.aes_bits, oaep_hash=ctx.oaep_hash)
+
+    def unwrapping_key_handle(self, ctx: WrapContext) -> int | None:
+        return ctx.rsa_unwrap_handle
+
+    def has_material(self, ctx: WrapContext) -> bool:
+        return ctx.rsa_pub_der is not None and ctx.rsa_unwrap_handle is not None
 
 
 class RsaOaep:
@@ -119,6 +131,12 @@ class RsaOaep:
             h_mgf = CKG_MGF1_SHA256
         return mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=h_mech, mgf=h_mgf)
 
+    def unwrapping_key_handle(self, ctx: WrapContext) -> int | None:
+        return ctx.rsa_unwrap_handle
+
+    def has_material(self, ctx: WrapContext) -> bool:
+        return ctx.rsa_pub_der is not None and ctx.rsa_unwrap_handle is not None
+
 
 class AesKwp:
     name = "aes_kwp"
@@ -128,7 +146,7 @@ class AesKwp:
         return bool(profile.supports_unwrap_mech(self.unwrap_mech))
 
     def max_target_size(self, ctx: WrapContext) -> int | None:
-        return None if ctx.sym_kek is not None else 0  # needs a symmetric KEK value
+        return None if self.has_material(ctx) else 0  # needs a symmetric KEK value
 
     def wrap(self, ctx: WrapContext, target: bytes) -> bytes:
         assert ctx.sym_kek is not None
@@ -136,6 +154,12 @@ class AesKwp:
 
     def unwrap_mech_param(self, ctx: WrapContext) -> None:
         return None  # CKM_AES_KEY_WRAP_KWP takes no params
+
+    def unwrapping_key_handle(self, ctx: WrapContext) -> int | None:
+        return ctx.aes_kek_handle
+
+    def has_material(self, ctx: WrapContext) -> bool:
+        return ctx.sym_kek is not None and ctx.aes_kek_handle is not None
 
 
 DEFAULT_STRATEGIES: tuple[WrapStrategy, ...] = (RsaAesKeyWrap(), RsaOaep(), AesKwp())
@@ -154,6 +178,16 @@ _CREATE_PROHIBITED_RVS: frozenset[int] = frozenset(
         CKR_ATTRIBUTE_VALUE_INVALID,
     }
 )
+
+# Probe template used by build_wrap_context for the trial round-trip unwrap.
+_PROBE_ATTRS: dict[int, Any] = {
+    CKA_CLASS: CKO_SECRET_KEY,
+    CKA_KEY_TYPE: CKK_AES,
+    CKA_TOKEN: False,
+    CKA_SENSITIVE: False,
+    CKA_EXTRACTABLE: True,
+    CKA_ENCRYPT: True,
+}
 
 
 @dataclass
@@ -234,7 +268,7 @@ def select_strategy(
     """
     probe_ctx = WrapContext(
         rsa_pub_der=getattr(profile, "rsa_pub_der_probe", None),
-        unwrapping_key_handle=0,
+        rsa_unwrap_handle=None,
         sym_kek=b"\x00" * 32 if getattr(profile, "aes_kwp", False) else None,
         oaep_hash="sha1",
     )
@@ -293,72 +327,20 @@ def _bootstrap_rsa_unwrap_key(rs: Any, start_bits: int) -> tuple[int, int, int] 
     return None
 
 
-def _negotiate_oaep_hash(
-    rs: Any,
-    strategy: WrapStrategy,
-    rsa_pub_der: bytes,
-    unwrapping_key_handle: int,
-    aes_bits: int,
-) -> str | None:
-    """Probe the module to find the best supported OAEP hash for wrapping.
-
-    Tries candidates in order (sha256 first, sha1 second).  For each, wraps a
-    16-byte probe value and attempts C_UnwrapKey with a minimal AES secret-key
-    template.  Returns the first candidate that succeeds, or ``None`` if every
-    candidate fails.
-
-    The throwaway unwrapped key is destroyed quietly on success.
-    """
-    from pkcs11_check.raw.recipes import destroy_quietly, unwrap_key
-
-    probe = b"\x00" * 16
-    probe_attrs = {
-        CKA_CLASS: CKO_SECRET_KEY,
-        CKA_KEY_TYPE: CKK_AES,
-        CKA_TOKEN: False,
-        CKA_SENSITIVE: False,
-        CKA_EXTRACTABLE: True,
-        CKA_ENCRYPT: True,
-    }
-    for cand in ("sha256", "sha1"):
-        ctx = WrapContext(
-            rsa_pub_der=rsa_pub_der,
-            unwrapping_key_handle=unwrapping_key_handle,
-            aes_bits=aes_bits,
-            oaep_hash=cand,
-        )
-        blob = strategy.wrap(ctx, probe)
-        try:
-            handle = unwrap_key(
-                rs.raw,
-                rs.sh,
-                unwrapping_key_handle,
-                blob,
-                strategy.unwrap_mech,
-                attrs=probe_attrs,
-                mech_param=strategy.unwrap_mech_param(ctx),
-            )
-        except CkrAssertionError:
-            continue
-        destroy_quietly(rs.raw, rs.sh, handle)
-        return cand
-    return None
-
-
 def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
-    """Build a ``WrapContext`` for the bootstrap path.
+    """Build a ``WrapContext`` by probing ALL usable strategies in DEFAULT_STRATEGIES order.
 
-    Generates a session RSA wrap keypair (escalating size if the provider refuses
-    smaller keys), reads the public modulus and exponent, assembles an SPKI DER blob
-    via ``cryptography``, and returns a ``WrapContext``.  Returns ``None`` when every
-    candidate size is refused (→ caller should skip the unwrap path).
+    For each strategy, bootstraps the required key material lazily (RSA keypair or AES KEK),
+    then performs a trial round-trip (wrap + C_UnwrapKey with a 16-byte probe) to confirm
+    the strategy + hash combo works end-to-end.  Returns the first winning ``WrapContext``
+    (with ``strategy_name`` set), or ``None`` if every combo fails.
 
-    Sets ``profile_for(rs).rsa_pub_der_probe`` so ``select_strategy`` can size-check
-    OAEP payloads correctly before the real ``WrapContext`` is passed.
+    RSA strategies try candidate hashes in order (sha256 preferred, sha1 fallback) when
+    ``cfg.wrap_oaep_hash == "auto"``; an explicit hash is used as-is.  AES-KWP has no
+    hash parameter.
 
-    When ``cfg.wrap_oaep_hash == "auto"`` (the default), probes the module by
-    attempting a round-trip with each candidate hash (sha256 preferred, sha1
-    fallback).  Returns ``None`` when no OAEP hash succeeds in auto mode.
+    Sets ``profile_for(rs).rsa_pub_der_probe`` when RSA material is successfully
+    bootstrapped so ``select_strategy`` can size-check OAEP payloads correctly.
 
     The ``configured`` wrap-key-source path is not yet implemented; a
     ``NotImplementedError`` is raised for that branch.
@@ -371,34 +353,127 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
         )
 
     start_bits: int = getattr(cfg, "wrap_rsa_bits", 2048)
-    result = _bootstrap_rsa_unwrap_key(rs, start_bits)
-    if result is None:
-        return None
-
-    pub_handle, priv_handle, _bits = result
-
-    from pkcs11_check.raw.recipes import read_attributes
-
-    attrs = read_attributes(rs.raw, rs.sh, pub_handle, (CKA_MODULUS, CKA_PUBLIC_EXPONENT))
-    n = int.from_bytes(attrs[CKA_MODULUS], "big")
-    e = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
-    pub_key = _crypto_rsa.RSAPublicNumbers(e, n).public_key()
-    der = pub_key.public_bytes(_Encoding.DER, _PublicFormat.SubjectPublicKeyInfo)
-
-    profile_for(rs).rsa_pub_der_probe = der
-
     oaep_hash_cfg: str = getattr(cfg, "wrap_oaep_hash", "auto")
-    if oaep_hash_cfg == "auto":
-        strategy = select_strategy(DEFAULT_STRATEGIES, profile_for(rs), 16)
-        if strategy is None:
-            return None
-        oaep_hash = _negotiate_oaep_hash(rs, strategy, der, priv_handle, 256)
-        if oaep_hash is None:
-            return None
-    else:
-        oaep_hash = oaep_hash_cfg
 
-    return WrapContext(rsa_pub_der=der, unwrapping_key_handle=priv_handle, oaep_hash=oaep_hash)
+    # Material accumulated lazily across strategies
+    rsa_pub_der: bytes | None = None
+    rsa_unwrap_handle: int | None = None
+    aes_kek_handle: int | None = None
+    sym_kek: bytes | None = None
+
+    # Track bootstrap attempts to avoid retrying a failing bootstrap
+    rsa_bootstrapped = False
+    aes_bootstrapped = False
+
+    from pkcs11_check.raw.recipes import destroy_quietly, unwrap_key
+
+    for strategy in DEFAULT_STRATEGIES:
+        if not strategy.usable(profile_for(rs)):
+            continue
+
+        # ------------------------------------------------------------------
+        # Lazy bootstrap for this strategy's required material
+        # ------------------------------------------------------------------
+        if strategy.name in ("rsa_aes_key_wrap", "rsa_oaep") and not rsa_bootstrapped:
+            rsa_bootstrapped = True
+            result = _bootstrap_rsa_unwrap_key(rs, start_bits)
+            if result is not None:
+                from pkcs11_check.raw.recipes import read_attributes
+
+                pub_handle, priv_handle, _bits = result
+                attrs = read_attributes(
+                    rs.raw, rs.sh, pub_handle, (CKA_MODULUS, CKA_PUBLIC_EXPONENT)
+                )
+                n = int.from_bytes(attrs[CKA_MODULUS], "big")
+                e = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
+                pub_key = _crypto_rsa.RSAPublicNumbers(e, n).public_key()
+                der = pub_key.public_bytes(_Encoding.DER, _PublicFormat.SubjectPublicKeyInfo)
+                rsa_pub_der = der
+                rsa_unwrap_handle = priv_handle
+                profile_for(rs).rsa_pub_der_probe = der
+
+        if strategy.name == "aes_kwp" and not aes_bootstrapped:
+            aes_bootstrapped = True
+            try:
+                from pkcs11_check.raw.recipes import gen_aes_key, read_attributes
+
+                kek_handle = gen_aes_key(
+                    rs.raw,
+                    rs.sh,
+                    bits=256,
+                    attrs={
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_WRAP: True,
+                        CKA_UNWRAP: True,
+                    },
+                )
+                kek_attrs = read_attributes(rs.raw, rs.sh, kek_handle, (CKA_VALUE,))
+                kek_val = kek_attrs.get(CKA_VALUE)
+                if kek_val is not None:
+                    aes_kek_handle = kek_handle
+                    sym_kek = kek_val
+            except CkrAssertionError:
+                pass  # gen_aes_key failed → skip AES-KWP
+
+        # Build a probe context with all material gathered so far
+        probe_ctx = WrapContext(
+            rsa_pub_der=rsa_pub_der,
+            rsa_unwrap_handle=rsa_unwrap_handle,
+            aes_kek_handle=aes_kek_handle,
+            sym_kek=sym_kek,
+            aes_bits=256,
+            oaep_hash="sha1",  # placeholder; overridden per candidate below
+            strategy_name=strategy.name,
+        )
+
+        if not strategy.has_material(probe_ctx):
+            continue
+
+        # ------------------------------------------------------------------
+        # Determine hash candidates for this strategy
+        # ------------------------------------------------------------------
+        if strategy.name in ("rsa_aes_key_wrap", "rsa_oaep"):
+            hash_candidates: tuple[str | None, ...] = (
+                ("sha256", "sha1") if oaep_hash_cfg == "auto" else (oaep_hash_cfg,)
+            )
+        else:
+            hash_candidates = (None,)
+
+        # ------------------------------------------------------------------
+        # Trial round-trip for each hash candidate
+        # ------------------------------------------------------------------
+        for cand in hash_candidates:
+            trial_ctx = WrapContext(
+                rsa_pub_der=rsa_pub_der,
+                rsa_unwrap_handle=rsa_unwrap_handle,
+                aes_kek_handle=aes_kek_handle,
+                sym_kek=sym_kek,
+                aes_bits=256,
+                oaep_hash=cand if cand is not None else "sha1",
+                strategy_name=strategy.name,
+            )
+            unwrap_handle = strategy.unwrapping_key_handle(trial_ctx)
+            if unwrap_handle is None:
+                continue  # material check passed but no handle (shouldn't happen)
+            blob = strategy.wrap(trial_ctx, b"\x00" * 16)
+            try:
+                handle = unwrap_key(
+                    rs.raw,
+                    rs.sh,
+                    unwrap_handle,
+                    blob,
+                    strategy.unwrap_mech,
+                    attrs=_PROBE_ATTRS,
+                    mech_param=strategy.unwrap_mech_param(trial_ctx),
+                )
+            except CkrAssertionError:
+                continue
+            destroy_quietly(rs.raw, rs.sh, handle)
+            return trial_ctx
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -429,8 +504,9 @@ def provision_secret_key(
 
     2. If create is unavailable/prohibited OR ``cfg.key_inject == "force-unwrap"``:
        - ``key_inject == "off"`` → ``pytest.skip`` (no injection path).
-       - Build a ``WrapContext`` (bootstrap RSA keypair); ``None`` → ``pytest.skip``.
-       - ``select_strategy`` for the target size; ``None`` → ``pytest.skip``.
+       - Build a ``WrapContext`` (bootstrap + multi-strategy negotiation);
+         ``None`` → ``pytest.skip``.
+       - Look up the resolved strategy by ``ctx.strategy_name``; not found → ``pytest.skip``.
        - Encrypt the value into a blob, call ``unwrap_key`` with the blob.
        - Value-integrity: when the key is non-sensitive, read back ``CKA_VALUE``
          and assert it equals ``value``; mismatch → ``pytest.skip`` (corrupted
@@ -476,10 +552,17 @@ def provision_secret_key(
     if ctx is None:
         pytest.skip(f"{label}: no wrapping path")
 
-    strategy = select_strategy(DEFAULT_STRATEGIES, profile_for(rs), len(value))
+    strategy = next((s for s in DEFAULT_STRATEGIES if s.name == ctx.strategy_name), None)
     if strategy is None:
+        pytest.skip(f"{label}: no wrapping path: resolved strategy not found")
+
+    cap = strategy.max_target_size(ctx)
+    if cap is not None and len(value) > cap:
         pytest.skip(f"{label}: no wrapping path: no usable wrap mechanism for this target size")
 
+    unwrap_handle = strategy.unwrapping_key_handle(ctx)
+    if unwrap_handle is None:
+        pytest.skip(f"{label}: no wrapping path: resolved strategy has no unwrap handle")
     blob = strategy.wrap(ctx, value)
     unwrap_template = {k: v for k, v in attrs.items() if k not in _VALUE_BEARING}
     # C_UnwrapKey requires the new key's class and type in the template; add them
@@ -489,7 +572,7 @@ def provision_secret_key(
     handle = unwrap_key(
         rs.raw,
         rs.sh,
-        ctx.unwrapping_key_handle,
+        unwrap_handle,
         blob,
         strategy.unwrap_mech,
         attrs=unwrap_template,

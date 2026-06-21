@@ -17,6 +17,7 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_MODULUS,
     CKA_PUBLIC_EXPONENT,
+    CKA_VALUE,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
 )
@@ -26,8 +27,12 @@ from pkcs11_check.raw.types_std import (
 # ---------------------------------------------------------------------------
 
 
-def _make_rs(sh: int) -> Any:
+def _make_rs(sh: int, has_mechanism_fn: Any = None) -> Any:
     """Synthetic RS object with no real module."""
+    if has_mechanism_fn is None:
+        has_mech: Any = lambda self, n: True  # noqa: E731
+    else:
+        has_mech = has_mechanism_fn
     return type(
         "RS",
         (),
@@ -35,7 +40,7 @@ def _make_rs(sh: int) -> Any:
             "raw": object(),
             "sh": sh,
             "slot_id": 0,
-            "has_mechanism": lambda self, n: True,
+            "has_mechanism": has_mech,
         },
     )()
 
@@ -90,6 +95,24 @@ def test_bootstrap_builds_usable_context(monkeypatch: pytest.MonkeyPatch) -> Non
     n_bytes, e_bytes = _real_rsa_numbers(2048)
 
     _stub_keygen_and_attrs(monkeypatch, pub_h, priv_h, n_bytes, e_bytes)
+
+    def fake_unwrap_key(
+        raw: Any,
+        session: int,
+        unwrapping_key: Any,
+        wrapped_key: bytes,
+        mechanism: Any,
+        attrs: Any = None,
+        *,
+        mech_param: Any = None,
+    ) -> int:
+        return 999
+
+    def fake_destroy_quietly(raw: Any, session: int, handle: int) -> None:
+        pass
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.unwrap_key", fake_unwrap_key)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy_quietly)
     _reset_cache()
 
     from pathlib import Path
@@ -107,7 +130,7 @@ def test_bootstrap_builds_usable_context(monkeypatch: pytest.MonkeyPatch) -> Non
     ctx = build_wrap_context(rs, cfg)
 
     assert ctx is not None
-    assert ctx.unwrapping_key_handle == priv_h
+    assert ctx.rsa_unwrap_handle == priv_h
 
     # rsa_pub_der must be set and must round-trip back to the same n/e
     assert ctx.rsa_pub_der is not None
@@ -151,8 +174,25 @@ def test_size_escalation_2048_refused_3072_succeeds(monkeypatch: pytest.MonkeyPa
     ) -> dict[int, Any]:
         return {CKA_MODULUS: n_bytes, CKA_PUBLIC_EXPONENT: e_bytes}
 
+    def fake_unwrap_key(
+        raw: Any,
+        session: int,
+        unwrapping_key: Any,
+        wrapped_key: bytes,
+        mechanism: Any,
+        attrs: Any = None,
+        *,
+        mech_param: Any = None,
+    ) -> int:
+        return 999
+
+    def fake_destroy_quietly(raw: Any, session: int, handle: int) -> None:
+        pass
+
     monkeypatch.setattr("pkcs11_check.raw.recipes.gen_rsa_keypair", fake_gen_rsa_keypair)
     monkeypatch.setattr("pkcs11_check.raw.recipes.read_attributes", fake_read_attributes)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.unwrap_key", fake_unwrap_key)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy_quietly)
     _reset_cache()
 
     from pathlib import Path
@@ -170,7 +210,7 @@ def test_size_escalation_2048_refused_3072_succeeds(monkeypatch: pytest.MonkeyPa
     ctx = build_wrap_context(rs, cfg)
 
     assert ctx is not None
-    assert ctx.unwrapping_key_handle == priv_h
+    assert ctx.rsa_unwrap_handle == priv_h
     # gen_rsa_keypair must have been called with 2048 first, then 3072
     assert calls == [2048, 3072]
 
@@ -188,7 +228,11 @@ def test_all_sizes_refused_returns_none(monkeypatch: pytest.MonkeyPatch) -> None
     ) -> tuple[int, int]:
         raise CkrAssertionError("key size range", CKR_KEY_SIZE_RANGE)
 
+    def fake_gen_aes_key(raw: Any, session: int, **kwargs: Any) -> int:
+        raise CkrAssertionError("not supported", CKR_MECHANISM_INVALID)
+
     monkeypatch.setattr("pkcs11_check.raw.recipes.gen_rsa_keypair", fake_gen_rsa_keypair)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.gen_aes_key", fake_gen_aes_key)
     _reset_cache()
 
     from pathlib import Path
@@ -365,7 +409,11 @@ def test_auto_negotiate_both_fail_returns_none(monkeypatch: pytest.MonkeyPatch) 
     ) -> int:
         raise CkrAssertionError("mechanism invalid", CKR_MECHANISM_INVALID)
 
+    def fake_gen_aes_key(raw: Any, session: int, **kwargs: Any) -> int:
+        raise CkrAssertionError("not supported", CKR_MECHANISM_INVALID)
+
     monkeypatch.setattr("pkcs11_check.raw.recipes.unwrap_key", fake_unwrap_key)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.gen_aes_key", fake_gen_aes_key)
     _reset_cache()
 
     from pathlib import Path
@@ -381,24 +429,30 @@ def test_auto_negotiate_both_fail_returns_none(monkeypatch: pytest.MonkeyPatch) 
 
 
 # ---------------------------------------------------------------------------
-# Explicit sha256: skips negotiation, uses sha256 directly
+# Explicit sha256: uses sha256 with a single trial round-trip probe
 # ---------------------------------------------------------------------------
 
 
 def test_explicit_sha256_skips_negotiation(monkeypatch: pytest.MonkeyPatch) -> None:
-    """wrap_oaep_hash='sha256' must use sha256 directly, no unwrap_key probe."""
+    """wrap_oaep_hash='sha256' must use sha256 directly with a single trial probe."""
     pub_h = 80
     priv_h = 81
+    probe_handle = 999
     n_bytes, e_bytes = _real_rsa_numbers(2048)
-    unwrap_called: list[bool] = []
+    unwrap_calls: list[bool] = []
+    destroy_calls: list[int] = []
 
     _stub_keygen_and_attrs(monkeypatch, pub_h, priv_h, n_bytes, e_bytes)
 
     def fake_unwrap_key(*args: Any, **kwargs: Any) -> int:
-        unwrap_called.append(True)
-        return 999
+        unwrap_calls.append(True)
+        return probe_handle
+
+    def fake_destroy_quietly(raw: Any, session: int, handle: int) -> None:
+        destroy_calls.append(handle)
 
     monkeypatch.setattr("pkcs11_check.raw.recipes.unwrap_key", fake_unwrap_key)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy_quietly)
     _reset_cache()
 
     from pathlib import Path
@@ -416,5 +470,245 @@ def test_explicit_sha256_skips_negotiation(monkeypatch: pytest.MonkeyPatch) -> N
 
     assert ctx is not None
     assert ctx.oaep_hash == "sha256"
-    # No negotiation probe should have called unwrap_key
-    assert not unwrap_called
+    assert ctx.rsa_unwrap_handle == priv_h
+    # The trial round-trip must have been called exactly once
+    assert unwrap_calls
+    # The probe key must have been destroyed
+    assert probe_handle in destroy_calls
+
+
+# ---------------------------------------------------------------------------
+# AES-KWP fall-through: RSA not advertised, AES-KWP succeeds
+# ---------------------------------------------------------------------------
+
+
+def test_aes_kwp_fallthrough_when_oaep_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When only CKM_AES_KEY_WRAP_KWP is advertised, strategy falls through to aes_kwp."""
+    kek_handle = 90
+    unwrapped_handle = 100
+    kek_value = b"\xaa" * 32
+    destroy_calls: list[int] = []
+
+    # Only AES_KEY_WRAP_KWP is present; RSA mechanisms are not
+    def has_mechanism(self: Any, name: str) -> bool:
+        return name == "CKM_AES_KEY_WRAP_KWP"
+
+    def fake_gen_aes_key(raw: Any, session: int, **kwargs: Any) -> int:
+        return kek_handle
+
+    def fake_read_attributes(
+        raw: Any, session: int, handle: int, attr_types: Any
+    ) -> dict[int, Any]:
+        return {CKA_VALUE: kek_value}
+
+    def fake_unwrap_key(
+        raw: Any,
+        session: int,
+        unwrapping_key: Any,
+        wrapped_key: bytes,
+        mechanism: Any,
+        attrs: Any = None,
+        *,
+        mech_param: Any = None,
+    ) -> int:
+        return unwrapped_handle
+
+    def fake_destroy_quietly(raw: Any, session: int, handle: int) -> None:
+        destroy_calls.append(handle)
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.gen_aes_key", fake_gen_aes_key)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.read_attributes", fake_read_attributes)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.unwrap_key", fake_unwrap_key)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy_quietly)
+    _reset_cache()
+
+    from pathlib import Path
+
+    from pkcs11_check.config import P11TestConfig
+    from pkcs11_check.testcases._provisioning import build_wrap_context
+
+    cfg = P11TestConfig(module=Path("/ignored.so"), key_inject="unwrap", wrap_oaep_hash="auto")
+    rs = _make_rs(sh=400, has_mechanism_fn=has_mechanism)
+    ctx = build_wrap_context(rs, cfg)
+
+    assert ctx is not None
+    assert ctx.strategy_name == "aes_kwp"
+    assert ctx.aes_kek_handle == kek_handle
+    assert ctx.sym_kek == kek_value
+    assert unwrapped_handle in destroy_calls
+
+
+# ---------------------------------------------------------------------------
+# RSA-OAEP fall-through: only CKM_RSA_PKCS_OAEP is advertised (not RSA-AES-KEY-WRAP)
+# ---------------------------------------------------------------------------
+
+
+def test_rsa_oaep_fallthrough_when_rsa_aes_key_wrap_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When only CKM_RSA_PKCS_OAEP is advertised, strategy falls through to rsa_oaep."""
+    pub_h = 50
+    priv_h = 51
+    n_bytes, e_bytes = _real_rsa_numbers(2048)
+    unwrapped_handle = 200
+
+    # Only RSA_PKCS_OAEP is present; RSA_AES_KEY_WRAP and AES_KEY_WRAP_KWP are not
+    def has_mechanism(self: Any, name: str) -> bool:
+        return name == "CKM_RSA_PKCS_OAEP"
+
+    _stub_keygen_and_attrs(monkeypatch, pub_h, priv_h, n_bytes, e_bytes)
+
+    def fake_unwrap_key(
+        raw: Any,
+        session: int,
+        unwrapping_key: Any,
+        wrapped_key: bytes,
+        mechanism: Any,
+        attrs: Any = None,
+        *,
+        mech_param: Any = None,
+    ) -> int:
+        return unwrapped_handle
+
+    def fake_destroy_quietly(raw: Any, session: int, handle: int) -> None:
+        pass
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.unwrap_key", fake_unwrap_key)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy_quietly)
+    _reset_cache()
+
+    from pathlib import Path
+
+    from pkcs11_check.config import P11TestConfig
+    from pkcs11_check.testcases._provisioning import build_wrap_context
+
+    cfg = P11TestConfig(module=Path("/ignored.so"), key_inject="unwrap", wrap_oaep_hash="auto")
+    rs = _make_rs(sh=500, has_mechanism_fn=has_mechanism)
+    ctx = build_wrap_context(rs, cfg)
+
+    assert ctx is not None
+    assert ctx.strategy_name == "rsa_oaep"
+
+
+# ---------------------------------------------------------------------------
+# Nothing works -> returns None
+# ---------------------------------------------------------------------------
+
+
+def test_nothing_works_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """All strategies fail: RSA unwrap always raises, AES KEK gen fails -> None."""
+    pub_h = 60
+    priv_h = 61
+    n_bytes, e_bytes = _real_rsa_numbers(2048)
+
+    _stub_keygen_and_attrs(monkeypatch, pub_h, priv_h, n_bytes, e_bytes)
+
+    def fake_gen_aes_key(raw: Any, session: int, **kwargs: Any) -> int:
+        raise CkrAssertionError("not supported", CKR_MECHANISM_INVALID)
+
+    def fake_unwrap_key(
+        raw: Any,
+        session: int,
+        unwrapping_key: Any,
+        wrapped_key: bytes,
+        mechanism: Any,
+        attrs: Any = None,
+        *,
+        mech_param: Any = None,
+    ) -> int:
+        raise CkrAssertionError("mechanism invalid", CKR_MECHANISM_INVALID)
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.gen_aes_key", fake_gen_aes_key)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.unwrap_key", fake_unwrap_key)
+    _reset_cache()
+
+    from pathlib import Path
+
+    from pkcs11_check.config import P11TestConfig
+    from pkcs11_check.testcases._provisioning import build_wrap_context
+
+    cfg = P11TestConfig(module=Path("/ignored.so"), key_inject="unwrap", wrap_oaep_hash="auto")
+    # has_mechanism returns True for everything
+    rs = _make_rs(sh=600)
+    ctx = build_wrap_context(rs, cfg)
+
+    assert ctx is None
+
+
+# ---------------------------------------------------------------------------
+# provision_secret_key routes through the resolved strategy's unwrapping_key_handle
+# ---------------------------------------------------------------------------
+
+
+def test_provision_routes_through_aes_kek_handle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """provision_secret_key uses ctx.strategy_name to look up aes_kwp and passes aes_kek_handle."""
+    from pkcs11_check.testcases._provisioning import WrapContext
+
+    aes_kek = 77
+    fixed_ctx = WrapContext(
+        rsa_pub_der=None,
+        strategy_name="aes_kwp",
+        aes_kek_handle=aes_kek,
+        sym_kek=b"\x00" * 32,
+    )
+
+    def fake_build_wrap_context(rs: Any, cfg: Any) -> WrapContext:
+        return fixed_ctx
+
+    unwrap_key_args: list[Any] = []
+
+    def fake_unwrap_key(
+        raw: Any,
+        session: int,
+        unwrapping_key: Any,
+        wrapped_key: bytes,
+        mechanism: Any,
+        attrs: Any = None,
+        *,
+        mech_param: Any = None,
+    ) -> int:
+        unwrap_key_args.append(unwrapping_key)
+        return 888
+
+    def fake_read_attributes(
+        raw: Any, session: int, handle: int, attr_types: Any
+    ) -> dict[int, Any]:
+        # Return the same value we injected so integrity check passes
+        return {CKA_VALUE: b"\x00" * 16}
+
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._provisioning.build_wrap_context", fake_build_wrap_context
+    )
+    monkeypatch.setattr("pkcs11_check.raw.recipes.unwrap_key", fake_unwrap_key)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.read_attributes", fake_read_attributes)
+    _reset_cache()
+
+    from pathlib import Path
+
+    from pkcs11_check.config import P11TestConfig
+    from pkcs11_check.raw.types_std import CKA_EXTRACTABLE, CKA_SENSITIVE, CKA_TOKEN, CKK_AES
+    from pkcs11_check.testcases._provisioning import provision_secret_key
+
+    cfg = P11TestConfig(
+        module=Path("/ignored.so"),
+        key_inject="force-unwrap",
+        wrap_oaep_hash="auto",
+    )
+
+    # only AES_KEY_WRAP_KWP advertised so profile_for doesn't accidentally prefer RSA
+    def has_mechanism(self: Any, name: str) -> bool:
+        return name == "CKM_AES_KEY_WRAP_KWP"
+
+    rs = _make_rs(sh=700, has_mechanism_fn=has_mechanism)
+
+    handle = provision_secret_key(
+        rs,
+        cfg,
+        CKK_AES,
+        b"\x00" * 16,
+        {CKA_TOKEN: False, CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
+        label="test",
+    )
+
+    assert handle == 888
+    assert unwrap_key_args == [aes_kek]
