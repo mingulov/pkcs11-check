@@ -124,11 +124,11 @@ def test_a9_rsa_private_import_site_xfails_real_function(monkeypatch: pytest.Mon
     """A9 RSA: the real _run_asymmetric_sign_kat RSA branch xfails on a broad import CKR.
 
     Drives the production function (not just the helper) so the swap to
-    import_rsa_private_key_negotiated + helper routing is exercised end-to-end.
+    provision_rsa_private_key + helper routing is exercised end-to-end.
     """
     from pkcs11_check.testcases import test_mech_sign as tms
 
-    monkeypatch.setattr(tms, "import_rsa_private_key_negotiated", _raiser(_KEY_SIZE_RANGE))
+    monkeypatch.setattr(tms, "provision_rsa_private_key", _raiser(_KEY_SIZE_RANGE))
 
     vec = {
         "n_hex": "aa" * 256,
@@ -146,7 +146,7 @@ def test_a9_rsa_private_import_site_xfails_real_function(monkeypatch: pytest.Mon
 
     try:
         with pytest.raises(pytest.xfail.Exception, match="SHA256_RSA_PKCS:key-import"):
-            tms._run_asymmetric_sign_kat(_session(), entry, entry.config, vec)
+            tms._run_asymmetric_sign_kat(_session(), entry, entry.config, vec, None)
     except pytest.skip.Exception as exc:
         pytest.fail(f"skipped instead of xfailing: {exc}")
 
@@ -156,10 +156,9 @@ def test_a9_ec_private_import_broad_reject_xfails_after_batch3b() -> None:
 
     Batch 3b removed ``_skip_kat_import_capability_reject`` and routed the EC
     private KAT import through ``_xfail_ec_kat_import_not_operational``: a broad
-    import-failure CKR is now "advertised but not operational" -> xfail (there is
-    no negotiated EC-private importer; the raw single-template import IS the spec
-    path -- D2, b56c3f8c). The curve-absence -> skip split is pinned in
-    tests/test_import_skip_xfail_batch3b.py.
+    import-failure CKR is now "advertised but not operational" -> xfail (the EC
+    private key now routes through ``provision_ec_private_key``). The
+    curve-absence -> skip split is pinned in tests/test_import_skip_xfail_batch3b.py.
     """
     from pkcs11_check.testcases import test_mech_sign as tms
 
@@ -471,7 +470,7 @@ def test_f1_kat_vector_site_xfails_on_broad_ckr(monkeypatch: pytest.MonkeyPatch)
 
     try:
         with pytest.raises(pytest.xfail.Exception, match="AES_CMAC:key-import"):
-            tms.TestMechSignKAT().test_kat_vector(_session(), entry)
+            tms.TestMechSignKAT().test_kat_vector(_session(), entry, None)
     except pytest.skip.Exception as exc:
         pytest.fail(f"skipped instead of xfailing: {exc}")
 
@@ -507,7 +506,7 @@ def test_f5_priv_key_destroyed_before_pub_import_xfail(
         destroyed.append(handle)
 
     # Priv import succeeds, pub import refuses with a broad CKR.
-    monkeypatch.setattr(tms, "import_rsa_private_key_negotiated", lambda *_a, **_kw: fake_priv)
+    monkeypatch.setattr(tms, "provision_rsa_private_key", lambda *_a, **_kw: fake_priv)
     monkeypatch.setattr(tms, "import_rsa_public_key_negotiated", _raiser(_KEY_SIZE_RANGE))
     monkeypatch.setattr(tms, "destroy_quietly", _fake_destroy)
 
@@ -527,7 +526,7 @@ def test_f5_priv_key_destroyed_before_pub_import_xfail(
     entry = _kat_rsa_entry()
 
     with pytest.raises(pytest.xfail.Exception, match="SHA256_RSA_PKCS:key-import"):
-        tms._run_asymmetric_sign_kat(_session(), entry, entry.config, vec)
+        tms._run_asymmetric_sign_kat(_session(), entry, entry.config, vec, None)
 
     assert fake_priv in destroyed, (
         f"priv handle {fake_priv:#x} was NOT destroyed before xfail; destroyed handles: {destroyed}"

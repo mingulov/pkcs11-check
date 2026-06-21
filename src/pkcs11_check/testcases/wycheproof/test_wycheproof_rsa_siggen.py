@@ -148,7 +148,7 @@ def _skip_or_xfail_rsa_private_import_reject(
 ) -> NoReturn:
     """Classify RSA private-key import rejects before Wycheproof siggen.
 
-    The key is imported through ``import_rsa_private_key_negotiated``; a clean
+    The key is provisioned through ``provision_rsa_private_key``; a clean
     broad import-failure CKR after negotiation exhaustion on a mechanism the
     module ADVERTISES (``has_mechanism`` gate passed upstream) is
     advertised-but-not-operational -> xfail, never skip (import-skip audit A10,
