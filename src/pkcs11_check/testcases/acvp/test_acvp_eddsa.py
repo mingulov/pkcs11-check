@@ -438,7 +438,7 @@ def test_acvp_eddsa_siggen(
                 p11_config,
                 ec_params=vec["ec_params"],
                 value=vec["d"],
-                key_type=int(CKK_EC_EDWARDS),
+                key_type=CKK_EC_EDWARDS,
                 attrs={CKA_SIGN: True},
                 label="acvp EdDSA siggen KAT",
             )

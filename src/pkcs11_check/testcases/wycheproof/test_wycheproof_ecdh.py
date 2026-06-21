@@ -280,7 +280,7 @@ def test_ecdh(p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[s
             p11_config,
             ec_params=oid,
             value=private_scalar,
-            key_type=int(CKK_EC),
+            key_type=CKK_EC,
             attrs={CKA_DERIVE: True},
             label="wycheproof ECDH KAT",
         )

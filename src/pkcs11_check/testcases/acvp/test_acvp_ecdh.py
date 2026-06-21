@@ -318,7 +318,7 @@ def test_acvp_ecdh_shared_secret(
                 p11_config,
                 ec_params=ec_params,
                 value=vec["private_key"],
-                key_type=int(CKK_EC),
+                key_type=CKK_EC,
                 attrs={
                     CKA_DERIVE: True,
                     CKA_SENSITIVE: False,

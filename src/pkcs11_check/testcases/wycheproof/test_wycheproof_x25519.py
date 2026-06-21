@@ -255,7 +255,7 @@ def test_xdh(p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[st
             p11_config,
             ec_params=oid,
             value=private_bytes,
-            key_type=int(CKK_EC_MONTGOMERY),
+            key_type=CKK_EC_MONTGOMERY,
             attrs={CKA_DERIVE: True},
             label="wycheproof X25519/X448 KAT",
         )
