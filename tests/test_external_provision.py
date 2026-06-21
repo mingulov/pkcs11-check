@@ -286,6 +286,46 @@ def test_timeout_expired_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_record_provisioning_event_raises_still_returns_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """record_provisioning_event raising must not prevent external_provision returning the handle.
+
+    Pins the never-raises contract: even if event recording explodes, the function
+    must still return the provisioned handle (not raise).
+    """
+    clear_provisioning_events()
+
+    def fake_run(args: Any, **kwargs: Any) -> Any:
+        proc = MagicMock()
+        proc.returncode = 0
+        return proc
+
+    def fake_find(raw: Any, sh: Any, tmpl: Any = None, **kwargs: Any) -> list[int]:
+        return [42]
+
+    def exploding_record(obj_class: str, method: str) -> None:
+        raise RuntimeError("event recording exploded")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.find_objects", fake_find)
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._provisioning.record_provisioning_event",
+        exploding_record,
+    )
+
+    rs = _make_rs()
+    cfg = _make_cfg()
+    try:
+        result = external_provision(
+            rs, cfg, material=_MATERIAL, label="mykey", key_type=3, obj_class="secret"
+        )
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"external_provision raised unexpectedly: {exc}")
+    else:
+        assert result == 42, f"expected handle 42, got {result!r}"
+
+
 def test_temp_file_mode_0600_while_exists(monkeypatch: pytest.MonkeyPatch) -> None:
     """The temp file must have mode 0600 at the time the command runs."""
     observed_mode: list[int] = []

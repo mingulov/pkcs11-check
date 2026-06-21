@@ -1199,7 +1199,7 @@ def external_provision(
             )
         except subprocess.TimeoutExpired:
             return None
-        except (OSError, Exception):  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             return None
 
         if proc.returncode != 0:
@@ -1220,10 +1220,8 @@ def external_provision(
             return None
 
         handle = handles[0]
-
-        # Record success.
-        record_provisioning_event(obj_class, "ran_via_external")
         try:
+            record_provisioning_event(obj_class, "ran_via_external")
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
@@ -1232,8 +1230,7 @@ def external_provision(
                 ComplianceLevel.CRITICAL,
             )
         except Exception:  # noqa: BLE001
-            return handle  # compliance notes are best-effort; don't let them block success
-
+            return handle  # best-effort: event/note failure must not block provisioning
         return handle
 
     finally:
