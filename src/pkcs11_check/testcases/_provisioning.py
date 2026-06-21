@@ -119,10 +119,10 @@ _PROFILE_CACHE: dict[int, ProvisioningProfile] = {}
 
 _CREATE_PROHIBITED_RVS: frozenset[int] = frozenset(
     {
-        int(CKR_TEMPLATE_INCONSISTENT),
-        int(CKR_KEY_FUNCTION_NOT_PERMITTED),
-        int(CKR_KEY_UNEXTRACTABLE),
-        int(CKR_ATTRIBUTE_VALUE_INVALID),
+        CKR_TEMPLATE_INCONSISTENT,
+        CKR_KEY_FUNCTION_NOT_PERMITTED,
+        CKR_KEY_UNEXTRACTABLE,
+        CKR_ATTRIBUTE_VALUE_INVALID,
     }
 )
 
@@ -173,10 +173,9 @@ class ProvisioningProfile:
                 },
             )
         except CkrAssertionError as exc:
-            rv = int(exc.rv)
-            if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+            if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
                 return "create_absent"
-            if rv in _CREATE_PROHIBITED_RVS:
+            if exc.rv in _CREATE_PROHIBITED_RVS:
                 return "create_prohibited"
             raise
         destroy_quietly(self.rs.raw, self.rs.sh, h)

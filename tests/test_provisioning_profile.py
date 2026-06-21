@@ -13,6 +13,8 @@ import pkcs11_check.testcases._provisioning as _prov
 from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_UNEXTRACTABLE,
     CKR_TEMPLATE_INCONSISTENT,
 )
 
@@ -111,6 +113,34 @@ def test_create_prohibited_via_attribute_value_invalid(monkeypatch: pytest.Monke
     assert prof.create_verdict("secret") == "create_prohibited"
 
 
+def test_create_prohibited_via_key_function_not_permitted(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pkcs11_check.raw.rv import CkrAssertionError
+
+    def fake_import(raw: object, sh: int, key_type: object, value: bytes, attrs: object) -> int:
+        raise CkrAssertionError("function not permitted", int(CKR_KEY_FUNCTION_NOT_PERMITTED))
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.import_secret_key", fake_import)
+    _reset_cache()
+
+    rs = _make_rs(sh=10, has_mech=True)
+    prof = _prov.profile_for(rs)
+    assert prof.create_verdict("secret") == "create_prohibited"
+
+
+def test_create_prohibited_via_key_unextractable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pkcs11_check.raw.rv import CkrAssertionError
+
+    def fake_import(raw: object, sh: int, key_type: object, value: bytes, attrs: object) -> int:
+        raise CkrAssertionError("key unextractable", int(CKR_KEY_UNEXTRACTABLE))
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.import_secret_key", fake_import)
+    _reset_cache()
+
+    rs = _make_rs(sh=11, has_mech=True)
+    prof = _prov.profile_for(rs)
+    assert prof.create_verdict("secret") == "create_prohibited"
+
+
 # ---------------------------------------------------------------------------
 # unexpected CKR re-raises (not silently swallowed)
 # ---------------------------------------------------------------------------
@@ -137,17 +167,9 @@ def test_unexpected_ckr_reraises(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_supports_unwrap_mech_true(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_supports_unwrap_mech_true() -> None:
     from pkcs11_check.raw.types_std import CKM_RSA_AES_KEY_WRAP
 
-    def fake_import(raw: object, sh: int, key_type: object, value: bytes, attrs: object) -> int:
-        return 10
-
-    def fake_destroy(raw: object, sh: int, handle: int) -> None:
-        pass
-
-    monkeypatch.setattr("pkcs11_check.raw.recipes.import_secret_key", fake_import)
-    monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy)
     _reset_cache()
 
     rs = _make_rs(sh=6, has_mech=True)
@@ -155,17 +177,9 @@ def test_supports_unwrap_mech_true(monkeypatch: pytest.MonkeyPatch) -> None:
     assert prof.supports_unwrap_mech(int(CKM_RSA_AES_KEY_WRAP)) is True
 
 
-def test_supports_unwrap_mech_false(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_supports_unwrap_mech_false() -> None:
     from pkcs11_check.raw.types_std import CKM_AES_KEY_WRAP_KWP
 
-    def fake_import(raw: object, sh: int, key_type: object, value: bytes, attrs: object) -> int:
-        return 11
-
-    def fake_destroy(raw: object, sh: int, handle: int) -> None:
-        pass
-
-    monkeypatch.setattr("pkcs11_check.raw.recipes.import_secret_key", fake_import)
-    monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy)
     _reset_cache()
 
     rs = _make_rs(sh=7, has_mech=False)
