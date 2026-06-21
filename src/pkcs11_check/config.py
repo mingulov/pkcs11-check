@@ -56,6 +56,7 @@ class P11TestConfig(BaseSettings):
     # override auto-selected unwrap mechanism (e.g. "CKM_RSA_AES_KEY_WRAP")
     wrap_mech: str | None = None
     wrap_rsa_bits: int = 2048
+    wrap_oaep_hash: str = "sha1"  # OAEP hash for wrapping: "sha1" (default) or "sha256"
 
     @classmethod
     def settings_customise_sources(

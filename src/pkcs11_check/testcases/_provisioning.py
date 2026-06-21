@@ -31,12 +31,16 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKA_WRAP,
+    CKG,
+    CKG_MGF1_SHA1,
     CKG_MGF1_SHA256,
     CKK_AES,
+    CKM,
     CKM_AES_KEY_WRAP_KWP,
     CKM_RSA_AES_KEY_WRAP,
     CKM_RSA_PKCS_OAEP,
     CKM_SHA256,
+    CKM_SHA_1,
     CKO_SECRET_KEY,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_FAILED,
@@ -54,6 +58,7 @@ class WrapContext:
     unwrapping_key_handle: int  # in-token handle used by C_UnwrapKey
     sym_kek: bytes | None = None  # symmetric KEK value (configured/readable), for AES-KWP
     aes_bits: int = 256
+    oaep_hash: str = "sha1"  # OAEP hash algorithm: "sha1" or "sha256"
 
 
 @runtime_checkable
@@ -82,10 +87,12 @@ class RsaAesKeyWrap:
 
     def wrap(self, ctx: WrapContext, target: bytes) -> bytes:
         assert ctx.rsa_pub_der is not None
-        return sw_wrap.rsa_aes_key_wrap_blob(ctx.rsa_pub_der, target, aes_bits=ctx.aes_bits)
+        return sw_wrap.rsa_aes_key_wrap_blob(
+            ctx.rsa_pub_der, target, aes_bits=ctx.aes_bits, oaep_hash=ctx.oaep_hash
+        )
 
     def unwrap_mech_param(self, ctx: WrapContext) -> PackedMechanism:
-        return mech_rsa_aes_key_wrap(aes_bits=ctx.aes_bits)
+        return mech_rsa_aes_key_wrap(aes_bits=ctx.aes_bits, oaep_hash=ctx.oaep_hash)
 
 
 class RsaOaep:
@@ -97,14 +104,20 @@ class RsaOaep:
 
     def max_target_size(self, ctx: WrapContext) -> int | None:
         assert ctx.rsa_pub_der is not None
-        return sw_wrap.oaep_max_payload(ctx.rsa_pub_der)
+        return sw_wrap.oaep_max_payload(ctx.rsa_pub_der, oaep_hash=ctx.oaep_hash)
 
     def wrap(self, ctx: WrapContext, target: bytes) -> bytes:
         assert ctx.rsa_pub_der is not None
-        return sw_wrap.rsa_oaep_wrap(ctx.rsa_pub_der, target)
+        return sw_wrap.rsa_oaep_wrap(ctx.rsa_pub_der, target, oaep_hash=ctx.oaep_hash)
 
     def unwrap_mech_param(self, ctx: WrapContext) -> PackedMechanism:
-        return mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA256, mgf=CKG_MGF1_SHA256)
+        if ctx.oaep_hash == "sha1":
+            h_mech: CKM | int = CKM_SHA_1
+            h_mgf: CKG | int = CKG_MGF1_SHA1
+        else:
+            h_mech = CKM_SHA256
+            h_mgf = CKG_MGF1_SHA256
+        return mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=h_mech, mgf=h_mgf)
 
 
 class AesKwp:
@@ -223,6 +236,7 @@ def select_strategy(
         rsa_pub_der=getattr(profile, "rsa_pub_der_probe", None),
         unwrapping_key_handle=0,
         sym_kek=b"\x00" * 32 if getattr(profile, "aes_kwp", False) else None,
+        oaep_hash="sha1",
     )
     for s in strategies:
         if not s.usable(profile):
@@ -316,7 +330,8 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
     der = pub_key.public_bytes(_Encoding.DER, _PublicFormat.SubjectPublicKeyInfo)
 
     profile_for(rs).rsa_pub_der_probe = der
-    return WrapContext(rsa_pub_der=der, unwrapping_key_handle=priv_handle)
+    oaep_hash: str = getattr(cfg, "wrap_oaep_hash", "sha1")
+    return WrapContext(rsa_pub_der=der, unwrapping_key_handle=priv_handle, oaep_hash=oaep_hash)
 
 
 # ---------------------------------------------------------------------------

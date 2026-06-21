@@ -254,6 +254,12 @@ def test_command(
         help="RSA key size in bits for bootstrap wrapping key",
         rich_help_panel="Key provisioning",
     ),
+    wrap_oaep_hash: str = typer.Option(
+        "sha1",
+        "--wrap-oaep-hash",
+        help="OAEP hash for wrapping: sha1 (default, max HSM compat) or sha256",
+        rich_help_panel="Key provisioning",
+    ),
     targets: list[str] = typer.Argument(None, help="Optional pytest paths or nodeids"),
 ) -> None:
     """Run the PKCS#11 test suite against a module."""
@@ -336,6 +342,7 @@ def test_command(
                 wrap_key_value=wrap_key_value,
                 wrap_mech=wrap_mech,
                 wrap_rsa_bits=wrap_rsa_bits,
+                wrap_oaep_hash=wrap_oaep_hash,
             )
             baseline = None
             if not ignore_disabled_tests:

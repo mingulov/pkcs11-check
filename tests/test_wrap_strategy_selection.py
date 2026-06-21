@@ -46,7 +46,7 @@ def test_envelope_preferred_for_large_target() -> None:
 
 
 def test_oaep_rejected_on_size_falls_to_envelope_or_kwp() -> None:
-    # OAEP only; 1217-byte target exceeds OAEP max (190 for 2048-bit) -> nothing can wrap it
+    # OAEP only; 1217-byte target exceeds OAEP max (214 for 2048-bit SHA-1) -> nothing can wrap it
     prof = FakeProfile(rsa_aes_key_wrap=False, rsa_oaep=True, aes_kwp=False)
     s = provisioning.select_strategy(provisioning.DEFAULT_STRATEGIES, prof, target_len=1217)
     assert s is None  # nothing can wrap a 1217-byte target here
@@ -57,3 +57,17 @@ def test_oaep_ok_for_small_target() -> None:
     s = provisioning.select_strategy(provisioning.DEFAULT_STRATEGIES, prof, target_len=32)
     assert s is not None
     assert s.name == "rsa_oaep"
+
+
+def test_oaep_max_payload_sha1_vs_sha256() -> None:
+    """select_strategy uses sha1 default; verify the sentinel ctx gives the right size."""
+    prof = FakeProfile(
+        rsa_aes_key_wrap=False, rsa_oaep=True, aes_kwp=False, rsa_pub_der_probe=_RSA2048_SPKI
+    )
+    # sha1 default: max = 214; target of 200 should be accepted
+    s = provisioning.select_strategy(provisioning.DEFAULT_STRATEGIES, prof, target_len=200)
+    assert s is not None
+    assert s.name == "rsa_oaep"
+    # 215 > 214 should be rejected with sha1
+    s2 = provisioning.select_strategy(provisioning.DEFAULT_STRATEGIES, prof, target_len=215)
+    assert s2 is None

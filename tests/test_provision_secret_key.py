@@ -59,13 +59,14 @@ def _reset_cache() -> None:
     _prov._PROFILE_CACHE.clear()
 
 
-def _make_cfg(key_inject: str, wrap_rsa_bits: int = 2048) -> Any:
+def _make_cfg(key_inject: str, wrap_rsa_bits: int = 2048, wrap_oaep_hash: str = "sha1") -> Any:
     from pkcs11_check.config import P11TestConfig
 
     return P11TestConfig(
         module=Path("/stub.so"),
         key_inject=key_inject,
         wrap_rsa_bits=wrap_rsa_bits,
+        wrap_oaep_hash=wrap_oaep_hash,
     )
 
 
@@ -640,6 +641,78 @@ def test_sensitive_key_skips_integrity_readback(monkeypatch: pytest.MonkeyPatch)
     assert h == 92
     # read_attributes called for RSA pub key (handle=60) but NOT for the unwrapped key (92)
     assert 92 not in read_calls, "read_attributes must NOT be called for sensitive key integrity"
+
+
+# ---------------------------------------------------------------------------
+# (l) wrap_oaep_hash="sha1" is threaded through WrapContext to strategy.wrap
+# ---------------------------------------------------------------------------
+
+
+def test_force_unwrap_oaep_hash_threaded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """wrap_oaep_hash from cfg must reach the WrapContext (and thus strategy.wrap)."""
+    from pkcs11_check.testcases._provisioning import WrapContext
+
+    captured_ctx: list[WrapContext] = []
+
+    # Capture the ctx that is passed to strategy.wrap
+    original_build = _prov.build_wrap_context
+
+    def capturing_build(rs: Any, cfg: Any) -> WrapContext | None:
+        ctx = original_build(rs, cfg)
+        if ctx is not None:
+            captured_ctx.append(ctx)
+        return ctx
+
+    monkeypatch.setattr(_prov, "build_wrap_context", capturing_build)
+
+    from cryptography.hazmat.primitives.asymmetric import rsa as _crypto_rsa
+
+    _priv = _crypto_rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _pub_nums = _priv.public_key().public_numbers()
+    _n_bytes = _pub_nums.n.to_bytes((_pub_nums.n.bit_length() + 7) // 8, "big")
+    _e_bytes = _pub_nums.e.to_bytes((_pub_nums.e.bit_length() + 7) // 8, "big")
+
+    def fake_gen_rsa_keypair(
+        raw: Any, session: int, bits: int = 2048, **kwargs: Any
+    ) -> tuple[int, int]:
+        return 80, 81
+
+    def fake_read_attributes(
+        raw: Any, session: int, handle: int, attr_types: Any
+    ) -> dict[int, Any]:
+        if handle == 80:
+            from pkcs11_check.raw.types_std import CKA_MODULUS, CKA_PUBLIC_EXPONENT
+
+            return {CKA_MODULUS: _n_bytes, CKA_PUBLIC_EXPONENT: _e_bytes}
+        return {CKA_VALUE: _AES_VALUE}
+
+    def fake_unwrap(
+        raw: Any,
+        sh: int,
+        unwrapping_key: int,
+        wrapped_key: bytes,
+        mechanism: Any,
+        attrs: Any = None,
+        *,
+        mech_param: PackedMechanism | None = None,
+    ) -> int:
+        return 95
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.gen_rsa_keypair", fake_gen_rsa_keypair)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.read_attributes", fake_read_attributes)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.unwrap_key", fake_unwrap)
+    _reset_cache()
+
+    from pkcs11_check.testcases._provisioning import provision_secret_key
+
+    rs = _make_rs(sh=211, has_mech=True)
+    cfg = _make_cfg("force-unwrap", wrap_oaep_hash="sha1")
+    provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
+
+    assert len(captured_ctx) == 1, "build_wrap_context must be called once"
+    assert captured_ctx[0].oaep_hash == "sha1", (
+        f"oaep_hash must be 'sha1', got {captured_ctx[0].oaep_hash!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
