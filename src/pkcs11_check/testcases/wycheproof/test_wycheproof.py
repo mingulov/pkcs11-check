@@ -20,7 +20,6 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     generate_random,
-    import_secret_key,
     sign_single,
     verify_single,
 )
@@ -59,6 +58,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._operability import not_operational_reason
+from pkcs11_check.testcases._provisioning import provision_secret_key
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import (
     assert_correct,
@@ -180,7 +180,7 @@ class TestAESGCMWycheproof:
     """Wycheproof AES-GCM vectors - tests AEAD correctness and tag validation."""
 
     @pytest.mark.parametrize("vec", _load_aes_gcm_vectors(), ids=_vec_id)
-    def test_aes_gcm(self, p11_module_session: Any, vec: dict[str, Any]) -> None:
+    def test_aes_gcm(self, p11_module_session: Any, p11_config: Any, vec: dict[str, Any]) -> None:
         rs = p11_module_session
         _skip_unless_mechanism(rs, "AES_GCM")
         key_bytes = bytes.fromhex(vec["key"])
@@ -191,19 +191,20 @@ class TestAESGCMWycheproof:
         tag_expected = bytes.fromhex(vec["tag"])
         result = vec["result"]
 
-        # Import key
+        # Provision key (create if available, else unwrap path per p11_config)
         try:
-            key = import_secret_key(
-                rs.raw,
-                rs.sh,
+            key = provision_secret_key(
+                rs,
+                p11_config,
                 CKK_AES,
                 key_bytes,
-                attrs={
+                {
                     CKA_ENCRYPT: True,
                     CKA_DECRYPT: True,
                     CKA_TOKEN: False,
                     CKA_SENSITIVE: False,
                 },
+                label="wycheproof-aes-gcm",
             )
         except AssertionError:
             if result == "invalid":
@@ -311,7 +312,9 @@ class TestHMACSHA256Wycheproof:
     """Wycheproof HMAC-SHA256 vectors."""
 
     @pytest.mark.parametrize("vec", _load_hmac_sha256_vectors(), ids=_vec_id)
-    def test_hmac_sha256(self, p11_module_session: Any, vec: dict[str, Any]) -> None:
+    def test_hmac_sha256(
+        self, p11_module_session: Any, p11_config: Any, vec: dict[str, Any]
+    ) -> None:
         rs = p11_module_session
         _skip_unless_mechanism(rs, "SHA256_HMAC")
         key_bytes = bytes.fromhex(vec["key"])
@@ -331,22 +334,25 @@ class TestHMACSHA256Wycheproof:
             )
 
         # Try SHA256_HMAC key type first; fall back to GENERIC_SECRET
-        # (some modules require min key length for typed HMAC keys)
+        # (some modules require min key length for typed HMAC keys).
+        # Each attempt is routed through provision_secret_key so create-absent
+        # modules can use the unwrap path (per p11_config).
         key = None
         last_import_exc = None
         for key_type in (CKK_SHA256_HMAC, CKK_GENERIC_SECRET):
             try:
-                key = import_secret_key(
-                    rs.raw,
-                    rs.sh,
+                key = provision_secret_key(
+                    rs,
+                    p11_config,
                     key_type,
                     key_bytes,
-                    attrs={
+                    {
                         CKA_SIGN: True,
                         CKA_VERIFY: True,
                         CKA_TOKEN: False,
                         CKA_SENSITIVE: False,
                     },
+                    label="wycheproof-hmac-sha256",
                 )
                 break
             except AssertionError as exc:
@@ -522,7 +528,9 @@ class TestAESCBCPKCS5Wycheproof:
     """Wycheproof AES-CBC-PKCS5 vectors - tests padding correctness."""
 
     @pytest.mark.parametrize("vec", _load_aes_cbc_pkcs5_vectors(), ids=_vec_id)
-    def test_aes_cbc_pkcs5(self, p11_module_session: Any, vec: dict[str, Any]) -> None:
+    def test_aes_cbc_pkcs5(
+        self, p11_module_session: Any, p11_config: Any, vec: dict[str, Any]
+    ) -> None:
         rs = p11_module_session
         _skip_unless_mechanism(rs, "AES_CBC_PAD")
         key_bytes = bytes.fromhex(vec["key"])
@@ -532,17 +540,18 @@ class TestAESCBCPKCS5Wycheproof:
         result = vec["result"]
 
         try:
-            key = import_secret_key(
-                rs.raw,
-                rs.sh,
+            key = provision_secret_key(
+                rs,
+                p11_config,
                 CKK_AES,
                 key_bytes,
-                attrs={
+                {
                     CKA_ENCRYPT: True,
                     CKA_DECRYPT: True,
                     CKA_TOKEN: False,
                     CKA_SENSITIVE: False,
                 },
+                label="wycheproof-aes-cbc",
             )
         except AssertionError:
             if result == "invalid":

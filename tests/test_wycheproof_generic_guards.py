@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from pkcs11_check.config import P11TestConfig
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
@@ -35,39 +37,47 @@ def _fail_if_called(*_args: Any, **_kwargs: Any) -> int:
     raise AssertionError("PKCS#11 operation reached before mechanism guard")
 
 
+_STUB_CFG = P11TestConfig(module=Path("/stub.so"), key_inject="off")
+
+
 @pytest.mark.parametrize(
-    ("case_factory", "method_name", "vector_factory", "expected_mechanism"),
+    ("case_factory", "method_name", "vector_factory", "expected_mechanism", "needs_cfg"),
     [
-        (wy.TestAESGCMWycheproof, "test_aes_gcm", wy._load_aes_gcm_vectors, "AES_GCM"),
+        (wy.TestAESGCMWycheproof, "test_aes_gcm", wy._load_aes_gcm_vectors, "AES_GCM", True),
         (
             wy.TestHMACSHA256Wycheproof,
             "test_hmac_sha256",
             wy._load_hmac_sha256_vectors,
             "SHA256_HMAC",
+            True,
         ),
         (
             wy.TestECDSAP256Wycheproof,
             "test_ecdsa_p256_sha256_verify",
             wy._load_ecdsa_p256_vectors,
             "ECDSA",
+            False,
         ),
         (
             wy.TestECDSAP384Wycheproof,
             "test_ecdsa_p384_sha384_verify",
             wy._load_ecdsa_p384_vectors,
             "ECDSA",
+            False,
         ),
         (
             wy.TestAESCBCPKCS5Wycheproof,
             "test_aes_cbc_pkcs5",
             wy._load_aes_cbc_pkcs5_vectors,
             "AES_CBC_PAD",
+            True,
         ),
         (
             wy.TestRSASigWycheproof,
             "test_rsa_sig_2048_sha256",
             wy._load_rsa_sig_vectors,
             "SHA256_RSA_PKCS",
+            False,
         ),
     ],
 )
@@ -77,9 +87,10 @@ def test_generic_wycheproof_skips_when_mechanism_missing(
     method_name: str,
     vector_factory: Callable[[], list[dict[str, Any]]],
     expected_mechanism: str,
+    needs_cfg: bool,
 ) -> None:
     """Missing mechanisms are capability skips, not failed vector tests."""
-    monkeypatch.setattr(wy, "import_secret_key", _fail_if_called)
+    monkeypatch.setattr(wy, "provision_secret_key", _fail_if_called)
     monkeypatch.setattr(wy, "import_ec_public_key_negotiated", _fail_if_called)
     monkeypatch.setattr(wy, "import_rsa_public_key_negotiated", _fail_if_called)
 
@@ -87,7 +98,10 @@ def test_generic_wycheproof_skips_when_mechanism_missing(
     method = getattr(case_factory(), method_name)
 
     with pytest.raises(pytest.skip.Exception, match="not supported"):
-        method(session, vector_factory()[0])
+        if needs_cfg:
+            method(session, _STUB_CFG, vector_factory()[0])
+        else:
+            method(session, vector_factory()[0])
 
     assert session.checked == [expected_mechanism]
 
