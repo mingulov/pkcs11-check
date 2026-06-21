@@ -1701,6 +1701,66 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     }
 
 
+def extract_provisioning_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
+    """Extract and merge ProvisioningReport entries from a JSONL artifact.
+
+    Returns a merged dict with ``by_class`` and ``totals``, or None if no
+    ProvisioningReport entries are found.
+    """
+    _methods = ("ran_via_create", "ran_via_unwrap", "ran_via_external", "skipped_no_path")
+    by_class: dict[str, dict[str, int]] = {}
+    found = False
+
+    try:
+        fh = jsonl_path.open(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return None
+    with fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("$report_type") != "ProvisioningReport":
+                continue
+            found = True
+            for cls, counts in rec.get("by_class", {}).items():
+                if cls not in by_class:
+                    by_class[cls] = {}
+                for method, val in counts.items():
+                    by_class[cls][method] = by_class[cls].get(method, 0) + int(val)
+
+    if not found:
+        return None
+
+    totals: dict[str, int] = {m: 0 for m in _methods}
+    for counts in by_class.values():
+        for method in _methods:
+            totals[method] += counts.get(method, 0)
+
+    return {"by_class": by_class, "totals": totals}
+
+
+def _emit_external_provision_banner(n: int) -> None:
+    """Print a prominent warning when external key provisioning was active."""
+    from rich.console import Console
+    from rich.panel import Panel
+
+    console = Console(stderr=True)
+    console.print(
+        Panel(
+            f"⚠ EXTERNAL KEY PROVISIONING WAS ACTIVE ({n} keys)"
+            " — results are NOT a pure in-API run",
+            style="bold yellow",
+        )
+    )
+
+
 def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[str, Any] | None:
     """Convert a pytest-reportlog JSONL file to pkcs11-check unified format.
 
@@ -2789,6 +2849,14 @@ def run_isolated_pytest_units(
                     if coverage_data:
                         coverage_path = report_config.jsonl_path.parent / "coverage.json"
                         coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
+                    provisioning_data = extract_provisioning_from_jsonl(report_config.jsonl_path)
+                    if provisioning_data is not None:
+                        provisioning_path = report_config.jsonl_path.parent / "provisioning.json"
+                        provisioning_path.write_text(json.dumps(provisioning_data, indent=2) + "\n")
+                        if provisioning_data["totals"].get("ran_via_external", 0) > 0:
+                            _emit_external_provision_banner(
+                                provisioning_data["totals"]["ran_via_external"]
+                            )
             if report_config.output_format == "json":
                 results_payload = write_isolated_json_report(
                     report_config.output_path,
@@ -3685,6 +3753,14 @@ def run_isolated_pytest_units(
                 if coverage_data:
                     coverage_path = report_config.jsonl_path.parent / "coverage.json"
                     coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
+                provisioning_data = extract_provisioning_from_jsonl(report_config.jsonl_path)
+                if provisioning_data is not None:
+                    provisioning_path = report_config.jsonl_path.parent / "provisioning.json"
+                    provisioning_path.write_text(json.dumps(provisioning_data, indent=2) + "\n")
+                    if provisioning_data["totals"].get("ran_via_external", 0) > 0:
+                        _emit_external_provision_banner(
+                            provisioning_data["totals"]["ran_via_external"]
+                        )
             if report_config.output_format == "json":
                 results_payload = write_isolated_json_report(
                     report_config.output_path,

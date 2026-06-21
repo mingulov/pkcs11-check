@@ -17,9 +17,11 @@ from pkcs11_check.config import P11TestConfig
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.file_runner import (
     IsolatedReportConfig,
+    _emit_external_provision_banner,
     discover_auto_isolation_units,
     discover_pytest_units,
     extract_coverage_from_jsonl,
+    extract_provisioning_from_jsonl,
     extract_quality_report_records_from_jsonl,
     load_run_state,
     postprocess_jsonl_to_unified,
@@ -476,6 +478,12 @@ def test_command(
             if coverage_data:
                 coverage_path = unified_path.parent / "coverage.json"
                 coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
+            provisioning_data = extract_provisioning_from_jsonl(jsonl_p)
+            if provisioning_data is not None:
+                provisioning_path = unified_path.parent / "provisioning.json"
+                provisioning_path.write_text(json.dumps(provisioning_data, indent=2) + "\n")
+                if provisioning_data["totals"].get("ran_via_external", 0) > 0:
+                    _emit_external_provision_banner(provisioning_data["totals"]["ran_via_external"])
             results_payload = postprocess_jsonl_to_unified(jsonl_p, unified_path)
             quality_path = unified_path.parent / "quality.json"
             write_quality_json_report(
