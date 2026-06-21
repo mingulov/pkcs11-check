@@ -34,9 +34,9 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._operability import not_operational_reason
+from pkcs11_check.testcases._provisioning import provision_rsa_private_key
 from pkcs11_check.testcases.conftest import (
     assert_correct,
-    import_rsa_private_key_negotiated,
     is_known_error,
     xfail_if_known_ckr,
 )
@@ -100,7 +100,7 @@ _ALL_DECRYPT_VECTORS = _load_decrypt_vectors()
 def _skip_or_xfail_rsa_pkcs1_private_import_reject(exc: AssertionError, key_bits: int) -> NoReturn:
     """Classify RSA private-key import rejects before Wycheproof PKCS#1 decrypt.
 
-    The key is imported through ``import_rsa_private_key_negotiated``; a clean
+    The key is provisioned through ``provision_rsa_private_key``; a clean
     broad import-failure CKR after negotiation exhaustion on RSA_PKCS
     (advertised -- ``has_mechanism`` gate passed upstream) is
     advertised-but-not-operational -> xfail, never skip (import-skip audit A12,
@@ -142,7 +142,9 @@ def _xfail_if_rsa_pkcs1_decrypt_runtime_reject(exc: AssertionError, label: str) 
 @pytest.mark.parametrize(
     "vec_id,vec", _ALL_DECRYPT_VECTORS, ids=[v[0] for v in _ALL_DECRYPT_VECTORS]
 )
-def test_rsa_pkcs1_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_rsa_pkcs1_decrypt(
+    p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[str, Any]
+) -> None:
     """RSA PKCS#1 v1.5 decryption from Wycheproof vectors."""
     rs = p11_module_session
     if not rs.has_mechanism("RSA_PKCS"):
@@ -181,8 +183,9 @@ def test_rsa_pkcs1_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, 
         )
 
     try:
-        priv_key = import_rsa_private_key_negotiated(
+        priv_key = provision_rsa_private_key(
             rs,
+            p11_config,
             n=modulus,
             e=pub_exponent,
             d=priv_exponent,
@@ -192,6 +195,7 @@ def test_rsa_pkcs1_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, 
             dmq1=exp2,
             iqmp=coefficient,
             attrs={CKA_DECRYPT: True},
+            label="wycheproof RSA-PKCS1 decrypt KAT",
         )
     except AssertionError as exc:
         _skip_or_xfail_rsa_pkcs1_private_import_reject(exc, key_bits)

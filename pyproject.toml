@@ -31,7 +31,7 @@ dependencies = [
     "pytest-xdist>=3.5",
     "pytest-timeout>=2.3",
     "asn1crypto>=1.5",
-    "cryptography>=46.0.5",
+    "cryptography>=49.0.0",
     "pytest-reportlog>=1.0.0",
     "hypothesis>=6.100",
 ]

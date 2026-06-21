@@ -139,7 +139,9 @@ def test_kat_sanctioned_refusal_emits_exactly_one_note(
     # (sanctioned refusal) on the first call to verify the loop terminates.
     call_count = {"n": 0}
 
-    def fake_run_asymmetric(rs: Any, entry: Any, config: Any, vec: Any) -> bool:
+    def fake_run_asymmetric(
+        rs: Any, entry: Any, config: Any, vec: Any, p11_config: Any = None
+    ) -> bool:
         call_count["n"] += 1
         # Simulate sanctioned refusal: emit note directly
         cc.compliance.note(
@@ -153,7 +155,7 @@ def test_kat_sanctioned_refusal_emits_exactly_one_note(
     monkeypatch.setattr(tms, "_run_asymmetric_sign_kat", fake_run_asymmetric)
 
     entry = _kat_entry()
-    tms.TestMechSignKAT().test_kat_vector(_rs(), entry)
+    tms.TestMechSignKAT().test_kat_vector(_rs(), entry, None)
 
     # Only ONE call to _run_asymmetric_sign_kat (loop exited after first sanctioned refusal)
     assert call_count["n"] == 1, f"expected 1 call, got {call_count['n']}"
@@ -178,7 +180,7 @@ def test_run_asymmetric_sign_kat_sanctioned_refusal_real_path(
         lambda d, level, reference="", *, test_id="": notes.append(d),
     )
     monkeypatch.setattr(cc, "_validation_objects_present", lambda rs: "False")
-    monkeypatch.setattr(tms, "import_rsa_private_key_negotiated", lambda *a, **k: 7)
+    monkeypatch.setattr(tms, "provision_rsa_private_key", lambda *a, **k: 7)
     monkeypatch.setattr(tms, "destroy_quietly", lambda *a, **k: None)
     # _run_asymmetric_sign_kat does a local import of build_params_from_vector,
     # so patch it on the source module.
@@ -206,7 +208,7 @@ def test_run_asymmetric_sign_kat_sanctioned_refusal_real_path(
         "signature_hex": "33" * 256,
     }
     entry = _kat_entry()
-    result = tms._run_asymmetric_sign_kat(_rs(), entry, entry.config, vec)
+    result = tms._run_asymmetric_sign_kat(_rs(), entry, entry.config, vec, None)
 
     assert result is True
     assert len(notes) == 1, f"expected exactly 1 note, got {len(notes)}: {notes}"

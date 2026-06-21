@@ -17,13 +17,14 @@ or CKR_SIGNATURE_LEN_RANGE) when the data does not match the signature.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from pkcs11_check.classification import classify
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    import_ec_private_key,
     sign_single,
     verify_single,
 )
@@ -31,6 +32,7 @@ from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_TOKEN,
+    CKK_EC,
     CKK_EC_EDWARDS,
     CKM,
     CKR_ARGUMENTS_BAD,
@@ -45,10 +47,13 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._capability_claims import claim_refusal_passes
 from pkcs11_check.testcases._operability import not_operational_reason
+from pkcs11_check.testcases._provisioning import (
+    provision_ec_private_key,
+    provision_rsa_private_key,
+)
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import (
     assert_correct,
-    import_rsa_private_key_negotiated,
     import_rsa_public_key_negotiated,
     import_secret_key_negotiated,
     is_known_error,
@@ -72,8 +77,8 @@ _EDWARDS_OID_PREFIXES = (
 # skip; the broad import-failure codes are "advertised but not operational" ->
 # xfail (KEY_SIZE_RANGE and TEMPLATE_INCOMPLETE/INCONSISTENT count as broad per
 # the Batch 2 verdict). The generic xfail helper gates on the broad set; the EC
-# private site filters curve-absence to skip first (no negotiated EC-private
-# importer -- the raw single-template import IS the spec path; D2, b56c3f8c).
+# private site filters curve-absence to skip first; the EC private key is now
+# routed through provision_ec_private_key (unwrap injection on no-create modules).
 _KAT_EC_CURVE_UNSUPPORTED_RVS = (
     CKR_CURVE_NOT_SUPPORTED,
     CKR_DOMAIN_PARAMS_INVALID,
@@ -116,18 +121,18 @@ def _xfail_ec_kat_import_not_operational(
     entry: MechEntry,
     object_label: str,
 ) -> None:
-    """Classify a raw EC-private KAT key-import reject (import-skip audit A9 EC leg).
+    """Classify an EC-private KAT key-import reject (import-skip audit A9 EC leg).
 
     Curve-genuine-absence CKRs (CKR_CURVE_NOT_SUPPORTED / CKR_DOMAIN_PARAMS_INVALID)
     keep the capability skip -- the specific curve is genuinely absent. A broad
     import-failure CKR, on a sign mechanism the module ADVERTISES (the
     ``mech_sign_entry`` registry parametrization is advertised-by-construction),
-    is "advertised but not operational" -> xfail. There is no negotiated
-    EC-private importer (D2, commit b56c3f8c): the raw single-template
-    ``import_ec_private_key`` IS the spec path, so the broad reject is conclusive
-    without negotiation wiring. Non-CKR AssertionErrors propagate (harness/coding
-    bug). This routes the EC leg to the same ``not_operational_reason`` wording as
-    the RSA/secret legs, closing the setup/op asymmetry on the EC family.
+    is "advertised but not operational" -> xfail. The EC private key is now routed
+    through ``provision_ec_private_key`` (create path on normal modules; unwrap
+    injection on no-create modules). Non-CKR AssertionErrors propagate
+    (harness/coding bug). This routes the EC leg to the same
+    ``not_operational_reason`` wording as the RSA/secret legs, closing the
+    setup/op asymmetry on the EC family.
     """
     if is_known_error(exc, _KAT_EC_CURVE_UNSUPPORTED_RVS):
         # Genuine capability absence: this specific curve is not supported
@@ -146,9 +151,9 @@ def _xfail_rsa_kat_import_not_operational(
     entry: MechEntry,
     object_label: str,
 ) -> None:
-    """Classify negotiated RSA KAT key-import rejects (import-skip audit A9 RSA).
+    """Classify RSA KAT key-import rejects (import-skip audit A9 RSA).
 
-    The RSA key is imported through ``import_rsa_private_key_negotiated`` /
+    The RSA key is provisioned through ``provision_rsa_private_key`` /
     ``import_rsa_public_key_negotiated``; a clean broad import-failure CKR after
     negotiation exhaustion on a sign mechanism the module ADVERTISES (the
     ``mech_sign_entry`` registry parametrization is advertised-by-construction)
@@ -309,6 +314,7 @@ def _run_asymmetric_sign_kat(
     entry: MechEntry,
     config: object,
     vec: dict,  # type: ignore[type-arg]
+    p11_config: object = None,
 ) -> bool:
     """Import an asymmetric key from a KAT vector and sign/verify.
 
@@ -335,10 +341,11 @@ def _run_asymmetric_sign_kat(
     verify_only: bool = bool(vec.get("verify_only", False))
 
     if "n_hex" in vec:
-        # RSA: import private key for signing
+        # RSA: provision private key for signing (create or unwrap depending on module)
         try:
-            priv_key = import_rsa_private_key_negotiated(
+            priv_key = provision_rsa_private_key(
                 rs,
+                p11_config,
                 n=bytes.fromhex(vec["n_hex"]),
                 e=bytes.fromhex(vec["e_hex"]),
                 d=bytes.fromhex(vec["d_hex"]),
@@ -348,6 +355,7 @@ def _run_asymmetric_sign_kat(
                 dmq1=bytes.fromhex(vec["dmq1_hex"]),
                 iqmp=bytes.fromhex(vec["iqmp_hex"]),
                 attrs={CKA_SIGN: True, CKA_TOKEN: False},
+                label="mech-sign RSA KAT",
             )
         except AssertionError as exc:
             _xfail_rsa_kat_import_not_operational(exc, entry, "RSA private key")
@@ -415,17 +423,19 @@ def _run_asymmetric_sign_kat(
                 destroy_quietly(rs.raw, rs.sh, pub_key)
 
     elif "ec_private_scalar_hex" in vec:
-        # EC/Edwards: import private key; public point not in vector so verify via round-trip
+        # EC/Edwards: provision private key; public point not in vector so verify via round-trip.
+        # Routes through provision_ec_private_key (create or unwrap depending on module).
         ec_params = bytes.fromhex(vec["ec_params_hex"])
-        ec_key_type = int(CKK_EC_EDWARDS) if ec_params.startswith(_EDWARDS_OID_PREFIXES) else None
+        ec_key_type = CKK_EC_EDWARDS if ec_params.startswith(_EDWARDS_OID_PREFIXES) else CKK_EC
         try:
-            priv_key = import_ec_private_key(
-                rs.raw,
-                rs.sh,
+            priv_key = provision_ec_private_key(
+                rs,
+                p11_config,
                 ec_params=ec_params,
                 value=bytes.fromhex(vec["ec_private_scalar_hex"]),
+                key_type=ec_key_type,
                 attrs={CKA_SIGN: True, CKA_TOKEN: False},
-                **({"key_type": ec_key_type} if ec_key_type is not None else {}),
+                label="mech-sign EC KAT",
             )
         except AssertionError as exc:
             _xfail_ec_kat_import_not_operational(exc, entry, "EC private key")
@@ -455,7 +465,12 @@ def _run_asymmetric_sign_kat(
 class TestMechSignKAT:
     """Known-answer sign/MAC tests from pre-generated vectors."""
 
-    def test_kat_vector(self, p11_module_session: RawSession, mech_sign_entry: MechEntry) -> None:
+    def test_kat_vector(
+        self,
+        p11_module_session: RawSession,
+        mech_sign_entry: MechEntry,
+        p11_config: Any,
+    ) -> None:
         """Compute MAC with known key and input -- verify output matches vector."""
         rs = p11_module_session
         entry = mech_sign_entry
@@ -476,7 +491,7 @@ class TestMechSignKAT:
                 continue
 
             if vec.get("key_type") == "asymmetric":
-                if _run_asymmetric_sign_kat(rs, entry, config, vec):
+                if _run_asymmetric_sign_kat(rs, entry, config, vec, p11_config):
                     return
                 continue
 

@@ -22,7 +22,6 @@ from pkcs11_check.raw.pack import attr_bytes
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_keypair,
-    import_ec_private_key,
     sign_single,
     verify_single,
 )
@@ -52,6 +51,7 @@ from pkcs11_check.testcases._eddsa_public_key import (
     verify_eddsa_signature_with_supported_params,
 )
 from pkcs11_check.testcases._operability import not_operational_reason
+from pkcs11_check.testcases._provisioning import provision_ec_private_key
 from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
     SIGNATURE_REJECT_RVS,
@@ -422,7 +422,9 @@ def test_acvp_eddsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, 
 
 
 @pytest.mark.parametrize("vec_id,vec", _SIGGEN_VECTORS, ids=[v[0] for v in _SIGGEN_VECTORS])
-def test_acvp_eddsa_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_eddsa_siggen(
+    p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[str, Any]
+) -> None:
     """Ed25519 signature generation from NIST ACVP SigGen vectors."""
     rs = p11_module_session
     if not rs.has_mechanism("EDDSA"):
@@ -431,13 +433,14 @@ def test_acvp_eddsa_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, 
     priv_key = 0
     try:
         try:
-            priv_key = import_ec_private_key(
-                rs.raw,
-                rs.sh,
+            priv_key = provision_ec_private_key(
+                rs,
+                p11_config,
                 ec_params=vec["ec_params"],
                 value=vec["d"],
-                key_type=int(CKK_EC_EDWARDS),
+                key_type=CKK_EC_EDWARDS,
                 attrs={CKA_SIGN: True},
+                label="acvp EdDSA siggen KAT",
             )
         except AssertionError as exc:
             if is_known_error(exc, _CURVE_UNSUPPORTED_RVS):

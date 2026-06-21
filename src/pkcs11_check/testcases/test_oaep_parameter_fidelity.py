@@ -50,8 +50,8 @@ from pkcs11_check.testcases._param_fidelity import (
     classify_fidelity,
     recover_oaep_params,
 )
+from pkcs11_check.testcases._provisioning import provision_rsa_private_key
 from pkcs11_check.testcases.conftest import (
-    import_rsa_private_key_negotiated,
     import_rsa_public_key_negotiated,
     is_known_error,
 )
@@ -81,13 +81,14 @@ def _int_to_bytes(x: int) -> bytes:
     return x.to_bytes((x.bit_length() + 7) // 8 or 1, "big")
 
 
-def _import_known_keypair(rs: Any) -> tuple[rsa.RSAPrivateKey, int, int]:
-    """Generate a python RSA-2048 keypair and import both halves into the module."""
+def _import_known_keypair(rs: Any, p11_config: Any) -> tuple[rsa.RSAPrivateKey, int, int]:
+    """Generate a python RSA-2048 keypair and provision both halves into the module."""
     k = rsa.generate_private_key(65537, 2048)
     pn = k.private_numbers()
     pub_n = k.public_key().public_numbers()
-    priv_handle = import_rsa_private_key_negotiated(
+    priv_handle = provision_rsa_private_key(
         rs,
+        p11_config,
         n=_int_to_bytes(pub_n.n),
         e=_int_to_bytes(pub_n.e),
         d=_int_to_bytes(pn.d),
@@ -97,6 +98,7 @@ def _import_known_keypair(rs: Any) -> tuple[rsa.RSAPrivateKey, int, int]:
         dmq1=_int_to_bytes(pn.dmq1),
         iqmp=_int_to_bytes(pn.iqmp),
         attrs={CKA_DECRYPT: True},
+        label="oaep-fidelity RSA key",
     )
     pub_handle = import_rsa_public_key_negotiated(
         rs, n=_int_to_bytes(pub_n.n), e=_int_to_bytes(pub_n.e), attrs={CKA_ENCRYPT: True}
@@ -105,7 +107,7 @@ def _import_known_keypair(rs: Any) -> tuple[rsa.RSAPrivateKey, int, int]:
 
 
 class TestOaepParameterFidelity:
-    def test_oaep_encrypt_param_fidelity(self, p11_raw_session: Any) -> None:
+    def test_oaep_encrypt_param_fidelity(self, p11_raw_session: Any, p11_config: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("CKM_RSA_PKCS_OAEP not supported")
@@ -113,7 +115,7 @@ class TestOaepParameterFidelity:
         priv_h = pub_h = 0
         try:
             try:
-                k, priv_h, pub_h = _import_known_keypair(rs)
+                k, priv_h, pub_h = _import_known_keypair(rs, p11_config)
             except AssertionError as exc:
                 pytest.skip(f"RSA keypair import refused: {exc}")
             mech_param = mech_oaep(
@@ -173,7 +175,7 @@ class TestOaepParameterFidelity:
             destroy_quietly(rs.raw, rs.sh, priv_h)
             destroy_quietly(rs.raw, rs.sh, pub_h)
 
-    def test_oaep_decrypt_correctness(self, p11_raw_session: Any) -> None:
+    def test_oaep_decrypt_correctness(self, p11_raw_session: Any, p11_config: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("CKM_RSA_PKCS_OAEP not supported")
@@ -181,7 +183,7 @@ class TestOaepParameterFidelity:
         priv_h = pub_h = 0
         try:
             try:
-                k, priv_h, pub_h = _import_known_keypair(rs)
+                k, priv_h, pub_h = _import_known_keypair(rs, p11_config)
             except AssertionError as exc:
                 pytest.skip(f"RSA keypair import refused: {exc}")
             # Local-encrypt a known ciphertext with the requested (matched) params.
@@ -255,7 +257,9 @@ class TestOaepParamMismatch:
     - No candidate recovers the plaintext -> not_operational (interpretable=False).
     """
 
-    def test_oaep_source_param_self_contradiction(self, p11_raw_session: Any) -> None:
+    def test_oaep_source_param_self_contradiction(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
         """CKM_RSA_PKCS_OAEP + source=CKZ_DATA_SPECIFIED, pSourceData=NULL, ulSourceDataLen=4."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
@@ -264,7 +268,7 @@ class TestOaepParamMismatch:
         priv_h = pub_h = 0
         try:
             try:
-                k, priv_h, pub_h = _import_known_keypair(rs)
+                k, priv_h, pub_h = _import_known_keypair(rs, p11_config)
             except AssertionError as exc:
                 pytest.skip(f"RSA keypair import refused: {exc}")
             # Spec-illegal: source=CKZ_DATA_SPECIFIED, pSourceData=NULL, ulSourceDataLen=4.

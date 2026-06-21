@@ -152,7 +152,7 @@ def test_kat_mac_runtime_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(mech_sign, "destroy_quietly", lambda *_args: None)
 
     with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
-        mech_sign.TestMechSignKAT().test_kat_vector(_session(), _aes_entry())
+        mech_sign.TestMechSignKAT().test_kat_vector(_session(), _aes_entry(), None)
 
 
 def _patch_ec_kat_vector(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -187,11 +187,11 @@ def test_kat_ec_private_import_broad_reject_xfails(
         )
 
     _patch_ec_kat_vector(monkeypatch)
-    monkeypatch.setattr(mech_sign, "import_ec_private_key", _import_reject)
+    monkeypatch.setattr(mech_sign, "provision_ec_private_key", _import_reject)
     monkeypatch.setattr(pytest, "skip", lambda message: pytest.fail(f"unexpected skip: {message}"))
 
     with pytest.raises(pytest.xfail.Exception, match="ECDSA_SHA224:key-import"):
-        mech_sign.TestMechSignKAT().test_kat_vector(_session(), _ec_entry())
+        mech_sign.TestMechSignKAT().test_kat_vector(_session(), _ec_entry(), None)
 
 
 def test_kat_ec_private_import_curve_unsupported_skips(
@@ -206,7 +206,7 @@ def test_kat_ec_private_import_curve_unsupported_skips(
         )
 
     _patch_ec_kat_vector(monkeypatch)
-    monkeypatch.setattr(mech_sign, "import_ec_private_key", _import_reject)
+    monkeypatch.setattr(mech_sign, "provision_ec_private_key", _import_reject)
 
     with pytest.raises(pytest.skip.Exception, match="cannot import EC private key"):
-        mech_sign.TestMechSignKAT().test_kat_vector(_session(), _ec_entry())
+        mech_sign.TestMechSignKAT().test_kat_vector(_session(), _ec_entry(), None)

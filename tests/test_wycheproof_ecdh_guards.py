@@ -44,12 +44,12 @@ def test_duplicate_ecdh_container_vector_is_skipped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """PEM/ASN/ECPOINT duplicates should not rerun identical PKCS#11 inputs."""
-    monkeypatch.setattr(ecdh, "import_ec_private_key_negotiated", _fail_if_called)
+    monkeypatch.setattr(ecdh, "provision_ec_private_key", _fail_if_called)
     vec_id = "ecdh_secp256r1_pem_test.json:tc70-valid"
     vec = next(vec for candidate_id, vec in ecdh._ALL_ECDH_VECTORS if candidate_id == vec_id)
 
     with pytest.raises(pytest.skip.Exception, match="Duplicate PKCS#11 ECDH operation input"):
-        ecdh.test_ecdh(_EcdhSession(), vec_id, vec)
+        ecdh.test_ecdh(_EcdhSession(), None, vec_id, vec)
 
 
 def test_ecdh_curve_mapping_bug_propagates(
@@ -63,7 +63,7 @@ def test_ecdh_curve_mapping_bug_propagates(
     vec = next(vec for candidate_id, vec in ecdh._ALL_ECDH_VECTORS if candidate_id == vec_id)
 
     try:
-        ecdh.test_ecdh(_EcdhSession(), vec_id, vec)
+        ecdh.test_ecdh(_EcdhSession(), None, vec_id, vec)
     except pytest.skip.Exception as exc:
         pytest.fail(f"ECDH curve-mapping bug was skipped: {exc}")
     except RuntimeError as exc:
@@ -85,7 +85,7 @@ def test_valid_ecdh_decoder_bug_propagates(
     vec = next(vec for candidate_id, vec in ecdh._ALL_ECDH_VECTORS if candidate_id == vec_id)
 
     try:
-        ecdh.test_ecdh(_EcdhSession(), vec_id, vec)
+        ecdh.test_ecdh(_EcdhSession(), None, vec_id, vec)
     except pytest.skip.Exception as exc:
         pytest.fail(f"valid ECDH decoder bug was skipped: {exc}")
     except RuntimeError as exc:
@@ -110,7 +110,7 @@ def test_invalid_ecdh_decoder_bug_propagates(
     vec = next(vec for candidate_id, vec in ecdh._ALL_ECDH_VECTORS if candidate_id == vec_id)
 
     try:
-        ecdh.test_ecdh(_EcdhSession(), vec_id, vec)
+        ecdh.test_ecdh(_EcdhSession(), None, vec_id, vec)
     except pytest.skip.Exception as exc:
         pytest.fail(f"invalid ECDH decoder bug was skipped: {exc}")
     except RuntimeError as exc:
@@ -123,7 +123,7 @@ def test_invalid_ecdh_without_shared_secret_success_is_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Invalid ECDH public points must fail if a provider derives anyway."""
-    monkeypatch.setattr(ecdh, "import_ec_private_key_negotiated", _handle)
+    monkeypatch.setattr(ecdh, "provision_ec_private_key", _handle)
     monkeypatch.setattr(ecdh, "derive_key", _handle)
     monkeypatch.setattr(ecdh, "read_attributes", _read_zeros)
     monkeypatch.setattr(ecdh, "destroy_quietly", lambda *_args: None)
@@ -135,7 +135,7 @@ def test_invalid_ecdh_without_shared_secret_success_is_reported(
     )
 
     with pytest.raises(pytest.fail.Exception, match="invalid-curve attack"):
-        ecdh.test_ecdh(_EcdhSession(), "ecdh_secp256r1_ecpoint_test.json:tc332-invalid", vec)
+        ecdh.test_ecdh(_EcdhSession(), None, "ecdh_secp256r1_ecpoint_test.json:tc332-invalid", vec)
 
 
 def test_invalid_ecdh_with_shared_secret_success_is_reported(
@@ -154,13 +154,13 @@ def test_invalid_ecdh_with_shared_secret_success_is_reported(
     vec = next(vec for candidate_id, vec in ecdh._ALL_ECDH_VECTORS if candidate_id == vec_id)
     assert vec["shared"], "fixture vector must carry a non-empty expected shared secret"
 
-    monkeypatch.setattr(ecdh, "import_ec_private_key_negotiated", _handle)
+    monkeypatch.setattr(ecdh, "provision_ec_private_key", _handle)
     monkeypatch.setattr(ecdh, "derive_key", _handle)
     monkeypatch.setattr(ecdh, "read_attributes", _read_zeros)
     monkeypatch.setattr(ecdh, "destroy_quietly", lambda *_args: None)
 
     with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
-        ecdh.test_ecdh(_EcdhSession(), vec_id, vec)
+        ecdh.test_ecdh(_EcdhSession(), None, vec_id, vec)
 
 
 # --- Parameter-level invalid-vector reduction (on-curve point, true-curve shared) ---
@@ -227,7 +227,7 @@ def test_parameter_level_invalid_vector_with_correct_shared_passes(
     vec_id = "ecdh_brainpoolP224r1_test.json:tc517-invalid"
     vec = next(vec for candidate_id, vec in ecdh._ALL_ECDH_VECTORS if candidate_id == vec_id)
     monkeypatch.setattr(ecdh, "_UNSUPPORTED_CURVES", set())
-    monkeypatch.setattr(ecdh, "import_ec_private_key_negotiated", _handle)
+    monkeypatch.setattr(ecdh, "provision_ec_private_key", _handle)
     monkeypatch.setattr(ecdh, "derive_key", _handle)
     monkeypatch.setattr(
         ecdh,
@@ -236,7 +236,7 @@ def test_parameter_level_invalid_vector_with_correct_shared_passes(
     )
     monkeypatch.setattr(ecdh, "destroy_quietly", lambda *_args: None)
 
-    ecdh.test_ecdh(_EcdhSession(), vec_id, vec)
+    ecdh.test_ecdh(_EcdhSession(), None, vec_id, vec)
 
 
 def test_parameter_level_invalid_vector_clean_reject_xfails(
@@ -253,12 +253,12 @@ def test_parameter_level_invalid_vector_clean_reject_xfails(
         )
 
     monkeypatch.setattr(ecdh, "_UNSUPPORTED_CURVES", set())
-    monkeypatch.setattr(ecdh, "import_ec_private_key_negotiated", _handle)
+    monkeypatch.setattr(ecdh, "provision_ec_private_key", _handle)
     monkeypatch.setattr(ecdh, "derive_key", _reject)
     monkeypatch.setattr(ecdh, "destroy_quietly", lambda *_args: None)
 
     with pytest.raises(pytest.xfail.Exception):
-        ecdh.test_ecdh(_EcdhSession(), vec_id, vec)
+        ecdh.test_ecdh(_EcdhSession(), None, vec_id, vec)
 
 
 def test_off_curve_invalid_vector_acceptance_still_fails(
@@ -279,13 +279,13 @@ def test_off_curve_invalid_vector_acceptance_still_fails(
         "_group": {},
     }
     monkeypatch.setattr(ecdh, "_UNSUPPORTED_CURVES", set())
-    monkeypatch.setattr(ecdh, "import_ec_private_key_negotiated", _handle)
+    monkeypatch.setattr(ecdh, "provision_ec_private_key", _handle)
     monkeypatch.setattr(ecdh, "derive_key", _handle)
     monkeypatch.setattr(ecdh, "read_attributes", lambda *_a, **_k: {CKA_VALUE: b"\xab" * 32})
     monkeypatch.setattr(ecdh, "destroy_quietly", lambda *_args: None)
 
     with pytest.raises(pytest.fail.Exception, match="invalid-curve attack"):
-        ecdh.test_ecdh(_EcdhSession(), "synthetic:tc0-invalid", vec)
+        ecdh.test_ecdh(_EcdhSession(), None, "synthetic:tc0-invalid", vec)
 
 
 def _first_invalid_ecdh() -> tuple[str, dict[str, Any]]:
@@ -303,7 +303,7 @@ def _first_invalid_ecdh() -> tuple[str, dict[str, Any]]:
 
 
 def _wire_successful_derive(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ecdh, "import_ec_private_key_negotiated", _handle)
+    monkeypatch.setattr(ecdh, "provision_ec_private_key", _handle)
     monkeypatch.setattr(ecdh, "derive_key", _handle)
     monkeypatch.setattr(ecdh, "read_attributes", _read_zeros)
     monkeypatch.setattr(ecdh, "destroy_quietly", lambda *_a, **_k: None)
@@ -319,7 +319,7 @@ def test_ecdh_invalid_derive_on_base_curve_point_is_not_a_finding(
     _wire_successful_derive(monkeypatch)
     monkeypatch.setattr(ecdh, "_point_on_base_curve", lambda *_a: True)
 
-    ecdh.test_ecdh(_EcdhSession(), vec_id, vec)  # no exception
+    ecdh.test_ecdh(_EcdhSession(), None, vec_id, vec)  # no exception
 
 
 def test_ecdh_invalid_derive_on_off_curve_point_is_a_finding(
@@ -332,7 +332,7 @@ def test_ecdh_invalid_derive_on_off_curve_point_is_a_finding(
     monkeypatch.setattr(ecdh, "_point_on_base_curve", lambda *_a: False)
 
     with pytest.raises(pytest.fail.Exception, match="invalid-curve"):
-        ecdh.test_ecdh(_EcdhSession(), vec_id, vec)
+        ecdh.test_ecdh(_EcdhSession(), None, vec_id, vec)
 
 
 def test_point_on_base_curve_validates_against_cryptography() -> None:

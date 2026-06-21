@@ -41,19 +41,19 @@ def test_duplicate_xdh_container_vector_is_skipped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """ASN/PEM/JWK duplicates should not rerun identical PKCS#11 inputs."""
-    monkeypatch.setattr(xdh, "import_ec_private_key_negotiated", _fail_if_duplicate_called)
+    monkeypatch.setattr(xdh, "provision_ec_private_key", _fail_if_duplicate_called)
     vec_id = "x25519_asn_test.json:tc1-valid"
     vec = next(vec for candidate_id, vec in xdh._ALL_XDH_VECTORS if candidate_id == vec_id)
 
     with pytest.raises(pytest.skip.Exception, match="Duplicate PKCS#11 XDH operation input"):
-        xdh.test_xdh(_XdhSession(), vec_id, vec)
+        xdh.test_xdh(_XdhSession(), None, vec_id, vec)
 
 
 def test_invalid_xdh_public_decode_is_accepted_rejection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Malformed invalid public vectors should not become capability skips."""
-    monkeypatch.setattr(xdh, "import_ec_private_key_negotiated", _fail_if_called)
+    monkeypatch.setattr(xdh, "provision_ec_private_key", _fail_if_called)
     vec = next(
         vec
         for vec_id, vec in xdh._ALL_XDH_VECTORS
@@ -61,7 +61,7 @@ def test_invalid_xdh_public_decode_is_accepted_rejection(
     )
 
     try:
-        xdh.test_xdh(_XdhSession(), "x25519_jwk_test.json:tc528-invalid", vec)
+        xdh.test_xdh(_XdhSession(), None, "x25519_jwk_test.json:tc528-invalid", vec)
     except pytest.skip.Exception as exc:
         pytest.fail(f"invalid XDH public-key decode was skipped: {exc}")
 
@@ -80,7 +80,7 @@ def test_valid_xdh_private_decoder_bug_propagates(
     vec = next(vec for candidate_id, vec in xdh._ALL_XDH_VECTORS if candidate_id == vec_id)
 
     try:
-        xdh.test_xdh(_XdhSession(), vec_id, vec)
+        xdh.test_xdh(_XdhSession(), None, vec_id, vec)
     except pytest.skip.Exception as exc:
         pytest.fail(f"valid XDH decoder bug was skipped: {exc}")
     except RuntimeError as exc:
@@ -104,14 +104,14 @@ def test_invalid_xdh_public_decoder_bug_propagates(
     vec = next(vec for candidate_id, vec in xdh._ALL_XDH_VECTORS if candidate_id == vec_id)
 
     with pytest.raises(RuntimeError, match="decoder bug"):
-        xdh.test_xdh(_XdhSession(), vec_id, vec)
+        xdh.test_xdh(_XdhSession(), None, vec_id, vec)
 
 
 def test_invalid_xdh_public_length_success_is_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Malformed public bytes must fail if a provider derives anyway."""
-    monkeypatch.setattr(xdh, "import_ec_private_key_negotiated", _handle)
+    monkeypatch.setattr(xdh, "provision_ec_private_key", _handle)
     monkeypatch.setattr(xdh, "derive_key", _handle)
     monkeypatch.setattr(xdh, "read_attributes", _read_zeros)
     monkeypatch.setattr(xdh, "destroy_quietly", lambda *_args: None)
@@ -121,7 +121,7 @@ def test_invalid_xdh_public_length_success_is_reported(
     )
 
     with pytest.raises(pytest.fail.Exception, match="invalid-point accepted"):
-        xdh.test_xdh(_XdhSession(), "x448_test.json:tc76-invalid", vec)
+        xdh.test_xdh(_XdhSession(), None, "x448_test.json:tc76-invalid", vec)
 
 
 def test_invalid_xdh_correct_length_success_is_reported(
@@ -151,20 +151,20 @@ def test_invalid_xdh_correct_length_success_is_reported(
         "flags": ["SyntheticRuntimeGuard"],
     }
 
-    monkeypatch.setattr(xdh, "import_ec_private_key_negotiated", _handle)
+    monkeypatch.setattr(xdh, "provision_ec_private_key", _handle)
     monkeypatch.setattr(xdh, "derive_key", _handle)
     monkeypatch.setattr(xdh, "read_attributes", _read_zeros)
     monkeypatch.setattr(xdh, "destroy_quietly", lambda *_args: None)
 
     with pytest.raises(pytest.fail.Exception, match="invalid-point accepted"):
-        xdh.test_xdh(_XdhSession(), "synthetic:tc1-invalid", vec)
+        xdh.test_xdh(_XdhSession(), None, "synthetic:tc1-invalid", vec)
 
 
 def test_valid_xdh_derive_runtime_reject_is_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Valid-vector derive CKRs are advertised-but-not-operational evidence."""
-    monkeypatch.setattr(xdh, "import_ec_private_key_negotiated", _handle)
+    monkeypatch.setattr(xdh, "provision_ec_private_key", _handle)
     monkeypatch.setattr(xdh, "derive_key", _raise_device_error)
     monkeypatch.setattr(xdh, "destroy_quietly", lambda *_args: None)
 
@@ -172,4 +172,4 @@ def test_valid_xdh_derive_runtime_reject_is_xfail(
     vec = next(vec for candidate_id, vec in xdh._ALL_XDH_VECTORS if candidate_id == vec_id)
 
     with pytest.raises(pytest.xfail.Exception, match="advertised XDH derive is not operational"):
-        xdh.test_xdh(_XdhSession(), vec_id, vec)
+        xdh.test_xdh(_XdhSession(), None, vec_id, vec)

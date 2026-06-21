@@ -100,11 +100,11 @@ def test_d2a_xdh_broad_import_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> 
     import pkcs11_check.testcases.wycheproof.test_wycheproof_x25519 as mod
 
     _patch_xdh_decoders(monkeypatch, mod)
-    monkeypatch.setattr(mod, "import_ec_private_key_negotiated", _raiser(_ATTR_INVALID))
+    monkeypatch.setattr(mod, "provision_ec_private_key", _raiser(_ATTR_INVALID))
 
     try:
         with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
-            mod.test_xdh(_session(), "x25519_test.json:tc1-valid", _xdh_vec("valid"))
+            mod.test_xdh(_session(), None, "x25519_test.json:tc1-valid", _xdh_vec("valid"))
     except pytest.skip.Exception as exc:
         pytest.fail(f"skipped instead of xfailing: {exc}")
 
@@ -114,10 +114,10 @@ def test_d2a_xdh_curve_unsupported_still_skips(monkeypatch: pytest.MonkeyPatch) 
     import pkcs11_check.testcases.wycheproof.test_wycheproof_x25519 as mod
 
     _patch_xdh_decoders(monkeypatch, mod)
-    monkeypatch.setattr(mod, "import_ec_private_key_negotiated", _raiser(_CURVE_NOT_SUPPORTED))
+    monkeypatch.setattr(mod, "provision_ec_private_key", _raiser(_CURVE_NOT_SUPPORTED))
 
     with pytest.raises(pytest.skip.Exception, match="Cannot import Montgomery private key"):
-        mod.test_xdh(_session(), "x25519_test.json:tc1-valid", _xdh_vec("valid"))
+        mod.test_xdh(_session(), None, "x25519_test.json:tc1-valid", _xdh_vec("valid"))
 
 
 def test_d2a_xdh_invalid_vector_broad_reject_returns(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -125,10 +125,10 @@ def test_d2a_xdh_invalid_vector_broad_reject_returns(monkeypatch: pytest.MonkeyP
     import pkcs11_check.testcases.wycheproof.test_wycheproof_x25519 as mod
 
     _patch_xdh_decoders(monkeypatch, mod)
-    monkeypatch.setattr(mod, "import_ec_private_key_negotiated", _raiser(_ATTR_INVALID))
+    monkeypatch.setattr(mod, "provision_ec_private_key", _raiser(_ATTR_INVALID))
 
     # No xfail / skip raised: invalid vector + un-importable key returns cleanly.
-    mod.test_xdh(_session(), "x25519_test.json:tc1-invalid", _xdh_vec("invalid"))
+    mod.test_xdh(_session(), None, "x25519_test.json:tc1-invalid", _xdh_vec("invalid"))
 
 
 def test_d2a_xdh_non_ckr_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -136,10 +136,10 @@ def test_d2a_xdh_non_ckr_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
     import pkcs11_check.testcases.wycheproof.test_wycheproof_x25519 as mod
 
     _patch_xdh_decoders(monkeypatch, mod)
-    monkeypatch.setattr(mod, "import_ec_private_key_negotiated", _raiser(_NON_CKR))
+    monkeypatch.setattr(mod, "provision_ec_private_key", _raiser(_NON_CKR))
 
     with pytest.raises(AssertionError, match="derive returned wrong shared secret"):
-        mod.test_xdh(_session(), "x25519_test.json:tc1-valid", _xdh_vec("valid"))
+        mod.test_xdh(_session(), None, "x25519_test.json:tc1-valid", _xdh_vec("valid"))
 
 
 # ===========================================================================
@@ -173,11 +173,11 @@ def test_d2b_ecdh_broad_import_reject_xfails(monkeypatch: pytest.MonkeyPatch) ->
     import pkcs11_check.testcases.wycheproof.test_wycheproof_ecdh as mod
 
     _patch_ecdh_decoders(monkeypatch, mod)
-    monkeypatch.setattr(mod, "import_ec_private_key_negotiated", _raiser(_FUNCTION_FAILED))
+    monkeypatch.setattr(mod, "provision_ec_private_key", _raiser(_FUNCTION_FAILED))
 
     try:
         with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
-            mod.test_ecdh(_session(), "ecdh_secp256r1:tc1-valid", _ecdh_vec("valid"))
+            mod.test_ecdh(_session(), None, "ecdh_secp256r1:tc1-valid", _ecdh_vec("valid"))
     except pytest.skip.Exception as exc:
         pytest.fail(f"skipped instead of xfailing: {exc}")
 
@@ -187,10 +187,10 @@ def test_d2b_ecdh_curve_unsupported_still_skips(monkeypatch: pytest.MonkeyPatch)
     import pkcs11_check.testcases.wycheproof.test_wycheproof_ecdh as mod
 
     _patch_ecdh_decoders(monkeypatch, mod)
-    monkeypatch.setattr(mod, "import_ec_private_key_negotiated", _raiser(_DOMAIN_PARAMS_INVALID))
+    monkeypatch.setattr(mod, "provision_ec_private_key", _raiser(_DOMAIN_PARAMS_INVALID))
 
     with pytest.raises(pytest.skip.Exception, match="Cannot import EC private key for ECDH"):
-        mod.test_ecdh(_session(), "ecdh_secp256r1:tc1-valid", _ecdh_vec("valid"))
+        mod.test_ecdh(_session(), None, "ecdh_secp256r1:tc1-valid", _ecdh_vec("valid"))
 
 
 def test_d2b_ecdh_invalid_vector_broad_reject_returns(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -198,9 +198,9 @@ def test_d2b_ecdh_invalid_vector_broad_reject_returns(monkeypatch: pytest.Monkey
     import pkcs11_check.testcases.wycheproof.test_wycheproof_ecdh as mod
 
     _patch_ecdh_decoders(monkeypatch, mod)
-    monkeypatch.setattr(mod, "import_ec_private_key_negotiated", _raiser(_FUNCTION_FAILED))
+    monkeypatch.setattr(mod, "provision_ec_private_key", _raiser(_FUNCTION_FAILED))
 
-    mod.test_ecdh(_session(), "ecdh_secp256r1:tc1-invalid", _ecdh_vec("invalid"))
+    mod.test_ecdh(_session(), None, "ecdh_secp256r1:tc1-invalid", _ecdh_vec("invalid"))
 
 
 def test_d2b_ecdh_non_ckr_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -208,7 +208,7 @@ def test_d2b_ecdh_non_ckr_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
     import pkcs11_check.testcases.wycheproof.test_wycheproof_ecdh as mod
 
     _patch_ecdh_decoders(monkeypatch, mod)
-    monkeypatch.setattr(mod, "import_ec_private_key_negotiated", _raiser(_NON_CKR))
+    monkeypatch.setattr(mod, "provision_ec_private_key", _raiser(_NON_CKR))
 
     with pytest.raises(AssertionError, match="derive returned wrong shared secret"):
-        mod.test_ecdh(_session(), "ecdh_secp256r1:tc1-valid", _ecdh_vec("valid"))
+        mod.test_ecdh(_session(), None, "ecdh_secp256r1:tc1-valid", _ecdh_vec("valid"))
