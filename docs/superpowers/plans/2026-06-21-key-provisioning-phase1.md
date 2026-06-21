@@ -476,6 +476,19 @@ git commit -m "feat(provisioning): WrapStrategy registry + size-aware selection"
 
 ### Task 5: `ProvisioningProfile` (per-class create-availability probe)
 
+> **TEST APPROACH (supersedes the softhsm2 test below).** The `tests/` suite is **module-free**
+> and is a fast gate — do NOT create a `softhsm2_raw_session` fixture or touch `tests/conftest.py`.
+> Write a **fake-`raw` meta-test** following the exact pattern of
+> `tests/test_import_ec_private_key_negotiated.py`: `monkeypatch.setattr` the recipe functions this
+> code calls (`pkcs11_check.raw.recipes.import_secret_key`, `…destroy_quietly`) and use a synthetic
+> `rs = type("RS", (), {"raw": object(), "sh": <int>, "slot_id": 0, "has_mechanism": lambda self,n: <bool>})()`.
+> Cover all three verdicts: patch `import_secret_key` to **return a handle** (→ `create_available`),
+> to **raise `CkrAssertionError(..., CKR_FUNCTION_NOT_SUPPORTED)`** (→ `create_absent`), and to raise
+> a policy code in `_CREATE_PROHIBITED_RVS` (→ `create_prohibited`); and assert `supports_unwrap_mech`
+> reflects the fake `has_mechanism`. Reset `_PROFILE_CACHE` between cases (or use distinct `sh`).
+> The implementation code below is unchanged; only the test is fake-based. The real-softhsm2
+> end-to-end check happens once in Task 9 (controller-run), not here.
+
 **Files:**
 - Modify: `src/pkcs11_check/testcases/_provisioning.py` (add `ProvisioningProfile` + `profile_for`)
 - Test: `tests/test_provisioning_profile_softhsm2.py` (create; runs against softhsm2)
@@ -592,6 +605,20 @@ git commit -m "feat(provisioning): ProvisioningProfile create-availability probe
 
 ### Task 6: Bootstrap wrapping key → `WrapContext` builder
 
+> **TEST APPROACH (supersedes the softhsm2 test below).** Module-free fake-`raw` meta-test (see
+> `tests/test_import_ec_private_key_negotiated.py`). `monkeypatch.setattr` the recipes this code
+> calls — `pkcs11_check.raw.recipes.gen_rsa_keypair` (return `(pub_h, priv_h)`) and
+> `…read_attributes` (return a dict with `CKA_MODULUS`/`CKA_PUBLIC_EXPONENT` taken from a REAL
+> `cryptography`-generated RSA-2048 key's public numbers, big-endian bytes) — plus a synthetic `rs`.
+> Assert `build_wrap_context` returns a `WrapContext` whose `rsa_pub_der` round-trips back to the same
+> modulus/exponent and whose `unwrapping_key_handle == priv_h`, and that `profile_for(rs).rsa_pub_der_probe`
+> is set. **Also test the size-escalation**: a `gen_rsa_keypair` fake that raises
+> `CkrAssertionError(CKR_KEY_SIZE_RANGE)` for `bits=2048` but succeeds for `bits=3072` must yield a
+> context (assert it retried at 3072); a fake that refuses all sizes must yield `None`. Guard
+> `RsaOaep` against a `None` `rsa_pub_der` (the Task 4 latent-assert footgun) — `build_wrap_context`
+> always sets `rsa_pub_der` on success, and `provision_secret_key` (Task 7) must not select a strategy
+> when no `WrapContext` exists.
+
 **Files:**
 - Modify: `src/pkcs11_check/testcases/_provisioning.py` (add `build_wrap_context`)
 - Test: `tests/test_wrap_context_bootstrap_softhsm2.py` (create)
@@ -672,6 +699,20 @@ git commit -m "feat(provisioning): bootstrap RSA unwrap key -> WrapContext"
 ---
 
 ### Task 7: `provision_secret_key` resolution + value-integrity
+
+> **TEST APPROACH (supersedes the softhsm2 test below).** Module-free fake-`raw` meta-tests (see
+> `tests/test_import_ec_private_key_negotiated.py`). Monkeypatch the recipes (`import_secret_key`,
+> `gen_rsa_keypair`, `read_attributes`, `unwrap_key`, `destroy_quietly`) and use a synthetic `rs`
+> with a `has_mechanism` that advertises the wrap mechs. Cover the resolution branches:
+> (a) `create_available` + mode `off`/`unwrap` → calls `import_secret_key`, returns its handle (no
+> unwrap); (b) `create_absent` + `key_inject=off` → `pytest.raises(pytest.skip.Exception)` with reason
+> "Module does not implement C_CreateObject"; (c) `create_absent` + `key_inject=unwrap` with a working
+> fake `unwrap_key` → returns the unwrapped handle and the value-integrity readback path runs;
+> (d) `force-unwrap` → never calls `import_secret_key`, goes straight to unwrap. Use a fake
+> `unwrap_key` that records the `(mechanism, mech_param, wrapped_key)` it was handed so the test
+> asserts the envelope strategy + blob were used. The value-integrity readback (`read_attributes`
+> CKA_VALUE) is monkeypatched to return the injected `value` for the non-sensitive case. The real
+> softhsm2 unwrap acceptance is validated in Task 9.
 
 **Files:**
 - Modify: `src/pkcs11_check/testcases/_provisioning.py` (add `provision_secret_key`)
@@ -799,53 +840,32 @@ git commit -m "feat(provisioning): route secret-key KAT setup through provision_
 
 ---
 
-### Task 9: Force-unwrap end-to-end validation on softhsm2
+### Task 9: Real-softhsm2 force-unwrap validation (CONTROLLER-run, not a subagent task)
 
-**Files:**
-- Test: `tests/test_force_unwrap_validation_softhsm2.py` (create)
+This is **not** a `tests/` unit test (the `tests/` gate is module-free). It is a one-time real-module
+validation the controller runs after Task 8 to prove softhsm2's `C_UnwrapKey` actually accepts our
+software-built `CKM_RSA_AES_KEY_WRAP` envelope blob — the core integration risk. Record the outcome
+in the ledger; do not commit a token-dependent test into the gate suite.
 
-**Interfaces:** Consumes everything above.
+Runbook (controller):
+1. Provision an ephemeral softhsm2 token in a temp dir:
+   `export SOFTHSM2_CONF=$(mktemp); TOK=$(mktemp -d); printf 'directories.tokendir = %s\n' "$TOK" > "$SOFTHSM2_CONF"`,
+   then `softhsm2-util --init-token --slot 0 --label kp --so-pin 12345678 --pin 1234`.
+2. Run a representative secret-key KAT with **force-unwrap** against the real module:
+   `uv run pkcs11-check test --module /usr/lib/softhsm/libsofthsm2.so --p11-slot <provisioned-slot> \
+    --pin 1234 --key-inject force-unwrap -- src/pkcs11_check/testcases/wycheproof/test_wycheproof.py -k AESGCM`
+3. **Expected:** the AES-GCM KAT cases **pass via the unwrap path** (the bootstrap RSA key is
+   generated, the envelope blob is unwrapped into the AES key, the GCM operation succeeds) — i.e. the
+   same pass profile as a normal create-path run, proving real-module acceptance.
+4. **Negative check:** repeat with `--key-inject unwrap` (not force) → on softhsm2 (create-available)
+   it must take the **create** path unchanged; and with `--key-inject off` it must also be unchanged.
+5. If force-unwrap fails to round-trip on softhsm2, the most likely cause is an OAEP-param mismatch
+   between `sw_wrap._OAEP` and `mech_rsa_aes_key_wrap` (§4.1) — debug there before proceeding to the
+   final review.
 
-- [ ] **Step 1: Write the test** — run a representative AES-GCM KAT *operation* through
-  `provision_secret_key` with `key_inject="force-unwrap"`, then encrypt/decrypt and assert
-  correctness, proving the unwrap-injected key is functionally identical to a created one:
-```python
-# tests/test_force_unwrap_validation_softhsm2.py
-from pathlib import Path
-from pkcs11_check.config import P11TestConfig
-from pkcs11_check.testcases._provisioning import provision_secret_key
-from pkcs11_check.raw import recipes
-from pkcs11_check.raw.types_std import CKK_AES, CKA_ENCRYPT, CKA_DECRYPT, CKA_TOKEN, CKA_SENSITIVE
-
-
-def test_force_unwrap_aes_gcm_roundtrip(softhsm2_raw_session):
-    cfg = P11TestConfig(module=Path("/x.so"), key_inject="force-unwrap")
-    key = bytes(range(16))
-    h = provision_secret_key(softhsm2_raw_session, cfg, int(CKK_AES), key,
-                             {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False,
-                              CKA_SENSITIVE: False}, label="val")
-    # AES-GCM encrypt then decrypt via the module using the unwrap-injected key handle; assert roundtrip.
-    # Use the same recipe helpers the wycheproof GCM test uses (encrypt_gcm / decrypt_gcm).
-    pt = b"hello provisioning"
-    ct, tag, iv = recipes.encrypt_gcm(softhsm2_raw_session.raw, softhsm2_raw_session.sh, h, pt)
-    assert recipes.decrypt_gcm(softhsm2_raw_session.raw, softhsm2_raw_session.sh, h, ct, tag, iv) == pt
-```
-  (Use the exact GCM encrypt/decrypt recipe names from `recipes.py` — grep `def .*gcm`; substitute.)
-
-- [ ] **Step 2: Run** `uv run pytest tests/test_force_unwrap_validation_softhsm2.py -v` → PASS
-  (proves end-to-end injection on a full module).
-
-- [ ] **Step 3: Full gate sweep**
-```bash
-uv run ruff format --check . && uv run ruff check . && uv run mypy --strict src/ && uv run pytest tests/ -q
-```
-  All green.
-
-- [ ] **Step 4: Commit**
-```bash
-git add tests/test_force_unwrap_validation_softhsm2.py
-git commit -m "test(provisioning): force-unwrap AES-GCM roundtrip validation on softhsm2"
-```
+(Optional, deferred to a later phase: a `@pytest.mark.integration` test gated on a
+`P11TEST_SOFTHSM2_MODULE` env var that self-provisions a token, so this validation becomes repeatable
+in an environment that has softhsm2. Out of scope for the module-free Phase 1 gate.)
 
 ---
 
