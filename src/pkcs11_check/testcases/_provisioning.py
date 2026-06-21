@@ -8,6 +8,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from cryptography.hazmat.primitives.asymmetric import rsa as _crypto_rsa
+from cryptography.hazmat.primitives.serialization import Encoding as _Encoding
+from cryptography.hazmat.primitives.serialization import PublicFormat as _PublicFormat
+
 from pkcs11_check.raw import sw_wrap
 from pkcs11_check.raw.pack import PackedMechanism
 from pkcs11_check.raw.pack_mechanisms import mech_oaep, mech_rsa_aes_key_wrap
@@ -16,8 +20,12 @@ from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
+    CKA_MODULUS,
+    CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
     CKA_TOKEN,
+    CKA_UNWRAP,
+    CKA_WRAP,
     CKG_MGF1_SHA256,
     CKK_AES,
     CKM_AES_KEY_WRAP_KWP,
@@ -25,8 +33,10 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS_OAEP,
     CKM_SHA256,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
     CKR_KEY_UNEXTRACTABLE,
     CKR_TEMPLATE_INCONSISTENT,
 )
@@ -216,3 +226,88 @@ def select_strategy(
             continue
         return s
     return None
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap RSA unwrap key with size escalation (Task 6)
+# ---------------------------------------------------------------------------
+
+_RSA_SIZE_REFUSED: frozenset[int] = frozenset(
+    {
+        int(CKR_KEY_SIZE_RANGE),
+        int(CKR_ATTRIBUTE_VALUE_INVALID),
+        int(CKR_TEMPLATE_INCONSISTENT),
+        int(CKR_FUNCTION_FAILED),
+    }
+)
+
+
+def _bootstrap_rsa_unwrap_key(rs: Any, start_bits: int) -> tuple[int, int, int] | None:
+    """Generate an RSA wrap/unwrap keypair, escalating size if the provider refuses.
+
+    Returns ``(pub_handle, priv_handle, bits)`` on success or ``None`` if every
+    candidate size is refused by the provider.  An unexpected keygen CKR (not a
+    size-refusal code) is re-raised immediately so it surfaces as a finding.
+    """
+    from pkcs11_check.raw.recipes import gen_rsa_keypair
+
+    sizes = [b for b in (start_bits, 3072, 4096) if b >= start_bits]
+    seen: set[int] = set()
+    for bits in sizes:
+        if bits in seen:
+            continue
+        seen.add(bits)
+        try:
+            pub, priv = gen_rsa_keypair(
+                rs.raw,
+                rs.sh,
+                bits=bits,
+                public_attrs={CKA_TOKEN: False, CKA_WRAP: True},
+                private_attrs={CKA_TOKEN: False, CKA_UNWRAP: True},
+            )
+            return pub, priv, bits
+        except CkrAssertionError as exc:
+            if int(exc.rv) in _RSA_SIZE_REFUSED:
+                continue  # try a larger size
+            raise  # an unexpected keygen error is a real finding
+    return None
+
+
+def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
+    """Build a ``WrapContext`` for the bootstrap path.
+
+    Generates a session RSA wrap keypair (escalating size if the provider refuses
+    smaller keys), reads the public modulus and exponent, assembles an SPKI DER blob
+    via ``cryptography``, and returns a ``WrapContext``.  Returns ``None`` when every
+    candidate size is refused (→ caller should skip the unwrap path).
+
+    Sets ``profile_for(rs).rsa_pub_der_probe`` so ``select_strategy`` can size-check
+    OAEP payloads correctly before the real ``WrapContext`` is passed.
+
+    The ``configured`` wrap-key-source path is not yet implemented; a
+    ``NotImplementedError`` is raised for that branch.
+    """
+    wrap_key_source: str = getattr(cfg, "wrap_key_source", "bootstrap")
+    if wrap_key_source != "bootstrap":
+        raise NotImplementedError(
+            f"wrap_key_source={wrap_key_source!r} is not yet implemented; "
+            "only 'bootstrap' is supported in Phase 1"
+        )
+
+    start_bits: int = getattr(cfg, "wrap_rsa_bits", 2048)
+    result = _bootstrap_rsa_unwrap_key(rs, start_bits)
+    if result is None:
+        return None
+
+    pub_handle, priv_handle, _bits = result
+
+    from pkcs11_check.raw.recipes import read_attributes
+
+    attrs = read_attributes(rs.raw, rs.sh, pub_handle, (int(CKA_MODULUS), int(CKA_PUBLIC_EXPONENT)))
+    n = int.from_bytes(attrs[int(CKA_MODULUS)], "big")
+    e = int.from_bytes(attrs[int(CKA_PUBLIC_EXPONENT)], "big")
+    pub_key = _crypto_rsa.RSAPublicNumbers(e, n).public_key()
+    der = pub_key.public_bytes(_Encoding.DER, _PublicFormat.SubjectPublicKeyInfo)
+
+    profile_for(rs).rsa_pub_der_probe = der
+    return WrapContext(rsa_pub_der=der, unwrapping_key_handle=priv_handle)
