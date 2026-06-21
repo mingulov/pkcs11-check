@@ -35,12 +35,14 @@ from pkcs11_check.raw.types_std import (
     CKG_MGF1_SHA1,
     CKG_MGF1_SHA256,
     CKK_AES,
+    CKK_RSA,
     CKM,
     CKM_AES_KEY_WRAP_KWP,
     CKM_RSA_AES_KEY_WRAP,
     CKM_RSA_PKCS_OAEP,
     CKM_SHA256,
     CKM_SHA_1,
+    CKO_PRIVATE_KEY,
     CKO_SECRET_KEY,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_FAILED,
@@ -650,4 +652,129 @@ def provision_secret_key(
                 f"(expected {value.hex()!r}, got {actual!r})"
             )
 
+    return handle
+
+
+# ---------------------------------------------------------------------------
+# provision_rsa_private_key — resolution entry point (Task 3)
+# ---------------------------------------------------------------------------
+
+
+def provision_rsa_private_key(
+    rs: Any,
+    cfg: Any,
+    *,
+    n: bytes,
+    e: bytes,
+    d: bytes,
+    p: bytes,
+    q: bytes,
+    dmp1: bytes,
+    dmq1: bytes,
+    iqmp: bytes,
+    attrs: dict[Any, Any],
+    label: str,
+) -> int:
+    """Provision an RSA private key into the token by the best available means.
+
+    Resolution order (per design §3.2):
+
+    1. If ``cfg.key_inject != "force-unwrap"``, probe create availability.
+       When the module supports C_CreateObject for private keys, call
+       ``import_rsa_private_key_negotiated`` directly and return the handle.
+
+    2. If create is unavailable/prohibited OR ``cfg.key_inject == "force-unwrap"``:
+       - ``key_inject == "off"`` → ``pytest.skip`` (no injection path).
+       - Build a ``WrapContext`` (bootstrap + multi-strategy negotiation);
+         ``None`` → ``pytest.skip``.
+       - Look up the resolved strategy by ``ctx.strategy_name``; not found → ``pytest.skip``.
+       - Encode the CRT components as PKCS#8 DER, check against strategy size cap.
+       - Call ``unwrap_key`` with the encrypted PKCS#8 blob.
+       - Record a compliance note (no value-integrity readback — private keys are sensitive).
+       - Return the unwrapped key handle.
+
+    Args:
+        rs:     Session record with ``.raw``, ``.sh``, and ``has_mechanism``.
+        cfg:    Config carrying ``key_inject``, ``wrap_rsa_bits``, etc.
+        n:      RSA modulus (big-endian bytes).
+        e:      Public exponent (big-endian bytes).
+        d:      Private exponent (big-endian bytes).
+        p:      First prime factor (big-endian bytes).
+        q:      Second prime factor (big-endian bytes).
+        dmp1:   d mod (p-1) (big-endian bytes).
+        dmq1:   d mod (q-1) (big-endian bytes).
+        iqmp:   q^{-1} mod p (big-endian bytes).
+        attrs:  Usage-flag attributes for the resulting object (e.g.
+                ``CKA_SIGN``, ``CKA_DECRYPT``, ``CKA_TOKEN``).  Must NOT
+                include CRT component attributes; those come from the kwargs.
+        label:  Human-readable label used in skip messages.
+
+    Returns:
+        Object handle (int) of the provisioned private key.
+
+    Raises:
+        pytest.skip.Exception: When the module has no injection path or the
+            wrap-context / strategy is unavailable.
+    """
+    from pkcs11_check.raw.key_encoding import rsa_pkcs8_from_crt
+    from pkcs11_check.raw.recipes import unwrap_key
+
+    mode: str = getattr(cfg, "key_inject", "off")
+
+    # ------------------------------------------------------------------
+    # Fast path: create_available (unless caller forces the unwrap path)
+    # ------------------------------------------------------------------
+    if mode != "force-unwrap":
+        verdict = profile_for(rs).create_verdict("private")
+        if verdict == "create_available":
+            from pkcs11_check.testcases.conftest import import_rsa_private_key_negotiated
+
+            return import_rsa_private_key_negotiated(
+                rs, n=n, e=e, d=d, p=p, q=q, dmp1=dmp1, dmq1=dmq1, iqmp=iqmp, attrs=attrs
+            )
+
+    # ------------------------------------------------------------------
+    # Unwrap path (or forced)
+    # ------------------------------------------------------------------
+    if mode == "off":
+        pytest.skip(f"{label}: Module does not implement C_CreateObject")
+
+    ctx = build_wrap_context(rs, cfg)
+    if ctx is None:
+        pytest.skip(f"{label}: no wrapping path")
+
+    strategy = next((s for s in DEFAULT_STRATEGIES if s.name == ctx.strategy_name), None)
+    if strategy is None:
+        pytest.skip(f"{label}: no wrapping path: resolved strategy not found")
+
+    pkcs8 = rsa_pkcs8_from_crt(n=n, e=e, d=d, p=p, q=q, dmp1=dmp1, dmq1=dmq1, iqmp=iqmp)
+
+    cap = strategy.max_target_size(ctx)
+    if cap is not None and len(pkcs8) > cap:
+        pytest.skip(f"{label}: no wrapping path: no usable wrap mechanism for this target size")
+
+    unwrap_handle = strategy.unwrapping_key_handle(ctx)
+    if unwrap_handle is None:
+        pytest.skip(f"{label}: no wrapping path: resolved strategy has no unwrap handle")
+
+    blob = strategy.wrap(ctx, pkcs8)
+    unwrap_template: dict[Any, Any] = {CKA_CLASS: CKO_PRIVATE_KEY, CKA_KEY_TYPE: CKK_RSA}
+    unwrap_template.update(attrs)
+
+    handle = unwrap_key(
+        rs.raw,
+        rs.sh,
+        unwrap_handle,
+        blob,
+        strategy.unwrap_mech,
+        attrs=unwrap_template,
+        mech_param=strategy.unwrap_mech_param(ctx),
+    )
+
+    from pkcs11_check.compliance import ComplianceLevel, note
+
+    note(
+        f"{label}: private key provisioned via C_UnwrapKey ({ctx.strategy_name})",
+        ComplianceLevel.STANDARD,
+    )
     return handle
