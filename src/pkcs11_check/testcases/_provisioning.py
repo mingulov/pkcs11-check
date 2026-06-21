@@ -245,7 +245,44 @@ class ProvisioningProfile:
         return "create_available"
 
     def _probe_private(self, obj_class: str) -> str:  # noqa: ARG002
-        # Phase 2 wires real private-key probes; Phase 1 only needs "secret".
+        """Probe EC P-256 private-key import; map outcome to a create verdict.
+
+        Attempts to import a throwaway EC P-256 private key via C_CreateObject.
+        Maps the outcome:
+        - success → destroy the key and return ``"create_available"``
+        - ``CKR_FUNCTION_NOT_SUPPORTED`` → ``"create_absent"``
+        - rv in ``_CREATE_PROHIBITED_RVS`` → ``"create_prohibited"``
+        - any other CKR → re-raise (real finding)
+
+        The ``obj_class`` parameter is unused (only ``"private"`` reaches this
+        method) but kept for API symmetry with the dispatch in ``create_verdict``.
+        """
+        from pkcs11_check.raw.recipes import destroy_quietly, import_ec_private_key
+
+        # P-256 named-curve OID DER: 1.2.840.10045.3.1.7
+        ec_p256_params = bytes.fromhex("06082a8648ce3d030107")
+        # A valid P-256 private scalar (32 bytes, small but in-range)
+        ec_p256_scalar = b"\x01" * 32
+
+        try:
+            h = import_ec_private_key(
+                self.rs.raw,
+                self.rs.sh,
+                ec_params=ec_p256_params,
+                value=ec_p256_scalar,
+                attrs={
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                },
+            )
+        except CkrAssertionError as exc:
+            if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
+                return "create_absent"
+            if exc.rv in _CREATE_PROHIBITED_RVS:
+                return "create_prohibited"
+            raise
+        destroy_quietly(self.rs.raw, self.rs.sh, h)
         return "create_available"
 
 
