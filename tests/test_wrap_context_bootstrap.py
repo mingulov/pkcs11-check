@@ -73,7 +73,7 @@ def test_bootstrap_builds_usable_context(monkeypatch: pytest.MonkeyPatch) -> Non
     def fake_read_attributes(
         raw: Any, session: int, handle: int, attr_types: Any
     ) -> dict[int, Any]:
-        return {int(CKA_MODULUS): n_bytes, int(CKA_PUBLIC_EXPONENT): e_bytes}
+        return {CKA_MODULUS: n_bytes, CKA_PUBLIC_EXPONENT: e_bytes}
 
     monkeypatch.setattr("pkcs11_check.raw.recipes.gen_rsa_keypair", fake_gen_rsa_keypair)
     monkeypatch.setattr("pkcs11_check.raw.recipes.read_attributes", fake_read_attributes)
@@ -125,13 +125,13 @@ def test_size_escalation_2048_refused_3072_succeeds(monkeypatch: pytest.MonkeyPa
     ) -> tuple[int, int]:
         calls.append(bits)
         if bits == 2048:
-            raise CkrAssertionError("key size range", int(CKR_KEY_SIZE_RANGE))
+            raise CkrAssertionError("key size range", CKR_KEY_SIZE_RANGE)
         return pub_h, priv_h
 
     def fake_read_attributes(
         raw: Any, session: int, handle: int, attr_types: Any
     ) -> dict[int, Any]:
-        return {int(CKA_MODULUS): n_bytes, int(CKA_PUBLIC_EXPONENT): e_bytes}
+        return {CKA_MODULUS: n_bytes, CKA_PUBLIC_EXPONENT: e_bytes}
 
     monkeypatch.setattr("pkcs11_check.raw.recipes.gen_rsa_keypair", fake_gen_rsa_keypair)
     monkeypatch.setattr("pkcs11_check.raw.recipes.read_attributes", fake_read_attributes)
@@ -163,7 +163,7 @@ def test_all_sizes_refused_returns_none(monkeypatch: pytest.MonkeyPatch) -> None
     def fake_gen_rsa_keypair(
         raw: Any, session: int, bits: int = 2048, **kwargs: Any
     ) -> tuple[int, int]:
-        raise CkrAssertionError("key size range", int(CKR_KEY_SIZE_RANGE))
+        raise CkrAssertionError("key size range", CKR_KEY_SIZE_RANGE)
 
     monkeypatch.setattr("pkcs11_check.raw.recipes.gen_rsa_keypair", fake_gen_rsa_keypair)
     _reset_cache()
@@ -192,7 +192,7 @@ def test_unexpected_keygen_ckr_propagates(monkeypatch: pytest.MonkeyPatch) -> No
     def fake_gen_rsa_keypair(
         raw: Any, session: int, bits: int = 2048, **kwargs: Any
     ) -> tuple[int, int]:
-        raise CkrAssertionError("device error", int(CKR_DEVICE_ERROR))
+        raise CkrAssertionError("device error", CKR_DEVICE_ERROR)
 
     monkeypatch.setattr("pkcs11_check.raw.recipes.gen_rsa_keypair", fake_gen_rsa_keypair)
     _reset_cache()

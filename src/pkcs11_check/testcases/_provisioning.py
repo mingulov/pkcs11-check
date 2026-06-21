@@ -234,10 +234,10 @@ def select_strategy(
 
 _RSA_SIZE_REFUSED: frozenset[int] = frozenset(
     {
-        int(CKR_KEY_SIZE_RANGE),
-        int(CKR_ATTRIBUTE_VALUE_INVALID),
-        int(CKR_TEMPLATE_INCONSISTENT),
-        int(CKR_FUNCTION_FAILED),
+        CKR_KEY_SIZE_RANGE,
+        CKR_ATTRIBUTE_VALUE_INVALID,
+        CKR_TEMPLATE_INCONSISTENT,
+        CKR_FUNCTION_FAILED,
     }
 )
 
@@ -267,7 +267,7 @@ def _bootstrap_rsa_unwrap_key(rs: Any, start_bits: int) -> tuple[int, int, int] 
             )
             return pub, priv, bits
         except CkrAssertionError as exc:
-            if int(exc.rv) in _RSA_SIZE_REFUSED:
+            if exc.rv in _RSA_SIZE_REFUSED:
                 continue  # try a larger size
             raise  # an unexpected keygen error is a real finding
     return None
@@ -303,9 +303,9 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
 
     from pkcs11_check.raw.recipes import read_attributes
 
-    attrs = read_attributes(rs.raw, rs.sh, pub_handle, (int(CKA_MODULUS), int(CKA_PUBLIC_EXPONENT)))
-    n = int.from_bytes(attrs[int(CKA_MODULUS)], "big")
-    e = int.from_bytes(attrs[int(CKA_PUBLIC_EXPONENT)], "big")
+    attrs = read_attributes(rs.raw, rs.sh, pub_handle, (CKA_MODULUS, CKA_PUBLIC_EXPONENT))
+    n = int.from_bytes(attrs[CKA_MODULUS], "big")
+    e = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
     pub_key = _crypto_rsa.RSAPublicNumbers(e, n).public_key()
     der = pub_key.public_bytes(_Encoding.DER, _PublicFormat.SubjectPublicKeyInfo)
 
