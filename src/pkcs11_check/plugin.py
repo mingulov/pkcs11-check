@@ -194,6 +194,56 @@ def pytest_addoption(parser: Any) -> None:
         metavar="N",
         help="Keep only the last N CK_RV trace entries per test (implies --p11-rv-trace)",
     )
+    group.addoption(
+        "--p11-key-inject",
+        dest="p11_key_inject",
+        default="off",
+        help="Key-provisioning injection mode: off, unwrap, force-unwrap (default: off)",
+    )
+    group.addoption(
+        "--p11-wrap-key-source",
+        dest="p11_wrap_key_source",
+        default="bootstrap",
+        help="Wrapping KEK source: bootstrap (auto-generate) or configured (default: bootstrap)",
+    )
+    group.addoption(
+        "--p11-wrap-key-label",
+        dest="p11_wrap_key_label",
+        default=None,
+        help="Label of the configured wrapping key",
+    )
+    group.addoption(
+        "--p11-wrap-key-handle",
+        dest="p11_wrap_key_handle",
+        type=int,
+        default=None,
+        help="Handle of the configured wrapping key",
+    )
+    group.addoption(
+        "--p11-wrap-key-value",
+        dest="p11_wrap_key_value",
+        default=None,
+        help="Hex value of a symmetric configured KEK",
+    )
+    group.addoption(
+        "--p11-wrap-mech",
+        dest="p11_wrap_mech",
+        default=None,
+        help="Override auto-selected unwrap mechanism (e.g. CKM_RSA_AES_KEY_WRAP)",
+    )
+    group.addoption(
+        "--p11-wrap-rsa-bits",
+        dest="p11_wrap_rsa_bits",
+        type=int,
+        default=2048,
+        help="RSA key size in bits for bootstrap wrapping key (default: 2048)",
+    )
+    group.addoption(
+        "--p11-wrap-oaep-hash",
+        dest="p11_wrap_oaep_hash",
+        default="auto",
+        help="OAEP hash for wrapping: auto, sha1, or sha256 (default: auto)",
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:

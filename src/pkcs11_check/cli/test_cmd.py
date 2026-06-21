@@ -78,6 +78,14 @@ def _build_pytest_args(
     output_file: str | None,
     include_machine_report_args: bool,
     verbose: bool,
+    key_inject: str,
+    wrap_key_source: str,
+    wrap_key_label: str | None,
+    wrap_key_handle: int | None,
+    wrap_key_value: str | None,
+    wrap_mech: str | None,
+    wrap_rsa_bits: int,
+    wrap_oaep_hash: str,
 ) -> list[str]:
     args: list[str] = []
     args.extend(["--p11-module", str(module)])
@@ -98,6 +106,23 @@ def _build_pytest_args(
         args.append(f"--p11-rv-trace-compact={rv_trace_compact}")
     elif rv_trace:
         args.append("--p11-rv-trace")
+
+    if key_inject != "off":
+        args.extend(["--p11-key-inject", key_inject])
+    if wrap_key_source != "bootstrap":
+        args.extend(["--p11-wrap-key-source", wrap_key_source])
+    if wrap_key_label is not None:
+        args.extend(["--p11-wrap-key-label", wrap_key_label])
+    if wrap_key_handle is not None:
+        args.extend(["--p11-wrap-key-handle", str(wrap_key_handle)])
+    if wrap_key_value is not None:
+        args.extend(["--p11-wrap-key-value", wrap_key_value])
+    if wrap_mech is not None:
+        args.extend(["--p11-wrap-mech", wrap_mech])
+    if wrap_rsa_bits != 2048:
+        args.extend(["--p11-wrap-rsa-bits", str(wrap_rsa_bits)])
+    if wrap_oaep_hash != "auto":
+        args.extend(["--p11-wrap-oaep-hash", wrap_oaep_hash])
 
     if marker:
         args.extend(["-m", marker])
@@ -324,6 +349,14 @@ def test_command(
         output_file=output_file,
         include_machine_report_args=isolation == "none",
         verbose=verbose,
+        key_inject=key_inject,
+        wrap_key_source=wrap_key_source,
+        wrap_key_label=wrap_key_label,
+        wrap_key_handle=wrap_key_handle,
+        wrap_key_value=wrap_key_value,
+        wrap_mech=wrap_mech,
+        wrap_rsa_bits=wrap_rsa_bits,
+        wrap_oaep_hash=wrap_oaep_hash,
     )
     pytest_args.extend(["--p11-manifest", str(manifest_path)])
     report_config = _isolated_report_config(output, output_file) if isolation != "none" else None
