@@ -799,28 +799,63 @@ def provision_secret_key(
     # Unwrap path (or forced)
     # ------------------------------------------------------------------
     if mode == "off":
-        record_provisioning_event("secret", "skipped_no_path")
-        pytest.skip(f"{label}: Module does not implement C_CreateObject")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=value,
+            label=label,
+            key_type=key_type,
+            obj_class="secret",
+            skip_msg=f"{label}: Module does not implement C_CreateObject",
+        )
 
     ctx = build_wrap_context(rs, cfg)
     if ctx is None:
-        record_provisioning_event("secret", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=value,
+            label=label,
+            key_type=key_type,
+            obj_class="secret",
+            skip_msg=f"{label}: no wrapping path",
+        )
 
     strategy = next((s for s in DEFAULT_STRATEGIES if s.name == ctx.strategy_name), None)
     if strategy is None:
-        record_provisioning_event("secret", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: resolved strategy not found")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=value,
+            label=label,
+            key_type=key_type,
+            obj_class="secret",
+            skip_msg=f"{label}: no wrapping path: resolved strategy not found",
+        )
 
     cap = strategy.max_target_size(ctx)
     if cap is not None and len(value) > cap:
-        record_provisioning_event("secret", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: no usable wrap mechanism for this target size")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=value,
+            label=label,
+            key_type=key_type,
+            obj_class="secret",
+            skip_msg=f"{label}: no wrapping path: no usable wrap mechanism for this target size",
+        )
 
     unwrap_handle = strategy.unwrapping_key_handle(ctx)
     if unwrap_handle is None:
-        record_provisioning_event("secret", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: resolved strategy has no unwrap handle")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=value,
+            label=label,
+            key_type=key_type,
+            obj_class="secret",
+            skip_msg=f"{label}: no wrapping path: resolved strategy has no unwrap handle",
+        )
     blob = strategy.wrap(ctx, value)
     unwrap_template = {k: v for k, v in attrs.items() if k not in _VALUE_BEARING}
     # C_UnwrapKey requires the new key's class and type in the template; add them
@@ -943,31 +978,67 @@ def provision_rsa_private_key(
     # ------------------------------------------------------------------
     # Unwrap path (or forced)
     # ------------------------------------------------------------------
+    # Compute PKCS#8 DER once here so it is available for all external-tier fallbacks below.
+    pkcs8 = rsa_pkcs8_from_crt(n=n, e=e, d=d, p=p, q=q, dmp1=dmp1, dmq1=dmq1, iqmp=iqmp)
+
     if mode == "off":
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: Module does not implement C_CreateObject")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=CKK_RSA,
+            obj_class="private",
+            skip_msg=f"{label}: Module does not implement C_CreateObject",
+        )
 
     ctx = build_wrap_context(rs, cfg)
     if ctx is None:
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=CKK_RSA,
+            obj_class="private",
+            skip_msg=f"{label}: no wrapping path",
+        )
 
     strategy = next((s for s in DEFAULT_STRATEGIES if s.name == ctx.strategy_name), None)
     if strategy is None:
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: resolved strategy not found")
-
-    pkcs8 = rsa_pkcs8_from_crt(n=n, e=e, d=d, p=p, q=q, dmp1=dmp1, dmq1=dmq1, iqmp=iqmp)
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=CKK_RSA,
+            obj_class="private",
+            skip_msg=f"{label}: no wrapping path: resolved strategy not found",
+        )
 
     cap = strategy.max_target_size(ctx)
     if cap is not None and len(pkcs8) > cap:
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: no usable wrap mechanism for this target size")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=CKK_RSA,
+            obj_class="private",
+            skip_msg=f"{label}: no wrapping path: no usable wrap mechanism for this target size",
+        )
 
     unwrap_handle = strategy.unwrapping_key_handle(ctx)
     if unwrap_handle is None:
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: resolved strategy has no unwrap handle")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=CKK_RSA,
+            obj_class="private",
+            skip_msg=f"{label}: no wrapping path: resolved strategy has no unwrap handle",
+        )
 
     blob = strategy.wrap(ctx, pkcs8)
     unwrap_template: dict[Any, Any] = {CKA_CLASS: CKO_PRIVATE_KEY, CKA_KEY_TYPE: CKK_RSA}
@@ -1073,37 +1144,74 @@ def provision_ec_private_key(
     # ------------------------------------------------------------------
     # Unwrap path (or forced)
     # ------------------------------------------------------------------
-    if mode == "off":
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: Module does not implement C_CreateObject")
-
-    ctx = build_wrap_context(rs, cfg)
-    if ctx is None:
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path")
-
-    strategy = next((s for s in DEFAULT_STRATEGIES if s.name == ctx.strategy_name), None)
-    if strategy is None:
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: resolved strategy not found")
-
+    # Compute PKCS#8 DER once so it is available for all external-tier fallbacks below.
+    # If encoding fails, external cannot receive material for this key type → skip early.
     try:
         from pkcs11_check.raw.key_encoding import ec_pkcs8_from_private
 
-        pkcs8 = ec_pkcs8_from_private(scalar=value, ec_params=ec_params, key_type=key_type)
+        pkcs8: bytes = ec_pkcs8_from_private(scalar=value, ec_params=ec_params, key_type=key_type)
     except ValueError:
         record_provisioning_event("private", "skipped_no_path")
         pytest.skip(f"{label}: no PKCS#8 encoding for this key type")
 
+    if mode == "off":
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=key_type,
+            obj_class="private",
+            skip_msg=f"{label}: Module does not implement C_CreateObject",
+        )
+
+    ctx = build_wrap_context(rs, cfg)
+    if ctx is None:
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=key_type,
+            obj_class="private",
+            skip_msg=f"{label}: no wrapping path",
+        )
+
+    strategy = next((s for s in DEFAULT_STRATEGIES if s.name == ctx.strategy_name), None)
+    if strategy is None:
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=key_type,
+            obj_class="private",
+            skip_msg=f"{label}: no wrapping path: resolved strategy not found",
+        )
+
     cap = strategy.max_target_size(ctx)
     if cap is not None and len(pkcs8) > cap:
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: no usable wrap mechanism for this target size")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=key_type,
+            obj_class="private",
+            skip_msg=f"{label}: no wrapping path: no usable wrap mechanism for this target size",
+        )
 
     unwrap_handle = strategy.unwrapping_key_handle(ctx)
     if unwrap_handle is None:
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: resolved strategy has no unwrap handle")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=key_type,
+            obj_class="private",
+            skip_msg=f"{label}: no wrapping path: resolved strategy has no unwrap handle",
+        )
 
     blob = strategy.wrap(ctx, pkcs8)
     unwrap_template: dict[Any, Any] = {CKA_CLASS: CKO_PRIVATE_KEY, CKA_KEY_TYPE: key_type}
@@ -1245,3 +1353,28 @@ def external_provision(
             os.unlink(path)
         except OSError:
             pass  # best-effort unlink; file may already be gone
+
+
+# ---------------------------------------------------------------------------
+# _external_or_skip — helper: try external tier, else record + skip
+# ---------------------------------------------------------------------------
+
+
+def _external_or_skip(
+    rs: Any,
+    cfg: Any,
+    *,
+    material: bytes,
+    label: str,
+    key_type: int,
+    obj_class: str,
+    skip_msg: str,
+) -> int:
+    """Try external provisioning; on success return the handle, else pytest.skip(skip_msg)."""
+    handle = external_provision(
+        rs, cfg, material=material, label=label, key_type=key_type, obj_class=obj_class
+    )
+    if handle is not None:
+        return handle
+    record_provisioning_event(obj_class, "skipped_no_path")
+    pytest.skip(skip_msg)
