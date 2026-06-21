@@ -35,12 +35,12 @@ def test_cctv_ed25519_verify_non_clean_reject_is_xfail(
     def _verify_reject(*_args: Any, **_kwargs: Any) -> bool:
         raise CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))
 
-    monkeypatch.setattr(test_cctv_ed25519, "import_ec_public_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_cctv_ed25519, "provision_public_key", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(test_cctv_ed25519, "verify_single", _verify_reject)
     monkeypatch.setattr(test_cctv_ed25519, "destroy_quietly", lambda *_args: None)
 
     with pytest.raises(pytest.xfail.Exception, match="signature verification rejected"):
-        test_cctv_ed25519.test_ed25519_cctv(_vec(["low_order_R"]), _EdDsaSession())
+        test_cctv_ed25519.test_ed25519_cctv(_vec(["low_order_R"]), _EdDsaSession(), None)
 
 
 def test_cctv_ed25519_invalid_key_non_clean_import_reject_is_xfail(
@@ -49,10 +49,10 @@ def test_cctv_ed25519_invalid_key_non_clean_import_reject_is_xfail(
     def _import_reject(*_args: Any, **_kwargs: Any) -> int:
         raise CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))
 
-    monkeypatch.setattr(test_cctv_ed25519, "import_ec_public_key", _import_reject)
+    monkeypatch.setattr(test_cctv_ed25519, "provision_public_key", _import_reject)
 
     with pytest.raises(pytest.xfail.Exception, match="invalid public key rejected"):
-        test_cctv_ed25519.test_ed25519_cctv(_vec(["low_order_A"]), _EdDsaSession())
+        test_cctv_ed25519.test_ed25519_cctv(_vec(["low_order_A"]), _EdDsaSession(), None)
 
 
 def test_cctv_ed25519_invalid_key_clean_import_reject_is_pass(
@@ -64,6 +64,6 @@ def test_cctv_ed25519_invalid_key_clean_import_reject_is_pass(
             int(CKR_ATTRIBUTE_VALUE_INVALID),
         )
 
-    monkeypatch.setattr(test_cctv_ed25519, "import_ec_public_key", _import_reject)
+    monkeypatch.setattr(test_cctv_ed25519, "provision_public_key", _import_reject)
 
-    test_cctv_ed25519.test_ed25519_cctv(_vec(["non_canonical_A"]), _EdDsaSession())
+    test_cctv_ed25519.test_ed25519_cctv(_vec(["non_canonical_A"]), _EdDsaSession(), None)

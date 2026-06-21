@@ -20,7 +20,6 @@ import pytest
 
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    import_ec_public_key,
     verify_single,
 )
 from pkcs11_check.raw.types_std import (
@@ -42,6 +41,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._provisioning import provision_public_key
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 from pkcs11_check.testcases.data import CCTV_DIR, load_json_cached
@@ -115,7 +115,7 @@ def _invalid_public_key_rejected_cleanly(exc: AssertionError, flags: list[str]) 
 
 
 @pytest.mark.parametrize("vec", _vectors, ids=_vec_id)
-def test_ed25519_cctv(vec: dict[str, Any], p11_module_session: Any) -> None:
+def test_ed25519_cctv(vec: dict[str, Any], p11_module_session: Any, p11_config: Any) -> None:
     """Ed25519 verification with CCTV edge-case vector."""
     rs = p11_module_session
     if not rs.has_mechanism("EDDSA"):
@@ -130,13 +130,14 @@ def test_ed25519_cctv(vec: dict[str, Any], p11_module_session: Any) -> None:
     pub = 0
     try:
         try:
-            pub = import_ec_public_key(
-                rs.raw,
-                rs.sh,
+            pub = provision_public_key(
+                rs,
+                p11_config,
                 ec_params=bytes.fromhex("06032b6570"),  # OID for Ed25519
                 ec_point=pub_key_bytes,
                 key_type=int(CKK_EC_EDWARDS),
                 attrs={CKA_VERIFY: True},
+                label="cctv ed25519 verify KAT",
             )
         except AssertionError as exc:
             if _invalid_public_key_rejected_cleanly(exc, flags):
