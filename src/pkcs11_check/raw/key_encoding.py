@@ -30,14 +30,18 @@ def _decode_der_oid(data: bytes) -> str:
     if len(data) < 2 or data[0] != 0x06:
         raise ValueError(f"Expected DER OID tag 0x06, got 0x{data[0]:02x}")
     oid_len = data[1]
+    if oid_len & 0x80:
+        raise ValueError("unsupported long-form DER length in EC params OID")
     body = data[2 : 2 + oid_len]
     if len(body) != oid_len:
         raise ValueError("DER OID length mismatch")
 
-    # First byte encodes the first two sub-identifiers: a*40 + b
+    # First byte encodes the first two sub-identifiers.
+    # arc-0: first < 40 → (0, first)
+    # arc-1: 40 <= first < 80 → (1, first - 40)
+    # arc-2: first >= 80 → (2, first - 80)
     first = body[0]
-    a = first // 40
-    b = first % 40
+    a, b = (0, first) if first < 40 else (1, first - 40) if first < 80 else (2, first - 80)
     components = [a, b]
 
     # Remaining bytes are base-128 varint-encoded sub-identifiers
@@ -124,7 +128,7 @@ def ec_pkcs8_from_private(*, scalar: bytes, ec_params: bytes, key_type: int) -> 
     elif key_type == CKK_EC_MONTGOMERY:
         return _montgomery_pkcs8(scalar=scalar)
     else:
-        raise ValueError(f"Unsupported key_type: 0x{int(key_type):08x}")
+        raise ValueError(f"Unsupported key_type: 0x{key_type:08x}")
 
 
 def _ec_named_curve_pkcs8(*, scalar: bytes, ec_params: bytes) -> bytes:
