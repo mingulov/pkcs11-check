@@ -264,12 +264,23 @@ def select_strategy(
     """First strategy that is usable AND can carry ``target_len`` bytes; else None.
 
     Size check uses a sentinel WrapContext with the profile's bootstrap RSA size so OAEP's
-    max-payload is honoured. The real ctx (Task 6) has the same rsa_pub_der size.
+    max-payload is honoured.  The real wrap context (built by ``build_wrap_context``) carries
+    the actual key material; this function is a pre-flight utility for callers (e.g. Phase 2
+    private-key provisioning) that need to know which strategy will be selected before
+    committing to a full bootstrap.  ``provision_secret_key`` does NOT use this function;
+    it resolves strategy through ``build_wrap_context``'s trial round-trip and stores the
+    result in ``WrapContext.strategy_name``.
     """
+    _aes_kwp_usable = AesKwp().usable(profile)
     probe_ctx = WrapContext(
         rsa_pub_der=getattr(profile, "rsa_pub_der_probe", None),
         rsa_unwrap_handle=None,
-        sym_kek=b"\x00" * 32 if getattr(profile, "aes_kwp", False) else None,
+        # Sentinel: if AES-KWP is usable, set both sym_kek and aes_kek_handle so that
+        # AesKwp.has_material() returns True and max_target_size() returns None (unbounded).
+        # The actual key material is supplied by build_wrap_context; these are probe-only
+        # placeholders and are never used to perform a real wrap operation here.
+        sym_kek=b"\x00" * 32 if _aes_kwp_usable else None,
+        aes_kek_handle=0 if _aes_kwp_usable else None,
         oaep_hash="sha1",
     )
     for s in strategies:
@@ -286,6 +297,13 @@ def select_strategy(
 # Bootstrap RSA unwrap key with size escalation (Task 6)
 # ---------------------------------------------------------------------------
 
+#: CKRs that trigger RSA keygen size escalation (2048 → 3072 → 4096).
+#:
+#: ``CKR_KEY_SIZE_RANGE`` and ``CKR_ATTRIBUTE_VALUE_INVALID`` are the canonical
+#: size-refusal codes.  ``CKR_TEMPLATE_INCONSISTENT`` and ``CKR_FUNCTION_FAILED``
+#: are also included because some real HSM implementations return them for
+#: unsupported key sizes (see docs/module-issues.md for per-module notes).
+#: An unexpected keygen error not in this set is re-raised as a finding.
 _RSA_SIZE_REFUSED: frozenset[int] = frozenset(
     {
         CKR_KEY_SIZE_RANGE,

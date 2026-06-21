@@ -71,3 +71,11 @@ def test_oaep_max_payload_sha1_vs_sha256() -> None:
     # 215 > 214 should be rejected with sha1
     s2 = provisioning.select_strategy(provisioning.DEFAULT_STRATEGIES, prof, target_len=215)
     assert s2 is None
+
+
+def test_aes_kwp_selected_when_only_option() -> None:
+    """select_strategy picks aes_kwp when it's the only usable strategy."""
+    prof = FakeProfile(rsa_aes_key_wrap=False, rsa_oaep=False, aes_kwp=True)
+    s = provisioning.select_strategy(provisioning.DEFAULT_STRATEGIES, prof, target_len=32)
+    assert s is not None
+    assert s.name == "aes_kwp"
