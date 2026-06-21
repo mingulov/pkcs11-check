@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa as _crypto_rsa
 from cryptography.hazmat.primitives.serialization import Encoding as _Encoding
 from cryptography.hazmat.primitives.serialization import PublicFormat as _PublicFormat
@@ -25,6 +26,8 @@ from pkcs11_check.raw.types_std import (
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKA_UNWRAP,
+    CKA_VALUE,
+    CKA_VALUE_LEN,
     CKA_WRAP,
     CKG_MGF1_SHA256,
     CKK_AES,
@@ -311,3 +314,108 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
 
     profile_for(rs).rsa_pub_der_probe = der
     return WrapContext(rsa_pub_der=der, unwrapping_key_handle=priv_handle)
+
+
+# ---------------------------------------------------------------------------
+# provision_secret_key — resolution entry point (Task 7)
+# ---------------------------------------------------------------------------
+
+#: Attribute keys that carry the secret material; must be stripped from the
+#: unwrap template so the value comes from the encrypted blob, not the template.
+_VALUE_BEARING: frozenset[int] = frozenset({CKA_VALUE, CKA_VALUE_LEN})
+
+
+def provision_secret_key(
+    rs: Any,
+    cfg: Any,
+    key_type: int,
+    value: bytes,
+    attrs: dict[Any, Any],
+    *,
+    label: str,
+) -> int:
+    """Provision a secret key into the token by the best available means.
+
+    Resolution order (per design §3.2):
+
+    1. If ``cfg.key_inject != "force-unwrap"``, probe create availability.
+       When the module supports C_CreateObject for secrets, call
+       ``import_secret_key`` directly and return the handle.
+
+    2. If create is unavailable/prohibited OR ``cfg.key_inject == "force-unwrap"``:
+       - ``key_inject == "off"`` → ``pytest.skip`` (no injection path).
+       - Build a ``WrapContext`` (bootstrap RSA keypair); ``None`` → ``pytest.skip``.
+       - ``select_strategy`` for the target size; ``None`` → ``pytest.skip``.
+       - Encrypt the value into a blob, call ``unwrap_key`` with the blob.
+       - Value-integrity: when the key is non-sensitive, read back ``CKA_VALUE``
+         and assert it equals ``value``; mismatch → ``pytest.skip`` (corrupted
+         setup, not a target-operation finding).
+       - Return the unwrapped key handle.
+
+    Args:
+        rs:       Session record with ``.raw``, ``.sh``, and ``has_mechanism``.
+        cfg:      Config carrying ``key_inject``, ``wrap_rsa_bits``, etc.
+        key_type: ``CKK_*`` int (bare constant, not wrapped in ``int()``).
+        value:    Raw key bytes to inject.
+        attrs:    Template attributes for the resulting object.  Must not
+                  include ``CKA_VALUE`` / ``CKA_VALUE_LEN`` for the unwrap
+                  path (they are stripped automatically).
+        label:    Human-readable label used in skip messages.
+
+    Returns:
+        Object handle (int) of the provisioned key.
+
+    Raises:
+        pytest.skip.Exception: When the module has no injection path or the
+            wrap-context / strategy is unavailable.
+    """
+    from pkcs11_check.raw.recipes import import_secret_key, read_attributes, unwrap_key
+
+    mode: str = getattr(cfg, "key_inject", "off")
+
+    # ------------------------------------------------------------------
+    # Fast path: create_available (unless caller forces the unwrap path)
+    # ------------------------------------------------------------------
+    if mode != "force-unwrap":
+        verdict = profile_for(rs).create_verdict("secret")
+        if verdict == "create_available":
+            return import_secret_key(rs.raw, rs.sh, key_type, value, attrs)
+
+    # ------------------------------------------------------------------
+    # Unwrap path (or forced)
+    # ------------------------------------------------------------------
+    if mode == "off":
+        pytest.skip(f"{label}: Module does not implement C_CreateObject")
+
+    ctx = build_wrap_context(rs, cfg)
+    if ctx is None:
+        pytest.skip(f"{label}: no wrapping path")
+
+    strategy = select_strategy(DEFAULT_STRATEGIES, profile_for(rs), len(value))
+    if strategy is None:
+        pytest.skip(f"{label}: no wrapping path: no usable wrap mechanism for this target size")
+
+    blob = strategy.wrap(ctx, value)
+    unwrap_template = {k: v for k, v in attrs.items() if int(k) not in _VALUE_BEARING}
+    handle = unwrap_key(
+        rs.raw,
+        rs.sh,
+        ctx.unwrapping_key_handle,
+        blob,
+        strategy.unwrap_mech,
+        attrs=unwrap_template,
+        mech_param=strategy.unwrap_mech_param(ctx),
+    )
+
+    # Value-integrity readback for non-sensitive keys
+    is_sensitive = attrs.get(CKA_SENSITIVE)
+    if not is_sensitive:
+        read_back = read_attributes(rs.raw, rs.sh, handle, (CKA_VALUE,))
+        actual = read_back.get(int(CKA_VALUE))
+        if actual != value:
+            pytest.skip(
+                f"{label}: provisioned key value mismatch "
+                f"(expected {value.hex()!r}, got {actual!r})"
+            )
+
+    return handle
