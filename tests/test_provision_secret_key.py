@@ -928,3 +928,108 @@ def test_readback_wrong_value_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     assert any(e.method == "skipped_no_path" for e in events), (
         "skipped_no_path must be recorded on confirmed corruption"
     )
+
+
+# ---------------------------------------------------------------------------
+# (p) force-unwrap + no wrap path + external CONFIGURED -> returns external handle
+# (q) force-unwrap + no wrap path + external NOT configured -> skips + records skipped_no_path
+# ---------------------------------------------------------------------------
+
+
+def _make_cfg_external(
+    key_inject: str,
+    *,
+    allow_external: bool,
+    external_cmd: str | None = "fake-cmd {keyfile} {label}",
+) -> Any:
+    from pkcs11_check.config import P11TestConfig
+
+    return P11TestConfig(
+        module=Path("/stub.so"),
+        key_inject=key_inject,
+        wrap_rsa_bits=2048,
+        wrap_oaep_hash="sha1",
+        allow_external_provision=allow_external,
+        external_provision_cmd=external_cmd if allow_external else None,
+    )
+
+
+def test_force_unwrap_no_ctx_external_configured_returns_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(p) force-unwrap + no wrap path + external configured -> returns external handle, no skip."""
+    external_handle = 4000
+
+    def fake_external_provision(
+        rs: Any,
+        cfg: Any,
+        *,
+        material: bytes,
+        label: str,
+        key_type: Any,
+        obj_class: str,
+    ) -> int:
+        from pkcs11_check.testcases._provisioning import record_provisioning_event
+
+        record_provisioning_event(obj_class, "ran_via_external")
+        return external_handle
+
+    monkeypatch.setattr(_prov, "build_wrap_context", lambda rs, cfg: None)
+    monkeypatch.setattr(_prov, "external_provision", fake_external_provision)
+    _reset_cache()
+
+    from pkcs11_check.testcases._provisioning import (
+        clear_provisioning_events,
+        get_provisioning_events,
+        provision_secret_key,
+    )
+
+    clear_provisioning_events()
+    rs = _make_rs(sh=400, has_mech=True)
+    cfg = _make_cfg_external("force-unwrap", allow_external=True)
+    h = provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t-p")
+
+    assert h == external_handle, "must return the external provision handle"
+    events = get_provisioning_events()
+    assert not any(e.method == "skipped_no_path" for e in events), (
+        "skipped_no_path must NOT be recorded when external succeeds"
+    )
+
+
+def test_force_unwrap_no_ctx_external_not_configured_skips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(q) force-unwrap + no wrap path + external not configured -> skip + skipped_no_path."""
+
+    def fake_external_provision(
+        rs: Any,
+        cfg: Any,
+        *,
+        material: bytes,
+        label: str,
+        key_type: Any,
+        obj_class: str,
+    ) -> None:
+        return None  # external returns None (not configured)
+
+    monkeypatch.setattr(_prov, "build_wrap_context", lambda rs, cfg: None)
+    monkeypatch.setattr(_prov, "external_provision", fake_external_provision)
+    _reset_cache()
+
+    from pkcs11_check.testcases._provisioning import (
+        clear_provisioning_events,
+        get_provisioning_events,
+        provision_secret_key,
+    )
+
+    clear_provisioning_events()
+    rs = _make_rs(sh=401, has_mech=True)
+    cfg = _make_cfg_external("force-unwrap", allow_external=False)
+    with pytest.raises(pytest.skip.Exception) as exc_info:
+        provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t-q")
+
+    assert "no wrapping path" in str(exc_info.value), "skip message must mention 'no wrapping path'"
+    events = get_provisioning_events()
+    assert any(e.method == "skipped_no_path" for e in events), (
+        "skipped_no_path must be recorded when external also fails"
+    )

@@ -25,15 +25,14 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKF_VERIFY,
+    CKK_EC,
+    CKK_RSA,
     CKM_ECDSA_SHA256,
     CKM_SHA256_RSA_PKCS,
 )
+from pkcs11_check.testcases._provisioning import provision_public_key
 from pkcs11_check.testcases._signature_policy import MODULE_VERIFY_UNUSABLE_RVS
-from pkcs11_check.testcases.conftest import (
-    import_ec_public_key_negotiated,
-    import_rsa_public_key_negotiated,
-    skip_unless_mechanism_flag,
-)
+from pkcs11_check.testcases.conftest import skip_unless_mechanism_flag
 
 pytestmark = [pytest.mark.sign, pytest.mark.keymgmt]
 
@@ -97,6 +96,7 @@ def classify_module_verify(
 
 def _build_rsa_pkcs1_probe(
     rs: Any,
+    p11_config: Any,
 ) -> tuple[int, bytes, bytes]:
     """Generate RSA-2048 key locally, sign _MESSAGE with PKCS#1 v1.5 SHA-256.
 
@@ -109,18 +109,21 @@ def _build_rsa_pkcs1_probe(
     pub_numbers = priv.public_key().public_numbers()
     n = pub_numbers.n.to_bytes(256, "big")
     e = pub_numbers.e.to_bytes(3, "big")
-    pub_handle = import_rsa_public_key_negotiated(
+    pub_handle = provision_public_key(
         rs,
-        n=n,
-        e=e,
+        p11_config,
+        rsa_n=n,
+        rsa_e=e,
+        key_type=CKK_RSA,
         attrs={CKA_VERIFY: True},
-        purpose="verify-operability RSA-2048 public key",
+        label="verify-operability RSA",
     )
     return pub_handle, _MESSAGE, sig
 
 
 def _build_ecdsa_sha256_probe(
     rs: Any,
+    p11_config: Any,
 ) -> tuple[int, bytes, bytes]:
     """Generate P-256 key locally, sign _MESSAGE with ECDSA-SHA256.
 
@@ -138,12 +141,14 @@ def _build_ecdsa_sha256_probe(
     pub_numbers = pub_key.public_numbers()
     ec_params = encode_named_curve_parameters("secp256r1")
     ec_point = encode_ec_point(pub_numbers.x, pub_numbers.y, _P256_COORD_LEN)
-    pub_handle = import_ec_public_key_negotiated(
+    pub_handle = provision_public_key(
         rs,
+        p11_config,
         ec_params=ec_params,
         ec_point=ec_point,
+        key_type=CKK_EC,
         attrs={CKA_VERIFY: True},
-        purpose="verify-operability P-256 public key",
+        label="verify-operability EC",
     )
     return pub_handle, _MESSAGE, raw_sig
 
@@ -172,6 +177,7 @@ class TestVerifyOperability:
     def test_module_verify_operability(
         self,
         p11_raw_session: Any,
+        p11_config: Any,
         mechanism: Any,
         mech_name: str,
     ) -> None:
@@ -187,9 +193,9 @@ class TestVerifyOperability:
         pub_handle = 0
         try:
             if mechanism == CKM_SHA256_RSA_PKCS:
-                pub_handle, data, sig = _build_rsa_pkcs1_probe(rs)
+                pub_handle, data, sig = _build_rsa_pkcs1_probe(rs, p11_config)
             else:
-                pub_handle, data, sig = _build_ecdsa_sha256_probe(rs)
+                pub_handle, data, sig = _build_ecdsa_sha256_probe(rs, p11_config)
             classify_module_verify(rs, mechanism, pub_handle, data, sig, label=label)
         finally:
             if pub_handle:

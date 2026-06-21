@@ -799,28 +799,63 @@ def provision_secret_key(
     # Unwrap path (or forced)
     # ------------------------------------------------------------------
     if mode == "off":
-        record_provisioning_event("secret", "skipped_no_path")
-        pytest.skip(f"{label}: Module does not implement C_CreateObject")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=value,
+            label=label,
+            key_type=key_type,
+            obj_class="secret",
+            skip_msg=f"{label}: Module does not implement C_CreateObject",
+        )
 
     ctx = build_wrap_context(rs, cfg)
     if ctx is None:
-        record_provisioning_event("secret", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=value,
+            label=label,
+            key_type=key_type,
+            obj_class="secret",
+            skip_msg=f"{label}: no wrapping path",
+        )
 
     strategy = next((s for s in DEFAULT_STRATEGIES if s.name == ctx.strategy_name), None)
     if strategy is None:
-        record_provisioning_event("secret", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: resolved strategy not found")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=value,
+            label=label,
+            key_type=key_type,
+            obj_class="secret",
+            skip_msg=f"{label}: no wrapping path: resolved strategy not found",
+        )
 
     cap = strategy.max_target_size(ctx)
     if cap is not None and len(value) > cap:
-        record_provisioning_event("secret", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: no usable wrap mechanism for this target size")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=value,
+            label=label,
+            key_type=key_type,
+            obj_class="secret",
+            skip_msg=f"{label}: no wrapping path: no usable wrap mechanism for this target size",
+        )
 
     unwrap_handle = strategy.unwrapping_key_handle(ctx)
     if unwrap_handle is None:
-        record_provisioning_event("secret", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: resolved strategy has no unwrap handle")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=value,
+            label=label,
+            key_type=key_type,
+            obj_class="secret",
+            skip_msg=f"{label}: no wrapping path: resolved strategy has no unwrap handle",
+        )
     blob = strategy.wrap(ctx, value)
     unwrap_template = {k: v for k, v in attrs.items() if k not in _VALUE_BEARING}
     # C_UnwrapKey requires the new key's class and type in the template; add them
@@ -943,31 +978,67 @@ def provision_rsa_private_key(
     # ------------------------------------------------------------------
     # Unwrap path (or forced)
     # ------------------------------------------------------------------
+    # Compute PKCS#8 DER once here so it is available for all external-tier fallbacks below.
+    pkcs8 = rsa_pkcs8_from_crt(n=n, e=e, d=d, p=p, q=q, dmp1=dmp1, dmq1=dmq1, iqmp=iqmp)
+
     if mode == "off":
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: Module does not implement C_CreateObject")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=CKK_RSA,
+            obj_class="private",
+            skip_msg=f"{label}: Module does not implement C_CreateObject",
+        )
 
     ctx = build_wrap_context(rs, cfg)
     if ctx is None:
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=CKK_RSA,
+            obj_class="private",
+            skip_msg=f"{label}: no wrapping path",
+        )
 
     strategy = next((s for s in DEFAULT_STRATEGIES if s.name == ctx.strategy_name), None)
     if strategy is None:
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: resolved strategy not found")
-
-    pkcs8 = rsa_pkcs8_from_crt(n=n, e=e, d=d, p=p, q=q, dmp1=dmp1, dmq1=dmq1, iqmp=iqmp)
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=CKK_RSA,
+            obj_class="private",
+            skip_msg=f"{label}: no wrapping path: resolved strategy not found",
+        )
 
     cap = strategy.max_target_size(ctx)
     if cap is not None and len(pkcs8) > cap:
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: no usable wrap mechanism for this target size")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=CKK_RSA,
+            obj_class="private",
+            skip_msg=f"{label}: no wrapping path: no usable wrap mechanism for this target size",
+        )
 
     unwrap_handle = strategy.unwrapping_key_handle(ctx)
     if unwrap_handle is None:
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: resolved strategy has no unwrap handle")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=CKK_RSA,
+            obj_class="private",
+            skip_msg=f"{label}: no wrapping path: resolved strategy has no unwrap handle",
+        )
 
     blob = strategy.wrap(ctx, pkcs8)
     unwrap_template: dict[Any, Any] = {CKA_CLASS: CKO_PRIVATE_KEY, CKA_KEY_TYPE: CKK_RSA}
@@ -1073,37 +1144,74 @@ def provision_ec_private_key(
     # ------------------------------------------------------------------
     # Unwrap path (or forced)
     # ------------------------------------------------------------------
-    if mode == "off":
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: Module does not implement C_CreateObject")
-
-    ctx = build_wrap_context(rs, cfg)
-    if ctx is None:
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path")
-
-    strategy = next((s for s in DEFAULT_STRATEGIES if s.name == ctx.strategy_name), None)
-    if strategy is None:
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: resolved strategy not found")
-
+    # Compute PKCS#8 DER once so it is available for all external-tier fallbacks below.
+    # If encoding fails, external cannot receive material for this key type → skip early.
     try:
         from pkcs11_check.raw.key_encoding import ec_pkcs8_from_private
 
-        pkcs8 = ec_pkcs8_from_private(scalar=value, ec_params=ec_params, key_type=key_type)
+        pkcs8: bytes = ec_pkcs8_from_private(scalar=value, ec_params=ec_params, key_type=key_type)
     except ValueError:
         record_provisioning_event("private", "skipped_no_path")
         pytest.skip(f"{label}: no PKCS#8 encoding for this key type")
 
+    if mode == "off":
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=key_type,
+            obj_class="private",
+            skip_msg=f"{label}: Module does not implement C_CreateObject",
+        )
+
+    ctx = build_wrap_context(rs, cfg)
+    if ctx is None:
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=key_type,
+            obj_class="private",
+            skip_msg=f"{label}: no wrapping path",
+        )
+
+    strategy = next((s for s in DEFAULT_STRATEGIES if s.name == ctx.strategy_name), None)
+    if strategy is None:
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=key_type,
+            obj_class="private",
+            skip_msg=f"{label}: no wrapping path: resolved strategy not found",
+        )
+
     cap = strategy.max_target_size(ctx)
     if cap is not None and len(pkcs8) > cap:
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: no usable wrap mechanism for this target size")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=key_type,
+            obj_class="private",
+            skip_msg=f"{label}: no wrapping path: no usable wrap mechanism for this target size",
+        )
 
     unwrap_handle = strategy.unwrapping_key_handle(ctx)
     if unwrap_handle is None:
-        record_provisioning_event("private", "skipped_no_path")
-        pytest.skip(f"{label}: no wrapping path: resolved strategy has no unwrap handle")
+        return _external_or_skip(
+            rs,
+            cfg,
+            material=pkcs8,
+            label=label,
+            key_type=key_type,
+            obj_class="private",
+            skip_msg=f"{label}: no wrapping path: resolved strategy has no unwrap handle",
+        )
 
     blob = strategy.wrap(ctx, pkcs8)
     unwrap_template: dict[Any, Any] = {CKA_CLASS: CKO_PRIVATE_KEY, CKA_KEY_TYPE: key_type}
@@ -1127,3 +1235,454 @@ def provision_ec_private_key(
     )
     record_provisioning_event("private", "ran_via_unwrap")
     return handle
+
+
+# ---------------------------------------------------------------------------
+# external_provision — operator-command provisioning tier (Task 2)
+# ---------------------------------------------------------------------------
+
+#: Maximum seconds to wait for the operator-supplied provisioning command.
+_EXTERNAL_CMD_TIMEOUT: int = 120
+
+
+def external_provision(
+    rs: Any,
+    cfg: Any,
+    *,
+    material: bytes,
+    label: str,
+    key_type: int,
+    obj_class: str,
+) -> int | None:
+    """Provision an object via the operator's external command. Returns a handle, or None.
+
+    INERT (returns None immediately) unless BOTH cfg.allow_external_provision is True
+    AND cfg.external_provision_cmd is a non-empty template. Writes ``material`` to a
+    0600 temp file; substitutes {keyfile}/{label}/{key_type}/{key_class} into the
+    command; runs it with a timeout; resolves the loaded object by CKA_LABEL via
+    C_FindObjects. On success records a provisioning event + compliance.note and
+    returns the handle. Any failure (timeout / non-zero exit / not found / exception)
+    returns None — the caller decides whether to skip. NEVER raises.
+    """
+    import os
+    import shlex
+    import subprocess
+    import tempfile
+
+    # Gate: both flags must be set and non-empty.
+    if not getattr(cfg, "allow_external_provision", False) or not getattr(
+        cfg, "external_provision_cmd", None
+    ):
+        return None
+
+    template: str = cfg.external_provision_cmd
+
+    # Create the temp file. If mkstemp itself fails, no file exists — nothing to clean up.
+    try:
+        fd, path = tempfile.mkstemp()
+    except Exception:  # noqa: BLE001
+        return None
+
+    # From here the file exists on disk; the finally below ALWAYS unlinks it, so a failure
+    # while writing the material (e.g. ENOSPC) cannot leave key material behind.
+    try:
+        try:
+            os.fchmod(fd, 0o600)
+            os.write(fd, material)
+            os.close(fd)
+        except Exception:  # noqa: BLE001
+            return None
+
+        # Build and run the command.
+        try:
+            cmd_str = template.format(
+                keyfile=path,
+                label=label,
+                key_type=str(key_type),
+                key_class=obj_class,
+            )
+            args = shlex.split(cmd_str)
+        except Exception:  # noqa: BLE001
+            return None
+
+        try:
+            proc = subprocess.run(
+                args,
+                capture_output=True,
+                timeout=_EXTERNAL_CMD_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            return None
+        except Exception:  # noqa: BLE001
+            return None
+
+        if proc.returncode != 0:
+            return None
+
+        # Resolve the loaded object by CKA_LABEL.
+        try:
+            from pkcs11_check.raw.pack import template_from_dict
+            from pkcs11_check.raw.recipes import find_objects
+
+            lbl_bytes: bytes = label.encode() if isinstance(label, str) else label
+            tmpl = template_from_dict({CKA_LABEL: lbl_bytes})
+            handles = find_objects(rs.raw, rs.sh, tmpl)
+        except Exception:  # noqa: BLE001
+            return None
+
+        if not handles:
+            return None
+
+        handle = handles[0]
+        try:
+            record_provisioning_event(obj_class, "ran_via_external")
+            from pkcs11_check.compliance import ComplianceLevel, note
+
+            note(
+                f"{label}: provisioned externally via operator command ({obj_class})"
+                " — NOT a PKCS#11-API capability",
+                ComplianceLevel.CRITICAL,
+            )
+        except Exception:  # noqa: BLE001
+            return handle  # best-effort: event/note failure must not block provisioning
+        return handle
+
+    finally:
+        # Best-effort: overwrite the file with zeros then unlink.
+        try:
+            with open(path, "r+b") as fh:
+                fh.write(b"\x00" * len(material))
+                fh.flush()
+        except OSError:
+            pass  # best-effort zeroing; unlink still attempted below
+        try:
+            os.unlink(path)
+        except OSError:
+            pass  # best-effort unlink; file may already be gone
+
+
+# ---------------------------------------------------------------------------
+# _external_or_skip — helper: try external tier, else record + skip
+# ---------------------------------------------------------------------------
+
+
+def _external_or_skip(
+    rs: Any,
+    cfg: Any,
+    *,
+    material: bytes,
+    label: str,
+    key_type: int,
+    obj_class: str,
+    skip_msg: str,
+) -> int:
+    """Try external provisioning; on success return the handle, else pytest.skip(skip_msg)."""
+    handle = external_provision(
+        rs, cfg, material=material, label=label, key_type=key_type, obj_class=obj_class
+    )
+    if handle is not None:
+        return handle
+    record_provisioning_event(obj_class, "skipped_no_path")
+    pytest.skip(skip_msg)
+
+
+# ---------------------------------------------------------------------------
+# provision_public_key — create → external → skip (no unwrap path)
+# ---------------------------------------------------------------------------
+
+
+def provision_public_key(
+    rs: Any,
+    cfg: Any,
+    *,
+    key_type: int,
+    attrs: dict[Any, Any],
+    label: str,
+    ec_params: bytes | None = None,
+    ec_point: bytes | None = None,
+    rsa_n: bytes | None = None,
+    rsa_e: bytes | None = None,
+) -> int:
+    """Provision a public key into the token by the best available means.
+
+    Resolution order (create → external → skip):
+
+    1. Probe create availability.  When the module supports C_CreateObject for public
+       keys, call the negotiated public importer and return the handle.
+
+    2. Else (create_absent / create_prohibited):
+       - Build a SPKI DER blob from the supplied key material for the external tier.
+         RSA: ``rsa_n`` / ``rsa_e`` → ``RSAPublicNumbers(...).public_key()``.
+         EC:  ``ec_params`` / ``ec_point`` → decoded public key via *cryptography*.
+         On any encoding failure the best-effort fallback is ``ec_point or b""``.
+       - Attempt ``external_provision``; if it returns a handle, record and return it.
+       - No handle → ``record_provisioning_event("public", "skipped_no_path")``
+         + ``pytest.skip``.
+
+    Public keys have NO unwrap path; ``force-unwrap`` mode does not apply.
+
+    Args:
+        rs:        Session record with ``.raw``, ``.sh``, and ``has_mechanism``.
+        cfg:       Config carrying external-provision settings.
+        key_type:  ``CKK_*`` bare int constant (e.g. ``CKK_RSA``, ``CKK_EC``).
+        attrs:     Usage-flag attributes for the resulting object (e.g. ``CKA_VERIFY``).
+        label:     Human-readable label used in skip messages.
+        ec_params: DER-encoded curve OID (EC keys).
+        ec_point:  DER OCTET STRING-wrapped X9.62 uncompressed point (EC keys).
+        rsa_n:     RSA modulus bytes, big-endian (RSA keys).
+        rsa_e:     RSA public exponent bytes, big-endian (RSA keys).
+
+    Returns:
+        Object handle (int) of the provisioned public key.
+
+    Raises:
+        pytest.skip.Exception: When the module has no create path and external
+            provisioning is not configured or fails.
+    """
+    verdict = profile_for(rs).create_verdict("public")
+    if verdict == "create_available":
+        record_provisioning_event("public", "ran_via_create")
+        if rsa_n is not None and rsa_e is not None:
+            from pkcs11_check.testcases.conftest import import_rsa_public_key_negotiated
+
+            return import_rsa_public_key_negotiated(rs, n=rsa_n, e=rsa_e, attrs=attrs)
+        # EC (or other) path
+        from pkcs11_check.testcases.conftest import import_ec_public_key_negotiated
+
+        return import_ec_public_key_negotiated(
+            rs, ec_params=ec_params or b"", ec_point=ec_point or b"", key_type=key_type, attrs=attrs
+        )
+
+    # Build SPKI DER for the external tier (best-effort; encoding failure → raw fallback).
+    try:
+        if rsa_n is not None and rsa_e is not None:
+            from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+
+            material: bytes = (
+                _rsa.RSAPublicNumbers(int.from_bytes(rsa_e, "big"), int.from_bytes(rsa_n, "big"))
+                .public_key()
+                .public_bytes(_Encoding.DER, _PublicFormat.SubjectPublicKeyInfo)
+            )
+        elif ec_params is not None and ec_point is not None:
+            from cryptography.hazmat.primitives.asymmetric import ec as _ec
+
+            # Decode OID from DER: skip tag(0x06)+length bytes → OID value bytes
+            oid_der = ec_params
+            if len(oid_der) >= 2 and oid_der[0] == 0x06:
+                from cryptography.hazmat.primitives.asymmetric.ec import (
+                    get_curve_for_oid,
+                )
+                from cryptography.x509 import ObjectIdentifier
+
+                oid_len = oid_der[1]
+                oid_bytes = oid_der[2 : 2 + oid_len]
+                curve_oid = ObjectIdentifier(".".join(str(x) for x in _decode_oid_value(oid_bytes)))
+                curve = get_curve_for_oid(curve_oid)()
+                # Strip DER OCTET STRING wrapper from ec_point if present (tag 0x04 + len)
+                raw_point: bytes
+                if len(ec_point) >= 2 and ec_point[0] == 0x04 and ec_point[1] == len(ec_point) - 2:
+                    raw_point = ec_point[2:]
+                else:
+                    raw_point = ec_point
+                from cryptography.hazmat.primitives.serialization import (
+                    Encoding as _CryptoEnc,
+                )
+                from cryptography.hazmat.primitives.serialization import PublicFormat
+
+                ec_pub = _ec.EllipticCurvePublicKey.from_encoded_point(curve, raw_point)
+                material = ec_pub.public_bytes(_CryptoEnc.DER, PublicFormat.SubjectPublicKeyInfo)
+            else:
+                material = ec_point if ec_point is not None else b""
+        else:
+            material = b""
+    except Exception:  # noqa: BLE001
+        # Best-effort: encoding failure must not block the external command attempt.
+        material = ec_point if ec_point is not None else b""
+
+    return _external_or_skip(
+        rs,
+        cfg,
+        material=material,
+        label=label,
+        key_type=key_type,
+        obj_class="public",
+        skip_msg=(
+            f"{label}: no provisioning path for public key"
+            " (no C_CreateObject; external not configured/failed)"
+        ),
+    )
+
+
+def _decode_oid_value(oid_bytes: bytes) -> list[int]:
+    """Decode the value bytes of a DER OID into a list of integer arcs.
+
+    The first byte encodes the first two arcs as ``40 * arc0 + arc1``.
+    Subsequent arcs are base-128 big-endian encoded (high bit = continuation).
+    """
+    arcs: list[int] = []
+    # First byte encodes arc0 and arc1
+    first = oid_bytes[0]
+    arcs.append(first // 40)
+    arcs.append(first % 40)
+    i = 1
+    while i < len(oid_bytes):
+        val = 0
+        while i < len(oid_bytes):
+            b = oid_bytes[i]
+            i += 1
+            val = (val << 7) | (b & 0x7F)
+            if not (b & 0x80):
+                break
+        arcs.append(val)
+    return arcs
+
+
+# ---------------------------------------------------------------------------
+# provision_certificate — create → external → skip (no unwrap path)
+# ---------------------------------------------------------------------------
+
+
+def provision_certificate(
+    rs: Any,
+    cfg: Any,
+    *,
+    value: bytes,
+    attrs: dict[Any, Any],
+    label: str,
+) -> int:
+    """Provision a certificate object into the token by the best available means.
+
+    Resolution order (create → external → skip):
+
+    1. Probe create availability.  When the module supports C_CreateObject for
+       certificate objects, call ``create_object`` with the canonical
+       ``{CKA_CLASS: CKO_CERTIFICATE, CKA_CERTIFICATE_TYPE: CKC_X_509,
+       CKA_VALUE: value, CKA_TOKEN: False, **attrs}`` template and return the handle.
+
+    2. Else (create_absent / create_prohibited):
+       - Pass ``value`` (the DER-encoded certificate) to the external tier.
+       - On success record and return the handle.
+       - No handle → ``record_provisioning_event("cert", "skipped_no_path")``
+         + ``pytest.skip``.
+
+    Certificate objects have NO unwrap path.
+
+    Args:
+        rs:    Session record with ``.raw``, ``.sh``, and ``has_mechanism``.
+        cfg:   Config carrying external-provision settings.
+        value: DER-encoded X.509 certificate bytes.
+        attrs: Additional attributes for the resulting object
+               (e.g. ``CKA_LABEL``, ``CKA_SUBJECT``, ``CKA_TOKEN``).
+        label: Human-readable label used in skip messages.
+
+    Returns:
+        Object handle (int) of the provisioned certificate.
+
+    Raises:
+        pytest.skip.Exception: When the module has no create path and external
+            provisioning is not configured or fails.
+    """
+    from pkcs11_check.raw.recipes import create_object
+
+    verdict = profile_for(rs).create_verdict("cert")
+    if verdict == "create_available":
+        record_provisioning_event("cert", "ran_via_create")
+        return create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_CERTIFICATE,
+                CKA_CERTIFICATE_TYPE: CKC_X_509,
+                CKA_VALUE: value,
+                CKA_TOKEN: False,
+                **attrs,
+            },
+        )
+
+    return _external_or_skip(
+        rs,
+        cfg,
+        material=value,
+        label=label,
+        key_type=0,
+        obj_class="cert",
+        skip_msg=(
+            f"{label}: no provisioning path for cert"
+            " (no C_CreateObject; external not configured/failed)"
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# provision_data — create → external → skip (no unwrap path)
+# ---------------------------------------------------------------------------
+
+
+def provision_data(
+    rs: Any,
+    cfg: Any,
+    *,
+    value: bytes,
+    attrs: dict[Any, Any],
+    label: str,
+) -> int:
+    """Provision a CKO_DATA object into the token by the best available means.
+
+    Resolution order (create → external → skip):
+
+    1. Probe create availability.  When the module supports C_CreateObject for
+       data objects, call ``create_object`` with the canonical
+       ``{CKA_CLASS: CKO_DATA, CKA_VALUE: value, CKA_TOKEN: False, **attrs}``
+       template and return the handle.
+
+    2. Else (create_absent / create_prohibited):
+       - Pass ``value`` to the external tier.
+       - On success record and return the handle.
+       - No handle → ``record_provisioning_event("data", "skipped_no_path")``
+         + ``pytest.skip``.
+
+    Data objects have NO unwrap path.
+
+    Args:
+        rs:    Session record with ``.raw``, ``.sh``, and ``has_mechanism``.
+        cfg:   Config carrying external-provision settings.
+        value: Raw data bytes.
+        attrs: Additional attributes for the resulting object
+               (e.g. ``CKA_LABEL``, ``CKA_TOKEN``, ``CKA_PRIVATE``).
+        label: Human-readable label used in skip messages.
+
+    Returns:
+        Object handle (int) of the provisioned data object.
+
+    Raises:
+        pytest.skip.Exception: When the module has no create path and external
+            provisioning is not configured or fails.
+    """
+    from pkcs11_check.raw.recipes import create_object
+
+    verdict = profile_for(rs).create_verdict("data")
+    if verdict == "create_available":
+        record_provisioning_event("data", "ran_via_create")
+        return create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_VALUE: value,
+                CKA_TOKEN: False,
+                **attrs,
+            },
+        )
+
+    return _external_or_skip(
+        rs,
+        cfg,
+        material=value,
+        label=label,
+        key_type=0,
+        obj_class="data",
+        skip_msg=(
+            f"{label}: no provisioning path for data"
+            " (no C_CreateObject; external not configured/failed)"
+        ),
+    )

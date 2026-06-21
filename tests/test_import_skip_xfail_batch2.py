@@ -267,14 +267,16 @@ def _acvp_ecdsa_vec() -> dict[str, Any]:
 
 
 def test_a14_acvp_ecdsa_broad_import_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A14: broad CKR from the raw EC public-key import -> xfail."""
+    """A14: broad CKR from provision_public_key (create path) -> xfail."""
     import pkcs11_check.testcases.acvp.test_acvp_ecdsa as mod
 
-    monkeypatch.setattr(mod, "import_ec_public_key", _raiser(_ATTR_INVALID))
+    monkeypatch.setattr(mod, "provision_public_key", _raiser(_ATTR_INVALID))
 
     try:
         with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
-            mod.test_acvp_ecdsa_sigver(_session(), "ECDSA-SigVer-P-256-tc1", _acvp_ecdsa_vec())
+            mod.test_acvp_ecdsa_sigver(
+                _session(), None, "ECDSA-SigVer-P-256-tc1", _acvp_ecdsa_vec()
+            )
     except pytest.skip.Exception as exc:
         pytest.fail(f"skipped instead of xfailing: {exc}")
 
@@ -283,17 +285,17 @@ def test_a14_acvp_ecdsa_curve_absent_still_skips(monkeypatch: pytest.MonkeyPatch
     """A14: curve-absent CKR keeps the genuine-absence skip (split preserved)."""
     import pkcs11_check.testcases.acvp.test_acvp_ecdsa as mod
 
-    monkeypatch.setattr(mod, "import_ec_public_key", _raiser(_DOMAIN_PARAMS_INVALID))
+    monkeypatch.setattr(mod, "provision_public_key", _raiser(_DOMAIN_PARAMS_INVALID))
 
     with pytest.raises(pytest.skip.Exception, match="Cannot import EC public key for"):
-        mod.test_acvp_ecdsa_sigver(_session(), "ECDSA-SigVer-P-256-tc1", _acvp_ecdsa_vec())
+        mod.test_acvp_ecdsa_sigver(_session(), None, "ECDSA-SigVer-P-256-tc1", _acvp_ecdsa_vec())
 
 
 def test_a14_acvp_ecdsa_non_ckr_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
     """A14 negative pin: a non-CKR AssertionError propagates."""
     import pkcs11_check.testcases.acvp.test_acvp_ecdsa as mod
 
-    monkeypatch.setattr(mod, "import_ec_public_key", _raiser(_NON_CKR))
+    monkeypatch.setattr(mod, "provision_public_key", _raiser(_NON_CKR))
 
     with pytest.raises(AssertionError, match="verify returned False"):
-        mod.test_acvp_ecdsa_sigver(_session(), "ECDSA-SigVer-P-256-tc1", _acvp_ecdsa_vec())
+        mod.test_acvp_ecdsa_sigver(_session(), None, "ECDSA-SigVer-P-256-tc1", _acvp_ecdsa_vec())
