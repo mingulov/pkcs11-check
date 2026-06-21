@@ -474,6 +474,19 @@ def profile_for(rs: Any) -> ProvisioningProfile:
     return prof
 
 
+def skip_unless_can_create(rs: Any, obj_class: str) -> None:
+    """Skip cleanly when the module cannot create *obj_class* objects via C_CreateObject.
+
+    Uses the valid-material per-class create probe (more robust than an empty-template
+    probe).  ``create_available`` returns (the caller creates normally and any failure
+    surfaces as a real finding); ``create_absent``/``create_prohibited`` skip.
+    """
+    verdict = profile_for(rs).create_verdict(obj_class)
+    if verdict in ("create_absent", "create_prohibited"):
+        record_provisioning_event(obj_class, "skipped_no_path")
+        pytest.skip(f"Module does not support C_CreateObject for {obj_class} objects ({verdict})")
+
+
 def select_strategy(
     strategies: tuple[WrapStrategy, ...], profile: Any, target_len: int
 ) -> WrapStrategy | None:
