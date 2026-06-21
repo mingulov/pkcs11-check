@@ -53,9 +53,9 @@ from pkcs11_check.testcases._operability import (
     not_operational_reason,
     probe_operability,
 )
+from pkcs11_check.testcases._provisioning import provision_rsa_private_key
 from pkcs11_check.testcases.conftest import (
     assert_correct,
-    import_rsa_private_key_negotiated,
     is_known_error,
     xfail_if_known_ckr,
 )
@@ -354,7 +354,9 @@ def _skip_or_xfail_rsa_oaep_private_import_reject(
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_OAEP_VECTORS, ids=[v[0] for v in _ALL_OAEP_VECTORS])
-def test_rsa_oaep(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_rsa_oaep(
+    p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[str, Any]
+) -> None:
     """RSA-OAEP decryption from Wycheproof vectors."""
     rs = p11_module_session
     if not rs.has_mechanism("RSA_PKCS_OAEP"):
@@ -413,8 +415,9 @@ def test_rsa_oaep(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
         )
 
     try:
-        priv_key = import_rsa_private_key_negotiated(
+        priv_key = provision_rsa_private_key(
             rs,
+            p11_config,
             n=modulus,
             e=pub_exponent,
             d=priv_exponent,
@@ -424,6 +427,7 @@ def test_rsa_oaep(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
             dmq1=exp2,
             iqmp=coefficient,
             attrs={CKA_DECRYPT: True},
+            label="wycheproof RSA-OAEP decrypt KAT",
         )
     except AssertionError as exc:
         _skip_or_xfail_rsa_oaep_private_import_reject(exc, key_bits)

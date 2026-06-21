@@ -49,9 +49,9 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._operability import not_operational_reason
+from pkcs11_check.testcases._provisioning import provision_ec_private_key
 from pkcs11_check.testcases.conftest import (
     assert_correct,
-    import_ec_private_key_negotiated,
     is_known_error,
     xfail_if_known_ckr,
 )
@@ -218,7 +218,7 @@ def _xfail_if_xdh_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_XDH_VECTORS, ids=[v[0] for v in _ALL_XDH_VECTORS])
-def test_xdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_xdh(p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """X25519/X448 key exchange from Wycheproof vectors."""
     rs = p11_module_session
     if not rs.has_mechanism("ECDH1_DERIVE"):
@@ -250,12 +250,14 @@ def test_xdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
 
     # Import Montgomery private key
     try:
-        priv_key = import_ec_private_key_negotiated(
+        priv_key = provision_ec_private_key(
             rs,
+            p11_config,
             ec_params=oid,
             value=private_bytes,
             key_type=int(CKK_EC_MONTGOMERY),
             attrs={CKA_DERIVE: True},
+            label="wycheproof X25519/X448 KAT",
         )
     except AssertionError as exc:
         if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):

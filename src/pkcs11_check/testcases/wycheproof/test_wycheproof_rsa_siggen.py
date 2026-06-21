@@ -47,9 +47,9 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._operability import not_operational_reason
+from pkcs11_check.testcases._provisioning import provision_rsa_private_key
 from pkcs11_check.testcases.conftest import (
     assert_correct,
-    import_rsa_private_key_negotiated,
     is_known_error,
     xfail_if_known_ckr,
 )
@@ -178,7 +178,9 @@ def _skip_or_xfail_rsa_private_import_reject(
     _ALL_SIGGEN_VECTORS,
     ids=[v[0] for v in _ALL_SIGGEN_VECTORS],
 )
-def test_rsa_pkcs1_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_rsa_pkcs1_siggen(
+    p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[str, Any]
+) -> None:
     """RSA PKCS#1 v1.5 signature generation from Wycheproof vectors."""
     rs = p11_module_session
     mechanism: int = vec["_mechanism"]
@@ -203,8 +205,9 @@ def test_rsa_pkcs1_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, A
     key_obj = None
     try:
         try:
-            key_obj = import_rsa_private_key_negotiated(
+            key_obj = provision_rsa_private_key(
                 rs,
+                p11_config,
                 n=_i2b(pub_nums.n),
                 e=_i2b(pub_nums.e),
                 d=_i2b(nums.d),
@@ -214,6 +217,7 @@ def test_rsa_pkcs1_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, A
                 dmq1=_i2b(nums.dmq1),
                 iqmp=_i2b(nums.iqmp),
                 attrs={CKA_SIGN: True},
+                label="wycheproof RSA-PKCS1 siggen KAT",
             )
         except AssertionError as e:
             _skip_or_xfail_rsa_private_import_reject(e, key_size, sha, mech_display)

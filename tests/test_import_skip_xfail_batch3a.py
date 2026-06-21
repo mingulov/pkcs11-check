@@ -225,10 +225,10 @@ def test_a10_siggen_import_helper_propagates_non_ckr(monkeypatch: pytest.MonkeyP
     from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa_siggen as sg
 
     vec_id, vec = sg._ALL_SIGGEN_VECTORS[0]
-    monkeypatch.setattr(sg, "import_rsa_private_key_negotiated", _raiser(_NON_CKR))
+    monkeypatch.setattr(sg, "provision_rsa_private_key", _raiser(_NON_CKR))
 
     with pytest.raises(AssertionError, match="KAT sign mismatch"):
-        sg.test_rsa_pkcs1_siggen(_session(), vec_id, vec)
+        sg.test_rsa_pkcs1_siggen(_session(), None, vec_id, vec)
 
 
 def test_a10_siggen_real_function_xfails_on_broad_ckr(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -236,13 +236,13 @@ def test_a10_siggen_real_function_xfails_on_broad_ckr(monkeypatch: pytest.Monkey
     from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa_siggen as sg
 
     vec_id, vec = sg._ALL_SIGGEN_VECTORS[0]
-    monkeypatch.setattr(sg, "import_rsa_private_key_negotiated", _raiser(_ATTR_INVALID))
+    monkeypatch.setattr(sg, "provision_rsa_private_key", _raiser(_ATTR_INVALID))
     monkeypatch.setattr(
         sg.pytest, "skip", lambda message: pytest.fail(f"unexpected skip: {message}")
     )
 
     with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
-        sg.test_rsa_pkcs1_siggen(_session(), vec_id, vec)
+        sg.test_rsa_pkcs1_siggen(_session(), None, vec_id, vec)
 
 
 # ===========================================================================
@@ -277,11 +277,11 @@ def test_a11_oaep_import_helper_propagates_non_ckr(monkeypatch: pytest.MonkeyPat
 
     oa._UNSUPPORTED_RSA_KEY_SIZES.clear()
     vec_id, vec = _first_valid_oaep_vector(oa)
-    monkeypatch.setattr(oa, "import_rsa_private_key_negotiated", _raiser(_NON_CKR))
+    monkeypatch.setattr(oa, "provision_rsa_private_key", _raiser(_NON_CKR))
 
     try:
         with pytest.raises(AssertionError, match="KAT sign mismatch"):
-            oa.test_rsa_oaep(_session(), vec_id, vec)
+            oa.test_rsa_oaep(_session(), None, vec_id, vec)
     finally:
         oa._UNSUPPORTED_RSA_KEY_SIZES.clear()
 
@@ -307,7 +307,7 @@ def test_a11_oaep_cached_keysize_early_exit_xfails(monkeypatch: pytest.MonkeyPat
 
     try:
         with pytest.raises(pytest.xfail.Exception, match="not operational \\(cached\\)"):
-            oa.test_rsa_oaep(_session(), vec_id, vec)
+            oa.test_rsa_oaep(_session(), None, vec_id, vec)
     finally:
         oa._UNSUPPORTED_RSA_KEY_SIZES.clear()
     del key_bits  # silence unused (documents the cache-key derivation)
@@ -339,7 +339,13 @@ def test_negotiation_genuinely_exhausts_before_xfail(monkeypatch: pytest.MonkeyP
     then re-raises after exhaustion. The OAEP test must then xfail
     'advertised but not operational'. We count the create_object calls to prove
     more than one storage variant was actually attempted.
+
+    The provisioning profile probe also calls create_object (via import_secret_key),
+    so we additionally force a create_available profile to ensure provision_rsa_private_key
+    delegates to import_rsa_private_key_negotiated, which is where negotiation exhaustion
+    and the xfail happen.
     """
+    from pkcs11_check.testcases._provisioning import ProvisioningProfile
     from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa_oaep as oa
 
     calls: list[dict[Any, Any]] = []
@@ -355,14 +361,25 @@ def test_negotiation_genuinely_exhausts_before_xfail(monkeypatch: pytest.MonkeyP
         oa.pytest, "skip", lambda message: pytest.fail(f"unexpected skip: {message}")
     )
 
+    # Force the profile to report create_available so provision_rsa_private_key delegates
+    # to import_rsa_private_key_negotiated (where negotiation exhaustion and xfail happen).
+    fake_session = _session()
+    fake_profile = ProvisioningProfile(rs=fake_session)
+    fake_profile._verdicts["private"] = "create_available"  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._provisioning._PROFILE_CACHE",
+        {fake_session.sh: fake_profile},
+    )
+
     vec_id, vec = _first_valid_oaep_vector(oa)
     oa._UNSUPPORTED_RSA_KEY_SIZES.clear()
 
     try:
         with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_OAEP:key-import"):
-            oa.test_rsa_oaep(_session(), vec_id, vec)
+            oa.test_rsa_oaep(fake_session, None, vec_id, vec)
     finally:
         oa._UNSUPPORTED_RSA_KEY_SIZES.clear()
+        monkeypatch.setattr("pkcs11_check.testcases._provisioning._PROFILE_CACHE", {})
 
     # Negotiation REALLY walked the storage variants (canonical + at least one
     # retry) before exhausting -- not a single-shot failure.

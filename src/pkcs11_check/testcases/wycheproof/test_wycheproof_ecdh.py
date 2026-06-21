@@ -29,6 +29,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKD_NULL,
+    CKK_EC,
     CKK_GENERIC_SECRET,
     CKM_ECDH1_DERIVE,
     CKO_SECRET_KEY,
@@ -47,9 +48,9 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._operability import not_operational_reason
+from pkcs11_check.testcases._provisioning import provision_ec_private_key
 from pkcs11_check.testcases.conftest import (
     assert_correct,
-    import_ec_private_key_negotiated,
     is_known_error,
     xfail_if_known_ckr,
 )
@@ -228,7 +229,7 @@ def _point_on_base_curve(point: bytes, curve_name: str) -> bool | None:
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_ECDH_VECTORS, ids=[v[0] for v in _ALL_ECDH_VECTORS])
-def test_ecdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_ecdh(p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """ECDH key agreement from Wycheproof ecpoint vectors."""
     rs = p11_module_session
     if not rs.has_mechanism("ECDH1_DERIVE"):
@@ -274,11 +275,14 @@ def test_ecdh(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
 
     # Import EC private key
     try:
-        priv_key = import_ec_private_key_negotiated(
+        priv_key = provision_ec_private_key(
             rs,
+            p11_config,
             ec_params=oid,
             value=private_scalar,
+            key_type=int(CKK_EC),
             attrs={CKA_DERIVE: True},
+            label="wycheproof ECDH KAT",
         )
     except AssertionError as exc:
         if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):

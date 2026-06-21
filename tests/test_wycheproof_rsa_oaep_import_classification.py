@@ -32,9 +32,7 @@ def test_rsa_oaep_private_import_runtime_reject_is_xfail(
     def _import_reject(*_args: Any, **_kwargs: Any) -> int:
         raise CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
 
-    monkeypatch.setattr(
-        test_wycheproof_rsa_oaep, "import_rsa_private_key_negotiated", _import_reject
-    )
+    monkeypatch.setattr(test_wycheproof_rsa_oaep, "provision_rsa_private_key", _import_reject)
     monkeypatch.setattr(
         test_wycheproof_rsa_oaep.pytest,
         "skip",
@@ -42,7 +40,7 @@ def test_rsa_oaep_private_import_runtime_reject_is_xfail(
     )
 
     with pytest.raises(pytest.xfail.Exception, match="RSA private-key import is not operational"):
-        test_wycheproof_rsa_oaep.test_rsa_oaep(_RsaSession(), vec_id, vec)
+        test_wycheproof_rsa_oaep.test_rsa_oaep(_RsaSession(), None, vec_id, vec)
 
     assert test_wycheproof_rsa_oaep._UNSUPPORTED_RSA_KEY_SIZES == set()
 
@@ -56,7 +54,7 @@ def test_rsa_oaep_private_import_unknown_assertion_propagates(
     def _import_bug(*_args: Any, **_kwargs: Any) -> int:
         raise AssertionError("ctypes packing bug")
 
-    monkeypatch.setattr(test_wycheproof_rsa_oaep, "import_rsa_private_key_negotiated", _import_bug)
+    monkeypatch.setattr(test_wycheproof_rsa_oaep, "provision_rsa_private_key", _import_bug)
 
     with pytest.raises(AssertionError, match="ctypes packing bug"):
-        test_wycheproof_rsa_oaep.test_rsa_oaep(_RsaSession(), vec_id, vec)
+        test_wycheproof_rsa_oaep.test_rsa_oaep(_RsaSession(), None, vec_id, vec)

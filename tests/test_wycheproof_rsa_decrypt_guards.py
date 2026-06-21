@@ -120,7 +120,7 @@ def test_a12_gate_not_advertised_skips() -> None:
     """
     vec_id, vec = _first_valid_pkcs1()
     with pytest.raises(pytest.skip.Exception, match="RSA_PKCS not supported"):
-        rsa_dec.test_rsa_pkcs1_decrypt(_RsaNoneSession(), vec_id, vec)
+        rsa_dec.test_rsa_pkcs1_decrypt(_RsaNoneSession(), None, vec_id, vec)
 
 
 # ===========================================================================
@@ -157,11 +157,11 @@ def test_a12_import_helper_propagates_non_ckr(monkeypatch: pytest.MonkeyPatch) -
     """
     rsa_dec._UNSUPPORTED_RSA_KEY_SIZES.clear()
     vec_id, vec = _first_valid_pkcs1()
-    monkeypatch.setattr(rsa_dec, "import_rsa_private_key_negotiated", _raiser(_NON_CKR))
+    monkeypatch.setattr(rsa_dec, "provision_rsa_private_key", _raiser(_NON_CKR))
 
     try:
         with pytest.raises(AssertionError, match="ctypes mismatch"):
-            rsa_dec.test_rsa_pkcs1_decrypt(_RsaPkcsSession(), vec_id, vec)
+            rsa_dec.test_rsa_pkcs1_decrypt(_RsaPkcsSession(), None, vec_id, vec)
     finally:
         rsa_dec._UNSUPPORTED_RSA_KEY_SIZES.clear()
 
@@ -178,14 +178,14 @@ def test_a12_real_function_xfails_on_broad_ckr(monkeypatch: pytest.MonkeyPatch) 
     """
     rsa_dec._UNSUPPORTED_RSA_KEY_SIZES.clear()
     vec_id, vec = _first_valid_pkcs1()
-    monkeypatch.setattr(rsa_dec, "import_rsa_private_key_negotiated", _raiser(_KEY_SIZE_RANGE))
+    monkeypatch.setattr(rsa_dec, "provision_rsa_private_key", _raiser(_KEY_SIZE_RANGE))
     monkeypatch.setattr(
         rsa_dec.pytest, "skip", lambda message: pytest.fail(f"unexpected skip: {message}")
     )
 
     try:
         with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS:key-import"):
-            rsa_dec.test_rsa_pkcs1_decrypt(_RsaPkcsSession(), vec_id, vec)
+            rsa_dec.test_rsa_pkcs1_decrypt(_RsaPkcsSession(), None, vec_id, vec)
     except pytest.skip.Exception as exc:
         pytest.fail(f"skipped instead of xfailing: {exc}")
     finally:
@@ -196,11 +196,11 @@ def test_a12_real_function_propagates_non_ckr(monkeypatch: pytest.MonkeyPatch) -
     """A12 negative pin: a non-CKR AssertionError from the negotiated importer propagates."""
     rsa_dec._UNSUPPORTED_RSA_KEY_SIZES.clear()
     vec_id, vec = _first_valid_pkcs1()
-    monkeypatch.setattr(rsa_dec, "import_rsa_private_key_negotiated", _raiser(_NON_CKR))
+    monkeypatch.setattr(rsa_dec, "provision_rsa_private_key", _raiser(_NON_CKR))
 
     try:
         with pytest.raises(AssertionError, match="ctypes mismatch"):
-            rsa_dec.test_rsa_pkcs1_decrypt(_RsaPkcsSession(), vec_id, vec)
+            rsa_dec.test_rsa_pkcs1_decrypt(_RsaPkcsSession(), None, vec_id, vec)
     finally:
         rsa_dec._UNSUPPORTED_RSA_KEY_SIZES.clear()
 
@@ -228,7 +228,7 @@ def test_a12_cached_keysize_early_exit_xfails(monkeypatch: pytest.MonkeyPatch) -
 
     try:
         with pytest.raises(pytest.xfail.Exception, match="not operational \\(cached\\)"):
-            rsa_dec.test_rsa_pkcs1_decrypt(_RsaPkcsSession(), vec_id, vec)
+            rsa_dec.test_rsa_pkcs1_decrypt(_RsaPkcsSession(), None, vec_id, vec)
     finally:
         rsa_dec._UNSUPPORTED_RSA_KEY_SIZES.clear()
 
@@ -246,12 +246,12 @@ def test_rsa_pkcs1_invalid_padding_bypass_returns_real_msg_is_finding(
     target message for an invalid-padding ciphertext bypassed the padding
     check -> fail. (Each invalid Wycheproof vector carries the target msg.)"""
     vec_id, vec = _first_invalid_pkcs1()
-    monkeypatch.setattr(rsa_dec, "import_rsa_private_key_negotiated", _handle)
+    monkeypatch.setattr(rsa_dec, "provision_rsa_private_key", _handle)
     monkeypatch.setattr(rsa_dec, "decrypt_single", lambda *_a, **_k: bytes.fromhex(vec["msg"]))
     monkeypatch.setattr(rsa_dec, "destroy_quietly", lambda *_a: None)
 
     with pytest.raises(pytest.fail.Exception, match="recovered the target message"):
-        rsa_dec.test_rsa_pkcs1_decrypt(_RsaPkcsSession(), vec_id, vec)
+        rsa_dec.test_rsa_pkcs1_decrypt(_RsaPkcsSession(), None, vec_id, vec)
 
 
 def test_rsa_pkcs1_invalid_synthetic_plaintext_is_secure_not_a_finding(
@@ -264,12 +264,12 @@ def test_rsa_pkcs1_invalid_synthetic_plaintext_is_secure_not_a_finding(
     vec_id, vec = _first_invalid_pkcs1()
     synthetic = b"\x00" + b"\xa5" * 31  # != bytes.fromhex(vec["msg"])
     assert synthetic != bytes.fromhex(vec["msg"])
-    monkeypatch.setattr(rsa_dec, "import_rsa_private_key_negotiated", _handle)
+    monkeypatch.setattr(rsa_dec, "provision_rsa_private_key", _handle)
     monkeypatch.setattr(rsa_dec, "decrypt_single", lambda *_a, **_k: synthetic)
     monkeypatch.setattr(rsa_dec, "destroy_quietly", lambda *_a: None)
 
     # No exception: secure non-rejection is accepted.
-    rsa_dec.test_rsa_pkcs1_decrypt(_RsaPkcsSession(), vec_id, vec)
+    rsa_dec.test_rsa_pkcs1_decrypt(_RsaPkcsSession(), None, vec_id, vec)
 
 
 def test_rsa_pkcs1_invalid_clean_rejection_is_secure(
@@ -279,7 +279,7 @@ def test_rsa_pkcs1_invalid_clean_rejection_is_secure(
     from pkcs11_check.raw.types_std import CKR_ENCRYPTED_DATA_INVALID
 
     vec_id, vec = _first_invalid_pkcs1()
-    monkeypatch.setattr(rsa_dec, "import_rsa_private_key_negotiated", _handle)
+    monkeypatch.setattr(rsa_dec, "provision_rsa_private_key", _handle)
 
     def _reject(*_a: Any, **_k: Any) -> bytes:
         raise CkrAssertionError(
@@ -289,7 +289,7 @@ def test_rsa_pkcs1_invalid_clean_rejection_is_secure(
     monkeypatch.setattr(rsa_dec, "decrypt_single", _reject)
     monkeypatch.setattr(rsa_dec, "destroy_quietly", lambda *_a: None)
 
-    rsa_dec.test_rsa_pkcs1_decrypt(_RsaPkcsSession(), vec_id, vec)  # no exception
+    rsa_dec.test_rsa_pkcs1_decrypt(_RsaPkcsSession(), None, vec_id, vec)  # no exception
 
 
 def test_rsa_oaep_invalid_ciphertext_decrypt_success_is_reported(
@@ -304,9 +304,9 @@ def test_rsa_oaep_invalid_ciphertext_decrypt_success_is_reported(
             "Wycheproof RSA-OAEP vectors not available (run `pkcs11-check fetch-data wycheproof`)"
         )
     vec_id, vec = hit
-    monkeypatch.setattr(rsa_oaep, "import_rsa_private_key_negotiated", _handle)
+    monkeypatch.setattr(rsa_oaep, "provision_rsa_private_key", _handle)
     monkeypatch.setattr(rsa_oaep, "decrypt_single", lambda *_a, **_k: b"\x00recovered")
     monkeypatch.setattr(rsa_oaep, "destroy_quietly", lambda *_a: None)
 
     with pytest.raises(pytest.fail.Exception, match="accepted invalid ciphertext"):
-        rsa_oaep.test_rsa_oaep(_RsaOaepSession(), vec_id, vec)
+        rsa_oaep.test_rsa_oaep(_RsaOaepSession(), None, vec_id, vec)

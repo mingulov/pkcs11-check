@@ -74,6 +74,7 @@ def test_rsa_oaep_import_uses_unsigned_pkcs11_bigint_encoding(
 
     def fake_import_rsa_private_key(
         rs: object,
+        cfg: object,
         *,
         n: bytes,
         e: bytes,
@@ -84,18 +85,18 @@ def test_rsa_oaep_import_uses_unsigned_pkcs11_bigint_encoding(
         dmq1: bytes,
         iqmp: bytes,
         attrs: dict[int, Any],
-        purpose: str = "",
+        label: str = "",
     ) -> int:
         captured.update(n=n, e=e, d=d, p=p, q=q, dmp1=dmp1, dmq1=dmq1, iqmp=iqmp)
         return 1
 
-    monkeypatch.setattr(rsa_oaep, "import_rsa_private_key_negotiated", fake_import_rsa_private_key)
+    monkeypatch.setattr(rsa_oaep, "provision_rsa_private_key", fake_import_rsa_private_key)
     monkeypatch.setattr(
         rsa_oaep, "decrypt_single", lambda *args, **kwargs: bytes.fromhex(vec["msg"])
     )
     monkeypatch.setattr(rsa_oaep, "destroy_quietly", lambda *args: None)
 
-    rsa_oaep.test_rsa_oaep(_RsaSession(), vec_id, vec)
+    rsa_oaep.test_rsa_oaep(_RsaSession(), None, vec_id, vec)
 
     assert not captured["n"].startswith(b"\x00")
     assert len(captured["n"]) == 256
