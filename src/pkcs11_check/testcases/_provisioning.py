@@ -20,6 +20,7 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
+    CKA_EC_PARAMS,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -760,6 +761,134 @@ def provision_rsa_private_key(
     blob = strategy.wrap(ctx, pkcs8)
     unwrap_template: dict[Any, Any] = {CKA_CLASS: CKO_PRIVATE_KEY, CKA_KEY_TYPE: CKK_RSA}
     unwrap_template.update(attrs)
+
+    handle = unwrap_key(
+        rs.raw,
+        rs.sh,
+        unwrap_handle,
+        blob,
+        strategy.unwrap_mech,
+        attrs=unwrap_template,
+        mech_param=strategy.unwrap_mech_param(ctx),
+    )
+
+    from pkcs11_check.compliance import ComplianceLevel, note
+
+    note(
+        f"{label}: private key provisioned via C_UnwrapKey ({ctx.strategy_name})",
+        ComplianceLevel.STANDARD,
+    )
+    return handle
+
+
+# ---------------------------------------------------------------------------
+# provision_ec_private_key — resolution entry point (Task 4)
+# ---------------------------------------------------------------------------
+
+#: Attributes that MUST be stripped from the EC unwrap template.
+#: ``CKA_EC_PARAMS`` is READ_ONLY on C_UnwrapKey (derived from the PKCS#8 payload;
+#: softhsm2 returns CKR_ATTRIBUTE_READ_ONLY if supplied).
+#: ``CKA_VALUE`` comes from the encrypted blob, not the template.
+_EC_UNWRAP_STRIP: frozenset[int] = frozenset({CKA_EC_PARAMS, CKA_VALUE})
+
+
+def provision_ec_private_key(
+    rs: Any,
+    cfg: Any,
+    *,
+    ec_params: bytes,
+    value: bytes,
+    key_type: int,
+    attrs: dict[Any, Any],
+    label: str,
+) -> int:
+    """Provision an EC/Edwards/Montgomery private key into the token by the best available means.
+
+    Resolution order (per design §3.2):
+
+    1. If ``cfg.key_inject != "force-unwrap"``, probe create availability.
+       When the module supports C_CreateObject for private keys, call
+       ``import_ec_private_key_negotiated`` directly and return the handle.
+
+    2. If create is unavailable/prohibited OR ``cfg.key_inject == "force-unwrap"``:
+       - ``key_inject == "off"`` → ``pytest.skip`` (no injection path).
+       - Build a ``WrapContext`` (bootstrap + multi-strategy negotiation);
+         ``None`` → ``pytest.skip``.
+       - Look up the resolved strategy by ``ctx.strategy_name``; not found → ``pytest.skip``.
+       - Encode the scalar as a PKCS#8 DER blob; ``ValueError`` (unsupported curve/type)
+         → ``pytest.skip`` (clean; not a finding).
+       - Check against strategy size cap; call ``unwrap_key`` with the encrypted blob.
+       - Template: ``{CKA_CLASS: CKO_PRIVATE_KEY, CKA_KEY_TYPE: key_type}`` plus caller
+         ``attrs`` with ``CKA_EC_PARAMS`` and ``CKA_VALUE`` stripped.
+       - Record a compliance note (no value-integrity readback — private keys are sensitive).
+       - Return the unwrapped key handle.
+
+    Args:
+        rs:        Session record with ``.raw``, ``.sh``, and ``has_mechanism``.
+        cfg:       Config carrying ``key_inject``, ``wrap_rsa_bits``, etc.
+        ec_params: DER-encoded curve OID (for CKK_EC) or ignored bytes (Edwards/Montgomery).
+        value:     Raw private scalar bytes.
+        key_type:  ``CKK_EC``, ``CKK_EC_EDWARDS``, or ``CKK_EC_MONTGOMERY`` bare constant.
+        attrs:     Usage-flag attributes for the resulting object.  ``CKA_EC_PARAMS`` and
+                   ``CKA_VALUE`` are stripped defensively if present.
+        label:     Human-readable label used in skip messages.
+
+    Returns:
+        Object handle (int) of the provisioned private key.
+
+    Raises:
+        pytest.skip.Exception: When the module has no injection path, the wrap-context /
+            strategy is unavailable, or ``ec_pkcs8_from_private`` raises ``ValueError``
+            on the unwrap path.
+    """
+    from pkcs11_check.raw.recipes import unwrap_key
+
+    mode: str = getattr(cfg, "key_inject", "off")
+
+    # ------------------------------------------------------------------
+    # Fast path: create_available (unless caller forces the unwrap path)
+    # ------------------------------------------------------------------
+    if mode != "force-unwrap":
+        verdict = profile_for(rs).create_verdict("private")
+        if verdict == "create_available":
+            from pkcs11_check.testcases.conftest import import_ec_private_key_negotiated
+
+            return import_ec_private_key_negotiated(
+                rs, ec_params=ec_params, value=value, key_type=key_type, attrs=attrs
+            )
+
+    # ------------------------------------------------------------------
+    # Unwrap path (or forced)
+    # ------------------------------------------------------------------
+    if mode == "off":
+        pytest.skip(f"{label}: Module does not implement C_CreateObject")
+
+    ctx = build_wrap_context(rs, cfg)
+    if ctx is None:
+        pytest.skip(f"{label}: no wrapping path")
+
+    strategy = next((s for s in DEFAULT_STRATEGIES if s.name == ctx.strategy_name), None)
+    if strategy is None:
+        pytest.skip(f"{label}: no wrapping path: resolved strategy not found")
+
+    try:
+        from pkcs11_check.raw.key_encoding import ec_pkcs8_from_private
+
+        pkcs8 = ec_pkcs8_from_private(scalar=value, ec_params=ec_params, key_type=key_type)
+    except ValueError:
+        pytest.skip(f"{label}: no PKCS#8 encoding for this key type")
+
+    cap = strategy.max_target_size(ctx)
+    if cap is not None and len(pkcs8) > cap:
+        pytest.skip(f"{label}: no wrapping path: no usable wrap mechanism for this target size")
+
+    unwrap_handle = strategy.unwrapping_key_handle(ctx)
+    if unwrap_handle is None:
+        pytest.skip(f"{label}: no wrapping path: resolved strategy has no unwrap handle")
+
+    blob = strategy.wrap(ctx, pkcs8)
+    unwrap_template: dict[Any, Any] = {CKA_CLASS: CKO_PRIVATE_KEY, CKA_KEY_TYPE: key_type}
+    unwrap_template.update({k: v for k, v in attrs.items() if k not in _EC_UNWRAP_STRIP})
 
     handle = unwrap_key(
         rs.raw,
