@@ -83,9 +83,11 @@ Resolution is driven by the profile's create-availability verdict + the configur
 - verdict `create_available` → **`create`** (a later create failure is a real finding, not an
   unwrap trigger).
 - verdict `create_absent` / `create_prohibited` → **`unwrap`** if inject is enabled and a wrapping
-  path exists, else **`skip`**.
+  path exists; else **`external`** if explicitly enabled (§4.2); else **`skip`**.
 - mode `force-unwrap` → **`unwrap`** without attempting create at all (validation; and deployers
   whose HSM is known to prohibit plaintext import, avoiding a guaranteed-refused create call).
+
+Full resolution order: **`create` → `unwrap` → `external` (strict opt-in) → `skip`**.
 
 **`provision_*` is for VALID key material only** — it is the "get me this fixture object" path.
 Tests that intentionally provision *invalid* material to probe creation-rejection (e.g. an
@@ -121,9 +123,15 @@ Selected by `ProvisioningProfile` + target size:
 1. **`RsaAesKeyWrap`** (`CKM_RSA_AES_KEY_WRAP`, envelope) — **primary.** RSA-OAEP-wrap an ephemeral
    AES KEK + AES-KWP-wrap the target, one `C_UnwrapKey`. **Any key size** (incl. ~1.2 KB RSA
    private keys) — and the **RSA bootstrap key size is independent of the target**, because RSA
-   only wraps the 32-byte KEK; **RSA-2048 suffices** regardless of target size (the AES-KWP layer
-   carries the large payload). Verified buildable in software (`cryptography`) and advertised by
-   softhsm2/opencryptoki.
+   only wraps the 32-byte KEK; **RSA-2048 is cryptographically sufficient** regardless of target size
+   (the AES-KWP layer carries the large payload). Verified buildable in software (`cryptography`) and
+   advertised by softhsm2/opencryptoki. **But a strict provider may *refuse to generate* a 2048-bit
+   bootstrap key** (FIPS/policy minimums of 3072/4096). The bootstrap therefore **auto-escalates the
+   RSA size**: it tries `--wrap-rsa-bits` (default 2048) and, on a size-policy refusal
+   (`CKR_KEY_SIZE_RANGE` / `CKR_ATTRIBUTE_VALUE_INVALID` / `CKR_TEMPLATE_INCONSISTENT` /
+   `CKR_FUNCTION_FAILED` on a valid keygen template), escalates 2048 → 3072 → 4096; if all sizes are
+   refused, the bootstrap reports no wrapping path → `skip`. (RSA size is decoupled from target size,
+   so escalation costs only keygen time, not coverage.)
 2. **`RsaOaep`** (`CKM_RSA_PKCS_OAEP`) — fallback for **small** targets only (≤ modulus − 2·hashlen
    − 2: 190/318/446 B for RSA-2048/3072/4096). Fits AES/HMAC and EC private keys; **cannot** fit RSA
    private keys.
@@ -150,6 +158,38 @@ round-trip in the meta-tests. The param structs (`CK_RSA_AES_KEY_WRAP_PARAMS`,
 `CKA_VALUE` bytes; private keys = PKCS#8 DER. Built with `cryptography`
 (`OAEP` + `aes_key_wrap_with_padding` + `private_bytes(PKCS8, DER, NoEncryption)`).
 
+### 4.2 External-tool provisioning (worst case — strictly gated, opt-in)
+
+Some backends can provision **no key via the PKCS#11 API at all** — `kmsp11` (Cloud KMS) has no
+`C_CreateObject`, no operational keygen, and no in-token wrapping key to unwrap under, so every
+in-band tier (§3.2, §4) ends in `skip`. The **only** way to get a chosen KAT key onto such a backend
+is its native import path (e.g. `gcloud kms keys import` with an RSA-OAEP-wrapped key, or a vendor
+CLI). This tier exposes that as a **generic command hook**, not per-provider code:
+
+- **Resolution position:** `create → unwrap → external → skip` — external is attempted **only after**
+  the in-band tiers fail **and only** when explicitly enabled.
+- **Double opt-in, off by default:** requires BOTH `--allow-external-provision` (a strict boolean
+  acknowledging the escape hatch) AND `--external-provision-cmd <template>`. Absent either, this tier
+  does not exist and behaviour is unchanged.
+- **Mechanism:** the suite writes the key material to a mode-`0600` temp file (deleted in a `finally`,
+  best-effort overwrite), substitutes `{keyfile} {label} {key_type} {key_class}` into the command
+  template, runs it with a timeout, then resolves the loaded object by `CKA_LABEL` via
+  `C_FindObjects` to get a handle. Non-zero exit / not-found → `skip` ("external provisioning
+  failed"), never a target-op `fail`.
+- **Honesty (non-negotiable):** an externally-provisioned object is **not** a PKCS#11-API capability
+  of the module. Every test that used it records `compliance.note("provisioned externally via …")`
+  and the provisioning report counts it as `ran_via_external` (distinct from `ran_via_create` /
+  `ran_via_unwrap`). The run summary prints a prominent banner that external provisioning was active,
+  so results are never mistaken for a pure in-API run. Value-integrity readback still applies when
+  the loaded key is non-sensitive.
+- **Security:** runs an operator-supplied command and writes key material to disk — exactly why it is
+  double-opt-in deployment config (like `--pin`), never a default, and loudly flagged.
+- **Provider-general:** the suite ships **no** built-in vendor commands; the operator supplies the
+  template for their backend. (A `docs/` cookbook may give example templates, e.g. for kmsp11.)
+
+This tier is **Phase 6** (after the in-band layer is proven); it slots in as one extra resolution
+step before `skip`.
+
 ## 5. Configuration surface
 
 Deployment config (provider-general — like `--pin`/`--p11-slot`; **never** per-module hardcoding),
@@ -162,7 +202,9 @@ in `config.py::P11TestConfig`:
 | `--wrap-key-label` / `--wrap-key-handle` | — | configured in-token wrapping key. |
 | `--wrap-key-value <hex>` | — | only for a **symmetric** configured KEK (software-side wrap). |
 | `--wrap-mech <CKM>` | auto | override the auto-selected unwrap mechanism. |
-| `--wrap-rsa-bits {2048,3072,4096}` | `2048` | bootstrap RSA size. Default 2048: in the envelope, RSA wraps only the 32-byte KEK, so size is independent of target. Bump only if the `RsaOaep` *fallback* must directly wrap a 191–318 B target (e.g. a large HMAC key) on a module lacking `CKM_RSA_AES_KEY_WRAP`. |
+| `--wrap-rsa-bits {2048,3072,4096}` | `2048` | **Starting** bootstrap RSA size; **auto-escalates** 2048 → 3072 → 4096 if the provider refuses the smaller size (FIPS/strict policy). Cryptographically 2048 suffices (envelope wraps only the KEK); escalation is purely to satisfy a provider's keygen minimum. |
+| `--allow-external-provision` | `false` | strict acknowledgement enabling the §4.2 external-tool tier (worst case). Required **with** `--external-provision-cmd`. |
+| `--external-provision-cmd <template>` | — | operator-supplied command template (`{keyfile} {label} {key_type} {key_class}`) that loads a key into the backend; tried only after in-band tiers fail. |
 
 ## 6. Classification & correctness rules (integrity-critical)
 
@@ -189,8 +231,9 @@ in `config.py::P11TestConfig`:
   `fail`, and not thousands of silent skips. The dependent tests still `skip` (capability absent);
   this is the one *visible* record of the cause.
 - A **provisioning report** rides in the run artifacts (like coverage): per module,
-  `ran_via_create / ran_via_unwrap / skipped_no_path`, by object class — making the currently
-  invisible 47k/19k/1.3k skips explicit.
+  `ran_via_create / ran_via_unwrap / ran_via_external / skipped_no_path`, by object class — making
+  the currently invisible 47k/19k/1.3k skips explicit. When `ran_via_external > 0` the run summary
+  prints a prominent banner (the run is not a pure in-API result).
 
 ## 8. Default vs opt-in
 
@@ -219,15 +262,17 @@ in `config.py::P11TestConfig`:
 ## 10. Phasing (drives the implementation plan)
 
 1. **Core + secret keys + default skip.** `ProvisioningProfile` (per-class probe), `WrapContext` +
-   `RsaAesKeyWrap`/`RsaOaep`/`AesKwp` strategies, `provision_secret_key`, config. Migrate wycheproof
-   secret-key classes + acvp secret sites. Make the 321 + ~30 skip cleanly by default. Force-unwrap
-   validation on softhsm2.
+   `RsaAesKeyWrap`/`RsaOaep`/`AesKwp` strategies (incl. **RSA-size auto-escalation 2048→3072→4096**),
+   `provision_secret_key`, config. Migrate wycheproof secret-key classes + acvp secret sites. Make the
+   321 + ~30 skip cleanly by default. Force-unwrap validation on softhsm2.
 2. **Private-key injection.** `provision_private_key` (sign / RSA-decrypt / ECDH), PKCS#8 target
    encoding, per-key-type unwrap templates. Migrate those KAT sites.
 3. **Visibility.** Provisioning report + dedicated create-absent finding + per-class probe surfaced.
 4. **Broad sweep.** Remaining setup-create sites (public/cert/data → clean profile-driven skip);
    audit the 82 `create_object` setup sites and route the setup ones through the profile.
 5. **(future) `MlKemKemDem` strategy** once a software ML-KEM source is available.
+6. **External-tool provisioning (§4.2)** — strict double-opt-in command hook; the only path for
+   backends that provision nothing via PKCS#11 (e.g. kmsp11). Recorded as `ran_via_external` + banner.
 
 ## 11. Risks & open questions
 
@@ -240,7 +285,13 @@ in `config.py::P11TestConfig`:
 - **Bootstrap key lifecycle**: generated once per test file (session object, cached on `rs`,
   `CKA_UNWRAP=True`), destroyed at file end; per test for `p11_raw_session` files. Per-file
   subprocess isolation means it cannot be shared across files — one keygen per file-process on a
-  no-create module under inject (acceptable, opt-in; RSA-2048 keeps it cheap).
+  no-create module under inject (acceptable, opt-in; RSA-2048 keeps it cheap, escalating only if the
+  provider's policy refuses it).
+- **External-tool tier security (Phase 6)**: runs an operator-supplied command and writes key
+  material to a `0600` temp file (deleted in `finally`). Double-opt-in
+  (`--allow-external-provision` + `--external-provision-cmd`), off by default, results flagged
+  `ran_via_external` with a banner — never mistaken for a pure in-API run. The suite ships no vendor
+  commands.
 - **Login state**: bootstrap keypair gen and private-key unwrap may require a logged-in session /
   `CKA_PRIVATE`. When `p11_config.pin` is `None` the layer cannot bootstrap a private unwrap key →
   it reports no wrapping path → `skip` (recorded), never a hang or a fail.
