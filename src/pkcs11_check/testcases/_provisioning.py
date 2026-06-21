@@ -1277,16 +1277,22 @@ def external_provision(
 
     template: str = cfg.external_provision_cmd
 
-    # Create the temp file with mode 0600 before writing anything.
+    # Create the temp file. If mkstemp itself fails, no file exists — nothing to clean up.
     try:
         fd, path = tempfile.mkstemp()
-        os.fchmod(fd, 0o600)
-        os.write(fd, material)
-        os.close(fd)
     except Exception:  # noqa: BLE001
         return None
 
+    # From here the file exists on disk; the finally below ALWAYS unlinks it, so a failure
+    # while writing the material (e.g. ENOSPC) cannot leave key material behind.
     try:
+        try:
+            os.fchmod(fd, 0o600)
+            os.write(fd, material)
+            os.close(fd)
+        except Exception:  # noqa: BLE001
+            return None
+
         # Build and run the command.
         try:
             cmd_str = template.format(

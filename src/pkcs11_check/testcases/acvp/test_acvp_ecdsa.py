@@ -317,7 +317,7 @@ def test_acvp_ecdsa_sigver(
                 p11_config,
                 ec_params=vec["ec_params"],
                 ec_point=vec["ec_point_der"],
-                key_type=int(CKK_EC),
+                key_type=CKK_EC,
                 attrs={CKA_VERIFY: True},
                 label="acvp ecdsa verify",
             )

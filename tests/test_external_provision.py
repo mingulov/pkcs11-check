@@ -354,3 +354,38 @@ def test_temp_file_mode_0600_while_exists(monkeypatch: pytest.MonkeyPatch) -> No
     assert result == 99
     assert observed_mode, "fake_run must have been called and observed the file mode"
     assert observed_mode[0] == 0o600, f"expected mode 0600, got {oct(observed_mode[0])}"
+
+
+def test_write_failure_still_removes_temp_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failure during write-prep (os.write raises, e.g. ENOSPC) must still unlink the
+    temp file — the finally covers it from mkstemp onward, so no key material is left on
+    disk. Regression for the Phase-6 final-review security fix."""
+    import os
+    import tempfile
+
+    clear_provisioning_events()
+    captured: list[str] = []
+    _real_mkstemp = tempfile.mkstemp
+
+    def spy_mkstemp(*a: Any, **k: Any) -> Any:
+        fd, path = _real_mkstemp(*a, **k)
+        captured.append(path)
+        return fd, path
+
+    def boom_write(fd: int, data: Any) -> int:
+        raise OSError("ENOSPC simulated")
+
+    monkeypatch.setattr(tempfile, "mkstemp", spy_mkstemp)
+    monkeypatch.setattr(os, "write", boom_write)
+
+    rs = _make_rs()
+    cfg = _make_cfg()
+    result = external_provision(
+        rs, cfg, material=_MATERIAL, label="k", key_type=3, obj_class="secret"
+    )
+
+    assert result is None
+    assert captured, "mkstemp should have been called"
+    assert not os.path.exists(captured[0]), (
+        f"temp file {captured[0]} must be removed even when write fails"
+    )

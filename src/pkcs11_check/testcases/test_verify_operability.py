@@ -114,7 +114,7 @@ def _build_rsa_pkcs1_probe(
         p11_config,
         rsa_n=n,
         rsa_e=e,
-        key_type=int(CKK_RSA),
+        key_type=CKK_RSA,
         attrs={CKA_VERIFY: True},
         label="verify-operability RSA",
     )
@@ -146,7 +146,7 @@ def _build_ecdsa_sha256_probe(
         p11_config,
         ec_params=ec_params,
         ec_point=ec_point,
-        key_type=int(CKK_EC),
+        key_type=CKK_EC,
         attrs={CKA_VERIFY: True},
         label="verify-operability EC",
     )
