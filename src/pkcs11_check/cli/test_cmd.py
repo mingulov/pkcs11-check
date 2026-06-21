@@ -17,9 +17,11 @@ from pkcs11_check.config import P11TestConfig
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.file_runner import (
     IsolatedReportConfig,
+    _emit_external_provision_banner,
     discover_auto_isolation_units,
     discover_pytest_units,
     extract_coverage_from_jsonl,
+    extract_provisioning_from_jsonl,
     extract_quality_report_records_from_jsonl,
     load_run_state,
     postprocess_jsonl_to_unified,
@@ -76,6 +78,14 @@ def _build_pytest_args(
     output_file: str | None,
     include_machine_report_args: bool,
     verbose: bool,
+    key_inject: str,
+    wrap_key_source: str,
+    wrap_key_label: str | None,
+    wrap_key_handle: int | None,
+    wrap_key_value: str | None,
+    wrap_mech: str | None,
+    wrap_rsa_bits: int,
+    wrap_oaep_hash: str,
 ) -> list[str]:
     args: list[str] = []
     args.extend(["--p11-module", str(module)])
@@ -96,6 +106,23 @@ def _build_pytest_args(
         args.append(f"--p11-rv-trace-compact={rv_trace_compact}")
     elif rv_trace:
         args.append("--p11-rv-trace")
+
+    if key_inject != "off":
+        args.extend(["--p11-key-inject", key_inject])
+    if wrap_key_source != "bootstrap":
+        args.extend(["--p11-wrap-key-source", wrap_key_source])
+    if wrap_key_label is not None:
+        args.extend(["--p11-wrap-key-label", wrap_key_label])
+    if wrap_key_handle is not None:
+        args.extend(["--p11-wrap-key-handle", str(wrap_key_handle)])
+    if wrap_key_value is not None:
+        args.extend(["--p11-wrap-key-value", wrap_key_value])
+    if wrap_mech is not None:
+        args.extend(["--p11-wrap-mech", wrap_mech])
+    if wrap_rsa_bits != 2048:
+        args.extend(["--p11-wrap-rsa-bits", str(wrap_rsa_bits)])
+    if wrap_oaep_hash != "auto":
+        args.extend(["--p11-wrap-oaep-hash", wrap_oaep_hash])
 
     if marker:
         args.extend(["-m", marker])
@@ -322,6 +349,14 @@ def test_command(
         output_file=output_file,
         include_machine_report_args=isolation == "none",
         verbose=verbose,
+        key_inject=key_inject,
+        wrap_key_source=wrap_key_source,
+        wrap_key_label=wrap_key_label,
+        wrap_key_handle=wrap_key_handle,
+        wrap_key_value=wrap_key_value,
+        wrap_mech=wrap_mech,
+        wrap_rsa_bits=wrap_rsa_bits,
+        wrap_oaep_hash=wrap_oaep_hash,
     )
     pytest_args.extend(["--p11-manifest", str(manifest_path)])
     report_config = _isolated_report_config(output, output_file) if isolation != "none" else None
@@ -476,6 +511,12 @@ def test_command(
             if coverage_data:
                 coverage_path = unified_path.parent / "coverage.json"
                 coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
+            provisioning_data = extract_provisioning_from_jsonl(jsonl_p)
+            if provisioning_data is not None:
+                provisioning_path = unified_path.parent / "provisioning.json"
+                provisioning_path.write_text(json.dumps(provisioning_data, indent=2) + "\n")
+                if provisioning_data["totals"].get("ran_via_external", 0) > 0:
+                    _emit_external_provision_banner(provisioning_data["totals"]["ran_via_external"])
             results_payload = postprocess_jsonl_to_unified(jsonl_p, unified_path)
             quality_path = unified_path.parent / "quality.json"
             write_quality_json_report(

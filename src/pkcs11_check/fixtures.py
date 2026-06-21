@@ -93,6 +93,30 @@ def p11_config(request: pytest.FixtureRequest) -> P11TestConfig:
     if rv_trace_enabled:
         kwargs["rv_trace"] = True
         kwargs["rv_trace_compact"] = rv_trace_compact
+    key_inject = request.config.getoption("p11_key_inject", default="off")
+    if key_inject != "off":
+        kwargs["key_inject"] = key_inject
+    wrap_key_source = request.config.getoption("p11_wrap_key_source", default="bootstrap")
+    if wrap_key_source != "bootstrap":
+        kwargs["wrap_key_source"] = wrap_key_source
+    wrap_key_label = request.config.getoption("p11_wrap_key_label", default=None)
+    if wrap_key_label is not None:
+        kwargs["wrap_key_label"] = wrap_key_label
+    wrap_key_handle = request.config.getoption("p11_wrap_key_handle", default=None)
+    if wrap_key_handle is not None:
+        kwargs["wrap_key_handle"] = wrap_key_handle
+    wrap_key_value = request.config.getoption("p11_wrap_key_value", default=None)
+    if wrap_key_value is not None:
+        kwargs["wrap_key_value"] = wrap_key_value
+    wrap_mech = request.config.getoption("p11_wrap_mech", default=None)
+    if wrap_mech is not None:
+        kwargs["wrap_mech"] = wrap_mech
+    wrap_rsa_bits = request.config.getoption("p11_wrap_rsa_bits", default=2048)
+    if wrap_rsa_bits != 2048:
+        kwargs["wrap_rsa_bits"] = wrap_rsa_bits
+    wrap_oaep_hash = request.config.getoption("p11_wrap_oaep_hash", default="auto")
+    if wrap_oaep_hash != "auto":
+        kwargs["wrap_oaep_hash"] = wrap_oaep_hash
     return P11TestConfig(**kwargs)
 
 

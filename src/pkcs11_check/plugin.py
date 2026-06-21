@@ -73,6 +73,7 @@ _CUMULATIVE_MECHANISM_DETAILS: pytest.StashKey[set[tuple[int, frozenset[tuple[st
 _CUMULATIVE_FUNCTION_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
 _CUMULATIVE_MECHANISM_COUNTS: pytest.StashKey[Counter[int]] = pytest.StashKey()
 _CUMULATIVE_DETAIL_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
+_PROVISIONING_COUNTS: pytest.StashKey[Counter[tuple[str, str]]] = pytest.StashKey()
 _BOOTSTRAP_FUNCTION_COUNTS: pytest.StashKey[dict[str, int]] = pytest.StashKey()
 _BOOTSTRAP_COLLECTED: pytest.StashKey[bool] = pytest.StashKey()
 _MODULE_SESSION_HEALTH_METRICS: pytest.StashKey[dict[str, int | float]] = pytest.StashKey()
@@ -193,6 +194,56 @@ def pytest_addoption(parser: Any) -> None:
         metavar="N",
         help="Keep only the last N CK_RV trace entries per test (implies --p11-rv-trace)",
     )
+    group.addoption(
+        "--p11-key-inject",
+        dest="p11_key_inject",
+        default="off",
+        help="Key-provisioning injection mode: off, unwrap, force-unwrap (default: off)",
+    )
+    group.addoption(
+        "--p11-wrap-key-source",
+        dest="p11_wrap_key_source",
+        default="bootstrap",
+        help="Wrapping KEK source: bootstrap (auto-generate) or configured (default: bootstrap)",
+    )
+    group.addoption(
+        "--p11-wrap-key-label",
+        dest="p11_wrap_key_label",
+        default=None,
+        help="Label of the configured wrapping key",
+    )
+    group.addoption(
+        "--p11-wrap-key-handle",
+        dest="p11_wrap_key_handle",
+        type=int,
+        default=None,
+        help="Handle of the configured wrapping key",
+    )
+    group.addoption(
+        "--p11-wrap-key-value",
+        dest="p11_wrap_key_value",
+        default=None,
+        help="Hex value of a symmetric configured KEK",
+    )
+    group.addoption(
+        "--p11-wrap-mech",
+        dest="p11_wrap_mech",
+        default=None,
+        help="Override auto-selected unwrap mechanism (e.g. CKM_RSA_AES_KEY_WRAP)",
+    )
+    group.addoption(
+        "--p11-wrap-rsa-bits",
+        dest="p11_wrap_rsa_bits",
+        type=int,
+        default=2048,
+        help="RSA key size in bits for bootstrap wrapping key (default: 2048)",
+    )
+    group.addoption(
+        "--p11-wrap-oaep-hash",
+        dest="p11_wrap_oaep_hash",
+        default="auto",
+        help="OAEP hash for wrapping: auto, sha1, or sha256 (default: auto)",
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -216,6 +267,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.stash[_LAST_RV_TRACE] = []
     config.stash[_SELECTION_TELEMETRY_KEY] = {}
     config.stash[_SELECTION_PARAM_CACHE_KEY] = {}
+    config.stash[_PROVISIONING_COUNTS] = Counter()
 
     # Inject --report-log when PKCS11_CHECK_REPORT_LOG is set (by test_cmd.py for
     # --isolation none JSON runs).  Guard against meta-tests (no --p11-module) and
@@ -920,6 +972,23 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
 
     clear_classifications()
 
+    # Provisioning events can originate from any test file; drain and clear unconditionally.
+    from pkcs11_check.testcases._provisioning import (
+        clear_provisioning_events,
+        get_provisioning_events,
+    )
+
+    _prov_session = getattr(item, "session", None)
+    prov_counts = (
+        _prov_session.config.stash.get(_PROVISIONING_COUNTS, None)
+        if _prov_session is not None
+        else None
+    )
+    if prov_counts is not None:
+        for ev in get_provisioning_events():
+            prov_counts[(ev.obj_class, ev.method)] += 1
+    clear_provisioning_events()
+
     if not _is_testcase_item(item):
         return
 
@@ -1136,6 +1205,19 @@ def _finalize_on_teardown(config: pytest.Config, raw: Any) -> None:
         report_log_plugin._write_json_data(record)
 
 
+def _build_provisioning_report(counts: Counter[tuple[str, str]]) -> dict[str, Any]:
+    """Build the ProvisioningReport payload from a per-(obj_class, method) counter.
+
+    Pure function — no I/O, fully unit-testable.
+    """
+    by_class: dict[str, dict[str, int]] = {}
+    for (obj_class, method), n in counts.items():
+        by_class.setdefault(obj_class, {})[method] = n
+    methods = ("ran_via_create", "ran_via_unwrap", "ran_via_external", "skipped_no_path")
+    totals = {m: sum(c.get(m, 0) for c in by_class.values()) for m in methods}
+    return {"by_class": by_class, "totals": totals}
+
+
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     config = session.config
     if config.getoption("p11_module", default=None) is None:
@@ -1266,6 +1348,15 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
                 "$report_type": "CoverageReport",
                 **coverage_data,
             }
+        )
+
+    # Emit ProvisioningReport to JSONL (always, even if all-zero counts).
+    provisioning_data = _build_provisioning_report(
+        config.stash.get(_PROVISIONING_COUNTS, Counter())
+    )
+    if report_log_plugin is not None and hasattr(report_log_plugin, "_write_json_data"):
+        report_log_plugin._write_json_data(
+            {"$report_type": "ProvisioningReport", **provisioning_data}
         )
 
     # Release per-process module resources: C_Finalize the live library on
