@@ -255,9 +255,9 @@ def test_command(
         rich_help_panel="Key provisioning",
     ),
     wrap_oaep_hash: str = typer.Option(
-        "sha1",
+        "auto",
         "--wrap-oaep-hash",
-        help="OAEP hash for wrapping: sha1 (default, max HSM compat) or sha256",
+        help="OAEP hash for wrapping: auto (probe; prefer sha256, fall back sha1), sha1, or sha256",
         rich_help_panel="Key provisioning",
     ),
     targets: list[str] = typer.Argument(None, help="Optional pytest paths or nodeids"),

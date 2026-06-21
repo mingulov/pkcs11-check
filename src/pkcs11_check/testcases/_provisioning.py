@@ -293,6 +293,58 @@ def _bootstrap_rsa_unwrap_key(rs: Any, start_bits: int) -> tuple[int, int, int] 
     return None
 
 
+def _negotiate_oaep_hash(
+    rs: Any,
+    strategy: WrapStrategy,
+    rsa_pub_der: bytes,
+    unwrapping_key_handle: int,
+    aes_bits: int,
+) -> str | None:
+    """Probe the module to find the best supported OAEP hash for wrapping.
+
+    Tries candidates in order (sha256 first, sha1 second).  For each, wraps a
+    16-byte probe value and attempts C_UnwrapKey with a minimal AES secret-key
+    template.  Returns the first candidate that succeeds, or ``None`` if every
+    candidate fails.
+
+    The throwaway unwrapped key is destroyed quietly on success.
+    """
+    from pkcs11_check.raw.recipes import destroy_quietly, unwrap_key
+
+    probe = b"\x00" * 16
+    probe_attrs = {
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: CKK_AES,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_ENCRYPT: True,
+    }
+    for cand in ("sha256", "sha1"):
+        ctx = WrapContext(
+            rsa_pub_der=rsa_pub_der,
+            unwrapping_key_handle=unwrapping_key_handle,
+            aes_bits=aes_bits,
+            oaep_hash=cand,
+        )
+        blob = strategy.wrap(ctx, probe)
+        try:
+            handle = unwrap_key(
+                rs.raw,
+                rs.sh,
+                unwrapping_key_handle,
+                blob,
+                strategy.unwrap_mech,
+                attrs=probe_attrs,
+                mech_param=strategy.unwrap_mech_param(ctx),
+            )
+        except CkrAssertionError:
+            continue
+        destroy_quietly(rs.raw, rs.sh, handle)
+        return cand
+    return None
+
+
 def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
     """Build a ``WrapContext`` for the bootstrap path.
 
@@ -303,6 +355,10 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
 
     Sets ``profile_for(rs).rsa_pub_der_probe`` so ``select_strategy`` can size-check
     OAEP payloads correctly before the real ``WrapContext`` is passed.
+
+    When ``cfg.wrap_oaep_hash == "auto"`` (the default), probes the module by
+    attempting a round-trip with each candidate hash (sha256 preferred, sha1
+    fallback).  Returns ``None`` when no OAEP hash succeeds in auto mode.
 
     The ``configured`` wrap-key-source path is not yet implemented; a
     ``NotImplementedError`` is raised for that branch.
@@ -330,7 +386,18 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
     der = pub_key.public_bytes(_Encoding.DER, _PublicFormat.SubjectPublicKeyInfo)
 
     profile_for(rs).rsa_pub_der_probe = der
-    oaep_hash: str = getattr(cfg, "wrap_oaep_hash", "sha1")
+
+    oaep_hash_cfg: str = getattr(cfg, "wrap_oaep_hash", "auto")
+    if oaep_hash_cfg == "auto":
+        strategy = select_strategy(DEFAULT_STRATEGIES, profile_for(rs), 16)
+        if strategy is None:
+            return None
+        oaep_hash = _negotiate_oaep_hash(rs, strategy, der, priv_handle, 256)
+        if oaep_hash is None:
+            return None
+    else:
+        oaep_hash = oaep_hash_cfg
+
     return WrapContext(rsa_pub_der=der, unwrapping_key_handle=priv_handle, oaep_hash=oaep_hash)
 
 
