@@ -212,6 +212,48 @@ def test_command(
         help="Keep only the last N CK_RV trace entries per test (implies --rv-trace)",
         rich_help_panel="CK_RV tracing",
     ),
+    key_inject: str = typer.Option(
+        "off",
+        "--key-inject",
+        help="Key-provisioning injection mode: off, unwrap, force-unwrap",
+        rich_help_panel="Key provisioning",
+    ),
+    wrap_key_source: str = typer.Option(
+        "bootstrap",
+        "--wrap-key-source",
+        help="Wrapping KEK source: bootstrap (auto-generate) or configured",
+        rich_help_panel="Key provisioning",
+    ),
+    wrap_key_label: str | None = typer.Option(
+        None,
+        "--wrap-key-label",
+        help="Label of the configured wrapping key",
+        rich_help_panel="Key provisioning",
+    ),
+    wrap_key_handle: int | None = typer.Option(
+        None,
+        "--wrap-key-handle",
+        help="Handle of the configured wrapping key",
+        rich_help_panel="Key provisioning",
+    ),
+    wrap_key_value: str | None = typer.Option(
+        None,
+        "--wrap-key-value",
+        help="Hex value of a symmetric configured KEK",
+        rich_help_panel="Key provisioning",
+    ),
+    wrap_mech: str | None = typer.Option(
+        None,
+        "--wrap-mech",
+        help="Override auto-selected unwrap mechanism (e.g. CKM_RSA_AES_KEY_WRAP)",
+        rich_help_panel="Key provisioning",
+    ),
+    wrap_rsa_bits: int = typer.Option(
+        2048,
+        "--wrap-rsa-bits",
+        help="RSA key size in bits for bootstrap wrapping key",
+        rich_help_panel="Key provisioning",
+    ),
     targets: list[str] = typer.Argument(None, help="Optional pytest paths or nodeids"),
 ) -> None:
     """Run the PKCS#11 test suite against a module."""
@@ -287,6 +329,13 @@ def test_command(
                 slot=slot,
                 destructive=destructive,
                 pin=SecretStr(pin) if pin is not None else None,
+                key_inject=key_inject,
+                wrap_key_source=wrap_key_source,
+                wrap_key_label=wrap_key_label,
+                wrap_key_handle=wrap_key_handle,
+                wrap_key_value=wrap_key_value,
+                wrap_mech=wrap_mech,
+                wrap_rsa_bits=wrap_rsa_bits,
             )
             baseline = None
             if not ignore_disabled_tests:
