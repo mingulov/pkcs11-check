@@ -244,6 +244,25 @@ def pytest_addoption(parser: Any) -> None:
         default="auto",
         help="OAEP hash for wrapping: auto, sha1, or sha256 (default: auto)",
     )
+    group.addoption(
+        "--p11-allow-external-provision",
+        dest="p11_allow_external_provision",
+        action="store_true",
+        default=False,
+        help=(
+            "Strict acknowledgement enabling external-tool provisioning "
+            "(requires --p11-external-provision-cmd)"
+        ),
+    )
+    group.addoption(
+        "--p11-external-provision-cmd",
+        dest="p11_external_provision_cmd",
+        default=None,
+        help=(
+            "Operator command template loading a key into the backend; "
+            "placeholders {keyfile} {label} {key_type} {key_class}"
+        ),
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:

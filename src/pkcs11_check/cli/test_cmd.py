@@ -86,6 +86,8 @@ def _build_pytest_args(
     wrap_mech: str | None,
     wrap_rsa_bits: int,
     wrap_oaep_hash: str,
+    allow_external_provision: bool,
+    external_provision_cmd: str | None,
 ) -> list[str]:
     args: list[str] = []
     args.extend(["--p11-module", str(module)])
@@ -123,6 +125,10 @@ def _build_pytest_args(
         args.extend(["--p11-wrap-rsa-bits", str(wrap_rsa_bits)])
     if wrap_oaep_hash != "auto":
         args.extend(["--p11-wrap-oaep-hash", wrap_oaep_hash])
+    if allow_external_provision:
+        args.append("--p11-allow-external-provision")
+    if external_provision_cmd is not None:
+        args.extend(["--p11-external-provision-cmd", external_provision_cmd])
 
     if marker:
         args.extend(["-m", marker])
@@ -287,6 +293,24 @@ def test_command(
         help="OAEP hash for wrapping: auto (probe; prefer sha256, fall back sha1), sha1, or sha256",
         rich_help_panel="Key provisioning",
     ),
+    allow_external_provision: bool = typer.Option(
+        False,
+        "--allow-external-provision",
+        help=(
+            "Strict acknowledgement enabling external-tool provisioning "
+            "(requires --external-provision-cmd)"
+        ),
+        rich_help_panel="Key provisioning",
+    ),
+    external_provision_cmd: str | None = typer.Option(
+        None,
+        "--external-provision-cmd",
+        help=(
+            "Operator command template loading a key into the backend; "
+            "placeholders {keyfile} {label} {key_type} {key_class}"
+        ),
+        rich_help_panel="Key provisioning",
+    ),
     targets: list[str] = typer.Argument(None, help="Optional pytest paths or nodeids"),
 ) -> None:
     """Run the PKCS#11 test suite against a module."""
@@ -357,6 +381,8 @@ def test_command(
         wrap_mech=wrap_mech,
         wrap_rsa_bits=wrap_rsa_bits,
         wrap_oaep_hash=wrap_oaep_hash,
+        allow_external_provision=allow_external_provision,
+        external_provision_cmd=external_provision_cmd,
     )
     pytest_args.extend(["--p11-manifest", str(manifest_path)])
     report_config = _isolated_report_config(output, output_file) if isolation != "none" else None
@@ -378,6 +404,8 @@ def test_command(
                 wrap_mech=wrap_mech,
                 wrap_rsa_bits=wrap_rsa_bits,
                 wrap_oaep_hash=wrap_oaep_hash,
+                allow_external_provision=allow_external_provision,
+                external_provision_cmd=external_provision_cmd,
             )
             baseline = None
             if not ignore_disabled_tests:

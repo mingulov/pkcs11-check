@@ -42,6 +42,9 @@ def _default_args(**overrides: object) -> dict[str, object]:
         "wrap_mech": None,
         "wrap_rsa_bits": 2048,
         "wrap_oaep_hash": "auto",
+        # external-tool provisioning (Phase 6)
+        "allow_external_provision": False,
+        "external_provision_cmd": None,
     }
     defaults.update(overrides)
     return defaults

@@ -117,6 +117,12 @@ def p11_config(request: pytest.FixtureRequest) -> P11TestConfig:
     wrap_oaep_hash = request.config.getoption("p11_wrap_oaep_hash", default="auto")
     if wrap_oaep_hash != "auto":
         kwargs["wrap_oaep_hash"] = wrap_oaep_hash
+    allow_external = request.config.getoption("p11_allow_external_provision", default=False)
+    if allow_external:
+        kwargs["allow_external_provision"] = True
+    ext_cmd = request.config.getoption("p11_external_provision_cmd", default=None)
+    if ext_cmd is not None:
+        kwargs["external_provision_cmd"] = ext_cmd
     return P11TestConfig(**kwargs)
 
 

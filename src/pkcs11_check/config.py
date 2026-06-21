@@ -58,6 +58,13 @@ class P11TestConfig(BaseSettings):
     wrap_rsa_bits: int = 2048
     wrap_oaep_hash: str = "auto"  # OAEP hash for wrapping: "auto" (probe), "sha1", or "sha256"
 
+    # External-tool provisioning tier (Phase 6).
+    # allow_external_provision: strict opt-in acknowledgement flag.
+    # external_provision_cmd: operator command template; placeholders: {keyfile} {label}
+    #   {key_type} {key_class}.
+    allow_external_provision: bool = False
+    external_provision_cmd: str | None = None
+
     @classmethod
     def settings_customise_sources(
         cls,
