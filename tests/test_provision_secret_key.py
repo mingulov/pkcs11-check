@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa as _crypto_rsa
 
 import pkcs11_check.testcases._provisioning as _prov
 from pkcs11_check.raw.pack import PackedMechanism
@@ -789,4 +790,141 @@ def test_unwrap_template_includes_class_and_key_type(
     assert template_attrs[CKA_KEY_TYPE] == CKK_AES, (
         f"CKA_KEY_TYPE must equal the passed key_type (CKK_AES), "
         f"got {template_attrs[CKA_KEY_TYPE]!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# (m-o) value-integrity readback: correct / None / wrong — force-unwrap path
+# ---------------------------------------------------------------------------
+
+
+def _make_force_unwrap_fixtures(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sh: int,
+    unwrap_handle: int,
+    read_value: bytes | None,
+) -> None:
+    """Wire up monkeypatches for force-unwrap path.
+
+    read_value is what read_attributes returns for the unwrapped key
+    (None means the key returned {CKA_VALUE: None} / key absent).
+    """
+    priv = _crypto_rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pub_nums = priv.public_key().public_numbers()
+    n_bytes = pub_nums.n.to_bytes((pub_nums.n.bit_length() + 7) // 8, "big")
+    e_bytes = pub_nums.e.to_bytes((pub_nums.e.bit_length() + 7) // 8, "big")
+
+    def fake_gen_rsa_keypair(
+        raw: Any, session: int, bits: int = 2048, **kwargs: Any
+    ) -> tuple[int, int]:
+        return sh + 1000, sh + 1001  # distinct pub/priv handles
+
+    def fake_read_attributes(
+        raw: Any, session: int, handle: int, attr_types: Any
+    ) -> dict[int, Any]:
+        if handle == sh + 1000:  # RSA pub key — return modulus/exponent for WrapContext build
+            from pkcs11_check.raw.types_std import CKA_MODULUS, CKA_PUBLIC_EXPONENT
+
+            return {CKA_MODULUS: n_bytes, CKA_PUBLIC_EXPONENT: e_bytes}
+        # Unwrapped key handle: return {CKA_VALUE: read_value}
+        return {CKA_VALUE: read_value}
+
+    def fake_unwrap(
+        raw: Any,
+        sh_: int,
+        unwrapping_key: int,
+        wrapped_key: bytes,
+        mechanism: Any,
+        attrs: Any = None,
+        *,
+        mech_param: PackedMechanism | None = None,
+    ) -> int:
+        return unwrap_handle
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.gen_rsa_keypair", fake_gen_rsa_keypair)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.read_attributes", fake_read_attributes)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.unwrap_key", fake_unwrap)
+
+
+def test_readback_correct_value_returns_handle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """(m) Readback returns CORRECT value -> handle returned, no skip, records ran_via_unwrap."""
+    _make_force_unwrap_fixtures(monkeypatch, sh=300, unwrap_handle=301, read_value=_AES_VALUE)
+    _reset_cache()
+
+    from pkcs11_check.testcases._provisioning import (
+        clear_provisioning_events,
+        get_provisioning_events,
+        provision_secret_key,
+    )
+
+    clear_provisioning_events()
+    rs = _make_rs(sh=300, has_mech=True)
+    cfg = _make_cfg("force-unwrap")
+    h = provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t-m")
+
+    assert h == 301, "must return the unwrapped key handle"
+    events = get_provisioning_events()
+    assert any(e.method == "ran_via_unwrap" for e in events), (
+        "ran_via_unwrap event must be recorded"
+    )
+    assert not any(e.method == "skipped_no_path" for e in events), (
+        "skipped_no_path must NOT be recorded"
+    )
+
+
+def test_readback_none_value_returns_handle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """(n) Readback returns None (value unreadable) -> handle returned, NO skip.
+
+    This is the bug-fix case: softhsm2 returns CKA_VALUE=None for non-extractable keys even
+    when CKA_SENSITIVE=False.  The old code treated None as mismatch and skipped; the fix
+    trusts the wrap/unwrap roundtrip instead and lets the downstream KAT catch corruption.
+    """
+    _make_force_unwrap_fixtures(monkeypatch, sh=310, unwrap_handle=311, read_value=None)
+    _reset_cache()
+
+    from pkcs11_check.testcases._provisioning import (
+        clear_provisioning_events,
+        get_provisioning_events,
+        provision_secret_key,
+    )
+
+    clear_provisioning_events()
+    rs = _make_rs(sh=310, has_mech=True)
+    cfg = _make_cfg("force-unwrap")
+    h = provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t-n")
+
+    assert h == 311, "must return the unwrapped key handle even when CKA_VALUE is unreadable"
+    events = get_provisioning_events()
+    assert any(e.method == "ran_via_unwrap" for e in events), (
+        "ran_via_unwrap event must be recorded"
+    )
+    assert not any(e.method == "skipped_no_path" for e in events), (
+        "skipped_no_path must NOT be recorded when value is merely unreadable"
+    )
+
+
+def test_readback_wrong_value_skips(monkeypatch: pytest.MonkeyPatch) -> None:
+    """(o) Readback returns a WRONG non-None value -> pytest.skip (confirmed corruption)."""
+    _make_force_unwrap_fixtures(monkeypatch, sh=320, unwrap_handle=321, read_value=b"\xff" * 32)
+    _reset_cache()
+
+    from pkcs11_check.testcases._provisioning import (
+        clear_provisioning_events,
+        get_provisioning_events,
+        provision_secret_key,
+    )
+
+    clear_provisioning_events()
+    rs = _make_rs(sh=320, has_mech=True)
+    cfg = _make_cfg("force-unwrap")
+    with pytest.raises(pytest.skip.Exception) as exc_info:
+        provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t-o")
+
+    assert "mismatch" in str(exc_info.value), (
+        "skip message must mention 'mismatch' for confirmed corruption"
+    )
+    events = get_provisioning_events()
+    assert any(e.method == "skipped_no_path" for e in events), (
+        "skipped_no_path must be recorded on confirmed corruption"
     )

@@ -680,11 +680,19 @@ def provision_secret_key(
     if not is_sensitive:
         read_back = read_attributes(rs.raw, rs.sh, handle, (CKA_VALUE,))
         actual = read_back.get(CKA_VALUE)
-        if actual != value:
+        if actual is not None and actual != value:
             record_provisioning_event("secret", "skipped_no_path")
             pytest.skip(
                 f"{label}: provisioned key value mismatch "
                 f"(expected {value.hex()!r}, got {actual!r})"
+            )
+        if actual is None:
+            from pkcs11_check.compliance import ComplianceLevel, note
+
+            note(
+                f"{label}: unwrapped key value not exposed (CKA_VALUE unreadable); "
+                "trusting wrap/unwrap roundtrip",
+                ComplianceLevel.STANDARD,
             )
 
     record_provisioning_event("secret", "ran_via_unwrap")
