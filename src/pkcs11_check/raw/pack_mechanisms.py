@@ -46,6 +46,7 @@ from .types_std import (
     CK_RC5_CBC_PARAMS,
     CK_RC5_MAC_GENERAL_PARAMS,
     CK_RC5_PARAMS,
+    CK_RSA_AES_KEY_WRAP_PARAMS,
     CK_RSA_PKCS_OAEP_PARAMS,
     CK_RSA_PKCS_PSS_PARAMS,
     CK_SALSA20_CHACHA20_POLY1305_PARAMS,
@@ -70,9 +71,14 @@ from .types_std import (
     CKD,
     CKG,
     CKG_GENERATE_RANDOM,
+    CKG_MGF1_SHA1,
+    CKG_MGF1_SHA256,
     CKH,
     CKH_HEDGE_PREFERRED,
     CKM,
+    CKM_RSA_AES_KEY_WRAP,
+    CKM_SHA256,
+    CKM_SHA_1,
     CKZ_DATA_SPECIFIED,
     CKZ_SALT_SPECIFIED,
 )
@@ -524,6 +530,34 @@ def mech_oaep(
         "mech_oaep",
         ka,
         sub_mechanisms={"hashAlg": hash_mech, "mgf": mgf},
+    )
+
+
+def mech_rsa_aes_key_wrap(aes_bits: int = 256, oaep_hash: str = "sha1") -> PackedMechanism:
+    """Pack CK_RSA_AES_KEY_WRAP_PARAMS. OAEP hash defaults to SHA-1 (max HSM compat)."""
+    if oaep_hash == "sha1":
+        h_alg: CKM | int = CKM_SHA_1
+        h_mgf: CKG | int = CKG_MGF1_SHA1
+    elif oaep_hash == "sha256":
+        h_alg = CKM_SHA256
+        h_mgf = CKG_MGF1_SHA256
+    else:
+        raise ValueError(f"Unknown oaep_hash: {oaep_hash!r}")
+    oaep = CK_RSA_PKCS_OAEP_PARAMS()
+    oaep.hashAlg = h_alg
+    oaep.mgf = h_mgf
+    oaep.source = CKZ_DATA_SPECIFIED
+    oaep.pSourceData = None
+    oaep.ulSourceDataLen = 0
+    params = CK_RSA_AES_KEY_WRAP_PARAMS()
+    params.ulAESKeyBits = aes_bits
+    params.pOAEPParams = ctypes.cast(ctypes.pointer(oaep), ctypes.c_void_p)
+    return _mech_struct(
+        CKM_RSA_AES_KEY_WRAP,
+        params,
+        "mech_rsa_aes_key_wrap",
+        [oaep],
+        sub_mechanisms={"aes_bits": aes_bits},
     )
 
 

@@ -339,6 +339,9 @@ def test_acvp_ecdsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, 
                     source=vec.get("_source"),
                     vector_id=vec.get("_vector_id"),
                 )
+            if isinstance(exc, CkrAssertionError) and exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
+                # Module does not implement C_CreateObject at all: clean capability skip.
+                pytest.skip("Module does not implement C_CreateObject")
             raise
         try:
             verified = verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["msg"], vec["sig"])
