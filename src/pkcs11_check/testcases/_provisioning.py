@@ -427,13 +427,18 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
                         CKA_UNWRAP: True,
                     },
                 )
-                kek_attrs = read_attributes(rs.raw, rs.sh, kek_handle, (CKA_VALUE,))
-                kek_val = kek_attrs.get(CKA_VALUE)
+                try:
+                    kek_attrs = read_attributes(rs.raw, rs.sh, kek_handle, (CKA_VALUE,))
+                    kek_val = kek_attrs.get(CKA_VALUE)
+                except CkrAssertionError:
+                    kek_val = None
                 if kek_val is not None:
                     aes_kek_handle = kek_handle
                     sym_kek = kek_val
+                else:
+                    destroy_quietly(rs.raw, rs.sh, kek_handle)  # readable-KEK path unavailable
             except CkrAssertionError:
-                pass  # gen_aes_key failed → skip AES-KWP
+                pass  # AES keygen not available → skip AES-KWP
 
         # Build a probe context with all material gathered so far
         probe_ctx = WrapContext(
