@@ -5,18 +5,30 @@ create -> (opt-in) unwrap -> skip. See docs/.../key-provisioning-injection-desig
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from pkcs11_check.raw import sw_wrap
 from pkcs11_check.raw.pack import PackedMechanism
 from pkcs11_check.raw.pack_mechanisms import mech_oaep, mech_rsa_aes_key_wrap
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_EXTRACTABLE,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
     CKG_MGF1_SHA256,
+    CKK_AES,
     CKM_AES_KEY_WRAP_KWP,
     CKM_RSA_AES_KEY_WRAP,
     CKM_RSA_PKCS_OAEP,
     CKM_SHA256,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_UNEXTRACTABLE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 
 
@@ -98,6 +110,90 @@ class AesKwp:
 
 
 DEFAULT_STRATEGIES: tuple[WrapStrategy, ...] = (RsaAesKeyWrap(), RsaOaep(), AesKwp())
+
+# ---------------------------------------------------------------------------
+# ProvisioningProfile — per-class create-availability probe
+# ---------------------------------------------------------------------------
+
+_PROFILE_CACHE: dict[int, ProvisioningProfile] = {}
+
+_CREATE_PROHIBITED_RVS: frozenset[int] = frozenset(
+    {
+        int(CKR_TEMPLATE_INCONSISTENT),
+        int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        int(CKR_KEY_UNEXTRACTABLE),
+        int(CKR_ATTRIBUTE_VALUE_INVALID),
+    }
+)
+
+
+@dataclass
+class ProvisioningProfile:
+    """Per-session profile: caches per-class create verdicts + mechanism availability.
+
+    Keyed by ``rs.sh`` (session handle) in ``_PROFILE_CACHE``.
+    ``rsa_pub_der_probe`` is populated by Task 6; None here in Phase 1.
+    """
+
+    rs: Any
+    rsa_pub_der_probe: bytes | None = None
+    _verdicts: dict[str, str] = field(default_factory=dict)
+
+    def supports_unwrap_mech(self, mech: int) -> bool:
+        """True iff the RS advertises the named mechanism for ``mech``."""
+        from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
+
+        name = MECHANISM_NAMES.get(int(mech))
+        return bool(name) and self.rs.has_mechanism(name)
+
+    def create_verdict(self, obj_class: str) -> str:
+        """Return a cached verdict ∈ {create_available, create_absent, create_prohibited}."""
+        if obj_class in self._verdicts:
+            return self._verdicts[obj_class]
+        v = self._probe_secret() if obj_class == "secret" else self._probe_private(obj_class)
+        self._verdicts[obj_class] = v
+        return v
+
+    def _probe_secret(self) -> str:
+        """Probe AES-128 import; map outcome to a create verdict."""
+        from pkcs11_check.raw.recipes import destroy_quietly, import_secret_key
+
+        try:
+            h = import_secret_key(
+                self.rs.raw,
+                self.rs.sh,
+                int(CKK_AES),
+                b"\x00" * 16,
+                attrs={
+                    CKA_TOKEN: False,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                },
+            )
+        except CkrAssertionError as exc:
+            rv = int(exc.rv)
+            if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+                return "create_absent"
+            if rv in _CREATE_PROHIBITED_RVS:
+                return "create_prohibited"
+            raise
+        destroy_quietly(self.rs.raw, self.rs.sh, h)
+        return "create_available"
+
+    def _probe_private(self, obj_class: str) -> str:  # noqa: ARG002
+        # Phase 2 wires real private-key probes; Phase 1 only needs "secret".
+        return "create_available"
+
+
+def profile_for(rs: Any) -> ProvisioningProfile:
+    """Return (cached) ``ProvisioningProfile`` for the given session handle."""
+    prof = _PROFILE_CACHE.get(rs.sh)
+    if prof is None:
+        prof = ProvisioningProfile(rs=rs)
+        _PROFILE_CACHE[rs.sh] = prof
+    return prof
 
 
 def select_strategy(
