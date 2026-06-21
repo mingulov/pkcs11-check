@@ -207,6 +207,16 @@ DEFAULT_STRATEGIES: tuple[WrapStrategy, ...] = (RsaAesKeyWrap(), RsaOaep(), AesK
 
 _PROFILE_CACHE: dict[int, ProvisioningProfile] = {}
 
+#: Per-session cache of the built ``WrapContext`` (keyed by ``rs.sh``), mirroring
+#: ``_PROFILE_CACHE``.  ``build_wrap_context`` bootstraps key material (RSA/AES keygen +
+#: trial round-trips), so it MUST run once per session and be reused — rebuilding it on
+#: every provision leaks the bootstrap objects (observed as ``CKR_HOST_MEMORY`` on
+#: resource-limited modules like freehsm-c) and runs a keygen per KAT vector.  A
+#: legitimate ``None`` (no wrapping path) is cached via ``_WRAP_CONTEXT_COMPUTED`` so it
+#: is not re-probed on every provision.
+_WRAP_CONTEXT_CACHE: dict[int, WrapContext | None] = {}
+_WRAP_CONTEXT_COMPUTED: set[int] = set()
+
 _CREATE_PROHIBITED_RVS: frozenset[int] = frozenset(
     {
         CKR_TEMPLATE_INCONSISTENT,
@@ -472,6 +482,21 @@ def profile_for(rs: Any) -> ProvisioningProfile:
         prof = ProvisioningProfile(rs=rs)
         _PROFILE_CACHE[rs.sh] = prof
     return prof
+
+
+def wrap_context_for(rs: Any, cfg: Any) -> WrapContext | None:
+    """Return the (cached) ``WrapContext`` for this session, building it at most once.
+
+    ``build_wrap_context`` bootstraps key material and runs trial round-trips; it MUST be
+    built once per session and reused.  A legitimate ``None`` result (no wrapping path) is
+    cached too, so a no-path module is not re-probed on every provision.  Keyed by ``rs.sh``
+    like ``profile_for`` (per-file subprocess isolation keeps the handle stable within a run).
+    """
+    sh = rs.sh
+    if sh not in _WRAP_CONTEXT_COMPUTED:
+        _WRAP_CONTEXT_CACHE[sh] = build_wrap_context(rs, cfg)
+        _WRAP_CONTEXT_COMPUTED.add(sh)
+    return _WRAP_CONTEXT_CACHE[sh]
 
 
 def skip_unless_can_create(rs: Any, obj_class: str) -> None:
@@ -809,7 +834,7 @@ def provision_secret_key(
             skip_msg=f"{label}: Module does not implement C_CreateObject",
         )
 
-    ctx = build_wrap_context(rs, cfg)
+    ctx = wrap_context_for(rs, cfg)
     if ctx is None:
         return _external_or_skip(
             rs,
@@ -992,7 +1017,7 @@ def provision_rsa_private_key(
             skip_msg=f"{label}: Module does not implement C_CreateObject",
         )
 
-    ctx = build_wrap_context(rs, cfg)
+    ctx = wrap_context_for(rs, cfg)
     if ctx is None:
         return _external_or_skip(
             rs,
@@ -1165,7 +1190,7 @@ def provision_ec_private_key(
             skip_msg=f"{label}: Module does not implement C_CreateObject",
         )
 
-    ctx = build_wrap_context(rs, cfg)
+    ctx = wrap_context_for(rs, cfg)
     if ctx is None:
         return _external_or_skip(
             rs,
