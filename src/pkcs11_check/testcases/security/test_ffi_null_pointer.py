@@ -4,8 +4,9 @@ All tests run in subprocess for crash safety. Each test passes a NULL pointer
 where a data buffer is expected with a non-zero length claim, verifying the
 module rejects the mismatch cleanly (CKR error) rather than crashing (SIGSEGV).
 
-Inspired by Kryoptic fix/ffi-integer-overflow-hardening which added ffi_slice(),
-ffi_slice_mut(), and bytes_to_slice() null-pointer guards.
+A NULL data pointer paired with a non-zero length is a classic FFI hazard
+(CWE-476): the module must validate the (pointer, length) pair before forming
+a slice/buffer from it, returning a clean CK_RV instead of dereferencing NULL.
 
 Covers:
 - NULL data pointer in multi-part Update operations

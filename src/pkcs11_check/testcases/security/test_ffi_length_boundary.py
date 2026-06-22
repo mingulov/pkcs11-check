@@ -6,8 +6,10 @@ All tests run in subprocess for crash safety. Tests exercise:
 - v3.0 message API input length boundaries
 - NULL inner pointers in mechanism parameter structures
 
-Inspired by Kryoptic fix/ffi-integer-overflow-hardening which added
-check_slice_len(), ffi_slice(), ffi_slice_mut(), and bytes_to_vec() guards.
+A CK_ULONG length that exceeds the platform's maximum addressable slice size
+(or available memory) must be rejected with a clean CK_RV, never used to form
+an out-of-bounds slice or drive an unguarded allocation (CWE-197 / CWE-681 /
+CWE-789).
 """
 
 from __future__ import annotations
@@ -71,12 +73,11 @@ pytestmark = [pytest.mark.security, pytest.mark.subprocess]
 # Constants for isize::MAX boundary probing (64-bit)
 # ---------------------------------------------------------------------------
 
-# Rust's isize::MAX -- the maximum byte count for slice::from_raw_parts.
+# Maximum byte count for a contiguous slice on a 64-bit platform.
 _ISIZE_MAX_64 = 0x7FFFFFFFFFFFFFFF
 
-# isize::MAX + 1 -- causes UB in slice::from_raw_parts because total byte
-# size exceeds isize::MAX.  This is the exact boundary Kryoptic's
-# check_slice_len<u8>() validates.
+# One past the maximum slice size: forming a slice this large is undefined
+# behavior on common 64-bit runtimes, so a module must reject this length.
 _ISIZE_MAX_PLUS_1_64 = 0x8000000000000000
 
 # Large but sub-OOM value for allocation guard testing (2 GB).
@@ -214,12 +215,12 @@ _ISIZE_BOUNDARY_LENGTHS = [
 class TestIsizeMaxDataLength:
     """Probe data functions with isize::MAX boundary lengths.
 
-    On 64-bit systems, isize::MAX = 0x7FFFFFFFFFFFFFFF.  Passing this
-    (or isize::MAX + 1) as the data length to C_Encrypt / C_Decrypt /
-    C_Sign / C_Digest with a small real buffer triggers the exact
-    boundary that Kryoptic's check_slice_len<u8>() validates.  A module
-    that calls Rust's slice::from_raw_parts with byte count > isize::MAX
-    hits undefined behavior.
+    On 64-bit platforms the largest valid byte count for a contiguous
+    slice is 0x7FFFFFFFFFFFFFFF (2**63 - 1).  Passing this value (or one
+    past it) as the data length to C_Encrypt / C_Decrypt / C_Sign /
+    C_Digest with a small real buffer must be rejected cleanly; forming a
+    slice of byte count beyond this boundary risks undefined behavior
+    (CWE-681).
     """
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -1971,11 +1972,12 @@ cleanup()
 class TestAllocationGuard:
     """Probe key generation with large but valid CKA_VALUE_LEN.
 
-    Kryoptic changed ``vec![0; value_len]`` (panics on OOM) to
-    ``try_reserve_exact`` (returns CKR_HOST_MEMORY).  A 2 GB
-    CKA_VALUE_LEN is large enough to likely OOM on most systems but
-    is NOT in integer-overflow territory (unlike the ULONG_MAX tests
-    in test_arithmetic_overflow.py).
+    A large but valid CKA_VALUE_LEN must be handled with a checked
+    allocation that returns CKR_HOST_MEMORY on failure, not an unchecked
+    allocation that aborts the process (CWE-789).  A 2 GB CKA_VALUE_LEN is
+    large enough to likely OOM on most systems but is NOT in
+    integer-overflow territory (unlike the ULONG_MAX tests in
+    test_arithmetic_overflow.py).
     """
 
     @pytest.mark.slow
@@ -2466,10 +2468,10 @@ class TestIsizeMaxOutputLength:
     """Probe OUTPUT buffer length parameters with isize::MAX boundary.
 
     Complementary to TestIsizeMaxDataLength which tests INPUT data length.
-    Kryoptic's check_slice_len<u8>() also guards output/signature buffer
-    sizes in sign(), verify(), digest(), sign_final(), verify_final(),
-    digest_final().  A claimed output buffer size of isize::MAX (or +1)
-    with a small real buffer should be rejected, not cause UB.
+    The same maximum-slice-size boundary applies to OUTPUT/signature
+    buffer-size parameters on sign / verify / digest and their *Final
+    variants.  A claimed output buffer size at the 64-bit boundary (or one
+    past it) with a small real buffer must be rejected, not cause UB.
     """
 
     @pytest.mark.parametrize("out_len", _ISIZE_BOUNDARY_LENGTHS)
