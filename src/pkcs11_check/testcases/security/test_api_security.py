@@ -46,6 +46,7 @@ from pkcs11_check.raw.types_std import (
     CKA_WRAP,
     CKF_SERIAL_SESSION,
     CKM_AES_ECB,
+    CKM_AES_KEY_WRAP,
     CKO_PRIVATE_KEY,
     CKR_ACTION_PROHIBITED,
     CKR_ATTRIBUTE_READ_ONLY,
@@ -500,3 +501,163 @@ class TestAccessControl:
         # Clean up
         for key_h in keys:
             destroy_quietly(rs.raw, rs.sh, key_h)
+
+
+_WRAP_DOWNGRADE_NOTE = (
+    "AES-128 wrapping key wrapped an AES-256 target (key-strength downgrade): "
+    "wrapping a longer key under a shorter one reduces the effective security "
+    "level of the wrapped key to that of the wrapping key "
+    "(NIST SP 800-57 Part 1 §5.6.3 key-strength matching)"
+)
+_WRAP_ECB_NOTE = (
+    "AES-ECB wrapped an AES-256 target: ECB mode provides no IV/nonce "
+    "protection and wraps key material in a deterministic, block-independent "
+    "fashion (NIST SP 800-57 Part 1 §5.3.5 / PKCS#11 v3.2 key-wrapping guidance)"
+)
+
+_WRAP_STRENGTH_RUNTIME_SKIP_RVS = (
+    CKR_ACTION_PROHIBITED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_NOT_WRAPPABLE,
+    CKR_KEY_UNEXTRACTABLE,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+
+class TestWrapStrengthDowngrade:
+    """G5.4: Wrap-strength downgrade posture (note-only, never fail).
+
+    NIST SP 800-57 Part 1 §5.6.3 recommends wrapping keys under a key of at
+    least equal strength.  Wrapping an AES-256 key under an AES-128 key (or
+    under ECB mode) is *permitted* by PKCS#11 but lowers the effective security
+    to that of the wrapping key.  These tests record the module's posture; they
+    NEVER produce a hard fail.
+    """
+
+    def test_aes256_wrapped_under_aes128_note(self, p11_raw_session: Any) -> None:
+        """Note when an AES-256 key can be wrapped by an AES-128 key.
+
+        A module that rejects or cannot set up the combination is equally fine:
+        the test exits cleanly at the first impediment.  Only a completed wrap
+        (CKR_OK from C_WrapKey) records the note — the note is about posture, not
+        a security failure.
+        """
+        from pkcs11_check.compliance import ComplianceLevel, note
+
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
+            pytest.skip("AES_KEY_GEN not supported by module")
+        if not rs.has_mechanism("AES_KEY_WRAP"):
+            pytest.skip("AES_KEY_WRAP not supported by module")
+        require_operational_aes_keygen(rs)
+
+        wrap_h = 0
+        target_h = 0
+        try:
+            try:
+                wrap_h = _raw_gen_aes_key(
+                    rs.raw,
+                    rs.sh,
+                    128,
+                    attrs={CKA_WRAP: True, CKA_ENCRYPT: False, CKA_DECRYPT: False},
+                )
+            except AssertionError as exc:
+                if is_known_error(exc, _WRAP_STRENGTH_RUNTIME_SKIP_RVS):
+                    return
+                raise
+
+            try:
+                target_h = _raw_gen_aes_key(
+                    rs.raw,
+                    rs.sh,
+                    256,
+                    attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+                )
+            except AssertionError as exc:
+                if is_known_error(exc, _WRAP_STRENGTH_RUNTIME_SKIP_RVS):
+                    return
+                raise
+
+            try:
+                wrap_key(rs.raw, rs.sh, wrap_h, target_h, CKM_AES_KEY_WRAP)
+            except AssertionError as exc:
+                if is_known_error(exc, _WRAP_STRENGTH_RUNTIME_SKIP_RVS):
+                    return
+                raise
+
+            note(
+                _WRAP_DOWNGRADE_NOTE,
+                ComplianceLevel.NOT_RECOMMENDED,
+                reference="NIST SP 800-57 Part 1 §5.6.3",
+                test_id="TestWrapStrengthDowngrade.test_aes256_wrapped_under_aes128_note",
+            )
+        finally:
+            if target_h:
+                destroy_quietly(rs.raw, rs.sh, target_h)
+            if wrap_h:
+                destroy_quietly(rs.raw, rs.sh, wrap_h)
+
+    def test_aes256_wrapped_under_ecb_note(self, p11_raw_session: Any) -> None:
+        """Note when an AES-256 key can be wrapped using AES-ECB mode.
+
+        AES-ECB wrap is deterministic and provides no IV-based diversification:
+        the same key always produces the same wrapped blob.  A module that
+        rejects or cannot set up the combination is equally fine.
+        """
+        from pkcs11_check.compliance import ComplianceLevel, note
+
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
+            pytest.skip("AES_KEY_GEN not supported by module")
+        if not rs.has_mechanism("AES_ECB"):
+            pytest.skip("AES_ECB not supported by module")
+        require_operational_aes_keygen(rs)
+
+        wrap_h = 0
+        target_h = 0
+        try:
+            try:
+                wrap_h = _raw_gen_aes_key(
+                    rs.raw,
+                    rs.sh,
+                    128,
+                    attrs={CKA_WRAP: True, CKA_ENCRYPT: False, CKA_DECRYPT: False},
+                )
+            except AssertionError as exc:
+                if is_known_error(exc, _WRAP_STRENGTH_RUNTIME_SKIP_RVS):
+                    return
+                raise
+
+            try:
+                target_h = _raw_gen_aes_key(
+                    rs.raw,
+                    rs.sh,
+                    256,
+                    attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+                )
+            except AssertionError as exc:
+                if is_known_error(exc, _WRAP_STRENGTH_RUNTIME_SKIP_RVS):
+                    return
+                raise
+
+            try:
+                wrap_key(rs.raw, rs.sh, wrap_h, target_h, CKM_AES_ECB)
+            except AssertionError as exc:
+                if is_known_error(exc, _WRAP_STRENGTH_RUNTIME_SKIP_RVS):
+                    return
+                raise
+
+            note(
+                _WRAP_ECB_NOTE,
+                ComplianceLevel.NOT_RECOMMENDED,
+                reference="NIST SP 800-57 Part 1 §5.3.5",
+                test_id="TestWrapStrengthDowngrade.test_aes256_wrapped_under_ecb_note",
+            )
+        finally:
+            if target_h:
+                destroy_quietly(rs.raw, rs.sh, target_h)
+            if wrap_h:
+                destroy_quietly(rs.raw, rs.sh, wrap_h)

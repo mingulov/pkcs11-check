@@ -2117,6 +2117,15 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         mechanisms=["SHA256_HMAC"],
         priority_note="Higher priority than CKR_SIGNATURE_INVALID",
     ),
+    "eddsa_signature_len_range": CkrExpectation(
+        function="C_Verify",
+        condition="EdDSA_wrong_length_signature",
+        spec_ckr=CKR_SIGNATURE_LEN_RANGE,
+        compat_tuple=(CKR_SIGNATURE_LEN_RANGE, CKR_SIGNATURE_INVALID, CKR_FUNCTION_FAILED),
+        spec_ref="PKCS#11 v3.2",
+        mechanisms=["EDDSA"],
+        priority_note="Higher priority than CKR_SIGNATURE_INVALID",
+    ),
     "rsa_pss_signature_invalid": CkrExpectation(
         function="C_Verify",
         condition="RSA_PSS_tampered_signature",

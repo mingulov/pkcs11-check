@@ -1,10 +1,11 @@
 """Runtime classification meta-tests for weak/invalid mechanism-parameter probes.
 
 Each probe in security/test_parameter_validation.py is reclassified from a
-compliance.note() (silent-pass on acceptance) to the Type-A crypto-correctness
-rule: accepting the insecure/invalid parameter -> fail; an expected reject ->
-pass; another clean reject code -> xfail. These offline meta-tests drive each
-probe with fake recipes and assert all three branches.
+compliance.note() (silent-pass on acceptance) to the crypto-correctness
+self-contradiction rule: accepting the insecure/invalid parameter in a way that
+breaks the cryptographic guarantee -> fail; an expected reject -> pass; another
+clean reject code (or a lenient-but-safe acceptance) -> xfail. These offline
+meta-tests drive each probe with fake recipes and assert all branches.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from pkcs11_check.testcases.security import test_parameter_validation as pv
 
 
 def _session() -> SimpleNamespace:
-    return SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
+    return SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
 
 
 def _raise(rv: int):  # type: ignore[no-untyped-def]
@@ -38,28 +39,106 @@ _EXPECTED = int(CKR_MECHANISM_PARAM_INVALID)
 _OTHER = int(CKR_DEVICE_ERROR)
 
 
-# --- GCM weak tag ---------------------------------------------------------
+# --- GCM tag size (three categories) -------------------------------------
 
 
-def _run_gcm_tag(monkeypatch: pytest.MonkeyPatch, *, accepted: bool, rv: int = 0) -> None:
+def _accepting_encrypt(tag_len: int):  # type: ignore[no-untyped-def]
+    """Fake encrypt_single that returns ciphertext (= plaintext) + a tag_len-byte tag.
+
+    The probe measures ``len(ct) - len(pt)`` to learn the tag the module actually
+    produced, so the mock must model that length relationship (echo the plaintext
+    it is handed, then append ``tag_len`` tag bytes).  The plaintext is the 5th
+    positional argument to ``encrypt_single``.
+    """
+
+    def _f(*args: object, **_kwargs: object) -> bytes:
+        pt = args[4]
+        assert isinstance(pt, bytes)
+        return pt + (b"\x00" * tag_len)
+
+    return _f
+
+
+def _run_gcm_tag(
+    monkeypatch: pytest.MonkeyPatch,
+    tag_case: tuple[int, str],
+    *,
+    accepted: bool,
+    rv: int = 0,
+    tag_len: int = 16,
+) -> None:
     monkeypatch.setattr(pv, "gen_aes_key", lambda *_a, **_k: 1)
     monkeypatch.setattr(pv, "destroy_quietly", lambda *_a, **_k: None)
-    monkeypatch.setattr(pv, "encrypt_single", (lambda *_a, **_k: b"x") if accepted else _raise(rv))
-    pv.TestGcmTagSize().test_gcm_weak_tag_size(_session(), 32)
+    monkeypatch.setattr(
+        pv,
+        "encrypt_single",
+        _accepting_encrypt(tag_len) if accepted else _raise(rv),
+    )
+    pv.TestGcmTagSize().test_gcm_weak_tag_size(_session(), tag_case)
+
+
+# --- invalid category (tag_bits=0): accept depends on PRODUCED tag length --
+# A bare acceptance does not prove the module emitted a 0-byte (unauthenticated)
+# tag — encrypt_single does an adaptive size query, so the probe measures the
+# produced tag.  Only a genuinely 0-byte tag is a crypto break (fail); a lenient
+# module that ignores the bad request and still emits a real tag is xfail.
+
+
+def test_gcm_tag_invalid_accept_zero_tag_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Accepted 0-bit request that yields a 0-byte (unauthenticated) tag must fail."""
+    with pytest.raises(Failed):
+        _run_gcm_tag(monkeypatch, (0, "invalid"), accepted=True, tag_len=0)
+
+
+def test_gcm_tag_invalid_accept_real_tag_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Accepted out-of-range request that still yields a real tag is honest_deviation."""
+    with pytest.raises(pytest.xfail.Exception):
+        _run_gcm_tag(monkeypatch, (0, "invalid"), accepted=True, tag_len=16)
+
+
+def test_gcm_tag_invalid_expected_reject_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An expected-code rejection of a structurally-invalid tag is a pass."""
+    _run_gcm_tag(monkeypatch, (0, "invalid"), accepted=False, rv=_EXPECTED)
+
+
+def test_gcm_tag_invalid_other_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-spec-code rejection of a structurally-invalid tag is an xfail."""
+    with pytest.raises(pytest.xfail.Exception):
+        _run_gcm_tag(monkeypatch, (0, "invalid"), accepted=False, rv=_OTHER)
+
+
+# --- weak category (tag_bits=32): accept → xfail, reject → pass/xfail ---
 
 
 def test_gcm_tag_accept_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    with pytest.raises(Failed):
-        _run_gcm_tag(monkeypatch, accepted=True)
+    """Weak-tag acceptance (32 bits) is honest_deviation xfail, not a hard fail."""
+    with pytest.raises(pytest.xfail.Exception):
+        _run_gcm_tag(monkeypatch, (32, "weak"), accepted=True)
 
 
 def test_gcm_tag_expected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
-    _run_gcm_tag(monkeypatch, accepted=False, rv=_EXPECTED)
+    """Rejection of a weak tag with an expected code is a pass."""
+    _run_gcm_tag(monkeypatch, (32, "weak"), accepted=False, rv=_EXPECTED)
 
 
 def test_gcm_tag_other_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rejection of a weak tag with a non-spec code is an xfail."""
     with pytest.raises(pytest.xfail.Exception):
-        _run_gcm_tag(monkeypatch, accepted=False, rv=_OTHER)
+        _run_gcm_tag(monkeypatch, (32, "weak"), accepted=False, rv=_OTHER)
+
+
+# --- valid category (tag_bits=128): accept → pass, reject → xfail --------
+
+
+def test_gcm_tag_valid_accept_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Accepting a valid NIST-permitted tag (128 bits) is a pass."""
+    _run_gcm_tag(monkeypatch, (128, "valid"), accepted=True)
+
+
+def test_gcm_tag_valid_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rejecting a valid NIST-permitted tag (128 bits) is an honest_deviation xfail."""
+    with pytest.raises(pytest.xfail.Exception):
+        _run_gcm_tag(monkeypatch, (128, "valid"), accepted=False, rv=_EXPECTED)
 
 
 # --- GCM weak IV ----------------------------------------------------------

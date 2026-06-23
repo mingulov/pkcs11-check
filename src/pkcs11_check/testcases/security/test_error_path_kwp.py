@@ -18,14 +18,44 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.types_std import (
+    CKR_DATA_INVALID,
+    CKR_DATA_LEN_RANGE,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_WRAPPED_KEY_INVALID,
+    CKR_WRAPPED_KEY_LEN_RANGE,
+)
 from pkcs11_check.testcases._subprocess_preamble import (
     pin_from_config,
     run_with_coverage,
     subprocess_session_preamble,
 )
+from pkcs11_check.testcases.conftest import classify_negative_rv
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess]
+
+# Clean rejections for a corrupted AES-KW / AES-KWP wrapped blob.
+# RFC 3394 (AES-KW) and RFC 5649 (AES-KWP) mandate an integrity check
+# (AIV/ICV); a conformant module must always reject a corrupted blob.
+# CKR_OK means the integrity check was bypassed -- an integrity bypass.
+_KW_KWP_REJECT_RVS = (
+    CKR_WRAPPED_KEY_INVALID,
+    CKR_WRAPPED_KEY_LEN_RANGE,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_DATA_INVALID,
+    CKR_DATA_LEN_RANGE,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_GENERAL_ERROR,
+)
 
 _CORRUPTIONS = [
     pytest.param("aiv", id="aiv"),
@@ -245,6 +275,43 @@ def _preamble(p11_config: Any) -> str:
     )
 
 
+def _parse_ckr_value(raw_str: str) -> int:
+    """Parse a CKR value from a string, handling both name and numeric forms.
+
+    Child scripts print CKR objects via f-string interpolation which calls
+    ``CKR.__str__`` and yields the constant name (e.g. ``CKR_GENERAL_ERROR``).
+    Fall back to integer parsing for any future numeric-form output.
+    """
+    import pkcs11_check.raw.types_std as _ts
+
+    raw_str = raw_str.strip()
+    if raw_str.startswith("CKR_"):
+        val = getattr(_ts, raw_str, None)
+        if val is not None:
+            return int(val)
+    # Numeric form (decimal or 0x-hex) -- handles vendor-defined codes
+    try:
+        return int(raw_str, 0)
+    except ValueError:
+        raise AssertionError(f"Cannot parse CKR value from {raw_str!r}") from None
+
+
+def _parse_op_rv(stdout: str, api: str) -> int:
+    """Parse the operation return value from child script stdout.
+
+    For the unwrap API the child prints ``unwrap_rv=<CKR name>``.
+    For the decrypt API the child prints either ``decrypt_init_rv=<CKR name>``
+    (when C_DecryptInit fails) or ``decrypt_rv=<CKR name>`` (when C_Decrypt
+    runs).  Either line is the operative rejection rv for the probe.
+    """
+    prefixes = ["unwrap_rv="] if api == "unwrap" else ["decrypt_init_rv=", "decrypt_rv="]
+    for line in stdout.splitlines():
+        for prefix in prefixes:
+            if line.startswith(prefix):
+                return _parse_ckr_value(line.removeprefix(prefix))
+    raise AssertionError(f"Missing {api} rv line in subprocess output: {stdout[-300:]}")
+
+
 def _build_script(
     p11_config: Any,
     *,
@@ -307,6 +374,18 @@ class TestCorruptedUnwrap:
             stderr,
             context=(f"{ckm_name} {api}: corruption={corruption}"),
         )
+        # assert_subprocess_no_crash xfails (via xfail_as) on SETUP_XFAIL, so if
+        # control reaches here the probe ran and an rv line is present in stdout.
+        rv = _parse_op_rv(stdout, api)
+        classify_negative_rv(
+            rv,
+            _KW_KWP_REJECT_RVS,
+            label=(
+                f"{ckm_name} {api}: corrupted blob (corruption={corruption})"
+                " must be rejected (RFC 3394/5649 integrity)"
+            ),
+            kind="crypto",
+        )
 
 
 class TestBitFlipUnwrap:
@@ -349,4 +428,16 @@ class TestBitFlipUnwrap:
             stdout,
             stderr,
             context=(f"{ckm_name} unwrap: bit_flip at byte {offset}"),
+        )
+        # assert_subprocess_no_crash xfails (via xfail_as) on SETUP_XFAIL, so if
+        # control reaches here the probe ran and an rv line is present in stdout.
+        rv = _parse_op_rv(stdout, "unwrap")
+        classify_negative_rv(
+            rv,
+            _KW_KWP_REJECT_RVS,
+            label=(
+                f"{ckm_name} unwrap: corrupted blob (bit_flip at byte {offset})"
+                " must be rejected (RFC 3394/5649 integrity)"
+            ),
+            kind="crypto",
         )

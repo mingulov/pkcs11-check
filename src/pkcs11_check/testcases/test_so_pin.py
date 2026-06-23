@@ -10,10 +10,12 @@ Many modules have different SO PINs - tests skip if SO login fails.
 
 from __future__ import annotations
 
+from ctypes import byref
 from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
     login_user,
@@ -27,14 +29,18 @@ from pkcs11_check.raw.recipes import (
     set_pin,
 )
 from pkcs11_check.raw.types_std import (
+    CK_TOKEN_INFO,
     CK_UTF8CHAR,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
+    CKF_TOKEN_INITIALIZED,
+    CKF_USER_PIN_INITIALIZED,
     CKR_ARGUMENTS_BAD,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_OK,
     CKR_PIN_INCORRECT,
     CKR_PIN_INVALID,
     CKR_PIN_LEN_RANGE,
@@ -43,6 +49,8 @@ from pkcs11_check.raw.types_std import (
     CKR_TOKEN_WRITE_PROTECTED,
     CKR_USER_ALREADY_LOGGED_IN,
     CKR_USER_NOT_LOGGED_IN,
+    CKR_USER_PIN_NOT_INITIALIZED,
+    CKR_USER_TYPE_INVALID,
     CKU_SO,
     CKU_USER,
 )
@@ -114,6 +122,69 @@ class TestSOLogin:
             (CKR_USER_ALREADY_LOGGED_IN,),
             label="C_Login(SO) while already logged in as USER on the same session",
         )
+
+    def test_so_empty_pin_must_not_fail_open(self, p11_raw_session: Any) -> None:
+        """SO login with an empty PIN on an unprovisioned token must be rejected.
+
+        PKCS#11 §11.4 C_Login: authentication must not succeed unless a valid
+        credential was previously established via C_InitToken/C_SetPIN. A token
+        that has never been provisioned has no SO PIN set; accepting an empty PIN
+        would grant an authenticated RW_SO session without any credential, violating
+        the authentication requirement (fail-open / auth bypass).
+
+        Safety gate: if the token is already provisioned (CKF_TOKEN_INITIALIZED or
+        CKF_USER_PIN_INITIALIZED set), this probe is not applicable — the token has
+        a real SO PIN and the empty-PIN rejection does not distinguish auth enforcement
+        from PIN mismatch.  Skip without mutating any state.
+        """
+        rs = p11_raw_session
+
+        # Safety gate: read token flags (read-only, no state mutation).
+        token_info = CK_TOKEN_INFO()
+        info_rv = rs.raw.C_GetTokenInfo(rs.slot_id, byref(token_info))
+        if info_rv == CKR_OK:
+            flags = token_info.flags
+            if (flags & CKF_TOKEN_INITIALIZED) or (flags & CKF_USER_PIN_INITIALIZED):
+                pytest.skip(
+                    "token already provisioned — empty-SO-PIN fail-open probe not applicable"
+                )
+
+        # Probe: open a RW session and attempt SO login with an empty PIN.
+        # Only read-only C_GetTokenInfo has run so far; nothing has mutated token state.
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
+        probe_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
+        try:
+            # An empty PIN is a NON-NULL pointer to a zero-length buffer with ulPinLen=0.
+            # A NULL pPin (per PKCS#11 §11.4) would request the protected authentication
+            # path instead, which is a different operation than an empty-PIN credential.
+            empty_pin = (CK_UTF8CHAR * 1)()
+            rv = rs.raw.C_Login(probe_sh, CKU_SO, empty_pin, 0)
+            if rv == CKR_OK:
+                # Authenticated RW_SO session granted with no credential: auth fail-open.
+                # Logout best-effort before classifying (do NOT mutate state while logged in).
+                rs.raw.C_Logout(probe_sh)
+                fail_as(
+                    "self_contradiction",
+                    kind="policy",
+                    label=(
+                        "SO login with an empty PIN succeeded on an unprovisioned token"
+                        " (authentication fail-open / bypass)"
+                    ),
+                )
+            classify_negative_rv(
+                rv,
+                (
+                    CKR_PIN_INCORRECT,
+                    CKR_PIN_LEN_RANGE,
+                    CKR_USER_PIN_NOT_INITIALIZED,
+                    CKR_USER_TYPE_INVALID,
+                    CKR_ARGUMENTS_BAD,
+                ),
+                label="C_Login(SO, empty PIN) on an unprovisioned token is rejected",
+                kind="policy",
+            )
+        finally:
+            close_session_quietly(rs.raw, probe_sh)
 
 
 class TestSetPIN:

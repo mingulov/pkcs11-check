@@ -17,28 +17,32 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
-from pkcs11_check.raw.pack import mech_bytes, mech_simple
+from pkcs11_check.raw.pack import attr_bytes, mech_bytes, mech_simple
 from pkcs11_check.raw.pack_mechanisms import mech_ecdh, mech_gcm, mech_oaep, mech_pss
 from pkcs11_check.raw.recipes import (
+    decrypt_single,
     derive_key,
     destroy_quietly,
     encrypt_single,
     gen_aes_key,
     gen_ec_keypair,
+    gen_keypair,
     gen_rsa_keypair,
     import_secret_key,
     read_attributes,
     sign_single,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
     CKA_DERIVE,
+    CKA_EC_PARAMS,
     CKA_EC_POINT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
@@ -47,6 +51,7 @@ from pkcs11_check.raw.types_std import (
     CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
+    CKA_VALUE,
     CKA_VALUE_LEN,
     CKA_VERIFY,
     CKD_NULL,
@@ -58,6 +63,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_AES_GCM,
     CKM_AES_XTS,
+    CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
     CKM_ECDH1_DERIVE,
     CKM_MD5,
     CKM_RSA_PKCS_OAEP,
@@ -69,10 +75,13 @@ from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_LEN_RANGE,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_SIGNATURE_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
@@ -82,6 +91,7 @@ from pkcs11_check.testcases._subprocess_preamble import (
     subprocess_session_preamble,
 )
 from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
     gen_aes_key_or_xfail,
     is_known_error,
     reject_or_classify,
@@ -122,23 +132,41 @@ _KEYGEN_CAPABILITY_REJECT_RVS = (
 # GCM tag size validation
 # ---------------------------------------------------------------------------
 
-_WEAK_GCM_TAG_BITS = [
-    pytest.param(0, id="tag-0-bits"),
-    pytest.param(8, id="tag-8-bits"),
-    pytest.param(32, id="tag-32-bits"),
-    pytest.param(64, id="tag-64-bits"),
+# Each entry is (tag_bits, category) where category is one of:
+#   "invalid"  -- structurally impossible for GCM (0 bits, >128 bits); accept = fail
+#   "weak"     -- below NIST SP 800-38D 96-bit floor but GCM-constructible;
+#                 accept = honest_deviation xfail (produces a correct short tag,
+#                 not a crypto break); reject = pass / nonspec_reject xfail
+#   "valid"    -- within NIST SP 800-38D (96 or 128 bits); accept = pass;
+#                 reject = nonspec_reject xfail (module declining valid params)
+_GCM_TAG_CASES = [
+    pytest.param((0, "invalid"), id="tag-0-bits"),
+    pytest.param((8, "weak"), id="tag-8-bits"),
+    pytest.param((32, "weak"), id="tag-32-bits"),
+    pytest.param((64, "weak"), id="tag-64-bits"),
+    pytest.param((96, "valid"), id="tag-96-bits"),
+    pytest.param((128, "valid"), id="tag-128-bits"),
+    pytest.param((256, "invalid"), id="tag-256-bits"),
 ]
 
 
 class TestGcmTagSize:
-    """Probe whether the module accepts weak GCM authentication tag sizes.
+    """Probe GCM authentication tag size handling across valid, weak, and invalid lengths.
 
-    NIST SP 800-38D requires tag lengths of 96, 104, 112, 120, or 128 bits.
-    Tag lengths below 96 bits weaken authentication guarantees significantly.
+    NIST SP 800-38D §5.2.1.2 permits tag lengths of 96, 104, 112, 120, or 128 bits
+    and restricts 32- and 64-bit tags to special applications. Tags of 0 bits or
+    more than 128 bits are structurally invalid for GCM.
+
+    Classification per category:
+    - invalid (0, >128 bits): accept → fail (accepted_invalid); reject → pass or xfail.
+    - weak (8, 32, 64 bits): accept → xfail (honest_deviation — produces a correct but
+      short tag, not a forgery); reject → pass or xfail.
+    - valid (96, 128 bits): accept → pass; reject → xfail (honest_deviation).
     """
 
-    @pytest.mark.parametrize("tag_bits", _WEAK_GCM_TAG_BITS)
-    def test_gcm_weak_tag_size(self, p11_raw_session: Any, tag_bits: int) -> None:
+    @pytest.mark.parametrize("tag_case", _GCM_TAG_CASES)
+    def test_gcm_weak_tag_size(self, p11_raw_session: Any, tag_case: tuple[int, str]) -> None:
+        tag_bits, category = tag_case
         rs = p11_raw_session
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("AES_GCM not supported")
@@ -148,12 +176,10 @@ class TestGcmTagSize:
             pt = b"A" * 32
             mech = mech_gcm(CKM_AES_GCM, iv, tag_bits=tag_bits)
             overhead = tag_bits // 8 if tag_bits > 0 else 0
-            # crypto-correctness: a sub-96-bit tag forges authentication;
-            # accepting it is a break (fail), an expected reject is pass, another
-            # clean reject is xfail.
-            reject_exc: AssertionError | None = None
+            ct: bytes | None = None
+            rv_on_reject: int | None = None
             try:
-                encrypt_single(
+                ct = encrypt_single(
                     rs.raw,
                     rs.sh,
                     key,
@@ -163,15 +189,235 @@ class TestGcmTagSize:
                     output_overhead=overhead,
                 )
             except AssertionError as exc:
-                reject_exc = exc
-            reject_or_classify(
-                reject_exc,
-                _WEAK_PARAM_REJECT_RVS,
-                label=f"AES-GCM with {tag_bits}-bit tag (below NIST 96-bit minimum)",
-                kind="crypto",
-            )
+                rv_on_reject = getattr(exc, "rv", None)
+                if rv_on_reject is None:
+                    raise
+
+            if ct is not None:
+                # Measure the tag the module actually produced. encrypt_single does
+                # an adaptive 2-call size query, so acceptance alone does NOT prove
+                # the requested tag length was honored: a lenient module may accept
+                # an out-of-range ulTagBits and default to a full tag.
+                tag_len = len(ct) - len(pt)
+                if category == "invalid":
+                    if tag_len <= 0:
+                        # Genuinely unauthenticated output (no tag) — a crypto break.
+                        fail_as(
+                            "accepted_invalid",
+                            kind="crypto",
+                            label=(
+                                f"AES-GCM accepted a structurally-invalid tag length "
+                                f"({tag_bits} bits) and produced an UNAUTHENTICATED "
+                                f"({tag_len}-byte tag) output"
+                            ),
+                        )
+                    else:
+                        # Module ignored the invalid request and still produced a tag;
+                        # lenient input handling, not an authentication break.
+                        xfail_as(
+                            "honest_deviation",
+                            kind="crypto",
+                            label=(
+                                f"AES-GCM accepted an out-of-range tag length "
+                                f"({tag_bits} bits) but produced a {tag_len}-byte tag "
+                                f"(lenient input handling, not unauthenticated)"
+                            ),
+                        )
+                elif category == "weak":
+                    # Weak but GCM-constructible: produces a correct short tag (NIST
+                    # SP 800-38D restricted use). Not a forgery — recorded as deviation.
+                    xfail_as(
+                        "honest_deviation",
+                        kind="crypto",
+                        label=(
+                            f"AES-GCM accepted a sub-96-bit tag ({tag_bits} bits) "
+                            f"— weak but produces a correct short tag (NIST SP 800-38D restricted)"
+                        ),
+                    )
+                # valid: accepting a valid tag length is correct → pass (fall through)
+            else:
+                assert rv_on_reject is not None
+                if category == "valid":
+                    # A module that rejects a NIST-permitted tag length deviates from
+                    # the spec; a module declining valid GCM params is an honest
+                    # deviation — recorded as xfail, never a hard fail.
+                    xfail_as(
+                        "honest_deviation",
+                        kind="crypto",
+                        label=(f"AES-GCM rejected a NIST-permitted tag length ({tag_bits} bits)"),
+                        actual=rv_on_reject,
+                    )
+                else:
+                    # invalid or weak: reject is expected — classify via rv.
+                    suffix = (
+                        "structurally invalid"
+                        if category == "invalid"
+                        else "below 96-bit NIST floor"
+                    )
+                    classify_negative_rv(
+                        rv_on_reject,
+                        _WEAK_PARAM_REJECT_RVS,
+                        label=f"AES-GCM with {tag_bits}-bit tag ({suffix})",
+                        kind="crypto",
+                    )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
+
+
+# ---------------------------------------------------------------------------
+# GCM full-tag enforcement on decryption (G2.4)
+# ---------------------------------------------------------------------------
+
+# CKRs that a conformant module returns when GCM tag verification fails.
+_GCM_TAG_VERIFY_REJECT_RVS = (
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_SIGNATURE_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+)
+
+
+class TestGcmFullTagEnforcedOnVerify:
+    """Probe whether the module verifies the full GCM tag on decryption.
+
+    A conformant AES-GCM implementation must recompute and compare all 128 bits
+    of the tag. A module that verifies only a prefix of the tag will accept
+    ciphertext whose trailing tag bytes have been corrupted, enabling authentication
+    bypass. This probe encrypts with a 128-bit tag, corrupts the trailing 4 bytes
+    of the tag, and asserts that decryption is rejected.
+
+    References: NIST SP 800-38D §7.2 (decryption); PKCS#11 v3.1 §2.15.
+    """
+
+    def test_gcm_full_tag_enforced_on_verify(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("AES_GCM not supported")
+        key = gen_aes_key(rs.raw, rs.sh, 256)
+        try:
+            iv = b"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c"
+            pt = b"F" * 32
+            # Encrypt with a 128-bit tag; output = ciphertext || 16-byte tag.
+            mech_enc = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
+            ct = encrypt_single(
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_GCM,
+                pt,
+                mech_param=mech_enc,
+                output_overhead=16,
+            )
+            # Corrupt the trailing 4 bytes of the tag (the suffix of the 16-byte tag).
+            # A full-tag-verifying module will always reject this; a prefix-only
+            # verifier may accept it.
+            tampered = ct[:-4] + bytes(b ^ 0xFF for b in ct[-4:])
+            # Decrypt with the same 128-bit tag spec — do NOT lower to 96 bits.
+            mech_dec = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
+            rv_on_reject: int | None = None
+            try:
+                decrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_GCM,
+                    tampered,
+                    mech_param=mech_dec,
+                    output_size_hint=len(pt),
+                )
+            except AssertionError as exc:
+                rv_on_reject = getattr(exc, "rv", None)
+                if rv_on_reject is None:
+                    raise
+            if rv_on_reject is None:
+                # Decryption succeeded despite corrupted trailing tag bytes.
+                fail_as(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label=(
+                        "AES-GCM verified only a tag prefix — "
+                        "accepted ciphertext with corrupted trailing tag bytes"
+                    ),
+                )
+            else:
+                # Rejection is the correct outcome — classify via rv.
+                classify_negative_rv(
+                    rv_on_reject,
+                    _GCM_TAG_VERIFY_REJECT_RVS,
+                    label="AES-GCM decryption rejection of corrupted trailing tag bytes",
+                    kind="crypto",
+                )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+
+# ---------------------------------------------------------------------------
+# CCM NULL nonce with non-zero length (subprocess -- crash risk) (G2.5)
+# ---------------------------------------------------------------------------
+
+
+# Subprocess snippet that builds CK_CCM_PARAMS with a NULL nonce pointer but
+# non-zero ulNonceLen (the deliberate mismatch this probe exercises).  Kept
+# as a module-level constant so the meta-test can exec it without a provider
+# and assert it builds cleanly.  Requires `ctypes` and `CK_CCM_PARAMS` in scope.
+_CCM_NULL_NONCE_PARAMS_SNIPPET = """\
+params = CK_CCM_PARAMS()
+params.ulDataLen = 0
+params.pNonce = None  # NULL pointer
+params.ulNonceLen = 13  # Non-zero length -- mismatch!
+params.pAAD = None
+params.ulAADLen = 0
+params.ulMACLen = 16
+"""
+
+
+class TestCcmNullNonceWithLength:
+    """Test CCM with NULL nonce pointer but non-zero ulNonceLen.
+
+    This NULL-pointer + non-zero-length mismatch can cause a NULL dereference
+    crash in modules that use ulNonceLen without first checking whether
+    pNonce is non-NULL. The probe asserts that C_EncryptInit either returns a
+    clean error or initialises successfully without crashing.
+
+    References: NIST SP 800-38C §A.1 (nonce requirements); PKCS#11 v3.1 §2.15.
+    """
+
+    def test_ccm_null_nonce_with_length(self, p11_raw_session: Any, p11_config: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CCM"):
+            pytest.skip("AES_CCM not supported")
+        preamble = subprocess_session_preamble(
+            str(p11_config.module),
+            pin=p11_config.pin.get_secret_value() if p11_config.pin else None,
+        )
+        script = (
+            preamble
+            + """
+import ctypes
+from pkcs11_check.raw.types_std import CK_CCM_PARAMS, CKM_AES_CCM, CK_MECHANISM
+from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
+
+key = gen_aes_key(raw, sh, 256)
+"""
+            + _CCM_NULL_NONCE_PARAMS_SNIPPET
+            + """mech = CK_MECHANISM()
+mech.mechanism = CKM_AES_CCM
+mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+mech.ulParameterLen = ctypes.sizeof(params)
+try:
+    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
+    print(f"rv={rv}")
+finally:
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context="CCM NULL nonce pointer with nonzero ulNonceLen",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -658,6 +904,26 @@ _INVALID_EC_POINTS = [
     pytest.param("truncated", id="truncated-point"),
 ]
 
+# Low-order u-coordinates for Montgomery curves (raw little-endian, no DER wrapper).
+# For X25519: u=0 is definitively low-order; X25519(k, 0) == 0 for all k.
+# For X448: u=0 is definitively low-order; X448(k, 0) == 0 for all k.
+# RFC 7748 §6.1 defines the all-zero shared secret as the low-order / small-subgroup
+# result and makes the contributory-behaviour check OPTIONAL.
+_MONTGOMERY_LOW_ORDER_POINTS = [
+    pytest.param(
+        "x25519",
+        b"\x00" * 32,  # u=0 (little-endian), low-order point
+        32,
+        id="x25519-u0",
+    ),
+    pytest.param(
+        "x448",
+        b"\x00" * 56,  # u=0 (little-endian), low-order point
+        56,
+        id="x448-u0",
+    ),
+]
+
 
 class TestEcPointValidation:
     """Probe whether the module validates EC public keys in ECDH derive.
@@ -739,6 +1005,139 @@ class TestEcPointValidation:
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
+
+    @pytest.mark.parametrize("curve_name,low_order_point,secret_len", _MONTGOMERY_LOW_ORDER_POINTS)
+    def test_ecdh_montgomery_low_order_point(
+        self,
+        p11_raw_session: Any,
+        curve_name: str,
+        low_order_point: bytes,
+        secret_len: int,
+    ) -> None:
+        """Probe X25519/X448 ECDH with a low-order peer point (u=0).
+
+        A low-order peer public key leads to a degenerate shared secret. RFC 7748
+        §6.1 permits -- but does not require -- modules to reject low-order inputs:
+        scalar clamping already protects the private key, so a module that produces
+        an all-zero shared secret is conformant. The only outright crypto-correctness
+        break is a NON-ZERO shared secret from a low-order point (miscomputation on
+        a Montgomery ladder).
+
+        Outcomes (RFC 7748 §6.1):
+        - Derive rejected cleanly → module enforces contributory-behaviour check
+          (optional hardening). Recorded as a compliance note, not a finding.
+        - Derive succeeds, shared secret is all-zero → permitted per RFC 7748 §6.1.
+          Recorded as a compliance note.
+        - Derive succeeds, shared secret is non-zero → miscomputation; X(k,0)==0
+          for all k by definition of the Montgomery ladder. Hard-fail (crypto kind).
+        - Derive succeeds but secret is unreadable → xfail (not_operational).
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("EC_MONTGOMERY_KEY_PAIR_GEN"):
+            pytest.skip(f"EC_MONTGOMERY_KEY_PAIR_GEN not supported ({curve_name} probe skipped)")
+        if not rs.has_mechanism("ECDH1_DERIVE"):
+            pytest.skip(f"CKM_ECDH1_DERIVE not supported ({curve_name} probe skipped)")
+
+        curve_oid = encode_named_curve_parameters(curve_name)
+        pub = 0
+        priv = 0
+        derived = 0
+        try:
+            try:
+                pub, priv = gen_keypair(
+                    rs.raw,
+                    rs.sh,
+                    CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
+                    pub_base=[attr_bytes(CKA_EC_PARAMS, curve_oid)],
+                    priv_base=[],
+                    public_attrs={CKA_TOKEN: False},
+                    private_attrs={CKA_SENSITIVE: True, CKA_TOKEN: False, CKA_DERIVE: True},
+                    pub_skip={CKA_EC_PARAMS},
+                )
+            except AssertionError as exc:
+                if is_known_error(exc, _KEYGEN_CAPABILITY_REJECT_RVS):
+                    pytest.skip(f"{curve_name} keygen not operational: {exc}")
+                raise
+
+            reject_exc: CkrAssertionError | None = None
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_ECDH1_DERIVE,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
+                        CKA_VALUE_LEN: secret_len,
+                    },
+                    mech_param=mech_ecdh(
+                        CKM_ECDH1_DERIVE,
+                        kdf=CKD_NULL,
+                        public_data=low_order_point,
+                    ),
+                )
+            except CkrAssertionError as exc:
+                reject_exc = exc
+
+            if reject_exc is not None:
+                # Module rejected the low-order peer point -- contributory-behaviour
+                # check is present (RFC 7748 §6.1 permits this; it is good hygiene).
+                note(
+                    f"{curve_name} ECDH derive rejected a low-order peer point (u=0) "
+                    f"with {ckr_name(reject_exc.rv)} — "
+                    "contributory-behaviour check present (RFC 7748 §6.1, optional)",
+                    ComplianceLevel.EXTENDED,
+                    reference="RFC 7748 §6.1",
+                )
+                return
+
+            # Derive succeeded -- read the shared secret value.
+            try:
+                result = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
+                secret = result[CKA_VALUE]
+            except AssertionError:
+                xfail_as(
+                    "not_operational",
+                    kind="crypto",
+                    label=(
+                        f"{curve_name} ECDH low-order point: derive returned CKR_OK "
+                        "but shared secret is unreadable"
+                    ),
+                )
+
+            assert isinstance(secret, bytes)
+            if secret == b"\x00" * len(secret):
+                # All-zero shared secret: correct behaviour for a low-order point.
+                note(
+                    f"{curve_name} ECDH derive accepted a low-order peer point (u=0) "
+                    "and produced an all-zero shared secret — "
+                    "contributory-behaviour check not enforced (permitted, RFC 7748 §6.1)",
+                    ComplianceLevel.EXTENDED,
+                    reference="RFC 7748 §6.1",
+                )
+            else:
+                # Non-zero secret from a low-order point: definitive miscomputation.
+                # A correct Montgomery ladder satisfies X(k, 0) == 0 for all k.
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label=(
+                        f"{curve_name} ECDH low-order point (u=0) produced a non-zero "
+                        "shared secret — miscomputation: a correct Montgomery ladder "
+                        "must yield all-zero for u=0 (RFC 7748 §5)"
+                    ),
+                )
+        finally:
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+            if pub:
+                destroy_quietly(rs.raw, rs.sh, pub)
 
     @staticmethod
     def _craft_invalid_point(valid_point: bytes, point_type: str) -> bytes:

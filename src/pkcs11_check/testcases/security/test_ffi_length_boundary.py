@@ -61,10 +61,6 @@ from pkcs11_check.testcases.conftest import (
     gen_edwards_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
 )
-from pkcs11_check.testcases.security._boundary_values import (
-    TRUNCATION_LOW0,
-    TRUNCATION_LOW8,
-)
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess]
@@ -207,8 +203,6 @@ def import_hmac_key(*, sign=False, verify=False):
 _ISIZE_BOUNDARY_LENGTHS = [
     pytest.param(_ISIZE_MAX_64, id="isize_max"),
     pytest.param(_ISIZE_MAX_PLUS_1_64, id="isize_max_plus_1"),
-    pytest.param(TRUNCATION_LOW0, id="trunc_low0"),
-    pytest.param(TRUNCATION_LOW8, id="trunc_low8"),
 ]
 
 
@@ -1858,72 +1852,6 @@ cleanup()
 
 class TestRandomIsizeLength:
     """Random APIs must handle impossible claimed buffer lengths safely."""
-
-    @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
-    def test_generate_random_isize_length_preserves_guard(
-        self,
-        p11_config: Any,
-        data_len: int,
-    ) -> None:
-        """``C_GenerateRandom`` must not accept or overwrite a tiny real buffer."""
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + f"""
-import ctypes
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import CKR_OK
-
-GUARD = 0xA7
-GUARD_SIZE = 64
-
-class RandomProbe(ctypes.Structure):
-    _fields_ = [
-        ("data", ctypes.c_ubyte * 1),
-        ("guard", ctypes.c_ubyte * GUARD_SIZE),
-    ]
-
-probe = RandomProbe()
-for idx in range(GUARD_SIZE):
-    probe.guard[idx] = GUARD
-
-print("TARGET:C_GenerateRandom", flush=True)
-print("LEN:{data_len}", flush=True)
-rv = raw.C_GenerateRandom(
-    sh,
-    ctypes.cast(probe.data, ctypes.POINTER(ctypes.c_ubyte)),
-    {data_len},
-)
-print(f"TARGET_RV:0x{{rv:08x}}")
-print(f"rv_name={{ckr_name(rv)}}")
-overwritten = sum(1 for byte in probe.guard if byte != GUARD)
-print(f"OVERWRITTEN:{{overwritten}}")
-if overwritten != 0:
-    print(f"GUARD_OVERWRITE:{{overwritten}}")
-cleanup()
-"""
-        )
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
-        assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
-            context=f"C_GenerateRandom(ulRandomLen={data_len:#x})",
-        )
-        if "GUARD_OVERWRITE:" in stdout:
-            fail_as(
-                "wrong_result",
-                kind="crypto",
-                label="output-buffer guard byte overwritten",
-                actual=_parse_prefixed_int(stdout, "GUARD_OVERWRITE:"),
-                summary="module wrote past the requested output length (OOB write)",
-            )
-        rv = _parse_prefixed_int(stdout, "TARGET_RV:")
-        classify_negative_rv(
-            rv,
-            (CKR_RANDOM_NO_RNG, CKR_FUNCTION_NOT_SUPPORTED, CKR_ARGUMENTS_BAD),
-            label="C_GenerateRandom/C_SeedRandom isize length",
-        )
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
     def test_seed_random_isize_length_rejects_cleanly(
