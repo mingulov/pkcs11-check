@@ -1091,7 +1091,10 @@ def test_f1_category_a_methods_parse_and_classify_target_rv() -> None:
         end = src.index("\n    def ", idx + 1) if "\n    def " in src[idx + 1 :] else len(src)
         body = src[idx:end]
         assert "TARGET_RV:" in body, f"{name}: child must print TARGET_RV:"
-        assert "classify_negative_rv(" in body, f"{name}: parent must classify the rv"
+        classifies = (
+            "classify_negative_rv(" in body or "_classify_unhonorable_length_outcome(" in body
+        )
+        assert classifies, f"{name}: parent must classify the rv"
 
 
 def test_no_dead_setup_xfail_classify_blocks() -> None:
