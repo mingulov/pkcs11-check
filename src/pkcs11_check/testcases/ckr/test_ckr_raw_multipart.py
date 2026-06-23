@@ -5,6 +5,7 @@ Tests CKR conditions that python-pkcs11 wrapper prevents:
 - C_DecryptUpdate/Final without C_DecryptInit
 - C_SignUpdate/Final without C_SignInit
 - C_DigestUpdate/Final without C_DigestInit
+- C_DigestUpdate after a successful C_DigestFinal (operation-terminated state)
 
 All tests run in subprocess for safety (raw calls can crash on bugs).
 
@@ -271,3 +272,137 @@ class TestMultipartNotInitialized:
         )
         assert_ckr_subprocess_ok(rc, out, err, context="C_VerifyFinal without init")
         _classify_multipart_ckr(out, label="C_VerifyFinal without C_VerifyInit")
+
+
+class TestUpdateAfterFinal:
+    """C_*Update after a successfully completed C_*Final -> CKR_OPERATION_NOT_INITIALIZED.
+
+    PKCS#11 v3.2 §5.2 specifies that a C_*Final call terminates the active
+    multipart operation.  After termination the operation state is cleared;
+    any subsequent C_*Update call must return CKR_OPERATION_NOT_INITIALIZED
+    because there is no active operation to continue.
+
+    Two probe variants are covered:
+    - Digest (CKM_SHA_256): stateless, no key required — widest module support.
+    - Encrypt (CKM_AES_ECB): requires a setup key; skips if AES_KEY_GEN or
+      CKM_AES_ECB are not operational on this module.
+
+    CKR_OK from C_*Update after C_*Final means the module continued an already-
+    completed operation — a lifecycle self-contradiction (accepted_invalid).
+    """
+
+    def test_digest_update_after_final(self, p11_config: Any) -> None:
+        """C_DigestUpdate after C_DigestFinal must return CKR_OPERATION_NOT_INITIALIZED.
+
+        PKCS#11 v3.2 §5.2: C_DigestFinal terminates the active digest operation.
+        Calling C_DigestUpdate on a terminated operation must be rejected.
+        CKR_OK here means the module accepted data into a finished digest (lifecycle
+        self-contradiction: accepted_invalid).
+        """
+        rc, out, err = _run_raw_test(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
+            from pkcs11_check.raw.types_std import CKM_SHA256
+
+            mech = CK_MECHANISM()
+            mech.mechanism = int(CKM_SHA256)
+            mech.pParameter = None
+            mech.ulParameterLen = 0
+
+            # Init
+            rv_init = raw.C_DigestInit(sh, ctypes.byref(mech))
+            if rv_init != CKR_OK:
+                print(f"SETUP_XFAIL: C_DigestInit(SHA256) not operational: 0x{rv_init:08x}")
+                print("OK")
+            else:
+                # Feed some data
+                data = (ctypes.c_ubyte * 4)(*[0x61, 0x62, 0x63, 0x64])
+                rv_upd = raw.C_DigestUpdate(sh, data, 4)
+                if rv_upd != CKR_OK:
+                    print(f"SETUP_XFAIL: C_DigestUpdate failed: 0x{rv_upd:08x}")
+                    print("OK")
+                else:
+                    # Finalize
+                    digest_buf = (ctypes.c_ubyte * 64)()
+                    digest_len = ctypes.c_ulong(64)
+                    rv_final = raw.C_DigestFinal(sh, digest_buf, ctypes.byref(digest_len))
+                    if rv_final != CKR_OK:
+                        print(f"SETUP_XFAIL: C_DigestFinal failed: 0x{rv_final:08x}")
+                        print("OK")
+                    else:
+                        # Probe: C_DigestUpdate after Final — must return OPERATION_NOT_INITIALIZED
+                        data2 = (ctypes.c_ubyte * 4)(*[0x65, 0x66, 0x67, 0x68])
+                        rv = raw.C_DigestUpdate(sh, data2, 4)
+                        print(f"CKR:0x{rv:08x}")
+                        print("OK")
+            """,
+        )
+        assert_ckr_subprocess_ok(rc, out, err, context="C_DigestUpdate after C_DigestFinal")
+        _classify_multipart_ckr(out, label="C_DigestUpdate after C_DigestFinal")
+
+    def test_encrypt_update_after_final(self, p11_config: Any) -> None:
+        """C_EncryptUpdate after C_EncryptFinal must return CKR_OPERATION_NOT_INITIALIZED.
+
+        PKCS#11 v3.2 §5.2: C_EncryptFinal terminates the active encryption operation.
+        Calling C_EncryptUpdate on a terminated operation must be rejected.
+        CKR_OK here means the module accepted plaintext into a finished encryption (lifecycle
+        self-contradiction: accepted_invalid).
+        """
+        rc, out, err = _run_raw_test(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
+            from pkcs11_check.raw.types_std import CKM_AES_ECB
+            from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+            # Generate a 128-bit AES key for encrypt
+            key_handle = 0
+            try:
+                key_handle = gen_aes_key(raw, sh, 128)
+            except AssertionError as exc:
+                print(f"SETUP_XFAIL: AES_KEY_GEN not operational: {exc}")
+                print("OK")
+            if key_handle:
+                mech_enc = CK_MECHANISM()
+                mech_enc.mechanism = int(CKM_AES_ECB)
+                mech_enc.pParameter = None
+                mech_enc.ulParameterLen = 0
+
+                rv_init = raw.C_EncryptInit(sh, ctypes.byref(mech_enc), key_handle)
+                if rv_init != CKR_OK:
+                    destroy_quietly(raw, sh, key_handle)
+                    print(f"SETUP_XFAIL: C_EncryptInit(AES_ECB) not operational: 0x{rv_init:08x}")
+                    print("OK")
+                else:
+                    # Feed one block
+                    plain = (ctypes.c_ubyte * 16)(*([0]*16))
+                    enc_buf = (ctypes.c_ubyte * 32)()
+                    enc_len = ctypes.c_ulong(32)
+                    rv_upd = raw.C_EncryptUpdate(sh, plain, 16, enc_buf, ctypes.byref(enc_len))
+                    if rv_upd != CKR_OK:
+                        destroy_quietly(raw, sh, key_handle)
+                        print(f"SETUP_XFAIL: C_EncryptUpdate failed: 0x{rv_upd:08x}")
+                        print("OK")
+                    else:
+                        # Finalize
+                        fin_buf = (ctypes.c_ubyte * 32)()
+                        fin_len = ctypes.c_ulong(32)
+                        rv_final = raw.C_EncryptFinal(sh, fin_buf, ctypes.byref(fin_len))
+                        destroy_quietly(raw, sh, key_handle)
+                        if rv_final != CKR_OK:
+                            print(f"SETUP_XFAIL: C_EncryptFinal failed: 0x{rv_final:08x}")
+                            print("OK")
+                        else:
+                            # Probe: C_EncryptUpdate after Final — must be OPERATION_NOT_INITIALIZED
+                            plain2 = (ctypes.c_ubyte * 16)(*([0xff]*16))
+                            enc_buf2 = (ctypes.c_ubyte * 32)()
+                            enc_len2 = ctypes.c_ulong(32)
+                            rv = raw.C_EncryptUpdate(sh, plain2, 16, enc_buf2,
+                                                     ctypes.byref(enc_len2))
+                            print(f"CKR:0x{rv:08x}")
+                            print("OK")
+            """,
+        )
+        assert_ckr_subprocess_ok(rc, out, err, context="C_EncryptUpdate after C_EncryptFinal")
+        _classify_multipart_ckr(out, label="C_EncryptUpdate after C_EncryptFinal")

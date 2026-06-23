@@ -11,23 +11,39 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify
+from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
+    import_secret_key,
     sign_single,
 )
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VERIFY,
     CKF_VERIFY,
+    CKK_GENERIC_SECRET,
+    CKK_SHA256_HMAC,
     CKM_AES_ECB,
+    CKM_ECDSA,
+    CKM_EDDSA,
+    CKM_SHA256_HMAC,
     CKM_SHA256_RSA_PKCS,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_VERIFY, assert_ckr
 from pkcs11_check.testcases.conftest import (
     classify_lifecycle_effect,
     gen_aes_key_or_xfail,
+    gen_ec_keypair_or_xfail,
+    gen_edwards_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
+    is_known_error,
     skip_unless_mechanism_flag,
 )
 
@@ -166,6 +182,99 @@ class TestVerifyErrors:
             # verifies (CKR_OK) is a break -> fail; an expected reject -> pass;
             # another clean reject -> xfail (3-way assert_ckr).
             assert_ckr(exp, rv, ckr_strict)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, _priv)
+
+    def test_ecdsa_signature_wrong_length(self, p11_raw_session: Any, ckr_strict: bool) -> None:
+        """ECDSA signature with wrong length -> CKR_SIGNATURE_LEN_RANGE."""
+        rs = p11_raw_session
+        skip_unless_mechanism_flag(rs, CKM_ECDSA, int(CKF_VERIFY))
+        curve_oid = encode_named_curve_parameters("secp256r1")
+        pub, _priv = gen_ec_keypair_or_xfail(rs, curve_oid)
+        try:
+            data = b"CKR compliance test data"
+
+            mech = mech_simple(CKM_ECDSA)
+            rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub)
+            if rv != CKR_OK:
+                pytest.skip(f"C_VerifyInit failed: {ckr_name(rv)}")
+
+            # P-256 raw ECDSA signature is 64 bytes (two 32-byte scalars), provide 32
+            data_buf = (ctypes.c_ubyte * len(data))(*data)
+            sig_buf = (ctypes.c_ubyte * 32)(*([0] * 32))
+            rv = rs.raw.C_Verify(rs.sh, data_buf, len(data), sig_buf, 32)
+            # A wrong-length ECDSA signature that verifies (CKR_OK) is a crypto
+            # break -> fail; expected reject -> pass; other clean reject -> xfail.
+            assert_ckr(CKR_VERIFY["ecdsa_signature_len_range"], rv, ckr_strict)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, _priv)
+
+    def test_hmac_signature_wrong_length(self, p11_raw_session: Any, ckr_strict: bool) -> None:
+        """SHA-256 HMAC tag with wrong length -> CKR_SIGNATURE_LEN_RANGE."""
+        rs = p11_raw_session
+        skip_unless_mechanism_flag(rs, CKM_SHA256_HMAC, int(CKF_VERIFY))
+        key_bytes = bytes(range(32))
+        hmac_key = 0
+        for key_type in (CKK_SHA256_HMAC, CKK_GENERIC_SECRET):
+            try:
+                hmac_key = import_secret_key(
+                    rs.raw,
+                    rs.sh,
+                    key_type,
+                    key_bytes,
+                    attrs={CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False},
+                )
+                break
+            except AssertionError as exc:
+                if is_known_error(
+                    exc,
+                    {CKR_MECHANISM_INVALID, CKR_KEY_SIZE_RANGE, CKR_TEMPLATE_INCONSISTENT},
+                ):
+                    continue
+                raise
+        if hmac_key == 0:
+            pytest.skip("Cannot create HMAC key for SHA256_HMAC verify")
+        try:
+            data = b"CKR compliance test data"
+
+            mech = mech_simple(CKM_SHA256_HMAC)
+            rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), hmac_key)
+            if rv != CKR_OK:
+                pytest.skip(f"C_VerifyInit failed: {ckr_name(rv)}")
+
+            # SHA-256 HMAC tag is 32 bytes; provide a 16-byte wrong-length tag
+            data_buf = (ctypes.c_ubyte * len(data))(*data)
+            sig_buf = (ctypes.c_ubyte * 16)(*([0] * 16))
+            rv = rs.raw.C_Verify(rs.sh, data_buf, len(data), sig_buf, 16)
+            # A wrong-length HMAC tag that verifies (CKR_OK) is a crypto break ->
+            # fail; expected reject -> pass; other clean reject -> xfail.
+            assert_ckr(CKR_VERIFY["hmac_signature_len_range"], rv, ckr_strict)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, hmac_key)
+
+    def test_eddsa_signature_wrong_length(self, p11_raw_session: Any, ckr_strict: bool) -> None:
+        """EdDSA (Ed25519) signature with wrong length -> CKR_SIGNATURE_LEN_RANGE."""
+        rs = p11_raw_session
+        skip_unless_mechanism_flag(rs, CKM_EDDSA, int(CKF_VERIFY))
+        curve_oid = encode_named_curve_parameters("ed25519")
+        pub, _priv = gen_edwards_keypair_or_xfail(rs, curve_oid)
+        try:
+            data = b"CKR compliance test data"
+
+            mech = mech_simple(CKM_EDDSA)
+            rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub)
+            if rv != CKR_OK:
+                pytest.skip(f"C_VerifyInit failed: {ckr_name(rv)}")
+
+            # Ed25519 signature is 64 bytes; provide a 32-byte wrong-length buffer
+            data_buf = (ctypes.c_ubyte * len(data))(*data)
+            sig_buf = (ctypes.c_ubyte * 32)(*([0] * 32))
+            rv = rs.raw.C_Verify(rs.sh, data_buf, len(data), sig_buf, 32)
+            # A wrong-length EdDSA signature that verifies (CKR_OK) is a crypto
+            # break -> fail; expected reject -> pass; other clean reject -> xfail.
+            assert_ckr(CKR_VERIFY["eddsa_signature_len_range"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, _priv)

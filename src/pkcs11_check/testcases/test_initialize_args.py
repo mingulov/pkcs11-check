@@ -343,11 +343,12 @@ class TestInitArgsMatrix:
                     "security-impacting."
                 ),
             )
-        classify_negative_rv(
-            rv,
-            (CKR_ARGUMENTS_BAD,),
-            label="C_Initialize with a non-NULL pReserved field (spec Sec.5.4)",
-        )
+        else:
+            classify_negative_rv(
+                rv,
+                (CKR_ARGUMENTS_BAD,),
+                label="C_Initialize with a non-NULL pReserved field (spec Sec.5.4)",
+            )
 
     def test_init_partial_callbacks_rejected(self, p11_config: Any) -> None:
         """Three callbacks set, one NULL — spec requires CKR_ARGUMENTS_BAD.
@@ -408,4 +409,105 @@ class TestInitArgsMatrix:
             rv,
             (CKR_ARGUMENTS_BAD,),
             label="C_Initialize with 3-of-4 mutex callbacks supplied (spec Sec.5.4)",
+        )
+
+
+def _run_finalize_reserved_script(p11_config: Any) -> tuple[int, str, str]:
+    """Execute a subprocess that initializes the module then calls C_Finalize with a non-NULL
+    pReserved pointer.  Prints the C_Finalize return value as ``RV=0x<hex>``.
+
+    Must run in its own subprocess: the call sequence modifies the library's global
+    initialization state, which would corrupt any shared session in the parent process.
+    """
+    module_path = str(p11_config.module)
+    script = textwrap.dedent(f"""
+        import ctypes
+        from ctypes import byref, c_void_p, cast
+
+        from pkcs11_check.raw.types_std import (
+            CK_RV,
+            CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_OK,
+        )
+
+        lib = ctypes.CDLL({module_path!r})
+
+        # Initialize first (C_Initialize(NULL) is universally-accepted per spec §5.4).
+        c_init = lib.C_Initialize
+        c_init.restype = CK_RV
+        c_init.argtypes = [c_void_p]
+        rv_init = c_init(None)
+        assert rv_init in (  # audit-ok: init idempotency; asserting setup success
+            int(CKR_OK), int(CKR_CRYPTOKI_ALREADY_INITIALIZED)
+        ), f"C_Initialize failed: 0x{{rv_init:08x}}"
+
+        # Call C_Finalize with a non-NULL pReserved (spec §11.4 requires
+        # CKR_ARGUMENTS_BAD; many modules tolerate it and return CKR_OK).
+        c_final = lib.C_Finalize
+        c_final.restype = CK_RV
+        c_final.argtypes = [c_void_p]
+
+        dummy = ctypes.c_ulong(0xDEADBEEF)
+        rv = c_final(cast(byref(dummy), c_void_p))
+        print(f"RV=0x{{rv:08x}}")
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+
+class TestFinalizeArgs:
+    """C_Finalize argument-validation tests, each run in its own subprocess."""
+
+    def test_finalize_reserved_non_null(self, p11_config: Any) -> None:
+        """`C_Finalize(pReserved != NULL)` should return CKR_ARGUMENTS_BAD.
+
+        PKCS#11 v3.2 §11.4 specifies that `pReserved` must be NULL; any non-NULL
+        value must cause C_Finalize to return CKR_ARGUMENTS_BAD.  Some modules
+        ignore the reserved field and return CKR_OK — lenient but not
+        security-impacting (the field carries no caller-supplied data that could
+        affect the module's behavior).
+
+        Classification:
+        - CKR_ARGUMENTS_BAD -> pass (spec-compliant rejection).
+        - CKR_OK -> xfail/honest_deviation (common benign leniency; the field is
+          truly reserved and ignoring it is safe).
+        - Any other clean code -> xfail/nonspec_reject (noted deviation).
+        """
+        rc, stdout, stderr = _run_finalize_reserved_script(p11_config)
+        if rc < 0:
+            classify(
+                "crash",
+                label="C_Finalize(non-NULL pReserved)",
+                operation="C_Finalize",
+                summary=(
+                    f"C_Finalize with non-NULL pReserved segfaulted "
+                    f"(signal {-rc}) — module dereferenced reserved field. "
+                    f"Stderr: {stderr}"
+                ),
+            )
+        rv = _parse_rv(stdout)
+        assert rv is not None, f"No RV produced. Stdout: {stdout!r} Stderr: {stderr!r}"
+        # CKR_OK is a common benign leniency (module ignores the reserved field):
+        # record as honest_deviation xfail, not a fail, because the field carries no
+        # caller data that could affect module behaviour.
+        if rv == CKR_OK:
+            classify(
+                "honest_deviation",
+                kind="metadata",
+                label="C_Finalize non-NULL pReserved accepted",
+                operation="C_Finalize",
+                summary=(
+                    "Module accepts non-NULL pReserved in C_Finalize (returns CKR_OK); "
+                    "spec §11.4 requires CKR_ARGUMENTS_BAD.  Non-compliant but not "
+                    "security-impacting (reserved field carries no caller data)."
+                ),
+            )
+        classify_negative_rv(
+            rv,
+            (CKR_ARGUMENTS_BAD,),
+            label="C_Finalize with a non-NULL pReserved field (spec §11.4)",
         )

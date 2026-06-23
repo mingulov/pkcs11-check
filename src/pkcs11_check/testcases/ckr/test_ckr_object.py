@@ -38,12 +38,17 @@ from pkcs11_check.raw.types_std import (
     CKA_ENCRYPT,
     CKA_KEY_TYPE,
     CKA_LABEL,
+    CKA_MODULUS,
+    CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKA_VALUE,
     CKK_AES,
+    CKK_RSA,
     CKM_AES_ECB,
+    CKM_DH_PKCS_KEY_PAIR_GEN,
     CKO_DATA,
+    CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
     CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
@@ -298,6 +303,103 @@ class TestCreateObjectErrors:
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle.value)
+
+    def test_rsa_public_key_import_missing_modulus(self, p11_raw_session: Any) -> None:
+        """Raw RSA public-key import without CKA_MODULUS must be rejected.
+
+        A minimal RSA public-key template (CKA_CLASS + CKA_KEY_TYPE +
+        CKA_PUBLIC_EXPONENT) omits the mandatory CKA_MODULUS attribute.
+        The module must reject the incomplete template; accepting it would create
+        a malformed key object (PKCS#11 v3.2 §C_CreateObject mandatory attributes).
+        """
+        rs = p11_raw_session
+        # Three-byte exponent 65537 (0x010001)
+        exponent = b"\x01\x00\x01"
+        tmpl = template(
+            attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_RSA),
+            attr_bytes(CKA_PUBLIC_EXPONENT, exponent),
+            attr_bool(CKA_TOKEN, False),
+        )
+        handle = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, handle.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label="C_CreateObject:rsa-public-missing-modulus",
+        )
+
+    def test_rsa_public_key_import_missing_exponent(self, p11_raw_session: Any) -> None:
+        """Raw RSA public-key import without CKA_PUBLIC_EXPONENT must be rejected.
+
+        A minimal RSA public-key template (CKA_CLASS + CKA_KEY_TYPE +
+        CKA_MODULUS) omits the mandatory CKA_PUBLIC_EXPONENT attribute.
+        The module must reject the incomplete template; accepting it would create
+        a malformed key object (PKCS#11 v3.2 §C_CreateObject mandatory attributes).
+        """
+        rs = p11_raw_session
+        # 2048-bit RSA modulus placeholder; arbitrary bytes — conformant modules
+        # must reject at template validation, before inspecting the key material.
+        modulus = b"\x00" * 256
+        tmpl = template(
+            attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_RSA),
+            attr_bytes(CKA_MODULUS, modulus),
+            attr_bool(CKA_TOKEN, False),
+        )
+        handle = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, handle.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label="C_CreateObject:rsa-public-missing-exponent",
+        )
+
+
+class TestGenerateKeyPairErrors:
+    """Error conditions for C_GenerateKeyPair (Sec.5.16.1)."""
+
+    def test_dh_keygen_missing_prime_and_base(self, p11_raw_session: Any) -> None:
+        """C_GenerateKeyPair(CKM_DH_PKCS_KEY_PAIR_GEN) without CKA_PRIME/CKA_BASE must reject.
+
+        DH key generation requires CKA_PRIME and CKA_BASE in the public-key
+        template to define the domain parameters. Omitting both leaves the template
+        incomplete; a conformant module must return CKR_TEMPLATE_INCOMPLETE (or an
+        equivalent error) and must never NULL-deref the missing parameters
+        (PKCS#11 v3.2 §C_GenerateKeyPair mandatory template attributes).
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("DH_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("CKM_DH_PKCS_KEY_PAIR_GEN not supported")
+        # Public-key template: CKA_TOKEN only — intentionally omit CKA_PRIME and
+        # CKA_BASE so the domain parameters are absent.
+        pub_tmpl = template(attr_bool(CKA_TOKEN, False))
+        priv_tmpl = template(attr_bool(CKA_TOKEN, False))
+        mech = mech_simple(CKM_DH_PKCS_KEY_PAIR_GEN)
+        pub_h = CK_OBJECT_HANDLE(0)
+        priv_h = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            pub_tmpl.ptr,
+            pub_tmpl.count,
+            priv_tmpl.ptr,
+            priv_tmpl.count,
+            byref(pub_h),
+            byref(priv_h),
+        )
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, pub_h.value)
+            destroy_quietly(rs.raw, rs.sh, priv_h.value)
+        classify_negative_rv(
+            rv,
+            TEMPLATE_ERRORS,
+            label="C_GenerateKeyPair:dh-missing-prime-base",
+        )
 
 
 class TestGetAttributeErrors:

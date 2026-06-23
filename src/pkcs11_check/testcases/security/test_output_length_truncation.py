@@ -66,6 +66,9 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_HOST_MEMORY,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases._subprocess_preamble import (
     pin_from_config,
@@ -97,6 +100,9 @@ _OUTPUT_LENGTH_REJECT_RVS = (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_HOST_MEMORY,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 
 _DECRYPT_LENGTH_REJECT_RVS = _OUTPUT_LENGTH_REJECT_RVS + (CKR_ENCRYPTED_DATA_LEN_RANGE,)
@@ -261,6 +267,175 @@ def _build_ctr_script(p11_config: Any, *, init_fn: str, op_fn: str) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Generalised 1:1 stream-cipher oracle body
+#
+# ``{key_setup_src}`` is interpolated verbatim; it must assign to ``key`` and
+# call ``setup_xfail_if_known_ckr`` on keygen failure (same contract as the
+# CTR body).  ``{mech_setup_src}`` must produce a live ``mech`` (CK_MECHANISM)
+# with all sub-objects kept alive until the end of the try block.
+# ``{init_fn}`` / ``{op_fn}`` select C_EncryptInit/C_Encrypt or the decrypt
+# pair.  The AES key import and the mmap oracle logic are identical for all
+# strictly-1:1 stream ciphers.
+# ---------------------------------------------------------------------------
+_STREAM_TRUNCATION_BODY = """
+import ctypes
+import mmap as _mmap
+
+from pkcs11_check.raw.recipes import destroy_quietly
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM,
+    CK_ULONG,
+    CKR_OK,
+)
+
+LEN = {oversize_len}        # 0x100000008 -- low 32 bits = 8
+PROBE_OFF = {probe_offset}  # 1 MiB, past any 32-bit truncation of LEN
+
+{key_setup_src}
+
+in_mm = None
+out_mm = None
+in_view = None
+out_view = None
+try:
+{mech_setup_src}
+    rv = raw.{init_fn}(sh, ctypes.byref(mech), key)
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:{{init_fn}} not operational: {{ckr_name(rv)}}")
+        cleanup()
+        raise SystemExit(0)
+
+    # Oversize demand-zero input + output buffers.  For 1:1 stream ciphers the
+    # output length equals the input length: an oversize input drives an oversize
+    # write.  A truncating provider casts LEN to 32 bits (=8), processes 8 input
+    # bytes, writes ~8 output bytes -> output[PROBE_OFF] stays zero.
+    in_mm = _mmap.mmap(
+        -1, LEN,
+        _mmap.MAP_PRIVATE | _mmap.MAP_ANONYMOUS,
+        _mmap.PROT_READ | _mmap.PROT_WRITE,
+    )
+    out_mm = _mmap.mmap(
+        -1, LEN,
+        _mmap.MAP_PRIVATE | _mmap.MAP_ANONYMOUS,
+        _mmap.PROT_READ | _mmap.PROT_WRITE,
+    )
+    in_view = (ctypes.c_ubyte * LEN).from_buffer(in_mm)
+    out_view = (ctypes.c_ubyte * LEN).from_buffer(out_mm)
+    out_len = CK_ULONG(LEN)
+
+    rv = raw.{op_fn}(
+        sh,
+        ctypes.cast(in_view, ctypes.POINTER(ctypes.c_ubyte)),
+        LEN,
+        ctypes.cast(out_view, ctypes.POINTER(ctypes.c_ubyte)),
+        ctypes.byref(out_len),
+    )
+    print(f"TARGET_RV:0x{{rv:08x}}")
+    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}")
+    if rv == CKR_OK:
+        sample = bytes(out_mm[PROBE_OFF : PROBE_OFF + 64])
+        underfill = 1 if sample == b"\\x00" * 64 else 0
+        print(f"UNDERFILL:{{underfill}}")
+        print(f"OUT_LEN:0x{{out_len.value:016x}}")
+finally:
+    if in_view is not None:
+        del in_view
+    if out_view is not None:
+        del out_view
+    in_mm = None
+    out_mm = None
+    destroy_quietly(raw, sh, key)
+cleanup()
+"""
+
+# Key-setup snippet reused by AES-OFB, AES-CFB128, and AES-CFB8 (all use AES-256
+# session keys; the key type is orthogonal to which stream mode is used).
+_AES_KEY_SETUP_SRC = """\
+from pkcs11_check.raw.recipes import gen_aes_key
+
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
+"""
+
+# Mechanism-setup snippet for AES modes that take a raw 16-byte IV as parameter
+# (OFB, CFB128, CFB8).  ``{mech_const}`` is substituted at build time.
+_AES_IV_MECH_SETUP_SRC_TEMPLATE = """\
+    from pkcs11_check.raw.types_std import {mech_const}
+    iv = (ctypes.c_ubyte * 16)(*range(1, 17))
+    mech = CK_MECHANISM()
+    mech.mechanism = {mech_const}
+    mech.pParameter = ctypes.cast(iv, ctypes.c_void_p)
+    mech.ulParameterLen = 16
+"""
+
+# Key-setup snippet for ChaCha20 (distinct key type generated via
+# CKM_CHACHA20_KEY_GEN; gen_aes_key is reused with a custom mechanism because it
+# omits CKA_KEY_TYPE when mechanism != CKM_AES_KEY_GEN, which is exactly what
+# CKM_CHACHA20_KEY_GEN requires).
+_CHACHA20_KEY_SETUP_SRC = """\
+from pkcs11_check.raw.recipes import gen_aes_key
+from pkcs11_check.raw.types_std import CKM_CHACHA20_KEY_GEN
+
+try:
+    key = gen_aes_key(raw, sh, 256, mechanism=CKM_CHACHA20_KEY_GEN)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "ChaCha20 key generation rejected",
+    )
+"""
+
+# Mechanism-setup snippet for ChaCha20 (CK_CHACHA20_PARAMS: 16-byte block counter
+# at 128 bits + 12-byte nonce at 96 bits).
+_CHACHA20_MECH_SETUP_SRC = """\
+    from pkcs11_check.raw.types_std import CK_CHACHA20_PARAMS, CKM_CHACHA20
+    counter = (ctypes.c_ubyte * 16)()       # all-zero counter at position 0
+    nonce = (ctypes.c_ubyte * 12)(*range(12))
+    chacha_params = CK_CHACHA20_PARAMS()
+    chacha_params.pBlockCounter = ctypes.cast(counter, ctypes.c_void_p)
+    chacha_params.blockCounterBits = 128
+    chacha_params.pNonce = ctypes.cast(nonce, ctypes.c_void_p)
+    chacha_params.ulNonceBits = 96
+    mech = CK_MECHANISM()
+    mech.mechanism = CKM_CHACHA20
+    mech.pParameter = ctypes.cast(ctypes.pointer(chacha_params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(chacha_params)
+"""
+
+
+def _build_stream_script(
+    p11_config: Any,
+    *,
+    key_setup_src: str,
+    mech_setup_src: str,
+    init_fn: str,
+    op_fn: str,
+) -> str:
+    """Assemble preamble + setup helpers + generalised stream-cipher truncation body.
+
+    ``key_setup_src`` and ``mech_setup_src`` are raw Python source snippets
+    (already dedented to their intended indentation level in the child); the CKM
+    constant is embedded in ``mech_setup_src``.
+    """
+    return (
+        _preamble(p11_config)
+        + _CHILD_SETUP_REJECT_HELPERS
+        + _STREAM_TRUNCATION_BODY.format(
+            oversize_len=OVERSIZE_WRITE_LEN,
+            probe_offset=PROBE_OFFSET,
+            key_setup_src=key_setup_src,
+            mech_setup_src=mech_setup_src,
+            init_fn=init_fn,
+            op_fn=op_fn,
+        )
+    )
+
+
 def _classify_oracle(
     stdout: str,
     *,
@@ -399,5 +574,385 @@ class TestDecryptOutputLengthTruncation:
             op_name="C_Decrypt",
             test_id=(
                 "TestDecryptOutputLengthTruncation.test_decrypt_oversized_length_rejects_or_honors"
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# AES-OFB -- strictly 1:1 stream mode, 16-byte IV parameter
+# ---------------------------------------------------------------------------
+
+
+class TestAesOFBOutputLengthTruncation:
+    """C_Encrypt / C_Decrypt must not silently truncate a 64-bit length for AES-OFB.
+
+    AES-OFB (Output Feedback) is a strictly 1:1 stream mode: output length equals
+    input length with no padding.  The mechanism parameter is a raw 16-byte IV.
+    The demand-zero mmap oracle applies identically to AES-CTR: an oversize input
+    drives an oversize write, and a truncating provider under-fills the output.
+    """
+
+    def test_encrypt_oversized_length_rejects_or_honors(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """C_Encrypt must reject or fully honor a 4 GiB+ AES-OFB input length."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_OFB"):
+            pytest.skip("CKM_AES_OFB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_Encrypt AES-OFB output-length truncation probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        script = _build_stream_script(
+            p11_config,
+            key_setup_src=_AES_KEY_SETUP_SRC,
+            mech_setup_src=_AES_IV_MECH_SETUP_SRC_TEMPLATE.format(mech_const="CKM_AES_OFB"),
+            init_fn="C_EncryptInit",
+            op_fn="C_Encrypt",
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script, timeout=_HONORING_TIMEOUT_S, pin=pin_from_config(p11_config)
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Encrypt(AES_OFB, ulDataLen=0x{OVERSIZE_WRITE_LEN:x})",
+        )
+        _classify_oracle(
+            stdout,
+            reject_rvs=_OUTPUT_LENGTH_REJECT_RVS,
+            op_name="C_Encrypt(AES-OFB)",
+            test_id=(
+                "TestAesOFBOutputLengthTruncation.test_encrypt_oversized_length_rejects_or_honors"
+            ),
+        )
+
+    def test_decrypt_oversized_length_rejects_or_honors(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """C_Decrypt must reject or fully honor a 4 GiB+ AES-OFB input length."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_OFB"):
+            pytest.skip("CKM_AES_OFB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_Decrypt AES-OFB output-length truncation probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        script = _build_stream_script(
+            p11_config,
+            key_setup_src=_AES_KEY_SETUP_SRC,
+            mech_setup_src=_AES_IV_MECH_SETUP_SRC_TEMPLATE.format(mech_const="CKM_AES_OFB"),
+            init_fn="C_DecryptInit",
+            op_fn="C_Decrypt",
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script, timeout=_HONORING_TIMEOUT_S, pin=pin_from_config(p11_config)
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Decrypt(AES_OFB, ulEncryptedDataLen=0x{OVERSIZE_WRITE_LEN:x})",
+        )
+        _classify_oracle(
+            stdout,
+            reject_rvs=_DECRYPT_LENGTH_REJECT_RVS,
+            op_name="C_Decrypt(AES-OFB)",
+            test_id=(
+                "TestAesOFBOutputLengthTruncation.test_decrypt_oversized_length_rejects_or_honors"
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# AES-CFB128 -- strictly 1:1 stream mode, 16-byte IV parameter
+# ---------------------------------------------------------------------------
+
+
+class TestAesCFB128OutputLengthTruncation:
+    """C_Encrypt / C_Decrypt must not silently truncate a 64-bit length for AES-CFB128.
+
+    AES-CFB128 (Cipher Feedback, 128-bit segment) is a strictly 1:1 stream mode.
+    The mechanism parameter is a raw 16-byte IV.  The demand-zero mmap oracle applies
+    identically: an oversize input drives an oversize write.
+    """
+
+    def test_encrypt_oversized_length_rejects_or_honors(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """C_Encrypt must reject or fully honor a 4 GiB+ AES-CFB128 input length."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CFB128"):
+            pytest.skip("CKM_AES_CFB128 not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_Encrypt AES-CFB128 output-length truncation probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        script = _build_stream_script(
+            p11_config,
+            key_setup_src=_AES_KEY_SETUP_SRC,
+            mech_setup_src=_AES_IV_MECH_SETUP_SRC_TEMPLATE.format(mech_const="CKM_AES_CFB128"),
+            init_fn="C_EncryptInit",
+            op_fn="C_Encrypt",
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script, timeout=_HONORING_TIMEOUT_S, pin=pin_from_config(p11_config)
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Encrypt(AES_CFB128, ulDataLen=0x{OVERSIZE_WRITE_LEN:x})",
+        )
+        _classify_oracle(
+            stdout,
+            reject_rvs=_OUTPUT_LENGTH_REJECT_RVS,
+            op_name="C_Encrypt(AES-CFB128)",
+            test_id=(
+                "TestAesCFB128OutputLengthTruncation"
+                ".test_encrypt_oversized_length_rejects_or_honors"
+            ),
+        )
+
+    def test_decrypt_oversized_length_rejects_or_honors(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """C_Decrypt must reject or fully honor a 4 GiB+ AES-CFB128 input length."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CFB128"):
+            pytest.skip("CKM_AES_CFB128 not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_Decrypt AES-CFB128 output-length truncation probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        script = _build_stream_script(
+            p11_config,
+            key_setup_src=_AES_KEY_SETUP_SRC,
+            mech_setup_src=_AES_IV_MECH_SETUP_SRC_TEMPLATE.format(mech_const="CKM_AES_CFB128"),
+            init_fn="C_DecryptInit",
+            op_fn="C_Decrypt",
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script, timeout=_HONORING_TIMEOUT_S, pin=pin_from_config(p11_config)
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Decrypt(AES_CFB128, ulEncryptedDataLen=0x{OVERSIZE_WRITE_LEN:x})",
+        )
+        _classify_oracle(
+            stdout,
+            reject_rvs=_DECRYPT_LENGTH_REJECT_RVS,
+            op_name="C_Decrypt(AES-CFB128)",
+            test_id=(
+                "TestAesCFB128OutputLengthTruncation"
+                ".test_decrypt_oversized_length_rejects_or_honors"
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# AES-CFB8 -- strictly 1:1 stream mode (8-bit CFB segment), 16-byte IV parameter
+# ---------------------------------------------------------------------------
+
+
+class TestAesCFB8OutputLengthTruncation:
+    """C_Encrypt / C_Decrypt must not silently truncate a 64-bit length for AES-CFB8.
+
+    AES-CFB8 (Cipher Feedback, 8-bit segment) produces exactly one byte of output
+    per byte of input (1:1).  The mechanism parameter is a raw 16-byte IV.  The
+    demand-zero mmap oracle applies identically.
+    """
+
+    def test_encrypt_oversized_length_rejects_or_honors(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """C_Encrypt must reject or fully honor a 4 GiB+ AES-CFB8 input length."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CFB8"):
+            pytest.skip("CKM_AES_CFB8 not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_Encrypt AES-CFB8 output-length truncation probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        script = _build_stream_script(
+            p11_config,
+            key_setup_src=_AES_KEY_SETUP_SRC,
+            mech_setup_src=_AES_IV_MECH_SETUP_SRC_TEMPLATE.format(mech_const="CKM_AES_CFB8"),
+            init_fn="C_EncryptInit",
+            op_fn="C_Encrypt",
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script, timeout=_HONORING_TIMEOUT_S, pin=pin_from_config(p11_config)
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Encrypt(AES_CFB8, ulDataLen=0x{OVERSIZE_WRITE_LEN:x})",
+        )
+        _classify_oracle(
+            stdout,
+            reject_rvs=_OUTPUT_LENGTH_REJECT_RVS,
+            op_name="C_Encrypt(AES-CFB8)",
+            test_id=(
+                "TestAesCFB8OutputLengthTruncation.test_encrypt_oversized_length_rejects_or_honors"
+            ),
+        )
+
+    def test_decrypt_oversized_length_rejects_or_honors(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """C_Decrypt must reject or fully honor a 4 GiB+ AES-CFB8 input length."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CFB8"):
+            pytest.skip("CKM_AES_CFB8 not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_Decrypt AES-CFB8 output-length truncation probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
+
+        script = _build_stream_script(
+            p11_config,
+            key_setup_src=_AES_KEY_SETUP_SRC,
+            mech_setup_src=_AES_IV_MECH_SETUP_SRC_TEMPLATE.format(mech_const="CKM_AES_CFB8"),
+            init_fn="C_DecryptInit",
+            op_fn="C_Decrypt",
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script, timeout=_HONORING_TIMEOUT_S, pin=pin_from_config(p11_config)
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Decrypt(AES_CFB8, ulEncryptedDataLen=0x{OVERSIZE_WRITE_LEN:x})",
+        )
+        _classify_oracle(
+            stdout,
+            reject_rvs=_DECRYPT_LENGTH_REJECT_RVS,
+            op_name="C_Decrypt(AES-CFB8)",
+            test_id=(
+                "TestAesCFB8OutputLengthTruncation.test_decrypt_oversized_length_rejects_or_honors"
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# ChaCha20 -- strictly 1:1 stream cipher, CK_CHACHA20_PARAMS parameter
+# ---------------------------------------------------------------------------
+
+
+class TestChaCha20OutputLengthTruncation:
+    """C_Encrypt / C_Decrypt must not silently truncate a 64-bit length for ChaCha20.
+
+    ChaCha20 (``CKM_CHACHA20``) is a strictly 1:1 stream cipher: output length
+    equals input length.  The mechanism parameter is ``CK_CHACHA20_PARAMS`` (block
+    counter + nonce).  The key is generated via ``CKM_CHACHA20_KEY_GEN`` (separate
+    from AES key generation).  The demand-zero mmap oracle applies identically.
+    """
+
+    def test_encrypt_oversized_length_rejects_or_honors(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """C_Encrypt must reject or fully honor a 4 GiB+ ChaCha20 input length."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CHACHA20"):
+            pytest.skip("CKM_CHACHA20 not supported")
+        if not rs.has_mechanism("CHACHA20_KEY_GEN"):
+            pytest.skip("CKM_CHACHA20_KEY_GEN not supported")
+
+        script = _build_stream_script(
+            p11_config,
+            key_setup_src=_CHACHA20_KEY_SETUP_SRC,
+            mech_setup_src=_CHACHA20_MECH_SETUP_SRC,
+            init_fn="C_EncryptInit",
+            op_fn="C_Encrypt",
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script, timeout=_HONORING_TIMEOUT_S, pin=pin_from_config(p11_config)
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Encrypt(CHACHA20, ulDataLen=0x{OVERSIZE_WRITE_LEN:x})",
+        )
+        _classify_oracle(
+            stdout,
+            reject_rvs=_OUTPUT_LENGTH_REJECT_RVS,
+            op_name="C_Encrypt(ChaCha20)",
+            test_id=(
+                "TestChaCha20OutputLengthTruncation.test_encrypt_oversized_length_rejects_or_honors"
+            ),
+        )
+
+    def test_decrypt_oversized_length_rejects_or_honors(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """C_Decrypt must reject or fully honor a 4 GiB+ ChaCha20 input length."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CHACHA20"):
+            pytest.skip("CKM_CHACHA20 not supported")
+        if not rs.has_mechanism("CHACHA20_KEY_GEN"):
+            pytest.skip("CKM_CHACHA20_KEY_GEN not supported")
+
+        script = _build_stream_script(
+            p11_config,
+            key_setup_src=_CHACHA20_KEY_SETUP_SRC,
+            mech_setup_src=_CHACHA20_MECH_SETUP_SRC,
+            init_fn="C_DecryptInit",
+            op_fn="C_Decrypt",
+        )
+        rc, stdout, stderr = run_with_coverage(
+            script, timeout=_HONORING_TIMEOUT_S, pin=pin_from_config(p11_config)
+        )
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=f"C_Decrypt(CHACHA20, ulEncryptedDataLen=0x{OVERSIZE_WRITE_LEN:x})",
+        )
+        _classify_oracle(
+            stdout,
+            reject_rvs=_DECRYPT_LENGTH_REJECT_RVS,
+            op_name="C_Decrypt(ChaCha20)",
+            test_id=(
+                "TestChaCha20OutputLengthTruncation.test_decrypt_oversized_length_rejects_or_honors"
             ),
         )

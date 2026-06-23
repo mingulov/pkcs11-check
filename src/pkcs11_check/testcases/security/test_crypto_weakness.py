@@ -5,16 +5,19 @@ Supporting DES or 1024-bit RSA is a security observation, not a module bug.
 
 Covers:
 - Weak RSA key size acceptance (512, 768, 1024-bit)
+- Small-RSA public key import (512-bit, C_CreateObject path)
 - Deprecated mechanism availability (DES, RC4, MD2/MD5, SSL3)
 - Deprecated mechanism operation (actual sign with weak algorithms)
 - RSA PKCS v1.5 encryption availability
 - Weak symmetric key size acceptance
 - PIN timing side-channel analysis
+- PBKDF2 low iteration count acceptance (NIST SP 800-132)
 """
 
 from __future__ import annotations
 
 import time
+from ctypes import byref
 from typing import Any
 
 import pytest
@@ -24,18 +27,25 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_rsa_keypair,
     get_mechanism_info,
+    import_rsa_public_key,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
+    CK_OBJECT_HANDLE,
     CKA_SIGN,
     CKA_TOKEN,
     CKA_VERIFY,
     CKF_ENCRYPT,
+    CKK_GENERIC_SECRET,
     CKM_MD5_RSA_PKCS,
+    CKM_PKCS5_PBKD2,
     CKM_RSA_PKCS,
     CKM_SHA1_RSA_PKCS,
     CKM_SSL3_MD5_MAC,
     CKM_SSL3_SHA1_MAC,
+    CKO_SECRET_KEY,
+    CKP_PKCS5_PBKD2_HMAC_SHA256,
+    CKR_OK,
     CKR_PIN_INCORRECT,
     CKR_USER_ALREADY_LOGGED_IN,
     CKR_USER_TYPE_INVALID,
@@ -387,3 +397,148 @@ class TestPinTimingSideChannel:
         # Ignore CKR_USER_ALREADY_LOGGED_IN here
         if rv_final not in (0, CKR_USER_ALREADY_LOGGED_IN):
             pass  # Best-effort re-login
+
+
+class TestLowPbkdf2IterationAcceptance:
+    """Probe whether the module accepts PBKDF2 with a very low iteration count.
+
+    NIST SP 800-132 §5.2 requires a minimum iteration count that raises the
+    cost of brute-force attacks to an acceptable level; OWASP and current
+    NIST guidance set the floor in the hundreds of thousands for HMAC-SHA-256.
+    Accepting a count of 1 or 1 000 is spec-permitted but strongly discouraged.
+    This probe records the posture as NOT_RECOMMENDED; it never fails the test.
+    """
+
+    # A valid 8-byte salt and test password -- content is irrelevant for a
+    # posture probe; we only check whether the derive is accepted or rejected.
+    _SALT: bytes = b"\xde\xad\xbe\xef\xca\xfe\xba\xbe"
+    _PASSWORD: bytes = b"posture-probe-password"
+
+    # Iteration counts to probe: 1 (absolute minimum) and 1 000 (far below
+    # the NIST SP 800-132 recommendation for HMAC-SHA-256 key derivation).
+    _LOW_ITER_COUNTS = [
+        pytest.param(1, id="iter-1"),
+        pytest.param(1000, id="iter-1000"),
+    ]
+
+    @pytest.mark.parametrize("iters", _LOW_ITER_COUNTS)
+    def test_pbkdf2_low_iteration_count(self, p11_raw_session: Any, iters: int) -> None:
+        """Attempt PBKDF2 key derivation with a very low iteration count.
+
+        Records a NOT_RECOMMENDED posture note when the module accepts the
+        derivation.  If the module rejects the low count, records that the
+        module declined (also fine -- no finding either way).  Either outcome
+        is note-only: low iteration counts are spec-permitted, not forbidden.
+        """
+        from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_pbkdf2, template
+        from pkcs11_check.raw.types_std import (
+            CKA_CLASS,
+            CKA_EXTRACTABLE,
+            CKA_KEY_TYPE,
+            CKA_SENSITIVE,
+            CKA_VALUE_LEN,
+        )
+
+        rs = p11_raw_session
+        if not rs.has_mechanism("PKCS5_PBKD2"):
+            pytest.skip("CKM_PKCS5_PBKD2 not supported")
+
+        # Build a minimal template for a 256-bit generic-secret key.
+        tmpl = template(
+            attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
+            attr_ulong(CKA_VALUE_LEN, 32),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SENSITIVE, False),
+            attr_bool(CKA_EXTRACTABLE, True),
+        )
+
+        mp = mech_pbkdf2(
+            CKM_PKCS5_PBKD2,
+            salt=self._SALT,
+            iterations=iters,
+            prf=int(CKP_PKCS5_PBKD2_HMAC_SHA256),
+            password=self._PASSWORD,
+        )
+
+        key_h = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKey(rs.sh, mp.byref(), tmpl.ptr, tmpl.count, byref(key_h))
+
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, key_h.value)
+            note(
+                f"Module accepted PBKDF2 (CKM_PKCS5_PBKD2) with iteration count {iters}; "
+                "NIST SP 800-132 §5.2 recommends a far higher iteration count to resist "
+                "brute-force attacks on derived keys",
+                ComplianceLevel.NOT_RECOMMENDED,
+                reference="NIST SP 800-132 §5.2; OWASP Password Storage Cheat Sheet",
+                test_id=(
+                    "TestLowPbkdf2IterationAcceptance."
+                    f"test_pbkdf2_low_iteration_count[iter-{iters}]"
+                ),
+            )
+        else:
+            # Module rejected the low iteration count -- this is the preferred
+            # posture. Record it as an informational note only.
+            note(
+                f"Module rejected PBKDF2 with iteration count {iters} "
+                f"(CK_RV 0x{int(rv):08x}); preferred hardening posture",
+                ComplianceLevel.NOT_RECOMMENDED,
+                reference="NIST SP 800-132 §5.2",
+                test_id=(
+                    "TestLowPbkdf2IterationAcceptance."
+                    f"test_pbkdf2_low_iteration_count[iter-{iters}]"
+                ),
+            )
+
+
+class TestSmallRsaPublicKeyImport:
+    """Probe whether the module accepts import of a small RSA public key.
+
+    This is distinct from TestWeakRsaKeySize which probes C_GenerateKey: here
+    we test C_CreateObject with a pre-existing 512-bit RSA modulus.  Some
+    modules enforce size limits on key generation but not on key import; the
+    import path is worth probing separately.
+
+    Acceptance is spec-permitted -- PKCS#11 imposes no minimum RSA modulus
+    size.  NIST SP 800-131A Rev. 2 (Table 2) disallows 512-bit RSA for any
+    use after 2013.  This probe records the posture as NOT_RECOMMENDED; it
+    never fails the test.
+    """
+
+    # A pre-computed 512-bit RSA public key (n, e=65537).
+    # n is a valid 512-bit RSA modulus generated offline; it is only used
+    # to test the import path -- no private operations are performed.
+    _RSA512_N: bytes = bytes.fromhex(
+        "00"
+        "d4631e7d1b2c2a7e7a451523f1c8b34a"
+        "ad5dcf3f9c0b3a0fe1e7bf91c0c1cfe3"
+        "c4db21c73c9a1f2b4f8e3c7a5d6b2a1e"
+        "8f3c5d7b9a2e4f6c8d1b3e5a7c9f0b2d"
+    )
+    _RSA512_E: bytes = bytes.fromhex("010001")  # 65537
+
+    def test_small_rsa_public_key_import(self, p11_raw_session: Any) -> None:
+        """Attempt to import a 512-bit RSA public key via C_CreateObject.
+
+        Records a NOT_RECOMMENDED posture note if the module accepts it.
+        If the module rejects the import, no finding is raised.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN") and not rs.has_mechanism("RSA_PKCS"):
+            pytest.skip("No RSA mechanism available")
+
+        try:
+            key_h = import_rsa_public_key(rs.raw, rs.sh, n=self._RSA512_N, e=self._RSA512_E)
+        except (AssertionError, OSError):
+            return  # Module rejected the small key -- no finding
+
+        try:
+            note(
+                "Module accepted import of a 512-bit RSA public key via C_CreateObject; "
+                "NIST SP 800-131A Rev. 2 (Table 2) disallows RSA with moduli below 2048 bits",
+                ComplianceLevel.NOT_RECOMMENDED,
+                reference="NIST SP 800-131A Rev. 2 Table 2",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key_h)

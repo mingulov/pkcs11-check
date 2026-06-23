@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import pytest
 
+from pkcs11_check.classification import fail_as
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.recipes import (
     decrypt_multipart,
@@ -29,10 +30,12 @@ from pkcs11_check.raw.recipes import (
     encrypt_multipart,
     encrypt_single,
     sign_multipart,
+    sign_single,
     verify_multipart,
 )
 from pkcs11_check.raw.types_std import CKM
 from pkcs11_check.testcases._capability_claims import claim_refusal_passes
+from pkcs11_check.testcases.conftest import assert_correct
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     generate_key_for_encrypt,
@@ -294,6 +297,124 @@ class TestMultipartSign:
                 if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:multipart-verify"):
                     return
             assert ok, f"{entry.mech_name}: multipart sign/verify failed (sig={sig.hex()!r})"
+        finally:
+            destroy_quietly(rs.raw, rs.sh, sign_key)
+            if verify_key is not None:
+                destroy_quietly(rs.raw, rs.sh, verify_key)
+
+    def test_streaming_equals_single(
+        self, p11_module_session: RawSession, mech_multipart_sign_entry: MechEntry
+    ) -> None:
+        """Multi-part sign output must be equivalent to single-part sign for the same input.
+
+        For deterministic mechanisms (HMAC, EdDSA, RSA-PKCS without PSS) the signature
+        bytes must be identical. For non-deterministic mechanisms (ECDSA, RSA-PSS, DSA)
+        both the single-part and multi-part signatures must verify successfully, which
+        confirms they produce valid signatures over the same data without requiring
+        byte equality on randomised outputs.
+
+        A deterministic mismatch or a verification failure is a crypto-correctness break
+        per PKCS#11 multi-part sign semantics.
+        """
+        rs = p11_module_session
+        entry = mech_multipart_sign_entry
+        config = entry.config
+        assert config is not None
+
+        sign_key, verify_key = generate_key_for_sign(rs, entry, config)
+        verify_key_handle = verify_key if verify_key is not None else sign_key
+
+        try:
+            mech_param = make_mech_param_or_skip(entry)
+
+            data = b"multipart sign equivalence test " * 3  # 96 bytes
+            chunk_size = len(data) // 3
+            chunks = [
+                data[:chunk_size],
+                data[chunk_size : 2 * chunk_size],
+                data[2 * chunk_size :],
+            ]
+            mech_id = CKM(entry.mech_id)
+
+            # Single-part reference -- the multipart-sign probe key is intentional:
+            # this test's claim is the multipart equivalence; single-part is gating setup.
+            try:
+                sig_single = sign_single(
+                    rs.raw, rs.sh, sign_key, mech_id, data, mech_param=mech_param
+                )
+            except AssertionError as exc:
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:multipart-sign"):
+                    return
+
+            # Multi-part sign
+            try:
+                sig_multi = sign_multipart(
+                    rs.raw, rs.sh, sign_key, mech_id, chunks, mech_param=mech_param
+                )
+            except AssertionError as exc:
+                if claim_refusal_passes(exc, rs, probe_key=f"{entry.mech_name}:multipart-sign"):
+                    return
+
+            # Determinism split: mechanisms that must produce identical bytes vs those
+            # that use randomised signing (ECDSA, PSS, DSA, …).
+            mech_name = entry.mech_name
+            is_deterministic = (
+                "HMAC" in mech_name
+                or "EDDSA" in mech_name
+                or "ED25519" in mech_name
+                or "ED448" in mech_name
+                or ("RSA_PKCS" in mech_name and "PSS" not in mech_name)
+            )
+
+            if is_deterministic:
+                # Byte-identical output is required for deterministic families.
+                assert_correct(
+                    actual=sig_multi,
+                    expected=sig_single,
+                    label="multipart sign equals one-shot",
+                    operation="C_Sign",
+                    mechanism=mech_name,
+                )
+            else:
+                # Non-deterministic: verify that both signatures are valid over the data.
+                try:
+                    ok_single = verify_multipart(
+                        rs.raw,
+                        rs.sh,
+                        verify_key_handle,
+                        mech_id,
+                        [data],
+                        sig_single,
+                        mech_param=mech_param,
+                    )
+                except AssertionError as exc:
+                    if claim_refusal_passes(
+                        exc, rs, probe_key=f"{entry.mech_name}:multipart-verify"
+                    ):
+                        return
+                try:
+                    ok_multi = verify_multipart(
+                        rs.raw,
+                        rs.sh,
+                        verify_key_handle,
+                        mech_id,
+                        chunks,
+                        sig_multi,
+                        mech_param=mech_param,
+                    )
+                except AssertionError as exc:
+                    if claim_refusal_passes(
+                        exc, rs, probe_key=f"{entry.mech_name}:multipart-verify"
+                    ):
+                        return
+                if not ok_single or not ok_multi:
+                    fail_as(
+                        "wrong_result",
+                        kind="crypto",
+                        label="multipart or one-shot signature failed to verify",
+                        operation="C_Sign",
+                        mechanism=mech_name,
+                    )
         finally:
             destroy_quietly(rs.raw, rs.sh, sign_key)
             if verify_key is not None:

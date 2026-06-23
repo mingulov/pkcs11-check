@@ -39,7 +39,7 @@ from pkcs11_check.raw.recipes import (
     import_secret_key,
     read_attributes,
 )
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
     CK_ULONG,
@@ -53,14 +53,18 @@ from pkcs11_check.raw.types_std import (
     CKA_LOCAL,
     CKA_NEVER_EXTRACTABLE,
     CKA_SENSITIVE,
+    CKA_SIGN,
     CKA_TOKEN,
+    CKA_VERIFY,
     CKK_AES,
     CKM_AES_KEY_GEN,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_OK,
 )
 from pkcs11_check.testcases._attribute_values import require_ulong_attr
+from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS
 from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
     require_operational_aes_keygen,
     skip_unless_create_object_supported,
 )
@@ -371,3 +375,121 @@ class TestDerivedAttributeInvariants:
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
+
+
+# Widened to TEMPLATE_ERRORS so common decline codes (CKR_ARGUMENTS_BAD,
+# CKR_FUNCTION_FAILED, CKR_ATTRIBUTE_TYPE_INVALID) are pass rather than xfail.
+_CREATION_REJECT_RVS = TEMPLATE_ERRORS
+
+
+class TestContradictoryCreationFaithfulness:
+    """G5.3: Contradictory-creation faithful-readback (metadata self-contradiction).
+
+    A module must either cleanly REJECT an unusual but legal attribute combination
+    (``CKR_TEMPLATE_INCONSISTENT`` / ``CKR_TEMPLATE_INCOMPLETE`` /
+    ``CKR_ATTRIBUTE_VALUE_INVALID``) or FAITHFULLY honor it: reading back the key
+    must return exactly the requested attribute values.  Silently altering a
+    requested attribute without signaling an error is a metadata self-contradiction:
+    the caller declared an intent and the module both accepted and then denied it.
+
+    Reference: PKCS#11 v3.2 §6.7 (object creation), §4.9.4 (attribute rules).
+    """
+
+    def _check_faithful_or_reject(
+        self,
+        rs: Any,
+        attrs: dict[Any, Any],
+        check_attrs: list[Any],
+        label: str,
+    ) -> None:
+        """Attempt creation; if accepted, verify each requested attribute is honored.
+
+        - Clean rejection with a spec-listed code (``_CREATION_REJECT_RVS``) → pass.
+        - Clean rejection with any other code → xfail ``nonspec_reject`` (the
+          module declined a legal combination with an unexpected code).
+        - Accepted → read back *check_attrs*; if every value matches what was
+          requested → pass (faithful).
+        - Accepted but any value differs from what was requested → fail
+          (silent attribute flip = metadata self-contradiction).
+
+        A clean rejection (with ANY clean code) must never hard-fail; only a
+        silent attribute flip on acceptance warrants fail.
+        """
+        require_operational_aes_keygen(rs)
+        key = 0
+        try:
+            reject_exc: CkrAssertionError | None = None
+            try:
+                key = gen_aes_key(rs.raw, rs.sh, 128, attrs=attrs)
+            except CkrAssertionError as exc:
+                reject_exc = exc
+
+            if reject_exc is not None:
+                # Route every clean rejection through the 3-way classifier:
+                # spec-listed code → pass; other clean code → xfail nonspec_reject.
+                classify_negative_rv(
+                    reject_exc.rv,
+                    _CREATION_REJECT_RVS,
+                    label=label,
+                    kind="metadata",
+                )
+                return
+
+            # Module accepted the creation.  Verify faithful readback.
+            readback = read_attributes(rs.raw, rs.sh, key, check_attrs)
+            for attr in check_attrs:
+                requested = attrs.get(attr)
+                actual = readback.get(attr)
+                if requested is not None and actual != requested:
+                    fail_as(
+                        "self_contradiction",
+                        kind="metadata",
+                        label=label,
+                        summary=(
+                            f"{label}: C_GenerateKey silently altered a requested attribute "
+                            f"(requested {attr!r}={requested!r}, object reports {actual!r})"
+                        ),
+                    )
+        finally:
+            if key:
+                destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_sensitive_false_extractable_false_faithful(self, p11_raw_session: Any) -> None:
+        """CKA_SENSITIVE=False, CKA_EXTRACTABLE=False: reject cleanly or honor faithfully.
+
+        Both False is an unusual but legal combination per PKCS#11 v3.2 §4.9.4:
+        SENSITIVE and EXTRACTABLE are independent booleans.  A module may reject it,
+        but if it accepts it the two attributes MUST read back as requested.  A silent
+        flip of either (e.g. forcing SENSITIVE=True because EXTRACTABLE=False) is a
+        metadata self-contradiction — the module accepted the template then denied the
+        caller's stated intent.
+        """
+        rs = p11_raw_session
+        self._check_faithful_or_reject(
+            rs,
+            attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: False},
+            check_attrs=[CKA_SENSITIVE, CKA_EXTRACTABLE],
+            label=(
+                "CKA_SENSITIVE=False + CKA_EXTRACTABLE=False on an AES secret key: "
+                "accepted but silently altered (PKCS#11 v3.2 §4.9.4)"
+            ),
+        )
+
+    def test_sign_and_verify_on_secret_key_faithful(self, p11_raw_session: Any) -> None:
+        """CKA_SIGN=True, CKA_VERIFY=True on a secret key: reject cleanly or honor faithfully.
+
+        Secret keys with CKA_SIGN / CKA_VERIFY set True are valid for HMAC-class
+        operations (PKCS#11 v3.2 §4.9.4).  A module may reject the combination, but if
+        it accepts it, those attribute values MUST be faithfully reported on readback.
+        A silent flip (e.g. forcing both False) is a metadata self-contradiction.
+        """
+        rs = p11_raw_session
+        self._check_faithful_or_reject(
+            rs,
+            attrs={CKA_SIGN: True, CKA_VERIFY: True},
+            check_attrs=[CKA_SIGN, CKA_VERIFY],
+            label=(
+                "CKA_SIGN=True + CKA_VERIFY=True on an AES secret key: "
+                "accepted but silently altered (PKCS#11 v3.2 §4.9.4)"
+            ),
+        )

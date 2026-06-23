@@ -1091,7 +1091,10 @@ def test_f1_category_a_methods_parse_and_classify_target_rv() -> None:
         end = src.index("\n    def ", idx + 1) if "\n    def " in src[idx + 1 :] else len(src)
         body = src[idx:end]
         assert "TARGET_RV:" in body, f"{name}: child must print TARGET_RV:"
-        assert "classify_negative_rv(" in body, f"{name}: parent must classify the rv"
+        classifies = (
+            "classify_negative_rv(" in body or "_classify_unhonorable_length_outcome(" in body
+        )
+        assert classifies, f"{name}: parent must classify the rv"
 
 
 def test_no_dead_setup_xfail_classify_blocks() -> None:
@@ -1101,17 +1104,19 @@ def test_no_dead_setup_xfail_classify_blocks() -> None:
 
 
 def test_isize_boundary_lengths_includes_truncation_ids() -> None:
-    """_ISIZE_BOUNDARY_LENGTHS must carry all four expected param ids.
+    """_ISIZE_BOUNDARY_LENGTHS must carry the un-honorable isize-boundary param ids.
 
-    The truncation ids (trunc_low0, trunc_low8) extend the original isize-boundary
-    ids so that the ~33 parametrized probes also detect 64-bit→32-bit truncation.
-    This meta-test ensures that coverage cannot silently regress.
+    Only un-honorable lengths (values that cannot be the size of any real buffer) are
+    sound for small-buffer reject probes: no addressable buffer that large can exist, so
+    rejection is the only valid module response.  Honorable ~4 GB truncation-revealing
+    values (trunc_low0, trunc_low8) were removed because a conformant 64-bit module
+    would try to honor them, over-reading the small buffer and causing caller-induced UB.
     """
     ids = [p.id for p in test_ffi_length_boundary._ISIZE_BOUNDARY_LENGTHS]
-    assert "isize_max" in ids, "original isize_max param must be present"
-    assert "isize_max_plus_1" in ids, "original isize_max_plus_1 param must be present"
-    assert "trunc_low0" in ids, "truncation probe trunc_low0 (1<<32, low32=0) must be present"
-    assert "trunc_low8" in ids, "truncation probe trunc_low8 ((1<<32)+8, low32=8) must be present"
+    assert "isize_max" in ids, "un-honorable isize_max param must be present"
+    assert "isize_max_plus_1" in ids, "un-honorable isize_max_plus_1 param must be present"
+    assert "trunc_low0" not in ids, "honorable trunc_low0 must not be in small-buffer reject probes"
+    assert "trunc_low8" not in ids, "honorable trunc_low8 must not be in small-buffer reject probes"
 
 
 # ---------------------------------------------------------------------------

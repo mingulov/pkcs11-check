@@ -292,14 +292,18 @@ def test_find_objects_count_probe_allows_ok_on_success(
 
 
 # ---------------------------------------------------------------------------
-# 5. HKDF ulSaltLen / ulInfoLen truncation
+# 5. HKDF ulSaltLen / ulInfoLen truncation (mmap-backed behavioral comparison)
 # ---------------------------------------------------------------------------
 
 
 def test_hkdf_salt_len_truncation_child_script_compiles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """HKDF salt-len truncation child script must be syntactically valid Python."""
+    """HKDF salt-len truncation child script must be syntactically valid Python.
+
+    The new implementation uses a full-length mmap-backed salt buffer and detects
+    truncation via behavioral comparison (two derives, compare key material).
+    """
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
     scripts: list[str] = []
 
@@ -320,7 +324,11 @@ def test_hkdf_salt_len_truncation_child_script_compiles(
     script = scripts[0]
     assert "CKM_HKDF_DERIVE" in script
     assert "ulSaltLen" in script or "CKF_HKDF_SALT_DATA" in script
-    assert "TARGET_RV:" in script
+    # Behavioral comparison: probe reports PROBE_RV, TRUNCATED for classification.
+    assert "PROBE_RV:" in script
+    assert "TRUNCATED:" in script
+    # Must use mmap-backed buffer (demand-zero mapping, full OVERSIZE_LEN sized).
+    assert "mmap" in script
     from pkcs11_check.testcases.security._boundary_values import TRUNCATION_LOW8
 
     assert str(TRUNCATION_LOW8) in script
@@ -330,7 +338,11 @@ def test_hkdf_salt_len_truncation_child_script_compiles(
 def test_hkdf_info_len_truncation_child_script_compiles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """HKDF info-len truncation child script must be syntactically valid Python."""
+    """HKDF info-len truncation child script must be syntactically valid Python.
+
+    The new implementation uses a full-length mmap-backed info buffer and detects
+    truncation via behavioral comparison (two derives, compare key material).
+    """
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
     scripts: list[str] = []
 
@@ -351,22 +363,26 @@ def test_hkdf_info_len_truncation_child_script_compiles(
     script = scripts[0]
     assert "CKM_HKDF_DERIVE" in script
     assert "ulInfoLen" in script
-    assert "TARGET_RV:" in script
+    # Behavioral comparison: probe reports PROBE_RV, TRUNCATED for classification.
+    assert "PROBE_RV:" in script
+    assert "TRUNCATED:" in script
+    # Must use mmap-backed buffer (demand-zero mapping, full OVERSIZE_LEN sized).
+    assert "mmap" in script
     from pkcs11_check.testcases.security._boundary_values import TRUNCATION_LOW8
 
     assert str(TRUNCATION_LOW8) in script
     compile(script, "<hkdf-info-len-truncation-child>", "exec")
 
 
-def test_hkdf_salt_len_probe_uses_real_nonnull_buffer(
+def test_hkdf_salt_len_probe_uses_mmap_backed_buffer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """HKDF salt-len truncation probe must have a NON-NULL real salt buffer.
+    """HKDF salt-len probe must use a full-length mmap-backed salt buffer.
 
-    This distinguishes it from the existing test_hkdf_null_salt which tests
-    the NULL-pointer case. The truncation probe is only meaningful with a real
-    buffer (buffer-coupled: real buffer ≥ low32 so a truncating provider reads
-    real data and succeeds).
+    The mmap is MAP_PRIVATE|MAP_ANONYMOUS and sized to the full oversized length,
+    so no read beyond the mapping occurs. This replaces the old small-real-buffer
+    approach which was unsound (a conformant 64-bit module would over-read).
+    Both probe and reference derives must point to non-NULL salt (CKF_HKDF_SALT_DATA).
     """
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
     scripts: list[str] = []
@@ -385,16 +401,21 @@ def test_hkdf_salt_len_probe_uses_real_nonnull_buffer(
 
     assert len(scripts) == 1
     script = scripts[0]
-    # A real buffer must be allocated (ctypes array, not None).
-    assert "salt_buf" in script
-    # pSalt must be set to the real buffer (not None).
-    assert "pSalt = None" not in script
+    # Must use a demand-zero mmap (not a small fixed-size ctypes array).
+    assert "MAP_PRIVATE" in script or "MAP_ANONYMOUS" in script or "mmap.mmap" in script
+    # The probe salt pointer must NOT be None (CKF_HKDF_SALT_DATA requires a real pointer).
+    assert "CKF_HKDF_SALT_DATA" in script
 
 
-def test_hkdf_info_len_probe_uses_real_nonnull_buffer(
+def test_hkdf_info_len_probe_uses_mmap_backed_buffer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """HKDF info-len truncation probe must have a NON-NULL real info buffer."""
+    """HKDF info-len probe must use a full-length mmap-backed info buffer.
+
+    The mmap is MAP_PRIVATE|MAP_ANONYMOUS and sized to the full oversized length,
+    so no read beyond the mapping occurs. This replaces the old small-real-buffer
+    approach which was unsound.
+    """
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
     scripts: list[str] = []
 
@@ -412,7 +433,7 @@ def test_hkdf_info_len_probe_uses_real_nonnull_buffer(
 
     assert len(scripts) == 1
     script = scripts[0]
-    # A real buffer must be allocated.
-    assert "info_buf" in script
-    # pInfo must be set to the real buffer (not None).
-    assert "pInfo = None" not in script
+    # Must use a demand-zero mmap (not a small fixed-size ctypes array).
+    assert "MAP_PRIVATE" in script or "MAP_ANONYMOUS" in script or "mmap.mmap" in script
+    # The probe info pointer must NOT be None; check the derive uses it.
+    assert "mmap_buf" in script
