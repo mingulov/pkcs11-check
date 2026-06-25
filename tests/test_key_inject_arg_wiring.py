@@ -50,6 +50,14 @@ def _default_args(**overrides: object) -> dict[str, object]:
     return defaults
 
 
+def test_build_pytest_args_disables_pytest_cache() -> None:
+    # pkcs11-check tracks its own run state; pytest's cache is unused and would warn
+    # ("could not create cache path /.pytest_cache") when rootdir resolves to '/'
+    # for an installed package, so it must be disabled in every invocation.
+    args = _build_pytest_args(**_default_args())  # type: ignore[arg-type]
+    assert ("-p", "no:cacheprovider") in list(zip(args, args[1:]))
+
+
 # ---------------------------------------------------------------------------
 # _build_pytest_args tests
 # ---------------------------------------------------------------------------
