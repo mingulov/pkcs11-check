@@ -19,6 +19,7 @@ from pkcs11_check.core.file_runner import (
     FileRunResult,
     FileRunState,
     IsolatedReportConfig,
+    _absolute_nodeid,
     _collection_args,
     _identify_crash_culprit,
     _load_available_mechanisms,
@@ -211,6 +212,49 @@ def test_discover_auto_isolation_units_expands_per_test_marked_files(
     )
 
     assert units == [f"{target}::test_one", f"{target}::test_two"]
+
+
+def test_absolute_nodeid_pins_path_part_to_file_key() -> None:
+    # rootdir-relative / slash-less path part is replaced by the absolute file key;
+    # the test part (after ::) is preserved verbatim.
+    assert (
+        _absolute_nodeid("/abs/test_x.py", "rel/test_x.py::TestC::test_m")
+        == "/abs/test_x.py::TestC::test_m"
+    )
+    assert _absolute_nodeid("/abs/test_x.py", "home/u/test_x.py") == "/abs/test_x.py"
+
+
+def test_discover_auto_isolation_units_pins_absolute_nodeid_for_rootdir_mismatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Regression: when an installed package is run with a stray absolute path on
+    # the pytest command line, pytest's rootdir can settle on '/', so collected
+    # nodeids come out slash-less (e.g. 'home/user/.../test_demo.py::test_one')
+    # while file_path stays absolute. The per-test expansion must pin the unit to
+    # the absolute file path so it is runnable and passes the expansion guard
+    # (previously this raised "subprocess_per_test file was not expanded").
+    target = tmp_path / "test_demo.py"
+    target.write_text("def test_one():\n    assert True\n")
+    rootdir_relative_nodeid = f"{str(target).lstrip('/')}::test_one"
+    monkeypatch.setattr(
+        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
+            CollectedPytestItem(
+                nodeid=rootdir_relative_nodeid,
+                file_path=str(target),
+                markers=["subprocess_per_test"],
+            ),
+        ],
+    )
+
+    # Must not raise (validate runs inside) and must pin to the absolute path.
+    units = discover_auto_isolation_units(
+        [str(target)],
+        tmp_path / "unused",
+        pytest_args=["--p11-module", "/tmp/module.so", "--p11-manifest", "/tmp/m.json"],
+    )
+
+    assert units == [f"{normalize_policy_file_key(str(target))}::test_one"]
 
 
 def test_validate_subprocess_per_test_expansion_rejects_file_unit(tmp_path: Path) -> None:
