@@ -110,8 +110,8 @@ pkcs11-check test --module /usr/lib/softhsm/libsofthsm2.so --pin 1234 --slot 0 \
   points at the wrong file, or the token was never initialised. Re-check step 2
   and confirm with `pkcs11-check info --module <lib>`.
 - **`subprocess_per_test file was not expanded to per-test units`** on a *full*
-  run from an installed package — a pytest `rootdir` edge case in this scenario.
-  Work around it with `--isolation file` until the fix ships:
+  run from an installed package — a pytest `rootdir` edge case. **Fixed in 0.1.6.**
+  On 0.1.4 / 0.1.5, work around it with `--isolation file`:
   ```bash
   pkcs11-check test --module /usr/lib/softhsm/libsofthsm2.so --pin 1234 --slot 0 \
       --isolation file --output json --output-file ./pk-demo/reports/results.json
