@@ -60,6 +60,10 @@ Two non-obvious rules:
 If anything fails, run **`pkcs11-check doctor`** first — it checks the module,
 slot, PIN, token, and data, and prints the exact next step for each problem.
 
+**New to this?** [docs/getting-started-softhsm2.md](docs/getting-started-softhsm2.md)
+is a complete copy-pasteable walkthrough — install, create a SoftHSM2 config and
+token from scratch, run the suite, and read the results.
+
 ### Saving a report
 
 By default `pkcs11-check test` prints a human-readable summary and keeps **no**
