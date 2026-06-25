@@ -60,6 +60,32 @@ Two non-obvious rules:
 If anything fails, run **`pkcs11-check doctor`** first — it checks the module,
 slot, PIN, token, and data, and prints the exact next step for each problem.
 
+### Saving a report
+
+By default `pkcs11-check test` prints a human-readable summary and keeps **no**
+report file. The `generated report log file: /tmp/pkcs11-check-…jsonl` lines you
+may notice are *internal* per-process logs that the isolated runner aggregates and
+then deletes — they are not meant to be read directly.
+
+To save a machine-readable report, add `--output json` and `--output-file`. The
+files are written next to the path you give:
+
+```bash
+pkcs11-check test --module /usr/lib/softhsm/libsofthsm2.so --pin 1234 --slot 0 \
+    --output json --output-file ./reports/results.json
+```
+
+That writes into `./reports/`:
+
+- **`report.jsonl`** — one JSON record per test (outcome, return code, notes)
+- **`results.json`** — the consolidated run summary (counts, crashes, environment)
+- **`coverage.json`**, **`quality.json`** — mechanism coverage and the
+  per-outcome classification report
+
+Use `--output junit --output-file ./reports/results.xml` for JUnit XML instead
+(for CI). The output directory is taken from the `--output-file` path, so point it
+wherever you want the files created.
+
 ## Test suite
 
 Test categories:
