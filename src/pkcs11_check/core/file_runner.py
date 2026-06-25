@@ -284,6 +284,23 @@ def validate_subprocess_per_test_expansion(
         raise ValueError(msg)
 
 
+def _absolute_nodeid(file_key: str, nodeid: str) -> str:
+    """Rebuild a per-test nodeid with an absolute, resolved file path.
+
+    pytest emits the path part of a nodeid relative to its ``rootdir``, and that
+    base is not always the CWD: when a stray absolute path rides on the pytest
+    command line (e.g. the ``--p11-manifest /tmp/...`` value), pytest's early
+    rootdir scan can settle on ``/`` for an installed package with no config file
+    above it, yielding slash-less paths like ``home/user/...``. Such a path does
+    not round-trip through ``normalize_policy_file_key`` (which resolves against
+    the CWD) and is not runnable from the CWD. Pinning the path part to the
+    already-resolved ``file_key`` makes the unit both rootdir-independent and
+    runnable. The test part (after ``::``) is rootdir-independent and preserved.
+    """
+    _, sep, test_part = nodeid.partition("::")
+    return f"{file_key}::{test_part}" if sep else file_key
+
+
 def discover_auto_isolation_units(
     targets: list[str],
     default_root: Path,
@@ -340,18 +357,19 @@ def discover_auto_isolation_units(
             mode = "test"
         if mode == "test":
             nodeids = nodeids_by_file_key.get(file_key, [])
-            if nodeids:
-                units.extend(nodeids)
-            else:
-                units.extend(
-                    discover_pytest_units(
-                        [file_unit],
-                        default_root,
-                        granularity="test",
-                        pytest_args=pytest_args,
-                        env=env,
-                    )
+            if not nodeids:
+                nodeids = discover_pytest_units(
+                    [file_unit],
+                    default_root,
+                    granularity="test",
+                    pytest_args=pytest_args,
+                    env=env,
                 )
+            # Pin each per-test unit to the resolved absolute file path so it is
+            # runnable and key-matchable regardless of pytest's rootdir (which can
+            # be dragged to '/' by a stray absolute path on the command line for an
+            # installed package with no config file above it).
+            units.extend(_absolute_nodeid(file_key, nid) for nid in nodeids)
         else:
             if file_forces_file_isolation(marker_names):
                 units.append(str(file_path))

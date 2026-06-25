@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.1.6] - 2026-06-25
+
+A bug-fix and documentation release — no CLI or API changes.
+
+- **Fix: full runs from an installed package.** The default full run
+  (`pkcs11-check test`, `--isolation auto`) could abort at startup with
+  `subprocess_per_test file was not expanded to per-test units` when run from a
+  pip/uv-installed package that has no pytest config file above it. pytest's
+  `rootdir` was being dragged to `/` by the absolute run-manifest path on its
+  command line, so collected nodeids came out slash-less and no longer matched
+  their files. Per-test isolation units are now pinned to the resolved absolute
+  file path, making the expansion robust to pytest's `rootdir`. (Source-checkout
+  and CI runs were unaffected, which is why it only surfaced for installed users.)
+  Workaround on 0.1.4 / 0.1.5: `--isolation file`.
+- **Fix: spurious pytest cache warning.** The same `rootdir = /` condition made
+  pytest's cache provider warn `could not create cache path /.pytest_cache:
+  Permission denied`. pkcs11-check tracks its own run state, so pytest's cache is
+  now disabled (`-p no:cacheprovider`) and the warning is gone.
+- **Docs.** New `docs/getting-started-softhsm2.md` — a complete SoftHSM2
+  walkthrough (config, token, run, reading reports, troubleshooting) — and a
+  README section on saving machine-readable reports
+  (`--output json --output-file`).
+
+### Requirements
+
+- Python 3.12+
+- Linux (primary), macOS and Windows where ctypes works
+
 ## [0.1.5] - 2026-06-25
 
 Key provisioning and hardening conformance. This release adds an opt-in

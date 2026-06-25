@@ -148,6 +148,11 @@ def _build_pytest_args(
 
     args.append("--tb=short")
     args.append("--no-header")
+    # pkcs11-check tracks its own run state / resume, so pytest's cache is unused.
+    # Disabling it also avoids a "could not create cache path /.pytest_cache"
+    # warning when pytest's rootdir resolves to '/' (installed package, no config
+    # file above it — see the rootdir handling in core/file_runner.py).
+    args.extend(["-p", "no:cacheprovider"])
     return args
 
 
