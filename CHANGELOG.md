@@ -1,5 +1,133 @@
 # Changelog
 
+## [0.1.5] - 2026-06-25
+
+Key provisioning and hardening conformance. This release adds an opt-in
+key-provisioning layer so capability-limited modules can be exercised on
+operations they would otherwise skip, and a cross-provider hardening-conformance
+suite (G1–G8) that checks input-validation boundaries and policy invariants by
+*verifying the effect* rather than trusting a return code. The validation matrix
+grows to **30 provider builds**. No breaking CLI or API changes — new flags and
+checks are additive and default to the prior behavior (`--key-inject=off`).
+
+- **Opt-in key provisioning.** When a module cannot itself generate a key a test
+  needs, the suite can now provision one through an escalating, provider-general
+  chain — `create` → `unwrap` → external tool → `skip` — across secret, private,
+  public, certificate, and data objects. It is **off by default**
+  (`--key-inject=off`, a clean skip); opt in with `--key-inject=unwrap`. The
+  unwrap path bootstraps a wrapping key, auto-negotiates the OAEP hash (probes the
+  module, prefers SHA-256, falls back to SHA-1), and selects a wrap strategy
+  (RSA-AES-KEY-WRAP / RSA-OAEP / AES-KWP) by key size. An optional external-tool
+  tier (`--allow-external-provision` / `--external-provision-cmd`) provisions via a
+  user-supplied command and find-by-label. A provisioning report (JSONL sidecar
+  plus a dedicated per-class `C_CreateObject`-availability conformance test)
+  records what was created, unwrapped, or skipped. This lets import-only and
+  signing-only modules be checked on operations that previously mass-skipped,
+  without inventing capability they do not have.
+
+- **Cross-provider hardening-conformance checks (G1–G8).** A new family (~25
+  checks) probes input-validation boundaries and policy invariants that the spec
+  requires but providers often leave unguarded: 64→32-bit length-field handling
+  (`C_GenerateRandom`, `AES-KEY-WRAP-PAD`, find-count, KDF parameter lengths) via a
+  demand-zero output-length oracle, declared-length mismatches on scalar and
+  boolean-overlong attributes, nested-template enforcement, public-session private
+  object creation, SO empty-PIN fail-open on an unprovisioned token,
+  use-after-free when a key is destroyed mid-operation, required parameter sets
+  (ML-DSA `CKA_PARAMETER_SET`, EC `CKA_EC_PARAMS`), and `C_SetAttributeValue`
+  attribute-weakening. Every check **verifies the effect** (read-back, derive,
+  output-equivalence) instead of trusting the return code — which both surfaces
+  real silent-truncation findings and prevents false-accusing compliant modules
+  (a DH generator of 0 and a spec-legal RSA-512 keygen are confirmed *not*
+  findings, not failed).
+
+- **Sound FFI length probing.** The 64→32-bit truncation probes either back the
+  full claimed length with a demand-zero `mmap` or use un-honorable magnitudes
+  (2^63, behind a honeypot mapping and a 30-second timeout), so a module that
+  correctly honors a 64-bit length is never false-accused by harness undefined
+  behavior. Silent truncation fails; an honored large length is a recorded note.
+
+- **Finding integrity.** The finding-leak lint now also catches multi-line
+  `assert`, tuple-form `except: pass`, and comment-then-pass evasions; raw
+  `pytest.xfail()` / `pytest.fail()` stays blocked in product tests in favor of
+  at-source classification, so a real break cannot be quietly downgraded.
+
+- **Honest teardown.** `C_Finalize` now runs on normal per-file teardown to
+  release module resources, and a hung isolation subprocess is classified as a
+  crash finding instead of leaking a `TimeoutExpired`.
+
+- **Dependencies.** The `cryptography` floor is raised to **≥49.0.0** (ML-KEM /
+  ML-DSA primitives); all locked dependencies were refreshed.
+
+### Supported modules
+
+SoftHSM2 2.7.0 / main · Kryoptic v1.5.1 / main / FIPS · NSS (Fedora softoken,
+slots 0 and 1, PQC tip) / main · OpenCryptoki v3.27.0 / master · wolfPKCS11
+v2.0.0-stable / master / wolfTPM-fwTPM backend · corePKCS11 v3.6.4 / main ·
+tpm2-pkcs11 1.10.0 · BouncyHSM v2.1.1 · pkcs11-mock v2.0.0 · Craton HSM · Nitrokey
+NetHSM · FreeHSM-C · jCardSim (IsoApplet) · CrypTech · google-kmsp11 · Cosmian KMS
+· pico-hsm (sc-hsm emulation) · OP-TEE (heavy target)
+
+New since 0.1.4: **wolfPKCS11 on a wolfTPM firmware-TPM backend** and **pico-hsm**
+(sc-hsm emulation via vpcd + OpenSC).
+
+### Test Results
+
+Full provider matrix (baseline dated 2026-06-21), one row per distinct build, from
+the pooled `docker/test_pool.py` sweep (30 targets / 67 sharded items, zero
+timeouts). The 23 long-standing targets were reconciled per-test-file against the
+prior full pool (2026-06-15): no coverage was lost, no crash regressions, and
+every good→bad file crossing traces to an intentional post-0.1.4 framework change,
+not a provider regression. Failures, errors, crashes, and skips are kept as
+provider findings — a crash is a finding, not a hidden result.
+
+| Build | Passed | Failed | Errored | Skipped | Xfailed | Crashed | Total |
+|-------|-------:|-------:|--------:|--------:|--------:|--------:|------:|
+| SoftHSM2 2.7.0 | 45,034 | 101 | 0 | 60,936 | 6,215 | 3 | 112,289 |
+| SoftHSM2 2.7.0 (generated-IV) | 45,039 | 98 | 0 | 60,934 | 6,215 | 3 | 112,289 |
+| SoftHSM2 main | 47,276 | 230 | 0 | 59,148 | 5,716 | 3 | 112,373 |
+| Kryoptic v1.5.1 | 58,794 | 203 | 0 | 30,520 | 24,595 | 3 | 114,115 |
+| Kryoptic main | 58,796 | 202 | 0 | 30,520 | 24,594 | 3 | 114,115 |
+| Kryoptic FIPS/PQC | 44,102 | 231 | 0 | 38,462 | 23,706 | 17 | 106,518 |
+| NSS (Fedora, slot 1) | 38,188 | 220 | 0 | 71,630 | 2,483 | 9 | 112,530 |
+| NSS PQC (slot 1) | 36,730 | 209 | 0 | 73,252 | 2,405 | 9 | 112,605 |
+| NSS main (slot 1) | 36,730 | 209 | 0 | 73,252 | 2,405 | 9 | 112,605 |
+| NSS (Fedora, slot 0) | 1,565 | 130 | 0 | 908 | 341 | 9 | 2,953 |
+| NSS PQC (slot 0) | 1,610 | 130 | 0 | 923 | 358 | 9 | 3,030 |
+| NSS main (slot 0) | 1,610 | 130 | 0 | 923 | 358 | 9 | 3,030 |
+| OpenCryptoki v3.27.0 | 64,488 | 244 | 0 | 46,544 | 3,021 | 3 | 114,300 |
+| OpenCryptoki master | 64,488 | 245 | 0 | 46,544 | 3,020 | 3 | 114,300 |
+| wolfPKCS11 v2.0.0-stable | 46,634 | 680 | 0 | 48,023 | 16,314 | 17 | 111,668 |
+| wolfPKCS11 master | 48,663 | 494 | 0 | 48,415 | 14,211 | 4 | 111,787 |
+| wolfPKCS11 (wolfTPM fwTPM) | 25,820 | 983 | 0 | 63,020 | 20,108 | 6 | 109,937 |
+| corePKCS11 v3.6.4 | 9,353 | 441 | 0 | 90,725 | 10,151 | 0 | 110,670 |
+| corePKCS11 main | 9,353 | 441 | 0 | 90,725 | 10,151 | 0 | 110,670 |
+| tpm2-pkcs11 1.10.0 | 18,145 | 71 | 0 | 67,442 | 25,638 | 2 | 111,298 |
+| pkcs11-mock v2.0.0 | 746 | 278 | 0 | 109,603 | 82 | 0 | 110,709 |
+| BouncyHSM v2.1.1 | 54,350 | 2,097 | 0 | 42,135 | 16,565 | 8 | 115,155 |
+| Craton HSM | 19,945 | 3,213 | 0 | 60,067 | 27,979 | 0 | 111,204 |
+| Nitrokey NetHSM | 11,688 | 529 | 16 | 78,946 | 19,895 | 3 | 111,077 |
+| FreeHSM-C | 11,940 | 655 | 8 | 96,512 | 2,525 | 6 | 111,646 |
+| jCardSim (IsoApplet) | 1,227 | 1,888 | 30 | 103,789 | 4,003 | 0 | 110,937 |
+| CrypTech | 10,541 | 250 | 16 | 82,509 | 17,608 | 0 | 110,924 |
+| google-kmsp11 | 11,069 | 165 | 0 | 98,774 | 1,019 | 0 | 111,027 |
+| Cosmian KMS | 10,473 | 15,136 | 15 | 80,197 | 4,870 | 3 | 110,694 |
+| pico-hsm (sc-hsm) | 12,426 | 1,552 | 16 | 58,136 | 1,654 | 11 | 73,795 |
+
+~3.0M test executions across the full 30-build matrix. The large `xfailed` counts
+on capability-limited modules (Craton HSM, NetHSM, CrypTech, tpm2, wolfTPM) are the
+capability-boundary-honesty model recording advertised-but-not-operational surface
+rather than failing it. The large Cosmian KMS failure count is a KMS
+key-capability-metadata snapshot still being triaged. Real SIGSEGV crash findings
+remain on NSS, BouncyHSM, wolfPKCS11, FreeHSM-C, and pico-hsm; the Kryoptic
+FIPS/PQC "crashes" are debug-build `abort()`s on internal assertions, not release
+segfaults. See [docs/module-issues.md](docs/module-issues.md) for per-module
+findings.
+
+### Requirements
+
+- Python 3.12+
+- Linux (primary), macOS and Windows where ctypes works
+
 ## [0.1.4] - 2026-06-17
 
 Broader reach and more honest results. The Python floor drops to **3.12**, the
