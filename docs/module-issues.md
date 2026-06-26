@@ -8,6 +8,31 @@ statistics are in [docker-provider-results.md](docker-provider-results.md).
 Older sections below preserve issue detail from earlier runs and may name older
 provider package versions where the finding was first recorded.
 
+## Memory-safety detection scope
+
+The framework detects memory-safety issues at two complementary levels:
+
+1. **Behavioral layer (normal suite)**: Crashes on valid/honorable inputs and acceptance
+   of clearly-invalid-but-honorable inputs are caught by the isolated per-file subprocess
+   runner (a crash exits with `returncode < 0`, which is recorded as a finding). Honorable
+   use-after-free across operation state is detectable when it causes observable behavioral
+   changes or crashes — for example, `testcases/security/test_operation_state_uaf.py`
+   destroys keys mid-operation (Sign, Verify, Encrypt, Decrypt, Derive across multiple
+   mechanisms) and expects the operation to terminate safely or reject the key access.
+   Honorable template validation gaps are similarly observable when empty or `ulCount=0`
+   templates are silently accepted where the spec requires rejection — see
+   `testcases/security/test_template_count_edges.py`.
+
+2. **ASAN-lane only**: Silent out-of-bounds *reads* with no observable behavioral effect,
+   and integer-overflow `count*size` paths with un-honorable magnitudes (e.g., `0xffffffff`
+   that cannot fit in a real buffer), are detectable only under the AddressSanitizer docker
+   targets. The normal suite cannot observe silent OOB reads. A sound generic behavioral
+   test for un-honorable magnitudes is impossible: passing a count/length larger than the
+   caller's own buffer would make the module over-read the caller's memory, inducing
+   undefined behavior in the test harness itself (not a module bug). ASAN targets run the
+   same test suite under AddressSanitizer, which instruments memory operations and detects
+   these silent reads at runtime.
+
 ---
 
 ## SoftHSM2 2.7.0 (v2.40)
