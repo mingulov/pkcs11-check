@@ -24,7 +24,9 @@ def test_get_attribute_value_zero_count_no_crash(p11_raw_session: Any) -> None:
     """C_GetAttributeValue with ulCount=0 on a valid object must not crash."""
     rs = p11_raw_session
     # A handle that exists: find any object; if none, skip (no object to query).
-    rs.raw.C_FindObjectsInit(rs.sh, None, 0)
+    init_rv = rs.raw.C_FindObjectsInit(rs.sh, None, 0)
+    if init_rv != CKR_OK:
+        pytest.skip(f"C_FindObjectsInit failed: {init_rv:#010x}")
     found = (CK_OBJECT_HANDLE * 1)()
     n = CK_ULONG(0)
     rs.raw.C_FindObjects(rs.sh, found, 1, byref(n))

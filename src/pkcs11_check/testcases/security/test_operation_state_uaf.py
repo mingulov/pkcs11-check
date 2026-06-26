@@ -415,6 +415,10 @@ data = (ctypes.c_ubyte * 16)(*range(16))
 out_len = CK_ULONG(0)
 op_rv = raw.C_{op}(sh, data, 16, None, ctypes.byref(out_len))
 print(f"{op.upper()}_RV:0x{{op_rv:08x}}")
+if op_rv == CKR_OK and out_len.value > 0:
+    out_buf = (ctypes.c_ubyte * out_len.value)()
+    op_rv2 = raw.C_{op}(sh, data, 16, out_buf, ctypes.byref(out_len))
+    print(f"{op.upper()}_RV2:0x{{op_rv2:08x}}")
 cleanup()
 """
 
@@ -460,6 +464,14 @@ class TestEncryptCbcOperationStateUAF:
                 label="C_Encrypt(AES-CBC) after destroy of active key",
                 allow_ok=True,
             )
+        rv2 = _parse_rv(out, "ENCRYPT_RV2:")
+        if rv2 is not None:
+            classify_negative_rv(
+                rv2,
+                _COMPLETION_REJECT_RVS,
+                label="C_Encrypt(AES-CBC, 2nd pass) after destroy of active key",
+                allow_ok=True,
+            )
 
 
 class TestDecryptCbcOperationStateUAF:
@@ -501,6 +513,14 @@ class TestDecryptCbcOperationStateUAF:
                 rv,
                 _COMPLETION_REJECT_RVS,
                 label="C_Decrypt(AES-CBC) after destroy of active key",
+                allow_ok=True,
+            )
+        rv2 = _parse_rv(out, "DECRYPT_RV2:")
+        if rv2 is not None:
+            classify_negative_rv(
+                rv2,
+                _COMPLETION_REJECT_RVS,
+                label="C_Decrypt(AES-CBC, 2nd pass) after destroy of active key",
                 allow_ok=True,
             )
 
@@ -1600,7 +1620,7 @@ print(f"DESTROY_RV:0x{destroy_rv:08x}")
 
 # --- C_Decrypt on possibly-freed key reference (two-pass, modulus-sized zero input) ---
 # 256 zero bytes is an invalid RSA-PKCS#1 v1.5 ciphertext; a clean decrypt error
-# (e.g. CKR_FUNCTION_FAILED, CKR_DATA_INVALID) is acceptable.  No crash is the
+# (e.g. CKR_FUNCTION_FAILED, CKR_ENCRYPTED_DATA_INVALID) is acceptable.  No crash is the
 # only hard requirement.
 ciphertext = (ctypes.c_ubyte * 256)(0)
 dec_len = CK_ULONG(0)
