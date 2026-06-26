@@ -83,6 +83,16 @@ _RSA_DECRYPT_REJECT_RVS = _COMPLETION_REJECT_RVS + (
     CKR_ENCRYPTED_DATA_LEN_RANGE,
 )
 
+# For the AES-GCM decrypt probe the 16-byte input is a 0-byte ciphertext plus
+# a 16-byte authentication tag.  A conformant module that copied the key at
+# *Init time may proceed to decrypt and reject the bad tag with one of these
+# spec-defined codes — both are conformant, not findings.  (ECB/CBC/CTR are
+# unaffected: they complete with CKR_OK on the valid 16-byte block.)
+_AES_DECRYPT_REJECT_RVS = _COMPLETION_REJECT_RVS + (
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+)
+
 
 def _parse_rv(output: str, prefix: str) -> int | None:
     """Return the integer rv printed as ``<prefix>0x…`` or ``None`` if absent."""
@@ -520,7 +530,7 @@ class TestAesDecryptDestroyUAF:
         if dec_rv is not None:
             classify_negative_rv(
                 dec_rv,
-                _COMPLETION_REJECT_RVS,
+                _AES_DECRYPT_REJECT_RVS,
                 label=f"C_Decrypt({label}) after destroy of active AES key",
                 allow_ok=True,
             )
@@ -528,7 +538,7 @@ class TestAesDecryptDestroyUAF:
         if dec_rv2 is not None:
             classify_negative_rv(
                 dec_rv2,
-                _COMPLETION_REJECT_RVS,
+                _AES_DECRYPT_REJECT_RVS,
                 label=f"C_Decrypt({label}, 2nd pass) after destroy of active AES key",
                 allow_ok=True,
             )
