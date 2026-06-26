@@ -343,6 +343,143 @@ class TestEncryptOperationStateUAF:
 
 
 # ---------------------------------------------------------------------------
+# Encrypt/Decrypt probe (CKM_AES_CBC) — IV-carrying mechanism
+# ---------------------------------------------------------------------------
+
+_AES_CBC_IMPORTS = """
+import ctypes
+from pkcs11_check.raw.recipes import gen_aes_key
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM, CK_ULONG, CKM_AES_CBC, CKA_ENCRYPT, CKA_DECRYPT, CKA_TOKEN, CKR_OK,
+)
+from pkcs11_check.testcases.conftest import AES_KEYGEN_RUNTIME_REJECT_RVS
+from pkcs11_check.testcases.security.conftest import child_setup_reject_known
+"""
+
+
+def _aes_cbc_body(op: str) -> str:
+    """Return a subprocess script body for the AES-CBC destroy-mid-operation probe.
+
+    ``op`` is ``"Encrypt"`` or ``"Decrypt"``; both follow Init → DestroyObject →
+    complete.  The IV is a 16-byte counter sequence; AES-CBC requires exactly one
+    full block of input (16 bytes).
+    """
+    return f"""
+try:
+    aes_key = gen_aes_key(
+        raw, sh, 128, attrs={{CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False}},
+    )
+except AssertionError as exc:
+    if child_setup_reject_known(exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected"):
+        cleanup(); raise SystemExit(0)
+    raise
+iv = (ctypes.c_ubyte * 16)(*range(16))
+mech = CK_MECHANISM()
+mech.mechanism = CKM_AES_CBC
+mech.pParameter = ctypes.cast(iv, ctypes.c_void_p)
+mech.ulParameterLen = 16
+rv = raw.C_{op}Init(sh, ctypes.byref(mech), aes_key)
+if rv != CKR_OK:
+    from pkcs11_check.raw.rv import ckr_name as _cn
+    print(f"SETUP_XFAIL:C_{op}Init(CKM_AES_CBC) failed: {{_cn(rv)}}")
+    raw.C_DestroyObject(sh, aes_key); cleanup(); raise SystemExit(0)
+destroy_rv = raw.C_DestroyObject(sh, aes_key)
+print(f"DESTROY_RV:0x{{destroy_rv:08x}}")
+data = (ctypes.c_ubyte * 16)(*range(16))
+out_len = CK_ULONG(0)
+op_rv = raw.C_{op}(sh, data, 16, None, ctypes.byref(out_len))
+print(f"{op.upper()}_RV:0x{{op_rv:08x}}")
+cleanup()
+"""
+
+
+class TestEncryptCbcOperationStateUAF:
+    """``C_Encrypt`` (CKM_AES_CBC) after ``C_DestroyObject`` on the active key must not crash."""
+
+    def test_encrypt_cbc_after_destroy_does_not_crash(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """Destroying the AES key mid-CBC-encrypt must not cause a use-after-free crash.
+
+        AES-CBC carries an IV in the mechanism parameter; the mechanism is otherwise
+        structurally identical to AES-ECB for the UAF pattern.  After
+        ``C_DestroyObject`` on the active key, the operation's stored key reference
+        may point to freed memory.  A conformant module either refuses the destroy
+        while the operation is active, returns a clean error from ``C_Encrypt``, or
+        (snapshot-based) completes normally.  A crash is the finding.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
+            pytest.skip("CKM_AES_KEY_GEN not supported")
+        if not rs.has_mechanism("AES_CBC"):
+            pytest.skip("CKM_AES_CBC not supported")
+        rc, out, err = run_with_coverage(
+            _preamble(p11_config) + _AES_CBC_IMPORTS + _aes_cbc_body("Encrypt"),
+            timeout=15,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            out,
+            err,
+            context="C_Encrypt(AES-CBC) after C_DestroyObject (operation-state UAF)",
+        )
+        rv = _parse_rv(out, "ENCRYPT_RV:")
+        if rv is not None:
+            classify_negative_rv(
+                rv,
+                _COMPLETION_REJECT_RVS,
+                label="C_Encrypt(AES-CBC) after destroy of active key",
+                allow_ok=True,
+            )
+
+
+class TestDecryptCbcOperationStateUAF:
+    """``C_Decrypt`` (CKM_AES_CBC) after ``C_DestroyObject`` on the active key must not crash."""
+
+    def test_decrypt_cbc_after_destroy_does_not_crash(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """Destroying the AES key mid-CBC-decrypt must not cause a use-after-free crash.
+
+        AES-CBC carries an IV in the mechanism parameter; the mechanism is otherwise
+        structurally identical to AES-ECB for the UAF pattern.  After
+        ``C_DestroyObject`` on the active key, the operation's stored key reference
+        may point to freed memory.  A conformant module either refuses the destroy
+        while the operation is active, returns a clean error from ``C_Decrypt``, or
+        (snapshot-based) completes normally.  A crash is the finding.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
+            pytest.skip("CKM_AES_KEY_GEN not supported")
+        if not rs.has_mechanism("AES_CBC"):
+            pytest.skip("CKM_AES_CBC not supported")
+        rc, out, err = run_with_coverage(
+            _preamble(p11_config) + _AES_CBC_IMPORTS + _aes_cbc_body("Decrypt"),
+            timeout=15,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            out,
+            err,
+            context="C_Decrypt(AES-CBC) after C_DestroyObject (operation-state UAF)",
+        )
+        rv = _parse_rv(out, "DECRYPT_RV:")
+        if rv is not None:
+            classify_negative_rv(
+                rv,
+                _COMPLETION_REJECT_RVS,
+                label="C_Decrypt(AES-CBC) after destroy of active key",
+                allow_ok=True,
+            )
+
+
+# ---------------------------------------------------------------------------
 # Digest probe (CKM_SHA256 + C_DigestKey on destroyed handle)
 # ---------------------------------------------------------------------------
 
