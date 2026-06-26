@@ -23,15 +23,24 @@ The framework detects memory-safety issues at two complementary levels:
    templates are silently accepted where the spec requires rejection — see
    `testcases/security/test_template_count_edges.py`.
 
-2. **ASAN-lane only**: Silent out-of-bounds *reads* with no observable behavioral effect,
-   and integer-overflow `count*size` paths with un-honorable magnitudes (e.g., `0xffffffff`
-   that cannot fit in a real buffer), are detectable only under the AddressSanitizer docker
-   targets. The normal suite cannot observe silent OOB reads. A sound generic behavioral
-   test for un-honorable magnitudes is impossible: passing a count/length larger than the
-   caller's own buffer would make the module over-read the caller's memory, inducing
-   undefined behavior in the test harness itself (not a module bug). ASAN targets run the
-   same test suite under AddressSanitizer, which instruments memory operations and detects
-   these silent reads at runtime.
+2. **Oversized length/count — a crash IS a finding by default** (see CLAUDE.md "Probe
+   soundness" + [probe-soundness.md](probe-soundness.md)). The security suite simulates an
+   untrusted caller; a module that feeds an unvalidated caller-supplied length/count into a
+   memory op has a real input-validation bug. So these crashes are findings, not "harness
+   UB" — e.g. the SoftHSM2 `template_count` SIGSEGV documented below is recorded as a HIGH
+   finding, **not** dismissed. The one genuine false-positive (a module that correctly
+   *honors* a large mappable length over a buffer we under-provisioned) is separated by
+   making the buffer honest: back the claimed length with a demand-zero mmap
+   (`HONEYPOT_MMAP_CODE` in `security/conftest.py`) and re-run — still crashes ⇒
+   unconditionally real (internal / alloc-wrap / write-side overflow); crash disappears ⇒
+   contingent over-read (a hardening note, not corruption). `test_arithmetic_overflow.py`'s
+   GCM `DecryptUpdate` probe uses this honeypot for exactly that reason.
+
+3. **ASAN-lane**: Silent out-of-bounds *reads* with no observable effect, and the
+   read-vs-write disambiguation for **un-mappable** magnitudes (2^63 / 2^64 / ULONG_MAX,
+   where an honest buffer is impossible), are resolved only under the AddressSanitizer
+   docker targets — a WRITE overflow is unconditionally real; a pure read past our short
+   buffer is the contingent case. ASAN runs the same suite instrumented, surfacing both.
 
 ---
 
