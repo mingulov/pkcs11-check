@@ -1383,3 +1383,259 @@ class TestCrossSessionOperationStateUAF:
                 label="C_Sign(session A, 2nd pass) after cross-session destroy of active token key",
                 allow_ok=True,
             )
+
+
+# ---------------------------------------------------------------------------
+# ECDSA sign probe — asymmetric destroy-mid-sign
+# ---------------------------------------------------------------------------
+#
+# C_SignInit(CKM_ECDSA, priv) → C_DestroyObject(priv) → C_Sign on the stale
+# operation state.  ECDSA modular arithmetic dereferences the private-key scalar;
+# if the module holds a raw pointer to the key's CKA_VALUE field and the object
+# store entry is freed by C_DestroyObject, the subsequent C_Sign walks freed
+# memory (CWE-416).  The probe is single-threaded and sequential.
+
+_ECDSA_SIGN_UAF_IMPORTS = """
+import ctypes
+from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.recipes import gen_ec_keypair
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM,
+    CK_ULONG,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VERIFY,
+    CKM_ECDSA,
+    CKR_OK,
+)
+from pkcs11_check.testcases.conftest import KEYPAIR_RUNTIME_REJECT_RVS
+from pkcs11_check.testcases.security.conftest import child_setup_reject_known
+"""
+
+_ECDSA_SIGN_UAF_BODY = """
+# --- generate a session P-256 EC keypair (CKA_SIGN on private) ---
+curve_oid = encode_named_curve_parameters("secp256r1")
+try:
+    pub_h, priv_h = gen_ec_keypair(
+        raw,
+        sh,
+        curve_oid,
+        public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+        private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+    )
+except AssertionError as exc:
+    if child_setup_reject_known(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "EC keypair generation rejected"
+    ):
+        cleanup()
+        raise SystemExit(0)
+    raise
+
+raw.C_DestroyObject(sh, pub_h)
+
+# --- C_SignInit with CKM_ECDSA ---
+mech = CK_MECHANISM()
+mech.mechanism = CKM_ECDSA
+mech.pParameter = None
+mech.ulParameterLen = 0
+rv = raw.C_SignInit(sh, ctypes.byref(mech), priv_h)
+if rv != CKR_OK:
+    from pkcs11_check.raw.rv import ckr_name as _cn
+    print(f"SETUP_XFAIL:C_SignInit(CKM_ECDSA) failed: {_cn(rv)}")
+    raw.C_DestroyObject(sh, priv_h)
+    cleanup()
+    raise SystemExit(0)
+
+# --- C_DestroyObject on the private key while sign operation is active ---
+destroy_rv = raw.C_DestroyObject(sh, priv_h)
+print(f"DESTROY_RV:0x{destroy_rv:08x}")
+
+# --- C_Sign on possibly-freed key reference (two-pass) ---
+data = (ctypes.c_ubyte * 32)(*range(32))
+sig_len = CK_ULONG(0)
+sign_rv = raw.C_Sign(sh, data, 32, None, ctypes.byref(sig_len))
+print(f"SIGN_RV:0x{sign_rv:08x}")
+if sign_rv == CKR_OK and sig_len.value > 0:
+    sig_buf = (ctypes.c_ubyte * sig_len.value)()
+    sign_rv2 = raw.C_Sign(sh, data, 32, sig_buf, ctypes.byref(sig_len))
+    print(f"SIGN_RV2:0x{sign_rv2:08x}")
+
+cleanup()
+"""
+
+
+class TestSignEcdsaOperationStateUAF:
+    """``C_Sign`` (ECDSA) after ``C_DestroyObject`` on the private key must not crash."""
+
+    def test_ecdsa_sign_after_destroy_does_not_crash(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """Destroying the EC private key mid-ECDSA-sign must not cause a UAF crash.
+
+        After ``C_DestroyObject`` on the active EC private key, the operation's stored
+        key reference may point to freed memory (CWE-416).  A conformant module either
+        refuses the destroy while the operation is active, invalidates the operation so
+        ``C_Sign`` returns a clean error, or (snapshot-based) completes normally.  A
+        crash is the finding.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
+            pytest.skip("CKM_EC_KEY_PAIR_GEN not supported")
+        if not rs.has_mechanism("ECDSA"):
+            pytest.skip("CKM_ECDSA not supported")
+
+        body = _ECDSA_SIGN_UAF_IMPORTS + _ECDSA_SIGN_UAF_BODY
+        rc, out, err = run_with_coverage(
+            _preamble(p11_config) + body,
+            timeout=15,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            out,
+            err,
+            context="C_Sign(ECDSA) after C_DestroyObject (operation-state UAF)",
+        )
+        sign_rv = _parse_rv(out, "SIGN_RV:")
+        if sign_rv is not None:
+            classify_negative_rv(
+                sign_rv,
+                _COMPLETION_REJECT_RVS,
+                label="C_Sign(ECDSA) after destroy of active EC private key",
+                allow_ok=True,
+            )
+        sign_rv2 = _parse_rv(out, "SIGN_RV2:")
+        if sign_rv2 is not None:
+            classify_negative_rv(
+                sign_rv2,
+                _COMPLETION_REJECT_RVS,
+                label="C_Sign(ECDSA, 2nd pass) after destroy of active EC private key",
+                allow_ok=True,
+            )
+
+
+# ---------------------------------------------------------------------------
+# RSA decrypt probe — asymmetric destroy-mid-decrypt
+# ---------------------------------------------------------------------------
+#
+# C_DecryptInit(CKM_RSA_PKCS, priv) → C_DestroyObject(priv) → C_Decrypt on
+# a modulus-sized zero buffer.  RSA PKCS#1 v1.5 decryption performs private-key
+# scalar operations that dereference the CRT key material; if the module holds
+# raw pointers into the object store entry freed by C_DestroyObject, the
+# subsequent C_Decrypt walks freed memory (CWE-416).  The ciphertext is
+# intentionally invalid (256 zero bytes) so a clean decrypt error is acceptable;
+# the only hard requirement is no crash.
+
+_RSA_DECRYPT_UAF_IMPORTS = """
+import ctypes
+from pkcs11_check.raw.recipes import RSAUsage, gen_rsa_keypair
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM,
+    CK_ULONG,
+    CKM_RSA_PKCS,
+    CKR_OK,
+)
+from pkcs11_check.testcases.conftest import KEYPAIR_RUNTIME_REJECT_RVS
+from pkcs11_check.testcases.security.conftest import child_setup_reject_known
+"""
+
+_RSA_DECRYPT_UAF_BODY = """
+# --- generate a session RSA-2048 keypair (CKA_DECRYPT on private) ---
+try:
+    pub_h, priv_h = gen_rsa_keypair(raw, sh, 2048, usage=RSAUsage.DECRYPT)
+except AssertionError as exc:
+    if child_setup_reject_known(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "RSA keypair generation rejected"
+    ):
+        cleanup()
+        raise SystemExit(0)
+    raise
+
+raw.C_DestroyObject(sh, pub_h)
+
+# --- C_DecryptInit with CKM_RSA_PKCS ---
+mech = CK_MECHANISM()
+mech.mechanism = CKM_RSA_PKCS
+mech.pParameter = None
+mech.ulParameterLen = 0
+rv = raw.C_DecryptInit(sh, ctypes.byref(mech), priv_h)
+if rv != CKR_OK:
+    from pkcs11_check.raw.rv import ckr_name as _cn
+    print(f"SETUP_XFAIL:C_DecryptInit(CKM_RSA_PKCS) failed: {_cn(rv)}")
+    raw.C_DestroyObject(sh, priv_h)
+    cleanup()
+    raise SystemExit(0)
+
+# --- C_DestroyObject on the private key while decrypt operation is active ---
+destroy_rv = raw.C_DestroyObject(sh, priv_h)
+print(f"DESTROY_RV:0x{destroy_rv:08x}")
+
+# --- C_Decrypt on possibly-freed key reference (two-pass, modulus-sized zero input) ---
+# 256 zero bytes is an invalid RSA-PKCS#1 v1.5 ciphertext; a clean decrypt error
+# (e.g. CKR_FUNCTION_FAILED, CKR_DATA_INVALID) is acceptable.  No crash is the
+# only hard requirement.
+ciphertext = (ctypes.c_ubyte * 256)(0)
+dec_len = CK_ULONG(0)
+dec_rv = raw.C_Decrypt(sh, ciphertext, 256, None, ctypes.byref(dec_len))
+print(f"DECRYPT_RV:0x{dec_rv:08x}")
+if dec_rv == CKR_OK and dec_len.value > 0:
+    dec_buf = (ctypes.c_ubyte * dec_len.value)()
+    dec_rv2 = raw.C_Decrypt(sh, ciphertext, 256, dec_buf, ctypes.byref(dec_len))
+    print(f"DECRYPT_RV2:0x{dec_rv2:08x}")
+
+cleanup()
+"""
+
+
+class TestDecryptRsaOperationStateUAF:
+    """``C_Decrypt`` (RSA_PKCS) after ``C_DestroyObject`` on the active key must not crash."""
+
+    def test_rsa_decrypt_after_destroy_does_not_crash(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """Destroying the RSA private key mid-decrypt must not cause a UAF crash.
+
+        After ``C_DestroyObject`` on the active RSA private key, the operation's stored
+        key reference may point to freed memory (CWE-416).  A conformant module either
+        refuses the destroy while the operation is active, invalidates the operation so
+        ``C_Decrypt`` returns a clean error, or (snapshot-based) proceeds to a clean
+        error on the invalid ciphertext.  A crash is the finding.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
+        if not rs.has_mechanism("RSA_PKCS"):
+            pytest.skip("CKM_RSA_PKCS not supported")
+
+        body = _RSA_DECRYPT_UAF_IMPORTS + _RSA_DECRYPT_UAF_BODY
+        rc, out, err = run_with_coverage(
+            _preamble(p11_config) + body,
+            timeout=30,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            out,
+            err,
+            context="C_Decrypt(RSA_PKCS) after C_DestroyObject (operation-state UAF)",
+        )
+        dec_rv = _parse_rv(out, "DECRYPT_RV:")
+        if dec_rv is not None:
+            classify_negative_rv(
+                dec_rv,
+                _COMPLETION_REJECT_RVS,
+                label="C_Decrypt(RSA_PKCS) after destroy of active RSA private key",
+                allow_ok=True,
+            )
+        dec_rv2 = _parse_rv(out, "DECRYPT_RV2:")
+        if dec_rv2 is not None:
+            classify_negative_rv(
+                dec_rv2,
+                _COMPLETION_REJECT_RVS,
+                label="C_Decrypt(RSA_PKCS, 2nd pass) after destroy of active RSA private key",
+                allow_ok=True,
+            )
