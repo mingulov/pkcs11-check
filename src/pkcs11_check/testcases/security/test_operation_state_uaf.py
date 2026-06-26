@@ -480,6 +480,165 @@ class TestDecryptCbcOperationStateUAF:
 
 
 # ---------------------------------------------------------------------------
+# Encrypt/Decrypt probe (CKM_AES_CTR) — counter-mode mechanism
+# ---------------------------------------------------------------------------
+
+_AES_CTR_IMPORTS = """
+import ctypes
+from pkcs11_check.raw.recipes import gen_aes_key
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM, CK_ULONG, CK_AES_CTR_PARAMS, CKM_AES_CTR,
+    CKA_ENCRYPT, CKA_DECRYPT, CKA_TOKEN, CKR_OK,
+)
+from pkcs11_check.testcases.conftest import AES_KEYGEN_RUNTIME_REJECT_RVS
+from pkcs11_check.testcases.security.conftest import child_setup_reject_known
+"""
+
+
+def _aes_ctr_body(op: str) -> str:
+    """Return a subprocess script body for the AES-CTR destroy-mid-operation probe.
+
+    ``op`` is ``"Encrypt"`` or ``"Decrypt"``; both follow Init → DestroyObject →
+    complete (two-pass: length query then buffer write).  The counter block is a
+    16-byte counter sequence; ``ulCounterBits`` is 32.
+    """
+    return f"""
+try:
+    aes_key = gen_aes_key(
+        raw, sh, 128, attrs={{CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False}},
+    )
+except AssertionError as exc:
+    if child_setup_reject_known(exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected"):
+        cleanup(); raise SystemExit(0)
+    raise
+params = CK_AES_CTR_PARAMS()
+params.ulCounterBits = 32
+for i in range(16):
+    params.cb[i] = i
+mech = CK_MECHANISM()
+mech.mechanism = CKM_AES_CTR
+mech.pParameter = ctypes.cast(ctypes.byref(params), ctypes.c_void_p)
+mech.ulParameterLen = ctypes.sizeof(params)
+rv = raw.C_{op}Init(sh, ctypes.byref(mech), aes_key)
+if rv != CKR_OK:
+    from pkcs11_check.raw.rv import ckr_name as _cn
+    print(f"SETUP_XFAIL:C_{op}Init(CKM_AES_CTR) failed: {{_cn(rv)}}")
+    raw.C_DestroyObject(sh, aes_key); cleanup(); raise SystemExit(0)
+destroy_rv = raw.C_DestroyObject(sh, aes_key)
+print(f"DESTROY_RV:0x{{destroy_rv:08x}}")
+data = (ctypes.c_ubyte * 16)(*range(16))
+out_len = CK_ULONG(0)
+op_rv = raw.C_{op}(sh, data, 16, None, ctypes.byref(out_len))
+print(f"{op.upper()}_RV:0x{{op_rv:08x}}")
+if op_rv == CKR_OK and out_len.value > 0:
+    out_buf = (ctypes.c_ubyte * out_len.value)()
+    op_rv2 = raw.C_{op}(sh, data, 16, out_buf, ctypes.byref(out_len))
+    print(f"{op.upper()}_RV2:0x{{op_rv2:08x}}")
+cleanup()
+"""
+
+
+class TestEncryptCtrOperationStateUAF:
+    """``C_Encrypt`` (CKM_AES_CTR) after ``C_DestroyObject`` on the active key must not crash."""
+
+    def test_encrypt_ctr_after_destroy_does_not_crash(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """Destroying the AES key mid-CTR-encrypt must not cause a use-after-free crash.
+
+        AES-CTR carries a counter block in the mechanism parameter.  After
+        ``C_DestroyObject`` on the active key, the operation's stored key reference
+        may point to freed memory.  A conformant module either refuses the destroy
+        while the operation is active, returns a clean error from ``C_Encrypt``, or
+        (snapshot-based) completes normally.  A crash is the finding.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
+            pytest.skip("CKM_AES_KEY_GEN not supported")
+        if not rs.has_mechanism("AES_CTR"):
+            pytest.skip("CKM_AES_CTR not supported")
+        rc, out, err = run_with_coverage(
+            _preamble(p11_config) + _AES_CTR_IMPORTS + _aes_ctr_body("Encrypt"),
+            timeout=15,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            out,
+            err,
+            context="C_Encrypt(AES-CTR) after C_DestroyObject (operation-state UAF)",
+        )
+        rv = _parse_rv(out, "ENCRYPT_RV:")
+        if rv is not None:
+            classify_negative_rv(
+                rv,
+                _COMPLETION_REJECT_RVS,
+                label="C_Encrypt(AES-CTR) after destroy of active key",
+                allow_ok=True,
+            )
+        rv2 = _parse_rv(out, "ENCRYPT_RV2:")
+        if rv2 is not None:
+            classify_negative_rv(
+                rv2,
+                _COMPLETION_REJECT_RVS,
+                label="C_Encrypt(AES-CTR, 2nd pass) after destroy of active key",
+                allow_ok=True,
+            )
+
+
+class TestDecryptCtrOperationStateUAF:
+    """``C_Decrypt`` (CKM_AES_CTR) after ``C_DestroyObject`` on the active key must not crash."""
+
+    def test_decrypt_ctr_after_destroy_does_not_crash(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """Destroying the AES key mid-CTR-decrypt must not cause a use-after-free crash.
+
+        AES-CTR carries a counter block in the mechanism parameter.  After
+        ``C_DestroyObject`` on the active key, the operation's stored key reference
+        may point to freed memory.  A conformant module either refuses the destroy
+        while the operation is active, returns a clean error from ``C_Decrypt``, or
+        (snapshot-based) completes normally.  A crash is the finding.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
+            pytest.skip("CKM_AES_KEY_GEN not supported")
+        if not rs.has_mechanism("AES_CTR"):
+            pytest.skip("CKM_AES_CTR not supported")
+        rc, out, err = run_with_coverage(
+            _preamble(p11_config) + _AES_CTR_IMPORTS + _aes_ctr_body("Decrypt"),
+            timeout=15,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            out,
+            err,
+            context="C_Decrypt(AES-CTR) after C_DestroyObject (operation-state UAF)",
+        )
+        rv = _parse_rv(out, "DECRYPT_RV:")
+        if rv is not None:
+            classify_negative_rv(
+                rv,
+                _COMPLETION_REJECT_RVS,
+                label="C_Decrypt(AES-CTR) after destroy of active key",
+                allow_ok=True,
+            )
+        rv2 = _parse_rv(out, "DECRYPT_RV2:")
+        if rv2 is not None:
+            classify_negative_rv(
+                rv2,
+                _COMPLETION_REJECT_RVS,
+                label="C_Decrypt(AES-CTR, 2nd pass) after destroy of active key",
+                allow_ok=True,
+            )
+
+
+# ---------------------------------------------------------------------------
 # Digest probe (CKM_SHA256 + C_DigestKey on destroyed handle)
 # ---------------------------------------------------------------------------
 
