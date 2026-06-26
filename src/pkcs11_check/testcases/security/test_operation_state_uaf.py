@@ -10,21 +10,31 @@ active, OR the completion call returns a clean error, OR (for snapshot-based
 implementations) the operation completes with ``CKR_OK`` because key material
 was copied at ``*Init`` time.  The **one** hard requirement is no crash.
 
-Six probes (single-threaded, no race required):
+Fifteen probes (single-threaded, no race required):
 
-- Sign          — ``CKM_SHA256_HMAC`` key destroyed between ``C_SignInit`` and
-  ``C_Sign``.
-- Encrypt       — AES key destroyed between ``C_EncryptInit`` and ``C_Encrypt``.
-- Digest        — ``C_DigestInit(CKM_SHA256)`` then ``C_DigestKey`` on the
-  already-destroyed key handle.
-- Verify        — ``CKM_SHA256_HMAC`` key destroyed between ``C_VerifyInit`` and
-  ``C_Verify``.
-- Decrypt       — AES key destroyed between ``C_DecryptInit`` and ``C_Decrypt``.
-- Derive        — EC private key destroyed before ``C_DeriveKey``; the module
-  must reject the stale handle cleanly, not dereference freed memory.
-- Cross-session — token HMAC key sign-inited from session A, destroyed from
-  session B, then ``C_Sign`` completed in session A; CWE-416 across session
+- Sign (HMAC)             — ``CKM_SHA256_HMAC`` key destroyed between
+  ``C_SignInit`` and ``C_Sign``.
+- Encrypt/Decrypt (AES)   — parametrized family over ECB / CBC / CTR / GCM
+  (8 test cases): AES key destroyed between ``C_EncryptInit``/``C_DecryptInit``
+  and the completion call.  Encrypt cases additionally carry a wrong-output
+  oracle: the expected ciphertext is captured with the live key before the
+  destroy; if the post-destroy encrypt also completes the outputs are compared
+  for a crypto self-contradiction.
+- Digest                  — ``C_DigestInit(CKM_SHA256)`` then ``C_DigestKey``
+  on the already-destroyed key handle.
+- Verify                  — ``CKM_SHA256_HMAC`` key destroyed between
+  ``C_VerifyInit`` and ``C_Verify``.
+- Derive                  — EC private key destroyed before ``C_DeriveKey``; the
+  module must reject the stale handle cleanly, not dereference freed memory.
+- Cross-session           — token HMAC key sign-inited from session A, destroyed
+  from session B, then ``C_Sign`` completed in session A; CWE-416 across session
   boundaries. (Token object cleaned up; test skips if token creation fails.)
+- Sign (ECDSA)            — EC private key destroyed between
+  ``C_SignInit(CKM_ECDSA)`` and ``C_Sign``; asymmetric scalar operation on
+  possibly-freed key material.
+- Decrypt (RSA)           — RSA private key destroyed between
+  ``C_DecryptInit(CKM_RSA_PKCS)`` and ``C_Decrypt``; invalid ciphertext (zero
+  bytes) so a clean decrypt error is also acceptable.
 """
 
 from __future__ import annotations
@@ -33,7 +43,10 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as
 from pkcs11_check.raw.types_std import (
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
     CKR_KEY_HANDLE_INVALID,
@@ -61,12 +74,39 @@ _COMPLETION_REJECT_RVS = (
     CKR_GENERAL_ERROR,
 )
 
+# For the RSA decrypt probe the ciphertext is intentionally invalid (256 zero
+# bytes), so a snapshot-based module that copied the key at *Init time may
+# proceed to decrypt and then reject the bad ciphertext with one of these
+# spec-defined codes — both are conformant, not findings.
+_RSA_DECRYPT_REJECT_RVS = _COMPLETION_REJECT_RVS + (
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+)
+
+# For the AES-GCM decrypt probe the 16-byte input is a 0-byte ciphertext plus
+# a 16-byte authentication tag.  A conformant module that copied the key at
+# *Init time may proceed to decrypt and reject the bad tag with one of these
+# spec-defined codes — both are conformant, not findings.  (ECB/CBC/CTR are
+# unaffected: they complete with CKR_OK on the valid 16-byte block.)
+_AES_DECRYPT_REJECT_RVS = _COMPLETION_REJECT_RVS + (
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+)
+
 
 def _parse_rv(output: str, prefix: str) -> int | None:
     """Return the integer rv printed as ``<prefix>0x…`` or ``None`` if absent."""
     for line in output.splitlines():
         if line.startswith(prefix):
             return int(line.removeprefix(prefix), 0)
+    return None
+
+
+def _parse_line(output: str, prefix: str) -> str | None:
+    """Return the value printed as ``<prefix><value>`` or ``None`` if absent."""
+    for line in output.splitlines():
+        if line.startswith(prefix):
+            return line.removeprefix(prefix)
     return None
 
 
@@ -219,102 +259,196 @@ class TestSignOperationStateUAF:
 
 
 # ---------------------------------------------------------------------------
-# Encrypt probe (CKM_AES_ECB)
+# AES destroy-mid-operation UAF (ECB / CBC / CTR / GCM) — parametrized family
 # ---------------------------------------------------------------------------
 
-_ENCRYPT_UAF_IMPORTS = """
+# (label, has_mechanism_name, ckm_const_name)
+_AES_UAF_CASES = [
+    ("AES-ECB", "AES_ECB", "CKM_AES_ECB"),
+    ("AES-CBC", "AES_CBC", "CKM_AES_CBC"),
+    ("AES-CTR", "AES_CTR", "CKM_AES_CTR"),
+    ("AES-GCM", "AES_GCM", "CKM_AES_GCM"),
+]
+
+_AES_UAF_IMPORTS = """
 import ctypes
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.recipes import gen_aes_key
 from pkcs11_check.raw.types_std import (
+    CK_AES_CTR_PARAMS,
+    CK_AES_GCM_PARAMS,
     CK_MECHANISM,
     CK_ULONG,
-    CKM_AES_ECB,
-    CKM_AES_KEY_GEN,
-    CKA_ENCRYPT,
     CKA_DECRYPT,
+    CKA_ENCRYPT,
     CKA_TOKEN,
+    CKM_AES_CBC,
+    CKM_AES_CTR,
+    CKM_AES_ECB,
+    CKM_AES_GCM,
     CKR_OK,
 )
 from pkcs11_check.testcases.conftest import AES_KEYGEN_RUNTIME_REJECT_RVS
 from pkcs11_check.testcases.security.conftest import child_setup_reject_known
 """
 
-_ENCRYPT_UAF_BODY = """
-# --- generate a session AES-128 key ---
-try:
-    aes_key = gen_aes_key(
-        raw,
-        sh,
-        128,
-        attrs={
-            CKA_ENCRYPT: True,
-            CKA_DECRYPT: True,
-            CKA_TOKEN: False,
-        },
+
+def _mech_setup(ckm: str, suffix: str) -> str:
+    """Return mechanism-parameter setup lines for ``ckm``.
+
+    Variable names are qualified with ``suffix`` so an oracle reference
+    mechanism and the probe mechanism can coexist in the same generated script.
+    The caller must already have created ``CK_MECHANISM()`` as ``mech{suffix}``.
+    The returned string always ends with ``\\n``.
+    """
+    m = f"mech{suffix}"
+    if ckm == "CKM_AES_ECB":
+        return f"{m}.mechanism = CKM_AES_ECB\n{m}.pParameter = None\n{m}.ulParameterLen = 0\n"
+    if ckm == "CKM_AES_CBC":
+        iv = f"iv{suffix}"
+        return (
+            f"{iv} = (ctypes.c_ubyte * 16)(*range(16))\n"
+            f"{m}.mechanism = CKM_AES_CBC\n"
+            f"{m}.pParameter = ctypes.cast({iv}, ctypes.c_void_p)\n"
+            f"{m}.ulParameterLen = 16\n"
+        )
+    if ckm == "CKM_AES_CTR":
+        p = f"ctr_params{suffix}"
+        return (
+            f"{p} = CK_AES_CTR_PARAMS()\n"
+            f"{p}.ulCounterBits = 32\n"
+            f"for i in range(16):\n"
+            f"    {p}.cb[i] = i\n"
+            f"{m}.mechanism = CKM_AES_CTR\n"
+            f"{m}.pParameter = ctypes.cast(ctypes.byref({p}), ctypes.c_void_p)\n"
+            f"{m}.ulParameterLen = ctypes.sizeof({p})\n"
+        )
+    # CKM_AES_GCM
+    iv = f"gcm_iv{suffix}"
+    p = f"gcm_params{suffix}"
+    return (
+        f"{iv} = (ctypes.c_ubyte * 12)(*range(12))\n"
+        f"{p} = CK_AES_GCM_PARAMS()\n"
+        f"{p}.pIv = ctypes.cast({iv}, ctypes.c_void_p)\n"
+        f"{p}.ulIvLen = 12\n"
+        f"{p}.ulIvBits = 96\n"
+        f"{p}.pAAD = None\n"
+        f"{p}.ulAADLen = 0\n"
+        f"{p}.ulTagBits = 128\n"
+        f"{m}.mechanism = CKM_AES_GCM\n"
+        f"{m}.pParameter = ctypes.cast(ctypes.byref({p}), ctypes.c_void_p)\n"
+        f"{m}.ulParameterLen = ctypes.sizeof({p})\n"
     )
-except AssertionError as exc:
-    if child_setup_reject_known(
-        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected"
-    ):
-        cleanup()
-        raise SystemExit(0)
-    raise
-
-# --- C_EncryptInit ---
-mech = CK_MECHANISM()
-mech.mechanism = CKM_AES_ECB
-mech.pParameter = None
-mech.ulParameterLen = 0
-rv = raw.C_EncryptInit(sh, ctypes.byref(mech), aes_key)
-if rv != CKR_OK:
-    from pkcs11_check.raw.rv import ckr_name as _cn
-    print(f"SETUP_XFAIL:C_EncryptInit(CKM_AES_ECB) failed: {_cn(rv)}")
-    raw.C_DestroyObject(sh, aes_key)
-    cleanup()
-    raise SystemExit(0)
-
-# --- C_DestroyObject while encrypt operation is active ---
-destroy_rv = raw.C_DestroyObject(sh, aes_key)
-print(f"DESTROY_RV:0x{destroy_rv:08x}")
-
-# --- C_Encrypt on possibly-freed state ---
-plaintext = (ctypes.c_ubyte * 16)(*range(16))
-enc_len = CK_ULONG(0)
-enc_rv = raw.C_Encrypt(sh, plaintext, 16, None, ctypes.byref(enc_len))
-print(f"ENCRYPT_RV:0x{enc_rv:08x}")
-if enc_rv == CKR_OK and enc_len.value > 0:
-    enc_buf = (ctypes.c_ubyte * enc_len.value)()
-    enc_rv2 = raw.C_Encrypt(sh, plaintext, 16, enc_buf, ctypes.byref(enc_len))
-    print(f"ENCRYPT_RV2:0x{enc_rv2:08x}")
-
-cleanup()
-"""
 
 
-class TestEncryptOperationStateUAF:
-    """``C_Encrypt`` after ``C_DestroyObject`` on the active key must not crash."""
+def _aes_uaf_body(op: str, ckm: str, with_oracle: bool) -> str:
+    """Return the subprocess body for the AES destroy-mid-operation UAF probe.
+
+    ``op`` is ``"Encrypt"`` or ``"Decrypt"``.  ``ckm`` is one of the
+    ``CKM_AES_*`` constant names from ``_AES_UAF_CASES``.  When
+    ``with_oracle`` is ``True`` (only meaningful for ``op="Encrypt"``), a
+    complete encryption with the live key is performed first and the output is
+    printed as ``EXPECTED:<hex>``; if the post-destroy encryption also
+    completes the output is printed as ``ENCRYPT_CT:<hex>`` so the test can
+    compare them for a crypto self-contradiction.
+    """
+    op_upper = op.upper()
+    probe_mech = _mech_setup(ckm, "")
+
+    parts: list[str] = [
+        "try:\n"
+        "    aes_key = gen_aes_key(\n"
+        "        raw, sh, 128,\n"
+        "        attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},\n"
+        "    )\n"
+        "except AssertionError as exc:\n"
+        "    if child_setup_reject_known(\n"
+        '        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected"\n'
+        "    ):\n"
+        "        cleanup(); raise SystemExit(0)\n"
+        "    raise\n",
+    ]
+
+    if with_oracle and op == "Encrypt":
+        oracle_mech = _mech_setup(ckm, "_ref")
+        parts.append(
+            "# --- oracle: encrypt with live key to capture EXPECTED ciphertext ---\n"
+            "mech_ref = CK_MECHANISM()\n"
+            f"{oracle_mech}"
+            "rv_ref = raw.C_EncryptInit(sh, ctypes.byref(mech_ref), aes_key)\n"
+            "if rv_ref == CKR_OK:\n"
+            "    plain_ref = (ctypes.c_ubyte * 16)(*range(16))\n"
+            "    exp_len = CK_ULONG(0)\n"
+            "    rv_ref2 = raw.C_Encrypt(sh, plain_ref, 16, None, ctypes.byref(exp_len))\n"
+            "    if rv_ref2 == CKR_OK and exp_len.value > 0:\n"
+            "        exp_buf = (ctypes.c_ubyte * exp_len.value)()\n"
+            "        rv_ref3 = raw.C_Encrypt(\n"
+            "            sh, plain_ref, 16, exp_buf, ctypes.byref(exp_len)\n"
+            "        )\n"
+            "        if rv_ref3 == CKR_OK:\n"
+            '            print("EXPECTED:" + bytes(exp_buf[:exp_len.value]).hex())\n',
+        )
+
+    parts.append(
+        "mech = CK_MECHANISM()\n"
+        f"{probe_mech}"
+        f"rv = raw.C_{op}Init(sh, ctypes.byref(mech), aes_key)\n"
+        "if rv != CKR_OK:\n"
+        f'    print(f"SETUP_XFAIL:C_{op}Init({ckm}) failed: {{ckr_name(rv)}}")\n'
+        "    raw.C_DestroyObject(sh, aes_key); cleanup(); raise SystemExit(0)\n"
+        "destroy_rv = raw.C_DestroyObject(sh, aes_key)\n"
+        'print(f"DESTROY_RV:0x{destroy_rv:08x}")\n'
+        "data = (ctypes.c_ubyte * 16)(*range(16))\n"
+        "out_len = CK_ULONG(0)\n"
+        f"op_rv = raw.C_{op}(sh, data, 16, None, ctypes.byref(out_len))\n"
+        f'print(f"{op_upper}_RV:0x{{op_rv:08x}}")\n'
+        "if op_rv == CKR_OK and out_len.value > 0:\n"
+        "    out_buf = (ctypes.c_ubyte * out_len.value)()\n"
+        f"    op_rv2 = raw.C_{op}(sh, data, 16, out_buf, ctypes.byref(out_len))\n"
+        f'    print(f"{op_upper}_RV2:0x{{op_rv2:08x}}")\n',
+    )
+
+    if with_oracle and op == "Encrypt":
+        parts.append(
+            "    if op_rv2 == CKR_OK:\n"
+            '        print("ENCRYPT_CT:" + bytes(out_buf[:out_len.value]).hex())\n',
+        )
+
+    parts.append("cleanup()\n")
+    return "".join(parts)
+
+
+@pytest.mark.parametrize("label,mech_name,ckm", _AES_UAF_CASES)
+class TestAesEncryptDestroyUAF:
+    """Parametrized AES ``C_Encrypt`` after ``C_DestroyObject`` — ECB/CBC/CTR/GCM."""
 
     def test_encrypt_after_destroy_does_not_crash(
         self,
         p11_raw_session: Any,
         p11_config: Any,
+        label: str,
+        mech_name: str,
+        ckm: str,
     ) -> None:
         """Destroying the AES key mid-encrypt must not cause a use-after-free crash.
 
         After ``C_DestroyObject`` on the active key, the operation's stored key
-        reference may point to freed memory.  The same UAF pattern applies to
-        ``C_EncryptInit`` as to ``C_SignInit``.  A crash is the finding.
+        reference may point to freed memory.  The probe covers ECB, CBC, CTR, and
+        GCM mechanism variants to exercise different parameter-carrying code paths.
+        An encrypt oracle captures the expected ciphertext before the destroy; if the
+        post-destroy ``C_Encrypt`` also completes, the outputs are compared for a
+        crypto self-contradiction (use-after-free corrupting the key material).
+        A crash is the primary finding.
         """
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("CKM_AES_KEY_GEN not supported")
-        if not rs.has_mechanism("AES_ECB"):
-            pytest.skip("CKM_AES_ECB not supported")
+        if not rs.has_mechanism(mech_name):
+            pytest.skip(f"CKM_{mech_name} not supported")
 
-        body = _ENCRYPT_UAF_IMPORTS + _ENCRYPT_UAF_BODY
+        body = _aes_uaf_body("Encrypt", ckm, with_oracle=True)
         rc, out, err = run_with_coverage(
-            _preamble(p11_config) + body,
+            _preamble(p11_config) + _AES_UAF_IMPORTS + body,
             timeout=15,
             pin=pin_from_config(p11_config),
         )
@@ -322,14 +456,14 @@ class TestEncryptOperationStateUAF:
             rc,
             out,
             err,
-            context="C_Encrypt after C_DestroyObject (operation-state UAF)",
+            context=f"C_Encrypt({ckm}) after C_DestroyObject (operation-state UAF)",
         )
         enc_rv = _parse_rv(out, "ENCRYPT_RV:")
         if enc_rv is not None:
             classify_negative_rv(
                 enc_rv,
                 _COMPLETION_REJECT_RVS,
-                label="C_Encrypt after destroy of active AES key",
+                label=f"C_Encrypt({label}) after destroy of active AES key",
                 allow_ok=True,
             )
         enc_rv2 = _parse_rv(out, "ENCRYPT_RV2:")
@@ -337,7 +471,75 @@ class TestEncryptOperationStateUAF:
             classify_negative_rv(
                 enc_rv2,
                 _COMPLETION_REJECT_RVS,
-                label="C_Encrypt(2nd pass) after destroy of active AES key",
+                label=f"C_Encrypt({label}, 2nd pass) after destroy of active AES key",
+                allow_ok=True,
+            )
+        # Oracle: if both the live-key reference encrypt and the post-destroy encrypt
+        # completed, compare ciphertexts — a mismatch is a crypto self-contradiction.
+        expected_hex = _parse_line(out, "EXPECTED:")
+        ct_hex = _parse_line(out, "ENCRYPT_CT:")
+        if expected_hex is not None and ct_hex is not None and expected_hex != ct_hex:
+            fail_as(
+                "self_contradiction",
+                kind="crypto",
+                label=(
+                    f"{label} C_Encrypt after C_DestroyObject produced output differing"
+                    " from the live-key encryption (use-after-free corrupted the key)"
+                ),
+            )
+
+
+@pytest.mark.parametrize("label,mech_name,ckm", _AES_UAF_CASES)
+class TestAesDecryptDestroyUAF:
+    """Parametrized AES ``C_Decrypt`` after ``C_DestroyObject`` — ECB/CBC/CTR/GCM."""
+
+    def test_decrypt_after_destroy_does_not_crash(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        label: str,
+        mech_name: str,
+        ckm: str,
+    ) -> None:
+        """Destroying the AES key mid-decrypt must not cause a use-after-free crash.
+
+        After ``C_DestroyObject`` on the active key, the operation's stored key
+        reference may point to freed memory.  The probe covers ECB, CBC, CTR, and
+        GCM mechanism variants.  A crash is the primary finding; a clean error or
+        (snapshot-based) success are both conformant.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
+            pytest.skip("CKM_AES_KEY_GEN not supported")
+        if not rs.has_mechanism(mech_name):
+            pytest.skip(f"CKM_{mech_name} not supported")
+
+        body = _aes_uaf_body("Decrypt", ckm, with_oracle=False)
+        rc, out, err = run_with_coverage(
+            _preamble(p11_config) + _AES_UAF_IMPORTS + body,
+            timeout=15,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            out,
+            err,
+            context=f"C_Decrypt({ckm}) after C_DestroyObject (operation-state UAF)",
+        )
+        dec_rv = _parse_rv(out, "DECRYPT_RV:")
+        if dec_rv is not None:
+            classify_negative_rv(
+                dec_rv,
+                _AES_DECRYPT_REJECT_RVS,
+                label=f"C_Decrypt({label}) after destroy of active AES key",
+                allow_ok=True,
+            )
+        dec_rv2 = _parse_rv(out, "DECRYPT_RV2:")
+        if dec_rv2 is not None:
+            classify_negative_rv(
+                dec_rv2,
+                _AES_DECRYPT_REJECT_RVS,
+                label=f"C_Decrypt({label}, 2nd pass) after destroy of active AES key",
                 allow_ok=True,
             )
 
@@ -596,132 +798,6 @@ class TestVerifyOperationStateUAF:
                 verify_rv,
                 _COMPLETION_REJECT_RVS,
                 label="C_Verify after destroy of active HMAC verify key",
-                allow_ok=True,
-            )
-
-
-# ---------------------------------------------------------------------------
-# Decrypt probe (CKM_AES_ECB)
-# ---------------------------------------------------------------------------
-
-_DECRYPT_UAF_IMPORTS = """
-import ctypes
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.recipes import gen_aes_key
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM,
-    CK_ULONG,
-    CKA_DECRYPT,
-    CKA_ENCRYPT,
-    CKA_TOKEN,
-    CKM_AES_ECB,
-    CKR_OK,
-)
-from pkcs11_check.testcases.conftest import AES_KEYGEN_RUNTIME_REJECT_RVS
-from pkcs11_check.testcases.security.conftest import child_setup_reject_known
-"""
-
-_DECRYPT_UAF_BODY = """
-# --- generate a session AES-128 key ---
-try:
-    aes_key = gen_aes_key(
-        raw,
-        sh,
-        128,
-        attrs={
-            CKA_ENCRYPT: True,
-            CKA_DECRYPT: True,
-            CKA_TOKEN: False,
-        },
-    )
-except AssertionError as exc:
-    if child_setup_reject_known(
-        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected"
-    ):
-        cleanup()
-        raise SystemExit(0)
-    raise
-
-# --- C_DecryptInit ---
-mech = CK_MECHANISM()
-mech.mechanism = CKM_AES_ECB
-mech.pParameter = None
-mech.ulParameterLen = 0
-rv = raw.C_DecryptInit(sh, ctypes.byref(mech), aes_key)
-if rv != CKR_OK:
-    from pkcs11_check.raw.rv import ckr_name as _cn
-    print(f"SETUP_XFAIL:C_DecryptInit(CKM_AES_ECB) failed: {_cn(rv)}")
-    raw.C_DestroyObject(sh, aes_key)
-    cleanup()
-    raise SystemExit(0)
-
-# --- C_DestroyObject while decrypt operation is active ---
-destroy_rv = raw.C_DestroyObject(sh, aes_key)
-print(f"DESTROY_RV:0x{destroy_rv:08x}")
-
-# --- C_Decrypt on possibly-freed state (16-byte zero block) ---
-ciphertext = (ctypes.c_ubyte * 16)(0)
-dec_len = CK_ULONG(0)
-dec_rv = raw.C_Decrypt(sh, ciphertext, 16, None, ctypes.byref(dec_len))
-print(f"DECRYPT_RV:0x{dec_rv:08x}")
-if dec_rv == CKR_OK and dec_len.value > 0:
-    dec_buf = (ctypes.c_ubyte * dec_len.value)()
-    dec_rv2 = raw.C_Decrypt(sh, ciphertext, 16, dec_buf, ctypes.byref(dec_len))
-    print(f"DECRYPT_RV2:0x{dec_rv2:08x}")
-
-cleanup()
-"""
-
-
-class TestDecryptOperationStateUAF:
-    """``C_Decrypt`` after ``C_DestroyObject`` on the active key must not crash."""
-
-    def test_decrypt_after_destroy_does_not_crash(
-        self,
-        p11_raw_session: Any,
-        p11_config: Any,
-    ) -> None:
-        """Destroying the AES key mid-decrypt must not cause a use-after-free crash.
-
-        After ``C_DestroyObject`` on the active key, ``C_Decrypt`` may dereference
-        the operation's stored key reference, which now points to freed memory
-        (CWE-416).  A conformant module either refuses the destroy while the
-        operation is active, invalidates the operation so ``C_Decrypt`` returns a
-        clean error, or (snapshot-based) completes normally.  A crash is the
-        finding.
-        """
-        rs = p11_raw_session
-        if not rs.has_mechanism("AES_KEY_GEN"):
-            pytest.skip("CKM_AES_KEY_GEN not supported")
-        if not rs.has_mechanism("AES_ECB"):
-            pytest.skip("CKM_AES_ECB not supported")
-
-        body = _DECRYPT_UAF_IMPORTS + _DECRYPT_UAF_BODY
-        rc, out, err = run_with_coverage(
-            _preamble(p11_config) + body,
-            timeout=15,
-            pin=pin_from_config(p11_config),
-        )
-        assert_subprocess_no_crash(
-            rc,
-            out,
-            err,
-            context="C_Decrypt after C_DestroyObject (operation-state UAF)",
-        )
-        dec_rv = _parse_rv(out, "DECRYPT_RV:")
-        if dec_rv is not None:
-            classify_negative_rv(
-                dec_rv,
-                _COMPLETION_REJECT_RVS,
-                label="C_Decrypt after destroy of active AES key",
-                allow_ok=True,
-            )
-        dec_rv2 = _parse_rv(out, "DECRYPT_RV2:")
-        if dec_rv2 is not None:
-            classify_negative_rv(
-                dec_rv2,
-                _COMPLETION_REJECT_RVS,
-                label="C_Decrypt(2nd pass) after destroy of active AES key",
                 allow_ok=True,
             )
 
@@ -1085,5 +1161,261 @@ class TestCrossSessionOperationStateUAF:
                 xsession_rv2,
                 _COMPLETION_REJECT_RVS,
                 label="C_Sign(session A, 2nd pass) after cross-session destroy of active token key",
+                allow_ok=True,
+            )
+
+
+# ---------------------------------------------------------------------------
+# ECDSA sign probe — asymmetric destroy-mid-sign
+# ---------------------------------------------------------------------------
+#
+# C_SignInit(CKM_ECDSA, priv) → C_DestroyObject(priv) → C_Sign on the stale
+# operation state.  ECDSA modular arithmetic dereferences the private-key scalar;
+# if the module holds a raw pointer to the key's CKA_VALUE field and the object
+# store entry is freed by C_DestroyObject, the subsequent C_Sign walks freed
+# memory (CWE-416).  The probe is single-threaded and sequential.
+
+_ECDSA_SIGN_UAF_IMPORTS = """
+import ctypes
+from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.recipes import gen_ec_keypair
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM,
+    CK_ULONG,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VERIFY,
+    CKM_ECDSA,
+    CKR_OK,
+)
+from pkcs11_check.testcases.conftest import KEYPAIR_RUNTIME_REJECT_RVS
+from pkcs11_check.testcases.security.conftest import child_setup_reject_known
+"""
+
+_ECDSA_SIGN_UAF_BODY = """
+# --- generate a session P-256 EC keypair (CKA_SIGN on private) ---
+curve_oid = encode_named_curve_parameters("secp256r1")
+try:
+    pub_h, priv_h = gen_ec_keypair(
+        raw,
+        sh,
+        curve_oid,
+        public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+        private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+    )
+except AssertionError as exc:
+    if child_setup_reject_known(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "EC keypair generation rejected"
+    ):
+        cleanup()
+        raise SystemExit(0)
+    raise
+
+raw.C_DestroyObject(sh, pub_h)
+
+# --- C_SignInit with CKM_ECDSA ---
+mech = CK_MECHANISM()
+mech.mechanism = CKM_ECDSA
+mech.pParameter = None
+mech.ulParameterLen = 0
+rv = raw.C_SignInit(sh, ctypes.byref(mech), priv_h)
+if rv != CKR_OK:
+    from pkcs11_check.raw.rv import ckr_name as _cn
+    print(f"SETUP_XFAIL:C_SignInit(CKM_ECDSA) failed: {_cn(rv)}")
+    raw.C_DestroyObject(sh, priv_h)
+    cleanup()
+    raise SystemExit(0)
+
+# --- C_DestroyObject on the private key while sign operation is active ---
+destroy_rv = raw.C_DestroyObject(sh, priv_h)
+print(f"DESTROY_RV:0x{destroy_rv:08x}")
+
+# --- C_Sign on possibly-freed key reference (two-pass) ---
+data = (ctypes.c_ubyte * 32)(*range(32))
+sig_len = CK_ULONG(0)
+sign_rv = raw.C_Sign(sh, data, 32, None, ctypes.byref(sig_len))
+print(f"SIGN_RV:0x{sign_rv:08x}")
+if sign_rv == CKR_OK and sig_len.value > 0:
+    sig_buf = (ctypes.c_ubyte * sig_len.value)()
+    sign_rv2 = raw.C_Sign(sh, data, 32, sig_buf, ctypes.byref(sig_len))
+    print(f"SIGN_RV2:0x{sign_rv2:08x}")
+
+cleanup()
+"""
+
+
+class TestSignEcdsaOperationStateUAF:
+    """``C_Sign`` (ECDSA) after ``C_DestroyObject`` on the private key must not crash."""
+
+    def test_ecdsa_sign_after_destroy_does_not_crash(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """Destroying the EC private key mid-ECDSA-sign must not cause a UAF crash.
+
+        After ``C_DestroyObject`` on the active EC private key, the operation's stored
+        key reference may point to freed memory (CWE-416).  A conformant module either
+        refuses the destroy while the operation is active, invalidates the operation so
+        ``C_Sign`` returns a clean error, or (snapshot-based) completes normally.  A
+        crash is the finding.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
+            pytest.skip("CKM_EC_KEY_PAIR_GEN not supported")
+        if not rs.has_mechanism("ECDSA"):
+            pytest.skip("CKM_ECDSA not supported")
+
+        body = _ECDSA_SIGN_UAF_IMPORTS + _ECDSA_SIGN_UAF_BODY
+        rc, out, err = run_with_coverage(
+            _preamble(p11_config) + body,
+            timeout=15,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            out,
+            err,
+            context="C_Sign(ECDSA) after C_DestroyObject (operation-state UAF)",
+        )
+        sign_rv = _parse_rv(out, "SIGN_RV:")
+        if sign_rv is not None:
+            classify_negative_rv(
+                sign_rv,
+                _COMPLETION_REJECT_RVS,
+                label="C_Sign(ECDSA) after destroy of active EC private key",
+                allow_ok=True,
+            )
+        sign_rv2 = _parse_rv(out, "SIGN_RV2:")
+        if sign_rv2 is not None:
+            classify_negative_rv(
+                sign_rv2,
+                _COMPLETION_REJECT_RVS,
+                label="C_Sign(ECDSA, 2nd pass) after destroy of active EC private key",
+                allow_ok=True,
+            )
+
+
+# ---------------------------------------------------------------------------
+# RSA decrypt probe — asymmetric destroy-mid-decrypt
+# ---------------------------------------------------------------------------
+#
+# C_DecryptInit(CKM_RSA_PKCS, priv) → C_DestroyObject(priv) → C_Decrypt on
+# a modulus-sized zero buffer.  RSA PKCS#1 v1.5 decryption performs private-key
+# scalar operations that dereference the CRT key material; if the module holds
+# raw pointers into the object store entry freed by C_DestroyObject, the
+# subsequent C_Decrypt walks freed memory (CWE-416).  The ciphertext is
+# intentionally invalid (256 zero bytes) so a clean decrypt error is acceptable;
+# the only hard requirement is no crash.
+
+_RSA_DECRYPT_UAF_IMPORTS = """
+import ctypes
+from pkcs11_check.raw.recipes import RSAUsage, gen_rsa_keypair
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM,
+    CK_ULONG,
+    CKM_RSA_PKCS,
+    CKR_OK,
+)
+from pkcs11_check.testcases.conftest import KEYPAIR_RUNTIME_REJECT_RVS
+from pkcs11_check.testcases.security.conftest import child_setup_reject_known
+"""
+
+_RSA_DECRYPT_UAF_BODY = """
+# --- generate a session RSA-2048 keypair (CKA_DECRYPT on private) ---
+try:
+    pub_h, priv_h = gen_rsa_keypair(raw, sh, 2048, usage=RSAUsage.DECRYPT)
+except AssertionError as exc:
+    if child_setup_reject_known(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "RSA keypair generation rejected"
+    ):
+        cleanup()
+        raise SystemExit(0)
+    raise
+
+raw.C_DestroyObject(sh, pub_h)
+
+# --- C_DecryptInit with CKM_RSA_PKCS ---
+mech = CK_MECHANISM()
+mech.mechanism = CKM_RSA_PKCS
+mech.pParameter = None
+mech.ulParameterLen = 0
+rv = raw.C_DecryptInit(sh, ctypes.byref(mech), priv_h)
+if rv != CKR_OK:
+    from pkcs11_check.raw.rv import ckr_name as _cn
+    print(f"SETUP_XFAIL:C_DecryptInit(CKM_RSA_PKCS) failed: {_cn(rv)}")
+    raw.C_DestroyObject(sh, priv_h)
+    cleanup()
+    raise SystemExit(0)
+
+# --- C_DestroyObject on the private key while decrypt operation is active ---
+destroy_rv = raw.C_DestroyObject(sh, priv_h)
+print(f"DESTROY_RV:0x{destroy_rv:08x}")
+
+# --- C_Decrypt on possibly-freed key reference (two-pass, modulus-sized zero input) ---
+# 256 zero bytes is an invalid RSA-PKCS#1 v1.5 ciphertext; a clean decrypt error
+# (e.g. CKR_FUNCTION_FAILED, CKR_ENCRYPTED_DATA_INVALID) is acceptable.  No crash is the
+# only hard requirement.
+ciphertext = (ctypes.c_ubyte * 256)(0)
+dec_len = CK_ULONG(0)
+dec_rv = raw.C_Decrypt(sh, ciphertext, 256, None, ctypes.byref(dec_len))
+print(f"DECRYPT_RV:0x{dec_rv:08x}")
+if dec_rv == CKR_OK and dec_len.value > 0:
+    dec_buf = (ctypes.c_ubyte * dec_len.value)()
+    dec_rv2 = raw.C_Decrypt(sh, ciphertext, 256, dec_buf, ctypes.byref(dec_len))
+    print(f"DECRYPT_RV2:0x{dec_rv2:08x}")
+
+cleanup()
+"""
+
+
+class TestDecryptRsaOperationStateUAF:
+    """``C_Decrypt`` (RSA_PKCS) after ``C_DestroyObject`` on the active key must not crash."""
+
+    def test_rsa_decrypt_after_destroy_does_not_crash(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """Destroying the RSA private key mid-decrypt must not cause a UAF crash.
+
+        After ``C_DestroyObject`` on the active RSA private key, the operation's stored
+        key reference may point to freed memory (CWE-416).  A conformant module either
+        refuses the destroy while the operation is active, invalidates the operation so
+        ``C_Decrypt`` returns a clean error, or (snapshot-based) proceeds to a clean
+        error on the invalid ciphertext.  A crash is the finding.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
+        if not rs.has_mechanism("RSA_PKCS"):
+            pytest.skip("CKM_RSA_PKCS not supported")
+
+        body = _RSA_DECRYPT_UAF_IMPORTS + _RSA_DECRYPT_UAF_BODY
+        rc, out, err = run_with_coverage(
+            _preamble(p11_config) + body,
+            timeout=30,
+            pin=pin_from_config(p11_config),
+        )
+        assert_subprocess_no_crash(
+            rc,
+            out,
+            err,
+            context="C_Decrypt(RSA_PKCS) after C_DestroyObject (operation-state UAF)",
+        )
+        dec_rv = _parse_rv(out, "DECRYPT_RV:")
+        if dec_rv is not None:
+            classify_negative_rv(
+                dec_rv,
+                _RSA_DECRYPT_REJECT_RVS,
+                label="C_Decrypt(RSA_PKCS) after destroy of active RSA private key",
+                allow_ok=True,
+            )
+        dec_rv2 = _parse_rv(out, "DECRYPT_RV2:")
+        if dec_rv2 is not None:
+            classify_negative_rv(
+                dec_rv2,
+                _RSA_DECRYPT_REJECT_RVS,
+                label="C_Decrypt(RSA_PKCS, 2nd pass) after destroy of active RSA private key",
                 allow_ok=True,
             )
