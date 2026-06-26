@@ -10,21 +10,36 @@ active, OR the completion call returns a clean error, OR (for snapshot-based
 implementations) the operation completes with ``CKR_OK`` because key material
 was copied at ``*Init`` time.  The **one** hard requirement is no crash.
 
-Six probes (single-threaded, no race required):
+Thirteen probes (single-threaded, no race required):
 
-- Sign          — ``CKM_SHA256_HMAC`` key destroyed between ``C_SignInit`` and
-  ``C_Sign``.
-- Encrypt       — AES key destroyed between ``C_EncryptInit`` and ``C_Encrypt``.
-- Digest        — ``C_DigestInit(CKM_SHA256)`` then ``C_DigestKey`` on the
+- Sign (HMAC)       — ``CKM_SHA256_HMAC`` key destroyed between ``C_SignInit``
+  and ``C_Sign``.
+- Encrypt (AES-ECB) — AES key destroyed between ``C_EncryptInit`` and
+  ``C_Encrypt``.
+- Encrypt (AES-CBC) — AES key destroyed between ``C_EncryptInit`` and
+  ``C_Encrypt``; IV carried in mechanism parameter.
+- Decrypt (AES-CBC) — AES key destroyed between ``C_DecryptInit`` and
+  ``C_Decrypt``; IV carried in mechanism parameter.
+- Encrypt (AES-CTR) — AES key destroyed between ``C_EncryptInit`` and
+  ``C_Encrypt``; counter block carried in mechanism parameter.
+- Decrypt (AES-CTR) — AES key destroyed between ``C_DecryptInit`` and
+  ``C_Decrypt``; counter block carried in mechanism parameter.
+- Digest            — ``C_DigestInit(CKM_SHA256)`` then ``C_DigestKey`` on the
   already-destroyed key handle.
-- Verify        — ``CKM_SHA256_HMAC`` key destroyed between ``C_VerifyInit`` and
-  ``C_Verify``.
-- Decrypt       — AES key destroyed between ``C_DecryptInit`` and ``C_Decrypt``.
-- Derive        — EC private key destroyed before ``C_DeriveKey``; the module
-  must reject the stale handle cleanly, not dereference freed memory.
-- Cross-session — token HMAC key sign-inited from session A, destroyed from
+- Verify            — ``CKM_SHA256_HMAC`` key destroyed between ``C_VerifyInit``
+  and ``C_Verify``.
+- Decrypt (AES-ECB) — AES key destroyed between ``C_DecryptInit`` and
+  ``C_Decrypt``.
+- Derive            — EC private key destroyed before ``C_DeriveKey``; the
+  module must reject the stale handle cleanly, not dereference freed memory.
+- Cross-session     — token HMAC key sign-inited from session A, destroyed from
   session B, then ``C_Sign`` completed in session A; CWE-416 across session
   boundaries. (Token object cleaned up; test skips if token creation fails.)
+- Sign (ECDSA)      — EC private key destroyed between ``C_SignInit(CKM_ECDSA)``
+  and ``C_Sign``; asymmetric scalar operation on possibly-freed key material.
+- Decrypt (RSA)     — RSA private key destroyed between
+  ``C_DecryptInit(CKM_RSA_PKCS)`` and ``C_Decrypt``; invalid ciphertext (zero
+  bytes) so a clean decrypt error is also acceptable.
 """
 
 from __future__ import annotations
@@ -34,6 +49,8 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.types_std import (
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
     CKR_KEY_HANDLE_INVALID,
@@ -59,6 +76,15 @@ _COMPLETION_REJECT_RVS = (
     CKR_KEY_HANDLE_INVALID,
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
+)
+
+# For the RSA decrypt probe the ciphertext is intentionally invalid (256 zero
+# bytes), so a snapshot-based module that copied the key at *Init time may
+# proceed to decrypt and then reject the bad ciphertext with one of these
+# spec-defined codes — both are conformant, not findings.
+_RSA_DECRYPT_REJECT_RVS = _COMPLETION_REJECT_RVS + (
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
 )
 
 
@@ -1627,7 +1653,7 @@ class TestDecryptRsaOperationStateUAF:
         if dec_rv is not None:
             classify_negative_rv(
                 dec_rv,
-                _COMPLETION_REJECT_RVS,
+                _RSA_DECRYPT_REJECT_RVS,
                 label="C_Decrypt(RSA_PKCS) after destroy of active RSA private key",
                 allow_ok=True,
             )
@@ -1635,7 +1661,7 @@ class TestDecryptRsaOperationStateUAF:
         if dec_rv2 is not None:
             classify_negative_rv(
                 dec_rv2,
-                _COMPLETION_REJECT_RVS,
+                _RSA_DECRYPT_REJECT_RVS,
                 label="C_Decrypt(RSA_PKCS, 2nd pass) after destroy of active RSA private key",
                 allow_ok=True,
             )
