@@ -42,7 +42,10 @@ from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
 )
-from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
+from pkcs11_check.testcases.security.conftest import (
+    HONEYPOT_MMAP_CODE,
+    assert_subprocess_no_crash,
+)
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess]
 
@@ -232,7 +235,7 @@ from pkcs11_check.raw.types_std import (
     CK_AES_GCM_PARAMS, CK_MECHANISM, CK_ULONG, CKM_AES_GCM, CKR_OK,
 )
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
-
+{HONEYPOT_MMAP_CODE}
 try:
     key = gen_aes_key(raw, sh, 256)
 except AssertionError as exc:
@@ -258,11 +261,14 @@ try:
         cleanup()
         raise SystemExit(0)
 
-    # Small real buffer, but claim 0xFFFFFFFF bytes.
-    buf1 = (ctypes.c_ubyte * 16)(*range(16))
+    # Honest buffer (docs/probe-soundness.md): the claimed 0xFFFFFFFF bytes are
+    # backed by a demand-zero mmap, so a module that honors the length reads real
+    # zeroed pages -- any crash that remains (e.g. the word32 encSz accumulator
+    # wrapping on the second update -> under-alloc + over-write) is the module's
+    # own bug, a real finding, not an over-read of our short buffer.
     out1 = (ctypes.c_ubyte * 32)()
     out1_len = CK_ULONG(32)
-    rv1 = raw.C_DecryptUpdate(sh, buf1, {_ULONG_32BIT_MAX}, out1, ctypes.byref(out1_len))
+    rv1 = raw.C_DecryptUpdate(sh, HONEYPOT_BUF, {_ULONG_32BIT_MAX}, out1, ctypes.byref(out1_len))
     print(f"CKR_UPDATE1:0x{{rv1:08x}}")
     if rv1 == CKR_OK:
         # If the first update was accepted, attempt the wrap-triggering second
