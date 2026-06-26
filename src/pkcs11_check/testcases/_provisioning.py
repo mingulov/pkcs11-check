@@ -5,6 +5,7 @@ create -> (opt-in) unwrap -> skip. See docs/.../key-provisioning-injection-desig
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -41,6 +42,7 @@ from pkcs11_check.raw.types_std import (
     CKG_MGF1_SHA1,
     CKG_MGF1_SHA256,
     CKK_AES,
+    CKK_EC,
     CKK_RSA,
     CKM,
     CKM_AES_KEY_WRAP_KWP,
@@ -52,6 +54,7 @@ from pkcs11_check.raw.types_std import (
     CKO_DATA,
     CKO_PRIVATE_KEY,
     CKO_SECRET_KEY,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
@@ -223,6 +226,12 @@ _CREATE_PROHIBITED_RVS: frozenset[int] = frozenset(
         CKR_KEY_FUNCTION_NOT_PERMITTED,
         CKR_KEY_UNEXTRACTABLE,
         CKR_ATTRIBUTE_VALUE_INVALID,
+        # Safety net: if even the storage-shape-negotiated template (which already drops the
+        # benign policy attrs CKA_SENSITIVE/CKA_EXTRACTABLE) is still rejected read-only, the
+        # module prohibits this create shape — route to unwrap/external/skip rather than
+        # hard-failing. craton 0.9.3 instead accepts the dropped variant (so it never reaches
+        # here); this only catches modules that forbid the minimal shape outright.
+        CKR_ATTRIBUTE_READ_ONLY,
     }
 )
 
@@ -314,25 +323,48 @@ class ProvisioningProfile:
 
         The ``obj_class`` parameter is unused (only ``"private"`` reaches this
         method) but kept for API symmetry with the dispatch in ``create_verdict``.
+
+        The probe imports the throwaway key through the SAME storage-shape negotiation the
+        real KAT import uses (``_storage_variants`` + ``negotiate_request``), so its verdict
+        matches what ``import_ec_private_key_negotiated`` can actually achieve. A module that
+        rejects the canonical policy attrs on create (e.g. craton 0.9.3 returns
+        CKR_ATTRIBUTE_READ_ONLY for CKA_EXTRACTABLE=true / CKA_SENSITIVE=false) but accepts
+        the dropped-policy variant probes as ``create_available`` — the throwaway object's
+        policy shape is irrelevant (it is destroyed immediately). The probe and the KAT EC
+        key share an ``_import_shape_key``, so this also warms ``_IMPORT_SHAPE_WINNERS``.
+        ``negotiate_request`` re-raises the final CKR on exhaustion (it does NOT skip), so the
+        verdict classification below stays intact for no-create / prohibited modules.
         """
-        from pkcs11_check.raw.recipes import destroy_quietly, import_ec_private_key
+        from pkcs11_check.raw.recipes import create_object, destroy_quietly
+        from pkcs11_check.testcases._negotiation import negotiate_request
+        from pkcs11_check.testcases.conftest import (
+            IMPORT_STORAGE_SHAPE_REJECTS,
+            _storage_variants,
+        )
 
         # P-256 named-curve OID DER: 1.2.840.10045.3.1.7
         ec_p256_params = bytes.fromhex("06082a8648ce3d030107")
         # A valid P-256 private scalar (32 bytes, small but in-range)
         ec_p256_scalar = b"\x01" * 32
+        base: dict[int, Any] = {
+            CKA_CLASS: CKO_PRIVATE_KEY,
+            CKA_KEY_TYPE: int(CKK_EC),
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: True,
+            CKA_EC_PARAMS: ec_p256_params,
+            CKA_VALUE: ec_p256_scalar,
+        }
+
+        def attempt(delta: Mapping[int, Any]) -> int:
+            return create_object(self.rs.raw, self.rs.sh, dict(delta))
 
         try:
-            h = import_ec_private_key(
-                self.rs.raw,
-                self.rs.sh,
-                ec_params=ec_p256_params,
-                value=ec_p256_scalar,
-                attrs={
-                    CKA_TOKEN: False,
-                    CKA_SENSITIVE: False,
-                    CKA_EXTRACTABLE: True,
-                },
+            h, _idx = negotiate_request(
+                attempt,
+                _storage_variants(base),
+                label="private create probe",
+                shape_rejects=IMPORT_STORAGE_SHAPE_REJECTS,
             )
         except CkrAssertionError as exc:
             if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:

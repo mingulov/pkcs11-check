@@ -121,7 +121,7 @@ def test_create_available_calls_negotiated_import(monkeypatch: pytest.MonkeyPatc
         build_ctx_called.append(True)
         return None
 
-    def fake_ec_import(raw: Any, sh: int, **kwargs: Any) -> int:
+    def fake_ec_import(raw: Any, sh: int, attrs: Any = None, **kwargs: Any) -> int:
         # probe for create_verdict("private") -> "create_available"
         return 999
 
@@ -133,7 +133,7 @@ def test_create_available_calls_negotiated_import(monkeypatch: pytest.MonkeyPatc
         fake_negotiated,
     )
     monkeypatch.setattr(_prov, "build_wrap_context", fake_build_ctx)
-    monkeypatch.setattr("pkcs11_check.raw.recipes.import_ec_private_key", fake_ec_import)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.create_object", fake_ec_import)
     monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy)
     _reset_cache()
 
@@ -295,13 +295,13 @@ def test_off_create_absent_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     from pkcs11_check.raw.rv import CkrAssertionError
     from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
 
-    def fake_ec_import(raw: Any, sh: int, **kwargs: Any) -> int:
+    def fake_ec_import(raw: Any, sh: int, attrs: Any = None, **kwargs: Any) -> int:
         raise CkrAssertionError("not supported", CKR_FUNCTION_NOT_SUPPORTED)
 
     def fake_destroy(raw: Any, sh: int, handle: int) -> None:
         pass
 
-    monkeypatch.setattr("pkcs11_check.raw.recipes.import_ec_private_key", fake_ec_import)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.create_object", fake_ec_import)
     monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy)
     _reset_cache()
 
@@ -378,7 +378,7 @@ def test_create_available_failure_propagates(monkeypatch: pytest.MonkeyPatch) ->
         build_ctx_called.append(True)
         return None
 
-    def fake_ec_import(raw: Any, sh: int, **kwargs: Any) -> int:
+    def fake_ec_import(raw: Any, sh: int, attrs: Any = None, **kwargs: Any) -> int:
         # probe for create_verdict("private") -> "create_available"
         return 999
 
@@ -390,7 +390,7 @@ def test_create_available_failure_propagates(monkeypatch: pytest.MonkeyPatch) ->
         fake_negotiated_raises,
     )
     monkeypatch.setattr(_prov, "build_wrap_context", fake_build_ctx)
-    monkeypatch.setattr("pkcs11_check.raw.recipes.import_ec_private_key", fake_ec_import)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.create_object", fake_ec_import)
     monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy)
     _reset_cache()
 
