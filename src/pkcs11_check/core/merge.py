@@ -40,18 +40,10 @@ from pkcs11_check.core.file_runner import (
     postprocess_jsonl_to_unified,
     write_quality_json_report,
 )
+from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS
 from pkcs11_check.testcases._subprocess_trace import extract_subprocess_rv_trace
 
-_SUMMARY_KEYS = (
-    "passed",
-    "failed",
-    "skipped",
-    "xfailed",
-    "xpassed",
-    "error",
-    "crashed",
-    "timeout",
-)
+_SUMMARY_KEYS = RESULT_OUTCOME_KEYS
 
 
 def _concat_jsonl(paths: list[Path], output_path: Path) -> None:

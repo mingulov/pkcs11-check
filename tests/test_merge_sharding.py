@@ -149,8 +149,19 @@ def test_merge_results_payloads_sums_and_concats() -> None:
     assert merged["summary"]["passed"] == 5
     assert merged["summary"]["failed"] == 1
     assert merged["summary"]["skipped"] == 4
-    assert merged["summary"]["total"] == 5 + 1 + 4
+    assert merged["summary"]["total"] == sum(
+        merged["summary"][k] for k in ("passed", "failed", "skipped")
+    )
     assert [u["target"] for u in merged["units"]] == ["a.py", "b.py"]
+
+
+def test_merge_counts_crash_limited_into_total() -> None:
+    a = {"summary": {"passed": 5, "crash_limited": 2}, "units": []}
+    b = {"summary": {"failed": 1, "crash_limited": 3}, "units": []}
+    merged = merge_results_payloads([a, b], coverage=None)
+    s = merged["summary"]
+    assert s["crash_limited"] == 5
+    assert s["total"] == 5 + 1 + 5  # passed + failed + crash_limited
 
 
 def _coverage_report(
