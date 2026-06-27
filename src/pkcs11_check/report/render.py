@@ -6,7 +6,7 @@ Layout (severity-first, size-budgeted):
 * ``━━ 🔴 CRITICAL · fail (n) ━━`` then ``🟠 HIGH``, grouped within each by
   finding ``kind``
 * a single collapsed ``🟡 deviations · xfail (n)`` section: one count line per
-  xfail reason with a top example — never the full enumeration
+  xfail reason with a top example - never the full enumeration
 * ``⚪`` one-liners for sanctioned-refusal compliance and unclassified
 
 Even with thousands of findings the fail sections plus the collapsed xfail/
@@ -59,7 +59,7 @@ def _counts_line(
 
 
 def _kind_subheader(kind: str | None, reason: str) -> str:
-    """``crypto · accepted_invalid`` — kind and reason keywords."""
+    """``crypto · accepted_invalid`` - kind and reason keywords."""
     kindword = kind or "other"
     return f"{kindword} · {reason}"
 
@@ -70,7 +70,7 @@ def _finding_lines(g: dict[str, Any]) -> list[str]:
     mech = g.get("mechanism") or ""
     summary = g.get("summary") or g.get("reason") or ""
     head = " ".join(p for p in (op, mech) if p)
-    headline = f"[{g.get('count', 0)}] {head} — {summary}".replace("  ", " ").strip()
+    headline = f"[{g.get('count', 0)}] {head} - {summary}".replace("  ", " ").strip()
 
     detail_parts: list[str] = []
     expected = g.get("expected_ckr")
@@ -139,7 +139,7 @@ def _xfail_section(groups: list[dict[str, Any]]) -> list[str]:
         op = top.get("operation") or ""
         mech = top.get("mechanism") or ""
         example = " ".join(p for p in (op, mech) if p) or (top.get("summary") or "")
-        lines.append(f"[{n}] {reason} — e.g. {example}".rstrip())
+        lines.append(f"[{n}] {reason} - e.g. {example}".rstrip())
     lines.append("")
     return lines
 
@@ -154,7 +154,7 @@ def _oneliner_section(groups: list[dict[str, Any]]) -> list[str]:
     unclassified = [g for g in groups if g.get("reason") == "unclassified"]
     if unclassified:
         n = sum(int(g.get("count", 0)) for g in unclassified)
-        lines.append(f"⚪ {n} unclassified — un-migrated fail/xfail; see .jsonl")
+        lines.append(f"⚪ {n} unclassified - un-migrated fail/xfail; see .jsonl")
     return lines
 
 
@@ -173,7 +173,7 @@ def render_provider(
     ``incomplete`` emits an ``⚠ INCOMPLETE COVERAGE`` banner when ``True``.
     """
     out: list[str] = [
-        f"# {provider} — conformance report",
+        f"# {provider} - conformance report",
         _counts_line(groups, pass_count, crash_limited),
         "",
     ]
@@ -192,7 +192,7 @@ def render_provider(
         out.append("")
         for g in crashes:
             target = g.get("test_file") or g.get("summary") or "?"
-            out.append(f"[{g.get('count', 0)}] {target} — {g.get('summary', 'process crashed')}")
+            out.append(f"[{g.get('count', 0)}] {target} - {g.get('summary', 'process crashed')}")
         out.append("")
 
     for severity, marker in _FAIL_SECTIONS:

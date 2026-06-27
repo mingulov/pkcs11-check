@@ -192,7 +192,7 @@ def _write_index(
         )
     lines.append("")
     lines.append("See [_universal.md](_universal.md) for the full correlation.")
-    (out_dir / "_index.md").write_text("\n".join(lines) + "\n")
+    (out_dir / "_index.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _write_universal(correlation: dict[str, Any], out_dir: Path) -> None:
@@ -202,15 +202,15 @@ def _write_universal(correlation: dict[str, Any], out_dir: Path) -> None:
         names = ", ".join(theme["provider_names"])
         lines.append(
             f"- [{theme['providers']}] {theme['reason']} · {theme['kind'] or '-'} · {mech} "
-            f"— {names}"
+            f"- {names}"
         )
     lines.append("")
     lines.append("## single-provider outliers")
     for theme in correlation["outliers"]:
         mech = theme["mechanism"] or "-"
         names = ", ".join(theme["provider_names"])
-        lines.append(f"- {theme['reason']} · {theme['kind'] or '-'} · {mech} — {names}")
-    (out_dir / "_universal.md").write_text("\n".join(lines) + "\n")
+        lines.append(f"- {theme['reason']} · {theme['kind'] or '-'} · {mech} - {names}")
+    (out_dir / "_universal.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:

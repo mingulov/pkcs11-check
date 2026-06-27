@@ -9,7 +9,7 @@ dict. They come from two places:
   :func:`pkcs11_check.core.file_runner.crash_classification` (the process was
   dead, so they could not be emitted in-test).
 
-Findings are grouped on a *readable* tuple key — no hashes anywhere — so the
+Findings are grouped on a *readable* tuple key - no hashes anywhere - so the
 output stays inspectable. The key is::
 
     (test_file, reason, kind, mechanism, operation, tuple(expected_ckr or []), actual_ckr)
