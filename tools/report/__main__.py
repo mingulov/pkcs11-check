@@ -67,26 +67,6 @@ def crashes_from_results(results_json: Path | None) -> list[dict[str, Any]]:
     return crashes
 
 
-def passed_from_results(results_json: Path | None) -> int | None:
-    """Read ``summary.passed`` from a ``results.json`` file, if available.
-
-    Returns ``None`` when the file is missing/unreadable or carries no
-    ``summary.passed`` integer, so the report header simply omits the
-    ``passed`` token in that case.
-    """
-    if results_json is None:
-        return None
-    try:
-        payload = json.loads(results_json.read_text())
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
-        return None
-    summary = payload.get("summary") if isinstance(payload, dict) else None
-    if not isinstance(summary, dict):
-        return None
-    passed = summary.get("passed")
-    return passed if isinstance(passed, int) else None
-
-
 def _summary_from_results(results_json: Path | None) -> dict[str, Any]:
     """Read the ``summary`` dict from a ``results.json`` file, or return ``{}``."""
     if results_json is None:

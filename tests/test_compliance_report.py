@@ -483,6 +483,44 @@ def test_generate_report_includes_compliance_notes_from_result_units(tmp_path: P
     ]
 
 
+def test_crash_limited_unit_is_skip_class_not_error(tmp_path: Path) -> None:
+    """A crash_limited-only unit must yield a SKIP-class status, not ERROR.
+
+    Regression guard: _outcome_from_status used to fall through to 'error' for
+    'crash_limited' (which was absent from _OUTCOME_KEYS), causing abandoned tests
+    to inflate the error counter and produce an ERROR function classification.
+    """
+    results_file = tmp_path / "results.json"
+    results_file.write_text(
+        json.dumps(
+            {
+                "tool": "pkcs11-check",
+                "kind": "test-run",
+                "summary": {"crash_limited": 5},
+                "units": [
+                    {
+                        "target": "src/pkcs11_check/testcases/test_sign.py",
+                        "status": "crash_limited",
+                    }
+                ],
+            }
+        )
+    )
+
+    counts = _parse_test_results(results_file)
+
+    # The abandoned tests must land in crash_limited, not error
+    assert counts["test_sign"]["error"] == 0
+    assert counts["test_sign"]["crash_limited"] == 1
+    assert counts["test_sign"]["tests"] == 1
+
+    # Function classification must be SKIP (not ERROR) for a crash_limited-only file
+    functions = _classify_functions(counts)
+    # C_Sign maps to "test_sign" (via _FUNCTION_KEYWORDS); its status must be SKIP
+    assert functions["C_Sign"]["status"] == "SKIP"
+    assert functions["C_Sign"]["error"] == 0
+
+
 def test_generate_report_includes_compliance_notes_from_report_jsonl(tmp_path: Path) -> None:
     clear_notes()
     results_file = tmp_path / "results.json"

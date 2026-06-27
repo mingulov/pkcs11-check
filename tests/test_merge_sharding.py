@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from pkcs11_check.core.merge import merge_results_payloads, merge_shard_dirs
+from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS
 from pkcs11_check.core.sharding import (
     duration_by_unit_from_results,
     estimate_shard_load,
@@ -153,6 +154,44 @@ def test_merge_results_payloads_sums_and_concats() -> None:
         merged["summary"][k] for k in ("passed", "failed", "skipped")
     )
     assert [u["target"] for u in merged["units"]] == ["a.py", "b.py"]
+
+
+def test_merge_recomputes_child_metrics_from_units() -> None:
+    # Payload 1: a unit whose tests[] contains a child-subprocess crash finding.
+    # The longrepr contains "module crashed with signal 11" which is one of the
+    # _CHILD_CRASH_MARKERS recognised by compute_child_subprocess_counts.
+    p1: dict[str, Any] = {
+        "summary": {"failed": 1},
+        "units": [
+            {
+                "target": "security/test_bounds.py",
+                "status": "failed",
+                "tests": [
+                    {
+                        "outcome": "failed",
+                        "longrepr": "AssertionError: module crashed with signal 11",
+                    }
+                ],
+            }
+        ],
+    }
+    # Payload 2: crash_limited unit — tests abandoned after per-file crash budget.
+    p2: dict[str, Any] = {
+        "summary": {"crash_limited": 2},
+        "units": [
+            {
+                "target": "security/test_overflow.py",
+                "status": "crash_limited",
+            }
+        ],
+    }
+    merged = merge_results_payloads([p1, p2], coverage=None)
+    s = merged["summary"]
+    assert s["child_crash"] == 1
+    assert s["child_timeout"] == 0
+    assert s["incomplete"] is True
+    # child_crash / child_timeout are a subset of failed — they must NOT inflate total
+    assert s["total"] == sum(s[k] for k in RESULT_OUTCOME_KEYS)
 
 
 def test_merge_counts_crash_limited_into_total() -> None:

@@ -23,6 +23,7 @@ _OUTCOME_KEYS: tuple[str, ...] = (
     "error",
     "crashed",
     "timeout",
+    "crash_limited",
 )
 
 _COMPLIANCE_NOTE_FIELDS: tuple[str, ...] = (
