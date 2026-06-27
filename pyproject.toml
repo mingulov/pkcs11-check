@@ -71,6 +71,11 @@ exclude = [
     ".github/",
     "AGENTS.md",
     "CLAUDE.md",
+    # The PKCS#11 header is a dev-time codegen input only (see
+    # scripts/generate_raw_standard.py); the shipped ctypes bindings are
+    # generated from it. Keep it in the repo but do not ship it in the sdist
+    # or wheel - end users never need it.
+    "/third_party/",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -12,16 +12,17 @@ commit for each fetched source; a regression test enforces that the two stay
 in sync. Exact commit hashes are intentionally not repeated in this file, since
 the fetched data is updated over time and the pin lives in `sources.toml`.
 
-## Bundled in the source distribution
+## Generated from a public-domain header
 
 ### `latchset/pkcs11-headers` - Public Domain
 
-The PKCS#11 v3.2 C header `pkcs11.h` lives in the source tree at
-`third_party/pkcs11-headers/3.2/pkcs11.h` and ships in the sdist. It is the
-dev-time input to `scripts/generate_raw_standard.py`, which produces the
-ctypes binding modules (e.g. `pkcs11_check/raw/types_std.py`) that
-pkcs11-check ships in the wheel - the wheel itself does not contain a
-literal copy of the header.
+The PKCS#11 v3.2 C header `pkcs11.h` lives in the source repository at
+`third_party/pkcs11-headers/3.2/pkcs11.h`. It is the dev-time input to
+`scripts/generate_raw_standard.py`, which produces the ctypes binding modules
+(e.g. `pkcs11_check/raw/types_std.py`) that pkcs11-check ships in the wheel.
+The header itself is *not* shipped in the installable package (it is excluded
+from both the wheel and the sdist); only the generated bindings are
+distributed, and the header is public domain.
 
 The header originates from the `public-domain/3.2/` subtree of
 [`latchset/pkcs11-headers`](https://github.com/latchset/pkcs11-headers); the
