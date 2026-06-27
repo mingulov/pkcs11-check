@@ -7,8 +7,10 @@ either bundles in its source distribution or downloads at runtime via
 
 The fetch CLI displays the same per-source license information before each
 download. The list below mirrors the structured fields in
-`src/pkcs11_check/testcases/data/sources.toml`; a regression test enforces
-that the two stay in sync.
+`src/pkcs11_check/testcases/data/sources.toml`, which records the exact pinned
+commit for each fetched source; a regression test enforces that the two stay
+in sync. Exact commit hashes are intentionally not repeated in this file, since
+the fetched data is updated over time and the pin lives in `sources.toml`.
 
 ## Bundled in the source distribution
 
@@ -22,9 +24,8 @@ pkcs11-check ships in the wheel - the wheel itself does not contain a
 literal copy of the header.
 
 The header originates from the `public-domain/3.2/` subtree of
-[`latchset/pkcs11-headers`](https://github.com/latchset/pkcs11-headers) at
-commit
-[`c5e61990c5621a9b955fc208644fe8145ac0a75d`](https://github.com/latchset/pkcs11-headers/tree/c5e61990c5621a9b955fc208644fe8145ac0a75d).
+[`latchset/pkcs11-headers`](https://github.com/latchset/pkcs11-headers); the
+exact source commit is recorded in `third_party/pkcs11-headers/3.2/README.md`.
 The file itself opens with `/* This file is in the Public Domain */`, and
 the upstream repo records `public-domain/` as its public-domain subtree
 (separate from an `unlicensed/` subtree that pkcs11-check does not use).
@@ -39,20 +40,19 @@ files referenced below land on disk alongside the test vectors.
 
 ### `C2SP/wycheproof` - Apache-2.0
 
-[`C2SP/wycheproof`](https://github.com/C2SP/wycheproof) at commit
-[`6d7cccd0fcb1917368579adeeac10fe802f1b521`](https://github.com/C2SP/wycheproof/tree/6d7cccd0fcb1917368579adeeac10fe802f1b521).
+[`C2SP/wycheproof`](https://github.com/C2SP/wycheproof) (pinned commit in
+`sources.toml`).
 
 License:
-[`LICENSE`](https://github.com/C2SP/wycheproof/blob/6d7cccd0fcb1917368579adeeac10fe802f1b521/LICENSE)
+[`LICENSE`](https://github.com/C2SP/wycheproof/blob/HEAD/LICENSE)
 - Apache License, Version 2.0.
 
 After fetch the file lands at
-`data/wycheproof/wycheproof-6d9d6de.../LICENSE`.
+`data/wycheproof/wycheproof-<commit>/LICENSE`.
 
 ### `C2SP/CCTV` - mixed (BSD-3-Clause and BSD-1-Clause)
 
-[`C2SP/CCTV`](https://github.com/C2SP/CCTV) at commit
-[`1e3d2860d46e94e777e1b17c7a6f2436387e3ecc`](https://github.com/C2SP/CCTV/tree/1e3d2860d46e94e777e1b17c7a6f2436387e3ecc).
+[`C2SP/CCTV`](https://github.com/C2SP/CCTV) (pinned commit in `sources.toml`).
 
 The CCTV repository does **not** carry a single top-level `LICENSE` file.
 pkcs11-check uses six subdirectories from this archive (`ed25519/`,
@@ -60,7 +60,7 @@ pkcs11-check uses six subdirectories from this archive (`ed25519/`,
 
 | Subdirectory | License | Record |
 |---|---|---|
-| `ed25519/` | BSD-3-Clause | [`ed25519/LICENSE`](https://github.com/C2SP/CCTV/blob/1e3d2860d46e94e777e1b17c7a6f2436387e3ecc/ed25519/LICENSE) (Google LLC / Filippo Valsorda) |
+| `ed25519/` | BSD-3-Clause | [`ed25519/LICENSE`](https://github.com/C2SP/CCTV/blob/HEAD/ed25519/LICENSE) (Google LLC / Filippo Valsorda) |
 | `ML-DSA/`, `ML-KEM/`, `RFC6979/`, `jq255/`, `keygen/` | BSD 1-Clause (C2SP umbrella, see below) | no per-subdir LICENSE file at the pinned commit |
 
 C2SP's central spec repository
@@ -77,17 +77,16 @@ itself lives at
 in `C2SP/C2SP`.
 
 After fetch, `ed25519/LICENSE` lands at
-`data/cctv/CCTV-67c1397.../ed25519/LICENSE`.
+`data/cctv/CCTV-<commit>/ed25519/LICENSE`.
 
 ### `usnistgov/ACVP-Server` - NIST Public Domain
 
-[`usnistgov/ACVP-Server`](https://github.com/usnistgov/ACVP-Server) at
-commit
-[`15c0f3deeefbfa8cb6cd32a99e1ca3b738c66bf0`](https://github.com/usnistgov/ACVP-Server/tree/15c0f3deeefbfa8cb6cd32a99e1ca3b738c66bf0).
+[`usnistgov/ACVP-Server`](https://github.com/usnistgov/ACVP-Server) (pinned
+commit in `sources.toml`).
 
 The ACVP-Server repository carries **no** dedicated `LICENSE` file. License
 terms are embedded in
-[`README.md`](https://github.com/usnistgov/ACVP-Server/blob/15c0f3deeefbfa8cb6cd32a99e1ca3b738c66bf0/README.md):
+[`README.md`](https://github.com/usnistgov/ACVP-Server/blob/HEAD/README.md):
 
 > NIST-developed software is provided by NIST as a public service. You may
 > use, copy, and distribute copies of the software in any medium, provided
@@ -98,19 +97,19 @@ terms are embedded in
 SPDX has no standard identifier for this NIST wording; we use
 `LicenseRef-NIST-PD` for machine-readable purposes.
 
-After fetch the README lands at `data/acvp/ACVP-Server-15c0f3d.../README.md`.
+After fetch the README lands at `data/acvp/ACVP-Server-<commit>/README.md`.
 
 ### `C2SP/x509-limbo` - Apache-2.0
 
-[`C2SP/x509-limbo`](https://github.com/C2SP/x509-limbo) at commit
-[`1983423436313a6605461056470e21242d066416`](https://github.com/C2SP/x509-limbo/tree/1983423436313a6605461056470e21242d066416).
+[`C2SP/x509-limbo`](https://github.com/C2SP/x509-limbo) (pinned commit in
+`sources.toml`).
 
 License:
-[`LICENSE`](https://github.com/C2SP/x509-limbo/blob/1983423436313a6605461056470e21242d066416/LICENSE)
+[`LICENSE`](https://github.com/C2SP/x509-limbo/blob/HEAD/LICENSE)
 - Apache License, Version 2.0.
 
 After fetch the file lands at
-`data/x509-limbo/x509-limbo-086b0da.../LICENSE`.
+`data/x509-limbo/x509-limbo-<commit>/LICENSE`.
 
 ## Notes
 

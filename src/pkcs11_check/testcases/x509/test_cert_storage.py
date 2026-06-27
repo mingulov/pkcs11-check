@@ -53,8 +53,9 @@ def test_cert_storage_template(p11_raw_session: Any, name: str, template: dict[i
 
 
 def test_cert_storage_requires_subject(p11_raw_session: Any) -> None:
-    """Negative/conformance: omitting the mandatory CKA_SUBJECT (certificate_objects.md ^1^
-    -- MUST be specified at creation) must be rejected. CKR_TEMPLATE_INCOMPLETE -> pass
+    """Negative/conformance: omitting the mandatory CKA_SUBJECT (OASIS PKCS#11
+    certificate-objects ^1^ -- MUST be specified at creation) must be rejected.
+    CKR_TEMPLATE_INCOMPLETE -> pass
     (correct enforcement); another clean reject -> xfail (nonspec_reject); accepted -> xfail
     (honest_deviation -- the module stored a cert omitting a mandatory attribute). A crash or
     non-refusal CKR propagates as a real finding via attempt_store_cert."""

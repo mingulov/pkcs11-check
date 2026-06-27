@@ -12,7 +12,7 @@ parameter structures (CK_SSL3_RANDOM_DATA, CK_SSL3_MASTER_KEY_DERIVE_PARAMS,
 CK_SSL3_KEY_MAT_PARAMS). The raw packers in pkcs11_check.raw.pack provide
 proper struct packing for these.
 
-OASIS spec: ssl.md
+OASIS PKCS#11 v3.2 spec: SSL.
 """
 
 from __future__ import annotations

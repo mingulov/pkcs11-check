@@ -3,6 +3,13 @@
 This snapshot describes the product tests under `src/pkcs11_check/testcases/`.
 It does not include pkcs11-check's own meta-tests under `tests/`.
 
+> *Point-in-time snapshot.* These counts are from late May 2026 (around the
+> v0.1.1 release) and are already out of date: the suite grows and is
+> reclassified with every release, so the exact figures below are illustrative,
+> not current. Treat them as orders of magnitude (">100k product tests"), not
+> exact totals. For the live count, run pytest collection (`--collect-only`)
+> over `src/pkcs11_check/testcases/`.
+
 The counts were verified on 2026-05-25 with pytest collection metadata. They
 are collected test items before provider-specific runtime skips, xfails,
 failures, crashes, timeouts, or marker filters.

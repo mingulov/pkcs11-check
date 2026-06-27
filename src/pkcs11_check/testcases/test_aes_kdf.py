@@ -3,7 +3,7 @@
 Covers CKM_AES_ECB_ENCRYPT_DATA and CKM_AES_CBC_ENCRYPT_DATA - mechanisms
 that derive new keys by encrypting supplied data with a base key.
 
-OASIS spec: key_derivation_by_data_encryption_aes-des.md
+OASIS PKCS#11 v3.2 spec: AES/DES key derivation by data encryption.
 """
 
 from __future__ import annotations

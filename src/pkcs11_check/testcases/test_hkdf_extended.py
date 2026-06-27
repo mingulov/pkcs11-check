@@ -3,7 +3,7 @@
 Covers CKM_HKDF_DATA and CKM_HKDF_KEY_GEN.
 CKM_HKDF_DERIVE is tested in test_kdf.py.
 
-OASIS spec: hkdf_mechanisms.md
+OASIS PKCS#11 v3.2 spec: HKDF mechanisms.
 
 Uses the raw PKCS#11 API via pkcs11_check.raw.
 """

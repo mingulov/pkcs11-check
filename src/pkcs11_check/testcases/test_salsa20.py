@@ -7,7 +7,7 @@ Covers:
 
 Note: CKM_CHACHA20_POLY1305 (AEAD combined) is tested in wycheproof/test_wycheproof_chacha.py.
 
-OASIS spec: stream_ciphers.md
+OASIS PKCS#11 v3.2 spec: stream ciphers.
 """
 
 from __future__ import annotations

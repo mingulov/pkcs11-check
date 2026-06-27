@@ -4,7 +4,7 @@ Tests AES key wrap modes using official NIST ACVP vectors:
 - AES-KW - Key Wrap (RFC 3394)
 - AES-KWP - Key Wrap with Padding (RFC 5649)
 
-Per OASIS PKCS#11 v3.2 spec (aes_key_wrap.md), CKM_AES_KEY_WRAP and
+Per OASIS PKCS#11 v3.2 spec, CKM_AES_KEY_WRAP and
 CKM_AES_KEY_WRAP_KWP support both C_Encrypt/C_Decrypt (raw data) and
 C_WrapKey/C_UnwrapKey (key objects).  ACVP vectors test raw byte-level
 wrapping, so we use C_Encrypt/C_Decrypt which operate on raw data

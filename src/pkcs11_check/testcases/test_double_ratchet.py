@@ -13,7 +13,7 @@ first and skips cleanly.  If a module claims support the tests attempt a basic
 operation and xfail on expected not-yet-operational errors rather than hiding
 them with a broad catch.
 
-OASIS spec: double_ratchet.md (Signal Double Ratchet section)
+OASIS PKCS#11 v3.2 spec: Signal Double Ratchet.
 """
 
 from __future__ import annotations

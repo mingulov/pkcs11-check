@@ -7,7 +7,7 @@ It requires a CK_CMS_SIG_PARAMS structure containing a certificate handle, signi
 mechanism OID, digest mechanism OID, content type OID, and requested/required attributes.
 This mechanism is extremely rarely implemented by PKCS#11 modules.
 
-OASIS spec: cms_mechanisms.md
+OASIS PKCS#11 v3.2 spec: CMS mechanisms.
 """
 
 from __future__ import annotations
