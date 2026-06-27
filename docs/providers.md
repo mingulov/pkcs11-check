@@ -35,6 +35,12 @@ under instrumentation. Those are marked *ASAN* below.
 | wolfPKCS11 (wolfTPM backend) | C | [wolfSSL/wolfPKCS11](https://github.com/wolfSSL/wolfPKCS11) + [wolfSSL/wolfTPM](https://github.com/wolfSSL/wolfTPM) |
 | OP-TEE PKCS#11 TA | C (TEE) | [OP-TEE/optee_os](https://github.com/OP-TEE/optee_os) |
 
+No physical secure hardware is required: the TPM-backed modules run against a
+software TPM. `tpm2-pkcs11` is exercised against a software TPM provided by
+[swtpm](https://github.com/stefanberger/swtpm) +
+[libtpms](https://github.com/stefanberger/libtpms); the wolfTPM backend uses
+wolfTPM's built-in simulator; and the OP-TEE TA runs inside a QEMU-emulated TEE.
+
 ## Cloud KMS bridges
 
 | Implementation | Language | Upstream |
