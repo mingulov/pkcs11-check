@@ -150,6 +150,8 @@ move over time and are intentionally not pinned here.
   preservation checks, and broader mutable-output simulator targets are tracked
   as future interop work.
 
+Planned and considered work is listed in [docs/roadmap.md](docs/roadmap.md).
+
 ## Architecture
 
 ```
@@ -179,6 +181,8 @@ src/pkcs11_check/
 - `docs/test-universe.md` - collected product-test counts by group
 - `docs/mechanism-output-parameters.md` - generated IV/nonce/tag output-parameter coverage
 - `docs/file-isolation.md` - isolation runner design
+- `docs/providers.md` - PKCS#11 implementations pkcs11-check is exercised against
+- `docs/roadmap.md` - planned and considered work
 
 ## License
 

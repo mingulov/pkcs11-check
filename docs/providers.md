@@ -26,6 +26,10 @@ under instrumentation. Those are marked *ASAN* below.
 | FreeHSM (C) *(ASAN)* | C | [afchine1337/freehsm-c](https://github.com/afchine1337/freehsm-c) |
 | BouncyHSM | C# | [harrison314/BouncyHsm](https://github.com/harrison314/BouncyHsm) |
 | Craton HSM (core) | - | [craton-co/craton-hsm-core](https://github.com/craton-co/craton-hsm-core) |
+| Cryptech Open HSM | C | [cryptech.is sw/pkcs11](https://git.cryptech.is/sw/pkcs11) |
+
+Cryptech is the open-source Cryptech HSM stack; in this suite it is exercised as
+an in-process software build (no FPGA board required).
 
 ## TPM-backed
 
@@ -35,20 +39,30 @@ under instrumentation. Those are marked *ASAN* below.
 | wolfPKCS11 (wolfTPM backend) | C | [wolfSSL/wolfPKCS11](https://github.com/wolfSSL/wolfPKCS11) + [wolfSSL/wolfTPM](https://github.com/wolfSSL/wolfTPM) |
 | OP-TEE PKCS#11 TA | C (TEE) | [OP-TEE/optee_os](https://github.com/OP-TEE/optee_os) |
 
-## Cloud KMS bridges
+No physical secure hardware is required: the TPM-backed modules run against a
+software TPM. `tpm2-pkcs11` is exercised against a software TPM provided by
+[swtpm](https://github.com/stefanberger/swtpm) +
+[libtpms](https://github.com/stefanberger/libtpms); the wolfTPM backend uses
+wolfTPM's built-in simulator; and the OP-TEE TA runs inside a QEMU-emulated TEE.
+
+## Network and cloud key services
 
 | Implementation | Language | Upstream |
 |---|---|---|
-| Google Cloud KMS PKCS#11 (kmsp11) | C++ | [GoogleCloudPlatform/kms-integrations](https://github.com/GoogleCloudPlatform/kms-integrations) |
-| Cosmian KMS | Rust | [cosmian/kms](https://github.com/cosmian/kms) |
-| Nitrokey NetHSM | Rust | [Nitrokey/nethsm-pkcs11](https://github.com/Nitrokey/nethsm-pkcs11) |
+| Google Cloud KMS (kmsp11) | C++ | [GoogleCloudPlatform/kms-integrations](https://github.com/GoogleCloudPlatform/kms-integrations) |
+| Cosmian KMS (key-management server) | Rust | [cosmian/kms](https://github.com/cosmian/kms) |
+| Nitrokey NetHSM (network HSM) | Rust | [Nitrokey/nethsm-pkcs11](https://github.com/Nitrokey/nethsm-pkcs11) |
+
+NetHSM is a network HSM accessed over a REST API (not a hosted cloud KMS); in
+this suite the NetHSM appliance runs as a co-located container and the
+nethsm-pkcs11 module bridges PKCS#11 to it. kmsp11 bridges to Google Cloud KMS
+(exercised against a local fake), and Cosmian KMS runs as a local server.
 
 ## Smart cards and simulators
 
 | Implementation | Language | Upstream |
 |---|---|---|
 | Pico HSM (SmartCard-HSM emulation) | C | [polhenarejos/pico-hsm](https://github.com/polhenarejos/pico-hsm) |
-| Cryptech Open HSM | C | [cryptech.is sw/pkcs11](https://git.cryptech.is/sw/pkcs11) |
 | IsoApplet on jcardsim | Java | [philipWendland/IsoApplet](https://github.com/philipWendland/IsoApplet) + [ph4r05/jcardsim](https://github.com/ph4r05/jcardsim) |
 | PivApplet (PIV smart card) | Java | [arekinath/PivApplet](https://github.com/arekinath/PivApplet) |
 
