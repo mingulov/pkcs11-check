@@ -73,6 +73,18 @@ uv run pkcs11-check compare-coverage old/coverage.json new/coverage.json --outpu
 state. Use it before trusting a speed change that rearranges sharding, skips, or
 fast paths.
 
+Compare two full result sets (per-target status crossings + summary-count deltas):
+
+```bash
+uv run pkcs11-check compare-results baseline/results.json current/results.json
+uv run pkcs11-check compare-results base.json curr.json -v        # per-target detail
+uv run pkcs11-check compare-results base.json curr.json --no-fail # report without failing
+```
+
+`compare-results` exits 1 when the candidate regresses (new failures, lost coverage of a
+previously-exercised target, an increase in the failure or crash/timeout count, or an
+unrecognized unit status) — use it for release sign-off and before trusting a refactor.
+
 ## Per-provider classification report
 
 Roll at-source classifications (and runner-side crash findings) up into per-provider
@@ -97,7 +109,4 @@ form), `--out` (output directory). Writes `<provider>.md` + `<provider>.jsonl` p
 
 ## Provider builds & the Docker test matrix
 
-Local provider builds (`local-builds/`), the Docker target matrix
-(`docker/` + the pooled `test_pool.py` runner), and result-comparison tooling live in
-the **development workspace** (`pkcs11-check-ws`), not in this repo. See the workspace
-docs for building providers and running the Docker conformance matrix.
+The Docker target matrix and the pooled `test_pool.py` runner live in the **development workspace** (`pkcs11-check-ws`), not in this repo. See the workspace docs for building providers and running the Docker conformance matrix.

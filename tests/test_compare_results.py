@@ -1,5 +1,9 @@
+import json
 from pathlib import Path
 
+from typer.testing import CliRunner
+
+from pkcs11_check.cli.app import app
 from pkcs11_check.core.compare_results import (
     ResultsComparison,
     compare_results,
@@ -66,6 +70,51 @@ def test_status_class_covers_every_framework_unit_status() -> None:
     # real (non-"unknown") class. A new status added to the producer fails here.
     for status in UNIT_STATUS_PRIORITY:
         assert status_class(status) != "unknown", f"unhandled unit status: {status}"
+
+
+# ---------------------------------------------------------------------------
+# CLI smoke tests
+# ---------------------------------------------------------------------------
+
+
+def _write(p: Path, units: list[tuple[str, str]], summary: dict[str, int]) -> None:
+    p.write_text(
+        json.dumps({"units": [{"target": t, "status": s} for t, s in units], "summary": summary})
+    )
+
+
+def test_cli_exit_0_when_no_regression(tmp_path: Path) -> None:
+    base = tmp_path / "b.json"
+    curr = tmp_path / "c.json"
+    _write(base, [("a.py", "passed")], {"passed": 1})
+    _write(curr, [("a.py", "passed")], {"passed": 1})
+    r = CliRunner().invoke(app, ["compare-results", str(base), str(curr)])
+    assert r.exit_code == 0
+
+
+def test_cli_exit_1_on_regression(tmp_path: Path) -> None:
+    base = tmp_path / "b.json"
+    curr = tmp_path / "c.json"
+    _write(base, [("a.py", "passed")], {"passed": 1})
+    _write(curr, [("a.py", "crashed")], {"crashed": 1})
+    r = CliRunner().invoke(app, ["compare-results", str(base), str(curr)])
+    assert r.exit_code == 1
+
+
+def test_cli_no_fail_forces_exit_0_on_regression(tmp_path: Path) -> None:
+    base = tmp_path / "b.json"
+    curr = tmp_path / "c.json"
+    _write(base, [("a.py", "passed")], {"passed": 1})
+    _write(curr, [("a.py", "crashed")], {"crashed": 1})
+    r = CliRunner().invoke(app, ["compare-results", str(base), str(curr), "--no-fail"])
+    assert r.exit_code == 0
+
+
+def test_cli_exit_2_on_missing_file(tmp_path: Path) -> None:
+    r = CliRunner().invoke(
+        app, ["compare-results", str(tmp_path / "nope.json"), str(tmp_path / "nope2.json")]
+    )
+    assert r.exit_code == 2
 
 
 def test_load_results_reads_statuses_the_writer_produces(tmp_path: Path) -> None:
