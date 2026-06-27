@@ -133,27 +133,20 @@ Test categories:
 | Security | Attribute fuzz, Tookan, handle reuse |
 | Stress | Threading, resource exhaustion |
 
-## Validation snapshot
+## Implementations exercised
 
-These are the modules used in the current validation snapshot - pkcs11-check runs against **any** PKCS#11 module. Versions are current and may change.
-
-| Module | Version | Status |
-|--------|---------|--------|
-| SoftHSM2 | 2.7.0 | Full support |
-| Kryoptic | 1.5.1+PQC | Full support (v3.2) |
-| NSS softokn | system | Crypto services (slot 0) |
-| OpenCryptoki | 3.27.0 | Docker only |
-| pkcs11-mock | 2.0.0 | Stub testing |
-| tpm2-pkcs11 | 1.10.0 | Hardware TPM |
-| BouncyHSM | 2.1.1 | Docker only |
-| wolfPKCS11 | 2.0.0-stable / master | Docker only |
-| corePKCS11 | 3.6.4 | Docker only |
+pkcs11-check runs against **any** PKCS#11 module. It is regularly exercised
+against a broad set of open-source implementations - software HSMs, a TPM stack,
+cloud KMS bridges, smart-card simulators, and a TEE - listed with upstream links
+in [docs/providers.md](docs/providers.md). Several C/C++ implementations are
+additionally run under a separate AddressSanitizer + UBSan build. Exact versions
+move over time and are intentionally not pinned here.
 
 ## Known limitations
 
 - SO login is not implemented yet, so trusted-certificate import with
   `CKA_TRUSTED=True` is not fully covered through `CKU_SO` workflows.
-- CloudHSM/Thales in-band IV profiles, proxy/loader mutable-parameter
+- Provider-generated in-band IV profiles, proxy/loader mutable-parameter
   preservation checks, and broader mutable-output simulator targets are tracked
   as future interop work.
 

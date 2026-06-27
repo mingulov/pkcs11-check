@@ -101,18 +101,8 @@ after the call.
   https://thalesdocs.com/gphsm/ptk/protectserver3/docs/ps_ptk_docs/ptkc_programming/ptkc_mechs/ckm_aes_gcm/index.html
 - Thales Luna `CKM_AES_GCM`:
   https://thalesdocs.com/gphsm/luna/7/docs/pci/Content/sdk/mechanisms/CKM_AES_GCM.htm
-- SoftHSM2 upstream:
-  https://github.com/softhsm/SoftHSMv2
-- BouncyHSM upstream:
-  https://github.com/harrison314/BouncyHsm
-- pkcs11-mock upstream:
-  https://github.com/Pkcs11Interop/pkcs11-mock
-- tpm2-pkcs11 upstream:
-  https://github.com/tpm2-software/tpm2-pkcs11
-- OpenSC upstream:
-  https://github.com/OpenSC/OpenSC
-- p11-kit upstream:
-  https://github.com/p11-glue/p11-kit
+- PKCS#11 implementations pkcs11-check is exercised against (with upstream
+  links): see [providers.md](providers.md).
 - NVIDIA DRIVE OS PKCS#11 sample and vendor-extension docs:
   https://developer.nvidia.com/docs/drive/drive-os/7.0.3/public/drive-os-linux-sdk/production-deployment/PKCS_11SampleApplication71.html
   https://developer.nvidia.com/docs/drive/drive-os/7.0.3/public/drive-os-linux-sdk-api-ref/group__nvpkcs11__ext.html

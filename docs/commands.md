@@ -63,7 +63,7 @@ uv run pkcs11-check fetch-disabled           # fetch disabled-tests baseline
 ## Artifact comparison
 
 ```bash
-uv run pkcs11-check compare-coverage artifacts3/wolfpkcs11-pooled artifacts/wolfpkcs11-pooled --fail-on-loss
+uv run pkcs11-check compare-coverage new/module-pooled old/module-pooled --fail-on-loss
 uv run pkcs11-check compare-coverage old/coverage.json new/coverage.json --output json
 ```
 
@@ -101,7 +101,7 @@ pkcs11-check-report --report-log /path/report.jsonl \
 
 # Multi-provider (repeat NAME=path; writes _index.md + _universal.md too):
 pkcs11-check-report \
-    --report-log nss=/p/nss.jsonl --report-log softhsm2=/p/sh.jsonl --out <dir>
+    --report-log module-a=/p/a.jsonl --report-log module-b=/p/b.jsonl --out <dir>
 ```
 
 Flags: `--report-log` (path, or `NAME=path`, repeatable), `--results-json` (optional, same
