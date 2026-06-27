@@ -40,18 +40,10 @@ from pkcs11_check.core.file_runner import (
     postprocess_jsonl_to_unified,
     write_quality_json_report,
 )
+from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS, compute_child_subprocess_counts
 from pkcs11_check.testcases._subprocess_trace import extract_subprocess_rv_trace
 
-_SUMMARY_KEYS = (
-    "passed",
-    "failed",
-    "skipped",
-    "xfailed",
-    "xpassed",
-    "error",
-    "crashed",
-    "timeout",
-)
+_SUMMARY_KEYS = RESULT_OUTCOME_KEYS
 
 
 def _concat_jsonl(paths: list[Path], output_path: Path) -> None:
@@ -228,6 +220,10 @@ def merge_results_payloads(
             summary[key] += int(psum.get(key, 0) or 0)
         units.extend(payload.get("units", []) or [])
     summary["total"] = sum(summary[key] for key in _SUMMARY_KEYS)
+    child_crash, child_timeout = compute_child_subprocess_counts(units)
+    summary["child_crash"] = child_crash
+    summary["child_timeout"] = child_timeout
+    summary["incomplete"] = summary["crash_limited"] > 0
 
     merged: dict[str, Any] = {
         "tool": "pkcs11-check",

@@ -6,6 +6,8 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, MutableMapping
 from typing import Any, Literal, cast
 
+from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS
+
 type SchemaVersion = str
 type SkipReasonCategory = Literal[
     "missing_capability",
@@ -17,16 +19,7 @@ type SkipReasonCategory = Literal[
 
 SCHEMA_VERSION: SchemaVersion = "1"
 _PASSING_OUTCOMES = {"passed", "xpassed"}
-_KNOWN_OUTCOMES = {
-    "passed",
-    "failed",
-    "skipped",
-    "xfailed",
-    "xpassed",
-    "error",
-    "crashed",
-    "timeout",
-}
+_KNOWN_OUTCOMES = set(RESULT_OUTCOME_KEYS)
 _SELECTED_REASON_CATEGORY = {
     "missing_flags": "missing_capability",
     "missing_capability": "missing_capability",
