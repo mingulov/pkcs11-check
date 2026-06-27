@@ -1,6 +1,6 @@
 """TDD meta-tests for D2 import-skip -> xfail conversion.
 
-Audit doc: docs/findings/import-skip-audit.md category D, D2.
+Audit reference: import-skip-audit category D, D2.
 
 D2 covers the EC/Montgomery *private*-key import sites used to set up an ECDH
 derive:

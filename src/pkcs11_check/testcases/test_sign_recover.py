@@ -552,7 +552,6 @@ class TestSignRecoverRecipes:
         NSS deviation: NSS C_VerifyRecover recovers wrong/unexpected data on
         CKM_RSA_X_509 -- the recovered bytes do not match the original padded input.
         This is a bug in NSS's C_VerifyRecover implementation for raw RSA.
-        Tracked in docs/module-issues.md under NSS.
         """
         rs = p11_raw_session
         pub, priv = self._gen_recover_key(rs)
@@ -590,7 +589,6 @@ class TestSignRecoverRecipes:
         NSS deviation: NSS C_VerifyRecover may return valid=True and non-empty
         recovered data for an invalid (all-zero) signature block, failing to
         detect the invalid input.
-        Tracked in docs/module-issues.md under NSS.
         """
         rs = p11_raw_session
         pub, priv = self._gen_recover_key(rs)

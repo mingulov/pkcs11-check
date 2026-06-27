@@ -6,8 +6,7 @@ carrying ``CKF_OS_LOCKING_OK`` (or four application mutex callbacks). With NULL
 ``pInitArgs`` the application promises single-threaded use and the library
 "need not perform any synchronization" -- so concurrent access is undefined
 behavior and a crash is *permitted*. That is documented **misuse**, not a module
-defect, so we never test it; the consequences are documented in
-docs/module-issues.md (SoftHSM2) instead. These tests therefore always
+defect, so we never test it. These tests therefore always
 initialize with ``CKF_OS_LOCKING_OK``.
 
 pkcs11-check's shared-session fixtures initialize with ``C_Initialize(None)``
@@ -15,7 +14,7 @@ pkcs11-check's shared-session fixtures initialize with ``C_Initialize(None)``
 session. It runs in a dedicated **child process** that performs its own
 ``C_Initialize(CKF_OS_LOCKING_OK)``, against a disposable token where one can be
 minted (SoftHSM2) so that even a genuine thread-safety crash cannot corrupt the
-shared token (see docs/destructive-token-isolation.md, Tier 1). A crash
+shared token. A crash
 (``returncode < 0``) or hang under this spec-valid multi-threaded contract is a
 genuine module thread-safety **finding** (FAIL); a module that cannot lock
 (``CKR_CANT_LOCK``) is skipped (capability genuinely absent).
@@ -53,7 +52,7 @@ def _make_throwaway_softhsm_token(p11_config: Any, tmp_path: Path) -> str | None
 
     A genuine thread-safety crash mid-``C_GenerateKey`` corrupts a file-backed
     token (``CKR_TOKEN_NOT_RECOGNIZED`` for every later test). For SoftHSM2 (a
-    relocatable file-backed token, Tier 1 in docs/destructive-token-isolation.md)
+    relocatable file-backed token)
     we mint a throwaway token in ``tmp_path`` so such a crash damages only that,
     never the shared session token.
 

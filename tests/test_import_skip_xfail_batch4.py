@@ -1,6 +1,6 @@
 """TDD meta-tests for Batch 4 import-skip -> xfail conversion (HKDF IKM + ChaCha key).
 
-Audit doc: docs/findings/import-skip-audit.md §4 "Batch 4" + rows A16 (SLH-DSA --
+Audit reference: import-skip-audit §4 "Batch 4" + rows A16 (SLH-DSA --
 already DONE via D3/9a040f98), A17 (DSA -- DEFERRED, no provider hits the leak),
 A18 (HKDF IKM secret-key import), A19 (ChaCha20 key import).
 

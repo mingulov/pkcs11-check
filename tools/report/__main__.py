@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -95,12 +96,29 @@ def _parse_named(values: list[str] | None, default_provider: str | None) -> dict
     return out
 
 
-def _module_issues_text(repo_root: Path) -> str:
-    path = repo_root / "docs" / "module-issues.md"
-    try:
-        return path.read_text()
-    except (FileNotFoundError, OSError):
-        return ""
+def _resolve_module_issues_text(explicit: Path | None, repo_root: Path) -> str:
+    """Resolve module-issues text from explicit path, env var, legacy fallback, or empty.
+
+    Resolution order:
+    1. ``explicit`` arg (``--module-issues`` CLI flag)
+    2. ``PKCS11_CHECK_MODULE_ISSUES`` environment variable
+    3. ``<repo_root>/docs/module-issues.md`` (legacy repo-relative fallback)
+    4. ``""`` (no-op enrichment)
+    """
+    candidates: list[Path] = []
+    if explicit is not None:
+        candidates.append(explicit)
+    env_val = os.environ.get("PKCS11_CHECK_MODULE_ISSUES")
+    if env_val:
+        candidates.append(Path(env_val))
+    candidates.append(repo_root / "docs" / "module-issues.md")
+
+    for path in candidates:
+        try:
+            return path.read_text()
+        except (FileNotFoundError, OSError):
+            pass
+    return ""
 
 
 def _counts(groups: list[dict[str, Any]]) -> dict[str, int]:
@@ -193,6 +211,14 @@ def main(argv: list[str] | None = None) -> int:
         help="provider name (required for single-provider bare-path form)",
     )
     parser.add_argument("--out", required=True, help="output directory")
+    parser.add_argument(
+        "--module-issues",
+        metavar="PATH",
+        help=(
+            "path to module-issues.md for known-issue enrichment "
+            "(overrides PKCS11_CHECK_MODULE_ISSUES env var and the repo-relative default)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     out_dir = Path(args.out)
@@ -202,7 +228,8 @@ def main(argv: list[str] | None = None) -> int:
     results_jsons = _parse_named(args.results_json, args.provider)
 
     repo_root = Path(__file__).resolve().parents[2]
-    module_issues = _module_issues_text(repo_root)
+    explicit_mi = Path(args.module_issues) if args.module_issues else None
+    module_issues = _resolve_module_issues_text(explicit=explicit_mi, repo_root=repo_root)
 
     provider_groups: dict[str, list[dict[str, Any]]] = {}
     for provider, report_path in report_logs.items():

@@ -1,6 +1,6 @@
 """TDD meta-tests for Batch 3a import-skip -> xfail conversion (RSA family).
 
-Audit doc: docs/findings/import-skip-audit.md §4 "Batch 3" + rows A9 (RSA legs),
+Audit reference: import-skip-audit §4 "Batch 3" + rows A9 (RSA legs),
 A10, A11.  EC sites (A13-A15) and the A9 EC private leg are Batch 3b -- NOT here.
 
 Batch 3a moves the RSA-family *raw* importers onto the existing negotiated

@@ -146,10 +146,9 @@ on capability-limited modules (Craton HSM, NetHSM, CrypTech, tpm2, wolfTPM) are 
 capability-boundary-honesty model recording advertised-but-not-operational surface
 rather than failing it. The large Cosmian KMS failure count is a KMS
 key-capability-metadata snapshot still being triaged. Real SIGSEGV crash findings
-remain on NSS, BouncyHSM, wolfPKCS11, FreeHSM-C, and pico-hsm; the Kryoptic
+remain on several tested providers; the Kryoptic
 FIPS/PQC "crashes" are debug-build `abort()`s on internal assertions, not release
-segfaults. See [docs/module-issues.md](docs/module-issues.md) for per-module
-findings.
+segfaults.
 
 ### Requirements
 
@@ -252,10 +251,9 @@ crash is a finding, not a hidden result.
 tpm2) are the capability-boundary-honesty model recording advertised-but-not-
 operational surface rather than failing it; Cosmian KMS is a first-sweep snapshot
 whose failures are largely key-capability metadata gaps still to be triaged. Real
-SIGSEGV crash findings remain on NSS, BouncyHSM, wolfPKCS11, and FreeHSM-C; the 14
+SIGSEGV crash findings remain on several tested providers; the 14
 Kryoptic FIPS/PQC "crashes" are debug-build `abort()`s on internal assertions, not
-release segfaults. See [docs/module-issues.md](docs/module-issues.md) for
-per-module findings.
+release segfaults.
 
 ### Requirements
 
@@ -327,12 +325,9 @@ baseline (PC-6 keygen reclassification + gap-triage), crashes stable.
 17-target matrix, including variants). The **NSS slot-0 row drops to ~2.3k**:
 the `*-slot0` passes are now scoped to the slot-0-unique digest/cipher/KDF files
 instead of re-running the whole slot-1 suite (coverage-neutral). Real SIGSEGV
-crash findings remain on NSS (3-4, including a `C_FindObjectsInit(ULONG_MAX)`
-overflow) and BouncyHSM (3); the 12 Kryoptic FIPS/PQC "crashes" are debug-build
-`abort()`s on internal assertions, not release segfaults. See
-[docs/docker-provider-results.md](docs/docker-provider-results.md) for the full
-17-target matrix and [docs/module-issues.md](docs/module-issues.md) for per-module
-findings.
+crash findings remain on several tested providers (3-4 including a
+`C_FindObjectsInit(ULONG_MAX)` overflow); the 12 Kryoptic FIPS/PQC "crashes" are
+debug-build `abort()`s on internal assertions, not release segfaults.
 
 ## [0.1.2] - 2026-05-31
 
@@ -381,13 +376,11 @@ crash is a finding, not a hidden result.
 | pkcs11-mock v2.0.0 | 230 | 117 | 29,123 | 58 | 0 | 29,528 |
 
 ~1.13M total test executions across the 13 builds. Real SIGSEGV crash findings
-remain on NSS (3-4) and BouncyHSM (3). The 12 "crashes" on the Kryoptic FIPS/PQC
+remain on several tested providers. The 12 "crashes" on the Kryoptic FIPS/PQC
 row are **not** release crashes: that build is compiled in debug mode, so its
 internal debug assertions `abort()` the process on a check failure rather than
 returning an error - they are debug-assertion aborts, not segfaults in a release
-build. See [docs/docker-provider-results.md](docs/docker-provider-results.md) for
-the full 17-target matrix (including variants) and
-[docs/module-issues.md](docs/module-issues.md) for per-module findings.
+build.
 
 ## [0.1.1] - 2026-05-27
 
@@ -456,7 +449,7 @@ and release-readiness hardening needed for use across multiple projects.
   and cross-process isolation checks.
 - Added module quirk registry support so provider-specific behavior is explicit,
   documented, and does not silently hide real failures.
-- Expanded `docs/module-issues.md` and `docs/cve-regression.md` with findings and
+- Expanded CVE / known-issue regression coverage with findings and
   coverage notes discovered during internal provider validation.
 
 ### Release Hardening
@@ -507,8 +500,8 @@ Tested 6 modules, ~510K total test executions across 237 test files:
 Findings are classified under a hardware-token threat model and are not CVE-grade
 vulnerability claims against upstream projects. The two CRITICAL rows are
 upstream-known properties of NSS softokn (software-only token) rather than
-defects; HIGH-severity issues span 4 modules; real SIGSEGV crashes in all 6
-modules. See the v0.1.0 release notes for the severity-model note and full
+defects; HIGH-severity issues span 4 modules; real SIGSEGV crashes across all
+tested modules. See the v0.1.0 release notes for the severity-model note and full
 breakdown.
 
 ### Requirements

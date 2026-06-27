@@ -2641,7 +2641,7 @@ def _escalate_current_file(
 # everything else (hypothesis, pytest-benchmark, pytest-cov, xdist) trims ~0.15s
 # of fixed startup off every isolated unit. hypothesis/benchmark are re-enabled
 # only for the files that use them (detected from source) so test behavior is
-# unchanged. See docs/findings/test-execution-speedup-gap-analysis-2026-06-04.md.
+# unchanged.
 _BASE_SUBPROCESS_PLUGINS: tuple[str, ...] = ("pkcs11-check", "pytest_reportlog", "timeout")
 _HYPOTHESIS_IMPORT_RE = re.compile(r"(?m)^\s*(?:from|import)\s+hypothesis\b")
 _BENCHMARK_FIXTURE_RE = re.compile(r"def\s+\w+\s*\([^)]*\bbenchmark\b")

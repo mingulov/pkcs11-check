@@ -76,8 +76,7 @@ CK_RV traces ride in `user_properties` when `--rv-trace` is on.
 ### Sharded runs
 `pkcs11-check shard-units` plans N balanced file batches; run each batch
 (`PKCS11_CHECK_TARGETS`), then `pkcs11-check merge-shards` reproduces the
-single-run artifacts (a split→merge round-trip is exact). See
-`docs/docker-artifacts.md`.
+single-run artifacts (a split→merge round-trip is exact).
 
 ### Coverage comparison
 `pkcs11-check compare-coverage BASELINE CANDIDATE` compares mechanism coverage
@@ -98,6 +97,9 @@ a baseline state for the same provider.
   registers the markers, fixtures (`p11_module`, `p11_module_session`,
   `p11_raw_session`, `p11_config`), and `--p11-module/--p11-pin/--p11-slot/...`
   options, so the product test cases can run inside an external pytest session.
+  Note: `--p11-module/--p11-pin/--p11-slot` are the pytest-plugin option names
+  (used when invoking `pytest` directly); the `pkcs11-check test` CLI uses the
+  shorter `--module/--pin/--slot` names.
 - **`pkcs11_check.core.preflight`** - crash-safe capability probing
   (`run_preflight_subprocess` → `CapabilityManifest`).
 
@@ -108,4 +110,3 @@ introduced for existing conditions, new JSON keys may be added but existing keys
 keep their meaning, and the marker/fixture/option names above are kept. The
 default profile of a bare `pkcs11-check test` and any change to it is called out
 in the CHANGELOG.
-</content>

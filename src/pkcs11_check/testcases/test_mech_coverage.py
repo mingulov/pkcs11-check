@@ -46,7 +46,7 @@ def _note_registry_blind_spots(catalog: MechanismCatalog) -> int:
             "no registry config -- no per-(mechanism, operation) operability verdict "
             "(harness blind spot, not a module deviation)",
             ComplianceLevel.STANDARD,
-            reference="docs/findings/advertised-not-operational-gap-analysis.md Q2",
+            reference="advertised-not-operational-gap-analysis Q2",
             test_id=caller_qualname,
         )
     if unregistered:
@@ -56,7 +56,7 @@ def _note_registry_blind_spots(catalog: MechanismCatalog) -> int:
             f"{n} advertised {noun} lack registry coverage "
             "(harness blind spots -- see per-mechanism notes above)",
             ComplianceLevel.STANDARD,
-            reference="docs/findings/advertised-not-operational-gap-analysis.md Q2",
+            reference="advertised-not-operational-gap-analysis Q2",
             test_id=caller_qualname,
         )
     return len(unregistered)

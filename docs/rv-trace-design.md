@@ -1,11 +1,10 @@
-# Per-test CK_RV trace in reports - design
+# Per-test CK_RV trace in reports - reference
 
-**Date:** 2026-05-30
-**Topic:** Capture the exact `CK_RV` returned by every `C_*` call at the raw
-ctypes choke point (`pkcs11_check.raw`) and attach it per test, via pytest
-`record_property`, so it rides in `report.jsonl`'s `user_properties` and survives
-the pooled shard merge verbatim. Gated off by default; secret-safe by
-construction.
+Shipped feature reference. The rv-trace captures the exact `CK_RV` returned by
+every `C_*` call at the raw ctypes choke point (`pkcs11_check.raw`) and attaches
+it per test, via pytest `record_property`, so it rides in `report.jsonl`'s
+`user_properties` and survives the pooled shard merge verbatim. Gated off by
+default; secret-safe by construction.
 
 ## Context
 

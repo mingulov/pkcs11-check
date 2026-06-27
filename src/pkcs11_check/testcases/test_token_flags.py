@@ -132,7 +132,6 @@ class TestTokenFlags:
         NSS deviation: NSS slot 1 (Certificate DB) does not set
         CKF_USER_PIN_INITIALIZED even when a PIN is configured, because NSS
         reports this slot as not requiring a user PIN.
-        Tracked in docs/module-issues.md under NSS.
         """
         rs = p11_raw_session
         if p11_config.pin is None:
