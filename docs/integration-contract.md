@@ -87,18 +87,18 @@ a baseline state for the same provider.
 
 ## Reusable Python building blocks
 
-- **`pkcs11_check.raw`** — a pure-ctypes PKCS#11 binding (no C build) with
+- **`pkcs11_check.raw`** - a pure-ctypes PKCS#11 binding (no C build) with
   v2.40/v3.0/v3.1/v3.2 interface negotiation and PQC mechanisms. Usable
   standalone to call any module.
-- **`pkcs11_check.core.quality_audit`** — pure artifact analysis helpers,
+- **`pkcs11_check.core.quality_audit`** - pure artifact analysis helpers,
   including `build_quality_audit()` and
   `compare_mechanism_coverage_states()` for provider-local baseline/candidate
   mechanism-state loss checks.
-- **The pytest plugin** (`pkcs11_check.plugin`, entry point `pkcs11-check`) —
+- **The pytest plugin** (`pkcs11_check.plugin`, entry point `pkcs11-check`) -
   registers the markers, fixtures (`p11_module`, `p11_module_session`,
   `p11_raw_session`, `p11_config`), and `--p11-module/--p11-pin/--p11-slot/...`
   options, so the product test cases can run inside an external pytest session.
-- **`pkcs11_check.core.preflight`** — crash-safe capability probing
+- **`pkcs11_check.core.preflight`** - crash-safe capability probing
   (`run_preflight_subprocess` → `CapabilityManifest`).
 
 ## Stability commitment

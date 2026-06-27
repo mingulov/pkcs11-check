@@ -12,13 +12,13 @@ that the two stay in sync.
 
 ## Bundled in the source distribution
 
-### `latchset/pkcs11-headers` — Public Domain
+### `latchset/pkcs11-headers` - Public Domain
 
 The PKCS#11 v3.2 C header `pkcs11.h` lives in the source tree at
 `third_party/pkcs11-headers/3.2/pkcs11.h` and ships in the sdist. It is the
 dev-time input to `scripts/generate_raw_standard.py`, which produces the
 ctypes binding modules (e.g. `pkcs11_check/raw/types_std.py`) that
-pkcs11-check ships in the wheel — the wheel itself does not contain a
+pkcs11-check ships in the wheel - the wheel itself does not contain a
 literal copy of the header.
 
 The header originates from the `public-domain/3.2/` subtree of
@@ -37,19 +37,19 @@ These archives are not bundled in the wheel. When you run `fetch-data`, each
 upstream archive is extracted under `data/<name>/<repo>-<sha>/...`, and the
 files referenced below land on disk alongside the test vectors.
 
-### `C2SP/wycheproof` — Apache-2.0
+### `C2SP/wycheproof` - Apache-2.0
 
 [`C2SP/wycheproof`](https://github.com/C2SP/wycheproof) at commit
 [`6d7cccd0fcb1917368579adeeac10fe802f1b521`](https://github.com/C2SP/wycheproof/tree/6d7cccd0fcb1917368579adeeac10fe802f1b521).
 
 License:
 [`LICENSE`](https://github.com/C2SP/wycheproof/blob/6d7cccd0fcb1917368579adeeac10fe802f1b521/LICENSE)
-— Apache License, Version 2.0.
+- Apache License, Version 2.0.
 
 After fetch the file lands at
 `data/wycheproof/wycheproof-6d9d6de.../LICENSE`.
 
-### `C2SP/CCTV` — mixed (BSD-3-Clause and BSD-1-Clause)
+### `C2SP/CCTV` - mixed (BSD-3-Clause and BSD-1-Clause)
 
 [`C2SP/CCTV`](https://github.com/C2SP/CCTV) at commit
 [`1e3d2860d46e94e777e1b17c7a6f2436387e3ecc`](https://github.com/C2SP/CCTV/tree/1e3d2860d46e94e777e1b17c7a6f2436387e3ecc).
@@ -79,7 +79,7 @@ in `C2SP/C2SP`.
 After fetch, `ed25519/LICENSE` lands at
 `data/cctv/CCTV-67c1397.../ed25519/LICENSE`.
 
-### `usnistgov/ACVP-Server` — NIST Public Domain
+### `usnistgov/ACVP-Server` - NIST Public Domain
 
 [`usnistgov/ACVP-Server`](https://github.com/usnistgov/ACVP-Server) at
 commit
@@ -100,14 +100,14 @@ SPDX has no standard identifier for this NIST wording; we use
 
 After fetch the README lands at `data/acvp/ACVP-Server-15c0f3d.../README.md`.
 
-### `C2SP/x509-limbo` — Apache-2.0
+### `C2SP/x509-limbo` - Apache-2.0
 
 [`C2SP/x509-limbo`](https://github.com/C2SP/x509-limbo) at commit
 [`1983423436313a6605461056470e21242d066416`](https://github.com/C2SP/x509-limbo/tree/1983423436313a6605461056470e21242d066416).
 
 License:
 [`LICENSE`](https://github.com/C2SP/x509-limbo/blob/1983423436313a6605461056470e21242d066416/LICENSE)
-— Apache License, Version 2.0.
+- Apache License, Version 2.0.
 
 After fetch the file lands at
 `data/x509-limbo/x509-limbo-086b0da.../LICENSE`.

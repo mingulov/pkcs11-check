@@ -1,10 +1,10 @@
-# Destructive-test token isolation — design note
+# Destructive-test token isolation - design note
 
 Status: **design / follow-up.** The immediate mitigation (marking the
 persistent-state-mutating tests `@destructive`) is already applied; the
 throwaway-token provisioner described here is not yet built.
 
-## Background — the bug this prevents
+## Background - the bug this prevents
 
 `test_ffi_null_pointer.py::TestNullPinBuffer::test_set_pin_null_new_pin` calls
 `C_SetPIN` with the **real current user PIN** as the old PIN and a NULL new-PIN
@@ -18,13 +18,13 @@ unaffected (it rejects the NULL new PIN and/or enforces no hard lockout).
 
 Root cause of the *regression*: commit `1406e01` corrected the old-PIN ctypes
 cast (`c_void_p` → `CK_UTF8CHAR_PTR`). Before that the call raised a Python
-`ArgumentError` and never reached the module, so the PIN was never touched —
+`ArgumentError` and never reached the module, so the PIN was never touched -
 which is why earlier runs "worked".
 
 ## Why `@destructive` alone is not the whole fix
 
 `@destructive` (gated by `--p11-destructive` in `plugin.py`) means default runs
-**skip** these tests — that stops the lockout for the common case. But a
+**skip** these tests - that stops the lockout for the common case. But a
 *destructive* run (`PKCS11_CHECK_DESTRUCTIVE=1`) still executes them against the
 shared token and will still lock it. To make destructive runs usable
 end-to-end, the persistent-state mutators must run against a **disposable
@@ -36,17 +36,17 @@ token**, never the shared session token.
 
 | Kind | Examples | Touches persistent token DB? | Needs throwaway token? |
 |------|----------|------------------------------|------------------------|
-| Persistent-state mutators | `C_SetPIN`, `C_InitPIN`, `C_InitToken` | yes — corrupts/locks DB | **yes** |
-| Library/session-state only | `C_Finalize`/`C_Initialize`, interface renegotiation (`test_reinitialize.py`) | no — resets library state | no |
+| Persistent-state mutators | `C_SetPIN`, `C_InitPIN`, `C_InitToken` | yes - corrupts/locks DB | **yes** |
+| Library/session-state only | `C_Finalize`/`C_Initialize`, interface renegotiation (`test_reinitialize.py`) | no - resets library state | no |
 
 Only the ~5 tests in `TestNullPinBuffer` + `TestNullInitToken` strictly need a
 throwaway token today. Routing *all* destructive tests through one anyway (where
-cheap) is a reasonable policy because it makes the suite order-independent — but
+cheap) is a reasonable policy because it makes the suite order-independent - but
 it is optional, not required.
 
 ## There is no universal "make a token" primitive
 
-`P11TestConfig` (config.py) carries only `module` / `slot` / `pin` — it has no
+`P11TestConfig` (config.py) carries only `module` / `slot` / `pin` - it has no
 notion of where a module's token state lives. Token storage differs per module,
 so provisioning is necessarily **per-module**. Three tiers:
 
@@ -70,7 +70,7 @@ the real problem. tpm2/mock don't lock, so they don't need it.
 2. **Config addition.** Add an optional field describing the token backend
    (e.g. `provider_kind` or `token_conf_env`) so the provisioner can be chosen.
    This is the missing piece that makes it real work rather than a one-liner.
-3. **`throwaway_token` fixture** (function-scoped — fresh per test; file
+3. **`throwaway_token` fixture** (function-scoped - fresh per test; file
    provisioning is cheap enough). Requested only by the mutator tests.
 4. **Subprocess plumbing.** Extend `run_with_coverage(script, env=...)` (in
    `_subprocess_preamble.py`) to merge the provisioner's env into the child;

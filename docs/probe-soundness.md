@@ -1,4 +1,4 @@
-# Probe soundness — when a crash is a finding (and when it isn't)
+# Probe soundness - when a crash is a finding (and when it isn't)
 
 **Status:** governing principle. Supersedes any reading of the length-truncation
 note that says "small buffer + big length = unsound, discard it."
@@ -7,7 +7,7 @@ note that says "small buffer + big length = unsound, discard it."
 
 pkcs11-check exists to find module bugs. **A crash, OOB, or corruption that a
 probe triggers in a module is a finding by default.** This is the same rule as
-"a segfault IS the finding" — it applies to length/count/size probes too.
+"a segfault IS the finding" - it applies to length/count/size probes too.
 
 The burden of proof runs one way: calling a reproducer **unsound** requires a
 *specific* argument that the module did something *correct*. The absence of such
@@ -17,7 +17,7 @@ an argument means it is a finding. Do not invert this.
 
 A security probe deliberately passes a **length or count larger than the
 buffer/array it provides**, then the module crashes. The mistake is to dismiss
-this as "harness-induced UB — we lied about the buffer, so the module was
+this as "harness-induced UB - we lied about the buffer, so the module was
 'correct' to over-read."
 
 That reasoning is wrong as a blanket rule, and it has repeatedly thrown away
@@ -36,13 +36,13 @@ upstream). Here is why it is wrong:
 
 ### Bug classes these probes legitimately find (unconditionally real)
 
-- **Internal-buffer overflow** — an oversized length is stored and later used to
+- **Internal-buffer overflow** - an oversized length is stored and later used to
   `memset`/`memcpy` over a *fixed-size internal* buffer.
-- **Allocation-size integer wrap** — `len + pad` or `count * sizeof` wraps,
+- **Allocation-size integer wrap** - `len + pad` or `count * sizeof` wraps,
   `malloc()` under-allocates, the following copy **writes** out of bounds.
-- **Write-side overflow / truncation-to-small-then-copy-large** — a `(word32)` /
+- **Write-side overflow / truncation-to-small-then-copy-large** - a `(word32)` /
   `(int)` narrowing under-sizes a destination that is then written in full.
-- **Type-pun truncation** — a 64→32 cast of a length *pointer* corrupts state.
+- **Type-pun truncation** - a 64→32 cast of a length *pointer* corrupts state.
 
 The crash in all of these is the module corrupting **its own** memory; it does
 not depend on the caller's buffer being short.
@@ -55,7 +55,7 @@ large-but-valid length** by reading the caller's buffer, where we
 under-provisioned that buffer. The module did nothing wrong; it read what the
 caller (we) claimed was there.
 
-Empirically this is rare — conformant modules reject absurd lengths
+Empirically this is rare - conformant modules reject absurd lengths
 (`CKR_DATA_LEN_RANGE` / `CKR_ARGUMENTS_BAD`) rather than read gigabytes. But it
 is the real kernel of caution, and it is the *only* thing the soundness rule
 should guard against.
@@ -73,7 +73,7 @@ Do **not** discard a reproducer because the buffer was short. Instead:
    - **No longer crashes → the crash was contingent** on our short buffer. The
      residual concern ("module trusts a caller length without a fits-word32
      guard") is a *hardening* observation caught by source review or a
-     truncation-correctness probe — not a memory-corruption finding.
+     truncation-correctness probe - not a memory-corruption finding.
 
 This single step separates real findings from the one false-positive, and it
 *preserves* every real crash. Reach for it before ever writing the word
@@ -97,7 +97,7 @@ assert "no crash" on a non-ASAN build for an un-mappable magnitude without this.
 A probe that asks "does the module silently **truncate** 64→32 and produce wrong
 output / process the wrong number of bytes?" is a *correctness* test, not a
 memory-safety test. It must use an honest (mmap-backed) buffer and verify the
-**effect** (output equivalence / bytes processed), never a reject-expectation —
+**effect** (output equivalence / bytes processed), never a reject-expectation -
 otherwise it false-accuses a module that correctly honors the full length. This
 is the legitimate, narrow origin of the length-truncation soundness note; do not
 generalize it into "all oversized-length probes are unsound."

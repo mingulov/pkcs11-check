@@ -11,7 +11,7 @@ uv run ruff format src/ tests/           # format
 uv run mypy src/                         # type check
 ```
 
-> **Never** run bare `ruff`, `mypy`, or `pytest` — they are inside the uv venv.
+> **Never** run bare `ruff`, `mypy`, or `pytest` - they are inside the uv venv.
 
 The fast syntax/generated-subprocess gate covers ordinary Python syntax under
 `src/` and `tests/`, plus representative dynamically generated child scripts
@@ -49,7 +49,7 @@ uv run pkcs11-check test --module <so>               # full: everything (default
 
 `--skip-slow`/`--only-slow` compose with `--marker` (e.g. `--marker acvp
 --skip-slow` → `-m "(acvp) and (not slow)"`). The full profile still runs every
-case — `slow` is a *selection* profile, never a way to hide a finding.
+case - `slow` is a *selection* profile, never a way to hide a finding.
 
 ## Test vector data
 
@@ -83,10 +83,10 @@ uv run pkcs11-check compare-results base.json curr.json --no-fail # report witho
 
 `compare-results` exits 1 when the candidate regresses (new failures, lost coverage of a
 previously-exercised target, an increase in the failure or crash/timeout count, or an
-unrecognized unit status) — use it for release sign-off and before trusting a refactor.
+unrecognized unit status) - use it for release sign-off and before trusting a refactor.
 
-For a worked end-to-end example — build two SoftHSM2 versions in Docker and diff them with
-`compare-results` and `compare-coverage` — see [docker-examples.md](docker-examples.md).
+For a worked end-to-end example - build two SoftHSM2 versions in Docker and diff them with
+`compare-results` and `compare-coverage` - see [docker-examples.md](docker-examples.md).
 
 ## Per-provider classification report
 
