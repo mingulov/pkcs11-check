@@ -577,7 +577,7 @@ def _synthetic_file_skip_detail(
 
 
 def _special_test_entry_from_result(result: FileRunResult) -> dict[str, Any] | None:
-    if result.status not in {"crashed", "timeout"} or "::" not in result.target:
+    if result.status not in {"crashed", "timeout", "crash_limited"} or "::" not in result.target:
         return None
 
     entry: dict[str, Any] = {
@@ -586,6 +586,8 @@ def _special_test_entry_from_result(result: FileRunResult) -> dict[str, Any] | N
         "duration": result.duration_s,
     }
     flat = result.stderr.strip() or result.stdout.strip()
+    if not flat and result.status == "crash_limited":
+        flat = "abandoned: per-file crash limit reached"
     if flat:
         entry["longrepr"] = flat
     if result.stdout.strip():
@@ -616,7 +618,7 @@ def _merge_special_entries_into_detail(
             continue
         merged["tests"].append(dict(entry))
         existing.add(key)
-        if outcome in {"crashed", "timeout"}:
+        if outcome in {"crashed", "timeout", "crash_limited"}:
             merged["counts"][outcome] += 1
 
     return merged

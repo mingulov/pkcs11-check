@@ -20,6 +20,7 @@ from pkcs11_check.core.file_runner import (
     FileRunState,
     IsolatedReportConfig,
     _absolute_nodeid,
+    _build_isolated_json_payload,
     _collection_args,
     _identify_crash_culprit,
     _load_available_mechanisms,
@@ -3925,6 +3926,47 @@ def test_write_isolated_json_report_special_detail_status_wins_over_failed_file_
     assert unit["counts"][special_outcome] == 1
     assert report["summary"]["failed"] == 1
     assert report["summary"][special_outcome] == 1
+
+
+def test_crash_limited_results_surface_as_counted_outcome() -> None:
+    state = FileRunState(
+        units=["t.py"],
+        fingerprint="abc123",
+        results=[
+            FileRunResult(target="t.py::test_a", status="crashed", returncode=-11, duration_s=0.1),
+            FileRunResult(
+                target="t.py::test_b", status="crash_limited", returncode=0, duration_s=0.0
+            ),
+            FileRunResult(
+                target="t.py::test_c", status="crash_limited", returncode=0, duration_s=0.0
+            ),
+        ],
+    )
+    payload = _build_isolated_json_payload(state)
+    s = payload["summary"]
+    assert s["crash_limited"] == 2
+    assert s["crashed"] == 1
+    assert s["total"] == s["crashed"] + s["crash_limited"]
+    unit = payload["units"][0]
+    outcomes = sorted(t["outcome"] for t in unit["tests"])
+    assert outcomes == ["crash_limited", "crash_limited", "crashed"]
+
+
+def test_crash_limited_default_longrepr_when_no_output() -> None:
+    state = FileRunState(
+        units=["t.py"],
+        fingerprint="abc123",
+        results=[
+            FileRunResult(
+                target="t.py::test_abandoned", status="crash_limited", returncode=0, duration_s=0.0
+            ),
+        ],
+    )
+    payload = _build_isolated_json_payload(state)
+    unit = payload["units"][0]
+    test_entry = unit["tests"][0]
+    assert test_entry["outcome"] == "crash_limited"
+    assert test_entry["longrepr"] == "abandoned: per-file crash limit reached"
 
 
 # ---------------------------------------------------------------------------
