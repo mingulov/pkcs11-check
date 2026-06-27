@@ -124,6 +124,18 @@ def test_unclassified_collapsed_to_single_line() -> None:
     assert len(count_lines) == 1
 
 
+def test_crash_limited_in_counts_line_and_incomplete_banner() -> None:
+    text = render_provider("demo", groups=[], pass_count=10, crash_limited=7, incomplete=True)
+    assert "crash_limited 7" in text
+    assert "INCOMPLETE COVERAGE" in text
+
+
+def test_no_crash_limited_token_when_zero() -> None:
+    text = render_provider("demo", groups=[], pass_count=10, crash_limited=0, incomplete=False)
+    assert "crash_limited" not in text
+    assert "INCOMPLETE COVERAGE" not in text
+
+
 def test_undeclared_capability_appears_in_xfail_breakdown() -> None:
     """undeclared_capability xfail must appear in the per-reason breakdown section."""
     xfail = _group(

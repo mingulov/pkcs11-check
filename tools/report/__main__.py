@@ -87,6 +87,18 @@ def passed_from_results(results_json: Path | None) -> int | None:
     return passed if isinstance(passed, int) else None
 
 
+def _summary_from_results(results_json: Path | None) -> dict[str, Any]:
+    """Read the ``summary`` dict from a ``results.json`` file, or return ``{}``."""
+    if results_json is None:
+        return {}
+    try:
+        payload = json.loads(results_json.read_text())
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {}
+    summary = payload.get("summary") if isinstance(payload, dict) else None
+    return summary if isinstance(summary, dict) else {}
+
+
 def _parse_named(values: list[str] | None, default_provider: str | None) -> dict[str, Path]:
     """Parse repeated ``NAME=path`` (or bare ``path`` for a single provider)."""
     out: dict[str, Path] = {}
@@ -129,8 +141,12 @@ def _write_provider(
     groups: list[dict[str, Any]],
     out_dir: Path,
     pass_count: int | None = None,
+    crash_limited: int = 0,
+    incomplete: bool = False,
 ) -> None:
-    md = render_provider(provider, groups, pass_count=pass_count)
+    md = render_provider(
+        provider, groups, pass_count=pass_count, crash_limited=crash_limited, incomplete=incomplete
+    )
     # render_provider ends with a single trailing newline; the "\n" join yields
     # one blank line before the appended "## capability audit" heading.
     md = md + "\n" + render_capability_section(capability_audit(groups))
@@ -215,7 +231,15 @@ def main(argv: list[str] | None = None) -> int:
         groups = extract_groups(report_path, crashes=crashes)
         enrich(groups, module_issues_text=module_issues, provider=provider)
         provider_groups[provider] = groups
-        _write_provider(provider, groups, out_dir, pass_count=passed_from_results(results_json))
+        summary = _summary_from_results(results_json)
+        _write_provider(
+            provider,
+            groups,
+            out_dir,
+            pass_count=summary.get("passed") if isinstance(summary.get("passed"), int) else None,
+            crash_limited=int(summary.get("crash_limited", 0) or 0),
+            incomplete=bool(summary.get("incomplete", False)),
+        )
 
     if len(provider_groups) > 1:
         correlation = correlate(provider_groups)
