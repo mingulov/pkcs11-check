@@ -279,7 +279,9 @@ raw.C_Logout(sh)
         if not os.environ.get("PKCS11_CHECK_THROWAWAY_MODULE"):
             pytest.skip("throwaway module not configured (PKCS11_CHECK_THROWAWAY_MODULE unset)")
         token_dir = tempfile.mkdtemp(prefix="pkcs11_check_ckr_uninit_")
-        conf_path = os.path.join(token_dir, "softhsm2.conf")
+        # This test writes a SoftHSM2-style uninitialized-token config and therefore
+        # assumes the configured throwaway module is SoftHSM2-compatible.
+        conf_path = os.path.join(token_dir, "module.conf")
         with open(conf_path, "w") as f:
             f.write(f"directories.tokendir = {token_dir}/tokens\n")
             f.write("objectstore.backend = file\n")

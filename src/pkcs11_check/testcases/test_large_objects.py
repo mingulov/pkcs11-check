@@ -116,8 +116,8 @@ class TestLargeRandomGeneration:
             xfail_if_known_ckr(
                 exc,
                 {CKR_ARGUMENTS_BAD},
-                "NSS rejects C_GenerateRandom(100KB) with CKR_ARGUMENTS_BAD -- "
-                "NSS has an internal size limit on single random generation calls",
+                "some modules reject C_GenerateRandom(100KB) with CKR_ARGUMENTS_BAD - "
+                "an internal size limit on single random generation calls",
             )
             raise
 
