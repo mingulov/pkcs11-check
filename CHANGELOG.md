@@ -452,7 +452,7 @@ and release-readiness hardening needed for use across multiple projects.
   and cross-process isolation checks.
 - Added module quirk registry support so provider-specific behavior is explicit,
   documented, and does not silently hide real failures.
-- Expanded `docs/cve-regression.md` with findings and
+- Expanded CVE / known-issue regression coverage with findings and
   coverage notes discovered during internal provider validation.
 
 ### Release Hardening
