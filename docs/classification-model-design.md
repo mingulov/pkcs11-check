@@ -1,7 +1,7 @@
 # Test-Outcome Classification Model - Design
 
 - **Date:** 2026-05-27
-- **Status:** Draft for review
+- **Status:** reference (design of record)
 - **Scope:** How every test case in `src/pkcs11_check/testcases/` decides `pass` / `xfail` / `fail` / `skip`, and the work to make the suite consistent with that decision.
 
 ## Problem
@@ -66,15 +66,11 @@ wrong-but-isolated metadata value is making an honest, provider-dependent choice
 
 ## Classification rules by test type
 
-The negative/security cases divide into four kinds. A and B were the original split;
-C and D are the *same* self-contradiction principle applied to lifecycle and metadata.
+The negative/security cases divide into four kinds. The crypto and policy kinds were
+the original split; lifecycle and metadata kinds apply the same self-contradiction
+principle to state and derived-attribute invariants.
 
-> **Historical note (retired aliases):** the A/B/C/D letters below are kept only as a
-> record of the original taxonomy. The canonical machine field is `kind`, whose values are
-> the keywords `crypto` (A), `policy` (B), `lifecycle` (C), and `metadata` (D). Code,
-> comments, and messages use those keywords - do not introduce the letters in new text.
-
-### Type A - cryptographic correctness → `fail`
+### crypto kind - cryptographic correctness → `fail`
 
 The module accepts something that yields a wrong or forgeable cryptographic result.
 No claim-check needed; this is broken for any provider.
@@ -84,7 +80,7 @@ No claim-check needed; this is broken for any provider.
   malformed ciphertext **decrypts**; a known-answer roundtrip returns the **wrong** value.
 - Verdict: **`fail`** on acceptance / wrong value.
 
-### Type B - attribute / permission enforcement → self-contradiction
+### policy kind - attribute / permission enforcement → self-contradiction
 
 The module is asked to enforce an attribute or permission boundary.
 
@@ -99,7 +95,7 @@ The module is asked to enforce an attribute or permission boundary.
      - Violation **succeeds** (value readable / escalation reflected) → **`fail`** (claimed then violated).
      - Violation **rejected** with the expected code → **`pass`**; with another code → **`xfail`**.
 
-### Type C - lifecycle / state → effect-check
+### lifecycle kind - lifecycle / state → effect-check
 
 The "claim" is the module's own success report on the prior call.
 
@@ -110,7 +106,7 @@ The "claim" is the module's own success report on the prior call.
   `CKR_OK` but the value is **unchanged** (no-op) → wrong code, no harm → **`xfail`**;
   rejected with the expected code → **`pass`**.
 
-### Type D - metadata → derived-attribute contradiction vs isolated value
+### metadata kind - metadata → derived-attribute contradiction vs isolated value
 
 - **Derived-attribute contradiction** (two linked attributes that cannot both be true):
   `CKA_NEVER_EXTRACTABLE=False` while `CKA_EXTRACTABLE` was always `False`;
@@ -119,7 +115,7 @@ The "claim" is the module's own success report on the prior call.
   a non-spec `CKA_PRIVATE` default → wrong, but contradicts nothing → **`xfail`**.
 - **New tests to add:** explicit derived-attribute invariant checks
   (`NEVER_EXTRACTABLE`↔`EXTRACTABLE`, `ALWAYS_SENSITIVE`↔`SENSITIVE`) - these don't exist
-  yet and are the `fail`-on-contradiction half of Type D.
+  yet and are the `fail`-on-contradiction half of the metadata kind.
 
 ## Mechanism / helpers
 
@@ -138,11 +134,11 @@ def classify_rejection(rv, expected_rvs, *, label):
     pytest.xfail(f"{label}: rejected with {ckr_name(rv)}, expected {names(expected_rvs)}")
 ```
 
-- **Type A** uses `classify_rejection` / unconditional `pytest.fail` on accepted-invalid;
+- **crypto kind** uses `classify_rejection` / unconditional `pytest.fail` on accepted-invalid;
   no claim-check.
-- **Type B** uses a **claim-check** (`read_attributes` of the protective attr) to choose
+- **policy kind** uses a **claim-check** (`read_attributes` of the protective attr) to choose
   between the `fail` (claimed→violated) and `xfail` (not claimed) branches.
-- **Type C** uses an **effect-check** (read state back after the operation) rather than
+- **lifecycle kind** uses an **effect-check** (read state back after the operation) rather than
   trusting the return code.
 - **`ckr/` `assert_ckr()`** (the single validation point used by ~50 negative call sites)
   and the ~27 standalone `assert rv in {set}` checks must grow the middle `xfail` tier -
@@ -162,13 +158,13 @@ def classify_rejection(rv, expected_rvs, *, label):
 Counts are approximate; representative sites listed. "Full inventory" = the five region
 reports from this session.
 
-### N1 - negative test does not `fail` on acceptance (~46) → apply A/B/C/D
-- **Type A `fail`:** invalid-EC-curve OID accepted `security/test_cve_regression.py:681`;
+### N1 - negative test does not `fail` on acceptance (~46) → apply classification rules
+- **crypto kind `fail`:** invalid-EC-curve OID accepted `security/test_cve_regression.py:681`;
   off-curve/infinity ECDH point `security/test_parameter_validation.py:522`; RSA `e=0`
   `:475`; wrong-length RSA ciphertext accepted `ckr/test_ckr_decrypt.py:169`; wrong-length
   RSA signature verified `ckr/test_ckr_verify.py:144`; AES key + RSA mechanism accepted
   `ckr/test_ckr_{verify:60,sign:53}`; wrong-mechanism verify `CKR_OK` `test_errors.py:289`.
-- **Type B self-contradiction:** sensitive value read `test_sensitivity.py:64,117`
+- **policy kind self-contradiction:** sensitive value read `test_sensitivity.py:64,117`
   (+ dups `ckr/test_ckr_object.py:122`, `ckr/test_ckr_codes.py:127`,
   `ckr/test_ckr_spec_compliance.py:197`); `EXTRACTABLE` escalation
   `security/test_api_security.py:363`, `security/test_tookan.py:203`; wrap+decrypt
@@ -177,10 +173,10 @@ reports from this session.
   `test_access_levels.py:962`; `CKA_COPYABLE` escalation `test_attribute_enforcement.py:110`.
   *Note: `test_sensitivity` is wired inverted today - it `xfail`s the violation and
   hard-`fail`s honest non-support; both branches flip.*
-- **Type C effect-check:** use-after-destroy `ckr/test_ckr_{object:143,198,255, decrypt:240,
+- **lifecycle kind effect-check:** use-after-destroy `ckr/test_ckr_{object:143,198,255, decrypt:240,
   verify:82, sign:92, codes:193, priority:48}`; read-only `SetAttribute`
   `test_set_attribute.py:109,128,146,161`, `ckr/test_ckr_object.py:167`.
-- **Type D:** keep isolated wrong values `xfail`; add derived-attr invariant tests (below).
+- **metadata kind:** keep isolated wrong values `xfail`; add derived-attr invariant tests (below).
 
 ### N2 - binary negative asserts lacking the `xfail` tier (~113) → 3-way
 - `ckr/` `assert_ckr()` DEFAULT-compat path (~50 sites) + ~27 standalone `assert rv in {set}`
@@ -210,10 +206,10 @@ reports from this session.
   clean error is arguably a self-contradiction (`fail`); start with the base rule (clean
   error → `xfail`) and revisit if it proves too lenient.
 
-### P2 - wrong metadata values currently `xfail` (~12) → keep `xfail` (Type D isolated)
+### P2 - wrong metadata values currently `xfail` (~12) → keep `xfail` (metadata kind isolated)
 - `test_attribute_defaults.py:104,150,202,268`; `test_key_flags.py:148,159,190,220,258,298`;
   `test_access_control.py:108`. **Exception:** `NEVER_EXTRACTABLE` invariant
-  (`test_key_flags.py:159,190`) is a Type-D *contradiction* → `fail`.
+  (`test_key_flags.py:159,190`) is a metadata kind *contradiction* → `fail`.
 - Genuine wrong-result leaks → `fail`: `test_crossverify_extended.py:169` (GCM mismatch
   swallowed by skip), `test_ecdh_extended.py:440` (failed self-roundtrip xfailed).
 
@@ -240,7 +236,7 @@ reports from this session.
   `test_profiles.py:64` (substring CKR match → exact).
 
 ### New tests to add
-- **Type D derived-attribute invariants:** `CKA_NEVER_EXTRACTABLE` vs `CKA_EXTRACTABLE`
+- **metadata kind derived-attribute invariants:** `CKA_NEVER_EXTRACTABLE` vs `CKA_EXTRACTABLE`
   history; `CKA_ALWAYS_SENSITIVE` vs `CKA_SENSITIVE`; `fail` on internal contradiction.
 
 ## Documentation
@@ -254,10 +250,10 @@ reports from this session.
 1. **Helpers + docs** - `classify_rejection`, claim-check/effect-check helpers, the
    `assert_ckr()` `xfail` tier, decision table in `CLAUDE.md`. (Enables everything else.)
 2. **V1 + V2** - invalid-vector correctness (highest crypto value; 3 live + ~1000 neutralized).
-3. **N1 (A/B/C)** - the security-finding reclassification (claim/effect-checks).
+3. **N1 (crypto/policy/lifecycle)** - the security-finding reclassification (claim/effect-checks).
 4. **N2 sweep** - binary negative asserts → 3-way.
 5. **P1a + P1b** - provider-incompleteness `fail`→`xfail`.
-6. **P2/P3/C cleanups + Type-D new tests.**
+6. **P2/P3/C cleanups + metadata kind new tests.**
 
 ## Open / deferred
 
@@ -290,11 +286,9 @@ CKO_VALIDATION capability only.
 This does not rewrite the model above - it makes the verdict machine-recorded. Tests emit a
 structured `Classification` at the decision point via `pkcs11_check.classification.classify()`
 (and `fail_as`/`xfail_as`/`assert_correct`), which records the verdict then raises the implied
-pytest outcome. See the design spec
-[superpowers/specs/2026-06-13-at-source-classification-design.md](superpowers/specs/2026-06-13-at-source-classification-design.md).
+pytest outcome.
 
-- The A/B/C/D self-contradiction classes are now the canonical machine field **`kind`**:
-  `crypto`=A, `policy`=B, `lifecycle`=C, `metadata`=D.
+- The four self-contradiction `kind` values are `crypto`, `policy`, `lifecycle`, and `metadata`.
 - The runtime **reason** vocabulary is the 10 reasons: `wrong_result`, `accepted_invalid`,
   `self_contradiction`, `oracle`, `crash` (→ fail); `not_operational`, `nonspec_reject`,
   `honest_deviation`, `undeclared_capability` (→ xfail); `sanctioned_refusal` (→ pass).

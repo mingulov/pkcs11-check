@@ -114,7 +114,7 @@ Tests MUST record their verdict at the decision point via `classification.classi
 - Document module quirks in comments or via `compliance.note()`, not as silent `pass` in code
 - Use `compliance.note()` for spec deviations that aren't bugs
 - Use `pytest.xfail()` for known module bugs with an explanatory message - but see the Test-outcome classification model above: crypto-correctness and self-contradiction (policy/lifecycle/metadata) classes `fail`, they are NOT `xfail`ed
-- NSS uses slot 1 (Certificate DB), not slot 0. Pass `--p11-slot=1`
+- NSS uses slot 1 (Certificate DB), not slot 0. Pass `--slot=1`
 
 ### Conventions
 - Type annotations on all public functions (mypy strict)

@@ -191,9 +191,6 @@ capability. See [findings/import-skip-audit.md](findings/import-skip-audit.md).
 
 Tests emit a structured *classification* at the decision point - the moment a test decides what the
 module did - instead of flattening the verdict into a free-text `pytest.fail`/`pytest.xfail` string.
-Design spec: [superpowers/specs/2026-06-13-at-source-classification-design.md](superpowers/specs/2026-06-13-at-source-classification-design.md);
-plan: [superpowers/plans/2026-06-13-at-source-classification.md](superpowers/plans/2026-06-13-at-source-classification.md).
-
 ### Emission API (`pkcs11_check.classification`)
 
 ```python
