@@ -346,7 +346,9 @@ def merge_shard_dirs(shard_dirs: list[Path], output_dir: Path) -> dict[str, Any]
     if warnings:
         shard_meta["warnings"] = list(warnings)
     merged = merge_results_payloads(payloads, coverage=coverage, shard_meta=shard_meta)
-    (output_dir / "results.json").write_text(json.dumps(merged, indent=2) + "\n")
+    (output_dir / "results.json").write_text(
+        json.dumps(merged, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
 
     records = (
         extract_quality_report_records_from_jsonl(merged_report) if merged_report.exists() else []
