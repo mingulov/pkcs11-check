@@ -2,22 +2,29 @@
 
 Single provider::
 
-    python -m tools.report --report-log report.jsonl \\
+    pkcs11-check-report --report-log report.jsonl \\
         [--results-json results.json] --provider softhsm2 --out out/
 
 Multiple providers (repeat ``--report-log NAME=path``; ``--results-json`` too)::
 
-    python -m tools.report \\
+    pkcs11-check-report \\
         --report-log softhsm2=sh.jsonl --report-log kryoptic=kry.jsonl \\
         --results-json softhsm2=sh.results.json \\
         --out out/
+
+Also callable as ``python -m pkcs11_check.report``.
 
 For each provider this writes ``<out>/<provider>.md`` (render) and
 ``<out>/<provider>.jsonl`` (one enriched group per line). With more than one
 provider it also writes ``<out>/_index.md`` (counts table + top themes + links)
 and ``<out>/_universal.md`` (cross-provider correlation).
 
-``docs/module-issues.md`` is read (when present) to drive known-issue enrichment.
+Known-issue enrichment is driven by a module-issues file resolved in this order:
+
+1. ``--module-issues PATH`` CLI flag
+2. ``PKCS11_CHECK_MODULE_ISSUES`` environment variable
+3. ``<repo-root>/docs/module-issues.md`` (legacy repo-relative fallback)
+4. No enrichment (empty)
 """
 
 from __future__ import annotations
@@ -28,10 +35,16 @@ import os
 from pathlib import Path
 from typing import Any
 
-from tools.report.capability import capability_audit, render_capability_section
-from tools.report.correlate import correlate, enrich
-from tools.report.extract import extract_groups
-from tools.report.render import render_provider
+from pkcs11_check.report.capability import capability_audit, render_capability_section
+from pkcs11_check.report.correlate import correlate, enrich
+from pkcs11_check.report.extract import extract_groups
+from pkcs11_check.report.render import render_provider
+
+_DISCLAIMER = (
+    "> These are pkcs11-check's observations under a software-token threat model"
+    " - behavioral evidence, not verdicts or CVE claims;"
+    " a clean pass is not the only useful result."
+)
 
 
 def crashes_from_results(results_json: Path | None) -> list[dict[str, Any]]:
@@ -148,7 +161,7 @@ def _write_provider(
     # render_provider ends with a single trailing newline; the "\n" join yields
     # one blank line before the appended "## capability audit" heading.
     md = md + "\n" + render_capability_section(capability_audit(groups))
-    (out_dir / f"{provider}.md").write_text(md, encoding="utf-8")
+    (out_dir / f"{provider}.md").write_text(_DISCLAIMER + "\n\n" + md, encoding="utf-8")
     with (out_dir / f"{provider}.jsonl").open("w", encoding="utf-8") as fh:
         for group in groups:
             fh.write(json.dumps(group, sort_keys=True, ensure_ascii=False) + "\n")
@@ -159,7 +172,14 @@ def _write_index(
     correlation: dict[str, Any],
     out_dir: Path,
 ) -> None:
-    lines = ["# conformance index", "", "| provider | fail | xfail | crash |", "|---|---|---|---|"]
+    lines = [
+        _DISCLAIMER,
+        "",
+        "# conformance index",
+        "",
+        "| provider | fail | xfail | crash |",
+        "|---|---|---|---|",
+    ]
     for provider in sorted(provider_groups):
         c = _counts(provider_groups[provider])
         lines.append(f"| [{provider}]({provider}.md) | {c['fail']} | {c['xfail']} | {c['crash']} |")
@@ -194,7 +214,7 @@ def _write_universal(correlation: dict[str, Any], out_dir: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m tools.report")
+    parser = argparse.ArgumentParser(prog="pkcs11-check-report")
     parser.add_argument(
         "--report-log",
         action="append",
@@ -227,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     report_logs = _parse_named(args.report_log, args.provider)
     results_jsons = _parse_named(args.results_json, args.provider)
 
-    repo_root = Path(__file__).resolve().parents[2]
+    repo_root = Path(__file__).resolve().parents[3]
     explicit_mi = Path(args.module_issues) if args.module_issues else None
     module_issues = _resolve_module_issues_text(explicit=explicit_mi, repo_root=repo_root)
 

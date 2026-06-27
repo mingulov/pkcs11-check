@@ -1,10 +1,10 @@
-"""Tests for tools.report.render — compact enriched provider markdown."""
+"""Tests for pkcs11_check.report.render — compact enriched provider markdown."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from tools.report.render import render_provider
+from pkcs11_check.report.render import render_provider
 
 
 def _group(**over: Any) -> dict[str, Any]:

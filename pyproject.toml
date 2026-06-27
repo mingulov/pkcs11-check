@@ -51,6 +51,7 @@ Issues = "https://github.com/mingulov/pkcs11-check/issues"
 
 [project.scripts]
 pkcs11-check = "pkcs11_check.cli.app:main"
+pkcs11-check-report = "pkcs11_check.report.__main__:main"
 
 [project.entry-points."pytest11"]
 pkcs11-check = "pkcs11_check.plugin"

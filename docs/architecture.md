@@ -38,13 +38,6 @@ rv = raw.C_GetTokenInfo(slot_id, byref(token_info))
 
 Use in subprocess for NULL/segfault tests (`subprocess.run([sys.executable, "-c", script])`).
 
-## Local builds (`local-builds/`)
-
-- `providers/<name>.sh` - one file per token with `build()` and `setup()` functions
-- `build.sh` - dispatcher: `bash local-builds/build.sh kryoptic [branch]`
-- `test.sh` - dispatcher: `bash local-builds/test.sh kryoptic [pytest-args]`
-- `reset.sh` - reset token data: `bash local-builds/reset.sh kryoptic`
-
 ## Test categories
 
 Core: interface, slot, object, mechanism, encrypt, sign, digest, errors
@@ -54,7 +47,7 @@ Wycheproof: ECDSA, RSA, ECDH, DSA, AES, HMAC, EdDSA, ChaCha20, X25519/X448, HKDF
 PQC (v3.2): ML-KEM, ML-DSA, SLH-DSA
 Key management: import, export, copy, wrap/unwrap, derive, KEM
 Security: attribute fuzz, Tookan vectors, handle reuse, padding oracle, ECDSA nonce, RNG stats
-CVE regression: 29 tests across NSS, SoftHSM2, TPM2, OpenCryptoki, BouncyHSM, Kryoptic
+CVE regression: regression tests for publicly-documented CVEs and known issues
 CKR spec compliance: exact return code verification per PKCS#11 standard
 Interop: OpenSSL pkcs11-provider, p11-kit proxy
 Stress: 1000-cycle ops, threading, resource exhaustion, DB concurrent writes
@@ -63,19 +56,6 @@ Fuzz: Hypothesis property tests, attribute template fuzzer
 See [test-universe.md](test-universe.md) for the current collected product-test
 counts by group and the AES-CTS single-provider maximum.
 See [interpreting-results.md](interpreting-results.md) for guidance on why xfail and fail counts can be large.
-
-## Docker test matrix
-
-- `test-softhsm2` / `test-softhsm2-generated-iv` / `test-softhsm2-main` - SoftHSM2 2.7.0 / generated-IV simulator / main
-- `test-kryoptic` / `test-kryoptic-main` / `test-kryoptic-fips` - Kryoptic v1.5.1 / main / FIPS
-- `test-nss` / `test-nss-pqc` / `test-nss-main` - Fedora NSS packages / NSS official source tags / NSS source tip
-- `test-opencryptoki` / `test-opencryptoki-master` - OpenCryptoki 3.27.0 / master
-- `test-wolfpkcs11` / `test-wolfpkcs11-master` - wolfPKCS11 v2.0.0-stable / master with PKCS#11 v3.2 ML-DSA/ML-KEM enabled
-- `test-corepkcs11` - corePKCS11 v3.6.4 MbedTLS software mock with a test adapter
-- `test-optee-pkcs11` - OP-TEE 4.10.0 `qemu_v8` heavy/manual target running in guest Linux against `libckteec.so`
-- `test-tpm2` - source-built tpm2-pkcs11 1.10.0 + swtpm
-- `test-bouncyhsm` - BouncyHSM 2.1.1
-- `test-pkcs11-mock` - pkcs11-mock v2.0.0 stub
 
 ## Key design decisions
 
@@ -239,12 +219,12 @@ never fabricated).
   synthetic `reason="unclassified"` record auto-injected, so coverage is always 100% and the
   remaining bare-assert tail shows up as a visible backlog rather than silently uncovered.
 
-### Report generator (`tools/report/`)
+### Report generator (`pkcs11_check.report` / `pkcs11-check-report`)
 
 Rolls the records up into per-provider reports: `<provider>.md` (compact, severity-first, grouped by
 `kind`) + `<provider>.jsonl` (one enriched group per line); with more than one
 provider it also writes `_index.md` (counts table + top themes) and `_universal.md` (cross-provider
-correlation). See [../tools/report/README.md](../tools/report/README.md) and
+correlation). See [../src/pkcs11_check/report/README.md](../src/pkcs11_check/report/README.md) and
 [commands.md](commands.md) for invocation.
 
 ## PKCS#11 Specification

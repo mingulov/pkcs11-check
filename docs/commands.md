@@ -96,16 +96,17 @@ JSON path sets `PKCS11_CHECK_REPORT_LOG` so the plugin writes one).
 
 ```bash
 # Single provider (bare paths; --provider names it; --results-json adds crash findings):
-uv run python -m tools.report --report-log /path/report.jsonl \
+pkcs11-check-report --report-log /path/report.jsonl \
     --results-json /path/results.json --provider <name> --out <dir>
 
 # Multi-provider (repeat NAME=path; writes _index.md + _universal.md too):
-uv run python -m tools.report \
+pkcs11-check-report \
     --report-log nss=/p/nss.jsonl --report-log softhsm2=/p/sh.jsonl --out <dir>
 ```
 
 Flags: `--report-log` (path, or `NAME=path`, repeatable), `--results-json` (optional, same
 forms, for crash/timeout findings), `--provider` (names the provider for the single bare-path
-form), `--out` (output directory). Writes `<provider>.md` + `<provider>.jsonl` per provider, and
+form), `--out` (output directory), `--module-issues PATH` (known-issue enrichment; overrides
+`PKCS11_CHECK_MODULE_ISSUES` env). Writes `<provider>.md` + `<provider>.jsonl` per provider, and
 `_index.md` + `_universal.md` when more than one provider is given. See
-[../tools/report/README.md](../tools/report/README.md).
+[../src/pkcs11_check/report/README.md](../src/pkcs11_check/report/README.md).

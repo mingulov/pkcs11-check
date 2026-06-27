@@ -1,4 +1,4 @@
-"""Golden test for the per-provider report generator (tools.report).
+"""Golden test for the per-provider report generator (pkcs11_check.report).
 
 Drives extract -> enrich -> render on a committed mini fixture spanning every
 classification reason (incl. a crash from results.json) and asserts the rendered
@@ -12,16 +12,12 @@ To regenerate the golden after an intentional layout change::
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
-# Allow `python tests/test_report_golden.py` (regen) to import the tools package.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from tools.report.correlate import enrich  # noqa: E402
-from tools.report.extract import extract_groups  # noqa: E402
-from tools.report.render import render_provider  # noqa: E402
+from pkcs11_check.report.correlate import enrich
+from pkcs11_check.report.extract import extract_groups
+from pkcs11_check.report.render import render_provider
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "report"
 MINI_REPORT = FIXTURE_DIR / "mini_report.jsonl"
