@@ -747,7 +747,7 @@ def write_isolated_json_report(
         coverage=coverage,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n")
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return payload
 
 
@@ -1186,7 +1186,7 @@ def write_quality_json_report(
         coverage=coverage,
         report_log_records=report_log_records,
     )
-    path.write_text(json.dumps(payload, indent=2) + "\n")
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def write_report_jsonl(jsonl_paths: list[Path], output_path: Path) -> None:
@@ -1849,7 +1849,9 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
         "units": units,
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, indent=2) + "\n")
+    output_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     return payload
 
 
