@@ -15,6 +15,7 @@ from rich.console import Console
 from pkcs11_check.core import file_runner as file_runner_mod
 from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.file_runner import (
+    UNIT_STATUS_PRIORITY,
     BackendIsolationPolicy,
     FileRunResult,
     FileRunState,
@@ -46,6 +47,18 @@ from pkcs11_check.core.file_runner import (
     write_isolated_json_report,
     write_report_jsonl,
 )
+
+
+def test_unit_status_priority_is_the_overall_status_set() -> None:
+    assert UNIT_STATUS_PRIORITY == (
+        "timeout",
+        "crashed",
+        "failed",
+        "crash_limited",
+        "passed",
+        "empty",
+        "escalated",
+    )
 
 
 def test_status_from_returncode_classifies_timeout_sentinel() -> None:

@@ -31,6 +31,18 @@ from pkcs11_check.core.test_selection import extract_required_mechanisms, write_
 IsolationGranularity = Literal["file", "test"]
 RunnerGranularity = Literal["file", "test", "mixed"]
 CrashStatus = Literal["crashed", "timeout"]
+# Priority-ordered set of unit-level statuses _overall_unit_status can return.
+# Single source of truth: the results-comparison tool binds its status classifier
+# to this so the two cannot drift (see core/compare_results.py).
+UNIT_STATUS_PRIORITY: tuple[str, ...] = (
+    "timeout",
+    "crashed",
+    "failed",
+    "crash_limited",
+    "passed",
+    "empty",
+    "escalated",
+)
 _RESUME_COMPLETE_STATUSES = {"passed", "empty", "escalated", "crash_limited"}
 _DETAIL_COUNT_KEYS = RESULT_OUTCOME_KEYS
 _SPECIAL_DETAIL_OUTCOMES = {"crashed", "timeout", "passed-in-isolation"}
@@ -626,7 +638,7 @@ def _merge_special_entries_into_detail(
 
 def _overall_unit_status(file_results: list[FileRunResult]) -> str:
     seen = {result.status for result in file_results}
-    for status in ("timeout", "crashed", "failed", "crash_limited", "passed", "empty", "escalated"):
+    for status in UNIT_STATUS_PRIORITY:
         if status in seen:
             return status
     return file_results[0].status
