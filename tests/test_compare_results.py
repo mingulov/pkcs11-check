@@ -1,4 +1,12 @@
-from pkcs11_check.core.compare_results import ResultsComparison, compare_results, status_class
+from pathlib import Path
+
+from pkcs11_check.core.compare_results import (
+    ResultsComparison,
+    compare_results,
+    load_results,
+    status_class,
+)
+from pkcs11_check.core.file_runner import UNIT_STATUS_PRIORITY
 
 
 def test_status_class_known_unit_statuses() -> None:
@@ -51,3 +59,33 @@ def test_unknown_status_in_current_is_flagged_not_hidden() -> None:
     c = _cmp({"a.py": "passed"}, {"passed": 1}, {"a.py": "weird"}, {})
     assert ("a.py", "weird") in c.unknown_statuses
     assert c.has_regressions is True  # conservative: never silently pass
+
+
+def test_status_class_covers_every_framework_unit_status() -> None:
+    # Structural binding: every status the producer can emit must classify to a
+    # real (non-"unknown") class. A new status added to the producer fails here.
+    for status in UNIT_STATUS_PRIORITY:
+        assert status_class(status) != "unknown", f"unhandled unit status: {status}"
+
+
+def test_load_results_reads_statuses_the_writer_produces(tmp_path: Path) -> None:
+    from pkcs11_check.core.file_runner import (
+        FileRunResult,
+        FileRunState,
+        write_isolated_json_report,
+    )
+
+    # One unit per real status, built and written by the framework's own writer.
+    results = [
+        FileRunResult(f"{s}.py::t", s, 0 if s == "passed" else -1, 0.1)
+        for s in UNIT_STATUS_PRIORITY
+    ]
+    state = FileRunState(units=[r.target for r in results], fingerprint="x", results=results)
+    out = tmp_path / "results.json"
+    write_isolated_json_report(out, state)
+
+    target_map, _summary = load_results(out)
+    produced = set(target_map.values())
+    # Every produced unit status classifies to a non-"unknown" bucket.
+    for s in produced:
+        assert status_class(s) != "unknown", f"writer produced unhandled status: {s}"
