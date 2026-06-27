@@ -4,8 +4,8 @@ Tests C_Login with CKU_SO, C_InitPIN, C_SetPIN.
 Marked @destructive - these modify token PIN state.
 
 Note: These tests require --p11-destructive flag AND knowledge of the
-SO PIN. SoftHSM2 default SO PIN = same as user PIN during init.
-Many modules have different SO PINs - tests skip if SO login fails.
+SO PIN. Many modules use a default SO PIN equal to the user PIN at init time.
+Tests skip if SO login fails.
 """
 
 from __future__ import annotations

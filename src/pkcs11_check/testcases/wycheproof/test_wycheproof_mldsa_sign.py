@@ -74,7 +74,7 @@ _MLDSA_SIGN_FILES = [
 # CKR_TEMPLATE_INCOMPLETE / _INCONSISTENT: template shape errors (spec §11.7).
 # CKR_KEY_SIZE_RANGE: key material is the wrong size (covers IncorrectPrivateKeyLength).
 # CKR_DATA_INVALID: data is structurally invalid (some modules use this for decode failures).
-# Any OTHER clean code (e.g. kryoptic CKR_DEVICE_ERROR) is a recorded deviation (xfail).
+# Any OTHER clean code (e.g. CKR_DEVICE_ERROR from some modules) is a recorded deviation (xfail).
 _MLDSA_PRIVATE_IMPORT_REJECT_CKRS = (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
@@ -150,8 +150,8 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_module_session: Any) -
         # wrong length) is correctly rejected at import.  Per the classification
         # model (CLAUDE.md table): rejection with the expected spec CKR = pass;
         # rejection with SOME OTHER clean code = xfail (recorded deviation).
-        # kryoptic rejects these with CKR_DEVICE_ERROR (its crypto-layer decode
-        # failure code); softhsm2/nss/wolfpkcs11 instead accept the bytes and
+        # some modules reject these with CKR_DEVICE_ERROR (a crypto-layer decode
+        # failure code); others instead accept the bytes and
         # sign (lenient, handled in the sign branch).  Both are honest; neither
         # is a fail.  reject_or_classify enforces the 3-way model here.
         if result == "invalid" and _has_flag(vec, _MLDSA_INVALID_PRIVATE_KEY_FLAGS):

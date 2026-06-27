@@ -76,7 +76,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import assert_correct
 
 # CKK_GENERIC_SECRET is the raw integer value 0x10; CKK_SHA_1_HMAC is 0x28.
-# Some modules (NSS) return CKK_GENERIC_SECRET for CKM_PBA_SHA1_WITH_SHA1_HMAC keys
+# Some modules return CKK_GENERIC_SECRET for CKM_PBA_SHA1_WITH_SHA1_HMAC keys
 # instead of CKK_SHA_1_HMAC, as they do not distinguish HMAC key types.
 _CKK_GENERIC_SECRET_INT = int(CKK_GENERIC_SECRET)
 
@@ -608,9 +608,9 @@ class TestPBASHA1:
     def test_generate_key(self, p11_raw_session: Any) -> None:
         """CKM_PBA_SHA1_WITH_SHA1_HMAC generates a key with CKA_KEY_TYPE=CKK_SHA_1_HMAC.
 
-        NSS deviation: NSS generates a key with CKA_KEY_TYPE=CKK_GENERIC_SECRET (0x10)
-        instead of CKK_SHA_1_HMAC (0x28) for CKM_PBA_SHA1_WITH_SHA1_HMAC -- NSS does
-        not differentiate HMAC key types and uses the generic secret key type.
+        Some modules generate a key with CKA_KEY_TYPE=CKK_GENERIC_SECRET (0x10)
+        instead of CKK_SHA_1_HMAC (0x28) for CKM_PBA_SHA1_WITH_SHA1_HMAC -- they do
+        not differentiate HMAC key types and use the generic secret key type.
         """
         rs = p11_raw_session
         if not rs.has_mechanism("PBA_SHA1_WITH_SHA1_HMAC"):

@@ -270,9 +270,8 @@ def test_xdh(p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[st
         if isinstance(exc, CkrAssertionError) and is_known_error(
             exc, _MONTGOMERY_PRIVATE_IMPORT_UNSUPPORTED_CKRS
         ):
-            # ECDH1_DERIVE is advertised (gate passed above) and providers that
-            # hit this branch (softhsm2/tpm2/wolfpkcs11/kryoptic per the D2
-            # cross-check) operationally derive XDH/ECDH -- the canonical
+            # ECDH1_DERIVE is advertised (gate passed above) and modules that
+            # hit this branch operationally derive XDH/ECDH -- the canonical
             # private-key import of a VALID vector is the only gap. That is
             # "advertised but not operational" -> xfail per the classification
             # model, not skip. The CKR_CURVE_NOT_SUPPORTED/DOMAIN branch above

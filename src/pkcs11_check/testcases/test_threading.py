@@ -13,7 +13,7 @@ pkcs11-check's shared-session fixtures initialize with ``C_Initialize(None)``
 (single-threaded mode), so the concurrent workload cannot run on the shared
 session. It runs in a dedicated **child process** that performs its own
 ``C_Initialize(CKF_OS_LOCKING_OK)``, against a disposable token where one can be
-minted (SoftHSM2) so that even a genuine thread-safety crash cannot corrupt the
+minted so that even a genuine thread-safety crash cannot corrupt the
 shared token. A crash
 (``returncode < 0``) or hang under this spec-valid multi-threaded contract is a
 genuine module thread-safety **finding** (FAIL); a module that cannot lock
@@ -206,7 +206,7 @@ class TestConcurrentUnderOSLocking:
     def test_concurrent_workload_os_locking(
         self, p11_config: Any, workload: str, tmp_path: Path
     ) -> None:
-        # Use a throwaway token where we can isolate one (SoftHSM2) so a genuine
+        # Use a throwaway token where one can be isolated so a genuine
         # thread-safety crash here cannot poison the shared token; other modules
         # fall back to the configured token (a conformant module does not corrupt it).
         conf = _mint_throwaway_token(tmp_path)

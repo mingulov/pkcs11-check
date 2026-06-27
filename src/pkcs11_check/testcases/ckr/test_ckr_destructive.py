@@ -1,7 +1,7 @@
 """CKR destructive token operation tests.
 
 Tests that require modifying token state (InitToken, SetPIN, InitPIN).
-Each test runs in subprocess with a TEMPORARY SoftHSM2 token to avoid
+Each test runs in subprocess with a TEMPORARY throwaway token to avoid
 damaging the main test token.
 
 Marked @destructive - skipped unless --p11-destructive is passed.
@@ -279,8 +279,8 @@ raw.C_Logout(sh)
         if not os.environ.get("PKCS11_CHECK_THROWAWAY_MODULE"):
             pytest.skip("throwaway module not configured (PKCS11_CHECK_THROWAWAY_MODULE unset)")
         token_dir = tempfile.mkdtemp(prefix="pkcs11_check_ckr_uninit_")
-        # This test writes a SoftHSM2-style uninitialized-token config and therefore
-        # assumes the configured throwaway module is SoftHSM2-compatible.
+        # This test writes a file-based uninitialized-token config and therefore
+        # assumes the configured throwaway module uses file-based token storage.
         conf_path = os.path.join(token_dir, "module.conf")
         with open(conf_path, "w") as f:
             f.write(f"directories.tokendir = {token_dir}/tokens\n")

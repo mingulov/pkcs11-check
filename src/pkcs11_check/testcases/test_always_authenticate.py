@@ -9,7 +9,7 @@ single-use: a second operation on the same key requires another
 This file exercises the operational enforcement.  test_attribute_enforcement.py
 already covers attribute readability and keygen-time setting; the work
 here is the runtime "sign-needs-reauth" path that historically has been
-mis-implemented (YubiHSM2, Thales Luna both had CVE-class bugs).
+mis-implemented (multiple HSMs have shipped CVE-class bugs here).
 
 Source: PKCS#11 v2.40 §11.6, v3.0 §5.5 (CKU_CONTEXT_SPECIFIC semantics).
 """

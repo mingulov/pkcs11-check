@@ -894,8 +894,8 @@ def _convert_missing_function_to_skip(report: Any, call: pytest.CallInfo[Any]) -
 
     The function dispatcher (``raw/api.py``) raises
     ``AttributeError("<C_Fn> not available in this module")`` when a test calls a
-    function the loaded module does not implement (common on minimal modules such
-    as corePKCS11). Per the classification model a genuinely-absent capability is
+    function the loaded module does not implement (common on minimal modules).
+    Per the classification model a genuinely-absent capability is
     a ``skip``, so convert that specific uncaught error into a skip rather than
     letting it surface as a hard error. Full modules expose all standard
     functions, so this never fires for them.

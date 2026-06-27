@@ -4,7 +4,7 @@ Tests C_MessageEncryptInit, C_MessageDecryptInit, C_MessageSignInit,
 C_MessageVerifyInit, C_LoginUser, C_SessionCancel using RawPKCS11
 with funclist3_ptr for v3.0 function access.
 
-Requires v3.0+ module (e.g., Kryoptic). Skips on v2.40 modules.
+Requires v3.0+ module. Skips on v2.40 modules.
 All tests run in subprocess for safety.
 """
 

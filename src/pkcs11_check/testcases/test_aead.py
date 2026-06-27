@@ -301,7 +301,7 @@ class TestAESGCMProviderGeneratedIV:
     def test_gcm_generated_iv_strict_writeback_two_call(self, p11_raw_session: Any) -> None:
         """CKM_AES_GCM strict generated-IV convention writes IV back to pIv.
 
-        This covers the pkcs11-proxy/CloudHSM class of workflows where the caller
+        This covers the provider-generated-IV class of workflows where the caller
         supplies a writable pIv buffer but requests provider IV generation via
         ulIvLen=0 and ulIvBits=96. Unsupported modules may reject the parameter;
         accepting it but not writing an IV back is a behavioral finding.
@@ -312,7 +312,7 @@ class TestAESGCMProviderGeneratedIV:
         note(
             "CKM_AES_GCM provider-generated IV via ulIvLen=0/ulIvBits=N",
             ComplianceLevel.VENDOR,
-            reference="AWS CloudHSM and Thales Luna/PTK generated-IV behavior",
+            reference="provider-generated-IV writeback behavior",
         )
 
         key_bytes = bytes(range(32))
@@ -354,10 +354,10 @@ class TestAESGCMProviderGeneratedIV:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_gcm_generated_iv_aws_style_writeback_two_call(self, p11_raw_session: Any) -> None:
-        """AWS CloudHSM-style CKM_AES_GCM generated IV writes IV back to pIv.
+    def test_gcm_generated_iv_zeroed_piv_writeback_two_call(self, p11_raw_session: Any) -> None:
+        """Zeroed-pIv CKM_AES_GCM generated IV writes IV back to pIv.
 
-        AWS CloudHSM callers use a zeroized pIv with ulIvLen=12 and ulIvBits=0.
+        Such callers use a zeroized pIv with ulIvLen=12 and ulIvBits=0.
         Standard software modules may reasonably treat that as a caller-supplied
         all-zero IV; those are skipped because no generated-IV writeback occurred.
         """
@@ -365,13 +365,13 @@ class TestAESGCMProviderGeneratedIV:
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
         note(
-            "CKM_AES_GCM provider-generated IV via AWS CloudHSM zeroized pIv convention",
+            "CKM_AES_GCM provider-generated IV via zeroized pIv convention",
             ComplianceLevel.VENDOR,
-            reference="AWS CloudHSM CK_GCM_PARAMS pIV writeback",
+            reference="CK_GCM_PARAMS pIV writeback convention",
         )
 
         key_bytes = bytes(range(32))
-        plaintext = b"classic GCM generated IV aws"
+        plaintext = b"classic GCM generated IV zeroed"
         aad = b"generated-iv-aad"
         key = _import_aes(rs, key_bytes)
         try:
@@ -380,19 +380,19 @@ class TestAESGCMProviderGeneratedIV:
                 iv_len=12,
                 aad=aad,
                 tag_bits=128,
-                convention="aws",
+                convention="zeroed",
             )
             ciphertext = _encrypt_gcm_generated_iv(
                 rs,
                 key,
                 mech,
                 plaintext,
-                convention="aws",
+                convention="zeroed",
             )
             iv = mech.buffer_bytes("iv")
             if not any(iv):
                 pytest.skip(
-                    "module treated AWS-style parameters as caller-supplied zero IV; "
+                    "module treated zeroed-pIv parameters as caller-supplied zero IV; "
                     "no provider-generated IV writeback observed"
                 )
 

@@ -226,10 +226,10 @@ def test_rsa_pkcs1_decrypt(
         # mitigation (RFC 8017 §7.2.2; "Marvin" 2023) is to NOT reveal padding
         # validity -- return a synthetic plaintext (or reject in constant time),
         # so the API "succeeds" with a value that is NOT the target message. Every
-        # real provider does this (softhsm2/kryoptic/NSS return synthetic for all
-        # invalid vectors; 0 padding bypasses, probed 2026-06-09). The ONLY break
-        # is recovering the actual target message -- that means the padding check
-        # was bypassed. So a non-target plaintext is secure, not a finding.
+        # conformant provider does this (returning synthetic for all invalid vectors;
+        # 0 padding bypasses, probed 2026-06-09). The ONLY break is recovering the
+        # actual target message -- that means the padding check was bypassed. So a
+        # non-target plaintext is secure, not a finding.
         if plaintext == msg_expected:
             classify(
                 "accepted_invalid",

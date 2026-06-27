@@ -4,8 +4,8 @@ Covers CKM_SSL3_PRE_MASTER_KEY_GEN, CKM_SSL3_MASTER_KEY_DERIVE,
 CKM_SSL3_KEY_AND_MAC_DERIVE, CKM_SSL3_MASTER_KEY_DERIVE_DH,
 CKM_SSL3_MD5_MAC, and CKM_SSL3_SHA1_MAC.
 
-These are legacy SSL 3.0 mechanisms. Most modern tokens (SoftHSM2, Kryoptic)
-do not support them. Tests skip cleanly via has_mechanism() when unsupported.
+These are legacy SSL 3.0 mechanisms. Most modern modules do not support them.
+Tests skip cleanly via has_mechanism() when unsupported.
 
 CKM_SSL3_MASTER_KEY_DERIVE and CKM_SSL3_KEY_AND_MAC_DERIVE require nested C
 parameter structures (CK_SSL3_RANDOM_DATA, CK_SSL3_MASTER_KEY_DERIVE_PARAMS,

@@ -80,7 +80,7 @@ pytestmark = pytest.mark.keymgmt
 # template) the module refuses the unwrap template shape -- a safety net so a cleanly-rejected
 # valid leg is an operational deviation -> xfail (discrimination undecidable), never a fail.
 # Includes the template-shape rejects for that reason; in practice the policy-attribute
-# negotiation (drop CKA_EXTRACTABLE/CKA_SENSITIVE) lets strict modules (opencryptoki) establish
+# negotiation (drop CKA_EXTRACTABLE/CKA_SENSITIVE) lets strict modules establish
 # the valid leg, so this net only catches a module that refuses the unwrap entirely.
 _WRAP_RUNTIME_REJECT_RVS = (
     CKR_DEVICE_ERROR,

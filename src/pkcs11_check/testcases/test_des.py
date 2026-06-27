@@ -10,11 +10,11 @@ DES2: 16-byte (128-bit) key (two-key Triple DES), 8-byte block.
 DES3: 24-byte (192-bit) key (three-key Triple DES), 8-byte block.
 IV for CBC/OFB/CFB modes: 8 bytes.
 
-SoftHSM2 supports: DES_KEY_GEN, DES_ECB, DES_CBC, DES_CBC_PAD,
+Typical module support includes: DES_KEY_GEN, DES_ECB, DES_CBC, DES_CBC_PAD,
   DES2_KEY_GEN, DES3_KEY_GEN, DES3_ECB, DES3_CBC, DES3_CBC_PAD, DES3_CMAC,
   DES_ECB_ENCRYPT_DATA, DES_CBC_ENCRYPT_DATA, DES3_ECB_ENCRYPT_DATA,
   DES3_CBC_ENCRYPT_DATA.
-SoftHSM2 does NOT support: DES_MAC, DES_MAC_GENERAL, DES_OFB64, DES_CFB8,
+Some modules do NOT support: DES_MAC, DES_MAC_GENERAL, DES_OFB64, DES_CFB8,
   DES_CFB64, DES3_MAC, DES3_MAC_GENERAL, DES3_CMAC_GENERAL.
 """
 
@@ -166,7 +166,7 @@ class TestDESKeyGen:
 class TestDESEncryption:
     """DES encryption/decryption: ECB, CBC, CBC_PAD, OFB64, CFB8, CFB64.
 
-    Note: Some modules (e.g. SoftHSM2 on OpenSSL 3) advertise CKM_DES_ECB and
+    Note: Some modules (e.g. on OpenSSL 3) advertise CKM_DES_ECB and
     CKM_DES_CBC in C_GetMechanismList but return CKR_MECHANISM_INVALID at
     C_EncryptInit because OpenSSL 3 does not load the legacy cipher provider by
     default.  Single-DES encrypt tests skip on MechanismInvalid so that the test

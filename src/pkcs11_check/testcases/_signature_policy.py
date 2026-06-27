@@ -45,7 +45,7 @@ NON_CLEAN_SIGNATURE_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_INVALID,
-    # Digest-length pinning (corePKCS11 accepts exactly 32B for CKM_ECDSA): the
+    # Digest-length pinning (some modules accept exactly 32B for CKM_ECDSA): the
     # module rejected the request before evaluating the signature -- xfail
     # evidence, never a clean signature-reject pass (PKCS#11 §2.3.1 requires
     # accepting any hash length, truncating to the group order).
@@ -58,10 +58,10 @@ NON_CLEAN_SIGNATURE_REJECT_RVS = (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     # Collateral of a stale verify operation the provider leaked after a prior
-    # reject (kryoptic/tpm2 spec violation; reported as a FAIL by
-    # test_operation_termination.py): the poisoned C_*Init never evaluated this
-    # vector's signature, so the invalid vector was not accepted -- xfail
-    # evidence attributed to the leak, not a finding on the innocent vector.
+    # reject (spec violation; reported as a FAIL by test_operation_termination.py):
+    # the poisoned C_*Init never evaluated this vector's signature, so the invalid
+    # vector was not accepted -- xfail evidence attributed to the leak, not a
+    # finding on the innocent vector.
     CKR_OPERATION_ACTIVE,
 )
 
@@ -70,8 +70,8 @@ NON_CLEAN_SIGNATURE_REJECT_RVS = (
 # roundtrip) cleanly refuses at runtime -- the mechanism is listed but is not
 # operational in this configuration. FIPS 140-3 is the canonical case: it
 # deprecates SHA-1 for signature generation and restricts RSA PKCS#1 v1.5
-# encryption/key-transport, so kryoptic-FIPS advertises CKM_ECDSA_SHA1 /
-# CKM_RSA_PKCS yet returns CKR_DEVICE_ERROR on the actual op. A clean refusal
+# encryption/key-transport, so a FIPS-mode module may advertise CKM_ECDSA_SHA1 /
+# CKM_RSA_PKCS yet return CKR_DEVICE_ERROR on the actual op. A clean refusal
 # produces no output, so per the classification model it is an "advertised but
 # not operational" deviation (xfail), never a crypto break. Wrong output (e.g.
 # a produced signature/ciphertext that does not round-trip) is caught by the

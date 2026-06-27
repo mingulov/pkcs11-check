@@ -113,7 +113,7 @@ DATA_ERRORS = (
     CKR_FUNCTION_FAILED,
 )
 
-# NOTE: SoftHSM2 returns CKR_GENERAL_ERROR for some data-length violations
+# NOTE: Some modules return CKR_GENERAL_ERROR for some data-length violations
 # where the spec says CKR_DATA_LEN_RANGE. If you see GeneralError for
-# data operations, it's a SoftHSM2 quirk - document it, don't add
+# data operations, it is a module quirk - document it, don't add
 # CKR_GENERAL_ERROR to DATA_ERRORS (that would hide real bugs).

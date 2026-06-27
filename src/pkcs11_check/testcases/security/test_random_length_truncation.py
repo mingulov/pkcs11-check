@@ -136,7 +136,7 @@ mm = None
 cleanup()
 """
         script = _preamble(p11_config) + body
-        # Timeout: softhsm2 measured ~0s (truncating); honoring module could take
+        # Timeout: a truncating module measures ~0s; a correctly honoring module could take
         # significant time filling 4 GiB.  180 s is generous for an honoring module
         # while keeping slow CI bounded.
         rc, stdout, stderr = run_with_coverage(script, timeout=180, pin=pin_from_config(p11_config))

@@ -1,6 +1,6 @@
-"""Session edge-case tests - stale handles, CloseAllSessions, SoftHSM2 issue regressions.
+"""Session edge-case tests - stale handles, CloseAllSessions, session issue regressions.
 
-References: rep11.md Iteration 2, SoftHSM2 #608, #596.
+References: rep11.md Iteration 2.
 """
 
 from __future__ import annotations
@@ -149,7 +149,7 @@ class TestSessionEdgeRegressions:
     """Session and mechanism edge case regressions (task 7.22)."""
 
     def test_wrap_unsupported_mechanism_returns_proper_ckr(self, p11_raw_session: Any) -> None:
-        """SoftHSM2 #608: C_WrapKey with unsupported mechanism must return
+        """C_WrapKey with unsupported mechanism must return
         CKR_MECHANISM_INVALID, not CKR_GENERAL_ERROR or crash."""
         rs = p11_raw_session
         key = gen_aes_key_or_xfail(

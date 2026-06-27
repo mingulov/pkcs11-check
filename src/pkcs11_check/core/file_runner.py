@@ -1903,7 +1903,7 @@ def save_run_state(path: Path, state: FileRunState) -> None:
     ``_write_unit_report_record_cache``) and the end-of-run merge always reads
     them back from those shards. Embedding the records in state.json made the
     payload grow to hundreds of MB and turned the per-unit save into an O(n^2)
-    re-serialization (~14 min on a full bouncyhsm round) for data that is never
+    re-serialization (~14 min on a full slow-module round) for data that is never
     the sole source of truth. The in-memory dict is retained only as a
     legacy/debug inline-state fallback; normal runs reconstruct records from
     the shards (and the prior report.jsonl on resume).

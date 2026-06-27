@@ -2,7 +2,7 @@
 
 Tests HKDF (RFC 5869) with SHA-1/SHA-256/SHA-384/SHA-512.
 Requires CKM_HKDF_DERIVE mechanism with CK_HKDF_PARAMS.
-Skips on modules without HKDF support (e.g., SoftHSM2).
+Skips on modules without HKDF support.
 """
 
 from __future__ import annotations

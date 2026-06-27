@@ -136,6 +136,6 @@ def run_null_test(
         capture_output=True,
         text=True,
         timeout=timeout,
-        env=os.environ.copy(),  # Inherit env (SOFTHSM2_CONF, NSS_LIB_PARAMS, etc.)
+        env=os.environ.copy(),  # Inherit env so the child sees the same provider config
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()

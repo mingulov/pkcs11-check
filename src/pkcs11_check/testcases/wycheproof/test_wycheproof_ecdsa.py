@@ -62,7 +62,8 @@ _UNSUPPORTED_CURVES: set[str] = set()
 # Per-curve effect-check result: None = curve binding verified coherent; str = defect
 # reason (silent rebind / incoherent object). Checked once per curve per process; a
 # defective curve's vectors skip BEFORE import so a bounded object store is not
-# flooded with broken objects (corePKCS11: 128-slot list -> CKR_DEVICE_MEMORY).
+# flooded with broken objects (some modules have bounded object stores that can
+# overflow with CKR_DEVICE_MEMORY).
 _CURVE_BINDING_DEFECTS: dict[str, str | None] = {}
 
 _CURVE_UNSUPPORTED_CKRS = (
@@ -82,8 +83,9 @@ _ECDSA_RUNTIME_REJECT_CKRS = (
     CKR_ARGUMENTS_BAD,
     CKR_DATA_INVALID,
     # PKCS#11 §2.3.1: CKM_ECDSA must accept any hash length (truncating to the
-    # group order); a module pinning the digest length (corePKCS11: exactly 32B)
-    # cleanly rejects valid longer digests -> recorded deviation, not hard fail.
+    # group order); a module pinning the digest length (some modules pin to a
+    # fixed size such as 32B) cleanly rejects valid longer digests -> recorded
+    # deviation, not hard fail.
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,

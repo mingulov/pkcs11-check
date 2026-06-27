@@ -4,7 +4,7 @@ KAT runners used to xfail "advertised but not operational" mechanisms via
 narrow per-CKR allowlists ({MECHANISM_INVALID, MECHANISM_PARAM_INVALID}); any
 other clean error on a positive-op vector hard-failed, so a module returning
 e.g. CKR_GENERAL_ERROR for a wholly non-operational mechanism produced
-thousands of misleading failures (bouncyhsm AES-CCM), while widening the list
+thousands of misleading failures (observed on some modules, e.g. AES-CCM), while widening the list
 blindly could mask real breaks.
 
 This module classifies by EFFECT instead: run ONE canonical known-answer
@@ -58,8 +58,8 @@ class OperabilityResult:
 
 # Request-shape rejects that remain xfail material when the probe is
 # INCONCLUSIVE (no effect evidence; e.g. the import path is broken, see H6):
-# the module cleanly refused THIS request shape (kryoptic rejects 7-byte CCM
-# nonces; corePKCS11-style impls use ARGUMENTS_BAD for input-shape
+# the module cleanly refused THIS request shape (some modules reject certain CCM
+# nonces; some implementations use ARGUMENTS_BAD for input-shape
 # constraints). Data-verdict and generic-failure codes stay OUT (meta-test
 # pinned): with no canonical evidence, blanket-xfailing those would have
 # hidden the H6 mass-import failure. With an OPERATIONAL canonical, ANY clean

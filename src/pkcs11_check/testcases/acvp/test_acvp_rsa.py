@@ -8,8 +8,8 @@ Mechanisms tested:
 - CKM_SHA*_RSA_PKCS (PKCS#1 v1.5 with hash)
 - CKM_SHA*_RSA_PKCS_PSS (RSA-PSS with hash)
 
-SoftHSM2 Known Issues:
-- RSA-PSS: Only supports hashAlg == mgf (no distinct hashes)
+Known module deviations (observed on some implementations):
+- RSA-PSS: Some modules only support hashAlg == mgf (no distinct hashes)
 
 Requires: scripts/fetch-optional-data.sh acvp
 """
@@ -337,7 +337,7 @@ def _pkcs15_sigver_operability(rs: Any, mech_name: str, key_bits: int) -> Operab
     no mechanism evidence either way; NOT_OPERATIONAL when the canonical known-valid vector
     is refused (CkrAssertionError) or verifies False; OPERATIONAL on True.
 
-    Three-state design (triage H2): tpm2 rejects all 27 valid SHA-1 SigVer vectors while
+    Three-state design (triage H2): some modules reject all 27 valid SHA-1 SigVer vectors while
     still rejecting every invalid one.  A reject of EVERY valid vector of a (mechanism,
     key-size) class is "advertised but not operational" (classification model: xfail), not a
     pile of per-vector findings; a staging failure (key import refused) must not masquerade as
@@ -429,7 +429,7 @@ class TestRsaSigVer:
                 )
             if not expected_pass and not verified:
                 # The invalid vector was rejected -- a genuine pass ONLY if the
-                # mechanism actually verifies anything. tpm2 rejects all 27 valid
+                # mechanism actually verifies anything. Some modules reject all 27 valid
                 # SHA-1 SigVer vectors while "passing" 135 invalid ones: those
                 # rejections never evaluated the signature -> vacuous (xfail). The
                 # probe is INCONCLUSIVE-safe (canonical import refused never fires).

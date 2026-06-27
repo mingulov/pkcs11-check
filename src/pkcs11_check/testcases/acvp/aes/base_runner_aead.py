@@ -54,7 +54,7 @@ _GCM_DATA_REJECTS = (
     CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_AEAD_DECRYPT_FAILED,
 )
-# kryoptic reports tag-auth failure as CKR_DEVICE_ERROR (its OpenSSL-failure
+# Some modules report tag-auth failure as CKR_DEVICE_ERROR (an OpenSSL-failure
 # fallback) -- accepted as an invalid-tag rejection for CCM, as before.
 _CCM_DATA_REJECTS = _GCM_DATA_REJECTS + (CKR_DEVICE_ERROR,)
 

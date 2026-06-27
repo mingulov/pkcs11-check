@@ -88,8 +88,8 @@ _AES_RUNTIME_REJECT_CKRS = (
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
-    # Imported-with-CKR_OK key not honored at use time (corePKCS11 returns
-    # KEY_HANDLE_INVALID for CMAC keys it claimed to import) -- the deviation
+    # Imported-with-CKR_OK key not honored at use time (some modules return
+    # KEY_HANDLE_INVALID for CMAC keys they claimed to import) -- the deviation
     # is recorded here; the self-contradiction itself belongs to the dedicated
     # object-coherence conformance coverage. Same precedent as wycheproof ECDSA.
     CKR_KEY_HANDLE_INVALID,
@@ -308,10 +308,10 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
             # The adaptive unwrap already tried both the minimal template and one with an
             # explicit CKA_VALUE_LEN, so a remaining clean template/attribute reject is an
             # operational deviation, not a crypto break: the module cannot create the
-            # generic-secret object either way. Examples seen across modules: NSS refuses
-            # the oversized 384-byte CounterOverflow vectors (TEMPLATE_INCONSISTENT) and
-            # opencryptoki/softhsm2 reject CKA_VALUE_LEN itself (ATTRIBUTE_READ_ONLY).
-            # softhsm2 and kryoptic unwrap these vectors, so the inputs are valid.
+            # generic-secret object either way. Some modules refuse the oversized
+            # 384-byte CounterOverflow vectors (TEMPLATE_INCONSISTENT) and others
+            # reject CKA_VALUE_LEN itself (ATTRIBUTE_READ_ONLY).
+            # Several modules successfully unwrap these vectors, so the inputs are valid.
             xfail_if_known_ckr(
                 exc,
                 _AES_RUNTIME_REJECT_CKRS + _AES_KW_VALID_VECTOR_CLEAN_REJECTS,
@@ -525,7 +525,7 @@ def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
             if isinstance(exc, AssertionError):
                 # Effect-based (triage H2): a clean decrypt error on a valid CCM
                 # vector is classified against the canonical CCM-decrypt probe.
-                # Non-operational (bouncyhsm CCM -> GENERAL_ERROR) or an honest
+                # Non-operational (some modules return GENERAL_ERROR for CCM) or an honest
                 # clean reject -> xfail; a working probe with WRONG canonical
                 # output (a real break) re-raises. The real CCM findings
                 # (accepted-invalid, wrong plaintext) are caught below, not here.

@@ -50,9 +50,9 @@ _all_cases = load_limbo_testcases()
 def _portable_label(raw_label: str) -> str:
     """CKA_LABEL within the 32-byte floor common to embedded object stores.
 
-    corePKCS11 caps labels at pkcs11configMAX_LABEL_LENGTH (32) and rejects
-    longer ones with CKR_DATA_LEN_RANGE before looking at the certificate at
-    all (493 limbo vectors hard-failed on the label, not the DER). The label
+    Some modules cap labels at 32 bytes and reject longer ones with
+    CKR_DATA_LEN_RANGE before looking at the certificate at all (observed:
+    493 limbo vectors hard-failed on the label, not the DER). The label
     is the harness's own bookkeeping, so send a deterministic short form for
     long testcase ids; modules with roomier stores see identical behavior for
     ids that already fit.

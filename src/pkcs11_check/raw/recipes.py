@@ -158,7 +158,7 @@ _ALL_OP_FLAGS = (
 
 
 # Set when a single-shot recipe meets a CKR_OPERATION_ACTIVE it cannot clear in
-# place (e.g. tpm2-pkcs11: PKCS#11 v2.40, no C_SessionCancel, and its NULL-mechanism
+# place (e.g. a v2.40 module with no C_SessionCancel, whose NULL-mechanism
 # C_VerifyInit does not cancel either -- only closing+reopening the session clears
 # the stale op). The module-scoped session holder consumes this on the next handout
 # and reopens, so the cascade stops at one collateral failure instead of running to
@@ -186,10 +186,10 @@ def _init_or_recover(raw: RawPKCS11, session: int, init_fn: Callable[[], int]) -
     """Run a single-shot ``C_*Init``; recover from a non-compliant provider's stale op.
 
     A ``C_*Init`` returns ``CKR_OPERATION_ACTIVE`` when an operation of that class
-    is already active on the session. Some providers (kryoptic v1.5.0,
-    tpm2-pkcs11) violate the spec by leaving a verify operation active after
-    ``C_Verify`` rejects a signature ("a call to C_Verify always terminates the
-    active verification operation"); on a shared module-scoped session that makes
+    is already active on the session. Some modules violate the spec by leaving
+    a verify operation active after ``C_Verify`` rejects a signature ("a call to
+    C_Verify always terminates the active verification operation"); on a shared
+    module-scoped session that makes
     the NEXT test's ``C_*Init`` return ``CKR_OPERATION_ACTIVE`` and cascade onto
     every following test.
 
@@ -197,8 +197,8 @@ def _init_or_recover(raw: RawPKCS11, session: int, init_fn: Callable[[], int]) -
     path runs the init exactly once, so this does not regress RPC-bound modules):
 
     1. ``C_SessionCancel`` the stale op and retry the init once (works on
-       PKCS#11 v3.0+ modules such as kryoptic -- cheap, same session handle).
-    2. If the init still reports the op active (e.g. tpm2-pkcs11: v2.40 with no
+       PKCS#11 v3.0+ modules -- cheap, same session handle).
+    2. If the init still reports the op active (e.g. a v2.40 module with no
        ``C_SessionCancel``, and no other in-place cancel works), request a session
        reopen via :func:`request_session_reopen`. The recipe cannot reopen itself
        (that would change the handle the caller holds), so the current call still
@@ -225,7 +225,7 @@ def _resolve_mech(
     """Return mech_param if given, otherwise wrap mechanism as mech_simple.
 
     For CKM_EDDSA, always use mech_eddsa() with pure mode (no context)
-    since some modules (NSS) require explicit params even for pure EdDSA.
+    since some modules require explicit params even for pure EdDSA.
     """
     if mech_param is not None:
         return mech_param
@@ -256,16 +256,16 @@ def _two_call_output(
     - C_GetMechanismList / C_GetSlotList / C_GetAttributeValue (non-byte array types)
 
     ``output_size_hint`` enables single-call mode for modules that do not support the
-    NULL-buffer size-query pass (e.g. NSS softoken for AES-GCM / AES-KEY-WRAP-KWP).
+    NULL-buffer size-query pass (e.g. for AES-GCM / AES-KEY-WRAP-KWP on some modules).
     When provided, the NULL-buffer query is skipped entirely and a single call is made
     with a pre-allocated buffer of ``output_size_hint`` bytes.  The output is truncated
     to the length reported by the module after the call.
 
     ``retry_on_buffer_too_small`` when True, if the second call returns
     CKR_BUFFER_TOO_SMALL and the module provides a larger required size,
-    re-allocates and retries once.  Needed for modules (e.g. NSS softoken)
-    that under-report the required size on the NULL-buffer query (returning
-    plaintext length without AEAD tag overhead).
+    re-allocates and retries once.  Needed for modules that under-report the
+    required size on the NULL-buffer query (returning plaintext length without
+    AEAD tag overhead).
 
     Per PKCS#11 spec section 5.2, the standard two-call pattern is used when
     ``output_size_hint`` is 0: first call with NULL buffer to obtain the required size,
@@ -274,7 +274,7 @@ def _two_call_output(
     fn = getattr(raw, call_fn)
     if output_size_hint > 0:
         # Single-call mode: allocate upfront and call once.
-        # Required for modules (e.g. NSS softoken) where passing NULL on the first
+        # Required for modules where passing NULL on the first
         # call either fails to set the output length or consumes the operation state.
         out_len = CK_ULONG(output_size_hint)
         out_buf = (ctypes.c_ubyte * output_size_hint)()
@@ -431,7 +431,7 @@ class RSAUsage(Flag):
     Purpose is a *crypto-visible* attribute: it changes what the key is and
     which operation may use it, so it must be declared explicitly by the caller
     rather than inferred or silently negotiated. Single-purpose providers
-    (Cloud-KMS-class, e.g. kmsp11) back keys that are sign-only XOR decrypt-only
+    (Cloud-KMS-class) back keys that are sign-only XOR decrypt-only
     and reject the multi-purpose combination with CKR_TEMPLATE_INCONSISTENT;
     pass ``RSAUsage.SIGN`` or ``RSAUsage.DECRYPT`` to target them.
     """
@@ -472,7 +472,7 @@ def gen_rsa_keypair(
     pub_caps, priv_caps = rsa_usage_attrs(usage)
     _pub_defaults: dict[CKA, Any] = {
         **pub_caps,
-        CKA_PUBLIC_EXPONENT: b"\x01\x00\x01",  # 65537, required by NSS
+        CKA_PUBLIC_EXPONENT: b"\x01\x00\x01",  # 65537 (standard RSA public exponent)
     }
     _priv_defaults: dict[CKA, Any] = {**priv_caps}
     if public_attrs:
@@ -832,7 +832,7 @@ def encrypt_single(
 
     ``output_overhead`` is the number of bytes the mechanism appends beyond the
     plaintext length (e.g. 16 for AES-GCM with a 128-bit tag).  This is only
-    needed for modules (e.g. NSS softoken) that do not set the output length
+    needed for modules that do not set the output length
     when called with a NULL buffer pointer during the size-query pass.
 
     ``output_size_hint`` (> 0) skips the NULL-buffer size-query pass entirely
@@ -920,7 +920,7 @@ def decrypt_single(
 
     - ``output_size_hint > 0`` skips the NULL-buffer size probe and goes
       straight to a single call with a pre-allocated ``output_size_hint``-byte
-      buffer.  Needed for modules (e.g. NSS softoken) that fail the NULL
+      buffer.  Needed for modules that fail the NULL
       probe or consume operation state during it.  Pass ``len(ciphertext)``
       for AEAD (plaintext is at most that size).
     - ``retry_on_buffer_too_small`` when True, if the (single or post-probe)
@@ -1232,7 +1232,7 @@ def wrap_key(
 
     ``output_size_hint`` is used as the buffer allocation size when the module
     does not set the output length during the NULL-buffer size-query pass (e.g.
-    NSS softoken for AES-KEY-WRAP-KWP).  It should be at least as large as the
+    for AES-KEY-WRAP-KWP on some modules).  It should be at least as large as the
     actual wrapped-key output.
     """
     mech = _resolve_mech(mechanism, mech_param)
@@ -1762,17 +1762,18 @@ def encapsulate_key(
     Uses the two-call pattern: first call with pCiphertext=NULL to get the required buffer
     size, second call with a properly allocated buffer.
 
-    NSS-PQC returns CKR_BUFFER_TOO_SMALL (not CKR_OK) on the first NULL-buffer call, which
-    is valid PKCS#11 behavior analogous to C_Encrypt.  Kryoptic may create the key on the
-    first call and return CKR_OK -- we preserve that handle and reuse it on the second call.
+    Some modules return CKR_BUFFER_TOO_SMALL (not CKR_OK) on the first NULL-buffer call,
+    which is valid PKCS#11 behavior analogous to C_Encrypt.  Others may create the key on
+    the first call and return CKR_OK -- we preserve that handle and reuse it on the second
+    call.
     """
     mech = _resolve_mech(mechanism, mech_param)
     packed = pack_attrs(attrs)
     tmpl = template(*packed) if packed else None
 
     # First call: query ciphertext buffer size.
-    # Accept both CKR_OK (Kryoptic: key may already be created) and
-    # CKR_BUFFER_TOO_SMALL (NSS-PQC: standard two-pass indicator).
+    # Accept both CKR_OK (some modules create the key already) and
+    # CKR_BUFFER_TOO_SMALL (the standard two-pass indicator).
     ct_len = CK_ULONG(0)
     key_handle = CK_OBJECT_HANDLE(0)
     rv = raw.C_EncapsulateKey(
@@ -1782,17 +1783,17 @@ def encapsulate_key(
         *template_ptr_count(tmpl),
         None,  # pCiphertext -- NULL signals size query
         byref(ct_len),
-        byref(key_handle),  # Kryoptic requires non-NULL even for size query
+        byref(key_handle),  # some modules require non-NULL even for size query
     )
     if rv not in (CKR_OK, CKR_BUFFER_TOO_SMALL):
         expect_rv(rv, CKR_OK)  # raises with descriptive error
 
     # Second call: pass properly sized buffer.
-    # If the first call already created the key (Kryoptic, CKR_OK + non-zero handle),
+    # If the first call already created the key (CKR_OK + non-zero handle),
     # reset the handle so the second call can overwrite it safely.
     first_call_handle = key_handle.value
     if rv == CKR_BUFFER_TOO_SMALL:
-        key_handle = CK_OBJECT_HANDLE(0)  # NSS: key not yet created
+        key_handle = CK_OBJECT_HANDLE(0)  # key not yet created
     ct_buf = (ctypes.c_ubyte * ct_len.value)()
     rv = raw.C_EncapsulateKey(
         session,
@@ -1870,7 +1871,7 @@ def wrap_key_authenticated(
 
     ``output_size_hint`` skips the NULL-buffer size-query first call and
     issues a single call with a pre-allocated buffer of that size.  Needed
-    for modules (e.g. NSS softoken) that either fail to report the required
+    for modules that either fail to report the required
     size on a NULL probe or consume operation state during it.
     """
     mech = _resolve_mech(mechanism, mech_param)

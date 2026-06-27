@@ -96,8 +96,8 @@ _PARAM_MAP = {
 # FIPS 203: the ML-KEM shared secret is always 32 bytes for every parameter set.
 # PKCS#11 v3.2 says the KEM contributes CKA_VALUE but "other attributes required by the
 # key type must be specified in the template" — so the output template must declare
-# CKA_VALUE_LEN. Strict-but-conformant modules (opencryptoki) reject a template without it
-# (CKR_TEMPLATE_INCONSISTENT); lenient ones (kryoptic/nss) infer it. Always supply it.
+# CKA_VALUE_LEN. Strict-but-conformant modules reject a template without it
+# (CKR_TEMPLATE_INCONSISTENT); lenient ones infer it. Always supply it.
 _ML_KEM_SHARED_SECRET_BYTES = 32
 
 _KEM_OPERATION_REJECT_RVS = (
@@ -166,7 +166,7 @@ def _encap_attrs(
     """Standard template for an encapsulated/decapsulated key.
 
     Declares CKA_CLASS/CKA_KEY_TYPE and, by default, CKA_VALUE_LEN=32 (the ML-KEM shared
-    secret size). The length is required by strict-but-conformant modules (opencryptoki)
+    secret size). The length is required by strict-but-conformant modules
     per PKCS#11 v3.2; pass ``value_len`` to request a different size (AES-128/192) or
     ``None`` to omit it deliberately.
     """
@@ -758,7 +758,7 @@ class TestMLKEMDecapsulation:
             # Verification
             enc_val = read_attributes(rs.raw, rs.sh, encap_handle, [CKA_VALUE])[CKA_VALUE]
             dec_val = read_attributes(rs.raw, rs.sh, decap_handle, [CKA_VALUE])[CKA_VALUE]
-            # Some modules (Kryoptic) may always produce 32-byte shared secret
+            # Some modules may always produce the full 32-byte shared secret
             assert len(dec_val) in (aes_len, 32)
             if len(dec_val) == aes_len:
                 assert_correct(

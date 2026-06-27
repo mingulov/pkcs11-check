@@ -46,9 +46,9 @@ from pkcs11_check.testcases.conftest import (
 )
 
 # Clean rejects that mean "advertised import/op not operational for these
-# attributes" on a minimal provider (corePKCS11 rejects CKA_DECRYPT on RSA
-# private keys; does not expose CKA_LOCAL) -> recorded deviation (xfail), not a
-# hard fail. A capable module (softhsm2) never hits these and still passes.
+# attributes" on a minimal provider (some modules reject CKA_DECRYPT on RSA
+# private keys or do not expose CKA_LOCAL) -> recorded deviation (xfail), not a
+# hard fail. A capable module never hits these and still passes.
 _RSA_IMPORT_DEVIATION_CKRS = (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_TYPE_INVALID,

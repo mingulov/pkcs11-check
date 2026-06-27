@@ -882,7 +882,7 @@ print(f"CF:0x{rv2:08x}")
         assert gfs_line is not None, f"No GFS output: {stdout!r}"
         rv_hex = gfs_line.split(":")[1]
         # Spec says CKR_FUNCTION_NOT_PARALLEL (0x51).
-        # SoftHSM2 returns CKR_OPERATION_NOT_INITIALIZED (0x91) - module quirk.
+        # Some modules return CKR_OPERATION_NOT_INITIALIZED (0x91) - module quirk.
         acceptable = {"0x00000051", "0x00000091", "0x00000054"}
         if rv_hex not in acceptable:
             classify(

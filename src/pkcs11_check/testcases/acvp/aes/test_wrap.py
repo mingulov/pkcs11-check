@@ -46,9 +46,9 @@ from pkcs11_check.testcases.acvp.aes.base import _import_aes_key, _load_vectors
 from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 
 # CKR errors that indicate the module correctly rejected invalid ciphertext
-# during unwrap integrity checking.  OpenSSL-backed modules often return
-# CKR_GENERAL_ERROR instead of the more specific CKR codes.  Kryoptic
-# returns CKR_DEVICE_ERROR for integrity check failures.
+# during unwrap integrity checking.  Some modules return CKR_GENERAL_ERROR
+# instead of the more specific CKR codes; others return CKR_DEVICE_ERROR
+# for integrity check failures.
 _UNWRAP_REJECT_RVS = {
     CKR_ENCRYPTED_DATA_INVALID,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
