@@ -145,8 +145,8 @@ class TestCloseAllSessions:
             close_session_quietly(rs.raw, s_new)
 
 
-class TestSoftHSM2IssueRegressions:
-    """SoftHSM2 GitHub issue regressions (task 7.22)."""
+class TestSessionEdgeRegressions:
+    """Session and mechanism edge case regressions (task 7.22)."""
 
     def test_wrap_unsupported_mechanism_returns_proper_ckr(self, p11_raw_session: Any) -> None:
         """SoftHSM2 #608: C_WrapKey with unsupported mechanism must return
@@ -194,7 +194,7 @@ class TestSoftHSM2IssueRegressions:
                     f"C_WrapKey with bad mechanism returned {ckr_name(rv)} "
                     "instead of CKR_MECHANISM_INVALID",
                     ComplianceLevel.NOT_RECOMMENDED,
-                    reference="SoftHSM2 #608",
+                    reference="wrap-unsupported-mechanism",
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, target)

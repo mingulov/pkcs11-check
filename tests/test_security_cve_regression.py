@@ -175,7 +175,7 @@ def test_rapid_sign_skips_without_sha256_rsa_pkcs(
     monkeypatch.setattr(test_cve_regression, "gen_rsa_keypair", _unexpected_keypair)
 
     with pytest.raises(pytest.skip.Exception, match="SHA256_RSA_PKCS not supported"):
-        test_cve_regression.TestTPM2Issue44().test_rapid_sign_no_deadlock(
+        test_cve_regression.TestMutexDeadlockRegression().test_rapid_sign_no_deadlock(
             _session(_EncryptStateRaw(), "RSA_PKCS_KEY_PAIR_GEN")
         )
 
@@ -186,7 +186,7 @@ def test_rapid_sign_xfails_when_advertised_rsa_keygen_rejects(
     monkeypatch.setattr(test_cve_regression, "gen_rsa_keypair", _raise_function_not_supported)
 
     with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN advertised"):
-        test_cve_regression.TestTPM2Issue44().test_rapid_sign_no_deadlock(
+        test_cve_regression.TestMutexDeadlockRegression().test_rapid_sign_no_deadlock(
             _session(_EncryptStateRaw(), "RSA_PKCS_KEY_PAIR_GEN", "SHA256_RSA_PKCS")
         )
 
