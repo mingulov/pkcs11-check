@@ -185,7 +185,7 @@ helpers - **use these instead of hand-rolling per-CKR allowlists or bare `pytest
 **Import-skip rule:** a *negotiated* import that fails for all storage shapes on a module that
 *advertises* the mechanism is "advertised but not operational" → `xfail`, never `skip`. Use the
 `import_*_negotiated` helpers (`testcases/conftest.py`); skip is only for genuinely-absent
-capability. See [findings/import-skip-audit.md](findings/import-skip-audit.md).
+capability.
 
 ## At-source test-outcome classification
 
