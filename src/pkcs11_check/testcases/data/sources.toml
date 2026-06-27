@@ -11,9 +11,9 @@
 
 [wycheproof]
 repo = "C2SP/wycheproof"
-commit = "6d7cccd0fcb1917368579adeeac10fe802f1b521"
-commit_date = "2026-06-06T15:36:36Z"
-archive_sha256 = "bb5e31bfe1639db91a9e4448a35c78cd2e4e7bbf9fea0dd50c0560ffc56c62cb"
+commit = "ee7b4f7e611928cbe163dc6f5e54527bfd166f34"
+commit_date = "2026-06-10T17:08:58Z"
+archive_sha256 = "7756fa2522b59561d6ea0bd7c15a512f4680dd5ef888f59e020552adfa7f2322"
 description = "Wycheproof edge-case cryptographic test vectors"
 include = ["testvectors_v1/", "LICENSE"]
 license = "Apache-2.0"
@@ -41,9 +41,9 @@ license_files = ["README.md"]
 
 [x509-limbo]
 repo = "C2SP/x509-limbo"
-commit = "1983423436313a6605461056470e21242d066416"
-commit_date = "2026-06-07T01:45:37Z"
-archive_sha256 = "64850246b02ed1f6c75d639de865e7e7192159d2e18cc1faf5dc8d27e4b93180"
+commit = "9d41359a05d811ee3de8026ff21d7ddecbd0f3eb"
+commit_date = "2026-06-16T03:16:33Z"
+archive_sha256 = "f5b00fdabdce8f13334c2752ef674356c23c7cc2445f400ec0a268567659e569"
 description = "C2SP x509-limbo pathological X.509 certificates"
 # No include = extract everything
 license = "Apache-2.0"
