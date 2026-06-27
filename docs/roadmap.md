@@ -15,6 +15,18 @@ behavior is documented in the README and the rest of `docs/`.
   spurious findings. This will be opt-in / configurable, so strict runs can
   still treat every return code at face value.
 
+- *Easier scoping-out of unsupported curves and mechanisms.* PKCS#11 has no
+  per-curve or per-key-size capability flag, so the suite finds an unsupported
+  EC curve only by trying it; a clean rejection is recorded as a
+  `not_operational` deviation, and across a whole vector file one capability gap
+  becomes thousands of `not_operational` xfails (see
+  [interpreting-results.md](interpreting-results.md)). A simpler way to tell a
+  run which curves / key sizes / mechanisms a module actually implements would
+  let those families be skipped up front instead of attempted, cutting the
+  noise. This is run scoping (what to exercise), supplied per run by the user -
+  not a shipped per-provider allowlist - so result classification stays
+  provider-neutral.
+
 - *SO (security officer) login flows.* CKU_SO workflows, including
   trusted-certificate import with `CKA_TRUSTED=True`, are not yet covered.
 
