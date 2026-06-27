@@ -4,7 +4,7 @@ Phase-2 V2: HMAC invalid vectors were exercised as *produce* (C_Sign + compare)
 operations, so a fresh correct tag never matched the modified expected tag and
 rejection was never tested. Re-framed to verify-and-reject: a module that
 verifies an invalid (forged) HMAC tag as valid is a crypto-correctness break
-(Type A -> fail). A valid MAC that the module rejects (e.g. an unsupported
+(crypto -> fail). A valid MAC that the module rejects (e.g. an unsupported
 truncated tag length) is an honest deviation -> xfail.
 """
 

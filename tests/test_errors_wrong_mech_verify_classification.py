@@ -1,4 +1,4 @@
-"""Runtime classification meta-test for test_errors wrong-mechanism verify (Type A).
+"""Runtime classification meta-test for test_errors wrong-mechanism verify (crypto).
 
 A signature produced under SHA256-RSA verified under SHA384-RSA that returns
 CKR_OK accepts a signature over the wrong message digest -- a crypto-correctness

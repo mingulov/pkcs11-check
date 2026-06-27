@@ -1,9 +1,9 @@
-"""Runtime classification meta-tests for test_sensitivity Type-B reclassification.
+"""Runtime classification meta-tests for test_sensitivity policy reclassification.
 
 The sensitive-value-read tests were wired inverted: they xfailed the violation
 (value readable) and were effectively never able to pass on honest protection
 because read_attributes omits unavailable attributes rather than raising. The
-Type-B claim/effect-check fixes both directions:
+policy claim/effect-check fixes both directions:
 
 - the key reads back CKA_SENSITIVE=True (claimed) AND the protected value is
   readable (violated) -> fail (claimed then violated),

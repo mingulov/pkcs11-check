@@ -6,7 +6,7 @@ type (returns ``CKR_OK``) but then SAFELY refuses at the terminal
 no usable operation behind -- which is the test's own documented contract
 ("must not leave a usable operation behind"). Per the classification model that
 is a recorded deviation (xfail), not a hard fail. Only a *produced* signature (a
-usable wrong-key operation = Type-C self-contradiction) or a crash is a genuine
+usable wrong-key operation = lifecycle self-contradiction) or a crash is a genuine
 break (fail).
 
 softhsm2 is the one provider that exhibits the lenient-init-but-safe-op path

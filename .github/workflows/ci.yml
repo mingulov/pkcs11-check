@@ -11,8 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: recursive
       - uses: astral-sh/setup-uv@v8.1.0
       - run: uv sync --frozen --extra dev
       - run: uv run ruff check src/ tests/
@@ -22,8 +20,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: recursive
       - uses: astral-sh/setup-uv@v8.1.0
       - run: uv sync --frozen --extra dev
       - run: uv run mypy src/
@@ -32,8 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: recursive
       - uses: astral-sh/setup-uv@v8.1.0
       - run: uv sync --frozen --extra dev
       - run: uv run pytest tests/ -v --timeout=60
@@ -42,8 +36,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: recursive
       - uses: astral-sh/setup-uv@v8.1.0
       - run: uv sync --frozen --extra dev
       - run: uv run pytest --strict-markers src/pkcs11_check/testcases/ --collect-only -q
@@ -52,8 +44,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: recursive
       - uses: astral-sh/setup-uv@v8.1.0
       - run: sudo apt-get update && sudo apt-get install -y softhsm2
       - run: uv sync --frozen --extra dev
@@ -69,7 +59,7 @@ jobs:
         run: |
           # Functional smoke only: --marker "not security" excludes destructive
           # probes (e.g. isize::MAX ulDataLen boundary) that surface real
-          # provider defects (documented in docs/module-issues.md) and are
+          # provider defects and are
           # exercised in the full Docker matrix, not this per-push gate.
           uv run pkcs11-check test \
             --module /usr/lib/softhsm/libsofthsm2.so \

@@ -1,12 +1,12 @@
-"""Runtime classification meta-tests for ML-KEM negative tests (Type A + Type B).
+"""Runtime classification meta-tests for ML-KEM negative tests (crypto + policy).
 
-Type A -- CKA_VALUE injection (test_decapsulate_with_invalid_attributes_in_template):
+crypto -- CKA_VALUE injection (test_decapsulate_with_invalid_attributes_in_template):
 injecting CKA_VALUE into a C_DecapsulateKey template lets the caller dictate the
 derived key's secret bytes instead of deriving them -- a crypto-correctness
 break. Acceptance (CKR_OK) must fail; an expected template reject passes; another
 clean reject xfails.
 
-Type B -- CKA_DECAPSULATE=False enforcement (test_decapsulate_missing_permission_flag):
+policy -- CKA_DECAPSULATE=False enforcement (test_decapsulate_missing_permission_flag):
 if the module honored CKA_DECAPSULATE=False on the private key (claim) and then
 decapsulated anyway (violation) it is a self-contradiction -> fail; if it did not
 claim the flag (reads back True/absent) -> xfail; rejection -> pass.
@@ -63,7 +63,7 @@ def test_value_injection_other_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Type B -- CKA_DECAPSULATE=False enforcement
+# policy -- CKA_DECAPSULATE=False enforcement
 # ---------------------------------------------------------------------------
 
 

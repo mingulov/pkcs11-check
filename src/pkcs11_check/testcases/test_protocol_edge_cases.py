@@ -80,7 +80,6 @@ class TestResourceExhaustion:
         NSS deviation: NSS returns CKR_ARGUMENTS_BAD for C_GenerateRandom
         requests larger than approximately 32KB -- NSS has an internal size
         limit on single random generation calls.
-        Tracked in docs/module-issues.md under NSS.
         """
         rs = p11_raw_session
         from pkcs11_check.testcases.conftest import skip_unless_generate_random_supported
@@ -95,8 +94,8 @@ class TestResourceExhaustion:
             xfail_if_known_ckr(
                 exc,
                 {CKR_ARGUMENTS_BAD},
-                "NSS rejects C_GenerateRandom(1MB) with CKR_ARGUMENTS_BAD -- "
-                "NSS has an internal size limit on single random generation calls",
+                "some modules reject C_GenerateRandom(1MB) with CKR_ARGUMENTS_BAD "
+                "- internal size limit on single random generation calls",
             )
             raise
 

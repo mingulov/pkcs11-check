@@ -27,7 +27,7 @@ def _python_files() -> list[Path]:
 
 
 def test_public_docs_do_not_reference_workstation_paths_or_agent_plans() -> None:
-    banned = ("/home/user", "/home/", "ScheduleWakeup", "/loop", "docs/superpowers/")
+    banned = ("/home/user", "/home/", "ScheduleWakeup", "/loop", "superpowers/")
     offenders: list[str] = []
     for path in PUBLIC_DOCS:
         text = path.read_text()

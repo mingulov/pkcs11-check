@@ -310,7 +310,7 @@ def test_binding_defect_reports_unavailable_params(monkeypatch: pytest.MonkeyPat
 def test_ec_import_coherence_defect_is_fail_not_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A claimed-OK-but-unhonored import is a Type-C self-contradiction: the
+    """A claimed-OK-but-unhonored import is a lifecycle self-contradiction: the
     dedicated conformance test must FAIL, never xfail/skip."""
     from pkcs11_check.testcases import test_ec_import_coherence as coherence
 

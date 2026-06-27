@@ -1,4 +1,4 @@
-"""Golden test for the per-provider report generator (tools.report).
+"""Golden test for the per-provider report generator (pkcs11_check.report).
 
 Drives extract -> enrich -> render on a committed mini fixture spanning every
 classification reason (incl. a crash from results.json) and asserts the rendered
@@ -12,23 +12,19 @@ To regenerate the golden after an intentional layout change::
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
-# Allow `python tests/test_report_golden.py` (regen) to import the tools package.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from tools.report.correlate import enrich  # noqa: E402
-from tools.report.extract import extract_groups  # noqa: E402
-from tools.report.render import render_provider  # noqa: E402
+from pkcs11_check.report.correlate import enrich
+from pkcs11_check.report.extract import extract_groups
+from pkcs11_check.report.render import render_provider
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "report"
 MINI_REPORT = FIXTURE_DIR / "mini_report.jsonl"
 MINI_RESULTS = FIXTURE_DIR / "mini_results.json"
 GOLDEN_MD = FIXTURE_DIR / "expected_provider.md"
 
-PROVIDER = "softhsm2"
+PROVIDER = "example-provider"
 
 
 def _crashes_from_results(path: Path) -> list[dict[str, Any]]:
@@ -48,7 +44,7 @@ def generate_markdown() -> str:
     """Build the provider markdown from the committed fixtures (no docs dependency)."""
     crashes = _crashes_from_results(MINI_RESULTS)
     groups = extract_groups(MINI_REPORT, crashes=crashes)
-    # empty module-issues so the golden is independent of docs/module-issues.md
+    # empty module-issues so the golden is provider-independent
     enrich(groups, module_issues_text="", provider=PROVIDER)
     return render_provider(PROVIDER, groups, pass_count=44957)
 

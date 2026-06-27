@@ -68,7 +68,7 @@ def test_no_literal_discrimination_legs() -> None:
 def test_no_silent_material_skip() -> None:
     """The `if recovered is not None:` idiom in wrap/unwrap tests silently skips
     material verification when the recovered key material is unavailable, hiding
-    a self-contradiction (Type C) instead of failing. It must not appear.
+    a self-contradiction (lifecycle) instead of failing. It must not appear.
     """
     pat = re.compile(r"if\s+recovered\s+is\s+not\s+None\s*:")
     bad = [_rel(p) for p in _files() if pat.search(p.read_text())]

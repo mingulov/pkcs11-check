@@ -172,7 +172,6 @@ class TestUniversalRealTriggers:
         from pathlib import Path
 
         proxy_candidates = [
-            Path(__file__).parents[4] / "local-builds" / "fault-proxy" / "fault-proxy.so",
             Path("/usr/lib/pkcs11/fault-proxy.so"),
         ]
         _env_proxy = os.environ.get("P11TEST_FAULT_PROXY_SO")

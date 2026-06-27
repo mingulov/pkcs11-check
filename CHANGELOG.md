@@ -2,7 +2,7 @@
 
 ## [0.1.6] - 2026-06-25
 
-A bug-fix and documentation release — no CLI or API changes.
+A bug-fix and documentation release - no CLI or API changes.
 
 - **Fix: full runs from an installed package.** The default full run
   (`pkcs11-check test`, `--isolation auto`) could abort at startup with
@@ -18,8 +18,8 @@ A bug-fix and documentation release — no CLI or API changes.
   pytest's cache provider warn `could not create cache path /.pytest_cache:
   Permission denied`. pkcs11-check tracks its own run state, so pytest's cache is
   now disabled (`-p no:cacheprovider`) and the warning is gone.
-- **Docs.** New `docs/getting-started-softhsm2.md` — a complete SoftHSM2
-  walkthrough (config, token, run, reading reports, troubleshooting) — and a
+- **Docs.** New `docs/getting-started-softhsm2.md` - a complete SoftHSM2
+  walkthrough (config, token, run, reading reports, troubleshooting) - and a
   README section on saving machine-readable reports
   (`--output json --output-file`).
 
@@ -33,14 +33,14 @@ A bug-fix and documentation release — no CLI or API changes.
 Key provisioning and hardening conformance. This release adds an opt-in
 key-provisioning layer so capability-limited modules can be exercised on
 operations they would otherwise skip, and a cross-provider hardening-conformance
-suite (G1–G8) that checks input-validation boundaries and policy invariants by
+suite (G1-G8) that checks input-validation boundaries and policy invariants by
 *verifying the effect* rather than trusting a return code. The validation matrix
-grows to **30 provider builds**. No breaking CLI or API changes — new flags and
+grows to **30 provider builds**. No breaking CLI or API changes - new flags and
 checks are additive and default to the prior behavior (`--key-inject=off`).
 
 - **Opt-in key provisioning.** When a module cannot itself generate a key a test
   needs, the suite can now provision one through an escalating, provider-general
-  chain — `create` → `unwrap` → external tool → `skip` — across secret, private,
+  chain - `create` → `unwrap` → external tool → `skip` - across secret, private,
   public, certificate, and data objects. It is **off by default**
   (`--key-inject=off`, a clean skip); opt in with `--key-inject=unwrap`. The
   unwrap path bootstraps a wrapping key, auto-negotiates the OAEP hash (probes the
@@ -53,7 +53,7 @@ checks are additive and default to the prior behavior (`--key-inject=off`).
   signing-only modules be checked on operations that previously mass-skipped,
   without inventing capability they do not have.
 
-- **Cross-provider hardening-conformance checks (G1–G8).** A new family (~25
+- **Cross-provider hardening-conformance checks (G1-G8).** A new family (~25
   checks) probes input-validation boundaries and policy invariants that the spec
   requires but providers often leave unguarded: 64→32-bit length-field handling
   (`C_GenerateRandom`, `AES-KEY-WRAP-PAD`, find-count, KDF parameter lengths) via a
@@ -63,7 +63,7 @@ checks are additive and default to the prior behavior (`--key-inject=off`).
   use-after-free when a key is destroyed mid-operation, required parameter sets
   (ML-DSA `CKA_PARAMETER_SET`, EC `CKA_EC_PARAMS`), and `C_SetAttributeValue`
   attribute-weakening. Every check **verifies the effect** (read-back, derive,
-  output-equivalence) instead of trusting the return code — which both surfaces
+  output-equivalence) instead of trusting the return code - which both surfaces
   real silent-truncation findings and prevents false-accusing compliant modules
   (a DH generator of 0 and a spec-legal RSA-512 keygen are confirmed *not*
   findings, not failed).
@@ -101,12 +101,11 @@ New since 0.1.4: **wolfPKCS11 on a wolfTPM firmware-TPM backend** and **pico-hsm
 ### Test Results
 
 Full provider matrix (baseline dated 2026-06-21), one row per distinct build, from
-the pooled `docker/test_pool.py` sweep (30 targets / 67 sharded items, zero
-timeouts). The 23 long-standing targets were reconciled per-test-file against the
+a pooled multi-target sweep (30 targets / 67 sharded items, zero timeouts). The 23 long-standing targets were reconciled per-test-file against the
 prior full pool (2026-06-15): no coverage was lost, no crash regressions, and
 every good→bad file crossing traces to an intentional post-0.1.4 framework change,
 not a provider regression. Failures, errors, crashes, and skips are kept as
-provider findings — a crash is a finding, not a hidden result.
+provider findings - a crash is a finding, not a hidden result.
 
 | Build | Passed | Failed | Errored | Skipped | Xfailed | Crashed | Total |
 |-------|-------:|-------:|--------:|--------:|--------:|--------:|------:|
@@ -146,10 +145,9 @@ on capability-limited modules (Craton HSM, NetHSM, CrypTech, tpm2, wolfTPM) are 
 capability-boundary-honesty model recording advertised-but-not-operational surface
 rather than failing it. The large Cosmian KMS failure count is a KMS
 key-capability-metadata snapshot still being triaged. Real SIGSEGV crash findings
-remain on NSS, BouncyHSM, wolfPKCS11, FreeHSM-C, and pico-hsm; the Kryoptic
+remain on several tested providers; the Kryoptic
 FIPS/PQC "crashes" are debug-build `abort()`s on internal assertions, not release
-segfaults. See [docs/module-issues.md](docs/module-issues.md) for per-module
-findings.
+segfaults.
 
 ### Requirements
 
@@ -170,9 +168,9 @@ full suite).
   updated). This widens the set of distributions and CI images the tool installs
   on out of the box; no 3.13-only language features are used.
 - **Capability-boundary honesty.** A module is no longer failed for *not* doing
-  something it never advertised. The suite probes real capability — verify
+  something it never advertised. The suite probes real capability - verify
   operability, certificate/object storage (`CKF_VERIFY`, cert-storage probe),
-  per-operation mechanism gating — and routes an advertised-but-not-operational
+  per-operation mechanism gating - and routes an advertised-but-not-operational
   surface to a recorded `xfail`/`skip` with an explicit reason instead of a false
   `fail`. A local cross-verify oracle lets sign-only modules be checked even when
   the module cannot verify its own signatures. Capability-based gating replaces
@@ -190,8 +188,8 @@ full suite).
   permission). At-source verdict emission (a reason × kind taxonomy) now records
   *why* each outcome was reached and is enforced over raw `pytest.xfail/fail`.
 - **More targets checked.** The validation matrix grew to 28 provider builds,
-  adding software, HSM, and KMS modules — Craton HSM, Nitrokey NetHSM, FreeHSM-C,
-  jCardSim (IsoApplet smartcard sim), CrypTech, google-kmsp11, and Cosmian KMS —
+  adding software, HSM, and KMS modules - Craton HSM, Nitrokey NetHSM, FreeHSM-C,
+  jCardSim (IsoApplet smartcard sim), CrypTech, google-kmsp11, and Cosmian KMS -
   alongside wolfPKCS11 and corePKCS11 (added since 0.1.3) and pooled OP-TEE
   heavy-target support. Existing pins were refreshed (Kryoptic v1.5.1,
   BouncyHSM v2.1.1).
@@ -216,9 +214,9 @@ pkcs11-mock v2.0.0 · Craton HSM · Nitrokey NetHSM · FreeHSM-C · jCardSim
 ### Test Results
 
 Latest full provider matrix (baseline dated 2026-06-17), one row per distinct
-build, from the pooled `docker/test_pool.py` sweep. The run was reconciled
+build, from the pooled multi-target runner. The run was reconciled
 test-id-by-test-id against the prior baseline: no findings disappeared and no test
-stopped running. Failures, crashes, and skips are kept as provider findings — a
+stopped running. Failures, crashes, and skips are kept as provider findings - a
 crash is a finding, not a hidden result.
 
 | Build | Passed | Failed | Skipped | Xfailed | Crashed | Total |
@@ -252,10 +250,9 @@ crash is a finding, not a hidden result.
 tpm2) are the capability-boundary-honesty model recording advertised-but-not-
 operational surface rather than failing it; Cosmian KMS is a first-sweep snapshot
 whose failures are largely key-capability metadata gaps still to be triaged. Real
-SIGSEGV crash findings remain on NSS, BouncyHSM, wolfPKCS11, and FreeHSM-C; the 14
+SIGSEGV crash findings remain on several tested providers; the 14
 Kryoptic FIPS/PQC "crashes" are debug-build `abort()`s on internal assertions, not
-release segfaults. See [docs/module-issues.md](docs/module-issues.md) for
-per-module findings.
+release segfaults.
 
 ### Requirements
 
@@ -277,9 +274,9 @@ No breaking CLI or API changes (new commands/flags are additive; the default
   suite (coverage-neutral); and BouncyHSM starts on a readiness poll instead of
   a fixed sleep.
 - **`pkcs11-check doctor`.** A new command that diagnoses the common setup
-  problems — wrong slot index (vs the provider's slot ID), wrong/locked PIN,
+  problems - wrong slot index (vs the provider's slot ID), wrong/locked PIN,
   uninitialized or unrecognized token, an unloadable library, a crashing module,
-  and missing vector data — and prints the exact next step for each.
+  and missing vector data - and prints the exact next step for each.
 - **Faster *opt-in* runs.** `--skip-slow` / `--only-slow` select a fast profile
   that omits a small set of individually long-running cases (large-RSA, DSA/DH
   parameter generation, AES multi-block, leak/fuzz loops); the full run is
@@ -327,12 +324,9 @@ baseline (PC-6 keygen reclassification + gap-triage), crashes stable.
 17-target matrix, including variants). The **NSS slot-0 row drops to ~2.3k**:
 the `*-slot0` passes are now scoped to the slot-0-unique digest/cipher/KDF files
 instead of re-running the whole slot-1 suite (coverage-neutral). Real SIGSEGV
-crash findings remain on NSS (3-4, including a `C_FindObjectsInit(ULONG_MAX)`
-overflow) and BouncyHSM (3); the 12 Kryoptic FIPS/PQC "crashes" are debug-build
-`abort()`s on internal assertions, not release segfaults. See
-[docs/docker-provider-results.md](docs/docker-provider-results.md) for the full
-17-target matrix and [docs/module-issues.md](docs/module-issues.md) for per-module
-findings.
+crash findings remain on several tested providers (3-4 including a
+`C_FindObjectsInit(ULONG_MAX)` overflow); the 12 Kryoptic FIPS/PQC "crashes" are
+debug-build `abort()`s on internal assertions, not release segfaults.
 
 ## [0.1.2] - 2026-05-31
 
@@ -342,7 +336,7 @@ No breaking CLI or API changes.
 
 - **Faster runs.** Tests that just verify vectors now log in once per file
   instead of once per test, so providers with slow logins speed up dramatically
-  — the ECDSA Wycheproof file went from ~42 min to under a minute on OpenCryptoki
+  - the ECDSA Wycheproof file went from ~42 min to under a minute on OpenCryptoki
   and from ~56 min to ~2 min on BouncyHSM. SoftHSM2, NSS, and Kryoptic (fast
   logins) are unchanged.
 - **Steadier under stress.** The harness now recovers from provider/proxy
@@ -361,7 +355,7 @@ BouncyHSM v2.1.0 · pkcs11-mock v2.0.0
 ### Test Results
 
 Latest full provider matrix (`artifacts/20260530_3/`, 2026-05-30/31), one row per
-distinct build. Failures, crashes, and skips are kept as provider findings — a
+distinct build. Failures, crashes, and skips are kept as provider findings - a
 crash is a finding, not a hidden result.
 
 | Build | Passed | Failed | Skipped | Xfailed | Crashed | Total |
@@ -381,13 +375,11 @@ crash is a finding, not a hidden result.
 | pkcs11-mock v2.0.0 | 230 | 117 | 29,123 | 58 | 0 | 29,528 |
 
 ~1.13M total test executions across the 13 builds. Real SIGSEGV crash findings
-remain on NSS (3-4) and BouncyHSM (3). The 12 "crashes" on the Kryoptic FIPS/PQC
+remain on several tested providers. The 12 "crashes" on the Kryoptic FIPS/PQC
 row are **not** release crashes: that build is compiled in debug mode, so its
 internal debug assertions `abort()` the process on a check failure rather than
-returning an error — they are debug-assertion aborts, not segfaults in a release
-build. See [docs/docker-provider-results.md](docs/docker-provider-results.md) for
-the full 17-target matrix (including variants) and
-[docs/module-issues.md](docs/module-issues.md) for per-module findings.
+returning an error - they are debug-assertion aborts, not segfaults in a release
+build.
 
 ## [0.1.1] - 2026-05-27
 
@@ -456,7 +448,7 @@ and release-readiness hardening needed for use across multiple projects.
   and cross-process isolation checks.
 - Added module quirk registry support so provider-specific behavior is explicit,
   documented, and does not silently hide real failures.
-- Expanded `docs/module-issues.md` and `docs/cve-regression.md` with findings and
+- Expanded CVE / known-issue regression coverage with findings and
   coverage notes discovered during internal provider validation.
 
 ### Release Hardening
@@ -507,8 +499,8 @@ Tested 6 modules, ~510K total test executions across 237 test files:
 Findings are classified under a hardware-token threat model and are not CVE-grade
 vulnerability claims against upstream projects. The two CRITICAL rows are
 upstream-known properties of NSS softokn (software-only token) rather than
-defects; HIGH-severity issues span 4 modules; real SIGSEGV crashes in all 6
-modules. See the v0.1.0 release notes for the severity-model note and full
+defects; HIGH-severity issues span 4 modules; real SIGSEGV crashes across all
+tested modules. See the v0.1.0 release notes for the severity-model note and full
 breakdown.
 
 ### Requirements

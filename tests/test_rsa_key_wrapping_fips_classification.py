@@ -10,7 +10,7 @@ Three invariants tested here:
 (a) Unwrap refusal with a clean CKR (CKR_DEVICE_ERROR) -> xfail "not operational".
 (b) Wrap + unwrap succeeding with matching key material -> test passes.
 (c) Unwrap succeeds but follow-on usage assertion fails (wrong ciphertext / wrong value)
-    -> hard fail (Type-C territory: C_UnwrapKey claimed success, usage contradicts it).
+    -> hard fail (lifecycle territory: C_UnwrapKey claimed success, usage contradicts it).
 (d) A non-CKR AssertionError from unwrap (harness/ctypes bug) propagates unchanged.
 """
 
@@ -135,7 +135,7 @@ def test_usability_roundtrip_ok_passes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ===========================================================================
-# (c) Unwrap OK but follow-on assertion fails -> hard fail (Type-C territory)
+# (c) Unwrap OK but follow-on assertion fails -> hard fail (lifecycle territory)
 #     The helper must NOT swallow post-unwrap assertion failures.
 # ===========================================================================
 

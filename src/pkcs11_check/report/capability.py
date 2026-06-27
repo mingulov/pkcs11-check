@@ -1,4 +1,4 @@
-# tools/report/capability.py
+# pkcs11_check/report/capability.py
 """Per-provider capability audit: in-range advertised-but-not-operational findings.
 
 The actionable signal is the contradiction candidates -- not_operational records

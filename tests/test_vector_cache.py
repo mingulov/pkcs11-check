@@ -1,6 +1,5 @@
 """Regression tests for the marshal-backed vector JSON cache.
 
-Lever 3 of docs/findings/test-execution-speedup-gap-analysis-2026-06-04.md:
 load_json_cached must return data identical to json.load, persist a cache, and
 transparently fall back to the JSON source on any cache miss/staleness/corruption
 (the JSON stays the source of truth — the cache must never hide a vector change).

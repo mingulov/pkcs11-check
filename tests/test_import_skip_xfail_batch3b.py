@@ -1,6 +1,6 @@
 """TDD meta-tests for Batch 3b import-skip -> xfail conversion (EC sites).
 
-Audit doc: docs/findings/import-skip-audit.md §4 "Batch 3" + rows A13, A15, and
+Audit reference: import-skip-audit §4 "Batch 3" + rows A13, A15, and
 the A9 EC-private leg.  RSA sites (A9 RSA legs, A10-A12) were Batch 3a; the
 EC/Montgomery *private* derive sites (D2) were a separate determination.
 

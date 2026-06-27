@@ -1,12 +1,12 @@
 """Cross-provider correlation and per-group enrichment.
 
-:func:`correlate` finds *universal themes* — the same ``(reason, kind, mechanism)``
-signature seen across two or more providers — plus single-provider *outliers*.
+:func:`correlate` finds *universal themes* - the same ``(reason, kind, mechanism)``
+signature seen across two or more providers - plus single-provider *outliers*.
 
 :func:`enrich` annotates each group in place with a triage ``category`` and a
 ``routing`` target, re-tagging known module-issues matches and flagging the
 soft-token padding-oracle caveat. It is deliberately simple: substring / keyword
-matching against the relevant provider section of ``module-issues.md``.
+matching against the relevant provider section of the known-issue text.
 """
 
 from __future__ import annotations

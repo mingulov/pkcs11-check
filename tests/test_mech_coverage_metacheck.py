@@ -145,7 +145,7 @@ def test_note_reference_is_gap_analysis(monkeypatch: pytest.MonkeyPatch) -> None
     per_mech = [(d, r) for d, _l, _t, r in captured if "no registry config" in d]
     assert per_mech, "expected at least one per-mechanism note"
     for _desc, ref in per_mech:
-        assert ref == "docs/findings/advertised-not-operational-gap-analysis.md Q2"
+        assert ref == "advertised-not-operational-gap-analysis Q2"
 
 
 def test_note_test_id_is_enclosing_test_qualname(monkeypatch: pytest.MonkeyPatch) -> None:

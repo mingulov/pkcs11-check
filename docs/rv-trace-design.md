@@ -1,26 +1,25 @@
-# Per-test CK_RV trace in reports — design
+# Per-test CK_RV trace in reports - reference
 
-**Date:** 2026-05-30
-**Topic:** Capture the exact `CK_RV` returned by every `C_*` call at the raw
-ctypes choke point (`pkcs11_check.raw`) and attach it per test, via pytest
-`record_property`, so it rides in `report.jsonl`'s `user_properties` and survives
-the pooled shard merge verbatim. Gated off by default; secret-safe by
-construction.
+Shipped feature reference. The rv-trace captures the exact `CK_RV` returned by
+every `C_*` call at the raw ctypes choke point (`pkcs11_check.raw`) and attaches
+it per test, via pytest `record_property`, so it rides in `report.jsonl`'s
+`user_properties` and survives the pooled shard merge verbatim. Gated off by
+default; secret-safe by construction.
 
 ## Context
 
 The suite already funnels every `C_*` call through a single choke point:
-`RawPKCS11._call(name, *args)` at `raw/api.py:302–314`. It increments
+`RawPKCS11._call(name, *args)` at `raw/api.py:302-314`. It increments
 `self._call_log[name]`, extracts the mechanism id for mechanism-bearing
 functions (`args[1]._obj.mechanism`), and the **raw integer RV is right there**
-at `int(func(*args))` — *before* `_to_ckr()`, which is naming only, not
+at `int(func(*args))` - *before* `_to_ckr()`, which is naming only, not
 interpretation. So the value the module actually returned is observable at one
 place, before any test-level "accept any of these codes" logic.
 
 The report pipeline preserves arbitrary `user_properties` for free:
 pytest `_report_to_json` copies the field untouched (`_pytest/reports.py:597`),
-reportlog `json.dumps` it (`pytest_reportlog/plugin.py:71–77`), and the pooled
-shard merge is a byte-for-byte `shutil.copyfileobj` (`core/merge.py:48–73`). A
+reportlog `json.dumps` it (`pytest_reportlog/plugin.py:71-77`), and the pooled
+shard merge is a byte-for-byte `shutil.copyfileobj` (`core/merge.py:48-73`). A
 native list-of-dicts of primitives serializes to clean nested JSON; a
 non-serializable value would be `str()`-ed rather than crash, but every field
 here is `int`/`str`/`null`, so it is safe. `user_properties` is currently always
@@ -29,8 +28,8 @@ here is `int`/`str`/`null`, so it is safe. `user_properties` is currently always
 The per-test bookkeeping seam also already exists: `call_log`,
 `used_mechanisms`, and `mechanism_counts` are instance attributes on the
 session-scoped `RawPKCS11`, reset per test in the three session fixtures
-(`fixtures.py:99, 238, 392`, at the `reset_call_log()` sites — *after* bootstrap
-and `C_Login`) and drained at `pytest_runtest_teardown` (`plugin.py:542–584`).
+(`fixtures.py:99, 238, 392`, at the `reset_call_log()` sites - *after* bootstrap
+and `C_Login`) and drained at `pytest_runtest_teardown` (`plugin.py:542-584`).
 The RV trace is a fourth sibling of that family.
 
 ## Goals
@@ -56,7 +55,7 @@ The RV trace is a fourth sibling of that family.
 - **No change to any test's outcome.** The trace is observational. It never
   influences pass/xfail/fail/skip, and the classification model is untouched.
 - **No new secret surface.** We capture only function names, mechanism ids, and
-  RVs (plus, in the deferred phase, output byte-lengths) — nothing that can carry
+  RVs (plus, in the deferred phase, output byte-lengths) - nothing that can carry
   key/plaintext material.
 
 ## The contract (both sides agree)
@@ -70,21 +69,21 @@ The RV trace is a fourth sibling of that family.
    "mech_params": {"hashAlg": <id>, "mgf": <id>},  // optional: stacked params
    "in_len": <int>, "out_len": <int>}              // optional: byte lengths
   ```
-  - `i` — **absolute** call index within the test (0-based). Absolute, not
+  - `i` - **absolute** call index within the test (0-based). Absolute, not
     list-position, so that compact mode (below) can elide a prefix and the
     consumer still knows where each tail entry sits in the full sequence.
-  - `fn` — the `C_*` function name (string, from the choke-point closure).
-  - `mech` — mechanism type as an unsigned int for mechanism-bearing functions,
+  - `fn` - the `C_*` function name (string, from the choke-point closure).
+  - `mech` - mechanism type as an unsigned int for mechanism-bearing functions,
     else `null`. (`CK_MECHANISM_TYPE` is `CK_ULONG`, u32 in practice; the
     contract's `<u64|null>` is a superset and remains valid.)
-  - `rv` — the raw integer `CK_RV` the module returned, before `_to_ckr` and
+  - `rv` - the raw integer `CK_RV` the module returned, before `_to_ckr` and
     before any test-level interpretation.
-  - `rv_name` — `str(_to_ckr(rv))`: `"CKR_OK"`, `"CKR_MECHANISM_INVALID"`, or
+  - `rv_name` - `str(_to_ckr(rv))`: `"CKR_OK"`, `"CKR_MECHANISM_INVALID"`, or
     `"0x........"` for unknown codes.
-  - `mech_params` *(optional)* — stacked sub-mechanism params (`{name: id}`,
+  - `mech_params` *(optional)* - stacked sub-mechanism params (`{name: id}`,
     ids only) for mechanisms that carry them (RSA-OAEP, GCM, …). Deterministic.
-  - `in_len` *(optional)* — input byte-length (ulDataLen) for single-shot ops.
-  - `out_len` *(optional)* — output byte-length, for output-producing ops on
+  - `in_len` *(optional)* - input byte-length (ulDataLen) for single-shot ops.
+  - `out_len` *(optional)* - output byte-length, for output-producing ops on
     `CKR_OK`/`CKR_BUFFER_TOO_SMALL`. **All optional fields are length/id only,
     never key/plaintext bytes.**
 - Sidecar (compact mode only): property `pkcs11_rv_trace_dropped` = integer
@@ -95,16 +94,16 @@ The RV trace is a fourth sibling of that family.
 Small seams, each following an existing pattern. §1/§3/§4 are v1; §2 (out_len)
 is the deferred phase.
 
-### 1. Capture — `raw/api.py`
+### 1. Capture - `raw/api.py`
 
 Add to `RawPKCS11.__init__` a `_rv_trace: deque | None = None` (the gate) and a
 `_rv_trace_total: int = 0` counter. Add methods mirroring the
 `reset_call_log` family:
 
-- `enable_rv_trace(self, *, maxlen: int | None = None) -> None` — sets
+- `enable_rv_trace(self, *, maxlen: int | None = None) -> None` - sets
   `self._rv_trace = deque(maxlen=maxlen)` (unbounded list semantics when
   `maxlen is None`, ring buffer when set) and zeroes the counter.
-- `reset_rv_trace(self) -> None` — clears the deque and counter (per test),
+- `reset_rv_trace(self) -> None` - clears the deque and counter (per test),
   preserving the configured `maxlen`. No-op when tracing is disabled.
 - `rv_trace` property → `list(self._rv_trace)` (a copy), or `[]` when disabled.
 - `rv_trace_dropped` property → `max(0, self._rv_trace_total - len(self._rv_trace))`.
@@ -130,7 +129,7 @@ When tracing is off, `self._rv_trace is None` → no entry, no allocation,
 branch do not change any observable output.) The deferred out_len phase inserts
 one `_read_out_len(...)` call here behind the same `is None` guard.
 
-### 2. Output length — `raw/api.py` *(DEFERRED — optional phase, not in v1 core)*
+### 2. Output length - `raw/api.py` *(DEFERRED - optional phase, not in v1 core)*
 
 Pre-designed and verified low-risk, but split out so v1 core stays minimal and
 the original contract is exact. Implement only when greenlit.
@@ -138,7 +137,7 @@ the original contract is exact. Implement only when greenlit.
 **Verified:** every output-producing `C_*` routes through
 `recipes._two_call_output`, which passes the length as
 `byref(CK_ULONG(...))` and **always as the last positional argument**. So the
-length is `args[-1]._obj.value` universally — no per-function index table.
+length is `args[-1]._obj.value` universally - no per-function index table.
 
 Gate by a **function-name set**, not by reading blindly:
 
@@ -154,7 +153,7 @@ _OUTPUT_LEN_FUNCS: frozenset[str] = frozenset({
 ```
 
 The set is **essential**: `C_DeriveKey`, `C_UnwrapKey`, and
-`C_GenerateKeyPair` also have a `byref(handle)` last arg — reading it would
+`C_GenerateKeyPair` also have a `byref(handle)` last arg - reading it would
 mislabel a **key handle** as a length. Gating by name prevents that.
 
 ```python
@@ -167,7 +166,7 @@ def _read_out_len(name: str, args: tuple, rv: int) -> int | None:
         return None
 ```
 
-`_OUT_LEN_OK_RVS = (CKR_OK, CKR_BUFFER_TOO_SMALL)` — both set a real length;
+`_OUT_LEN_OK_RVS = (CKR_OK, CKR_BUFFER_TOO_SMALL)` - both set a real length;
 other errors leave the `CK_ULONG` stale, so we skip them. The value is a
 **byte count**, never a buffer.
 
@@ -181,18 +180,18 @@ and ships a **drift-guard meta-test** asserting every `_two_call_output` caller
 name (grepped from `recipes.py`) is in `_OUTPUT_LEN_FUNCS`, so a future
 output-producing function cannot silently miss `out_len`.
 
-### 3. Lifecycle / gating — `fixtures.py`, `plugin.py`, `cli/test_cmd.py`
+### 3. Lifecycle / gating - `fixtures.py`, `plugin.py`, `cli/test_cmd.py`
 
 - **Option + env (dual, mirrors `--report-log` / `PKCS11_CHECK_REPORT_LOG`):**
   - `pytest_addoption`: `--p11-rv-trace` (store_true) and
-    `--p11-rv-trace-compact` (`type=int, default=None` — an explicit window size
+    `--p11-rv-trace-compact` (`type=int, default=None` - an explicit window size
     `N`; **no** `nargs="?"`, which would let argparse swallow a following test
     path as the int and crash). Enabling compact implies tracing.
   - `test_cmd.py` typer flag `--rv-trace` (and `--rv-trace-compact N`) sets the
     pytest option (always emitting `--p11-rv-trace-compact=N` with the `=` form)
     **and** exports `PKCS11_CHECK_RV_TRACE=1`
-    (`PKCS11_CHECK_RV_TRACE_COMPACT=N`) — with a `try/finally` `os.environ.pop`
-    cleanup, exactly mirroring the `PKCS11_CHECK_REPORT_LOG` path — so it
+    (`PKCS11_CHECK_RV_TRACE_COMPACT=N`) - with a `try/finally` `os.environ.pop`
+    cleanup, exactly mirroring the `PKCS11_CHECK_REPORT_LOG` path - so it
     propagates into isolated/subprocess runs (children inherit `os.environ`).
   - `p11_config` fixture resolves `rv_trace_compact: int | None` and
     `rv_trace: bool` from *either* the options or the env vars, and **compact
@@ -203,12 +202,12 @@ output-producing function cannot silently miss `out_len`.
 - **Per-test reset:** when `p11_config.rv_trace` is on, `raw.enable_rv_trace()`
   is called before bootstrap so setup failures can carry the failing CK_RV.
   Successful fixture setup resets the trace again at each `reset_call_log()`
-  site before yielding to the test (enable doubles as reset — fresh `deque`,
+  site before yielding to the test (enable doubles as reset - fresh `deque`,
   zeroed counter). That keeps bootstrap/login out of ordinary successful
   test-body traces while preserving setup-failure evidence.
 - **Drain:** an **independent block at the top of `pytest_runtest_teardown`**
   (after the `_is_testcase_item` check), *not* nested under the coverage
-  early-return (`plugin.py:531–534` returns on a missing `_CUMULATIVE_FUNCTIONS`
+  early-return (`plugin.py:531-534` returns on a missing `_CUMULATIVE_FUNCTIONS`
   stash; rv-trace must not be coupled to that). It scans `item.funcargs` for the
   first of `("p11_raw_session", "p11_session", "p11_module_session")` that has a
   `.raw`, and when `raw._rv_trace is not None`:
@@ -224,19 +223,19 @@ output-producing function cannot silently miss `out_len`.
   before teardown hooks run; without the hookwrapper, failed/xfail call reports
   have no trace even though the later teardown record does.
 
-The raw layer never reads env/config — its gate is purely `_rv_trace is not
+The raw layer never reads env/config - its gate is purely `_rv_trace is not
 None`, set by the fixture. The choke point stays clean.
 
 ### 4. Compact mode (own phase, after core lands)
 
 `enable_rv_trace(maxlen=N)` already gives the ring buffer; absolute `i` is the
 counter, not the list position. So compact mode is a `deque(maxlen=N)` swap
-behind the same drain seam plus the `pkcs11_rv_trace_dropped` sidecar — no
+behind the same drain seam plus the `pkcs11_rv_trace_dropped` sidecar - no
 choke-point change. Default N when compact requested: 512. Full mode (unbounded)
 remains the default when tracing is merely on.
 
-Rationale (per design dialogue): the tail of the trace — the calls right before
-the test ends or crashes — is the high-value part, and a ring buffer bounds size
+Rationale (per design dialogue): the tail of the trace - the calls right before
+the test ends or crashes - is the high-value part, and a ring buffer bounds size
 without losing it. Total/dropped counts make truncation explicit.
 
 ## Testing (meta-tests, `tests/`)
@@ -244,7 +243,7 @@ without losing it. Total/dropped counts make truncation explicit.
 All in-process. Tests exercise the **real** `RawPKCS11._call` with stub
 `_funcs`. Because `__init__` requires a real module, build the instance via a
 small test helper: `raw = object.__new__(RawPKCS11)` then set the exact attrs
-`_call` touches — `_funcs` (`{"C_Sign": lambda *a: 0, …}`), `_call_log`
+`_call` touches - `_funcs` (`{"C_Sign": lambda *a: 0, …}`), `_call_log`
 (`defaultdict(int)`), `_used_mechanisms` (`set()`), `_mechanism_counts`
 (`Counter()`), `_lib = None`, `_rv_trace`, `_rv_trace_total`. (House style
 already uses lambda stubs / `_FakeRaw`; this drives the genuine choke point.)
@@ -279,23 +278,23 @@ plus the **drift-guard** test (every `_two_call_output` caller ∈
 
 ## Phasing
 
-1. **Core** — ✅ shipped. Capture (`_call` + trace methods on `RawPKCS11`),
-   gating (option + env + config), reset/drain (fixtures + teardown), tests 1–4.
-2. **Compact** — ✅ shipped *with* core (the `deque(maxlen=N)` made it free):
+1. **Core** - ✅ shipped. Capture (`_call` + trace methods on `RawPKCS11`),
+   gating (option + env + config), reset/drain (fixtures + teardown), tests 1-4.
+2. **Compact** - ✅ shipped *with* core (the `deque(maxlen=N)` made it free):
    `enable_rv_trace(maxlen=N)`, `--p11-rv-trace-compact=N` /
    `PKCS11_CHECK_RV_TRACE_COMPACT`, `pkcs11_rv_trace_dropped` sidecar + test.
-3. **out_len + in_len** — ✅ shipped. `_OUTPUT_LEN_FUNCS` (the 12
+3. **out_len + in_len** - ✅ shipped. `_OUTPUT_LEN_FUNCS` (the 12
    `_two_call_output` callers; `out_len = args[-1]._obj.value`, gated on
    `CKR_OK`/`CKR_BUFFER_TOO_SMALL`) + `_INPUT_LEN_ARG` (single-shot ulDataLen,
    `in_len`); both best-effort, length-only, present only when readable.
    Drift-guard test keeps `_OUTPUT_LEN_FUNCS` honest. Verified on SoftHSM2
    (`AES_CBC_PAD`: `in_len 32 → out_len 48`).
-3b. **Sub-mechanism params** — ✅ shipped. `PackedMechanism` stashes its
+3b. **Sub-mechanism params** - ✅ shipped. `PackedMechanism` stashes its
    stacked sub-params on the `CK_MECHANISM` struct (`_rv_trace_sub`); `_call`
    reads them from `args[1]._obj` (gated on tracing-on) into an optional
    `mech_params` (`{name: id}`, deterministic, diff-safe, ids only). Verified on
    SoftHSM2 (RSA-OAEP → `{hashAlg, mgf}`).
-4. **Crash-survivable trace** *(optional, separate mechanism)* — see below.
+4. **Crash-survivable trace** *(optional, separate mechanism)* - see below.
 
 **Verified end-to-end on SoftHSM2** (the `smoke` slice): flag-on ⇒ the trace
 rides the **teardown** record for passing tests and the outcome-bearing
@@ -309,8 +308,8 @@ flag-off ⇒ every record's `user_properties == []`; both the CLI option and the
 ## Write behavior & outcomes (verified)
 
 - **Append-streamed, written once during a run.** `report.jsonl` is opened once and written
-  line-by-line (`pytest_reportlog/plugin.py:71–77`, `write + flush` per event);
-  the trace adds **no** lines — it enriches the report records that are emitted
+  line-by-line (`pytest_reportlog/plugin.py:71-77`, `write + flush` per event);
+  the trace adds **no** lines - it enriches the report records that are emitted
   anyway. Shard merge may rewrite the merged `report.jsonl` to promote
   teardown-only traces from older artifacts onto failed/xfail reports.
 - **Outcome-bearing failures carry their own trace.** pytest snapshots
@@ -331,7 +330,7 @@ flag-off ⇒ every record's `user_properties == []`; both the CLI option and the
   the makereport hook parses it back into `pkcs11_rv_trace` on the
   outcome-bearing report.
 
-## Phase 4 — crash-survivable trace — ✅ shipped
+## Phase 4 - crash-survivable trace - ✅ shipped
 
 `record_property`-at-teardown cannot survive a segfault/abort: the process dies
 before teardown, and crash tests run in **subprocesses** whose in-memory trace
@@ -342,7 +341,7 @@ dies with the child. Captured instead via a **write-ahead journal**:
   `call` record *before* invoking the module and a `ret` record *after*, each
   flushed. A process death between the two leaves an unmatched `call` on disk =
   the exact crashing call. Robust because it never tries to handle the signal
-  (unsafe in a corrupted interpreter) — the data is already flushed to the kernel.
+  (unsafe in a corrupted interpreter) - the data is already flushed to the kernel.
 - `read_crash_journal(path) -> (completed, last_incomplete)` recovers it;
   `last_incomplete` is the crash payload. A torn final line is skipped, not raised.
 - **Works for the existing crash harness with no wiring:** `_raw_subprocess`
@@ -381,16 +380,16 @@ investigation artifact). Left out to avoid reworking shared crash-test infra.
 | `testcases/_raw_subprocess.py` | Raw subprocess runner appends the same inherited-trace emitter after caller boilerplate so raw ctypes child tests can surface traces. | Subprocess |
 | `testcases/_subprocess_result.py` | Failure text keeps any `P11_RV_TRACE_JSON:` marker even when normal stdout/stderr excerpts are truncated. | Subprocess |
 | `cli/test_cmd.py` | typer `--rv-trace`/`--rv-trace-compact`; `_build_pytest_args` append; `os.environ` export with `try/finally` cleanup. | Core |
-| `tests/test_rv_trace.py` (new) | stub-`_call` meta-tests 1–4. | Core |
+| `tests/test_rv_trace.py` (new) | stub-`_call` meta-tests 1-4. | Core |
 | `raw/api.py` + `tests/` | `_OUTPUT_LEN_FUNCS`, `_read_out_len`, one-line insert; drift-guard + length tests. | Deferred out_len |
 
-## Enabling (flags & env) — quick reference
+## Enabling (flags & env) - quick reference
 
 | Mechanism | How |
 |---|---|
 | pytest (in-process) | `--p11-rv-trace` or `--p11-rv-trace-compact=N`; or env `PKCS11_CHECK_RV_TRACE=1` / `PKCS11_CHECK_RV_TRACE_COMPACT=N` |
 | CLI (`pkcs11-check test`) | `--rv-trace` or `--rv-trace-compact N` (flows to in-process + isolated subprocess runs) |
-| Docker pool (`docker/test_pool.py`) | **on by default** in compact mode: injects `PKCS11_CHECK_RV_TRACE_COMPACT=512` per shard (`RV_TRACE_COMPACT_N`, overridable via the pool's own env — different N, or empty to disable). Compact 512 = full trace for every test under 512 C_* calls (all of them bar the ~dozen MCT cases), MCT bounded to its last 512. |
+| Pool / batch runner | Can enable compact mode by injecting `PKCS11_CHECK_RV_TRACE_COMPACT=512` per shard. Compact 512 = full trace for every test under 512 C_* calls (all of them bar the ~dozen MCT cases), MCT bounded to its last 512. |
 | Crash journal (single process) | `PKCS11_CHECK_RV_TRACE_JOURNAL=<path>` (`{pid}` expanded); inherited by the subprocess crash harness automatically |
 | Crash journal (isolated runner) | **opt-in, off by default** (per-call flush cost): `PKCS11_CHECK_RV_TRACE_JOURNAL_DIR=<dir>` makes `file_runner` give each unit a journal `<dir>/<unit-slug>-{pid}.jsonl`. In the pool, set `PKCS11_CHECK_CRASH_JOURNAL=1` → journals land under each shard's `crash-journals/`. Then `pkcs11-check crash-calls <dir>` prints, per crashed unit, the last C_* call + its journal file. |
 

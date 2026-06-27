@@ -6,7 +6,7 @@ tpm2-pkcs11 has no symmetric-keygen surface, so a negative C_GenerateKey probe
 deviation, so it must classify as **xfail** (noted, investigate later), not a
 hard fail. A wrong-accept (CKR_OK) on a non-permissive probe must still fail.
 
-See docs/findings/catalog.md PC-6 and docs/module-issues.md.
+See PC-6 in the classification catalog.
 """
 
 from __future__ import annotations
@@ -32,6 +32,6 @@ def test_keygen_function_not_supported_classifies_as_xfail(key: str) -> None:
 
 def test_keygen_wrong_accept_still_fails() -> None:
     # genkey_template_inconsistent has no allow_success: accepting (CKR_OK) is a
-    # Type-A wrong-accept and must remain a hard fail (never softened by PC-6).
+    # crypto wrong-accept and must remain a hard fail (never softened by PC-6).
     with pytest.raises(Failed):
         assert_ckr(CKR_KEYGEN["genkey_template_inconsistent"], CKR_OK, strict=False)

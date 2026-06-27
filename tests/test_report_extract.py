@@ -1,11 +1,11 @@
-"""Tests for tools.report.extract — grouping at-source classification findings."""
+"""Tests for pkcs11_check.report.extract — grouping at-source classification findings."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from tools.report.extract import extract_groups
+from pkcs11_check.report.extract import extract_groups
 
 
 def _classification(**over: object) -> dict[str, object]:

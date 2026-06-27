@@ -1,4 +1,4 @@
-"""Runtime classification meta-tests for ckr/test_ckr_sign Type-A reclassification.
+"""Runtime classification meta-tests for ckr/test_ckr_sign crypto reclassification.
 
 Accepting an AES key under an RSA signing mechanism is key-type confusion (a
 crypto-correctness break). The test must classify CKR_OK as fail via the 3-way

@@ -1011,7 +1011,6 @@ class TestLoginUserWithNameRecipe:
         NSS deviation: NSS returns CKR_OPERATION_NOT_INITIALIZED when
         C_LoginUser is called on an already-logged-in session, instead of
         CKR_USER_ALREADY_LOGGED_IN or CKR_OK.
-        Tracked in docs/module-issues.md under NSS.
         """
         rs = p11_raw_session
         if not hasattr(rs.raw, "C_LoginUser"):

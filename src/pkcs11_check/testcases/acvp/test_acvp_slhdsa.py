@@ -90,7 +90,7 @@ _PARAM_SET_MAP: dict[str, int] = {
 # advertisement -- there is no curve-absence CKR analogue. So once advertised,
 # ANY clean import reject is "advertised but not operational" -> xfail (mirrors
 # the ML-DSA precedent in test_wycheproof_mldsa* and the documented ML-KEM
-# raw-private import convention in docs/module-issues.md). The previous skip/xfail
+# raw-private import convention). The previous skip/xfail
 # split (CKR_FUNCTION_FAILED alone xfailed; the rest skipped) was an incoherent
 # asymmetry -- both buckets are the same not-operational signal.
 _PQC_IMPORT_NOT_OPERATIONAL_RVS = (

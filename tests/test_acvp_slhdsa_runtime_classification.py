@@ -78,7 +78,7 @@ def test_slhdsa_siggen_runtime_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) 
 # advertised PQC mechanism is "advertised but not operational" -> xfail, NOT
 # skip -- mirroring the ML-DSA precedent (test_wycheproof_mldsa* xfail on
 # _MLDSA_*_IMPORT_REJECT_CKRS) and the documented ML-KEM raw-private import
-# convention (docs/module-issues.md: CKR_ATTRIBUTE_VALUE_INVALID -> xfail).
+# convention (CKR_ATTRIBUTE_VALUE_INVALID -> xfail).
 # The boundary is mechanism advertisement: not-advertised = skip (above the
 # import), advertised + any broad clean CKR = xfail. There is no PQC
 # genuine-absence import CKR analogous to CKR_CURVE_NOT_SUPPORTED.

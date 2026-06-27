@@ -149,7 +149,7 @@ def test_wrap_extraction_other_reject_xfails(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_wrap_extraction_leak_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     # Wrap succeeded AND the decrypt leg recovers >= key-length plaintext from a
-    # key claimed non-extractable -> Type-B self-contradiction -> fail.
+    # key claimed non-extractable -> policy self-contradiction -> fail.
     with pytest.raises(Failed) as ei:
         _run_wrap_extraction(monkeypatch, recovered=b"\x11" * 16, claimed_protected=True)
     assert not isinstance(ei.value, XFailed)

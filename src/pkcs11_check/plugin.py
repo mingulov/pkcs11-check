@@ -160,7 +160,7 @@ def pytest_addoption(parser: Any) -> None:
         dest="p11_thread_safe",
         action="store_true",
         default=False,
-        help="Enable concurrent same-session tests (may crash SoftHSM2)",
+        help="Enable concurrent same-session tests (may crash some modules)",
     )
     group.addoption(
         "--p11-manifest",

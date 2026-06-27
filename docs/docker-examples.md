@@ -1,15 +1,15 @@
 # Running pkcs11-check in Docker
 
 Self-contained, copy-pasteable container examples that need no local install and no
-source build — both `pkcs11-check` (from PyPI) and SoftHSM2 (from a distro package
+source build - both `pkcs11-check` (from PyPI) and SoftHSM2 (from a distro package
 manager) are installed inside the image. SoftHSM2 is a pure-software PKCS#11 provider,
 so these need no hardware. For the host (non-Docker) walkthrough, see
 [getting-started-softhsm2.md](getting-started-softhsm2.md).
 
 ## Single-version quickstart (SoftHSM2 on Ubuntu)
 
-The same install → token → run flow as the host walkthrough, packaged in a container.
-Everything comes from a package manager — there is no source build.
+The same install -> token -> run flow as the host walkthrough, packaged in a container.
+Everything comes from a package manager - there is no source build.
 
 ```dockerfile
 # Save as Dockerfile, then build:  docker build -t pkcs11-check-softhsm2 .
@@ -54,7 +54,7 @@ cat reports/results.json
 
 The default command writes JSON to `/out/results.json` (alongside `report.jsonl`,
 `coverage.json`, and `quality.json`). Without the `-v` mount the run still prints a
-console summary, but the files stay inside the removed container — the bind mount is
+console summary, but the files stay inside the removed container - the bind mount is
 how the results reach the host. Files written through the mount are owned by `root`
 (the container runs as root); run `sudo chown -R "$USER" reports/` if that matters.
 
@@ -73,7 +73,7 @@ docker run --rm -v "$PWD/reports:/out" pkcs11-check-softhsm2 \
 `pkcs11-check` can diff two result sets, so you can ask "did upgrading the provider
 change anything?". Ubuntu and Debian package only SoftHSM2 2.6.1, so this example uses
 Fedora, which packages 2.6.1 (Fedora 43) and 2.7.0 (Fedora 44). Fedora 44's 2.7.0 is a
-release candidate — fine for demonstrating the comparison.
+release candidate - fine for demonstrating the comparison.
 
 One Dockerfile serves both versions; only the base image changes:
 

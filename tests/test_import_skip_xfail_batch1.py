@@ -1,6 +1,6 @@
 """TDD meta-tests for Batch 1 import-skip -> xfail conversion.
 
-Audit doc: docs/findings/import-skip-audit.md §4 Batch 1.
+Audit reference: import-skip-audit §4 Batch 1.
 
 Each Batch-1 site uses a *negotiated* importer (import_rsa_public_key_negotiated,
 import_secret_key_negotiated) guarded by has_mechanism.  When negotiation exhaustion

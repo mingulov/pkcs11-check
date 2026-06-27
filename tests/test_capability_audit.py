@@ -7,8 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from tools.report.capability import capability_audit, render_capability_section
-from tools.report.extract import extract_groups
+from pkcs11_check.report.capability import capability_audit, render_capability_section
+from pkcs11_check.report.extract import extract_groups
 
 
 def _group(reason: str, count: int, verdict: str | None) -> dict[str, Any]:

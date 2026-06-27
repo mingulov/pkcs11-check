@@ -39,11 +39,10 @@ after the call.
   SoftHSM headers include PKCS#11 v3.x message prototypes, but the exported
   function list remains the classic v2-style list, so stock SoftHSM is not a
   positive provider for `C_MessageEncrypt*` generated-IV tests.
-- pkcs11-check includes a separate patched SoftHSM2 Docker simulator target,
-  `test-softhsm2-generated-iv`, for positive classic `CKM_AES_GCM` writeback
-  coverage. The target is not stock SoftHSM behavior; it applies a local patch
-  that generates a 12-byte IV during `C_EncryptInit`, writes it to
-  `CK_GCM_PARAMS.pIv`, and keeps decrypt explicit-IV only.
+- A patched SoftHSM2 build can serve as a positive classic `CKM_AES_GCM` writeback
+  simulator for test coverage. Such a build applies a local patch that generates a
+  12-byte IV during `C_EncryptInit`, writes it to `CK_GCM_PARAMS.pIv`, and keeps
+  decrypt explicit-IV only. This is not stock SoftHSM2 behavior.
 - NSS softoken implements v3 message encryption paths and uses
   `CK_GCM_MESSAGE_PARAMS.ivGenerator` / `CK_CCM_MESSAGE_PARAMS.nonceGenerator`.
   Its classic `CKM_AES_GCM` path requires explicit byte-aligned IV parameters.

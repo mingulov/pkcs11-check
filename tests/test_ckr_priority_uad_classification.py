@@ -1,4 +1,4 @@
-"""Runtime classification meta-test for ckr/test_ckr_priority use-after-destroy (Type C).
+"""Runtime classification meta-test for ckr/test_ckr_priority use-after-destroy (lifecycle).
 
 test_destroyed_handle_with_wrong_mechanism previously did 'if rv == CKR_OK: pass',
 hiding a use-after-destroy. Now: destroy claimed CKR_OK and C_EncryptInit on the

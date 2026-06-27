@@ -805,8 +805,8 @@ class TestInvalidECCurve:
         )
 
 
-class TestSoftHSM2Issue596:
-    """SoftHSM2 #596 - CKR_MECHANISM_INVALID on 3DES wrap (task 7b.6).
+class TestWrapUnsupportedMechanismRegression:
+    """3DES key wrap mechanism error regression (task 7b.6).
 
     Wrapping a 3DES key with AES-KW should work (or return a specific
     mechanism error), not CKR_GENERAL_ERROR.
@@ -871,8 +871,8 @@ class TestSoftHSM2Issue596:
             destroy_quietly(rs.raw, rs.sh, des3_key)
 
 
-class TestSoftHSM2Issue722:
-    """SoftHSM2 #722 - SIGSEGV on C_Decrypt with OpenSSL 3 (task 7b.9).
+class TestDecryptCrashRegression:
+    """RSA decrypt crash regression (task 7b.9).
 
     RSA keygen + encrypt + decrypt cycle via subprocess.
     Must not segfault.
@@ -946,8 +946,8 @@ finally:
         assert "OK:" in result.stdout or "ERROR:" in result.stdout
 
 
-class TestTPM2Issue44:
-    """tpm2-pkcs11 #44 - mutex deadlock on rapid login/SignInit (task 7b.12).
+class TestMutexDeadlockRegression:
+    """Mutex deadlock on rapid sign operations regression (task 7b.12).
 
     Rapid sequential sign operations - must not deadlock.
     """

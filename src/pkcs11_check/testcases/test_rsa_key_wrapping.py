@@ -411,7 +411,6 @@ class TestWrappedKeyUsability:
         self-contradiction (the key reads back CKA_EXTRACTABLE=False, then its
         material leaves the token) and must FAIL, not xfail -- consistent with
         the sensitive-value and Tookan extractable-escalation security tests.
-        Findings are tracked in docs/module-issues.md.
         """
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):

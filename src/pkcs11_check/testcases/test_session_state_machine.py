@@ -981,7 +981,6 @@ class TestSessionContextManager:
 
         NSS deviation: NSS returns CKR_OK on C_GenerateRandom with a stale
         session handle (handle reuse or session ID recycling).
-        Tracked in docs/module-issues.md under NSS.
         """
         rs = p11_raw_session
         flags = CKF_SERIAL_SESSION | CKF_RW_SESSION

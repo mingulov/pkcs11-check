@@ -2,7 +2,7 @@
 
 Long-running individual cases are marked `slow` so a basic run can skip them
 with `--skip-slow` (-m "not slow"); they still run in the full profile or with
-`--only-slow`. See docs/findings/test-execution-speedup-gap-analysis-2026-06-04.md.
+`--only-slow`.
 """
 
 from __future__ import annotations

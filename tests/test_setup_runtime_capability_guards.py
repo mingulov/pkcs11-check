@@ -2835,7 +2835,7 @@ def test_session_edge_cases_wrap_xfail_when_advertised_aes_keygen_rejects_runtim
     rs = _session_with_mechanisms("AES_KEY_GEN")
 
     with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
-        test_session_edge_cases.TestSoftHSM2IssueRegressions().test_wrap_unsupported_mechanism_returns_proper_ckr(
+        test_session_edge_cases.TestSessionEdgeRegressions().test_wrap_unsupported_mechanism_returns_proper_ckr(
             rs
         )
 

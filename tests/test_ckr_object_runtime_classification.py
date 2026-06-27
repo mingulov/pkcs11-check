@@ -1,9 +1,9 @@
-"""Runtime classification meta-tests for ckr/test_ckr_object Type-B + Type-C.
+"""Runtime classification meta-tests for ckr/test_ckr_object policy + lifecycle.
 
-Type B -- sensitive value read (test_sensitive_value): claimed = key reports
+policy -- sensitive value read (test_sensitive_value): claimed = key reports
 CKA_SENSITIVE=True; violated = CKA_VALUE actually readable -> fail.
 
-Type C -- use-after-destroy and read-only setattr: claimed_success = the prior
+lifecycle -- use-after-destroy and read-only setattr: claimed_success = the prior
 op (destroy / setattr) returned CKR_OK; effect_observed = the contradicting
 effect (tagged object survives / value actually changed) -> fail. Honest decline
 (prior op did not claim success) -> xfail. No contradiction -> pass.
@@ -35,7 +35,7 @@ def _assert_real_fail(excinfo: pytest.ExceptionInfo[Failed]) -> None:
     assert not isinstance(excinfo.value, XFailed)
 
 
-# --- Type B: sensitive value read -----------------------------------------
+# --- policy: sensitive value read -----------------------------------------
 
 
 def _run_sensitive(monkeypatch: pytest.MonkeyPatch, *, claimed: bool, readable: bool) -> None:
@@ -70,7 +70,7 @@ def test_sensitive_protected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     _run_sensitive(monkeypatch, claimed=True, readable=False)
 
 
-# --- Type C: use-after-destroy (C_GetAttributeValue) -----------------------
+# --- lifecycle: use-after-destroy (C_GetAttributeValue) -----------------------
 
 
 def _run_destroyed_handle(monkeypatch: pytest.MonkeyPatch, *, getattr_rv: int) -> None:
@@ -107,7 +107,7 @@ def test_destroyed_handle_other_reject_xfails(monkeypatch: pytest.MonkeyPatch) -
         _run_destroyed_handle(monkeypatch, getattr_rv=int(CKR_FUNCTION_FAILED))
 
 
-# --- Type C: copy destroyed handle -----------------------------------------
+# --- lifecycle: copy destroyed handle -----------------------------------------
 
 
 def _run_copy_destroyed(monkeypatch: pytest.MonkeyPatch, *, destroy_rv: int, copy_rv: int) -> None:
@@ -143,7 +143,7 @@ def test_copy_destroyed_destroy_declined_xfails(monkeypatch: pytest.MonkeyPatch)
         _run_copy_destroyed(monkeypatch, destroy_rv=int(CKR_FUNCTION_FAILED), copy_rv=int(CKR_OK))
 
 
-# --- Type C: double destroy ------------------------------------------------
+# --- lifecycle: double destroy ------------------------------------------------
 
 
 def _run_double_destroy(monkeypatch: pytest.MonkeyPatch, *, first_rv: int, survives: bool) -> None:
@@ -178,7 +178,7 @@ def test_double_destroy_first_declined_xfails(monkeypatch: pytest.MonkeyPatch) -
         _run_double_destroy(monkeypatch, first_rv=int(CKR_FUNCTION_FAILED), survives=False)
 
 
-# --- Type C: read-only setattr (CKA_CLASS) ---------------------------------
+# --- lifecycle: read-only setattr (CKA_CLASS) ---------------------------------
 
 
 def _run_setattr(monkeypatch: pytest.MonkeyPatch, *, setattr_rv: int, changed: bool) -> None:

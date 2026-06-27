@@ -24,7 +24,7 @@ def _wrong_plaintext(*_args: Any, **_kwargs: Any) -> bytes:
 def test_gcm_siv_decrypt_invalid_vector_success_is_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A forged GCM-SIV vector that decrypts must fail (auth break, Type A).
+    """A forged GCM-SIV vector that decrypts must fail (auth break, crypto).
 
     Phase-2 V1: the decrypt-success path previously had no ``else: fail`` for
     ``test_passed is False``, so a module that returned plaintext for a

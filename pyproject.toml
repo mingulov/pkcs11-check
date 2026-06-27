@@ -1,7 +1,7 @@
 [project]
 name = "pkcs11-check"
 version = "0.1.6"
-description = "CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pytest plugin"
+description = "Broad, vendor-neutral PKCS#11 behavior & conformance test client (software tokens, HSMs, smart cards, cloud KMS)"
 readme = "README.md"
 authors = [
     { name = "Denis Mingulov", email = "denis@mingulov.com" }
@@ -51,6 +51,7 @@ Issues = "https://github.com/mingulov/pkcs11-check/issues"
 
 [project.scripts]
 pkcs11-check = "pkcs11_check.cli.app:main"
+pkcs11-check-report = "pkcs11_check.report.__main__:main"
 
 [project.entry-points."pytest11"]
 pkcs11-check = "pkcs11_check.plugin"

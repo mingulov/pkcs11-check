@@ -76,8 +76,7 @@ CK_RV traces ride in `user_properties` when `--rv-trace` is on.
 ### Sharded runs
 `pkcs11-check shard-units` plans N balanced file batches; run each batch
 (`PKCS11_CHECK_TARGETS`), then `pkcs11-check merge-shards` reproduces the
-single-run artifacts (a split→merge round-trip is exact). See
-`docs/docker-artifacts.md`.
+single-run artifacts (a split→merge round-trip is exact).
 
 ### Coverage comparison
 `pkcs11-check compare-coverage BASELINE CANDIDATE` compares mechanism coverage
@@ -87,18 +86,21 @@ a baseline state for the same provider.
 
 ## Reusable Python building blocks
 
-- **`pkcs11_check.raw`** — a pure-ctypes PKCS#11 binding (no C build) with
+- **`pkcs11_check.raw`** - a pure-ctypes PKCS#11 binding (no C build) with
   v2.40/v3.0/v3.1/v3.2 interface negotiation and PQC mechanisms. Usable
   standalone to call any module.
-- **`pkcs11_check.core.quality_audit`** — pure artifact analysis helpers,
+- **`pkcs11_check.core.quality_audit`** - pure artifact analysis helpers,
   including `build_quality_audit()` and
   `compare_mechanism_coverage_states()` for provider-local baseline/candidate
   mechanism-state loss checks.
-- **The pytest plugin** (`pkcs11_check.plugin`, entry point `pkcs11-check`) —
+- **The pytest plugin** (`pkcs11_check.plugin`, entry point `pkcs11-check`) -
   registers the markers, fixtures (`p11_module`, `p11_module_session`,
   `p11_raw_session`, `p11_config`), and `--p11-module/--p11-pin/--p11-slot/...`
   options, so the product test cases can run inside an external pytest session.
-- **`pkcs11_check.core.preflight`** — crash-safe capability probing
+  Note: `--p11-module/--p11-pin/--p11-slot` are the pytest-plugin option names
+  (used when invoking `pytest` directly); the `pkcs11-check test` CLI uses the
+  shorter `--module/--pin/--slot` names.
+- **`pkcs11_check.core.preflight`** - crash-safe capability probing
   (`run_preflight_subprocess` → `CapabilityManifest`).
 
 ## Stability commitment
@@ -108,4 +110,3 @@ introduced for existing conditions, new JSON keys may be added but existing keys
 keep their meaning, and the marker/fixture/option names above are kept. The
 default profile of a bare `pkcs11-check test` and any change to it is called out
 in the CHANGELOG.
-</content>

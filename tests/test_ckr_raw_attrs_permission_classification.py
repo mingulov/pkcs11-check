@@ -1,7 +1,7 @@
-"""Runtime classification meta-tests for ckr/test_ckr_raw_attrs permission flags (Type B).
+"""Runtime classification meta-tests for ckr/test_ckr_raw_attrs permission flags (policy).
 
 CKA_ENCRYPT=False / CKA_DECRYPT=False enforcement, exercised in a subprocess.
-The outer test parses the subprocess output and applies a Type-B claim/effect-check:
+The outer test parses the subprocess output and applies a policy claim/effect-check:
 claimed = the key reads back the permission flag as False; violated = the
 corresponding C_*Init still returned CKR_OK -> fail; not claimed -> xfail.
 """

@@ -103,8 +103,8 @@ def _skip_or_xfail_rsa_pkcs1_private_import_reject(exc: AssertionError, key_bits
     The key is provisioned through ``provision_rsa_private_key``; a clean
     broad import-failure CKR after negotiation exhaustion on RSA_PKCS
     (advertised -- ``has_mechanism`` gate passed upstream) is
-    advertised-but-not-operational -> xfail, never skip (import-skip audit A12,
-    docs/findings/import-skip-audit.md). Non-CKR AssertionErrors propagate as
+    advertised-but-not-operational -> xfail, never skip (import-skip audit A12).
+    Non-CKR AssertionErrors propagate as
     harness/coding-bug findings.
 
     RSA has no curve-absence analogue (unlike EC); every clean import-reject CKR

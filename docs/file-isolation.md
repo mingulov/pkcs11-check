@@ -175,7 +175,7 @@ uv run pkcs11-check state --output json .pkcs11-check-isolation-state.json
 - `--sessions` is ignored in isolated modes.
 - The normal `--timeout` value is still passed through to pytest as per-test timeout.
 - The file runner also has an outer subprocess timeout so a dead file runner does not hang forever.
-- `--max-crashes-per-file` defaults to `3` in `test` and `auto` isolation; `0` disables it.
+- `--max-crashes-per-file` defaults to `10` in `test` and `auto` isolation; `0` disables it.
 - Resume safety checks include the requested units, pytest arguments, relevant environment,
   and file/module metadata. A changed test file or changed module binary invalidates the old state.
 - Adaptive policy keys off backend-relevant inputs only: module/interface/slot/manifest/env, not the
@@ -207,49 +207,24 @@ Use `none` when:
 - you trust the backend not to crash the pytest process
 - you are debugging runner overhead rather than backend stability
 
-## Local Helper Script
+## Environment Variables For Isolation Mode
 
-`local-builds/test.sh` can now opt into the same modes:
+The isolation mode and related options can be driven via environment variables, which is
+useful when an external wrapper or conftest sets them before invoking `pkcs11-check test`:
 
 ```bash
 P11TEST_ISOLATION=auto \
-bash local-builds/test.sh nss-softokn src/pkcs11_check/testcases/test_aead.py
+pkcs11-check test --module /path/to/module.so src/pkcs11_check/testcases/test_aead.py
 ```
 
 ```bash
 P11TEST_ISOLATION=file \
-bash local-builds/test.sh bouncyhsm src/pkcs11_check/testcases/ckr/test_ckr_codes.py
+pkcs11-check test --module /path/to/module.so src/pkcs11_check/testcases/ckr/test_ckr_codes.py
 ```
 
 ```bash
 P11TEST_ISOLATION=test \
-bash local-builds/test.sh nss-softokn src/pkcs11_check/testcases/test_aead.py
-```
-
-Some crash-prone providers now default to `auto` isolation automatically when the
-user does not override the mode:
-
-- `nss-softokn`
-
-Those provider defaults use a stable state file under `/tmp`, for example:
-
-```text
-/tmp/pkcs11-check-nss-softokn-isolation-state.json
-```
-
-and a matching adaptive policy file, for example:
-
-```text
-/tmp/pkcs11-check-nss-softokn-isolation-policy.json
-```
-
-You can still override the default explicitly:
-
-```bash
-P11TEST_ISOLATION=none bash local-builds/test.sh nss-softokn -k ckr
-P11TEST_ISOLATION=auto bash local-builds/test.sh nss-softokn -k ckr
-P11TEST_ISOLATION=file bash local-builds/test.sh bouncyhsm -x
-P11TEST_ISOLATION=test bash local-builds/test.sh nss-softokn src/pkcs11_check/testcases/test_aead.py
+pkcs11-check test --module /path/to/module.so src/pkcs11_check/testcases/test_aead.py
 ```
 
 Useful companion variables:
@@ -258,60 +233,32 @@ Useful companion variables:
 P11TEST_ISOLATION=file
 P11TEST_RESUME=1
 P11TEST_STOP_ON_FAILURE=1
-P11TEST_STATE_FILE=/tmp/pkcs11-check-bouncyhsm.json
-P11TEST_POLICY_FILE=/tmp/pkcs11-check-bouncyhsm-policy.json
+P11TEST_STATE_FILE=/tmp/pkcs11-check-state.json
+P11TEST_POLICY_FILE=/tmp/pkcs11-check-policy.json
 P11TEST_MAX_CRASHES_PER_FILE=2
 ```
 
-The shell helper supports the common local workflow options in isolation mode:
+## Provider Example
 
-- file or nodeid targets
-- `-k` / `--match`
-- `-o` / `--output`
-- `--output-file`
-- `-v`
-- `-x` / `--stop-on-failure`
-- `--destructive`
-
-For arbitrary pytest flags, use `uv run pkcs11-check test ...` directly.
-
-## BouncyHSM Local Example
-
-For local BouncyHSM, the stable path today is the LiteDb-backed server mode:
+Once you have a provider library built and a token set up, point `--module` at the shared
+library and choose an isolation mode:
 
 ```bash
-mkdir -p local-builds/bouncyhsm/data
-cd local-builds/bouncyhsm/server
-ASPNETCORE_ENVIRONMENT=Docker \
-ASPNETCORE_URLS=http://127.0.0.1:5011 \
-BouncyHsm_LiteDbPersistentRepositorySetup__DbFilePath=$PWD/../data/BouncyHsm.db \
-BouncyHsm_BouncyHsmSetup__TcpEndpoint__Endpoint=127.0.0.1:8765 \
-dotnet BouncyHsm.dll
-```
-
-Create a token:
-
-```bash
-curl -X POST http://127.0.0.1:5011/Slot \
-  -H "Content-Type: application/json" \
-  -d '{"IsHwDevice":false,"Description":"pkcs11-check","Token":{"Label":"pkcs11-check","SerialNumber":"0001","UserPin":"1234","SoPin":"12345678"}}'
-```
-
-Point the native shim at the local TCP endpoint and run the isolated mode:
-
-```bash
-BOUNCY_HSM_CFG_STRING='Server=127.0.0.1;Port=8765;' \
-uv run pkcs11-check test \
-  --module local-builds/bouncyhsm/lib/libbouncyhsm_pkcs11.so \
+pkcs11-check test \
+  --module /path/to/module.so \
   --pin 1234 \
   --isolation file \
   src/pkcs11_check/testcases/ckr
 ```
 
-The same flow also works through the local helper:
+For network-backed providers that require connection environment variables, set them
+before invoking the CLI:
 
 ```bash
-BOUNCY_HSM_CFG_STRING='Server=127.0.0.1;Port=8765;' \
-P11TEST_ISOLATION=file \
-bash local-builds/test.sh bouncyhsm src/pkcs11_check/testcases/ckr/test_ckr_codes.py
+PROVIDER_CFG='...' \
+pkcs11-check test \
+  --module /path/to/module.so \
+  --pin 1234 \
+  --isolation file \
+  src/pkcs11_check/testcases/ckr
 ```

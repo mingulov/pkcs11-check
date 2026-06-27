@@ -1,6 +1,6 @@
 """Classification meta-tests for ckr/test_ckr_wrap non-extractable wrap (Phase 6 C).
 
-Type-B: a module that claims CKA_EXTRACTABLE=False then wraps (exports) the key
+policy: a module that claims CKA_EXTRACTABLE=False then wraps (exports) the key
 is a self-contradiction -> fail (was masked by skip). A module that does not
 claim the protection -> xfail. A claimed-and-rejected wrap -> pass.
 """
