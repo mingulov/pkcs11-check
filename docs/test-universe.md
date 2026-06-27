@@ -24,7 +24,7 @@ failures, crashes, timeouts, or marker filters.
 
 For an article or release report, the safest short phrasing is:
 
-> pkcs11-check currently has about 105k provider-executable product tests. The
+> pkcs11-check currently has >100k provider-executable product tests. The
 > raw reportable collection is 109,608 pytest nodes, including all AES-CTS
 > variants, but a single provider can only execute one CTS variant as a clean
 > pass target. The largest fully capable executable target is 104,744 tests with

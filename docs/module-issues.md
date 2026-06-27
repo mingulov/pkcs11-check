@@ -16,22 +16,22 @@ The framework detects memory-safety issues at two complementary levels:
    of clearly-invalid-but-honorable inputs are caught by the isolated per-file subprocess
    runner (a crash exits with `returncode < 0`, which is recorded as a finding). Honorable
    use-after-free across operation state is detectable when it causes observable behavioral
-   changes or crashes — for example, `testcases/security/test_operation_state_uaf.py`
+   changes or crashes - for example, `testcases/security/test_operation_state_uaf.py`
    destroys keys mid-operation (Sign, Verify, Encrypt, Decrypt, Derive across multiple
    mechanisms) and expects the operation to terminate safely or reject the key access.
    Honorable template validation gaps are similarly observable when empty or `ulCount=0`
-   templates are silently accepted where the spec requires rejection — see
+   templates are silently accepted where the spec requires rejection - see
    `testcases/security/test_template_count_edges.py`.
 
-2. **Oversized length/count — a crash IS a finding by default** (see CLAUDE.md "Probe
+2. **Oversized length/count - a crash IS a finding by default** (see CLAUDE.md "Probe
    soundness" + [probe-soundness.md](probe-soundness.md)). The security suite simulates an
    untrusted caller; a module that feeds an unvalidated caller-supplied length/count into a
    memory op has a real input-validation bug. So these crashes are findings, not "harness
-   UB" — e.g. the SoftHSM2 `template_count` SIGSEGV documented below is recorded as a HIGH
+   UB" - e.g. the SoftHSM2 `template_count` SIGSEGV documented below is recorded as a HIGH
    finding, **not** dismissed. The one genuine false-positive (a module that correctly
    *honors* a large mappable length over a buffer we under-provisioned) is separated by
    making the buffer honest: back the claimed length with a demand-zero mmap
-   (`HONEYPOT_MMAP_CODE` in `security/conftest.py`) and re-run — still crashes ⇒
+   (`HONEYPOT_MMAP_CODE` in `security/conftest.py`) and re-run - still crashes ⇒
    unconditionally real (internal / alloc-wrap / write-side overflow); crash disappears ⇒
    contingent over-read (a hardening note, not corruption). `test_arithmetic_overflow.py`'s
    GCM `DecryptUpdate` probe uses this honeypot for exactly that reason.
@@ -39,7 +39,7 @@ The framework detects memory-safety issues at two complementary levels:
 3. **ASAN-lane**: Silent out-of-bounds *reads* with no observable effect, and the
    read-vs-write disambiguation for **un-mappable** magnitudes (2^63 / 2^64 / ULONG_MAX,
    where an honest buffer is impossible), are resolved only under the AddressSanitizer
-   docker targets — a WRITE overflow is unconditionally real; a pure read past our short
+   docker targets - a WRITE overflow is unconditionally real; a pure read past our short
    buffer is the contingent case. ASAN runs the same suite instrumented, surfacing both.
 
 ---
@@ -51,7 +51,7 @@ The framework detects memory-safety issues at two complementary levels:
 ### xfail breakdown (658 total)
 | Count | File | Reason |
 |-------|------|--------|
-| 624 | test_wycheproof_rsa_oaep.py | RSA-OAEP with non-SHA1 hash/MGF — SoftHSM2 only supports SHA-1 for OAEP |
+| 624 | test_wycheproof_rsa_oaep.py | RSA-OAEP with non-SHA1 hash/MGF - SoftHSM2 only supports SHA-1 for OAEP |
 | 24 | test_wycheproof_hmac.py | HMAC truncated output variants not supported |
 | 9 | test_wycheproof.py | AES-GCM edge cases (SoftHSM2 2.6.1 has no GCM; 2.7.0 has it but some edge cases fail) |
 | 1 | test_wycheproof_ecdh.py | ECDH with invalid curve point handling |
@@ -68,19 +68,19 @@ The framework detects memory-safety issues at two complementary levels:
 - **Lenient wrong-key-type at `C_SignInit`/`C_VerifyInit` (ECDSA + RSA key), but SAFE at the
   operation**: `C_SignInit(CKM_ECDSA, RSA private key)` returns `CKR_OK` (PKCS#11 §5.2 prefers
   `CKR_KEY_TYPE_INCONSISTENT` at init); the subsequent `C_Sign` then safely refuses with
-  `CKR_GENERAL_ERROR` (and `C_Verify` with `CKR_SIGNATURE_LEN_RANGE`) — **no signature is
+  `CKR_GENERAL_ERROR` (and `C_Verify` with `CKR_SIGNATURE_LEN_RANGE`) - **no signature is
   produced and there is no crash**. SoftHSM2 is the only one of softhsm2/kryoptic/NSS/opencryptoki
   that defers the key-type check this way (the others reject at init). Because the operation leaves
   no usable result behind, this is a recorded **deviation (xfail)**, not a forgery: the
   `test_ckr_wrong_key_type_hardening.py::TestWrongAsymmetricKeyTypeContinuation` continuation probe
-  classifies by *effect* — a produced signature (`BREAK`) would `fail`, a crash would `fail`, and a
+  classifies by *effect* - a produced signature (`BREAK`) would `fail`, a crash would `fail`, and a
   safe late refusal `xfail`s. Note: the first-line init-only checks (`test_mech_negative.py::
   TestWrongKeyType::test_ecdsa_with_rsa_key_rejected`, `test_ckr_sign.py::TestSignInitErrors`,
   `test_ckr_verify.py::TestVerifyInitErrors`) still hard-`fail` SoftHSM2 here because they assert
-  rejection at the init stage without continuing to the operation — a stricter first-line check
+  rejection at the init stage without continuing to the operation - a stricter first-line check
   whose fail-vs-xfail classification for lenient-but-safe init is a flagged decision (the
   continuation probe is the authoritative safety verifier).
-- **HIGH — SIGSEGV on integer-overflow `template_count` (NEW 2026-04-29)**: Calling
+- **HIGH - SIGSEGV on integer-overflow `template_count` (NEW 2026-04-29)**: Calling
   `C_CreateObject`, `C_GenerateKey`, or `C_GenerateKeyPair` with `ulCount` set to extreme
   values such as `0xffffffffffffffff` (UINT64_MAX), `0xaaaaaaaaaaaaaab`
   (sizeof(CK_ATTRIBUTE)-overflow boundary), or `0x100000000` (4 GiB) crashes the module
@@ -101,7 +101,7 @@ The framework detects memory-safety issues at two complementary levels:
   `test_random_length_truncation.py::TestGenerateRandomLengthTruncation` calls
   `C_GenerateRandom(buf, 0x100000008)` over an mmap-backed demand-zero 4 GiB buffer.
   Stock SoftHSM2 2.7.0 (local `/usr/lib/softhsm/libsofthsm2.so`) returns `CKR_OK`
-  in ~0 s but fills only the low-32-bits count (8 bytes) — the requested length is
+  in ~0 s but fills only the low-32-bits count (8 bytes) - the requested length is
   silently truncated by a 32-bit cast, leaving the rest of the buffer unwritten.
   The caller believes the whole buffer was randomized (a cryptographic-contract
   violation), so this is classified `accepted_invalid` (fail). The companion
@@ -142,7 +142,7 @@ The framework detects memory-safety issues at two complementary levels:
   calls `C_EncryptInit(CKM_AES_GCM)` with a valid 12-byte IV and a tiny real
   `pAAD` buffer but `ulAADLen` set to `0x7fffffffffffffff` / `0x8000000000000000`.
   Stock SoftHSM2 2.7.0 abnormally terminates the child (positive exit code 5, no
-  stdout/stderr — dies inside `C_EncryptInit` before any return) instead of
+  stdout/stderr - dies inside `C_EncryptInit` before any return) instead of
   rejecting the impossible AAD length with a CKR. Kryoptic rejects cleanly (the
   probe passes there), confirming the test is sound. Same abnormal-exit class as
   the huge data-length `C_Sign`/`C_Digest` rows above; caller-controlled length →
@@ -182,7 +182,7 @@ The framework detects memory-safety issues at two complementary levels:
   `CKR_TEMPLATE_INCONSISTENT`; accepting it admits an unverifiable/garbage key
   object into the store (CVE-2021-3798 missing-EC-curve-validation pattern), a
   crypto-correctness break. **softhsm2-specific:** in the fresh 2026-06-11 pool,
-  softhsm2 and softhsm2-main are the **only** modules that accept it — kryoptic
+  softhsm2 and softhsm2-main are the **only** modules that accept it - kryoptic
   (all variants), NSS, opencryptoki, bouncyhsm, and tpm2 all reject (pass), and
   wolfpkcs11 / corepkcs11 reject with a non-spec clean code (xfail). Affects
   SoftHSM2 2.7.0 and main. Detected by:
@@ -192,14 +192,14 @@ The framework detects memory-safety issues at two complementary levels:
 ### Known quirks
 - `C_GetObjectSize` returns `CK_UNAVAILABLE_INFORMATION` (not implemented)
 - `C_SeedRandom` succeeds silently (no-op, RNG is OpenSSL-based)
-- v2.40 only — no `C_GetInterface`, no v3.0+ mechanisms
+- v2.40 only - no `C_GetInterface`, no v3.0+ mechanisms
 - Session objects visible across concurrent sessions (spec says they shouldn't be)
 
-### Threading & concurrency — NOT a SoftHSM2 bug (harness methodology)
-- **Concurrent `C_*` after `C_Initialize(NULL)` segfaults — but that is undefined behavior, not a module defect.** Per PKCS#11 v3.2 §5.4, passing `NULL` `pInitArgs` is the application *promising single-threaded use*; the library "need not perform any synchronization." pkcs11-check's shared-session fixtures initialize with `C_Initialize(None)`, so running `ThreadPoolExecutor` concurrency on the shared session (as the old `test_threading.py` did) is the *harness* breaking its own contract. Under that misuse SoftHSM2 crashes ~always: **32 threads × 200 `C_GenerateKey` = 6/6 (100%) SIGSEGV; 16 × 100 ≈ 88%; 4 threads ≈ 7% flaky** — the source of intermittent `crashed=1` for `test_threading.py` in the matrix.
+### Threading & concurrency - NOT a SoftHSM2 bug (harness methodology)
+- **Concurrent `C_*` after `C_Initialize(NULL)` segfaults - but that is undefined behavior, not a module defect.** Per PKCS#11 v3.2 §5.4, passing `NULL` `pInitArgs` is the application *promising single-threaded use*; the library "need not perform any synchronization." pkcs11-check's shared-session fixtures initialize with `C_Initialize(None)`, so running `ThreadPoolExecutor` concurrency on the shared session (as the old `test_threading.py` did) is the *harness* breaking its own contract. Under that misuse SoftHSM2 crashes ~always: **32 threads × 200 `C_GenerateKey` = 6/6 (100%) SIGSEGV; 16 × 100 ≈ 88%; 4 threads ≈ 7% flaky** - the source of intermittent `crashed=1` for `test_threading.py` in the matrix.
 - **Initialized correctly, SoftHSM2 is thread-safe.** The *same* concurrent workloads under `C_Initialize(CKF_OS_LOCKING_OK)` are rock-solid: **0/6 crashes at 32 × 200, 0/8 at 16 × 100.** So the finding is a harness bug (wrong init mode for the threading test), not a SoftHSM2 conformance violation.
-- **Secondary effect:** a crash mid-`C_GenerateKey` corrupts the file-backed token (`CKR_TOKEN_NOT_RECOGNIZED` for every later test) — a poison-the-shared-token cascade. This is why the threading test isolates its token (below).
-- **The misuse is documented here, not exercised as a test.** We do NOT add a test that deliberately mis-initializes (`C_Initialize(NULL)` + threads) to provoke the crash — provoking documented undefined behavior is not a conformance finding. The only threading test, `test_threading.py::TestConcurrentUnderOSLocking`, always initializes with `CKF_OS_LOCKING_OK` and then hammers concurrent keygen/digest/random in a child subprocess against a disposable throwaway token ([destructive-token-isolation.md](destructive-token-isolation.md), Tier 1). A crash or hang there *is* a genuine module thread-safety FAIL; `CKR_CANT_LOCK` skips (capability absent). SoftHSM2 passes.
+- **Secondary effect:** a crash mid-`C_GenerateKey` corrupts the file-backed token (`CKR_TOKEN_NOT_RECOGNIZED` for every later test) - a poison-the-shared-token cascade. This is why the threading test isolates its token (below).
+- **The misuse is documented here, not exercised as a test.** We do NOT add a test that deliberately mis-initializes (`C_Initialize(NULL)` + threads) to provoke the crash - provoking documented undefined behavior is not a conformance finding. The only threading test, `test_threading.py::TestConcurrentUnderOSLocking`, always initializes with `CKF_OS_LOCKING_OK` and then hammers concurrent keygen/digest/random in a child subprocess against a disposable throwaway token ([destructive-token-isolation.md](destructive-token-isolation.md), Tier 1). A crash or hang there *is* a genuine module thread-safety FAIL; `CKR_CANT_LOCK` skips (capability absent). SoftHSM2 passes.
 
 ---
 
@@ -212,13 +212,13 @@ The framework detects memory-safety issues at two complementary levels:
 - DH parameter generation not supported (skips, not xfails)
 
 ### Known bugs
-- **CKR_DEVICE_ERROR on verify failure**: `C_Verify` returns `CKR_DEVICE_ERROR` (0x30) instead of `CKR_SIGNATURE_INVALID` (0xC0) when signature verification fails. Affects ALL mechanisms (RSA, ECDSA, ML-DSA, SLH-DSA). SoftHSM2 correctly returns `CKR_SIGNATURE_INVALID`. This is a Kryoptic bug — PKCS#11 spec requires `CKR_SIGNATURE_INVALID`.
+- **CKR_DEVICE_ERROR on verify failure**: `C_Verify` returns `CKR_DEVICE_ERROR` (0x30) instead of `CKR_SIGNATURE_INVALID` (0xC0) when signature verification fails. Affects ALL mechanisms (RSA, ECDSA, ML-DSA, SLH-DSA). SoftHSM2 correctly returns `CKR_SIGNATURE_INVALID`. This is a Kryoptic bug - PKCS#11 spec requires `CKR_SIGNATURE_INVALID`.
 - **EDDSA accepts invalid signatures (ACVP SigVer)**: `C_Verify` with `CKM_EDDSA` accepts NIST ACVP `testPassed=False` vectors for Ed25519 (Ed448 is skipped). 4/4 tested invalid Ed25519 vectors return `CKR_OK` instead of `CKR_SIGNATURE_INVALID`. Detected by: `test_acvp_eddsa_sigver`.
 - **SLH_DSA accepts invalid signatures (ACVP SigVer)**: `C_Verify` with `CKM_SLH_DSA` accepts NIST ACVP `testPassed=False` vectors for SLH-DSA-SHA2-128f and SLH-DSA-SHA2-192f. 15/15 tested invalid vectors return `CKR_OK`. Detected by: `test_acvp_slhdsa` (`test_slhdsa_sigver`).
 - **ML-DSA sign seed mismatch**: Wycheproof `mldsa_*_sign_seed_test.json` vectors use a 32-byte private seed to derive full ML-DSA keys. Kryoptic does not support seed-based key derivation via `CKA_VALUE` import, so derived signatures differ from expected. 173+ vectors affected. Detected by: `test_wycheproof_mldsa_sign.py`.
 - **C_SessionCancel crash via function list**: Calling `C_SessionCancel` through the `CK_FUNCTION_LIST_3_0` function pointer table causes a crash (segfault or hang). The function is listed in the v3.0+ function list but does not work when invoked via ctypes `get_func()` on the function list pointer. Calling it through the python-pkcs11 wrapper (which may use a different invocation path) may behave differently. Detected by: `test_v30_session.py`. Workaround: xfail the direct function-list call test.
 - **AttributeValueInvalid on v3.0+ cert attributes**: Creating `CKO_CERTIFICATE` objects with standard v3.0+ attributes (`CKA_PUBLIC_KEY_INFO`, `CKA_SKID`, `CKA_AKID`) returns `CKR_ATTRIBUTE_VALUE_INVALID` (0x13). This persists even when the attribute values are correct SPKI or OctetStrings. Reverting to v2.40 interface or removing these attributes fixes the import.
-- **C_SetPIN with NULL new-PIN pointer mutates/corrupts the user PIN (NEW 2026-05-27)**: `C_SetPIN(hSession, pOldPin="1234" (the valid user PIN), ulOldLen=4, pNewPin=NULL, ulNewLen=8)` does **not** reject the malformed NULL `pNewPin` (nonzero length). Per PKCS#11 a NULL pointer with nonzero length must yield `CKR_ARGUMENTS_BAD`; instead Kryoptic accepts the valid old PIN and proceeds, leaving the stored user PIN no longer equal to `1234`. Every subsequent `C_Login(CKU_USER, "1234")` then returns `CKR_PIN_INCORRECT`, and after ~8 attempts Kryoptic's retry counter trips `CKR_PIN_LOCKED`, permanently bricking the shared token for the rest of the run. SoftHSM2 does **not** exhibit this (`PIN_LOCKED=0` on the same suite — it rejects the NULL new PIN safely). Reproduces identically on both Kryoptic v1.5.0 (release) and `kryoptic-main`. Detected by: `test_ffi_null_pointer.py::TestNullPinBuffer::test_set_pin_null_new_pin` (now `@destructive`). Evidence: the lockout cascade begins in `[60/267]` immediately after `TestNullPinBuffer`, and the only `C_SetPIN` call supplying the correct old PIN is the NULL-new-PIN one; the call only began reaching the module after commit `1406e01` corrected the old-PIN ctypes cast (`c_void_p` → `CK_UTF8CHAR_PTR`) — before that the call raised a Python `ArgumentError` and never executed. Recommended confirmation: a focused single-call repro capturing the `C_SetPIN` return value (CKR_OK = silent corruption vs error-with-mutation) against a throwaway token. Reportable upstream.
+- **C_SetPIN with NULL new-PIN pointer mutates/corrupts the user PIN (NEW 2026-05-27)**: `C_SetPIN(hSession, pOldPin="1234" (the valid user PIN), ulOldLen=4, pNewPin=NULL, ulNewLen=8)` does **not** reject the malformed NULL `pNewPin` (nonzero length). Per PKCS#11 a NULL pointer with nonzero length must yield `CKR_ARGUMENTS_BAD`; instead Kryoptic accepts the valid old PIN and proceeds, leaving the stored user PIN no longer equal to `1234`. Every subsequent `C_Login(CKU_USER, "1234")` then returns `CKR_PIN_INCORRECT`, and after ~8 attempts Kryoptic's retry counter trips `CKR_PIN_LOCKED`, permanently bricking the shared token for the rest of the run. SoftHSM2 does **not** exhibit this (`PIN_LOCKED=0` on the same suite - it rejects the NULL new PIN safely). Reproduces identically on both Kryoptic v1.5.0 (release) and `kryoptic-main`. Detected by: `test_ffi_null_pointer.py::TestNullPinBuffer::test_set_pin_null_new_pin` (now `@destructive`). Evidence: the lockout cascade begins in `[60/267]` immediately after `TestNullPinBuffer`, and the only `C_SetPIN` call supplying the correct old PIN is the NULL-new-PIN one; the call only began reaching the module after commit `1406e01` corrected the old-PIN ctypes cast (`c_void_p` → `CK_UTF8CHAR_PTR`) - before that the call raised a Python `ArgumentError` and never executed. Recommended confirmation: a focused single-call repro capturing the `C_SetPIN` return value (CKR_OK = silent corruption vs error-with-mutation) against a throwaway token. Reportable upstream.
 - **C_CreateObject accepts malformed CKA_ALLOWED_MECHANISMS pointer (NEW 2026-06-08)**:
   `C_CreateObject` for an AES secret key accepts a template where
   `CKA_ALLOWED_MECHANISMS.pValue == NULL_PTR` while `ulValueLen` is nonzero,
@@ -226,14 +226,14 @@ The framework detects memory-safety issues at two complementary levels:
   `C_GetAttributeValue` size queries; a NULL value pointer with a nonzero
   length must be rejected cleanly. Detected by
   `test_ckr_object.py::TestCreateObjectErrors::test_allowed_mechanisms_null_pointer_nonzero_length`.
-- **crypto — C_UnwrapKey(CKM_AES_KEY_WRAP) accepts an empty / non-multiple-of-8 wrapped blob (NEW
+- **crypto - C_UnwrapKey(CKM_AES_KEY_WRAP) accepts an empty / non-multiple-of-8 wrapped blob (NEW
   2026-06-11)**: `C_UnwrapKey` with `CKM_AES_KEY_WRAP` and a **zero-length** (`b""`) wrapped blob
   returns `CKR_OK` and creates a key object (rv-trace: `C_CreateObject→CKR_OK`,
   `C_UnwrapKey→CKR_OK`). RFC 3394 AES-KW requires the wrapped data to be a multiple of 64 bits with a
   minimum of two semiblocks (16 bytes); an empty (and any non-multiple-of-8) ciphertext is malformed
   and MUST be rejected (`CKR_WRAPPED_KEY_LEN_RANGE` / `CKR_DATA_LEN_RANGE`). Accepting it unwraps a
-  garbage/zero key into the store as if recovered — a crypto-correctness break. 27 Wycheproof
-  `aes_wrap_test.json` `WrongDataSize`/`InvalidWrappingSize` vectors (tc14–22, 56–64, 111–119 across
+  garbage/zero key into the store as if recovered - a crypto-correctness break. 27 Wycheproof
+  `aes_wrap_test.json` `WrongDataSize`/`InvalidWrappingSize` vectors (tc14-22, 56-64, 111-119 across
   AES-128/192/256, each with empty `ct`) are accepted. **kryoptic-specific**: all three variants
   (v1.5.0 / kryoptic-main / kryoptic-fips) return `CKR_OK`; softhsm2 (both), nss (all), opencryptoki
   (both), wolfpkcs11 (both) all reject (bouncyhsm/tpm2/corepkcs11 don't advertise the mechanism).
@@ -243,7 +243,7 @@ The framework detects memory-safety issues at two complementary levels:
   determination: [findings/issues-triage.md](findings/issues-triage.md) (kryoptic 2026-06-11 section).
 
 ### Known quirks
-- v3.2 interface — supports `C_GetInterface`, PQC mechanisms
+- v3.2 interface - supports `C_GetInterface`, PQC mechanisms
 - `C_GetObjectSize` works correctly
 - No P-224 EC curve support
 - AES-GCM parameter format differs from some other modules
@@ -264,21 +264,21 @@ The framework detects memory-safety issues at two complementary levels:
   AES-CBC-PAD. PKCS#11 §5.x two-call convention requires `CKR_BUFFER_TOO_SMALL` + setting the
   required length WITHOUT writing. A real 1-entry caller buffer would be overflowed. Detected by:
   `test_ckr_raw_buffer.py` (6 F on nss, fresh). Contrast `C_Digest`, where NSS returns `CKR_OK`
-  but writes **0** bytes past the boundary — a benign return-code deviation (xfail), not an
+  but writes **0** bytes past the boundary - a benign return-code deviation (xfail), not an
   overflow; the probe now distinguishes the two via the guard-byte count.
 
-- **crypto — ML-DSA verify accepts over-long (non-fixed-length) signatures and public keys**: NSS
+- **crypto - ML-DSA verify accepts over-long (non-fixed-length) signatures and public keys**: NSS
   softoken `C_Verify(CKM_ML_DSA, …)` returns `CKR_OK` on a signature that is **+1 byte longer** than
   the FIPS-204 fixed length, and `C_CreateObject`/import **accepts a public key +1 byte over** the
   fixed length and then verifies against it as valid. FIPS-204 (Alg. 3 ML-DSA.Verify via
-  `sigDecode`/`pkDecode`) operates only on byte strings of the fixed length — pk =
-  1312/1952/2592, sig = 2420/3309/4627 for ML-DSA-44/65/87 — so any other length is malformed and
+  `sigDecode`/`pkDecode`) operates only on byte strings of the fixed length - pk =
+  1312/1952/2592, sig = 2420/3309/4627 for ML-DSA-44/65/87 - so any other length is malformed and
   MUST be rejected (`CKR_SIGNATURE_LEN_RANGE`/`CKR_SIGNATURE_INVALID`, or key-import rejection).
   Accepting the over-long encoding is a **non-malleability break**: appending a trailing byte to a
   valid signature still validates. 8/8 Wycheproof verify vectors flagged `IncorrectSignatureLength`
   (6: `mldsa_{44,65,87}_verify` tc7 "long signature" + tc144/tc157/tc170 "one trailing zero byte")
-  and `IncorrectPublicKeyLength` (2: tc65/tc70 "long public key") — all `result: invalid`,
-  `bugType: BASIC` — are accepted. NSS is otherwise correct on this file: it rejects 380/388 invalid
+  and `IncorrectPublicKeyLength` (2: tc65/tc70 "long public key") - all `result: invalid`,
+  `bugType: BASIC` - are accepted. NSS is otherwise correct on this file: it rejects 380/388 invalid
   vectors and accepts 227/227 valid ones, so this is a specific fixed-length-malformation gap (NSS
   ignores trailing bytes past the spec length), not a blanket verify-always-true bug. Affects the
   base `nss` variant (advertises + operates `CKM_ML_DSA`); the `nss-pqc` variant does not advertise
@@ -295,12 +295,12 @@ The framework detects memory-safety issues at two complementary levels:
   creating the object. Probed values: `CKA_TOKEN` (`CK_BBOOL`, must be 1 byte) given
   `sizeof(CK_ULONG)`=8 bytes; `CKA_VALUE_LEN` / `CKA_CLASS` / `CKA_KEY_TYPE` and ML-DSA / ML-KEM
   `CKA_PARAMETER_SET` (`CK_ULONG`, must be `sizeof(CK_ULONG)`) given 1 byte (underlong) or 9 bytes
-  (overlong). The pointer is valid storage — only the declared length is wrong — so this is a
+  (overlong). The pointer is valid storage - only the declared length is wrong - so this is a
   value-shape validation gap, not a lying-buffer/UB probe. Expected `CKR_ATTRIBUTE_VALUE_INVALID` /
   `CKR_TEMPLATE_INCONSISTENT`. Broader than the softhsm2 `CKA_TOKEN` gap (NSS also misses
   `CKA_VALUE_LEN`/`CKA_PARAMETER_SET`, and misses it on `C_CreateObject`/`C_CopyObject` where
   softhsm2 + wolfpkcs11 reject). Cross-provider: kryoptic / opencryptoki / wolfpkcs11 reject the
-  scalar nodeids they advertise; softhsm2 rejects the object-creation subset — only NSS accepts every
+  scalar nodeids they advertise; softhsm2 rejects the object-creation subset - only NSS accepts every
   one. Detected by: `test_ckr_keygen.py` (15 F) + `test_ckr_object.py` (6 of 8 F). Classified crypto
   / value-shape (negative op: `CKR_OK` on a must-reject malformed attribute → `fail`). Reportable
   upstream. Full determination: [findings/issues-triage.md](findings/issues-triage.md)
@@ -308,7 +308,7 @@ The framework detects memory-safety issues at two complementary levels:
 
 - **Empty `CKA_ALLOWED_MECHANISMS` allow-list not enforced (policy, NEW 2026-06-11)**: NSS accepts a
   key created with an **empty** `CKA_ALLOWED_MECHANISMS` array (NULL_PTR, `ulValueLen`=0), reads it
-  back as `[]`, yet still permits `C_EncryptInit`/`C_Encrypt` with `CKM_AES_ECB` — claimed the
+  back as `[]`, yet still permits `C_EncryptInit`/`C_Encrypt` with `CKM_AES_ECB` - claimed the
   restriction then violated it (self-contradiction). An empty allow-list must forbid all mechanisms
   (`CKR_MECHANISM_INVALID` / `CKR_KEY_FUNCTION_NOT_PERMITTED`). Shared with opencryptoki;
   softhsm2/kryoptic/wolfpkcs11 enforce. Detected by:
@@ -323,14 +323,14 @@ The framework detects memory-safety issues at two complementary levels:
   `count`, and `C_EncryptInit(CKM_AES_GCM)` with NULL `pAAD` + nonzero `ulAADLen`. Decisive
   cross-provider split: softhsm2 / kryoptic / opencryptoki all **survive and return
   `CKR_ARGUMENTS_BAD`** on the exact same NULL-mechanism / NULL-template calls (for the GCM NULL-AAD
-  case softhsm2 also crashes, but kryoptic/opencryptoki survive) — so these are NSS-specific NULL
+  case softhsm2 also crashes, but kryoptic/opencryptoki survive) - so these are NSS-specific NULL
   dereferences, not generic harness-provoked UB. Detected by: `test_api_boundary.py` (4),
   `test_ckr_null_params.py` (2), `test_ckr_raw_args_bad.py` (2), `test_parameter_validation.py`
   (1, GCM NULL-AAD). Kept `fail` ("a segfault IS the finding"). Reportable upstream. (The broader
   C-cluster `test_ffi_null_pointer.py`/`test_ffi_length_boundary.py` NULL-*data*-with-nonzero-length
   and lying-buffer probes remain Denis-KEEP UB.)
 
-- **ChaCha20-Poly1305 KAT ciphertext mismatch — RETRACTED (was harness bug, not NSS bug)**: the
+- **ChaCha20-Poly1305 KAT ciphertext mismatch - RETRACTED (was harness bug, not NSS bug)**: the
   apparent crypto finding in `test_mech_encrypt.py::TestMechEncryptKAT::test_kat_vector[CHACHA20_POLY1305]`
   was caused by a harness param-wiring bug: `build_params_from_vector` had no `chacha20_poly1305`
   branch and fell through to `build_test_params`, which generates a **fresh random nonce** (ignoring
@@ -362,13 +362,13 @@ The framework detects memory-safety issues at two complementary levels:
 | Count | Area | Reason |
 |-------|------|--------|
 | 296 | DSA Wycheproof | Historical pkcs11-check loader issue, not an NSS finding. Follow-up found that DER DSA signatures were passed directly to `C_Verify` and then converted with the encoded length of `q`, including leading zero bytes. The loader now converts DER signatures to fixed-width PKCS#11/P1363 form; focused NSS validation passes this file. Full matrix counts still need rerun. |
-| 8 | ML-DSA verify (crypto) | NSS accepts over-long (+1 byte) ML-DSA signatures and public keys as valid — FIPS-204 fixed-length violation (non-malleability break). See the crypto entry above. |
-| ~16 | Session/access tests | NSS returns `CKR_USER_TYPE_INVALID` instead of `CKR_USER_ALREADY_LOGGED_IN` — PKCS#11 spec compliance deviation |
+| 8 | ML-DSA verify (crypto) | NSS accepts over-long (+1 byte) ML-DSA signatures and public keys as valid - FIPS-204 fixed-length violation (non-malleability break). See the crypto entry above. |
+| ~16 | Session/access tests | NSS returns `CKR_USER_TYPE_INVALID` instead of `CKR_USER_ALREADY_LOGGED_IN` - PKCS#11 spec compliance deviation |
 | ~16 | KEM/PQC | ML-KEM not supported in NSS 3.120.1 (expected skips, showing as errors) |
 | ~2 | AES-XCBC-MAC | NSS returns CKR_KEY_TYPE_INCONSISTENT on verify despite CKA_VERIFY=True |
-| ~27 | Other | AEAD, key flags, mechanism fuzz, etc. — per-file analysis needed |
+| ~27 | Other | AEAD, key flags, mechanism fuzz, etc. - per-file analysis needed |
 
-### Slot architecture — digest/crypto coverage gap (not an NSS bug)
+### Slot architecture - digest/crypto coverage gap (not an NSS bug)
 
 NSS softoken (`libsoftokn3.so`) exposes **two** slots with split responsibilities,
 and the harness pins `PKCS11_CHECK_SLOT=1`, which silently omits the slot-0-only
@@ -387,13 +387,13 @@ login ... can store Private Keys and Certs as token objects". So standalone
 
 **Effect:** `test_operation_termination.py::test_c_digest_terminates_after_each_call`
 (and any digest test) **skips** under the default slot-1 config because slot 1 does
-not advertise SHA digest mechanisms — not because NSS lacks them. Running the same
+not advertise SHA digest mechanisms - not because NSS lacks them. Running the same
 test with `PKCS11_CHECK_SLOT=0` makes NSS digest **pass** (verified: RSA+ECDSA+digest
 all pass on slot 0). Slot 1 remains the right slot for persistent
 key/cert/token-object tests. Source:
 <https://nss-crypto.org/reference/security/nss/legacy/pkcs11/faq/index.html>.
 
-**Coverage:** each NSS target now has a dedicated slot-0 second pass —
+**Coverage:** each NSS target now has a dedicated slot-0 second pass -
 `test-nss-slot0`, `test-nss-pqc-slot0`, `test-nss-main-slot0` (same images with
 `PKCS11_CHECK_SLOT=0`, separate artifact dirs). `test_pool.py` runs `nss-slot0` /
 `nss-pqc-slot0` in the default set and `nss-main-slot0` under `--all`, so NSS's
@@ -404,7 +404,7 @@ slot-1 key/cert pass.
 
 Surfaced by the slot-0 pass + `test_operation_termination.py::test_c_encrypt_terminates_after_multipart`:
 after a multipart encrypt (`C_EncryptInit`+`C_EncryptUpdate`+`C_EncryptFinal`) that
-returns `CKR_OK`, NSS leaves the encryption operation **active** — the next
+returns `CKR_OK`, NSS leaves the encryption operation **active** - the next
 `C_EncryptInit` returns `CKR_OPERATION_ACTIVE`. The spec says "a call to
 `C_EncryptFinal` always terminates the active encryption operation unless it
 returns `CKR_BUFFER_TOO_SMALL`". This affects **~15 symmetric mechanisms**
@@ -442,7 +442,7 @@ cascade stays bounded), but `C_EncryptFinal` itself not terminating is the bug.
   and the error path `sftk_MAC_DestroyContext` dereferences the uninitialized
   `destroy_func` → jumps to a garbage address. **Heap-state dependent:** if the
   allocation lands on zero-filled memory, `destroy_func` is NULL and it returns
-  `CKR_KEY_SIZE_RANGE` (0x62, still wrong) instead of crashing — which is why the
+  `CKR_KEY_SIZE_RANGE` (0x62, still wrong) instead of crashing - which is why the
   Fedora `nss` package variant does not always crash on this file.
   **Also affects:** `C_VerifyInit(CKM_SHA256_HMAC, RSA pub)` and
   `C_SignInit(CKM_AES_CMAC, RSA priv)` (same MAC dispatch). Suggested upstream fix:
@@ -450,7 +450,7 @@ cascade stays bounded), but `C_EncryptFinal` itself not terminating is the bug.
   (2) `PORT_ZNew(sftk_MACCtx)` instead of `PORT_New` in `sftkhmac.c:228`. An ~80-line
   ctypes reproducer (heap-warm + `C_SignInit(0x251, RSA)`) reproduces reliably.
   **Status:** reported upstream and acknowledged, but assessed as **not
-  security-important** — outside the NSS softoken threat model, since the wrong-key-type
+  security-important** - outside the NSS softoken threat model, since the wrong-key-type
   MAC path is not reachable through Firefox (a malicious local PKCS#11 caller is out of
   scope). Not prioritized upstream; retained here as a documented robustness finding.
   pkcs11-check keeps the existing `C_SignInit(CKM_SHA256_HMAC, RSA)` probe as the
@@ -459,7 +459,7 @@ cascade stays bounded), but `C_EncryptFinal` itself not terminating is the bug.
 
 ### Known quirks
 - **Read-only crypto services token**: NSS's default slot ("NSS Generic Crypto Services") is read-only. Cannot create objects, generate keys, or store tokens. Tests requiring RW access should skip.
-- **No PIN/login on crypto services slot**: The default slot does not support `C_Login` — returns `CKR_USER_TYPE_INVALID` when login is attempted. This is correct behavior for a public token that doesn't have login semantics.
+- **No PIN/login on crypto services slot**: The default slot does not support `C_Login` - returns `CKR_USER_TYPE_INVALID` when login is attempted. This is correct behavior for a public token that doesn't have login semantics.
 - **Two slots**: NSS exposes 2 slots. Slot 0 is the crypto services slot (read-only), slot 1 may be an NSS internal database slot.
 - **Needs configDir for full functionality**: `libsoftokn3.so` must be loaded with `configDir='sql:/path/to/db'` NSS init args to access the writable database slot. Without this, only the read-only crypto services slot is available. Use the NSS setup in `local-builds/providers/nss-softokn.sh` or the NSS Docker targets as reference configurations.
 - **RSA keypair requires CKA_PUBLIC_EXPONENT**: NSS requires `CKA_PUBLIC_EXPONENT` in the public key template for `CKM_RSA_PKCS_KEY_PAIR_GEN`. Kryoptic and SoftHSM2 are more lenient and accept the default (65537). The recipe now includes this attribute for cross-module compatibility.
@@ -492,7 +492,7 @@ cascade stays bounded), but `C_EncryptFinal` itself not terminating is the bug.
   state on the NULL pass, making retry impossible. Worked around in the
   recipes via the ``output_size_hint`` parameter on ``encrypt_single``,
   ``decrypt_single``, ``sign_single``, ``wrap_key``, and
-  ``wrap_key_authenticated`` — callers supply the expected output length
+  ``wrap_key_authenticated`` - callers supply the expected output length
   and the recipes skip the NULL probe entirely. Affected paths in this
   project: ``test_aead.py`` (AEAD), ``test_aead_wrap_outputs.py`` (wrap).
 
@@ -510,19 +510,19 @@ Inherits all quirks from NSS 3.120.1 above. Additional findings below.
 
 ### Improvements over NSS 3.120.1
 
-- 203 fewer failures (415 vs 618) — RSA operations significantly improved
+- 203 fewer failures (415 vs 618) - RSA operations significantly improved
 - PQC mechanisms available: CKM_ML_KEM (encapsulate/decapsulate), ML-KEM key generation
 - ML-DSA/SLH-DSA mechanisms NOT yet supported (all tests skip)
 
 ### PQC Issues
 
-- **ML-KEM buffer sizing:** C_EncapsulateKey/C_DecapsulateKey return CKR_BUFFER_TOO_SMALL on the NULL-buffer size query — valid two-call PKCS#11 behavior, handled by the recipes.
-- **ML-KEM-512 raw private-key import:** rejected with `CKR_ATTRIBUTE_VALUE_INVALID`. The Wycheproof "semi_expanded" vectors carry only the decapsulation key `dk` (the *full* FIPS 203 form — **not** a seed, despite the old note here); PKCS#11 v3.2 (ML-KEM private key) permits a token to require both `CKA_SEED` and `CKA_VALUE`, so a dk-only import rejection is a **spec-permitted operational deviation → xfail**, not a failure. 768/1024 import and decapsulate fine.
+- **ML-KEM buffer sizing:** C_EncapsulateKey/C_DecapsulateKey return CKR_BUFFER_TOO_SMALL on the NULL-buffer size query - valid two-call PKCS#11 behavior, handled by the recipes.
+- **ML-KEM-512 raw private-key import:** rejected with `CKR_ATTRIBUTE_VALUE_INVALID`. The Wycheproof "semi_expanded" vectors carry only the decapsulation key `dk` (the *full* FIPS 203 form - **not** a seed, despite the old note here); PKCS#11 v3.2 (ML-KEM private key) permits a token to require both `CKA_SEED` and `CKA_VALUE`, so a dk-only import rejection is a **spec-permitted operational deviation → xfail**, not a failure. 768/1024 import and decapsulate fine.
 
 ### Security Findings
 
 > **NSS softokn is a software-only PKCS#11 token.** Severities below use
-> pkcs11-check's hardware-token threat model — they describe what each behavior
+> pkcs11-check's hardware-token threat model - they describe what each behavior
 > would mean if NSS softokn claimed to be a hardware secure element resistant
 > to key extraction. Upstream does not aim to enforce that boundary in softokn,
 > so the CRITICAL / HIGH attribute-enforcement rows are upstream-known
@@ -584,13 +584,13 @@ Inherits all quirks from NSS 3.120.1 above. Additional findings below.
 
 - A v3.2 ML-KEM keypair created with `CKA_ENCAPSULATE=False` (public key) or
   `CKA_DECAPSULATE=False` (private key) still completes `C_EncapsulateKey` /
-  `C_DecapsulateKey` — the key reads the flag back as `False` and the module
+  `C_DecapsulateKey` - the key reads the flag back as `False` and the module
   performs the operation anyway (policy self-contradiction).
 - Ref: PKCS#11 v3.2 Sec.5.14.7 / Sec.5.14.8 require `CKR_KEY_FUNCTION_NOT_PERMITTED`
   when the corresponding flag is `False`.
 - Affected tests: `test_kem.py::TestMLKEMNegative::test_encapsulate_missing_permission_flag`,
   `test_kem.py::TestMLKEMNegative::test_decapsulate_missing_permission_flag`
-- Note: the encapsulate case was previously masked — the test only did a
+- Note: the encapsulate case was previously masked - the test only did a
   `pCiphertext=NULL` size query, which this module answers with
   `CKR_BUFFER_TOO_SMALL` before reaching the permission check, and the old
   assertion tolerated `CKR_OK`. The test now drives the full operation, so the
@@ -648,9 +648,9 @@ unless noted.
 - **CKA_NEVER_EXTRACTABLE inconsistent**: When `CKA_EXTRACTABLE` is explicitly set to `True` at
   creation, `CKA_NEVER_EXTRACTABLE` must be `False` (Sec.4.9.4). NSS softoken behavior is
   inconsistent with this rule in combination with the default-extractable deviation above.
-  The *derived-attribute invariant* of Sec.4.9.4 — a key created `CKA_EXTRACTABLE=False` and never
+  The *derived-attribute invariant* of Sec.4.9.4 - a key created `CKA_EXTRACTABLE=False` and never
   modified must read back `CKA_NEVER_EXTRACTABLE=True`, and a key created `CKA_SENSITIVE=True` and
-  never modified must read back `CKA_ALWAYS_SENSITIVE=True` — is now enforced as a metadata
+  never modified must read back `CKA_ALWAYS_SENSITIVE=True` - is now enforced as a metadata
   self-contradiction in `test_attribute_invariants.py`: violating it on a suite-generated,
   never-modified key is a `fail` (the module contradicts its own derived value), while an
   unsupported/absent derived attribute remains an `xfail` (honest non-support).
@@ -658,7 +658,7 @@ unless noted.
 #### Missing/Unsupported Attributes (Phase 2)
 
 - **CKA_COPYABLE not enforced**: Setting `CKA_COPYABLE=False` at key creation should prevent
-  `C_CopyObject` from succeeding. NSS softoken ignores this attribute — `C_CopyObject` succeeds
+  `C_CopyObject` from succeeding. NSS softoken ignores this attribute - `C_CopyObject` succeeds
   on non-copyable objects. Ref: PKCS#11 v3.1 Sec.4.9.1. Affected: 1 xfail in `test_attributes.py`.
 
 - **CKA_DESTROYABLE not enforced**: Setting `CKA_DESTROYABLE=False` should cause `C_DestroyObject`
@@ -690,7 +690,7 @@ unless noted.
   `CKR_SESSION_HANDLE_INVALID` when the handle is invalid (including already-closed sessions). NSS
   softoken returns `CKR_OK`. Covered by CKR tests.
 
-- **CKR ordering — template checks before session-type checks**: NSS validates template
+- **CKR ordering - template checks before session-type checks**: NSS validates template
   completeness (`CKR_TEMPLATE_INCOMPLETE`) before checking whether the session is read-only
   (`CKR_SESSION_READ_ONLY`). For example, `C_GenerateKeyPair` in a RO session with an incomplete
   template returns `CKR_TEMPLATE_INCOMPLETE` rather than `CKR_SESSION_READ_ONLY`. The PKCS#11
@@ -718,7 +718,7 @@ unless noted.
   `CKR_MECHANISM_PARAM_INVALID` when `CK_EDDSA_PARAMS` is provided for `CKM_EDDSA` sign/verify,
   even for pure-mode EdDSA with `phFlag=0` and no context data. PKCS#11 v3.0 Sec.2.3.13 mandates
   explicit `CK_EDDSA_PARAMS` for the `CKM_EDDSA` mechanism. NSS softoken instead requires NULL
-  params (no mechanism parameter struct at all). This is a spec deviation — pure-mode EdDSA should
+  params (no mechanism parameter struct at all). This is a spec deviation - pure-mode EdDSA should
   accept explicit params with `phFlag=CK_FALSE` and empty context. Affected tests in
   `test_eddsa.py` are marked `xfail` (7 tests: all sign/verify tests in `TestEdDSASignVerify`
   and `TestEdDSACrossVerify`). This same deviation affects NSS 3.120.1 and NSS-PQC 3.121.0.
@@ -735,7 +735,7 @@ unless noted.
 ### Token Write-Protection (Phase 1 findings)
 
 NSS cert DB slot (slot 1) has `CKF_WRITE_PROTECTED` set in `CK_TOKEN_INFO.flags`.
-This is normal NSS behavior — the certificate database slot does not support creating
+This is normal NSS behavior - the certificate database slot does not support creating
 arbitrary objects via `C_CreateObject`, `C_GenerateKey`, or `C_GenerateKeyPair` with
 `CKA_TOKEN=True`.
 
@@ -746,21 +746,21 @@ arbitrary objects via `C_CreateObject`, `C_GenerateKey`, or `C_GenerateKeyPair` 
 - **CKR_ATTRIBUTE_VALUE_INVALID** returned for: `C_CreateObject` with `CKO_DATA`
   and `CKA_TOKEN=True` (data objects not supported on cert DB slot)
 - **CKR_ATTRIBUTE_VALUE_INVALID** also for: `CKO_DATA` with `CKA_PRIVATE=True`
-  even on session objects — NSS does not support private data objects
+  even on session objects - NSS does not support private data objects
 - **CKR ordering:** NSS validates template completeness before checking session
-  type — `C_GenerateKeyPair` in RO session with incomplete template returns
+  type - `C_GenerateKeyPair` in RO session with incomplete template returns
   `CKR_TEMPLATE_INCOMPLETE` instead of `CKR_SESSION_READ_ONLY`
 
 Tests requiring token object creation skip with "Token is write-protected" on NSS.
 
 ### Known Limitations
 
-- ML-DSA (FIPS 204) not supported — all ML-DSA tests skip
-- SLH-DSA (FIPS 205) not supported — all SLH-DSA tests skip
-- Same DSA Wycheproof rejections as NSS 3.120.1 (296 failures — see Spec Deviations)
+- ML-DSA (FIPS 204) not supported - all ML-DSA tests skip
+- SLH-DSA (FIPS 205) not supported - all SLH-DSA tests skip
+- Same DSA Wycheproof rejections as NSS 3.120.1 (296 failures - see Spec Deviations)
 - EdDSA CKR_MECHANISM_PARAM_INVALID: 7 sign/verify tests in `test_eddsa.py` now xfailed (see Spec Deviations)
 
-### Xfail Triage (Phases 9-11) — 645 xfails categorized
+### Xfail Triage (Phases 9-11) - 645 xfails categorized
 
 This is a historical triage snapshot. Current follow-up found that the
 AES-KWP row below was a pkcs11-check mechanism-selection bug, not an NSS
@@ -793,7 +793,7 @@ all 256 valid Wycheproof vectors. The test uses the standard PKCS#11 v3.0
 `CK_SALSA20_CHACHA20_POLY1305_PARAMS` struct (`pNonce`, `ulNonceLen`, `pAAD`, `ulAADLen`).
 NSS softoken's internal ChaCha20-Poly1305 implementation uses a non-standard parameter format
 (historically `CK_NSS_AEAD_PARAMS` with an additional `ulTagLen` field). All test vectors use
-the correct 12-byte nonce and valid key sizes — the parameter struct mismatch is the only
+the correct 12-byte nonce and valid key sizes - the parameter struct mismatch is the only
 consistent explanation for the uniform failure across all 256 valid vectors.
 
 **Verdict:** NSS softoken spec deviation. The test correctly uses the PKCS#11 v3.0 standard
@@ -858,7 +858,7 @@ parameter combinations. Four tests pass (mechanism availability and error-path t
 16 derivation operation tests all xfail.
 
 The mechanisms are advertised in the `CK_MECHANISM_INFO` list but NSS softoken does not
-implement the full IKE key derivation operations — it rejects the `CK_PRF_DATA_PARAMS` or
+implement the full IKE key derivation operations - it rejects the `CK_PRF_DATA_PARAMS` or
 mechanism parameter structs that the operations require.
 
 **Verdict:** NSS softoken IKE mechanism stubs (advertised but not operationally implemented).
@@ -879,7 +879,7 @@ tests xfail:
 
 - `CKM_SP800_108_FEEDBACK_KDF`: 4 xfails (basic, with-IV, and two variants)
 - `CKM_SP800_108_DOUBLE_PIPELINE_KDF`: 2 xfails (basic and 256-bit)
-- `CKM_SP800_108_COUNTER_KDF` passes (7 passed) — NSS correctly implements counter mode
+- `CKM_SP800_108_COUNTER_KDF` passes (7 passed) - NSS correctly implements counter mode
 
 The feedback and double-pipeline variants are advertised but NSS softoken rejects the
 `CK_SP800_108_FEEDBACK_KDF_PARAMS`/`CK_SP800_108_DKM_LENGTH_FORMAT` parameter structs.
@@ -980,7 +980,7 @@ All 13 are xfailed with descriptive security messages. See Security Findings sec
 | Test | Reason | Analysis |
 |------|--------|---------|
 | `test_cctv_rfc6979.py` | ECDSA nonce is random, not RFC 6979 deterministic | Expected; xfail is correct for non-deterministic modules |
-| `test_wycheproof_pbkdf2.py::tc4` | `pbkdf2_hmacsha1_test.json:tc4` fails — 16,777,216 iterations | NSS may have an iteration count limit or timeout for PBKDF2 with extreme iteration counts |
+| `test_wycheproof_pbkdf2.py::tc4` | `pbkdf2_hmacsha1_test.json:tc4` fails - 16,777,216 iterations | NSS may have an iteration count limit or timeout for PBKDF2 with extreme iteration counts |
 | `test_remaining_gaps.py` | `CKM_AES_CMAC_GENERAL` returns `CKR_MECHANISM_PARAM_INVALID` | NSS does not support the `CKM_AES_CMAC_GENERAL` mechanism (general MAC with variable length), only fixed-length `CKM_AES_CMAC` |
 
 ---
@@ -991,12 +991,12 @@ All 645 xfails (final post-Phase-11 count) are verified as legitimate NSS softok
 Distribution:
 
 - **NSS softoken implementation gaps** (mechanisms advertised but broken): 595 (92%)
-  — ChaCha20-Poly1305, HKDF output, AES-KWP, IKE, SP800-108 feedback/pipeline, HKDF_DATA
+  - ChaCha20-Poly1305, HKDF output, AES-KWP, IKE, SP800-108 feedback/pipeline, HKDF_DATA
 - **NSS spec deviations** (non-conformant behavior): 37 (6%)
-  — EdDSA params, attribute defaults (CKA_PRIVATE, CKA_LOCAL, CKA_EXTRACTABLE),
+  - EdDSA params, attribute defaults (CKA_PRIVATE, CKA_LOCAL, CKA_EXTRACTABLE),
   CKA_COPYABLE/DESTROYABLE not enforced, session/cancel behavior, auto-init, CKA_WRAP_WITH_TRUSTED
 - **Security policy violations** (PKCS#11 security model broken): 13 (2%)
-  — Tookan, sensitive reads, key extraction, padding oracle
+  - Tookan, sensitive reads, key extraction, padding oracle
 
 No xfails should be removed or converted to skips. These are the findings pkcs11-check
 exists to report. The xfail annotations serve as a permanent record that the behavior is
@@ -1012,9 +1012,9 @@ known, documented, and not a test defect.
 
 Uncalled functions fall into three groups:
 
-- **Lifecycle** (not called by design — framework handles init/finalize): `C_Initialize`, `C_Finalize`,
+- **Lifecycle** (not called by design - framework handles init/finalize): `C_Initialize`, `C_Finalize`,
   `C_GetFunctionList`, `C_GetInterface`
-- **Destructive / PIN management** (skipped — no PIN configured, destructive flag not set):
+- **Destructive / PIN management** (skipped - no PIN configured, destructive flag not set):
   `C_InitToken`, `C_InitPIN`, `C_SetPIN`
 - **Multi-part streaming** (no streaming tests yet): `C_EncryptUpdate`, `C_EncryptFinal`,
   `C_DecryptUpdate`, `C_DecryptFinal`, `C_SignFinal`, `C_VerifyFinal`, `C_VerifyUpdate`,
@@ -1041,30 +1041,30 @@ Uncalled functions fall into three groups:
 | MD2/MD5 (deprecated hash) | `CKM_MD2_HMAC`, `CKM_MD2_HMAC_GENERAL`, `CKM_MD2_RSA_PKCS`, `CKM_MD5_HMAC`, `CKM_MD5_HMAC_GENERAL`, `CKM_MD5_RSA_PKCS` |
 | ECDSA aliases | `CKM_ECDSA_KEY_PAIR_GEN` (alias for `CKM_EC_KEY_PAIR_GEN`), `CKM_ECDSA_SHA384`, `CKM_ECDSA_SHA512` |
 | HMAC _GENERAL variants | `CKM_SHA_1_HMAC_GENERAL`, `CKM_SHA224_HMAC_GENERAL`, `CKM_SHA256_HMAC_GENERAL`, `CKM_SHA384_HMAC_GENERAL`, `CKM_SHA512_HMAC_GENERAL`, `CKM_SHA3_224_HMAC_GENERAL`, `CKM_SHA3_256_HMAC_GENERAL`, `CKM_SHA3_384_HMAC_GENERAL`, `CKM_SHA3_512_HMAC_GENERAL`, `CKM_AES_MAC` |
-| PQC (present but untested) | `CKM_ML_KEM` (encapsulate/decapsulate combined mechanism — tests only use `CKM_ML_KEM_KEY_PAIR_GEN` + `C_EncapsulateKey`/`C_DecapsulateKey` directly) |
+| PQC (present but untested) | `CKM_ML_KEM` (encapsulate/decapsulate combined mechanism - tests only use `CKM_ML_KEM_KEY_PAIR_GEN` + `C_EncapsulateKey`/`C_DecapsulateKey` directly) |
 
 #### Skip Reason Breakdown (31,984 total skips)
 
 | Count | % | Category | Root Cause |
 |------:|--:|----------|-----------|
-| 20,062 | 63% | EC unsupported curves | `CKR_DOMAIN_PARAMS_INVALID` on secp256k1, secp224r1, secp192r1, secp160r1/r2/k1, secp192k1, secp224k1, brainpoolP224/256/320/384/512r1 — NSS only supports NIST prime curves P-256/384/521 |
+| 20,062 | 63% | EC unsupported curves | `CKR_DOMAIN_PARAMS_INVALID` on secp256k1, secp224r1, secp192r1, secp160r1/r2/k1, secp192k1, secp224k1, brainpoolP224/256/320/384/512r1 - NSS only supports NIST prime curves P-256/384/521 |
 | 5,105 | 16% | ECDH private key import | `CKR_DOMAIN_PARAMS_INVALID` on ECDH test vectors for unsupported curves (subset of above, affects `test_wycheproof_ecdh.py`) |
-| 1,993 | 6% | Montgomery / X448 import | `Cannot import Montgomery private key` / `X448 keygen not supported` — NSS supports X25519 keygen but not import of raw private key bytes |
-| 1,919 | 6% | SHA-3 based mechanisms | `SHA3_*_RSA_PKCS not supported`, `SHA3_*_HMAC not supported` — NSS-PQC has SHA3 HMAC (advertised) but SHA3-RSA-PKCS and SHAKE/KMAC are absent |
+| 1,993 | 6% | Montgomery / X448 import | `Cannot import Montgomery private key` / `X448 keygen not supported` - NSS supports X25519 keygen but not import of raw private key bytes |
+| 1,919 | 6% | SHA-3 based mechanisms | `SHA3_*_RSA_PKCS not supported`, `SHA3_*_HMAC not supported` - NSS-PQC has SHA3 HMAC (advertised) but SHA3-RSA-PKCS and SHAKE/KMAC are absent |
 | 1,097 | 3% | AES non-standard modes | `AES_CCM`, `AES_GMAC`, `AES_XTS`, `AES_CFB8/64/128`, `AES_OFB` not advertised |
 | 711 | 2% | Miscellaneous | ~120 distinct reasons: ARIA, GOST, BLAKE2b, Camellia CTR, TLS KDF, WTLS, X9.42, Signal-protocol, HSS/XMSS/XMSSMT, etc. |
-| 530 | 2% | ML-DSA (PQC) | `ML_DSA not supported` — FIPS 204 / ML-DSA not in NSS 3.121.0 |
-| 236 | 1% | Ed25519/Ed448 key import | Public key import fails — NSS EdDSA requires keygen, not `C_CreateObject` import |
-| 110 | 0% | RSA OAEP private key import | `Cannot import RSA private key for OAEP` — Wycheproof OAEP vectors need raw private key import |
+| 530 | 2% | ML-DSA (PQC) | `ML_DSA not supported` - FIPS 204 / ML-DSA not in NSS 3.121.0 |
+| 236 | 1% | Ed25519/Ed448 key import | Public key import fails - NSS EdDSA requires keygen, not `C_CreateObject` import |
+| 110 | 0% | RSA OAEP private key import | `Cannot import RSA private key for OAEP` - Wycheproof OAEP vectors need raw private key import |
 | 84 | 0% | Hash-ML-DSA / Hash-SLH-DSA | `CKM_HASH_ML_DSA_*` / `CKM_HASH_SLH_DSA_*` (22 variants × 4) not supported |
 | 64 | 0% | XDH vector decode errors | Wycheproof XDH vectors with unsupported key formats (`ValueError`, `UnsupportedAlgorithm`) |
 | 41 | 0% | No PIN configured | Tests needing PIN-based login skipped (NSS crypto-services slot uses slot 0 with no PIN) |
 | 35 | 0% | Destructive tests disabled | `--p11-destructive` not passed |
-| 31 | 0% | Token write-protected | Cert DB slot (slot 1) `CKF_WRITE_PROTECTED` — 31 tests needing token-object creation skip |
-| 22 | 0% | SLH-DSA (PQC) | `SLH_DSA not supported` — FIPS 205 / SLH-DSA not in NSS 3.121.0 |
+| 31 | 0% | Token write-protected | Cert DB slot (slot 1) `CKF_WRITE_PROTECTED` - 31 tests needing token-object creation skip |
+| 22 | 0% | SLH-DSA (PQC) | `SLH_DSA not supported` - FIPS 205 / SLH-DSA not in NSS 3.121.0 |
 | 14 | 0% | Infrastructure absent | fault-proxy not built, pkcs11-provider/p11-kit not installed, x509-limbo data not fetched |
 
-**Summary:** 79% of skips (25,160) are due to NSS's restricted EC curve support — only P-256, P-384,
+**Summary:** 79% of skips (25,160) are due to NSS's restricted EC curve support - only P-256, P-384,
 and P-521 are accepted. The remaining 21% span missing mechanisms (SHA-3/RSA, AES CCM/XTS/GMAC,
 ML-DSA, SLH-DSA), key import limitations (Montgomery, Ed, RSA-OAEP), and test infrastructure gaps.
 All skips are legitimate capability-based skips; none hide broken behavior.
@@ -1079,7 +1079,7 @@ All skips are legitimate capability-based skips; none hide broken behavior.
 - **AES-CCM decrypt does not authenticate (tag-auth bypass, crypto)**: fresh 2026-06-09
   (`test_ccm.py` with the H2 operability probe): **423×** "module accepted CCM ciphertext
   with invalid tag" and ~1,268× plaintext mismatches where the returned plaintext is the
-  expected one **plus the unstripped tag bytes** — i.e. BouncyHSM's CCM decrypt path
+  expected one **plus the unstripped tag bytes** - i.e. BouncyHSM's CCM decrypt path
   decrypts without verifying or stripping the tag. Its CCM single-shot is otherwise
   largely non-operational (canonical known-answer encrypt → `CKR_GENERAL_ERROR`; 5,679
   vectors xfail "advertised but not operational"); the ops that DO complete expose the
@@ -1099,7 +1099,7 @@ All skips are legitimate capability-based skips; none hide broken behavior.
 
 ## tpm2-pkcs11 1.9.0 (hardware TPM)
 
-**Status: 33 passed, 61 failed (core tests only) — limited mechanism support**
+**Status: 33 passed, 61 failed (core tests only) - limited mechanism support**
 
 ### Known limitations (hardware TPM)
 - **26 mechanisms only**: AES-ECB/CBC/CBC-PAD/CFB/CTR, RSA-PKCS/OAEP/X509, ECDSA (P-256 only), SHA-1/256/384/512, SHA-HMAC
@@ -1144,7 +1144,7 @@ pkcs11-check vector-loader issue.
 ### No symmetric-keygen surface → CKR_FUNCTION_NOT_SUPPORTED (PC-6)
 
 tpm2-pkcs11 does not expose a symmetric key-generation surface, so
-`C_GenerateKey(CKM_AES_KEY_GEN)` returns `CKR_FUNCTION_NOT_SUPPORTED` — the whole
+`C_GenerateKey(CKM_AES_KEY_GEN)` returns `CKR_FUNCTION_NOT_SUPPORTED` - the whole
 function is unavailable. A *negative* keygen probe (invalid key size,
 inconsistent or bogus-type template) therefore cannot exercise its parameter and
 can only get `CKR_FUNCTION_NOT_SUPPORTED`. This is an honest missing-capability
@@ -1275,7 +1275,7 @@ OpenCryptoki advertises full **standard** PQC since 3.27 (`CKM_ML_DSA`, `CKM_ML_
 
 `C_EncapsulateKey`/`C_DecapsulateKey` require the output-key template to declare
 **`CKA_VALUE_LEN`**; without it OpenCryptoki returns `CKR_TEMPLATE_INCONSISTENT`. This is a
-defensible strict reading of PKCS#11 v3.2 — for `CKM_ML_KEM` the spec says the mechanism
+defensible strict reading of PKCS#11 v3.2 - for `CKM_ML_KEM` the spec says the mechanism
 contributes `CKA_VALUE` but *"other attributes required by the key type must be specified in
 the template."* Lenient modules (kryoptic, NSS) infer the 32-byte length; OpenCryptoki does not.
 
@@ -1295,8 +1295,8 @@ ML-KEM encaps/decaps cleanly with no module change. The harness fix is locked by
 ### AES-KEY-WRAP unwrap rejects `CKA_VALUE_LEN` as read-only
 
 In contrast to ML-KEM, OpenCryptoki's `CKM_AES_KEY_WRAP` unwrap *rejects* `CKA_VALUE_LEN`
-(`CKR_ATTRIBUTE_READ_ONLY`) for some key sizes — it derives the recovered length from the
-wrapped blob, like softhsm2 — while NSS *requires* it (see the NSS section). The adaptive
+(`CKR_ATTRIBUTE_READ_ONLY`) for some key sizes - it derives the recovered length from the
+wrapped blob, like softhsm2 - while NSS *requires* it (see the NSS section). The adaptive
 unwrap in `test_wycheproof_aes.py` tries the minimal template first and only restates the
 length for valid vectors when the module asks; where the module cannot create the
 generic-secret object either way (larger AES-KW payloads here), that valid vector is recorded
@@ -1317,7 +1317,7 @@ So OpenCryptoki rejects the *policy* attributes (`CKA_EXTRACTABLE`/`CKA_SENSITIV
 unwrap template and requires `CKA_CLASS`. softhsm2 is the mirror: it *needs* `CKA_EXTRACTABLE`
 for the unwrapped value to be readable. This is handled provider-generally by
 `unwrap_key_for_mechanism_roundtrip`, which keeps `CKA_CLASS`/`CKA_KEY_TYPE` in every variant
-and, on a clean shape reject, drops only the policy attributes — so OpenCryptoki's
+and, on a clean shape reject, drops only the policy attributes - so OpenCryptoki's
 authenticated-wrap / ECDH-AES-KW forgery detection is actually exercised. (An earlier
 mis-attribution blamed `CKA_CLASS`/`CKA_KEY_TYPE` for this `READ_ONLY`; the probe shows the
 real cause is the policy attributes.) OpenCryptoki does not implement AES-GCM authenticated
@@ -1330,11 +1330,11 @@ wrap (`CKR_FUNCTION_NOT_SUPPORTED`), so those forgery tests xfail on a genuine c
 **Status: 468 passed, 24 failed, 312 skipped, 1 xfailed, 28,762 errors**
 
 ### Root cause of 28K errors
-`pkcsslotd` daemon dies during the full test run, causing `FunctionFailed` for all subsequent tests. When run individually with the daemon alive, tests pass. This is a daemon stability issue under sustained load — needs investigation in task 2.4.
+`pkcsslotd` daemon dies during the full test run, causing `FunctionFailed` for all subsequent tests. When run individually with the daemon alive, tests pass. This is a daemon stability issue under sustained load - needs investigation in task 2.4.
 
 > **Update 2026-04-29:** No longer reproduces. The 2026-04-29 phase 1 run
 > against opencryptoki-master (commit unpinned, `--depth 1` HEAD) recorded
-> 0 crashed tests across 84,026 total — vs 6 crashed in the 2026-04-09
+> 0 crashed tests across 84,026 total - vs 6 crashed in the 2026-04-09
 > baseline. Either upstream OpenCryptoki master fixed the daemon stability
 > issue between Apr 8 and Apr 29, or the larger 19,684-entry
 > `data/disabled-tests.txt` baseline now pre-skips the load pattern
@@ -1373,21 +1373,21 @@ This is a regression in the SoftHSM2 dev branch compared to the stable 2.7.0 rel
 **Root cause:** Development branch EC code regression. Not a pkcs11-check issue.
 
 ### Accepts undersized AES wrap key, returns CKR_GENERAL_ERROR (NEW 2026-04-30)
-`test_ckr_wrap.py::test_wrapping_key_size_range` — SoftHSM2 accepts a 64-bit
+`test_ckr_wrap.py::test_wrapping_key_size_range` - SoftHSM2 accepts a 64-bit
 "AES" key on `C_CreateObject` (AES requires 128/192/256 bits per FIPS 197).
 When the undersized key is then used for `C_WrapKey` with `CKM_AES_KEY_WRAP`,
 the module returns `CKR_GENERAL_ERROR` (0x05) instead of the
 spec-conformant `CKR_WRAPPING_KEY_SIZE_RANGE` (0x114) or
 `CKR_KEY_SIZE_RANGE` (0x62).
 
-**Severity:** MEDIUM (conformance — two issues: lax import-time validation
+**Severity:** MEDIUM (conformance - two issues: lax import-time validation
 and wrong CKR on wrap).
 **Root cause:** SoftHSM2 does not validate AES key sizes on import; its
 wrap path catches the failure too late and returns a generic error.
 
 ### Wrong CKR on tampered AES-KEY-WRAP ciphertext (NEW iter-47 2026-04-30)
 `test_authenticated_wrap.py::TestWrapIntegrity::test_aes_key_wrap_bit_flip_detected`
-— when the ICV-protected (RFC 3394 §2.2.2 A6A6A6A6 magic) AES-KEY-WRAP
+- when the ICV-protected (RFC 3394 §2.2.2 A6A6A6A6 magic) AES-KEY-WRAP
 ciphertext is bit-flipped and submitted to `C_UnwrapKey`, SoftHSM2
 returns `CKR_GENERAL_ERROR` (0x05) instead of the spec-conformant
 `CKR_WRAPPED_KEY_INVALID` (0x110) or `CKR_ENCRYPTED_DATA_INVALID` (0x40).
@@ -1397,7 +1397,7 @@ reported code is wrong. Unmasked by the iter-46 anti-masking commit
 accepted set; the prior CKR-tolerant version had been silently absorbing
 this deviation since iter 44.
 
-**Severity:** MEDIUM (conformance — wrong CKR; still rejects).
+**Severity:** MEDIUM (conformance - wrong CKR; still rejects).
 **Root cause:** SoftHSM2's AES-KEY-WRAP unwrap path uses a generic
 exception → CKR_GENERAL_ERROR translation rather than mapping the
 RFC-3394 ICV mismatch to a specific code. Reportable upstream.
@@ -1406,16 +1406,16 @@ This is NOT masked: the undersized-wrap test classifies the reject
 with the 3-way negative classifier (spec `CKR_WRAPPING_KEY_SIZE_RANGE`
 → pass, any other clean code → xfail), so SoftHSM2's
 `CKR_GENERAL_ERROR` surfaces as an honest **xfail** (a recorded
-deviation) — never accepted as a pass. `CKR_GENERAL_ERROR` is too
+deviation) - never accepted as a pass. `CKR_GENERAL_ERROR` is too
 generic to ever treat as the expected code, and the deviation keeps
 surfacing in CI until SoftHSM2 fixes it upstream.
 
 ### Vaudenay 2002 / POODLE channel on AES-CBC-PAD (NEW iter-48 2026-04-30)
 `test_padding_oracle.py::TestAESPaddingOracle::test_cbc_pad_all_last_block_positions`
-— SoftHSM2 returns `CKR_OK` with **mismatched plaintext** when a
+- SoftHSM2 returns `CKR_OK` with **mismatched plaintext** when a
 bit-flipped CBC-PAD ciphertext happens to produce accidentally-valid
 PKCS#7 padding (~6/256 of random corruptions). Distinguishable from
-`CKR_ENCRYPTED_DATA_INVALID` on rejected probes — the canonical
+`CKR_ENCRYPTED_DATA_INVALID` on rejected probes - the canonical
 Vaudenay 2002 padding-oracle leak channel.
 
 Concrete observation across 20 trials × 16 byte positions = 320
@@ -1423,14 +1423,14 @@ chosen-ciphertext probes: `{CKR_ENCRYPTED_DATA_INVALID: 319,
 CKR_OK_DIFFERENT: 1}`. The CKR_OK_DIFFERENT outcome (audit-driven
 classification added in the iter-48 audit fix) precisely identifies
 the leak path: `C_Decrypt` returned CKR_OK but the recovered
-plaintext does not match the original — exactly Vaudenay's signal.
+plaintext does not match the original - exactly Vaudenay's signal.
 
 This is an INHERENT property of PKCS#7 padding without an integrity
 layer. An attacker with chosen-ciphertext access can recover plaintext
 byte-by-byte via ~256 oracle queries per byte (CVE-2014-3566 POODLE
 attack pattern).
 
-**Severity:** MEDIUM (well-known channel — applications using bare
+**Severity:** MEDIUM (well-known channel - applications using bare
 CBC-PAD are vulnerable; mitigation is application-level). Reportable
 in the sense of "users SHOULD prefer AES-GCM"; not a SoftHSM2 bug per
 se, since the spec permits the distinguishable response.
@@ -1445,24 +1445,24 @@ explanation that Kryoptic silently accepts all bit-flipped ciphertexts
 as CKR_OK with garbage plaintext (which would have shown
 CKR_OK_DIFFERENT in the tally). Kryoptic genuinely returns
 `CKR_ENCRYPTED_DATA_INVALID` even when random corruption happens to
-produce a valid PKCS#7 byte pattern — an active mitigation against
+produce a valid PKCS#7 byte pattern - an active mitigation against
 the Vaudenay channel.
 
-Worth investigating Kryoptic's source to learn how — likely a
+Worth investigating Kryoptic's source to learn how - likely a
 constant-time padding check that always returns the rejection code
 regardless of the validity bit, or an integrity layer beyond bare
 PKCS#7. This is the kind of CBC-PAD behaviour TLS 1.3 / RFC 7366
 mandates at the protocol level; Kryoptic providing it at the module
 level is a notable security posture choice.
 
-### Tookan §3.3 — CKA_SENSITIVE downgrade on unwrap (NEW 2026-04-30)
+### Tookan §3.3 - CKA_SENSITIVE downgrade on unwrap (NEW 2026-04-30)
 `test_cve_regression.py::TestTookanUnwrapAttrs::test_unwrapped_key_cannot_unset_sensitive`
-— SoftHSM2 honours an attacker-supplied `CKA_SENSITIVE=False` in the
+- SoftHSM2 honours an attacker-supplied `CKA_SENSITIVE=False` in the
 unwrap template, even when the original wrapped key was `CKA_SENSITIVE=True`.
 The unwrapped copy has `CKA_SENSITIVE=False` and the key value can then be
 read via `C_GetAttributeValue(CKA_VALUE)`.
 
-**Severity:** **HIGH (security — known attack class)**. This is the
+**Severity:** **HIGH (security - known attack class)**. This is the
 canonical Tookan paper §3.3 attack pattern from 2010. Anyone with wrap +
 unwrap permission can clone any sensitive secret key into a non-sensitive
 copy and exfiltrate the key bytes. Reportable upstream as a security
@@ -1471,9 +1471,9 @@ finding.
 without enforcing the "sensitive can never be unset" rule from
 PKCS#11 v3.1 Sec.4.7.
 
-### Tookan §3.2 — key-type confusion on unwrap (NEW 2026-04-30)
+### Tookan §3.2 - key-type confusion on unwrap (NEW 2026-04-30)
 `test_tookan.py::TestKeyTypeConfusionOnUnwrap::test_unwrap_aes_as_des3_rejected`
-— SoftHSM2 unwraps an AES-wrapped blob as `CKK_DES3` (Triple-DES) when
+- SoftHSM2 unwraps an AES-wrapped blob as `CKK_DES3` (Triple-DES) when
 the attacker requests it via the unwrap template. The wrap blob carries
 an AES-128 key (16 bytes), which the module reinterprets as a DES3 key
 without size validation, parity adjustment, or weak-key checking. The
@@ -1481,7 +1481,7 @@ attacker can then run DES3 operations on bytes that were originally an
 AES key, creating a side-channel that bypasses the type-based key
 isolation PKCS#11 relies on.
 
-**Severity:** **HIGH (security — known attack class)**. Tookan paper
+**Severity:** **HIGH (security - known attack class)**. Tookan paper
 §3.2 attack from 2010. Combines well with §3.3 (sensitive-flag
 downgrade): an attacker with wrap + unwrap permission can both
 extract the bytes and reinterpret them under different cryptographic
@@ -1491,10 +1491,10 @@ side-channel and integrity attacks.
 relationship between the wrap mechanism, the wrapped-blob length,
 and the requested CKA_KEY_TYPE.
 
-Kryoptic correctly rejects this attack — its unwrap path enforces
+Kryoptic correctly rejects this attack - its unwrap path enforces
 type-and-size matching against the mechanism.
 
-### Wrong CKR on tampered AES-KEY-WRAP — confirmed by iter-54 Phase 1 (CONFIRMED 2026-04-30)
+### Wrong CKR on tampered AES-KEY-WRAP - confirmed by iter-54 Phase 1 (CONFIRMED 2026-04-30)
 The iter-47 finding for `test_aes_key_wrap_bit_flip_detected` reproduces
 in the iter-54 Phase 1 re-run: SoftHSM2 returns `CKR_GENERAL_ERROR` on
 a bit-flipped AES-KEY-WRAP ciphertext. No additional information.
@@ -1519,7 +1519,7 @@ error handling.
 > Fedora 3.26.0 RPM image. This section covers the unfiltered Phase 1
 > work against the OpenCryptoki master branch (`--depth 1` HEAD)
 > exercised in iters 42-63. Some entries below may also reproduce on
-> 3.26 — they're documented here because that's where they were
+> 3.26 - they're documented here because that's where they were
 > surfaced.
 
 ### SSL3 master key derive crash
@@ -1622,55 +1622,55 @@ not an OpenCryptoki finding. pkcs11-check was using generic
 `CKM_EC_KEY_PAIR_GEN` for Ed25519 setup; current source uses
 `CKM_EC_EDWARDS_KEY_PAIR_GEN`.
 
-### AES-CBC-PAD accepts invalid PKCS#5 padding — 144 (NEW 2026-06-11, crypto)
-`test_wycheproof.py::TestAESCBCPKCS5Wycheproof::test_aes_cbc_pkcs5` — **144 failed /
+### AES-CBC-PAD accepts invalid PKCS#5 padding - 144 (NEW 2026-06-11, crypto)
+`test_wycheproof.py::TestAESCBCPKCS5Wycheproof::test_aes_cbc_pkcs5` - **144 failed /
 72 passed** on both the 3.26 RPM pool (`opencryptoki-pooled`) and the master pool
-(`opencryptoki-master-pooled`) — identical failing tcId set. `CKM_AES_CBC_PAD` decrypts
+(`opencryptoki-master-pooled`) - identical failing tcId set. `CKM_AES_CBC_PAD` decrypts
 Wycheproof `result:invalid` vectors and returns `CKR_OK` instead of rejecting with
 `CKR_ENCRYPTED_DATA_INVALID`. The 144 invalid vectors break down as **`BadPadding` ×141**
 (last block uses non-PKCS#5 padding: zero-byte, `0xff`, ISO/IEC 7816-4, ANSI X.923,
 ISO 10126, over-length count) and **`NoPadding` ×3** (tc25/97/169 "empty ciphertext").
 
-**Determination — GENUINE module finding, `fail` is correct (crypto, not a strictness
+**Determination - GENUINE module finding, `fail` is correct (crypto, not a strictness
 call).** Per the classification-model design doc (`docs/classification-model-design.md`,
 crypto): "a wrong-length or **malformed ciphertext decrypts**" is a crypto-correctness
 break → `fail` on acceptance, no claim-check. A non-PKCS#5-padded ciphertext IS a malformed
 ciphertext for `CKM_AES_CBC_PAD`; stripping it and returning a plaintext is precisely that
 case (and the classic padding-oracle attack surface). This **supersedes the earlier
-"flagged deliberate-strictness" note** in the wolfpkcs11 section below — the model already
+"flagged deliberate-strictness" note** in the wolfpkcs11 section below - the model already
 classifies it.
 
 **Cross-check evidence (fresh 2026-06-11 from the validated pools):**
 - opencryptoki-pooled == opencryptoki-master-pooled == wolfpkcs11-pooled (stable): all fail
   the **byte-identical 144-tcId set** (set difference empty in both directions). So
   opencryptoki's deviation is structurally the *same* lax-PKCS#5 acceptance as wolfpkcs11
-  stable — not merely a matching count.
+  stable - not merely a matching count.
 - Strict providers reject all 144 → **softhsm2 216P, kryoptic 216P** (live-confirmed:
   local softhsm2 run = `216 passed`). The test is provider-general and effect-gated
   (line 503-504 fails unconditionally on an `invalid` vector decrypting), so strict modules
   pass and lax modules fail with no provider keying.
 - Graded structure across providers: **wolfpkcs11-master** and **bouncyhsm** each fail
-  *only* the 3 `NoPadding` empty-ciphertext vectors (tc25/97/169) — i.e. they fixed
+  *only* the 3 `NoPadding` empty-ciphertext vectors (tc25/97/169) - i.e. they fixed
   BadPadding enforcement but still accept empty ciphertext. opencryptoki accepts both
   classes (all 144). This grading confirms a real, providers-differ validation deviation,
   not a harness artifact.
 
-**Severity:** MEDIUM (conformance — `CKM_AES_CBC_PAD` does not validate PKCS#5 padding on
+**Severity:** MEDIUM (conformance - `CKM_AES_CBC_PAD` does not validate PKCS#5 padding on
 decrypt: malformed ciphertext is accepted and a stripped plaintext returned, a
 crypto-correctness break with unvalidated-malleability / interop consequences. Note this
 module accepts *all* invalid-padding vectors, so on its own it exposes no distinguishable
-padding oracle — the harm is malformed-ciphertext acceptance, not an oracle channel.).
+padding oracle - the harm is malformed-ciphertext acceptance, not an oracle channel.).
 **Action:** documentation only; the test classification is already correct. Report upstream
 against OpenCryptoki SW token.
 
 ### RSA-PSS distinct hash and MGF rejected (NEW 2026-04-30)
-`test_wycheproof_rsa_pss.py` — **435 failures**. RSA-PSS signatures where
+`test_wycheproof_rsa_pss.py` - **435 failures**. RSA-PSS signatures where
 the message hash (e.g. SHA-256) differs from the MGF1 hash (e.g. SHA-1) are
 rejected with `CKR_MECHANISM_PARAM_INVALID`. RFC 8017 / FIPS 186-4 explicitly
-allow distinct hash and MGF — a common, conformant configuration in TLS 1.2
+allow distinct hash and MGF - a common, conformant configuration in TLS 1.2
 and RFC 5756. SoftHSM2 has the same restriction (already documented above).
 
-**Severity:** MEDIUM (conformance — interop with peers that use distinct
+**Severity:** MEDIUM (conformance - interop with peers that use distinct
 hash/MGF impossible).
 **Root cause:** OpenCryptoki RSA-PSS limited to matched hash/MGF only.
 
@@ -1689,7 +1689,7 @@ an OpenCryptoki AES-KWP interop bug.
 
 ### AES-KWP corrupted decrypt writes past minimal output buffer (NEW 2026-05-26)
 `security/test_error_path_kwp.py::TestCorruptedUnwrap::test_corrupted_unwrap`
-— corrected guarded-output-buffer probes fail for the 8 corrupted
+- corrected guarded-output-buffer probes fail for the 8 corrupted
 `CKM_AES_KEY_WRAP_KWP` `C_Decrypt` cases when OpenCryptoki master is built with
 OpenSSL 4.0.0. `C_Decrypt` returns `CKR_GENERAL_ERROR`, but the guard bytes
 immediately after the minimal `len(input) - 8` output buffer are overwritten.
@@ -1708,8 +1708,8 @@ maps `CKM_AES_KEY_WRAP_KWP` to OpenSSL `EVP_aes_*_wrap_pad()`. OpenSSL PR
 **Root cause:** OpenSSL AES-KWP unwrap-pad error cleanup is still reachable
 through OpenCryptoki swtok.
 
-### AES-CBC-PAD ciphertext malleability — no padding validation (NEW iter-58 2026-04-30 — CRITICAL)
-`test_padding_oracle.py::test_cbc_pad_all_last_block_positions` — across
+### AES-CBC-PAD ciphertext malleability - no padding validation (NEW iter-58 2026-04-30 - CRITICAL)
+`test_padding_oracle.py::test_cbc_pad_all_last_block_positions` - across
 20 trials × 16 byte positions = 320 corruption probes, OpenCryptoki
 returns the tally `{CKR_OK_DIFFERENT: 319, CKR_OK_MATCH: 1}`. **NONE** of
 the 320 probes return `CKR_ENCRYPTED_DATA_INVALID`. The module silently
@@ -1717,45 +1717,45 @@ accepts ALL bit-flipped CBC-PAD ciphertexts and returns CKR_OK with
 whatever plaintext bytes result from the corrupted ciphertext.
 
 This is **strictly worse than the Vaudenay 2002 channel** observed on
-SoftHSM2 / Kryoptic — those modules at least reject the ~94% of
+SoftHSM2 / Kryoptic - those modules at least reject the ~94% of
 corruptions that produce invalid PKCS#7 padding. OpenCryptoki has no
 padding validation at all on the decrypt path, exposing a CIPHERTEXT
 MALLEABILITY surface: an attacker who can submit chosen-ciphertext
 queries can flip arbitrary bits in the ciphertext and the module
 silently produces the corresponding plaintext modification. No
-oracle queries needed — direct manipulation works.
+oracle queries needed - direct manipulation works.
 
 The single CKR_OK_MATCH out of 320 is a coincidence: a random
 corruption that happens to invert to its original (statistically
 expected at ~1/256 / 2^N probability for N flipped bits in random
 content).
 
-**Severity:** **CRITICAL (security — silent ciphertext malleability)**.
+**Severity:** **CRITICAL (security - silent ciphertext malleability)**.
 This is significantly worse than a padding oracle. Reportable upstream
 as an urgent fix. The iter-51 audit-fix classifier (CKR_OK_MATCH /
 CKR_OK_DIFFERENT) introduced for the silent-failure-hunter was
-exactly what surfaced this finding — a less-strict test that just
+exactly what surfaced this finding - a less-strict test that just
 checked for "more than one outcome class" would have flagged it
 identically to SoftHSM2's Vaudenay finding, missing the
 "no rejections at all" pattern.
 **Root cause:** OpenCryptoki's AES-CBC-PAD decrypt path appears to
 skip PKCS#7 padding validation entirely on the decrypted block.
 
-### RSA-OAEP padding oracle — Manger 2001 (NEW iter-58 2026-04-30 — HIGH)
+### RSA-OAEP padding oracle - Manger 2001 (NEW iter-58 2026-04-30 - HIGH)
 `test_padding_oracle.py::TestRSAPaddingOracle::test_oaep_error_uniformity`
-— OpenCryptoki returns non-uniform CKRs for invalid OAEP ciphertexts:
+- OpenCryptoki returns non-uniform CKRs for invalid OAEP ciphertexts:
 `{CKR_FUNCTION_FAILED, CKR_ENCRYPTED_DATA_INVALID}`. The Manger 2001
 attack distinguishes "valid prefix, bad content" from "invalid prefix"
 via this CKR difference. The same channel as the NSS finding above,
 but with a different CKR set (NSS uses `CKR_ARGUMENTS_BAD` instead of
 `CKR_FUNCTION_FAILED`).
 
-**Severity:** HIGH (security — known attack class). Reportable upstream.
+**Severity:** HIGH (security - known attack class). Reportable upstream.
 **Root cause:** OpenCryptoki's OAEP decrypt path emits different
 CKRs depending on which validation step failed, leaking the boundary
 the Manger attack exploits.
 
-### Unwrap-template attribute rejection (CKR_ATTRIBUTE_READ_ONLY, NEW iter-63 2026-04-30 — LOW)
+### Unwrap-template attribute rejection (CKR_ATTRIBUTE_READ_ONLY, NEW iter-63 2026-04-30 - LOW)
 `C_UnwrapKey` returns `CKR_ATTRIBUTE_READ_ONLY` (0x10) when the unwrap
 template includes `CKA_CLASS` or `CKA_KEY_TYPE`, before any
 cryptographic check is performed. PKCS#11 v3.1 Sec.5.14.4 explicitly
@@ -1765,9 +1765,9 @@ shows examples of unwrap templates that include these two attributes
 
 Surfaced during iter-58 / iter-61 by tests in `test_tookan.py` and
 `test_authenticated_wrap.py` whose unwrap templates pre-fill
-CKA_CLASS / CKA_KEY_TYPE — a pattern aligned with the spec examples.
+CKA_CLASS / CKA_KEY_TYPE - a pattern aligned with the spec examples.
 
-**Severity:** LOW (conformance — restrictive template parsing; rejects
+**Severity:** LOW (conformance - restrictive template parsing; rejects
 spec-allowed templates). The behaviour is consistent and prevents
 the test from reaching its security assertion, but no security gap
 is opened: every cryptographic primitive on OC is still gated by
@@ -1779,7 +1779,7 @@ templates. Reportable upstream.
 
 This is absorbed provider-generally (no module identity): the
 mechanism-level unwrap helper `unwrap_key_for_mechanism_roundtrip`
-negotiates the template — it tries the canonical template first and,
+negotiates the template - it tries the canonical template first and,
 on a clean template-shape reject, retries a variant dropping only
 CKA_CLASS (CKA_KEY_TYPE is spec-mandatory and kept). A module that
 rejects the CKA_CLASS-bearing template thus still completes the
@@ -1831,7 +1831,7 @@ Crashes on CKM_EXTRACT_KEY_FROM_KEY and certain AES-CCM vectors.
 FIPS mode correctly rejects non-approved operations but aborts instead of
 returning CKR_MECHANISM_INVALID.
 
-**Note — these are debug-build aborts, not release crashes.** The
+**Note - these are debug-build aborts, not release crashes.** The
 `kryoptic-fips` target is compiled in **debug mode** (against a custom OpenSSL
 FIPS branch), so an internal debug assertion calls `abort()` (SIGABRT) on a
 check failure rather than returning an error. The recorded `crashed` count for
@@ -1840,7 +1840,7 @@ release build. The underlying policy issue (a non-approved op should return a
 clean CKR rather than terminate) is still a real finding.
 
 ### Type-confusion: generic-secret accepted as AES wrap key (NEW 2026-04-30)
-`test_ckr_wrap.py::test_wrapping_key_type_inconsistent` — Kryoptic accepts a
+`test_ckr_wrap.py::test_wrapping_key_type_inconsistent` - Kryoptic accepts a
 `CKK_GENERIC_SECRET` key as the wrap-key argument to `C_WrapKey` with
 `CKM_AES_KEY_WRAP`, returning `CKR_OK` and producing wrap output. PKCS#11
 v3.1 Sec.5.14.3 explicitly requires `CKR_WRAPPING_KEY_TYPE_INCONSISTENT`
@@ -1848,7 +1848,7 @@ when "the type of the key specified to wrap another key is not consistent
 with the mechanism."
 
 **Severity:** **HIGH (security)**. Type-confusion in the wrap path opens a
-key-misuse attack vector — any secret material (HMAC keys, KDF outputs,
+key-misuse attack vector - any secret material (HMAC keys, KDF outputs,
 import-attacker-supplied generic-secret blobs) becomes wrap-eligible. An
 attacker who can place a generic secret into the token can then re-package
 sensitive keys against it, bypassing the type-based access controls that
@@ -1861,13 +1861,13 @@ invoking the underlying AES primitive. The output is whatever the AES
 primitive produces when fed the generic-secret bytes as if they were an
 AES key.
 
-### Tookan §3.3 — CKA_SENSITIVE downgrade on unwrap (NEW 2026-04-30)
+### Tookan §3.3 - CKA_SENSITIVE downgrade on unwrap (NEW 2026-04-30)
 `test_cve_regression.py::TestTookanUnwrapAttrs::test_unwrapped_key_cannot_unset_sensitive`
-— Kryoptic, like SoftHSM2, honours an attacker-supplied `CKA_SENSITIVE=False`
+- Kryoptic, like SoftHSM2, honours an attacker-supplied `CKA_SENSITIVE=False`
 in the unwrap template, downgrading a `CKA_SENSITIVE=True` key to a
 non-sensitive copy whose value can be read via `C_GetAttributeValue(CKA_VALUE)`.
 
-**Severity:** **HIGH (security — known attack class)**. Canonical Tookan
+**Severity:** **HIGH (security - known attack class)**. Canonical Tookan
 paper §3.3 attack pattern from 2010. Any caller with wrap + unwrap
 permission can clone a sensitive secret key into a non-sensitive copy
 and exfiltrate the key bytes. Reportable upstream as a security finding.
@@ -1877,14 +1877,14 @@ invariant from PKCS#11 v3.1 Sec.4.7.
 
 ### CKA_TRUSTED escalation by USER session (NEW iter-54 2026-04-30)
 `test_access_levels.py::TestTrustedAttribute::test_user_cannot_set_trusted`
-— Kryoptic accepts CKA_TRUSTED=True on a freshly-generated key from a
+- Kryoptic accepts CKA_TRUSTED=True on a freshly-generated key from a
 USER (CKU_USER) session. PKCS#11 v3.1 Sec.4.7 designates CKA_TRUSTED
 as SO-only: only a Security Officer (CKU_SO) is allowed to mark a key
 as trusted. A USER-session caller who can create CKA_TRUSTED keys
 bypasses the `CKA_WRAP_WITH_TRUSTED` policy gate that protects sensitive
 wrap operations.
 
-**Severity:** **HIGH (security — privilege escalation)**. The TRUSTED
+**Severity:** **HIGH (security - privilege escalation)**. The TRUSTED
 flag is the SO-trust boundary for `CKA_WRAP_WITH_TRUSTED` enforcement.
 A USER session creating TRUSTED keys can wrap any
 `CKA_WRAP_WITH_TRUSTED=True` key, defeating the attribute's purpose.
@@ -1892,20 +1892,20 @@ A USER session creating TRUSTED keys can wrap any
 CKA_TRUSTED attribute against the session's user type. Reportable
 upstream as a security finding.
 
-### Vaudenay 2002 channel on AES-CBC-PAD — present (REVISED iter-54 2026-04-30)
+### Vaudenay 2002 channel on AES-CBC-PAD - present (REVISED iter-54 2026-04-30)
 **Update from iter-48's claim that "Kryoptic defeats Vaudenay":**
 the iter-54 Phase 1 re-run on `test_cbc_pad_all_last_block_positions`
 shows Kryoptic also has the channel, just at a much lower hit rate
 than SoftHSM2. Tally: `{CKR_ENCRYPTED_DATA_INVALID: 319,
-CKR_OK_DIFFERENT: 1}` across the 320 probes — 1 / 320 ≈ 0.3% leak rate
+CKR_OK_DIFFERENT: 1}` across the 320 probes - 1 / 320 ≈ 0.3% leak rate
 vs SoftHSM2's similar rate. The earlier iter-48 / iter-51 claim that
 Kryoptic defeats the channel was based on lucky runs where no probe
 hit the rare accidentally-valid-padding case. The Vaudenay channel
-is real on Kryoptic too — same caveats and mitigation as the SoftHSM2
+is real on Kryoptic too - same caveats and mitigation as the SoftHSM2
 note in the SoftHSM2 section.
 
 **Severity:** MEDIUM (well-known channel; spec permits the
-distinguishable response). Same as SoftHSM2's entry — applications
+distinguishable response). Same as SoftHSM2's entry - applications
 should use AES-GCM or RFC 7366 encrypt-then-MAC instead of bare
 CBC-PAD. The earlier "positive finding" claim is retracted.
 
@@ -1913,15 +1913,15 @@ CBC-PAD. The earlier "positive finding" claim is retracted.
 
 ## NSS main (3.121 dev branch, iter-54 findings)
 
-### Tookan §3.3 — CKA_SENSITIVE downgrade on unwrap (NEW iter-54 2026-04-30)
+### Tookan §3.3 - CKA_SENSITIVE downgrade on unwrap (NEW iter-54 2026-04-30)
 `test_cve_regression.py::TestTookanUnwrapAttrs::test_unwrapped_key_cannot_unset_sensitive`
-— NSS softoken, like SoftHSM2 and Kryoptic, honours an attacker-
+- NSS softoken, like SoftHSM2 and Kryoptic, honours an attacker-
 supplied `CKA_SENSITIVE=False` in the unwrap template. A
 `CKA_SENSITIVE=True` key, once wrapped and unwrapped under attacker
 control, becomes a non-sensitive copy whose value is readable via
 `C_GetAttributeValue(CKA_VALUE)`.
 
-**Severity:** **HIGH (security — known attack class)**. Tookan paper
+**Severity:** **HIGH (security - known attack class)**. Tookan paper
 §3.3 attack from 2010. The same canonical attack now confirmed
 present on **all three major open-source PKCS#11 providers**
 (SoftHSM2 + Kryoptic + NSS). A 2010-era key-extraction attack is
@@ -1933,12 +1933,12 @@ invariant from PKCS#11 v3.1 Sec.4.7.
 
 ### CKA_TRUSTED escalation by USER session (NEW iter-54 2026-04-30)
 `test_access_levels.py::TestTrustedAttribute::test_user_cannot_set_trusted`
-— NSS softoken accepts CKA_TRUSTED=True on a freshly-generated key
+- NSS softoken accepts CKA_TRUSTED=True on a freshly-generated key
 from a USER (CKU_USER) session, same shape as the Kryoptic finding
 above. The TRUSTED-flag SO-trust boundary used by
 `CKA_WRAP_WITH_TRUSTED` is breached.
 
-**Severity:** **HIGH (security — privilege escalation)**. Same
+**Severity:** **HIGH (security - privilege escalation)**. Same
 attack class and same reportability as the Kryoptic entry above.
 Two independent providers exhibiting the same defect suggests a
 shared incorrect mental model of CKA_TRUSTED's authorisation rule
@@ -1959,13 +1959,13 @@ Ed25519 setup; current source uses `CKM_EC_EDWARDS_KEY_PAIR_GEN`.
 
 ### RSA-OAEP padding oracle confirmed and surfaced (CONFIRMED iter-54 2026-04-30)
 `test_padding_oracle.py::TestRSAPaddingOracle::test_oaep_error_uniformity`
-— NSS RSA-OAEP returns non-uniform CKRs for invalid ciphertexts:
+- NSS RSA-OAEP returns non-uniform CKRs for invalid ciphertexts:
 `{CKR_ENCRYPTED_DATA_INVALID, CKR_ARGUMENTS_BAD}`. This is the
 documented Manger 2001 leak channel and was previously tracked via
 `pytest.xfail` (suppressive pattern). Iter-45 upgraded the test to
 `pytest.fail`; the iter-54 Phase 1 re-run is the first time NSS-main
 exercises the upgraded version, surfacing the long-known leak as a
-hard CI failure. Not a NEW finding — the bug has been public since at
+hard CI failure. Not a NEW finding - the bug has been public since at
 least the v0.1.0 release report. Reportable upstream as a security
 finding (already in upstream NSS Bugzilla per the v0.1.0 report).
 
@@ -1999,7 +1999,7 @@ Minimal embedded implementation; storage-oriented object model. Root-caused 2026
   `CKA_EC_PARAMS` check only runs when the supplied OID has the same DER length as the
   P-256 OID (`prvEcKeyAttParse` compares only on equal `ulValueLen`), and
   `mbedtls_ecp_point_read_binary` performs no curve-membership check. A secp256k1 or
-  brainpoolP256r1 public key (32-byte coordinates) is therefore accepted with `CKR_OK` —
+  brainpoolP256r1 public key (32-byte coordinates) is therefore accepted with `CKR_OK` -
   but the object is unusable: `C_GetAttributeValue` → `CKR_OBJECT_HANDLE_INVALID`,
   `C_Verify` → `CKR_KEY_HANDLE_INVALID`. Claimed success, not honored → **fail** per the
   classification model. Detected by: `test_ec_import_coherence.py` (2 failures, fresh
@@ -2012,14 +2012,14 @@ Minimal embedded implementation; storage-oriented object model. Root-caused 2026
   `NON_CLEAN_SIGNATURE_REJECT_RVS`.
 - **Imported secret keys (AES-CMAC / SHA256-HMAC) are advertised but not operational**:
   `C_CreateObject` for a `CKO_SECRET_KEY` returns `CKR_OK` and a handle, but the key cannot
-  then be used — `C_Sign` returns `CKR_KEY_TYPE_INCONSISTENT` and `C_GetAttributeValue` on the
+  then be used - `C_Sign` returns `CKR_KEY_TYPE_INCONSISTENT` and `C_GetAttributeValue` on the
   just-returned handle returns `CKR_OBJECT_HANDLE_INVALID`. **Verified consistent** (2026-06-09)
   across the corePKCS11-native configured label (`"HMAC Key"`) and arbitrary labels, so it is a
   stable corePKCS11 secret-key-use limitation rather than a per-vector handle bug; the KAT clean
   error returns are model-conformant xfails (advertised-but-not-operational). **Caveat: the
   `CKR_OK`-create-then-invalid-handle readback is a lifecycle self-contradiction, but its root cause
   (corePKCS11's own object-list handling vs the docker target's generic in-memory PAL storing a
-  raw, non-DER secret blob) is not yet isolated — so it is documented here, not asserted as a
+  raw, non-DER secret blob) is not yet isolated - so it is documented here, not asserted as a
   module `fail`, pending a stock-PAL repro.** (Contrast the EC silent-curve-rebind bug above,
   which is in corePKCS11's native `mbedtls_ecp_point_read_binary` path and IS asserted as a fail.)
 - ECDSA verify itself is correct for the supported shape: valid P-256/SHA-256 signature →
@@ -2031,7 +2031,7 @@ Minimal embedded implementation; storage-oriented object model. Root-caused 2026
   docker target replaces it with a generic in-memory PAL
   (`docker/corepkcs11/corepkcs11_pal_generic.c`): arbitrary labels, honest `isPrivate`
   (DER-shape discrimination), real `PKCS11_PAL_DestroyObject`. The PAL is corePKCS11's
-  designated porting point — corePKCS11's own PKCS#11 logic is untouched.
+  designated porting point - corePKCS11's own PKCS#11 logic is untouched.
 - The adapter shim (`corepkcs11_adapter.c`) only overrides GetInfo/SlotInfo/TokenInfo/
   MechanismList/MechanismInfo/Digest; C_CreateObject and C_Verify pass straight through.
 
@@ -2042,7 +2042,7 @@ Minimal embedded implementation; storage-oriented object model. Root-caused 2026
 Pool baseline 3,067. The fix-pass cleared `test_cts` 2,079 (H2 operability probe → xfail) and
 `wycheproof_rsa` 21 → 0. The remaining failures are **genuine wolfpkcs11 findings + flagged UB
 probes**. **Correction (2026-06-10 re-verify):** two files the prior summary listed as "cleared → 0"
-were NOT cleared — fresh targeted runs on dev still show `wycheproof_rsa_oaep` **209 failed** (stable)
+were NOT cleared - fresh targeted runs on dev still show `wycheproof_rsa_oaep` **209 failed** (stable)
 / **210** (master) and `wycheproof.py::TestAESCBCPKCS5Wycheproof` **144 failed**. Both are genuine
 deviations (see below), not harness artifacts. The H3 combo probe only clears *combo-dead* OAEP
 (e.g. opencryptoki's 26 SHA-512/224 vectors → xfail); wolfpkcs11's combos are operational, so its
@@ -2058,24 +2058,24 @@ so no precise total is asserted here.)
   (~309 total). Returning a non-`CKR_*` value violates the spec; the suite surfaces it as a clean
   (non-crash) return.
 - **RSA-OAEP decrypt rejects valid edge-case vectors despite an operational combo (209/210)**:
-  `test_wycheproof_rsa_oaep` — wolfpkcs11 decrypts typical OAEP messages correctly (the canonical
+  `test_wycheproof_rsa_oaep` - wolfpkcs11 decrypts typical OAEP messages correctly (the canonical
   per-(sha,mgf) combo probe is OPERATIONAL) but returns `CKR_ENCRYPTED_DATA_INVALID` on valid
   vectors at the input edges. Fresh 2026-06-10 cross-checked against the pool: **209 failed** (stable),
   **210** (master). Breakdown (all clean rejects, no wrong output): **empty-message OAEP `msglen=0`
   ~125** (softhsm2/kryoptic/opencryptoki all decrypt empty-message OAEP fine), **3-prime RSA keys 54**
-  (`rsa_three_primes_oaep_*`; softhsm2 66P, kryoptic/opencryptoki 110P each — so the harness's
+  (`rsa_three_primes_oaep_*`; softhsm2 66P, kryoptic/opencryptoki 110P each - so the harness's
   multi-prime import is correct and this is wolfpkcs11-specific), **near-max message length ~15**,
   scattered ~15. Classified `fail` (operational combo + rejected valid vector = correctness finding,
   per the deliberate H3 design); the inconsistency (decrypts 16-byte but not 0-byte same-combo) is a
   real wolfpkcs11 OAEP decoder edge-case bug, not an "advertised but not operational" deviation.
 - **AES-CBC-PAD accepts invalid PKCS#5 padding (144)**: `test_wycheproof.py::
-  TestAESCBCPKCS5Wycheproof` — also NOT cleared by the fix-pass (fresh 2026-06-10: **144 failed**).
+  TestAESCBCPKCS5Wycheproof` - also NOT cleared by the fix-pass (fresh 2026-06-10: **144 failed**).
   The Wycheproof "invalid" vectors carry genuinely non-PKCS#5 padding (`BadPadding` ×141: zero-byte,
   0xff, ISO/IEC 7816-4, ANSI X.923, ISO 10126, over-length; `NoPadding` ×3), which `CKM_AES_CBC_PAD`
   should reject with `CKR_ENCRYPTED_DATA_INVALID`; wolfpkcs11 decrypts them (`CKR_OK`). **Shared with
   opencryptoki** (both 72P/144F), whereas softhsm2 and kryoptic reject correctly (216P) and bouncyhsm
-  rejects all but 3 — so this is a real lax-padding-validation deviation, not a harness artifact.
-  ⚖️ **Decision RESOLVED (2026-06-11) — `fail` is correct (crypto), not a strictness call.** The
+  rejects all but 3 - so this is a real lax-padding-validation deviation, not a harness artifact.
+  ⚖️ **Decision RESOLVED (2026-06-11) - `fail` is correct (crypto), not a strictness call.** The
   earlier "neither crypto-correctness nor self-contradiction" framing was an incomplete reading of the
   model: `docs/classification-model-design.md` crypto explicitly lists "a wrong-length or **malformed
   ciphertext decrypts**" as a crypto-correctness break → `fail`. A non-PKCS#5-padded ciphertext is a
@@ -2107,7 +2107,7 @@ so no precise total is asserted here.)
 **Interface:** v3.1 (stub; most operations return `CKR_FUNCTION_NOT_SUPPORTED`)
 
 pkcs11-mock is a minimal conformance-testing stub. It accepts any `C_CreateObject` call and
-returns `CKR_OK`, but it does not actually store the caller-supplied data — it serves back its
+returns `CKR_OK`, but it does not actually store the caller-supplied data - it serves back its
 own hardcoded canned values for every `C_GetAttributeValue` query.
 
 ### Known bugs
@@ -2119,8 +2119,8 @@ own hardcoded canned values for every `C_GetAttributeValue` query.
   175 `test_limbo_import.py` certificate-import tests fail with the message
   `"CKA_VALUE mismatch (12B stored vs <N>B sent)"`, where `N` is the real DER length (hundreds of
   bytes). This is a **lifecycle self-contradiction**: `C_CreateObject` claims success, but
-  the readback contradicts the stored value — the module did not honour what it said it had
-  stored. Classification: **correctly FAILs** — this is a genuine finding, not a harness bug.
+  the readback contradicts the stored value - the module did not honour what it said it had
+  stored. Classification: **correctly FAILs** - this is a genuine finding, not a harness bug.
 
   **Source evidence:** the canned value is `PKCS11_MOCK_CK_OBJECT_CKA_VALUE "Hello world!"`
   defined in the upstream `pkcs11-mock.h` header; the `C_GetAttributeValue` implementation in
@@ -2131,10 +2131,10 @@ own hardcoded canned values for every `C_GetAttributeValue` query.
   **Count context:** the pool baseline recorded ~88 failures on an earlier run; the count grew to
   ~175 after the portable-label fix allowed more `C_CreateObject` calls to succeed (previously
   some imports were rejected before reaching the value-storage path). Both counts reflect the same
-  underlying canned-value behaviour — more successful imports expose more readback contradictions.
+  underlying canned-value behaviour - more successful imports expose more readback contradictions.
 
   **Report upstream?** The behaviour is by design for a stub library: pkcs11-mock is intended as
-  a minimal no-op stub, not a compliant token. Worth noting upstream as documentation — a stub
+  a minimal no-op stub, not a compliant token. Worth noting upstream as documentation - a stub
   that returns `CKR_FUNCTION_NOT_SUPPORTED` from `C_CreateObject` would be a cleaner contract
   than a silent-discard that returns `CKR_OK` and then lies on readback. pkcs11-check correctly
   surfaces the contradiction as a hard fail; callers testing against pkcs11-mock should not rely
@@ -2148,4 +2148,4 @@ own hardcoded canned values for every `C_GetAttributeValue` query.
 
 ## Triage notes (cross-module)
 
-- **`test_cve_regression.py::test_create_trusted_data_object` hard-fails (`accepted_invalid`, kind=policy) when a USER session accepts `CKA_TRUSTED=True` on a `CKO_DATA` object** — expected behavior; any module that creates the object succeeds (CKR_OK) without rejecting the invalid trust-escalation is a genuine policy finding, not a harness false-positive.
+- **`test_cve_regression.py::test_create_trusted_data_object` hard-fails (`accepted_invalid`, kind=policy) when a USER session accepts `CKA_TRUSTED=True` on a `CKO_DATA` object** - expected behavior; any module that creates the object succeeds (CKR_OK) without rejecting the invalid trust-escalation is a genuine policy finding, not a harness false-positive.

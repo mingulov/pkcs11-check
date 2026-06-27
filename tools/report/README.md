@@ -1,9 +1,9 @@
-# tools.report — per-provider classification reports
+# tools.report - per-provider classification reports
 
 Rolls the **at-source classifications** emitted by the test suite (see
 [`pkcs11_check.classification`](../../src/pkcs11_check/classification.py) and
 [docs/architecture.md](../../docs/architecture.md) "At-source test-outcome classification") up into
-human-readable, severity-first conformance reports — one per provider, plus cross-provider
+human-readable, severity-first conformance reports - one per provider, plus cross-provider
 correlation when several providers are passed.
 
 ## Pipeline
@@ -22,25 +22,25 @@ report.jsonl + results.json
 <provider>.md / <provider>.jsonl  (+ _index.md / _universal.md)
 ```
 
-- **extract** (`extract.py`) — reads the pytest report log, pulls each call-phase report's
+- **extract** (`extract.py`) - reads the pytest report log, pulls each call-phase report's
   `pkcs11_classification` finding list out of `user_properties`, folds in runner-side crash
   findings, and groups them on a *readable* tuple key (no hashes):
   `(test_file, reason, kind, mechanism, operation, expected_ckr, actual_ckr)`. Each group keeps a
   `count`, sample `nodeids`, sorted unique `vector_ids` (capped with a `+N` overflow marker),
   `sources`, and first-member metadata.
-- **render** (`render.py`) — emits the compact provider markdown: a counts line, crash and fail
+- **render** (`render.py`) - emits the compact provider markdown: a counts line, crash and fail
   sections ordered by severity (`🔴 CRITICAL` → `🟠 HIGH` → `🟡 MEDIUM` → `⚪ LOW`) grouped within
   each by finding `kind` keyword (crypto/policy/lifecycle/metadata), a single collapsed `🟡 deviations · xfail`
   section (one count line per xfail reason with a top example, never the full enumeration), and `⚪`
   one-liners for sanctioned-refusal compliance and the unclassified backlog. The fail sections plus
   the folded tail stay near one screen even at thousands of findings.
-- **correlate** (`correlate.py`) — `enrich()` annotates each group in place with a triage
+- **correlate** (`correlate.py`) - `enrich()` annotates each group in place with a triage
   `category` / `routing` (fails → `PROVIDER_BUG`/`PROVIDER_REPORT`, xfails → `deviation`/`DOCS_ONLY`,
   unclassified → `HARNESS_OR_UNMIGRATED`/`HARNESS_FIX`, a `module-issues.md` match → `KNOWN_ISSUE`)
-  and flags the soft-token padding-oracle caveat. `correlate()` finds *universal themes* — the same
-  `(reason, kind, mechanism)` signature seen across two or more providers — plus single-provider
+  and flags the soft-token padding-oracle caveat. `correlate()` finds *universal themes* - the same
+  `(reason, kind, mechanism)` signature seen across two or more providers - plus single-provider
   *outliers*.
-- **CLI** (`__main__.py`) — `python -m tools.report`; flags and usage in
+- **CLI** (`__main__.py`) - `python -m tools.report`; flags and usage in
   [docs/commands.md](../../docs/commands.md) "Per-provider classification report".
 
 ## Record schema
@@ -65,8 +65,8 @@ Crash findings are not emitted in-test (the process is dead); they are built run
 
 ## Output files
 
-- `<provider>.md` — compact, severity-first markdown (the report).
-- `<provider>.jsonl` — one enriched group per line (machine-readable backing data).
-- `_index.md` — counts table per provider + top universal themes + links (multi-provider only).
-- `_universal.md` — full cross-provider correlation (universal themes + outliers) (multi-provider
+- `<provider>.md` - compact, severity-first markdown (the report).
+- `<provider>.jsonl` - one enriched group per line (machine-readable backing data).
+- `_index.md` - counts table per provider + top universal themes + links (multi-provider only).
+- `_universal.md` - full cross-provider correlation (universal themes + outliers) (multi-provider
   only).

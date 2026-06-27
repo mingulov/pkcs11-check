@@ -1,4 +1,4 @@
-# Capability-based test gating — design
+# Capability-based test gating - design
 
 **Date:** 2026-06-09
 **Status:** implemented (2026-06-09)
@@ -10,7 +10,7 @@ Tests are gated on the module's **self-reported PKCS#11 interface version**
 (`@pytest.mark.requires_v30` / `requires_v32`). A module can implement a
 mechanism while still reporting an older interface version, which makes the
 suite **silently skip conformance coverage for capabilities that are actually
-present** — a violation of the project's core rule ("skip only for
+present** - a violation of the project's core rule ("skip only for
 genuinely-absent capability; a skip must never hide a finding").
 
 ### Confirmed instance
@@ -27,14 +27,14 @@ present and working.
   `C_*` pointers are non-NULL; `interface_version` is merely *derived* from it
   ("3.2" iff `C_EncapsulateKey` is present).
 - But `CapabilityManifest` (core/preflight.py) stores only the derived version
-  string + advertised mechanisms — **not** the function set.
+  string + advertised mechanisms - **not** the function set.
 - `_runtime_skip_reason` (plugin.py) gates `requires_v30/v32` purely on the
   version string, with no awareness of which functions/mechanisms a test needs.
 
 ## Principle
 
 **Gate each test on the *minimal real capability the operations it performs
-actually need*** — never on the self-reported version number:
+actually need*** - never on the self-reported version number:
 
 - A test that uses only **v2.40 functions** (`C_Sign`/`Verify`/`Encrypt`/
   `Decrypt`/`Digest`/`GenerateKey(Pair)`/`DeriveKey`/`Wrap`/`Unwrap`/
@@ -61,13 +61,13 @@ A single mechanism can span both tiers. **ML-KEM** is the key example:
 | decapsulate | `C_DecapsulateKey` (v3.2) | function | `needs_function("C_DecapsulateKey")` |
 
 So **ML-KEM keygen/import/attribute coverage must run on a v2.40 module that
-advertises `CKM_ML_KEM(_KEY_PAIR_GEN)`** — only the encaps/decaps operations
+advertises `CKM_ML_KEM(_KEY_PAIR_GEN)`** - only the encaps/decaps operations
 need the v3.2 functions. This means **file-level `pytestmark` that buckets mixed
 operations must be split to per-class/per-test gates** (see Mixed-bucket files).
 
 ## Components
 
-### Phase 1 — function detection + the confirmed bugs
+### Phase 1 - function detection + the confirmed bugs
 
 1. **`CapabilityManifest`** (core/preflight.py): add
    `functions: list[str] = field(default_factory=list)`, populated from
@@ -78,14 +78,14 @@ operations must be split to per-class/per-test gates** (see Mixed-bucket files).
    (plugin.py): skip iff the named function ∉ `manifest.functions`, reason
    `"Function C_X not present in module"`. **Register `needs_function` in
    `_has_dynamic_markers`** (plugin.py:211) so the preflight manifest is built
-   when a function-gated test is collected — otherwise the manifest is `None`,
+   when a function-gated test is collected - otherwise the manifest is `None`,
    the gate returns `None`, and the test runs unguarded.
 3. **ML-DSA tests** (`test_extended_mechanisms.py`, `test_wycheproof_mldsa_context.py`,
    ML-DSA parts of `test_remaining_gaps.py`, `test_ckr_keygen.py`): **drop
    `requires_v32`**; rely on the existing in-test `has_mechanism("ML_DSA")`
    guard (proven, alias-aware). Do **not** introduce `needs_mechanism` (see
    Decision: avoid needs_mechanism).
-4. **ML-KEM tests** — split by operation:
+4. **ML-KEM tests** - split by operation:
    - `test_kem.py::TestMLKEMKeyGeneration` → drop the marker for this class;
      in-test `has_mechanism("ML_KEM")` guard suffices.
    - `test_kem.py::TestMLKEMEncapsulateDecapsulate` + the direct-`C_EncapsulateKey`/
@@ -109,7 +109,7 @@ operations must be split to per-class/per-test gates** (see Mixed-bucket files).
      with `"Function C_EncapsulateKey not present"`.
    - locks the regression so it cannot silently return.
 
-### Phase 2 — systematic sweep + retire version-skipping
+### Phase 2 - systematic sweep + retire version-skipping
 
 7. Apply per-test/class capability gating to **all remaining** `requires_v30`/
    `requires_v32` sites (HKDF derive/keygen/data, KMAC, EdDSA, SHA-3,
@@ -125,20 +125,20 @@ operations must be split to per-class/per-test gates** (see Mixed-bucket files).
    `test_authenticated_wrap.py` already self-skip; still add `needs_function`
    for collection-time gating + clean reporting.
 9. Remove the `requires_v30`/`requires_v32` branch from `_runtime_skip_reason`;
-   delete `should_skip_for_version` (markers.py — sole caller); update
+   delete `should_skip_for_version` (markers.py - sole caller); update
    `_has_dynamic_markers` (drop `requires_v30`/`requires_v32`, ensure
    `needs_function` present). Keep `v30`/`v32` as category markers.
 
 ## Mixed-bucket files (must split file-level pytestmark)
 
-- `test_kem.py` — `TestMLKEMKeyGeneration` (mechanism) vs
+- `test_kem.py` - `TestMLKEMKeyGeneration` (mechanism) vs
   `TestMLKEMEncapsulateDecapsulate` (function).
-- `test_extended_mechanisms.py` — KMAC / ML-DSA-external-mu availability tests
+- `test_extended_mechanisms.py` - KMAC / ML-DSA-external-mu availability tests
   are mechanism-only (drop marker).
-- `test_hkdf_extended.py` — `TestHKDFKeyGen` / `TestHKDFData` are mechanism-only.
-- `wycheproof/test_wycheproof_hkdf.py` — file-level `requires_v30`, uses only
+- `test_hkdf_extended.py` - `TestHKDFKeyGen` / `TestHKDFData` are mechanism-only.
+- `wycheproof/test_wycheproof_hkdf.py` - file-level `requires_v30`, uses only
   `C_DeriveKey`; mechanism-only.
-- `ckr/test_ckr_keygen.py` — ML-KEM keygen test is mechanism-only.
+- `ckr/test_ckr_keygen.py` - ML-KEM keygen test is mechanism-only.
 
 ## Decisions / non-goals
 
@@ -153,7 +153,7 @@ operations must be split to per-class/per-test gates** (see Mixed-bucket files).
   `C_GetInterface(NULL, version)` then falls back to `C_GetFunctionList`; it does
   not probe *named* interfaces. A module exposing a v3.x function only via a
   named interface would have it missing from `available_function_names()`, so
-  `needs_function` would *skip* (false-negative — the safe direction, lost
+  `needs_function` would *skip* (false-negative - the safe direction, lost
   coverage, not a crash). Fine for kryoptic/nss/wolfpkcs11 (default interface).
   Documented; optional follow-up to probe named interfaces.
 - **Out of scope:** changing `needs_mechanism` semantics; auditing non-version
@@ -168,7 +168,7 @@ operations must be split to per-class/per-test gates** (see Mixed-bucket files).
 - Adding `functions` to the frozen dataclass is serialization-safe (kwargs-only
   construction, `asdict`/json round-trip, defensive `getattr` consumers).
 - A non-NULL-but-stub function (returns `CKR_FUNCTION_NOT_SUPPORTED`) is already
-  classified `xfail` in the ML-KEM tests — `needs_function` *surfaces* it rather
+  classified `xfail` in the ML-KEM tests - `needs_function` *surfaces* it rather
   than hiding it; no crash.
 - `doctor_probe` uses the same loader; no separate gating bug.
 
