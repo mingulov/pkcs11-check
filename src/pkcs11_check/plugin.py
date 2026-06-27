@@ -44,7 +44,6 @@ from pkcs11_check.raw.types_std import (
     CKF_MESSAGE_VERIFY,
     CKR_OK,
 )
-from pkcs11_check.testcases._mock_gating import is_pkcs11_mock_target, should_skip_on_mock
 from pkcs11_check.testcases._subprocess_trace import (
     drain_subprocess_rv_trace,
     extract_subprocess_rv_trace,
@@ -167,17 +166,6 @@ def pytest_addoption(parser: Any) -> None:
         dest="p11_manifest",
         default=None,
         help="Path to a precomputed PKCS#11 capability manifest",
-    )
-    group.addoption(
-        "--p11-allow-mock-conformance",
-        dest="p11_allow_mock_conformance",
-        action="store_true",
-        default=False,
-        help=(
-            "Run KAT/ACVP/Wycheproof/security/etc. suites against pkcs11-mock "
-            "(default: gated, since the mock returns canned values and these "
-            "suites produce only noise). For harness development only."
-        ),
     )
     group.addoption(
         "--p11-rv-trace",
@@ -615,11 +603,6 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
     destructive_enabled = config.getoption("p11_destructive", default=False)
     thread_safe_enabled = config.getoption("p11_thread_safe", default=False)
-    allow_mock_conformance = config.getoption("p11_allow_mock_conformance", default=False)
-    backend_module_path = os.environ.get("PKCS11_CHECK_BACKEND_MODULE")
-    gate_mock = not allow_mock_conformance and is_pkcs11_mock_target(
-        str(module_path), backend_module_path
-    )
 
     for item in items:
         if not _is_testcase_item(item):
@@ -636,19 +619,6 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
                     reason="Concurrent same-session test (use --p11-thread-safe to enable)"
                 )
             )
-
-        if gate_mock:
-            item_marker_names = {m.name for m in item.iter_markers()}
-            if should_skip_on_mock(item_marker_names):
-                item.add_marker(
-                    pytest.mark.skip(
-                        reason=(
-                            "pkcs11-mock returns canned values; conformance/"
-                            "security/KAT suites are meaningless against it "
-                            "(use --p11-allow-mock-conformance to override)"
-                        )
-                    )
-                )
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:
