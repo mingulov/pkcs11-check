@@ -1,7 +1,6 @@
 """Regression tests for per-subprocess pytest plugin autoload control.
 
-Lever 1 of docs/findings/test-execution-speedup-gap-analysis-2026-06-04.md:
-isolated unit subprocesses disable plugin autoload and enable only the plugins
+Isolated unit subprocesses disable plugin autoload and enable only the plugins
 they need, trimming startup cost without changing test behavior.
 """
 

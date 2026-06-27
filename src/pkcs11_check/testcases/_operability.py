@@ -24,8 +24,7 @@ operation per (mechanism, direction) per process and reuse the verdict:
                       to the legacy param-shape rules.
 
 Non-CKR exceptions from the probe or the vector are harness bugs and always
-propagate. See docs/findings/issues-triage.md (H2) and the classification
-model's positive-op row.
+propagate. See the classification model's positive-op row.
 """
 
 from __future__ import annotations

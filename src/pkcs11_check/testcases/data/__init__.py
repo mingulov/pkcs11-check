@@ -84,7 +84,7 @@ X509_LIMBO_DIR = _VENDOR_DIR / "x509-limbo"
 # (dicts/lists/scalars), and marshal -- unlike pickle -- cannot execute
 # arbitrary code on load. The cache lives in a private, owner-only directory
 # (never /tmp), is versioned + keyed by (mtime, size), and falls back to JSON on
-# any error. See docs/findings/test-execution-speedup-gap-analysis-2026-06-04.md.
+# any error.
 _VECTOR_CACHE_VERSION = 1
 # marshal format is Python-version specific; key on the interpreter too so an
 # upgrade transparently rebuilds the cache instead of erroring.

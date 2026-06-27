@@ -1,7 +1,6 @@
 """Regression tests for the content-addressed collection-metadata cache.
 
-Lever 2 of docs/findings/test-execution-speedup-gap-analysis-2026-06-04.md:
-the cache must be correct-by-construction -- a hit returns collection identical
+The collection-metadata cache must be correct-by-construction -- a hit returns collection identical
 to a fresh --collect-only, and ANY change to a collection-affecting input (source
 file, vendor data, collection args, versions) must change the digest so a stale
 cache can never drop or alter a test.

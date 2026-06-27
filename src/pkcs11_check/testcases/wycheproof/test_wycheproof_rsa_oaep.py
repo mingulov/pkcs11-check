@@ -330,8 +330,8 @@ def _skip_or_xfail_rsa_oaep_private_import_reject(
     The key is provisioned through ``provision_rsa_private_key``; a clean
     broad import-failure CKR after negotiation exhaustion on RSA_PKCS_OAEP
     (advertised -- ``has_mechanism`` gate passed upstream) is
-    advertised-but-not-operational -> xfail, never skip (import-skip audit A11,
-    docs/findings/import-skip-audit.md). The runtime-reject branch already
+    advertised-but-not-operational -> xfail, never skip (import-skip audit A11).
+    The runtime-reject branch already
     xfails; non-CKR AssertionErrors propagate as harness/coding-bug findings.
     """
     if is_known_error(exc, _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS):

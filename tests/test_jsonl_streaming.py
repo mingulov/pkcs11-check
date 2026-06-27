@@ -1,9 +1,7 @@
 """Characterization (golden) tests for the report.jsonl readers.
 
-T4 of docs/findings/docker-pooled-deep-audit-2026-06-04.md converts these readers
-from load-all (`read_text().splitlines()`, ~1.4 GB RSS on a 214 MB report) to
-line-streaming. These tests pin the EXACT current output so the streaming rewrite
-is provably byte-identical — same records, same aggregation, same order.
+These tests pin the EXACT current output of the report.jsonl readers so any
+rewrite is provably byte-identical - same records, same aggregation, same order.
 """
 
 from __future__ import annotations

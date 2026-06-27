@@ -1,6 +1,6 @@
 """TDD meta-tests for Batch 2 import-skip -> xfail conversion (A5/A7/A8/A14).
 
-Audit doc: docs/findings/import-skip-audit.md §4 Batch 2.
+Audit reference: import-skip-audit §4 Batch 2.
 
 Batch 2 covers EC/Edwards public-key-import sites that already SPLIT the import
 reject into two branches:
