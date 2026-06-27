@@ -191,8 +191,9 @@ at your option.
 
 ### Third-party attributions
 
-pkcs11-check bundles the public-domain PKCS#11 v3.2 header from
-`latchset/pkcs11-headers`, and its `fetch-data` command downloads test
-vectors from C2SP and NIST. See
+pkcs11-check ships ctypes bindings generated from the public-domain PKCS#11
+v3.2 header from `latchset/pkcs11-headers` (the header itself is a dev-time
+codegen input kept in the source repository, not shipped in the package), and
+its `fetch-data` command downloads test vectors from C2SP and NIST. See
 [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) for the full list and
 per-source license terms.
