@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -27,23 +26,6 @@ def _minimal_group(**overrides: Any) -> dict[str, Any]:
     }
     g.update(overrides)
     return g
-
-
-def _minimal_report_jsonl(tmp_path: Path) -> Path:
-    p = tmp_path / "report.jsonl"
-    rec = {
-        "reason": "not_operational",
-        "outcome": "xfail",
-        "severity": "INFO",
-        "label": "test",
-        "operation": "encrypt",
-        "mechanism": "CKM_AES_CBC",
-        "kind": None,
-        "expected": None,
-        "actual": None,
-    }
-    p.write_text(json.dumps(rec) + "\n")
-    return p
 
 
 def test_disclaimer_in_provider_file(tmp_path: Path) -> None:
