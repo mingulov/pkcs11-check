@@ -1256,7 +1256,7 @@ def _assert_standard_raw_pack_contents(
 
 
 @pytest.mark.timeout(300)
-def test_sdist_and_wheel_include_vendored_standard_headers_and_generated_raw_modules(
+def test_sdist_and_wheel_ship_generated_raw_modules_without_the_vendored_header(
     tmp_path: Path,
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
@@ -1288,10 +1288,12 @@ def test_sdist_and_wheel_include_vendored_standard_headers_and_generated_raw_mod
         module_prefix="pkcs11_check",
         header_prefix=None,
     )
+    # The vendored header is a dev-time codegen input only; it ships in neither
+    # the wheel nor the sdist (see pyproject [tool.hatch.build] exclude).
     _assert_standard_raw_pack_contents(
         sdist_names,
         module_prefix="src/pkcs11_check",
-        header_prefix="third_party/pkcs11-headers/3.2",
+        header_prefix=None,
     )
 
 
