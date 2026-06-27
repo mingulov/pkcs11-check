@@ -50,6 +50,40 @@ def compare_coverage_command(
         raise typer.Exit(code=1)
 
 
+def compare_results_command(
+    baseline: Path = typer.Argument(..., help="Baseline results.json"),
+    current: Path = typer.Argument(..., help="Current results.json"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show per-target detail"),
+    no_fail: bool = typer.Option(False, "--no-fail", help="Report but exit 0 even on regression"),
+) -> None:
+    """Compare two pkcs11-check results.json files and report regressions."""
+    from pkcs11_check.core.compare_results import compare_results, load_results, render_text
+
+    for path in (baseline, current):
+        if not path.exists():
+            console.print(f"[red]Error:[/red] {path} not found")
+            raise typer.Exit(code=2)
+    try:
+        base_map, base_summary = load_results(baseline)
+        curr_map, curr_summary = load_results(current)
+    except json.JSONDecodeError as exc:
+        console.print(f"[red]Error:[/red] invalid results JSON: {exc}")
+        raise typer.Exit(code=2) from exc
+
+    comparison = compare_results(base_map, base_summary, curr_map, curr_summary)
+    console.print(
+        render_text(
+            comparison,
+            baseline_name=baseline.name,
+            current_name=current.name,
+            verbose=verbose,
+        )
+    )
+
+    if comparison.has_regressions and not no_fail:
+        raise typer.Exit(code=1)
+
+
 def _load_coverage_payload(path: Path) -> tuple[Path, Mapping[str, Any]]:
     coverage_path = path / "coverage.json" if path.is_dir() else path
     if not coverage_path.exists():
