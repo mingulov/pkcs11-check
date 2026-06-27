@@ -3,7 +3,8 @@
 Tests that the test framework correctly handles device/token errors
 by loading the fault-proxy.so which wraps a real PKCS#11 module.
 
-Requires: fault-proxy.so built (bash local-builds/build.sh fault-proxy).
+Requires: fault-proxy.so available as P11TEST_FAULT_PROXY_SO or at
+/usr/lib/pkcs11/fault-proxy.so.
 """
 
 from __future__ import annotations
@@ -26,7 +27,6 @@ from pkcs11_check.testcases.ckr._subprocess import (
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
 _FAULT_PROXY_PATHS = [
-    Path(__file__).parents[4] / "local-builds" / "fault-proxy" / "fault-proxy.so",
     Path("/usr/lib/pkcs11/fault-proxy.so"),
 ]
 # Explicit override (set by an external harness/conftest).
@@ -40,7 +40,9 @@ _PROXY_PATH = next((p for p in _FAULT_PROXY_PATHS if p.exists()), None)
 def _skip_if_no_proxy() -> None:
     """Skip if fault-proxy.so is not built."""
     if _PROXY_PATH is None or not _PROXY_PATH.exists():
-        pytest.skip("fault-proxy not built (run: bash local-builds/build.sh fault-proxy)")
+        pytest.skip(
+            "fault-proxy not available (set P11TEST_FAULT_PROXY_SO or install to /usr/lib/pkcs11/)"
+        )
 
 
 class TestFaultInjection:

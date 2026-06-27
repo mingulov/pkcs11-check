@@ -13,7 +13,7 @@ report.jsonl + results.json
         │  extract.py   group findings on a readable key
         ▼
    groups[]
-        │  correlate.py (enrich)  add category/routing + caveats from module-issues.md
+        │  correlate.py (enrich)  add category/routing + caveats from known-issue text
         │  correlate.py (correlate)  find universal themes across providers
         ▼
    render.py   compact severity-first markdown
@@ -36,7 +36,7 @@ report.jsonl + results.json
   the folded tail stay near one screen even at thousands of findings.
 - **correlate** (`correlate.py`) - `enrich()` annotates each group in place with a triage
   `category` / `routing` (fails → `PROVIDER_BUG`/`PROVIDER_REPORT`, xfails → `deviation`/`DOCS_ONLY`,
-  unclassified → `HARNESS_OR_UNMIGRATED`/`HARNESS_FIX`, a `module-issues.md` match → `KNOWN_ISSUE`)
+  unclassified → `HARNESS_OR_UNMIGRATED`/`HARNESS_FIX`, a known-issue match → `KNOWN_ISSUE`)
   and flags the soft-token padding-oracle caveat. `correlate()` finds *universal themes* - the same
   `(reason, kind, mechanism)` signature seen across two or more providers - plus single-provider
   *outliers*.
