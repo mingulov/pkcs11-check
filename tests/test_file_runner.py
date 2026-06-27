@@ -780,12 +780,51 @@ def test_build_state_fingerprint_changes_when_env_changes(tmp_path: Path) -> Non
     first = build_state_fingerprint(
         [str(unit)],
         ["--p11-module", str(module)],
-        {"BOUNCY_HSM_CFG_STRING": "Server=127.0.0.1;Port=8765;"},
+        {"P11TEST_TOKEN_DIR": "/run/tokens/a"},
     )
     second = build_state_fingerprint(
         [str(unit)],
         ["--p11-module", str(module)],
-        {"BOUNCY_HSM_CFG_STRING": "Server=127.0.0.1;Port=9999;"},
+        {"P11TEST_TOKEN_DIR": "/run/tokens/b"},
+    )
+
+    assert first != second
+
+
+def test_build_state_fingerprint_ignores_unregistered_provider_env(tmp_path: Path) -> None:
+    """A provider env var outside the framework namespaces is ignored by default."""
+    unit = tmp_path / "test_demo.py"
+    unit.write_text("def test_demo():\n    assert True\n")
+    module = tmp_path / "module.so"
+    module.write_text("v1")
+
+    first = build_state_fingerprint(
+        [str(unit)], ["--p11-module", str(module)], {"MYHSM_CONF": "/etc/a.conf"}
+    )
+    second = build_state_fingerprint(
+        [str(unit)], ["--p11-module", str(module)], {"MYHSM_CONF": "/etc/b.conf"}
+    )
+
+    assert first == second
+
+
+def test_build_state_fingerprint_honors_extension_env_prefixes(tmp_path: Path) -> None:
+    """Registering a provider prefix via PKCS11_CHECK_FINGERPRINT_ENV_PREFIXES
+    makes that provider's configuration part of the fingerprint."""
+    unit = tmp_path / "test_demo.py"
+    unit.write_text("def test_demo():\n    assert True\n")
+    module = tmp_path / "module.so"
+    module.write_text("v1")
+
+    first = build_state_fingerprint(
+        [str(unit)],
+        ["--p11-module", str(module)],
+        {"PKCS11_CHECK_FINGERPRINT_ENV_PREFIXES": "MYHSM_", "MYHSM_CONF": "/etc/a.conf"},
+    )
+    second = build_state_fingerprint(
+        [str(unit)],
+        ["--p11-module", str(module)],
+        {"PKCS11_CHECK_FINGERPRINT_ENV_PREFIXES": "MYHSM_", "MYHSM_CONF": "/etc/b.conf"},
     )
 
     assert first != second

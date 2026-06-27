@@ -125,7 +125,7 @@ from .types_std import (
     CKA_SUBPRIME_BITS,
     CKA_SUPPORTED_CMS_ATTRIBUTES,
     CKA_TOKEN,
-    # NSS trust
+    # Trust
     CKA_TRUST_CLIENT_AUTH,
     CKA_TRUST_CODE_SIGNING,
     CKA_TRUST_EMAIL_PROTECTION,
@@ -339,7 +339,7 @@ ATTR_VALUE_TYPES: dict[int, str] = {
     CKA_REQUIRED_CMS_ATTRIBUTES: "bytes",
     CKA_DEFAULT_CMS_ATTRIBUTES: "bytes",
     CKA_SUPPORTED_CMS_ATTRIBUTES: "bytes",
-    # --- NSS trust (vendor but widely used, CK_TRUST = CK_ULONG) ---
+    # --- Trust (CK_TRUST = CK_ULONG) ---
     CKA_TRUST_SERVER_AUTH: "ulong",
     CKA_TRUST_CLIENT_AUTH: "ulong",
     CKA_TRUST_CODE_SIGNING: "ulong",
