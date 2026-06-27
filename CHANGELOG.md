@@ -101,8 +101,7 @@ New since 0.1.4: **wolfPKCS11 on a wolfTPM firmware-TPM backend** and **pico-hsm
 ### Test Results
 
 Full provider matrix (baseline dated 2026-06-21), one row per distinct build, from
-the pooled `docker/test_pool.py` sweep (30 targets / 67 sharded items, zero
-timeouts). The 23 long-standing targets were reconciled per-test-file against the
+a pooled multi-target sweep (30 targets / 67 sharded items, zero timeouts). The 23 long-standing targets were reconciled per-test-file against the
 prior full pool (2026-06-15): no coverage was lost, no crash regressions, and
 every good→bad file crossing traces to an intentional post-0.1.4 framework change,
 not a provider regression. Failures, errors, crashes, and skips are kept as
@@ -215,7 +214,7 @@ pkcs11-mock v2.0.0 · Craton HSM · Nitrokey NetHSM · FreeHSM-C · jCardSim
 ### Test Results
 
 Latest full provider matrix (baseline dated 2026-06-17), one row per distinct
-build, from the pooled `docker/test_pool.py` sweep. The run was reconciled
+build, from the pooled multi-target runner. The run was reconciled
 test-id-by-test-id against the prior baseline: no findings disappeared and no test
 stopped running. Failures, crashes, and skips are kept as provider findings - a
 crash is a finding, not a hidden result.

@@ -114,8 +114,8 @@ After fetch the file lands at
 
 ## Notes
 
-- `docker/` and `local-builds/` build or launch real third-party PKCS#11
-  providers for interoperability testing only. Those provider projects,
+- Container-based interoperability runs use real third-party PKCS#11
+  providers (see `docs/docker-examples.md`). Those provider projects,
   base images, distro packages, and their dependencies are governed by their
   own upstream license terms; they are not bundled into pkcs11-check's Python
   package, source-generated bindings, or application code.

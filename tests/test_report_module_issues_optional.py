@@ -3,7 +3,7 @@
 from pkcs11_check.report.__main__ import _resolve_module_issues_text
 
 
-def test_module_issues_absent_is_empty(tmp_path, monkeypatch):
+def test_module_issues_absent_is_empty(monkeypatch):
     monkeypatch.delenv("PKCS11_CHECK_MODULE_ISSUES", raising=False)
     assert _resolve_module_issues_text(explicit=None) == ""
 
