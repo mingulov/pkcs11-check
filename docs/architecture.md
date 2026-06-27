@@ -62,6 +62,7 @@ Fuzz: Hypothesis property tests, attribute template fuzzer
 
 See [test-universe.md](test-universe.md) for the current collected product-test
 counts by group and the AES-CTS single-provider maximum.
+See [interpreting-results.md](interpreting-results.md) for guidance on why xfail and fail counts can be large.
 
 ## Docker test matrix
 
