@@ -130,10 +130,10 @@ def _write_provider(
     # render_provider ends with a single trailing newline; the "\n" join yields
     # one blank line before the appended "## capability audit" heading.
     md = md + "\n" + render_capability_section(capability_audit(groups))
-    (out_dir / f"{provider}.md").write_text(md)
-    with (out_dir / f"{provider}.jsonl").open("w") as fh:
+    (out_dir / f"{provider}.md").write_text(md, encoding="utf-8")
+    with (out_dir / f"{provider}.jsonl").open("w", encoding="utf-8") as fh:
         for group in groups:
-            fh.write(json.dumps(group, sort_keys=True) + "\n")
+            fh.write(json.dumps(group, sort_keys=True, ensure_ascii=False) + "\n")
 
 
 def _write_index(
