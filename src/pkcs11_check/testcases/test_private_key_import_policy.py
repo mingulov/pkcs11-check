@@ -13,10 +13,10 @@ they drop the benign policy attrs on a clean shape reject so the crypto KAT stil
 means a module that rejects the standard policy shape would otherwise leave no visible record.
 Here it surfaces as exactly one recorded deviation.
 
-Observed deviation (craton-hsm 0.9.3): returns CKR_ATTRIBUTE_READ_ONLY for this template,
-because it applies the §10.7 one-way constraint at creation time (new objects default
-extractable=false / sensitive=true). It can still import the key with the policy attrs omitted
-(the negotiation path the KATs use), so this is a clean single deviation -> xfail
+Observed deviation: some modules return CKR_ATTRIBUTE_READ_ONLY for this template,
+because they apply the §10.7 one-way constraint at creation time (new objects default
+extractable=false / sensitive=true). Such a module can still import the key with the policy
+attrs omitted (the negotiation path the KATs use), so this is a clean single deviation -> xfail
 (not_operational), not a crash or crypto-correctness break.
 """
 
@@ -50,8 +50,8 @@ pytestmark = pytest.mark.keymgmt
 _EC_P256_PARAMS = bytes.fromhex("06082a8648ce3d030107")
 _EC_P256_SCALAR = b"\x01" * 32
 
-# Clean refusals of the spec-legal policy template. CKR_ATTRIBUTE_READ_ONLY is the craton
-# 0.9.3 case (one-way rule misapplied at create); the template/attribute codes cover other
+# Clean refusals of the spec-legal policy template. CKR_ATTRIBUTE_READ_ONLY covers modules
+# that misapply the one-way rule at create; the template/attribute codes cover other
 # modules that decline the standard policy shape. Any OTHER CKR (or a crash) is NOT in this
 # set and therefore surfaces as a real failure via xfail_if_known_ckr's re-raise.
 _STD_POLICY_IMPORT_REFUSED = (
@@ -68,7 +68,7 @@ def test_ec_private_key_import_accepts_standard_policy_attrs(p11_module_session:
 
     pass:  C_CreateObject returns CKR_OK (the spec-legal template is accepted).
     skip:  module implements no C_CreateObject, or no private-key import (FUNCTION_NOT_SUPPORTED).
-    xfail: clean refusal of the standard policy shape (e.g. craton CKR_ATTRIBUTE_READ_ONLY).
+    xfail: clean refusal of the standard policy shape (e.g. CKR_ATTRIBUTE_READ_ONLY).
     fail:  any other CKR, or a crash (surfaced by the isolated runner).
     """
     rs = p11_module_session

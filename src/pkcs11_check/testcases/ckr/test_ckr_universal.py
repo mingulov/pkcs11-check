@@ -110,9 +110,9 @@ class TestUniversalRealTriggers:
         """CKR_CRYPTOKI_NOT_INITIALIZED - call after C_Finalize.
 
         PKCS#11 v3.2: After C_Finalize, any function call MUST return
-        CKR_CRYPTOKI_NOT_INITIALIZED. NSS returns CKR_OK because it auto-initializes
-        on each function call (vendor extension for browser use). This is an intentional
-        NSS design choice, not a crash, but deviates from the PKCS#11 spec.
+        CKR_CRYPTOKI_NOT_INITIALIZED. Some modules return CKR_OK because they
+        auto-initialize on each function call (vendor extension). This is an intentional
+        design choice, not a crash, but deviates from the PKCS#11 spec.
         """
         import os
 

@@ -141,7 +141,7 @@ def _raw_ek_import_supported(rs: Any, ps_bits: int) -> bool:
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
-                    # Required by strict-but-conformant modules (opencryptoki) per PKCS#11
+                    # Required by strict-but-conformant modules per PKCS#11
                     # v3.2; the ML-KEM shared secret is 32 bytes (FIPS 203).
                     CKA_VALUE_LEN: 32,
                 },
@@ -206,7 +206,7 @@ def test_mlkem_encaps_modulus_overflow(
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
-                    # Required by strict-but-conformant modules (opencryptoki) per PKCS#11
+                    # Required by strict-but-conformant modules per PKCS#11
                     # v3.2; the ML-KEM shared secret is 32 bytes (FIPS 203).
                     CKA_VALUE_LEN: 32,
                 },

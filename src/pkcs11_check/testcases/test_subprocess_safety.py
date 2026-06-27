@@ -3,8 +3,7 @@
 These tests run Python scripts in subprocesses to avoid corrupting
 the main test session. They test crash scenarios safely.
 
-References: rep11.md Iteration 3, NSS fork detection (Mozilla #473505),
-SoftHSM2 #729 (exit crash).
+References: rep11.md Iteration 3, fork detection and exit crash bugs found in some modules.
 """
 
 from __future__ import annotations
@@ -246,9 +245,8 @@ class TestSessionObjectProcessIsolation:
     sessions belong to an "application". An application is whatever
     called C_Initialize — distinct processes are distinct applications.
     Session objects MUST NOT be visible to a different process even if
-    the underlying module backend is shared (e.g. SQLite DB on disk for
-    NSS/SoftHSM2, dbus broker for tpm2-abrmd, daemon socket for
-    OpenCryptoki/pkcsslotd).
+    the underlying module backend is shared (e.g. a SQLite DB on disk,
+    a dbus broker, or a daemon socket for daemon-backed modules).
 
     The existing same-process cross-session tests in
     test_object_visibility.py validate that two sessions in the SAME
@@ -413,9 +411,9 @@ class TestSessionObjectProcessIsolation:
             close_session_quietly(raw, sh)
             raw.C_Finalize(None)
         """
-        # 90s timeout — tabrmd-backed tpm2-pkcs11 needs cold-start
-        # headroom for post-fork re-Initialize. Real-world fork+
-        # TPM2_Startup can exceed 30s on busy systems.
+        # 90s timeout: daemon-backed modules may need cold-start headroom
+        # for post-fork re-Initialize. Real-world fork+TPM2_Startup
+        # can exceed 30s on busy systems.
         rc, output = _run_script(script, timeout=90)
         if rc != 0:
             if "FATAL:Parent_CreateObject:" in output:
@@ -543,8 +541,8 @@ class TestLibraryReload:
 
         A negative exit code (signal/segfault) is a module bug and kept as failure.
         A positive exit code (rc > 0) means the module raised a Python exception
-        during reinit -- common causes: token label not found after reinit (NSS)
-        or daemon not provisioned (tpm2-pkcs11). These are module
+        during reinit -- common causes: token label not found after reinit,
+        or daemon not provisioned. These are module
         environment limitations, not crashes, so xfail.
         """
         module = str(p11_config.module)

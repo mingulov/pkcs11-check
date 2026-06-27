@@ -216,7 +216,7 @@ class TestCertificateExtractFields:
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
             val = attrs[CKA_VALUE]
-            if val != b"Hello world!":  # pkcs11-mock
+            if val != b"Hello world!":  # mock sentinel value used by some test modules
                 assert_correct(
                     actual=val,
                     expected=ca_cert_der,

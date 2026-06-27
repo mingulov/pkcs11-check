@@ -129,9 +129,8 @@ class TestTokenFlags:
         PKCS#11 spec: CKF_USER_PIN_INITIALIZED is set after the user PIN has
         been initialized via C_InitPIN or C_SetPIN.
 
-        NSS deviation: NSS slot 1 (Certificate DB) does not set
-        CKF_USER_PIN_INITIALIZED even when a PIN is configured, because NSS
-        reports this slot as not requiring a user PIN.
+        Some modules do not set CKF_USER_PIN_INITIALIZED even when a PIN is
+        configured, because the slot is reported as not requiring a user PIN.
         """
         rs = p11_raw_session
         if p11_config.pin is None:

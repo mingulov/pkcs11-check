@@ -971,9 +971,9 @@ class TestSessionCancel:
         # "the session state will not be modified and CKR_OK will be returned".
         # Modules that return other CKR codes for flags=0 are non-conformant.
         # Known non-conformant responses:
-        #   0x00000091 = CKR_OPERATION_NOT_INITIALIZED (NSS)
-        #   0x00000001 = CKR_CANCEL (kryoptic-main)
-        #   0x00000051 = CKR_FUNCTION_NOT_PARALLEL (BouncyHSM)
+        #   0x00000091 = CKR_OPERATION_NOT_INITIALIZED (observed)
+        #   0x00000001 = CKR_CANCEL (observed)
+        #   0x00000051 = CKR_FUNCTION_NOT_PARALLEL (observed)
         if "CANCEL:0x" in stdout:
             cancel_part = next(
                 (part for part in stdout.split() if part.startswith("CANCEL:0x")), stdout
@@ -1008,7 +1008,7 @@ class TestLoginUserWithNameRecipe:
     ) -> None:
         """login_user_with_name with empty username behaves like C_Login.
 
-        NSS deviation: NSS returns CKR_OPERATION_NOT_INITIALIZED when
+        Observed deviation: some modules return CKR_OPERATION_NOT_INITIALIZED when
         C_LoginUser is called on an already-logged-in session, instead of
         CKR_USER_ALREADY_LOGGED_IN or CKR_OK.
         """

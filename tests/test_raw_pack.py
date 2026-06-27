@@ -112,11 +112,11 @@ def test_mech_gcm_generated_iv_strict_owns_writable_iv_buffer() -> None:
     assert mech.buffer_bytes("iv") == b"\x00" * 12
 
 
-def test_mech_gcm_generated_iv_aws_convention_keeps_len_and_zero_bits() -> None:
+def test_mech_gcm_generated_iv_zeroed_convention_keeps_len_and_zero_bits() -> None:
     from pkcs11_check.raw.pack import mech_gcm_generated_iv
     from pkcs11_check.raw.types_std import CK_AES_GCM_PARAMS, CKM_AES_GCM
 
-    mech = mech_gcm_generated_iv(CKM_AES_GCM, iv_len=12, convention="aws")
+    mech = mech_gcm_generated_iv(CKM_AES_GCM, iv_len=12, convention="zeroed")
 
     params = mech.params
     assert isinstance(params, CK_AES_GCM_PARAMS)
@@ -129,7 +129,7 @@ def test_mech_gcm_generated_iv_buffers_reflect_provider_writes() -> None:
     from pkcs11_check.raw.pack import mech_gcm_generated_iv
     from pkcs11_check.raw.types_std import CKM_AES_GCM
 
-    for convention in ("strict", "aws"):
+    for convention in ("strict", "zeroed"):
         mech = mech_gcm_generated_iv(CKM_AES_GCM, iv_len=12, convention=convention)
         iv = bytes(range(1, 13))
 

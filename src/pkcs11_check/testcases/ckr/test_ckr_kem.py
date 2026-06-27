@@ -1,7 +1,7 @@
 """CKR compliance tests for C_EncapsulateKey and C_DecapsulateKey.
 
 v3.2 only - requires ML-KEM mechanism support.
-Only Kryoptic currently implements KEM operations.
+Few modules currently implement KEM operations.
 
 Source: PKCS#11 v3.2 Sec.5.14.7 (C_EncapsulateKey), Sec.5.14.8 (C_DecapsulateKey).
 """

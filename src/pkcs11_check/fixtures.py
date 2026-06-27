@@ -175,8 +175,8 @@ def _open_raw_session(
     return raw, sh, slot_id, logged_in
 
 
-# --- provider/proxy restart recovery (pkcs11-proxy-ng restart window) --------
-# A proxied provider crash + restart is NOT instantaneous: pkcs11-proxy-ng
+# --- provider/proxy restart recovery (proxy restart window) ------------------
+# A proxied provider crash + restart is NOT instantaneous: a proxy/daemon
 # restarts the provider and restores access over seconds, during which the
 # surviving client module returns a "connection lost" CK_RV for every call.
 # Recovery is a BOUNDED wait-and-reconnect loop -- reconnect (C_Finalize +
@@ -237,7 +237,7 @@ def _open_or_reinit(
 ) -> tuple[RawPKCS11, int, int, bool]:
     """Open a session; bridge a provider/proxy restart with a bounded wait loop.
 
-    A proxied provider crash + pkcs11-proxy-ng restart leaves the surviving
+    A proxied provider crash + proxy restart leaves the surviving
     client module returning a restart-signature CK_RV (NOT_INITIALIZED, a stale
     SESSION_HANDLE_INVALID / SESSION_CLOSED, or a transport DEVICE_ERROR /
     DEVICE_REMOVED) -- or a transport ``OSError`` -- for the whole restart
@@ -521,8 +521,8 @@ class _ModuleSessionHolder:
 
     PKCS#11 spec note: C_*Init does NOT silently cancel a pending operation of
     the same class -- it returns CKR_OPERATION_ACTIVE. So a provider that fails
-    to terminate an operation when the spec requires it (e.g. kryoptic /
-    tpm2-pkcs11 leave a verify op active after C_Verify rejects a signature,
+    to terminate an operation when the spec requires it (e.g. some modules
+    leave a verify op active after C_Verify rejects a signature,
     violating "a call to C_Verify always terminates the active verification
     operation") would leave the shared session dirty. The single-shot recipes
     handle this reactively: ``_init_or_recover`` cancels the stale op and
@@ -681,10 +681,9 @@ def p11_module_session(
     invocation -- use ``p11_raw_session`` (function-scoped) for those.
 
     Performance: avoids the per-test C_OpenSession + C_Login overhead,
-    which is ~47ms on OpenCryptoki SWToken (PBKDF2-based PIN derivation)
-    and ~80ms on BouncyHSM (HTTP/TCP RPC). For a 28,915-test file this
-    saves 23 minutes (OpenCryptoki) or 39 minutes (BouncyHSM) of pure
-    login overhead.
+    which can be tens of milliseconds per login on modules with PBKDF2-based
+    PIN derivation or RPC-backed transports. For a 28,915-test file that adds
+    up to tens of minutes of pure login overhead.
     """
     holder = _p11_module_session_holder
     fast_reuse = request.node.get_closest_marker("module_session_fast") is not None

@@ -7,7 +7,7 @@ Covers key generation, encryption/decryption (ECB, CBC, CBC_PAD),
 MAC signing/verification, and key derivation availability checks.
 
 Most modules do NOT support CAMELLIA - all tests will skip cleanly on those
-platforms. Some Kryoptic and some NSS builds include Camellia support.
+platforms. Some module builds include Camellia support.
 """
 
 from __future__ import annotations

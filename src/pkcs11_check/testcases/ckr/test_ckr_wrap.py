@@ -388,7 +388,7 @@ class TestWrapKeyErrors:
             # Code-conformance: the spec mandates CKR_WRAPPING_KEY_SIZE_RANGE for a
             # too-small wrapping key. Classify the reject three ways (assert_ckr):
             #   * a size-or-type spec code -> pass,
-            #   * any other clean reject (e.g. softhsm2's catch-all
+            #   * any other clean reject (e.g. a module's catch-all
             #     CKR_GENERAL_ERROR) -> xfail (an honest, recorded deviation),
             #   * CKR_OK -> fail (already handled above as the crypto-correctness break).
             # In strict mode (ckr_strict) a non-spec code is promoted to a hard

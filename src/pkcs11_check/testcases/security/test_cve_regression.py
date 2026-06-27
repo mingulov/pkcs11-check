@@ -249,8 +249,8 @@ class TestCKATrusted:
 class TestCKADeriveOnEC:
     """CKA_DERIVE on EC keygen (task 7.20).
 
-    tpm2-pkcs11 #656: EC P-256 keygen fails with CKR_ATTRIBUTE_VALUE_INVALID
-    when CKA_DERIVE=True (TPM limitation). Software tokens should accept it.
+    Some modules fail EC P-256 keygen with CKR_ATTRIBUTE_VALUE_INVALID
+    when CKA_DERIVE=True (a hardware-backed limitation). Software tokens should accept it.
     """
 
     def test_ec_keygen_with_derive(self, p11_raw_session: Any) -> None:
@@ -273,7 +273,7 @@ class TestCKADeriveOnEC:
         except AssertionError as e:
             err_str = str(e)
             if "CKR_ATTRIBUTE_VALUE_INVALID" in err_str:
-                # Some modules reject CKA_DERIVE on EC keys (e.g. tpm2-pkcs11 #656);
+                # Some modules reject CKA_DERIVE on EC keys;
                 # a clean non-spec rejection -> noted deviation, not a finding.
                 classify(
                     "not_operational",

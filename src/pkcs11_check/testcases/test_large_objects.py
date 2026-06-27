@@ -102,9 +102,9 @@ class TestLargeRandomGeneration:
     def test_generate_100kb_random(self, p11_raw_session: Any) -> None:
         """Generate 100KB of random data via C_GenerateRandom.
 
-        NSS deviation: NSS returns CKR_ARGUMENTS_BAD for C_GenerateRandom
-        requests larger than approximately 32KB -- NSS has an internal size
-        limit on single random generation calls.
+        Some modules return CKR_ARGUMENTS_BAD for C_GenerateRandom requests
+        larger than a module-specific threshold - an internal size limit on
+        single random generation calls.
         """
         rs = p11_raw_session
         try:

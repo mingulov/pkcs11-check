@@ -324,11 +324,11 @@ class TestECDSACrossVerify:
 
 
 # Clean codes a module may return from C_Digest when it advertises the SHA
-# mechanism but standalone digest is not operational (cryptech SHA224 ->
+# mechanism but standalone digest is not operational (some modules return
 # CKR_FUNCTION_FAILED; modules exposing SHA* only for composite sign).
 # CKR_ARGUMENTS_BAD is deliberately EXCLUDED: an ARGUMENTS_BAD reject of an
-# empty-message digest (wolfpkcs11/bouncyhsm) is a real PROVIDER_BUG (empty digest
-# is well-defined) and must stay a hard fail, as must any wrong digest output.
+# empty-message digest is a real finding (empty digest is well-defined) and
+# must stay a hard fail, as must any wrong digest output.
 _DIGEST_OP_REJECT_RVS = (
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,

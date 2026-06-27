@@ -91,13 +91,13 @@ class TestWaitForSlotEventErrors:
         rs = p11_raw_session
         slot_id = CK_ULONG(0)
         # CKF_DONT_BLOCK is REQUIRED for a non-blocking probe. Per PKCS#11 v3.2 §5.5.4,
-        # flags=0 BLOCKS until a slot event occurs — against a module that honors that
-        # (e.g. NetHSM) flags=0 hangs forever, and a signal-based test timeout cannot
-        # interrupt the blocked native call. CKF_DONT_BLOCK returns immediately.
+        # flags=0 BLOCKS until a slot event occurs: a blocking-capable module would then
+        # hang forever, and a signal-based test timeout cannot interrupt the blocked
+        # native call. CKF_DONT_BLOCK returns immediately.
         rv = rs.raw.C_WaitForSlotEvent(CKF_DONT_BLOCK, byref(slot_id), None)
         acceptable = (
             CKR_OK,  # Event returned - possible on some setups
             CKR_NO_EVENT,  # Expected for software tokens
-            CKR_FUNCTION_NOT_SUPPORTED,  # SoftHSM2 doesn't implement this
+            CKR_FUNCTION_NOT_SUPPORTED,  # some modules do not implement this
         )
         assert rv in acceptable, f"Unexpected CKR {ckr_name(rv)} from C_WaitForSlotEvent"

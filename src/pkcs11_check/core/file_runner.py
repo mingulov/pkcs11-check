@@ -55,16 +55,17 @@ _NO_TESTS_COLLECTED_EXIT = 2
 _TIMEOUT_RETURN_CODE = 124
 _DISABLE_COLLECTION_PROBES_ENV = "PKCS11_CHECK_DISABLE_COLLECTION_PROBES"
 
-_FINGERPRINT_ENV_KEYS = ("BOUNCY_HSM_CFG_STRING", "SOFTHSM2_CONF", "P11TEST_PIN")
-_FINGERPRINT_ENV_PREFIXES = (
-    "P11TEST_",
-    "BOUNCY_HSM_",
-    "NSS_",
-    "OPENCRYPTOKI_",
-    "PKCS11_",
-    "SOFTHSM2_",
-    "TPM2_",
-)
+# The fingerprint detects when the run's effective configuration changed, so
+# stale resume/policy state is not reused. By default it covers the framework's
+# own env namespaces only. A provider exposes its token/config through its own
+# env vars, so point PKCS11_CHECK_FINGERPRINT_ENV_PREFIXES (and, rarely,
+# PKCS11_CHECK_FINGERPRINT_ENV_KEYS) at any extra prefixes/keys to have that
+# provider's configuration invalidate the fingerprint too. Both accept a comma-
+# or whitespace-separated list.
+_FINGERPRINT_ENV_PREFIXES_ENV = "PKCS11_CHECK_FINGERPRINT_ENV_PREFIXES"
+_FINGERPRINT_ENV_KEYS_ENV = "PKCS11_CHECK_FINGERPRINT_ENV_KEYS"
+_DEFAULT_FINGERPRINT_ENV_KEYS = ("P11TEST_PIN",)
+_DEFAULT_FINGERPRINT_ENV_PREFIXES = ("P11TEST_", "PKCS11_")
 _REDACTED_ENV_KEYS = {"P11TEST_PIN"}
 _POLICY_IGNORED_ENV_KEYS = {
     "P11TEST_ISOLATION",
@@ -1902,7 +1903,7 @@ def save_run_state(path: Path, state: FileRunState) -> None:
     ``_write_unit_report_record_cache``) and the end-of-run merge always reads
     them back from those shards. Embedding the records in state.json made the
     payload grow to hundreds of MB and turned the per-unit save into an O(n^2)
-    re-serialization (~14 min on a full bouncyhsm round) for data that is never
+    re-serialization (~14 min on a full slow-module round) for data that is never
     the sole source of truth. The in-memory dict is retained only as a
     legacy/debug inline-state fallback; normal runs reconstruct records from
     the shards (and the prior report.jsonl on resume).
@@ -2090,14 +2091,34 @@ def _fingerprint_units(units: list[str]) -> list[dict[str, int | str]]:
     return snapshots
 
 
+def _split_env_list(value: str | None) -> tuple[str, ...]:
+    """Parse a comma- or whitespace-separated env value into a tuple of tokens."""
+    if not value:
+        return ()
+    return tuple(value.replace(",", " ").split())
+
+
+def _fingerprint_env_selectors(
+    env: Mapping[str, str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return (exact_keys, prefixes) to fingerprint: framework-generic defaults
+    plus any provider-specific selectors registered via the extension env vars."""
+    keys = _DEFAULT_FINGERPRINT_ENV_KEYS + _split_env_list(env.get(_FINGERPRINT_ENV_KEYS_ENV))
+    prefixes = _DEFAULT_FINGERPRINT_ENV_PREFIXES + _split_env_list(
+        env.get(_FINGERPRINT_ENV_PREFIXES_ENV)
+    )
+    return keys, prefixes
+
+
 def _fingerprint_env(
     env: Mapping[str, str], *, ignored_keys: set[str] | frozenset[str] = frozenset()
 ) -> dict[str, str]:
+    keys, prefixes = _fingerprint_env_selectors(env)
     snapshot: dict[str, str] = {}
     for key in sorted(env):
         if key in ignored_keys:
             continue
-        if key in _FINGERPRINT_ENV_KEYS or key.startswith(_FINGERPRINT_ENV_PREFIXES):
+        if key in keys or key.startswith(prefixes):
             if key in _REDACTED_ENV_KEYS:
                 snapshot[key] = "<set>" if env[key] else "<unset>"
             else:

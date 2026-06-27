@@ -6,7 +6,7 @@ docs/superpowers/specs/2026-06-15-parameter-fidelity-design.md):
 
 - salt probe: request saltLen=8 (non-digest-length), mgf==hash. A module that
   produces a valid signature with a different salt -> honest_deviation reporting
-  the actual salt (the evidenced nethsm case).
+  the actual salt (observed on some modules).
 - mgf probe (secondary): request mgf=MGF1-SHA1 with hashAlg=SHA256 (legal but
   unusual). Often refused -> not_operational; if honored/substituted, recover the
   actual MGF.

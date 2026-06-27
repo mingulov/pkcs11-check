@@ -28,10 +28,10 @@ TEMPLATE_SHAPE_REJECTS: tuple[int, ...] = (
 )
 
 # G3: key types for which a CKA_VALUE_LEN variant is permitted in a C_UnwrapKey template.
-# Restricted to CKK_GENERIC_SECRET: NSS *requires* CKA_VALUE_LEN for a variable-length generic
-# secret, while modules that derive the length from the blob (softhsm2/opencryptoki) reject it
-# as CKR_ATTRIBUTE_READ_ONLY. For CKK_AES, softhsm2 rejects CKA_VALUE_LEN outright (probed
-# 2026-06-09) and opencryptoki does not require it, so AES is deliberately excluded.
+# Restricted to CKK_GENERIC_SECRET: some modules *require* CKA_VALUE_LEN for a variable-length
+# generic secret, while modules that derive the length from the blob reject it as
+# CKR_ATTRIBUTE_READ_ONLY. For CKK_AES, some modules reject CKA_VALUE_LEN outright (probed
+# 2026-06-09) and others do not require it, so AES is deliberately excluded.
 VALUE_LEN_ON_UNWRAP_OK: frozenset[int] = frozenset({int(CKK_GENERIC_SECRET)})
 
 # G3: mechanisms whose recovered length is unambiguously determined, so a supplied

@@ -81,8 +81,8 @@ from pkcs11_check.raw.types_std import (
 #   - C_SignInit lenient (CKR_OK), C_Sign refuses     -> safe deviation  (xfail)
 #   - C_SignInit lenient (CKR_OK), C_Sign PRODUCES sig-> usable wrong-key op (fail)
 #   - either call crashes                             -> signal death    (fail)
-# softhsm2 takes the safe-deviation path (SignInit CKR_OK, C_Sign CKR_GENERAL_ERROR);
-# kryoptic/NSS/opencryptoki reject at init. PKCS#11 5.2 prefers
+# Some modules take the safe-deviation path (SignInit CKR_OK, C_Sign CKR_GENERAL_ERROR);
+# others reject at init. PKCS#11 5.2 prefers
 # CKR_KEY_TYPE_INCONSISTENT at C_SignInit, but a late-but-safe refusal is a
 # recorded deviation, not a forgery.
 try:

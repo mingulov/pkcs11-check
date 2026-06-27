@@ -67,7 +67,7 @@ _OAEP_REFUSED = (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_ARGUMENTS_BAD,
     # Module-operational-failure codes: advertised OAEP but the imported key
-    # handle / size / type is not usable for the op (e.g. craton imports the key
+    # handle / size / type is not usable for the op (e.g. a module imports the key
     # CKR_OK then rejects the handle on C_Encrypt/C_Decrypt). Aligns with the
     # framework's MODULE_VERIFY_UNUSABLE_RVS -> not_operational (xfail), never a
     # raw hard fail.

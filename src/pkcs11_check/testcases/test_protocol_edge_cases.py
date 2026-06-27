@@ -77,9 +77,9 @@ class TestResourceExhaustion:
     def test_generate_random_large(self, p11_raw_session: Any) -> None:
         """Generate large random (1MB). Must not crash or hang.
 
-        NSS deviation: NSS returns CKR_ARGUMENTS_BAD for C_GenerateRandom
-        requests larger than approximately 32KB -- NSS has an internal size
-        limit on single random generation calls.
+        Some modules return CKR_ARGUMENTS_BAD for large C_GenerateRandom
+        requests -- they have an internal size limit on single random
+        generation calls.
         """
         rs = p11_raw_session
         from pkcs11_check.testcases.conftest import skip_unless_generate_random_supported

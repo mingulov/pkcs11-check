@@ -159,8 +159,8 @@ class TestAESWrapUnwrapUse:
             target = 0
 
             # Unwrap and decrypt to verify key material was preserved.
-            # CKA_CLASS is required by PKCS#11 spec for C_UnwrapKey -- Kryoptic
-            # returns CKR_TEMPLATE_INCONSISTENT when it is absent.
+            # CKA_CLASS is required by PKCS#11 spec for C_UnwrapKey --
+            # some modules return CKR_TEMPLATE_INCONSISTENT when it is absent.
             unwrapped_key = unwrap_key(
                 rs.raw,
                 rs.sh,
@@ -228,8 +228,8 @@ class TestECDHDerivedKeyUse:
 
             ecdh_param = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=peer_point)
 
-            # CKA_CLASS is required by PKCS#11 spec for C_DeriveKey -- Kryoptic
-            # returns CKR_TEMPLATE_INCONSISTENT when it is absent.
+            # CKA_CLASS is required by PKCS#11 spec for C_DeriveKey --
+            # some modules return CKR_TEMPLATE_INCONSISTENT when it is absent.
             derived = derive_key(
                 rs.raw,
                 rs.sh,
@@ -295,8 +295,8 @@ class TestHKDFDerivedKeyUse:
             from pkcs11_check.raw.types_std import CKM_HKDF_KEY_GEN
 
             # Generate HKDF base key using CKM_HKDF_KEY_GEN + CKK_HKDF.
-            # Using CKM_GENERIC_SECRET_KEY_GEN with CKK_HKDF fails on Kryoptic
-            # with CKR_TEMPLATE_INCONSISTENT -- the HKDF keygen mechanism is
+            # Using CKM_GENERIC_SECRET_KEY_GEN with CKK_HKDF fails on some modules
+            # with CKR_TEMPLATE_INCONSISTENT -- the HKDF keygen mechanism may be
             # required for this key type.
             hkdf_attrs: dict[int, Any] = {
                 CKA_KEY_TYPE: CKK_HKDF,
@@ -331,8 +331,8 @@ class TestHKDFDerivedKeyUse:
                 info=b"pkcs11-check lifecycle test",
             )
 
-            # CKA_CLASS is required by PKCS#11 spec for C_DeriveKey -- Kryoptic
-            # returns CKR_TEMPLATE_INCONSISTENT when it is absent.
+            # CKA_CLASS is required by PKCS#11 spec for C_DeriveKey --
+            # some modules return CKR_TEMPLATE_INCONSISTENT when it is absent.
             derived = derive_key(
                 rs.raw,
                 rs.sh,
@@ -432,8 +432,8 @@ class TestRSAOAEPWrapLifecycle:
             destroy_quietly(rs.raw, rs.sh, target)
             target = 0
 
-            # CKA_CLASS is required by PKCS#11 spec for C_UnwrapKey -- Kryoptic
-            # returns CKR_TEMPLATE_INCONSISTENT when it is absent.
+            # CKA_CLASS is required by PKCS#11 spec for C_UnwrapKey --
+            # some modules return CKR_TEMPLATE_INCONSISTENT when it is absent.
             try:
                 unwrapped_key = unwrap_key(
                     rs.raw,

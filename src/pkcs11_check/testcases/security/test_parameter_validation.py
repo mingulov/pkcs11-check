@@ -115,7 +115,7 @@ _WEAK_PARAM_REJECT_RVS = (
 )
 
 # CKRs that a module may legitimately return when refusing to *generate* a
-# key shape required by a security probe (e.g. tpm2 rejecting session RSA
+# key shape required by a security probe (e.g. some modules rejecting session RSA
 # keys with restrictive attribute policy). The probe targets weak/insecure
 # *operation* parameters, not keygen support; if keygen itself is not
 # operational, the probe is a missing-capability ``skip``, not a ``fail``.

@@ -381,7 +381,7 @@ def _gen_hkdf_base_key(rs: RawSession) -> int:
     """Generate a CKK_HKDF key for use as HKDF base key.
 
     Must use CKM_HKDF_KEY_GEN (not CKM_GENERIC_SECRET_KEY_GEN) with CKK_HKDF.
-    Kryoptic returns CKR_TEMPLATE_INCONSISTENT for any other combination.
+    Some modules return CKR_TEMPLATE_INCONSISTENT for any other combination.
     """
     try:
         from pkcs11_check.raw.types_std import CKM_HKDF_KEY_GEN
@@ -407,7 +407,7 @@ def _gen_hkdf_base_key(rs: RawSession) -> int:
 
 
 # Template for derived AES-128 key.
-# CKA_CLASS is required by PKCS#11 spec for C_DeriveKey -- some modules (Kryoptic)
+# CKA_CLASS is required by PKCS#11 spec for C_DeriveKey -- some modules
 # return CKR_TEMPLATE_INCONSISTENT when it is absent.
 _DERIVED_AES_ATTRS: dict[int, Any] = {
     CKA_CLASS: CKO_SECRET_KEY,
@@ -421,7 +421,7 @@ _DERIVED_AES_ATTRS: dict[int, Any] = {
 }
 
 # Template for derived generic secret key.
-# CKA_CLASS is required by PKCS#11 spec for C_DeriveKey -- some modules (Kryoptic)
+# CKA_CLASS is required by PKCS#11 spec for C_DeriveKey -- some modules
 # return CKR_TEMPLATE_INCONSISTENT when it is absent.
 _DERIVED_GENERIC_ATTRS: dict[int, Any] = {
     CKA_CLASS: CKO_SECRET_KEY,

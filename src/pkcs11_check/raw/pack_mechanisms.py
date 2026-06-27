@@ -138,13 +138,13 @@ def mech_gcm_generated_iv(
     aad: bytes | None = None,
     aad_len: int = 0,
     tag_bits: int = 128,
-    convention: Literal["strict", "aws"] = "strict",
+    convention: Literal["strict", "zeroed"] = "strict",
 ) -> PackedMechanism:
     """Pack CK_AES_GCM_PARAMS for provider-generated IV writeback.
 
-    ``strict`` uses the convention observed by pkcs11-proxy (`ulIvLen=0`,
-    `ulIvBits=N`) while keeping a writable pIv buffer of N bits. ``aws``
-    models AWS CloudHSM callers (`ulIvLen=N`, `ulIvBits=0`) with a zeroized
+    ``strict`` uses the writeback convention `ulIvLen=0`,
+    `ulIvBits=N` while keeping a writable pIv buffer of N bits. ``zeroed``
+    models callers that pass `ulIvLen=N`, `ulIvBits=0` with a zeroized
     writable pIv buffer that the provider may overwrite.
     """
     if iv_len < 0:
@@ -152,8 +152,8 @@ def mech_gcm_generated_iv(
     resolved_iv_bits = iv_len * 8 if iv_bits is None else iv_bits
     if resolved_iv_bits < 0:
         raise ValueError("iv_bits must be non-negative")
-    if convention not in ("strict", "aws"):
-        raise ValueError("convention must be 'strict' or 'aws'")
+    if convention not in ("strict", "zeroed"):
+        raise ValueError("convention must be 'strict' or 'zeroed'")
 
     bit_capacity = (resolved_iv_bits + 7) // 8
     iv_buf_len = max(iv_len, bit_capacity)

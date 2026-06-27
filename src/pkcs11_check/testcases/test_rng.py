@@ -21,7 +21,7 @@ pytestmark = pytest.mark.security
 def _skip_if_rng_not_operational(p11_session: Any) -> None:
     """Skip every RNG test when C_GenerateRandom is advertised-but-not-operational.
 
-    cryptech/corepkcs11 return CKR_FUNCTION_FAILED; some proxies return
+    some modules return CKR_FUNCTION_FAILED; some proxies return
     CKR_FUNCTION_NOT_SUPPORTED. Probing once avoids cascading the rejection
     into every statistical check.
     """

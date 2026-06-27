@@ -7,8 +7,8 @@ Each test generates an ML-DSA key pair (per parameter set), signs a message
 from the benchmark list, and verifies the resulting signature.  This confirms
 the sign+verify path is internally consistent across all three ML-DSA sizes.
 
-Requires: PKCS#11 v3.2 module with ML_DSA support (e.g., Kryoptic).
-SoftHSM2 (v2.40) skips all tests - it has no ML-DSA support.
+Requires: PKCS#11 v3.2 module with ML_DSA support.
+Modules without ML-DSA support skip all tests.
 """
 
 from __future__ import annotations

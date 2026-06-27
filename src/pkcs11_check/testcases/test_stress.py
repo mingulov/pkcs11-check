@@ -137,9 +137,9 @@ def _verify_or_xfail(rs: Any, public_key: int, data: bytes, signature: bytes) ->
 class TestMultiSessionConcurrency:
     """Test concurrent operations across multiple sessions.
 
-    NOTE: Many PKCS#11 modules (including SoftHSM2) have limited thread
-    safety. These tests verify the module doesn't crash under concurrency,
-    even if some operations fail.
+    NOTE: Many PKCS#11 modules have limited thread safety. These tests
+    verify the module doesn't crash under concurrency, even if some
+    operations fail.
     """
 
     def test_sequential_multi_session(

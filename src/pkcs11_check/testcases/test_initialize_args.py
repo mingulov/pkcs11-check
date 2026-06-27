@@ -16,7 +16,7 @@ Edge cases the spec calls out:
 
 These tests verify each mode is honored.  Real-module bugs that historically
 appeared here:
-- Some NSS softoken builds segfault when callbacks are supplied without
+- Some module builds segfault when callbacks are supplied without
   `CKF_OS_LOCKING_OK` then concurrent calls follow.
 - Some modules ignore application callbacks silently (return `CKR_OK`
   but use OS locks anyway).

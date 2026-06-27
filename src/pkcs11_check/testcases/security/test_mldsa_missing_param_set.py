@@ -6,8 +6,8 @@ A conformant module must reject a ``C_CreateObject`` template for
 silently creates the param-less key may crash or produce undefined output when
 the module's ML-DSA key-init path attempts to use an uninitialised parameter set.
 
-Note: softhsm2 does not advertise ``CKM_ML_DSA``; this probe is gated behind
-``rs.has_mechanism("ML_DSA")`` and will cleanly skip on that module.
+Note: some modules do not advertise ``CKM_ML_DSA``; this probe is gated behind
+``rs.has_mechanism("ML_DSA")`` and will cleanly skip if not available.
 """
 
 from __future__ import annotations
