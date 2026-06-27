@@ -23,8 +23,7 @@ Known-issue enrichment is driven by a module-issues file resolved in this order:
 
 1. ``--module-issues PATH`` CLI flag
 2. ``PKCS11_CHECK_MODULE_ISSUES`` environment variable
-3. ``<repo-root>/docs/module-issues.md`` (legacy repo-relative fallback)
-4. No enrichment (empty)
+3. No enrichment (empty)
 """
 
 from __future__ import annotations
@@ -109,14 +108,13 @@ def _parse_named(values: list[str] | None, default_provider: str | None) -> dict
     return out
 
 
-def _resolve_module_issues_text(explicit: Path | None, repo_root: Path) -> str:
-    """Resolve module-issues text from explicit path, env var, legacy fallback, or empty.
+def _resolve_module_issues_text(explicit: Path | None) -> str:
+    """Resolve module-issues text from explicit path, env var, or empty.
 
     Resolution order:
     1. ``explicit`` arg (``--module-issues`` CLI flag)
     2. ``PKCS11_CHECK_MODULE_ISSUES`` environment variable
-    3. ``<repo_root>/docs/module-issues.md`` (legacy repo-relative fallback)
-    4. ``""`` (no-op enrichment)
+    3. ``""`` (no-op enrichment)
     """
     candidates: list[Path] = []
     if explicit is not None:
@@ -124,7 +122,6 @@ def _resolve_module_issues_text(explicit: Path | None, repo_root: Path) -> str:
     env_val = os.environ.get("PKCS11_CHECK_MODULE_ISSUES")
     if env_val:
         candidates.append(Path(env_val))
-    candidates.append(repo_root / "docs" / "module-issues.md")
 
     for path in candidates:
         try:
@@ -235,8 +232,7 @@ def main(argv: list[str] | None = None) -> int:
         "--module-issues",
         metavar="PATH",
         help=(
-            "path to module-issues.md for known-issue enrichment "
-            "(overrides PKCS11_CHECK_MODULE_ISSUES env var and the repo-relative default)"
+            "path to a known-issue enrichment file (overrides PKCS11_CHECK_MODULE_ISSUES env var)"
         ),
     )
     args = parser.parse_args(argv)
@@ -247,9 +243,8 @@ def main(argv: list[str] | None = None) -> int:
     report_logs = _parse_named(args.report_log, args.provider)
     results_jsons = _parse_named(args.results_json, args.provider)
 
-    repo_root = Path(__file__).resolve().parents[3]
     explicit_mi = Path(args.module_issues) if args.module_issues else None
-    module_issues = _resolve_module_issues_text(explicit=explicit_mi, repo_root=repo_root)
+    module_issues = _resolve_module_issues_text(explicit=explicit_mi)
 
     provider_groups: dict[str, list[dict[str, Any]]] = {}
     for provider, report_path in report_logs.items():
