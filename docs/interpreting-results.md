@@ -2,6 +2,12 @@
 
 A run collects ~110k+ items per module. Most are **skipped** (mechanism not advertised) and most **xfail** is `not_operational`. A high xfail count is **not** a pile of crypto deviations.
 
+## Why fail counts can also be large
+
+The same systemic amplification that inflates xfail also inflates `fail`: one provider trait can turn into thousands of failed vectors. A single capability gap — for example, a module that mishandles an out-of-range EC curve or key size across an entire vector file — multiplies into thousands of `fail` entries.
+
+Both xfail and fail are recorded findings — a difference from the checked expectation — not defects in pkcs11-check. This is current behavior and may change.
+
 ## `not_operational` is mostly a capability gap, amplified by vector count
 
 The dominant `not_operational` pattern is an advertised **mechanism** (e.g. `CKM_ECDSA`, `CKM_ECDH`, `CKM_RSA_PKCS`) exercised with an **unsupported curve or key size** (brainpoolP224r1, Montgomery, RSA-1024). PKCS#11 has no per-curve capability flag, so the harness can only discover this by trying; a clean rejection of an unsupported curve is conformant, but it is recorded as a deviation and multiplied by the entire wycheproof/ACVP vector file — so one capability gap becomes thousands of `not_operational` xfails (the same curve produced the identical ~12k count across unrelated modules).

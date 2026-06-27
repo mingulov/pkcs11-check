@@ -1,16 +1,45 @@
 # pkcs11-check
 
-CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pytest plugin.
+See how any PKCS#11 module really behaves — a broad, vendor-neutral test client
+for providers, HSMs, tokens, and cloud KMS.
 
-## What it does
+## What this is
 
-pkcs11-check runs comprehensive tests against PKCS#11 modules (hardware HSMs, software tokens, smart cards). It catches:
+pkcs11-check is a broad, vendor-neutral test client for any PKCS#11 module —
+software tokens, HSMs, smart cards, cloud-KMS bridges, and internal or
+proprietary providers. It drives the module through >100k behavioral checks — a
+large hand-written suite of spec-conformance, CKR/API-negative, security, and
+fuzz tests, plus the major public crypto vector corpora (Wycheproof, NIST ACVP,
+CCTV, x509-limbo) — all with crash-survival, and shows what it supports, where it
+diverges from the spec or its peers, and where it breaks.
 
-- **Crashes and segfaults** — per-file subprocess isolation recovers from SIGSEGV
-- **CKR return code violations** — different spec conditions checked against OASIS PKCS#11 standard
-- **CVE regressions** — tests for known CVEs across NSS, SoftHSM2, TPM2, OpenCryptoki
-- **Security policy violations** — Tookan paper vectors, attribute fuzzing, padding oracle detection
-- **Interface negotiation bugs** — v2.40/v3.0/v3.1/v3.2 with automatic fallback
+It maximizes coverage instead of stopping at the first incompatibility, and
+records every difference as evidence to investigate and compare — not a verdict.
+Large xfail/fail counts are normal: PKCS#11 cannot express many constraints (for
+example, there is no per-curve capability flag), so one capability gap
+multiplies across thousands of vectors. Both xfail and fail are recorded
+findings — how the module differed from the checked expectation — not defects in
+pkcs11-check. See [docs/interpreting-results.md](docs/interpreting-results.md).
+
+## What it is not
+
+It does not replace your module's own tests — keep those; they are faster and
+know your internals. Think of pkcs11-check as an extra, exceptionally wide
+external client that exercises your module the way the real world will. It is not
+a compliance certification (no FIPS/CC), and its findings are hardening
+observations under a software-token threat model — not CVE claims against any
+project.
+
+## Who it's for
+
+- **Building a PKCS#11 module?** Point pkcs11-check at it during development for a
+  broad, independent second opinion on how it behaves (it complements your own
+  unit tests, it does not replace them).
+- **Adopting or migrating?** Validate a module before you deploy, and confirm
+  parity when you switch providers, versions, or loaders
+  (`pkcs11-check compare-results` / `pkcs11-check compare-coverage`).
+- **Maintaining or comparing providers?** Produce reproducible behavioral
+  evidence to compare and discuss.
 
 ## Quick start
 
@@ -21,7 +50,7 @@ cd pkcs11-check
 uv sync
 
 # Run against any PKCS#11 module you provide
-uv run pkcs11-check test --p11-module /path/to/module.so --p11-pin 1234
+uv run pkcs11-check test --module /path/to/module.so --pin 1234
 ```
 
 (See "First run in 60 seconds" below for a complete SoftHSM2 example. Provider
@@ -104,7 +133,9 @@ Test categories:
 | Security | Attribute fuzz, Tookan, handle reuse |
 | Stress | Threading, resource exhaustion |
 
-## Supported modules
+## Validation snapshot
+
+These are the modules used in the current validation snapshot — pkcs11-check runs against **any** PKCS#11 module. Versions are current and may change.
 
 | Module | Version | Status |
 |--------|---------|--------|
@@ -118,7 +149,7 @@ Test categories:
 | wolfPKCS11 | 2.0.0-stable / master | Docker only |
 | corePKCS11 | 3.6.4 | Docker only |
 
-## Known limitations in v0.1.0
+## Known limitations
 
 - SO login is not implemented yet, so trusted-certificate import with
   `CKA_TRUSTED=True` is not fully covered through `CKU_SO` workflows.
@@ -149,12 +180,11 @@ src/pkcs11_check/
 
 ## Documentation
 
+- `docs/interpreting-results.md` — what the pass/xfail/fail/skip counts mean (read this first)
 - `docs/architecture.md` — codebase structure and test writing guide
 - `docs/commands.md` — build, test, and Docker commands
-- `docs/module-issues.md` — per-module bugs and quirks
 - `docs/test-universe.md` — collected product-test counts by group
 - `docs/mechanism-output-parameters.md` — generated IV/nonce/tag output-parameter coverage
-- `docs/cve-regression.md` — CVE coverage tracker
 - `docs/file-isolation.md` — isolation runner design
 
 ## License
