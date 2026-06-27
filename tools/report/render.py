@@ -43,7 +43,9 @@ def _counts(groups: list[dict[str, Any]]) -> dict[str, int]:
     return out
 
 
-def _counts_line(groups: list[dict[str, Any]], pass_count: int | None) -> str:
+def _counts_line(
+    groups: list[dict[str, Any]], pass_count: int | None, crash_limited: int = 0
+) -> str:
     c = _counts(groups)
     parts: list[str] = []
     if pass_count is not None:
@@ -51,6 +53,8 @@ def _counts_line(groups: list[dict[str, Any]], pass_count: int | None) -> str:
     parts.append(f"xfail {c['xfail']}")
     parts.append(f"fail {c['fail']}")
     parts.append(f"crash {c['crash']}")
+    if crash_limited:
+        parts.append(f"crash_limited {crash_limited}")
     return " · ".join(parts)
 
 
@@ -155,18 +159,30 @@ def _oneliner_section(groups: list[dict[str, Any]]) -> list[str]:
 
 
 def render_provider(
-    provider: str, groups: list[dict[str, Any]], pass_count: int | None = None
+    provider: str,
+    groups: list[dict[str, Any]],
+    pass_count: int | None = None,
+    *,
+    crash_limited: int = 0,
+    incomplete: bool = False,
 ) -> str:
     """Render the compact-enriched markdown report for one provider.
 
     ``pass_count`` is optional; when ``None`` the ``passed`` token is omitted from
-    the counts line.
+    the counts line.  ``crash_limited`` adds a ``crash_limited N`` token when > 0.
+    ``incomplete`` emits an ``⚠ INCOMPLETE COVERAGE`` banner when ``True``.
     """
     out: list[str] = [
         f"# {provider} — conformance report",
-        _counts_line(groups, pass_count),
+        _counts_line(groups, pass_count, crash_limited),
         "",
     ]
+    if incomplete:
+        out.append(
+            f"> ⚠ INCOMPLETE COVERAGE: {crash_limited} tests abandoned"
+            " (per-file crash limit). Coverage is partial; re-run to probe them."
+        )
+        out.append("")
 
     # crash findings render as a CRITICAL-style block first (most actionable).
     crashes = [g for g in groups if g.get("reason") == "crash"]

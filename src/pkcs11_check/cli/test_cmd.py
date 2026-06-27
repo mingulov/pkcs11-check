@@ -230,11 +230,11 @@ def test_command(
         rich_help_panel="Isolation",
     ),
     max_crashes_per_file: int = typer.Option(
-        3,
+        10,
         "--max-crashes-per-file",
         min=0,
         help="In test/auto isolation, skip remaining tests from a file after this many crashes "
-        "(0 = unlimited)",
+        "(0 = unlimited; default 10). Abandoned tests are reported as crash_limited.",
         rich_help_panel="Isolation",
     ),
     rv_trace: bool = typer.Option(

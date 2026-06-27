@@ -25,22 +25,14 @@ from rich.console import Console
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.preflight import load_manifest
 from pkcs11_check.core.quality_audit import build_quality_audit
+from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS, compute_child_subprocess_counts
 from pkcs11_check.core.test_selection import extract_required_mechanisms, write_deselect_file
 
 IsolationGranularity = Literal["file", "test"]
 RunnerGranularity = Literal["file", "test", "mixed"]
 CrashStatus = Literal["crashed", "timeout"]
 _RESUME_COMPLETE_STATUSES = {"passed", "empty", "escalated", "crash_limited"}
-_DETAIL_COUNT_KEYS = (
-    "passed",
-    "failed",
-    "skipped",
-    "xfailed",
-    "xpassed",
-    "error",
-    "crashed",
-    "timeout",
-)
+_DETAIL_COUNT_KEYS = RESULT_OUTCOME_KEYS
 _SPECIAL_DETAIL_OUTCOMES = {"crashed", "timeout", "passed-in-isolation"}
 _MAX_TIMEOUT_RETRIES = 3
 # Exit code when the selection (module/marker/match/path) collected ZERO tests:
@@ -585,7 +577,7 @@ def _synthetic_file_skip_detail(
 
 
 def _special_test_entry_from_result(result: FileRunResult) -> dict[str, Any] | None:
-    if result.status not in {"crashed", "timeout"} or "::" not in result.target:
+    if result.status not in {"crashed", "timeout", "crash_limited"} or "::" not in result.target:
         return None
 
     entry: dict[str, Any] = {
@@ -594,6 +586,8 @@ def _special_test_entry_from_result(result: FileRunResult) -> dict[str, Any] | N
         "duration": result.duration_s,
     }
     flat = result.stderr.strip() or result.stdout.strip()
+    if not flat and result.status == "crash_limited":
+        flat = "abandoned: per-file crash limit reached"
     if flat:
         entry["longrepr"] = flat
     if result.stdout.strip():
@@ -624,7 +618,7 @@ def _merge_special_entries_into_detail(
             continue
         merged["tests"].append(dict(entry))
         existing.add(key)
-        if outcome in {"crashed", "timeout"}:
+        if outcome in {"crashed", "timeout", "crash_limited"}:
             merged["counts"][outcome] += 1
 
     return merged
@@ -765,16 +759,7 @@ def _build_isolated_json_payload(
 ) -> dict[str, Any]:
     details = per_unit_details or {}
 
-    summary: dict[str, int] = {
-        "passed": 0,
-        "failed": 0,
-        "skipped": 0,
-        "xfailed": 0,
-        "xpassed": 0,
-        "error": 0,
-        "crashed": 0,
-        "timeout": 0,
-    }
+    summary: dict[str, int] = {key: 0 for key in RESULT_OUTCOME_KEYS}
 
     grouped = _group_results_by_file(state.results, details)
     units_out: list[dict[str, Any]] = []
@@ -828,7 +813,11 @@ def _build_isolated_json_payload(
 
         units_out.append(unit)
 
-    summary["total"] = sum(summary.values())
+    summary["total"] = sum(summary[key] for key in RESULT_OUTCOME_KEYS)
+    child_crash, child_timeout = compute_child_subprocess_counts(units_out)
+    summary["child_crash"] = child_crash
+    summary["child_timeout"] = child_timeout
+    summary["incomplete"] = summary["crash_limited"] > 0
 
     payload: dict[str, Any] = {
         "tool": "pkcs11-check",
@@ -1848,7 +1837,11 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
             unit["compliance_notes"] = compliance_notes
         units.append(unit)
 
-    summary["total"] = sum(summary.values())
+    summary["total"] = sum(summary[key] for key in RESULT_OUTCOME_KEYS)
+    child_crash, child_timeout = compute_child_subprocess_counts(units)
+    summary["child_crash"] = child_crash
+    summary["child_timeout"] = child_timeout
+    summary["incomplete"] = summary["crash_limited"] > 0
     payload = {
         "tool": "pkcs11-check",
         "kind": "test-run",
