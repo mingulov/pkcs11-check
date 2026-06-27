@@ -21,16 +21,16 @@ broken local test code from being counted as provider evidence.
 ## Running the suite against a module
 
 ```bash
-uv run pkcs11-check test --p11-module /path/to/module.so --p11-pin 1234
+uv run pkcs11-check test --module /path/to/module.so --pin 1234
 ```
 
 ### Test profiles (marker selection)
 
 ```bash
-uv run pkcs11-check test --p11-module <so> -m smoke                              # ~27 tests, ~5s
-uv run pkcs11-check test --p11-module <so> -m "not (wycheproof or acvp or cctv or stress or fuzz or slow)"  # ~2300 tests, ~30s
-uv run pkcs11-check test --p11-module <so> -m "wycheproof or acvp or cctv"       # ~72K vectors only
-uv run pkcs11-check test --p11-module <so>                                        # full: ~75K tests
+uv run pkcs11-check test --module <so> --marker smoke                            # ~27 tests, ~5s
+uv run pkcs11-check test --module <so> --marker "not (wycheproof or acvp or cctv or stress or fuzz or slow)"  # ~2300 tests, ~30s
+uv run pkcs11-check test --module <so> --marker "wycheproof or acvp or cctv"     # ~72K vectors only
+uv run pkcs11-check test --module <so>                                           # full: ~75K tests
 ```
 
 ### Fast vs full: long-running test cases (`slow`)
@@ -42,9 +42,9 @@ are thousands of fast cases and stay in the basic run). The `pkcs11-check test`
 command has convenience flags:
 
 ```bash
-uv run pkcs11-check test -m <module> --skip-slow   # basic/fast: -m "not slow"
-uv run pkcs11-check test -m <module> --only-slow   # only the long-running cases
-uv run pkcs11-check test -m <module>               # full: everything (default)
+uv run pkcs11-check test --module <so> --skip-slow   # basic/fast: -m "not slow"
+uv run pkcs11-check test --module <so> --only-slow   # only the long-running cases
+uv run pkcs11-check test --module <so>               # full: everything (default)
 ```
 
 `--skip-slow`/`--only-slow` compose with `--marker` (e.g. `--marker acvp
@@ -85,6 +85,9 @@ uv run pkcs11-check compare-results base.json curr.json --no-fail # report witho
 previously-exercised target, an increase in the failure or crash/timeout count, or an
 unrecognized unit status) — use it for release sign-off and before trusting a refactor.
 
+For a worked end-to-end example — build two SoftHSM2 versions in Docker and diff them with
+`compare-results` and `compare-coverage` — see [docker-examples.md](docker-examples.md).
+
 ## Per-provider classification report
 
 Roll at-source classifications (and runner-side crash findings) up into per-provider
@@ -106,7 +109,3 @@ forms, for crash/timeout findings), `--provider` (names the provider for the sin
 form), `--out` (output directory). Writes `<provider>.md` + `<provider>.jsonl` per provider, and
 `_index.md` + `_universal.md` when more than one provider is given. See
 [../tools/report/README.md](../tools/report/README.md).
-
-## Provider builds & the Docker test matrix
-
-The Docker target matrix and the pooled `test_pool.py` runner live in the **development workspace** (`pkcs11-check-ws`), not in this repo. See the workspace docs for building providers and running the Docker conformance matrix.
