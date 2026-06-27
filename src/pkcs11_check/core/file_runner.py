@@ -25,7 +25,7 @@ from rich.console import Console
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.preflight import load_manifest
 from pkcs11_check.core.quality_audit import build_quality_audit
-from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS
+from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS, compute_child_subprocess_counts
 from pkcs11_check.core.test_selection import extract_required_mechanisms, write_deselect_file
 
 IsolationGranularity = Literal["file", "test"]
@@ -814,6 +814,10 @@ def _build_isolated_json_payload(
         units_out.append(unit)
 
     summary["total"] = sum(summary[key] for key in RESULT_OUTCOME_KEYS)
+    child_crash, child_timeout = compute_child_subprocess_counts(units_out)
+    summary["child_crash"] = child_crash
+    summary["child_timeout"] = child_timeout
+    summary["incomplete"] = summary["crash_limited"] > 0
 
     payload: dict[str, Any] = {
         "tool": "pkcs11-check",
@@ -1834,6 +1838,10 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
         units.append(unit)
 
     summary["total"] = sum(summary[key] for key in RESULT_OUTCOME_KEYS)
+    child_crash, child_timeout = compute_child_subprocess_counts(units)
+    summary["child_crash"] = child_crash
+    summary["child_timeout"] = child_timeout
+    summary["incomplete"] = summary["crash_limited"] > 0
     payload = {
         "tool": "pkcs11-check",
         "kind": "test-run",

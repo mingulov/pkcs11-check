@@ -5119,3 +5119,53 @@ def test_load_available_mechanisms_from_manifest(tmp_path: Path) -> None:
 def test_load_available_mechanisms_no_manifest() -> None:
     result = _load_available_mechanisms(["--p11-module", "/lib/mod.so"])
     assert result is None
+
+
+def test_child_metrics_and_incomplete_excluded_from_total() -> None:
+    # Two test-level results so _group_results_by_file uses the test-level grouping
+    # path (has_test_level=True): test_x ran and failed (child-crash marker),
+    # test_b was abandoned as crash_limited (triggers incomplete=True).
+    state = FileRunState(
+        units=["t.py"],
+        fingerprint="abc",
+        results=[
+            FileRunResult(target="t.py::test_x", status="failed", returncode=1, duration_s=0.1),
+            FileRunResult(
+                target="t.py::test_b", status="crash_limited", returncode=0, duration_s=0.0
+            ),
+        ],
+    )
+    # inject a failed test bearing a child-crash marker via per_unit_details;
+    # key matches r.target in the per-result detail lookup
+    details: dict[str, Any] = {
+        "t.py::test_x": {
+            "counts": {"failed": 1},
+            "tests": [
+                {
+                    "nodeid": "t.py::test_x",
+                    "outcome": "failed",
+                    "longrepr": "module crashed with signal 11",
+                },
+            ],
+        }
+    }
+    payload = _build_isolated_json_payload(state, per_unit_details=details)
+    s = payload["summary"]
+    assert s["child_crash"] == 1
+    assert s["child_timeout"] == 0
+    assert s["incomplete"] is True  # crash_limited > 0
+    # child_* must NOT inflate total
+    assert s["total"] == sum(
+        s[k]
+        for k in (
+            "passed",
+            "failed",
+            "skipped",
+            "xfailed",
+            "xpassed",
+            "error",
+            "crashed",
+            "timeout",
+            "crash_limited",
+        )
+    )
