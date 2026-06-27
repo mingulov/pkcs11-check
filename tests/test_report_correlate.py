@@ -1,10 +1,10 @@
-"""Tests for tools.report.correlate — cross-provider themes + enrichment."""
+"""Tests for pkcs11_check.report.correlate — cross-provider themes + enrichment."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from tools.report.correlate import correlate, enrich
+from pkcs11_check.report.correlate import correlate, enrich
 
 
 def _group(**over: Any) -> dict[str, Any]:

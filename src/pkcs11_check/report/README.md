@@ -1,8 +1,8 @@
-# tools.report - per-provider classification reports
+# pkcs11_check.report - per-provider classification reports
 
 Rolls the **at-source classifications** emitted by the test suite (see
-[`pkcs11_check.classification`](../../src/pkcs11_check/classification.py) and
-[docs/architecture.md](../../docs/architecture.md) "At-source test-outcome classification") up into
+[`pkcs11_check.classification`](../classification.py) and
+[docs/architecture.md](../../../docs/architecture.md) "At-source test-outcome classification") up into
 human-readable, severity-first conformance reports - one per provider, plus cross-provider
 correlation when several providers are passed.
 
@@ -40,8 +40,8 @@ report.jsonl + results.json
   and flags the soft-token padding-oracle caveat. `correlate()` finds *universal themes* - the same
   `(reason, kind, mechanism)` signature seen across two or more providers - plus single-provider
   *outliers*.
-- **CLI** (`__main__.py`) - `python -m tools.report`; flags and usage in
-  [docs/commands.md](../../docs/commands.md) "Per-provider classification report".
+- **CLI** (`__main__.py`) - `pkcs11-check-report` (also `python -m pkcs11_check.report`); flags and
+  usage in [docs/commands.md](../../../docs/commands.md) "Per-provider classification report".
 
 ## Record schema
 

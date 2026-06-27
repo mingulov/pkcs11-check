@@ -239,12 +239,12 @@ never fabricated).
   synthetic `reason="unclassified"` record auto-injected, so coverage is always 100% and the
   remaining bare-assert tail shows up as a visible backlog rather than silently uncovered.
 
-### Report generator (`tools/report/`)
+### Report generator (`pkcs11_check.report` / `pkcs11-check-report`)
 
 Rolls the records up into per-provider reports: `<provider>.md` (compact, severity-first, grouped by
 `kind`) + `<provider>.jsonl` (one enriched group per line); with more than one
 provider it also writes `_index.md` (counts table + top themes) and `_universal.md` (cross-provider
-correlation). See [../tools/report/README.md](../tools/report/README.md) and
+correlation). See [../src/pkcs11_check/report/README.md](../src/pkcs11_check/report/README.md) and
 [commands.md](commands.md) for invocation.
 
 ## PKCS#11 Specification

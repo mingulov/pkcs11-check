@@ -1,6 +1,6 @@
-"""Tests for optional/path-configurable module-issues enrichment in tools/report."""
+"""Tests for optional/path-configurable module-issues enrichment in pkcs11_check.report."""
 
-from tools.report.__main__ import _resolve_module_issues_text  # new helper
+from pkcs11_check.report.__main__ import _resolve_module_issues_text
 
 
 def test_module_issues_absent_is_empty(tmp_path, monkeypatch):
