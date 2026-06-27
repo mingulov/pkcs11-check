@@ -226,9 +226,3 @@ Rolls the records up into per-provider reports: `<provider>.md` (compact, severi
 provider it also writes `_index.md` (counts table + top themes) and `_universal.md` (cross-provider
 correlation). See [../src/pkcs11_check/report/README.md](../src/pkcs11_check/report/README.md) and
 [commands.md](commands.md) for invocation.
-
-## PKCS#11 Specification
-
-OASIS spec in Markdown is not vendored in this repository. When working from a local checkout of
-the OASIS PKCS#11 spec, useful files include `rsa.md`, `aes.md`, `elliptic_curves.md`,
-`ml_dsa.md`, `slh-dsa.md`, `session_mgmt_functions.md`, and `function_return_values.md`.

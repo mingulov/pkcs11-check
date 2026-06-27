@@ -4,7 +4,7 @@ Covers CKM_ECDSA_SHA1, CKM_ECDSA_SHA224, and CKM_ECDSA_SHA3_* mechanisms.
 Basic CKM_ECDSA (raw) is tested in test_sign.py.
 Uses the raw PKCS#11 API via pkcs11_check.raw.
 
-OASIS spec: elliptic_curves.md
+OASIS PKCS#11 v3.2 spec: elliptic curves.
 """
 
 from __future__ import annotations

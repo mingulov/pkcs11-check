@@ -3,7 +3,7 @@
 Covers CKM_RSA_X9_31, CKM_RSA_X9_31_KEY_PAIR_GEN, CKM_RSA_AES_KEY_WRAP,
 and CKM_RSA_PKCS_OAEP_TPM_1_1.
 
-OASIS spec: rsa.md
+OASIS PKCS#11 v3.2 spec: RSA.
 """
 
 from __future__ import annotations

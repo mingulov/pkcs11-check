@@ -132,9 +132,10 @@ def _san_only_cert_der() -> bytes:
 
 def _minimal_cert_template(der: bytes) -> dict[int, Any]:
     """A spec-INCOMPLETE cert template that OMITS the mandatory CKA_SUBJECT (CKA_VALUE only).
-    Per certificate_objects.md, CKA_SUBJECT footnote ^1^ MUST be specified at creation, so a
-    conformant module rejects this with CKR_TEMPLATE_INCOMPLETE. Used by the negative
-    conformance test and as the probe's last-resort fallback."""
+    Per the OASIS PKCS#11 certificate-objects spec, CKA_SUBJECT footnote ^1^ MUST be
+    specified at creation, so a conformant module rejects this with
+    CKR_TEMPLATE_INCOMPLETE. Used by the negative conformance test and as the probe's
+    last-resort fallback."""
     return {CKA_CLASS: CKO_CERTIFICATE, CKA_CERTIFICATE_TYPE: CKC_X_509, CKA_VALUE: der}
 
 

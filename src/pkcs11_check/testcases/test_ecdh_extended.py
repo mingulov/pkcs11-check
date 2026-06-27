@@ -6,7 +6,7 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 
 Basic CKM_ECDH1_DERIVE is tested in test_kdf.py.
 
-OASIS spec: elliptic_curves.md
+OASIS PKCS#11 v3.2 spec: elliptic curves.
 """
 
 from __future__ import annotations

@@ -203,7 +203,7 @@ class TestCurveCategories:
 class TestWeierstrassEcPointDer:
     """Weierstrass (CKK_EC) curves: EC point is DER OCTET STRING wrapping 0x04||x||y.
 
-    Per OASIS elliptic_curves.md: CKA_EC_POINT is DER-encoding of ANSI X9.62
+    Per the OASIS PKCS#11 elliptic-curves spec: CKA_EC_POINT is DER-encoding of ANSI X9.62
     ECPoint value Q.
     """
 

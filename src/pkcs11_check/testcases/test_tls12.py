@@ -11,7 +11,7 @@ the raw packers in pkcs11_check.raw.pack provide proper struct packing for.
 Availability is tested on all modules; full operational tests xfail because
 most tokens do not implement these mechanisms.
 
-OASIS spec: tls_1.2_mechanisms.md
+OASIS PKCS#11 v3.2 spec: TLS 1.2 mechanisms.
 """
 
 from __future__ import annotations

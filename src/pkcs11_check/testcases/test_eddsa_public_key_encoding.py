@@ -53,8 +53,7 @@ def test_eddsa_public_key_encoding_support(p11_raw_session: Any) -> None:
                 "EdDSA public-key import also accepts DER-wrapped CKA_EC_POINT",
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference=(
-                    "OASIS PKCS#11 elliptic_curves.md: CKK_EC_EDWARDS "
-                    "CKA_EC_POINT uses raw RFC 8032 bytes"
+                    "OASIS PKCS#11 v3.2 spec: CKK_EC_EDWARDS CKA_EC_POINT uses raw RFC 8032 bytes"
                 ),
             )
         return

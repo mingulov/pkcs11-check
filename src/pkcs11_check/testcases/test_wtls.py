@@ -9,7 +9,7 @@ specification. These mechanisms are rarely supported by modern tokens and tests
 will mostly skip. The raw packers in pkcs11_check.raw.pack provide proper
 struct packing for WTLS parameter structures.
 
-OASIS spec: wtls.md
+OASIS PKCS#11 v3.2 spec: WTLS.
 """
 
 from __future__ import annotations

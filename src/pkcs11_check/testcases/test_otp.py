@@ -13,7 +13,7 @@ Also covers CT-KIP key derivation/wrapping/MAC mechanisms:
 These mechanisms are rarely supported by software HSMs. All tests check
 mechanism availability and skip cleanly when not supported.
 
-OASIS spec: otp_mechanisms.md, ct-kip.md
+OASIS PKCS#11 v3.2 spec: OTP mechanisms and CT-KIP.
 """
 
 from __future__ import annotations

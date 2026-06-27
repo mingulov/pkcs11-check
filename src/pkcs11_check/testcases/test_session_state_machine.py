@@ -1,7 +1,7 @@
 """Session state machine verification tests.
 
-Verifies PKCS#11 session state transitions per OASIS spec
-session_mgmt_functions.md - login states, session flags, concurrent
+Verifies PKCS#11 session state transitions per the OASIS spec
+session-management functions - login states, session flags, concurrent
 session behavior, and logout effects.
 
 States:
@@ -976,8 +976,8 @@ class TestSessionContextManager:
         """Opening and closing a session works cleanly.
 
         After closing a session, operations on the stale handle must return
-        CKR_SESSION_HANDLE_INVALID or CKR_SESSION_CLOSED per PKCS#11 spec
-        session_mgmt_functions.md.
+        CKR_SESSION_HANDLE_INVALID or CKR_SESSION_CLOSED per the PKCS#11 spec
+        session-management functions.
 
         Observed deviation: some modules return CKR_OK on C_GenerateRandom with a stale
         session handle (handle reuse or session ID recycling).
@@ -1000,7 +1000,7 @@ class TestSessionContextManager:
                 "C_GenerateRandom returned CKR_OK on a closed session handle "
                 "(spec requires CKR_SESSION_HANDLE_INVALID or CKR_SESSION_CLOSED)",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 spec session_mgmt_functions.md",
+                reference="PKCS#11 spec session-management functions",
             )
             fail_as(
                 "self_contradiction",

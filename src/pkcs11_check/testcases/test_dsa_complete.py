@@ -5,7 +5,7 @@ and CKM_DSA_PARAMETER_GEN.
 
 Note: CKM_DSA_KEY_PAIR_GEN is already tested in test_sign.py.
 
-OASIS spec: dsa.md
+OASIS PKCS#11 v3.2 spec: DSA.
 """
 
 from __future__ import annotations

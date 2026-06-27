@@ -5,7 +5,7 @@ Each CkrExpectation maps a (function, error condition) pair to:
 - A broader acceptable error tuple for compat mode
 - A reference to the OASIS spec section
 
-Source of truth: https://github.com/oasis-tcs/pkcs11.git working/doc/spec/
+Source of truth: the published OASIS PKCS#11 v3.2 specification.
 
 All CKR codes are represented as integers from pkcs11_check.raw.types_std.
 Tests check raw CK_RV return values, not exception types.

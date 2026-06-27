@@ -6,7 +6,7 @@ and CKM_SP800_108_DOUBLE_PIPELINE_KDF.
 These mechanisms derive keys using a PRF (typically HMAC-SHA256) in
 different iteration modes defined by NIST SP 800-108 Rev. 1.
 
-OASIS spec: sp800-108_key_derivation.md
+OASIS PKCS#11 v3.2 spec: SP 800-108 key derivation.
 
 Uses the raw PKCS#11 API via pkcs11_check.raw.
 """

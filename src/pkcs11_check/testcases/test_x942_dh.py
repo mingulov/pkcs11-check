@@ -6,7 +6,7 @@ and CKM_X9_42_MQV_DERIVE.
 
 Classic DH (CKM_DH_PKCS_*) is tested in test_dh_key_agreement.py.
 
-OASIS spec: diffie-hellman.md
+OASIS PKCS#11 v3.2 spec: Diffie-Hellman.
 
 Uses the raw PKCS#11 API via pkcs11_check.raw.
 """

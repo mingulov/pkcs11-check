@@ -7,7 +7,7 @@ IKE (Internet Key Exchange) mechanisms are used in IPsec VPN implementations.
 They use HMAC-based PRFs internally to derive keying material from a shared
 secret and nonce data.
 
-OASIS spec: ike_mechanisms.md
+OASIS PKCS#11 v3.2 spec: IKE mechanisms.
 """
 
 from __future__ import annotations
