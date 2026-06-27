@@ -175,7 +175,7 @@ uv run pkcs11-check state --output json .pkcs11-check-isolation-state.json
 - `--sessions` is ignored in isolated modes.
 - The normal `--timeout` value is still passed through to pytest as per-test timeout.
 - The file runner also has an outer subprocess timeout so a dead file runner does not hang forever.
-- `--max-crashes-per-file` defaults to `3` in `test` and `auto` isolation; `0` disables it.
+- `--max-crashes-per-file` defaults to `10` in `test` and `auto` isolation; `0` disables it.
 - Resume safety checks include the requested units, pytest arguments, relevant environment,
   and file/module metadata. A changed test file or changed module binary invalidates the old state.
 - Adaptive policy keys off backend-relevant inputs only: module/interface/slot/manifest/env, not the

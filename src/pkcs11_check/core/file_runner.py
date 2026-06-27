@@ -2757,7 +2757,7 @@ def run_isolated_pytest_units(
     stop_on_failure: bool,
     console: Console,
     granularity: RunnerGranularity = "file",
-    max_crashes_per_file: int = 3,
+    max_crashes_per_file: int = 10,
 ) -> int:
     """Run pytest units in fresh subprocesses and persist progress."""
     if not units:
