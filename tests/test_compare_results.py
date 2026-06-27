@@ -135,6 +135,7 @@ def test_load_results_reads_statuses_the_writer_produces(tmp_path: Path) -> None
 
     target_map, _summary = load_results(out)
     produced = set(target_map.values())
+    assert produced == set(UNIT_STATUS_PRIORITY)
     # Every produced unit status classifies to a non-"unknown" bucket.
     for s in produced:
         assert status_class(s) != "unknown", f"writer produced unhandled status: {s}"
