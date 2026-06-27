@@ -155,7 +155,7 @@ These are the modules used in the current validation snapshot - pkcs11-check run
   `CKA_TRUSTED=True` is not fully covered through `CKU_SO` workflows.
 - CloudHSM/Thales in-band IV profiles, proxy/loader mutable-parameter
   preservation checks, and broader mutable-output simulator targets are tracked
-  as post-v0.1.0 interop work.
+  as future interop work.
 
 ## Architecture
 

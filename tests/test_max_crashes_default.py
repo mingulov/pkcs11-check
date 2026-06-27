@@ -15,6 +15,6 @@ def test_max_crashes_per_file_runner_default_matches_cli() -> None:
     sig = inspect.signature(file_runner.run_isolated_pytest_units)
     default = sig.parameters["max_crashes_per_file"].default
     assert default == 10, (
-        f"file_runner.run_pytest_units_isolated max_crashes_per_file default is {default!r}, "
+        f"file_runner.run_isolated_pytest_units max_crashes_per_file default is {default!r}, "
         f"expected 10 (must match the CLI --max-crashes-per-file default)"
     )
