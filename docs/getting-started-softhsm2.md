@@ -104,6 +104,13 @@ pkcs11-check test --module /usr/lib/softhsm/libsofthsm2.so --pin 1234 --slot 0 \
     --output json --output-file ./pk-demo/reports/results.json
 ```
 
+## 6. Run it in Docker (optional)
+
+Prefer a container? [docker-examples.md](docker-examples.md) has a self-contained
+SoftHSM2 image you can build and run in one shot, plus an example that compares two
+SoftHSM2 versions (2.6.1 vs 2.7.0) with `pkcs11-check compare-results` and
+`compare-coverage`.
+
 ## Troubleshooting
 
 - **`CKR_TOKEN_NOT_RECOGNIZED` / no slots** — `SOFTHSM2_CONF` is not exported, or
