@@ -76,7 +76,7 @@ def test_missing_aes_keygen_is_skip_not_setup_failure(
 def test_encrypt_after_destroy_unexpected_ckr_xfails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Phase 3 Type-C: a non-handle clean reject on a destroyed handle is now a
+    # Phase 3 lifecycle: a non-handle clean reject on a destroyed handle is now a
     # noted deviation (xfail), not a hard fail.
     raw = SimpleNamespace(
         C_DestroyObject=lambda *_a: CKR_OK,
@@ -99,7 +99,7 @@ def test_encrypt_after_destroy_unexpected_ckr_xfails(
 def test_encrypt_after_destroy_success_is_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Phase 3 Type-C: the op succeeding on a destroyed handle is a genuine fail.
+    # Phase 3 lifecycle: the op succeeding on a destroyed handle is a genuine fail.
     from _pytest.outcomes import Failed, XFailed
 
     raw = SimpleNamespace(

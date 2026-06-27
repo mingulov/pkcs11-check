@@ -1,7 +1,7 @@
 """Regression test for PC-4.2: bit-flipped AES-KEY-WRAP ciphertext unwrap
 that returns ``CKR_GENERAL_ERROR`` (softhsm2) must classify as ``xfail``
 (noted deviation: not the RFC 3394 ICV-specific code), while acceptance
-of the bit-flipped ciphertext (``CKR_OK``) still hard-fails (Type-A
+of the bit-flipped ciphertext (``CKR_OK``) still hard-fails (crypto
 security break).
 
 Catalog: PC-4.2, softhsm2-recheck-20260528 evidence shows
@@ -59,7 +59,7 @@ def test_acceptance_still_fails() -> None:
 
     Note: this branch is NOT exercised in production for this site. In
     production, ``CKR_OK`` (acceptance of bit-flipped ciphertext) means
-    the ``except`` block is never entered; the Type-A acceptance guard
+    the ``except`` block is never entered; the crypto acceptance guard
     is the post-``except`` ``pytest.fail("SECURITY: ...")`` at the
     bottom of ``test_aes_key_wrap_bit_flip_detected``. This test pins
     the classifier contract so a future refactor that changes the

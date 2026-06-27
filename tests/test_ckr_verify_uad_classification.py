@@ -1,4 +1,4 @@
-"""Runtime classification meta-test for ckr/test_ckr_verify use-after-destroy (Type C)."""
+"""Runtime classification meta-test for ckr/test_ckr_verify use-after-destroy (lifecycle)."""
 
 from __future__ import annotations
 

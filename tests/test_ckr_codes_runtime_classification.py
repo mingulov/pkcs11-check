@@ -1,9 +1,9 @@
-"""Runtime classification meta-tests for ckr/test_ckr_codes Type-B + Type-C.
+"""Runtime classification meta-tests for ckr/test_ckr_codes policy + lifecycle.
 
-Type B -- test_ckr_attribute_sensitive: claimed=CKA_SENSITIVE=True read-back,
+policy -- test_ckr_attribute_sensitive: claimed=CKA_SENSITIVE=True read-back,
 violated=CKA_VALUE actually readable -> fail; not claimed -> xfail.
 
-Type C -- test_ckr_object_handle_invalid_after_destroy: a negative op on a
+lifecycle -- test_ckr_object_handle_invalid_after_destroy: a negative op on a
 destroyed handle. C_GetAttributeValue is issued *directly* and the raw rv is
 classified: CKR_OBJECT_HANDLE_INVALID / CKR_SESSION_HANDLE_INVALID (spec-correct
 rejection) -> pass; CKR_OK (read succeeded on a destroyed handle =
@@ -34,7 +34,7 @@ def _real_fail(ei: pytest.ExceptionInfo[Failed]) -> None:
     assert not isinstance(ei.value, XFailed)
 
 
-# --- Type B: sensitive value read -----------------------------------------
+# --- policy: sensitive value read -----------------------------------------
 
 
 def _run_sensitive(monkeypatch: pytest.MonkeyPatch, *, claimed: bool, readable: bool) -> None:
@@ -69,7 +69,7 @@ def test_sensitive_protected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     _run_sensitive(monkeypatch, claimed=True, readable=False)
 
 
-# --- Type C: use-after-destroy ---------------------------------------------
+# --- lifecycle: use-after-destroy ---------------------------------------------
 
 
 def _run_uad(monkeypatch: pytest.MonkeyPatch, *, getattr_rv: int) -> None:

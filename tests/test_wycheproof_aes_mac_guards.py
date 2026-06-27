@@ -4,7 +4,7 @@ Phase-2 V2: these families were exercised as *produce* operations
 (sign/encrypt/wrap), so a fresh correct output never matched the modified
 expected output and rejection of invalid vectors was never tested. They are
 re-framed to the verify/decrypt/unwrap direction; a module that ACCEPTS an
-invalid vector is a crypto-correctness break (Type A -> fail).
+invalid vector is a crypto-correctness break (crypto -> fail).
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Runtime classification meta-tests for test_set_attribute read-only writes (Type C).
+"""Runtime classification meta-tests for test_set_attribute read-only writes (lifecycle).
 
 A write to a read-only attribute via C_SetAttributeValue is classified by effect:
 - claimed success (no raise) AND the value actually changed -> fail (self-contradiction),

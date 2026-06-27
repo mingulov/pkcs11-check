@@ -1,4 +1,4 @@
-"""Runtime classification meta-tests for ckr/test_ckr_decrypt Type-A reclassification.
+"""Runtime classification meta-tests for ckr/test_ckr_decrypt crypto reclassification.
 
 Wrong-length RSA ciphertext that decrypts is a crypto-correctness break: the
 rsa_ciphertext_wrong_length expectation must no longer carry allow_success, so

@@ -1,4 +1,4 @@
-"""Runtime classification meta-tests for ckr/test_ckr_verify Type-A reclassification.
+"""Runtime classification meta-tests for ckr/test_ckr_verify crypto reclassification.
 
 Two key-type / signature-length confusion conditions are crypto-correctness
 breaks: an AES key accepted with an RSA verify mechanism, and a wrong-length

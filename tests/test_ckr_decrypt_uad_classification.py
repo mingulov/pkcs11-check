@@ -1,4 +1,4 @@
-"""Runtime classification meta-test for ckr/test_ckr_decrypt use-after-destroy (Type C).
+"""Runtime classification meta-test for ckr/test_ckr_decrypt use-after-destroy (lifecycle).
 
 C_DecryptInit on a destroyed key handle that returns CKR_OK is a use-after-destroy
 self-contradiction: the destroy claimed success yet the handle is still usable.

@@ -223,7 +223,7 @@ def test_exc_vendor_defined_value_xfails_distinctly() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Task 4 — Type-B / Type-C self-contradiction classifiers
+# Task 4 — policy / lifecycle self-contradiction classifiers
 # ---------------------------------------------------------------------------
 
 

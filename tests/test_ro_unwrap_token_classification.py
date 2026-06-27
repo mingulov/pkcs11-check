@@ -1,6 +1,6 @@
 """Regression test for PC-4.1: unwrap-to-token-object in an RO session
 must classify an unlisted clean reject (e.g. softhsm2's
-``CKR_TEMPLATE_INCOMPLETE``) as ``xfail``, not a hard fail. The Type-A
+``CKR_TEMPLATE_INCOMPLETE``) as ``xfail``, not a hard fail. The crypto
 acceptance path (``CKR_OK`` on a write to RO session) must still
 hard-fail.
 

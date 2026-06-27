@@ -1,4 +1,4 @@
-"""Runtime classification meta-tests for CVE regression Type-A reclassification.
+"""Runtime classification meta-tests for CVE regression crypto reclassification.
 
 Drives the invalid-EC-curve-OID import (CVE-2021-3798 pattern) offline with a
 fake create_object, asserting the three-way model:

@@ -2,7 +2,7 @@
 
 sLen=0 PSS is a STANDARDIZED deterministic variant (RFC 8017 §9.1 / FIPS 186-5)
 that produces correct, verifiable, non-forgeable signatures -- accepting it is
-NOT a Type-A crypto break. The probe therefore:
+NOT a crypto-correctness break. The probe therefore:
   - clean sign-reject  -> xfail (module/policy declines deterministic PSS)
   - sign + verify OK   -> pass  (correct support of a valid variant)
   - sign accepted but the produced signature does NOT verify -> fail (real break)
