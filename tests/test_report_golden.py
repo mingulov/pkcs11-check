@@ -24,7 +24,7 @@ MINI_REPORT = FIXTURE_DIR / "mini_report.jsonl"
 MINI_RESULTS = FIXTURE_DIR / "mini_results.json"
 GOLDEN_MD = FIXTURE_DIR / "expected_provider.md"
 
-PROVIDER = "softhsm2"
+PROVIDER = "example-provider"
 
 
 def _crashes_from_results(path: Path) -> list[dict[str, Any]]:

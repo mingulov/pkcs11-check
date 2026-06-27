@@ -1,4 +1,4 @@
-"""Runtime classification meta-tests for security/test_tookan Type-B sites.
+"""Runtime classification meta-tests for security/test_tookan policy sites.
 
 :203 copy extractable-escalation: claimed = original reads CKA_EXTRACTABLE=False,
 violated = the copy reads CKA_EXTRACTABLE=True -> fail; not claimed -> xfail.

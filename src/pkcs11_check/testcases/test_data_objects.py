@@ -394,7 +394,8 @@ class TestDataObjectToken:
                 xfail_if_known_ckr(
                     exc,
                     {CKR_ATTRIBUTE_VALUE_INVALID},
-                    "NSS rejects token=True CKO_DATA objects with CKR_ATTRIBUTE_VALUE_INVALID "
+                    "some modules reject token=True CKO_DATA objects "
+                    "with CKR_ATTRIBUTE_VALUE_INVALID "
                     "(slot does not support persistent generic data object storage)",
                 )
                 raise

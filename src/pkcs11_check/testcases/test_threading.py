@@ -26,7 +26,6 @@ concurrent ``C_GenerateKey`` mutates/contends token state) and ``@stress``.
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -47,48 +46,24 @@ pytestmark = [
 ]
 
 
-def _make_throwaway_softhsm_token(p11_config: Any, tmp_path: Path) -> str | None:
-    """Provision a disposable SoftHSM2 token; return its SOFTHSM2_CONF path.
+def _mint_throwaway_token(tmp_path: Path) -> str | None:
+    """Provision a disposable token via env-configured mint command.
 
-    A genuine thread-safety crash mid-``C_GenerateKey`` corrupts a file-backed
-    token (``CKR_TOKEN_NOT_RECOGNIZED`` for every later test). For SoftHSM2 (a
-    relocatable file-backed token)
-    we mint a throwaway token in ``tmp_path`` so such a crash damages only that,
-    never the shared session token.
-
-    Returns ``None`` when the module is not SoftHSM2 or ``softhsm2-util`` is
-    absent (no portable throwaway primitive for that module); callers then fall
-    back to the configured token.
+    Reads PKCS11_CHECK_THROWAWAY_MODULE (path to the module .so) and
+    PKCS11_CHECK_TOKEN_MINT_CMD (shell template; {token_dir} and {conf_path}
+    are substituted). Returns the conf path for the child process or None if
+    either variable is unset or the mint command fails.
     """
-    module = str(p11_config.module)
-    if "softhsm" not in module.lower() or shutil.which("softhsm2-util") is None:
+    if not os.environ.get("PKCS11_CHECK_THROWAWAY_MODULE"):
         return None
-    conf = tmp_path / "softhsm2.conf"
+    mint_cmd_tmpl = os.environ.get("PKCS11_CHECK_TOKEN_MINT_CMD")
+    if not mint_cmd_tmpl:
+        return None
+    conf = tmp_path / "module.conf"
     tokens = tmp_path / "tokens"
     tokens.mkdir(parents=True, exist_ok=True)
-    conf.write_text(
-        f"directories.tokendir = {tokens}\nobjectstore.backend = file\nlog.level = ERROR\n"
-    )
-    pin = p11_config.pin.get_secret_value() if p11_config.pin else "1234"
-    env = dict(os.environ)
-    env["SOFTHSM2_CONF"] = str(conf)
-    proc = subprocess.run(
-        [
-            "softhsm2-util",
-            "--init-token",
-            "--slot",
-            "0",
-            "--label",
-            "pkcs11-check-thread",
-            "--pin",
-            pin,
-            "--so-pin",
-            "12345678",
-        ],
-        env=env,
-        capture_output=True,
-        text=True,
-    )
+    mint_cmd = mint_cmd_tmpl.format(token_dir=str(tmp_path), conf_path=str(conf))
+    proc = subprocess.run(["/bin/sh", "-c", mint_cmd], capture_output=True, text=True)
     return str(conf) if proc.returncode == 0 else None
 
 
@@ -184,7 +159,7 @@ def _run_threaded_workload(
     workload: str,
     threads: int,
     iters: int,
-    softhsm2_conf: str | None = None,
+    throwaway_conf: str | None = None,
     timeout: float = 120.0,
 ) -> tuple[int | None, str, str]:
     """Run the concurrent workload (under CKF_OS_LOCKING_OK) in a child process.
@@ -192,12 +167,13 @@ def _run_threaded_workload(
     Returns ``(returncode, stdout, stderr)``. ``returncode`` is ``None`` on
     timeout (a hang under concurrency), ``< 0`` on a crash signal, ``0`` on a
     clean finish. The PIN is passed via the environment, never embedded in the
-    script source or echoed. When ``softhsm2_conf`` is given the child runs
+    script source or echoed. When ``throwaway_conf`` is given the child runs
     against that disposable token (so a crash cannot corrupt the shared one).
     """
     env = dict(os.environ)
-    if softhsm2_conf is not None:
-        env["SOFTHSM2_CONF"] = softhsm2_conf
+    conf_env_var = os.environ.get("PKCS11_CHECK_TOKEN_CONF_ENV")
+    if throwaway_conf is not None and conf_env_var:
+        env[conf_env_var] = throwaway_conf
     env["P11_THREAD_MODULE"] = str(p11_config.module)
     env["P11_THREAD_SLOT"] = str(p11_config.slot if p11_config.slot is not None else 0)
     env["P11_THREAD_THREADS"] = str(threads)
@@ -233,9 +209,9 @@ class TestConcurrentUnderOSLocking:
         # Use a throwaway token where we can isolate one (SoftHSM2) so a genuine
         # thread-safety crash here cannot poison the shared token; other modules
         # fall back to the configured token (a conformant module does not corrupt it).
-        conf = _make_throwaway_softhsm_token(p11_config, tmp_path)
+        conf = _mint_throwaway_token(tmp_path)
         rc, stdout, stderr = _run_threaded_workload(
-            p11_config, workload=workload, threads=16, iters=100, softhsm2_conf=conf
+            p11_config, workload=workload, threads=16, iters=100, throwaway_conf=conf
         )
         if "SKIP_CANT_LOCK" in stdout:
             pytest.skip(

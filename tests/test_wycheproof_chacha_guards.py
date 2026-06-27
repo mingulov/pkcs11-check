@@ -4,7 +4,7 @@ Phase-2 V2: ChaCha20-Poly1305 invalid vectors were exercised as *encrypt*
 operations, so a fresh correct ciphertext never matched the modified expected
 output and rejection was never tested. Re-framed to decrypt-and-reject: a
 module that decrypts a forged/modified ciphertext or tag is a crypto-correctness
-break (Type A -> fail).
+break (crypto -> fail).
 """
 
 from __future__ import annotations

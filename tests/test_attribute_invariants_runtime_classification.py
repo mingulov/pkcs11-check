@@ -1,6 +1,6 @@
-"""Runtime classification meta-tests for test_attribute_invariants (Type D).
+"""Runtime classification meta-tests for test_attribute_invariants (metadata).
 
-Type D = derived-attribute invariant. A suite-generated key created with
+metadata = derived-attribute invariant. A suite-generated key created with
 ``CKA_EXTRACTABLE=False`` and never modified MUST read back
 ``CKA_NEVER_EXTRACTABLE=True`` (PKCS#11 v3.1 Sec.4.9.4); a key created with
 ``CKA_SENSITIVE=True`` and never modified MUST read back

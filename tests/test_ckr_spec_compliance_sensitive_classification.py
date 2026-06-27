@@ -1,4 +1,4 @@
-"""Runtime classification meta-test for ckr/test_ckr_spec_compliance sensitive read (Type B)."""
+"""Runtime classification meta-test for ckr/test_ckr_spec_compliance sensitive read (policy)."""
 
 from __future__ import annotations
 

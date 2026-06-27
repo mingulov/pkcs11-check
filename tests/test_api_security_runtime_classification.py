@@ -1,4 +1,4 @@
-"""Runtime classification meta-tests for security/test_api_security Type-B sites.
+"""Runtime classification meta-tests for security/test_api_security policy sites.
 
 :241 wrap-decrypt oracle: the target key is created non-extractable/sensitive
 (claimed protected). If the wrap-decrypt oracle yields its key material the

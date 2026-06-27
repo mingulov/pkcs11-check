@@ -152,7 +152,7 @@ def test_decapsulate_invalid_ciphertext_accepted_is_fail(monkeypatch: pytest.Mon
 
 
 def test_decapsulate_invalid_template_success_is_fail(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Phase 3 Type-A: accepting CKA_VALUE in the decapsulation template lets the
+    # Phase 3 crypto: accepting CKA_VALUE in the decapsulation template lets the
     # caller dictate the derived key's secret bytes -- a crypto-correctness break
     # -> fail (was previously hidden as xfail).
     from _pytest.outcomes import Failed, XFailed

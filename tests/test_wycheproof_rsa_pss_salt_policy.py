@@ -9,7 +9,7 @@ classes (tpm2 fresh run 2026-06-09):
   signature (RFC 8017 verification with auto salt) accepts it. Not forgeable
   without the private key -> honest policy deviation -> xfail (recorded).
 - everything else (e.g. ``all bits in m_hash flipped``): acceptance means the
-  padding/hash check was bypassed -> Type-A crypto break -> fail.
+  padding/hash check was bypassed -> crypto break -> fail.
 
 The discriminator is a reference RSA-PSS verification with auto salt length
 (public-key math, no provider involved): only the first class passes it.
@@ -102,7 +102,7 @@ def test_accepted_resalted_signature_xfails(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_accepted_garbage_signature_still_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Accepting a non-genuine invalid signature stays a hard Type-A fail."""
+    """Accepting a non-genuine invalid signature stays a hard crypto fail."""
     vec = _vec(_GARBAGE_VEC_ID)
     _wire_verify(monkeypatch, True)
     with pytest.raises(pytest.fail.Exception, match="accepted by module"):

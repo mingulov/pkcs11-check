@@ -10,6 +10,7 @@ Marked @destructive - skipped unless --p11-destructive is passed.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -56,45 +57,40 @@ def _classify_destructive_ckr(out: str, expected_rvs: tuple[int, ...], *, label:
     classify_negative_rv(rv, expected_rvs, label=label)
 
 
-def _create_temp_softhsm_token() -> tuple[str, str, str]:
-    """Create a temporary SoftHSM2 token. Returns (conf_path, module_path, token_dir)."""
-    token_dir = tempfile.mkdtemp(prefix="pkcs11_check_ckr_")
-    conf_path = os.path.join(token_dir, "softhsm2.conf")
-    with open(conf_path, "w") as f:
-        f.write(f"directories.tokendir = {token_dir}/tokens\n")
-        f.write("objectstore.backend = file\n")
-    os.makedirs(os.path.join(token_dir, "tokens"), exist_ok=True)
+def _mint_throwaway_token() -> tuple[str, str, str] | None:
+    """Provision a disposable token using env-configured mint command.
 
-    # Initialize token
-    env = os.environ.copy()
-    env["SOFTHSM2_CONF"] = conf_path
-    subprocess.run(
-        [
-            "softhsm2-util",
-            "--init-token",
-            "--slot",
-            "0",
-            "--label",
-            "ckr-temp",
-            "--so-pin",
-            "87654321",
-            "--pin",
-            "1234",
-        ],
-        env=env,
-        capture_output=True,
-        check=True,
-    )
-    return conf_path, "/usr/lib/softhsm/libsofthsm2.so", token_dir
+    Reads PKCS11_CHECK_THROWAWAY_MODULE (path to module .so) and
+    PKCS11_CHECK_TOKEN_MINT_CMD (shell template; {token_dir} and {conf_path}
+    are substituted). Returns (module_path, conf_path, token_dir) or None if
+    either variable is unset or the mint command fails; callers skip the test.
+    """
+    module_path = os.environ.get("PKCS11_CHECK_THROWAWAY_MODULE")
+    mint_cmd_tmpl = os.environ.get("PKCS11_CHECK_TOKEN_MINT_CMD")
+    if not module_path or not mint_cmd_tmpl:
+        return None
+    token_dir = tempfile.mkdtemp(prefix="pkcs11_check_ckr_")
+    conf_path = os.path.join(token_dir, "module.conf")
+    mint_cmd = mint_cmd_tmpl.format(token_dir=token_dir, conf_path=conf_path)
+    proc = subprocess.run(["/bin/sh", "-c", mint_cmd], capture_output=True, check=False)
+    if proc.returncode != 0:
+        shutil.rmtree(token_dir, ignore_errors=True)
+        return None
+    return module_path, conf_path, token_dir
 
 
 def _run_destructive(test_code: str) -> tuple[int, str, str]:
-    """Run a destructive test against a temporary token."""
-    conf, module, token_dir = _create_temp_softhsm_token()
+    """Run a destructive test against a temporary throwaway token."""
+    mint_result = _mint_throwaway_token()
+    if mint_result is None:
+        pytest.skip(
+            "throwaway-token capability not configured "
+            "(set PKCS11_CHECK_THROWAWAY_MODULE and PKCS11_CHECK_TOKEN_MINT_CMD)"
+        )
+    module, conf_path, token_dir = mint_result
     script = (
         textwrap.dedent(f"""\
         import os, ctypes
-        os.environ["SOFTHSM2_CONF"] = "{conf}"
         from pkcs11_check.raw.api import RawPKCS11
         from pkcs11_check.raw.types_std import (
             CKR_OK, CKR_SESSION_EXISTS, CKR_PIN_INCORRECT,
@@ -121,16 +117,18 @@ def _run_destructive(test_code: str) -> tuple[int, str, str]:
     """)
     )
 
+    env = os.environ.copy()
+    conf_env_var = os.environ.get("PKCS11_CHECK_TOKEN_CONF_ENV")
+    if conf_env_var:
+        env[conf_env_var] = conf_path
+
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
         timeout=15,
-        env=os.environ.copy(),
+        env=env,
     )
-
-    # Cleanup temp token
-    import shutil
 
     shutil.rmtree(token_dir, ignore_errors=True)
 
@@ -278,24 +276,29 @@ raw.C_Logout(sh)
 
     def test_init_pin_token_not_initialized(self) -> None:
         """C_InitPIN on uninitialized token -> CKR_TOKEN_NOT_INITIALIZED."""
+        if not os.environ.get("PKCS11_CHECK_THROWAWAY_MODULE"):
+            pytest.skip("throwaway module not configured (PKCS11_CHECK_THROWAWAY_MODULE unset)")
         token_dir = tempfile.mkdtemp(prefix="pkcs11_check_ckr_uninit_")
-        conf_path = os.path.join(token_dir, "softhsm2.conf")
+        # This test writes a SoftHSM2-style uninitialized-token config and therefore
+        # assumes the configured throwaway module is SoftHSM2-compatible.
+        conf_path = os.path.join(token_dir, "module.conf")
         with open(conf_path, "w") as f:
             f.write(f"directories.tokendir = {token_dir}/tokens\n")
             f.write("objectstore.backend = file\n")
         os.makedirs(os.path.join(token_dir, "tokens"), exist_ok=True)
 
         env = os.environ.copy()
-        env["SOFTHSM2_CONF"] = conf_path
+        conf_env_var = os.environ.get("PKCS11_CHECK_TOKEN_CONF_ENV")
+        if conf_env_var:
+            env[conf_env_var] = conf_path
         script = textwrap.dedent(f"""\
         import os, ctypes
-        os.environ["SOFTHSM2_CONF"] = "{conf_path}"
         from pkcs11_check.raw.api import RawPKCS11
         from pkcs11_check.raw.types_std import (
             CKR_OK, CKR_TOKEN_NOT_INITIALIZED, CKR_SLOT_ID_INVALID,
             CKF_SERIAL_SESSION, CKF_RW_SESSION,
         )
-        raw = RawPKCS11.from_lib("/usr/lib/softhsm/libsofthsm2.so")
+        raw = RawPKCS11.from_lib(os.environ["PKCS11_CHECK_THROWAWAY_MODULE"])
 {ckr_subprocess_rv_trace_setup(indent="        ")}
         raw.C_Initialize(None)
         sc = ctypes.c_ulong(0)
@@ -334,8 +337,6 @@ raw.C_Logout(sh)
             timeout=15,
             env=env,
         )
-        import shutil
-
         shutil.rmtree(token_dir, ignore_errors=True)
 
         if result.returncode != 0:

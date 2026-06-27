@@ -34,7 +34,7 @@ def test_generated_ec_point_decode_error_is_xfail(monkeypatch: pytest.MonkeyPatc
 
 def test_empty_generated_ec_point_is_type_c_fail(monkeypatch: pytest.MonkeyPatch) -> None:
     """A module that claims EC keygen success but cannot expose CKA_EC_POINT is a
-    Type-C self-contradiction (claimed success, effect not observable), not a skip.
+    lifecycle self-contradiction (claimed success, effect not observable), not a skip.
 
     D1 determination: the former ``pytest.skip("Cannot extract public key point for
     ECDH")`` masked this. ``gen_ec_keypair`` asserts ``CKR_OK`` (success claimed); a
@@ -64,6 +64,6 @@ def test_empty_generated_ec_point_is_type_c_fail(monkeypatch: pytest.MonkeyPatch
         with pytest.raises(pytest.fail.Exception, match="self-contradiction"):
             test_acvp_ecdh.TestEcdhKeyAgreement().test_ecdh_key_agreement_basic(rs, "P-256")
     except pytest.skip.Exception as exc:
-        pytest.fail(f"skipped instead of Type-C failing: {exc}")
+        pytest.fail(f"skipped instead of lifecycle failing: {exc}")
     except pytest.xfail.Exception as exc:
-        pytest.fail(f"xfailed instead of Type-C failing: {exc}")
+        pytest.fail(f"xfailed instead of lifecycle failing: {exc}")
