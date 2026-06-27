@@ -4,7 +4,7 @@ PKCS#11 spec mandates one cryptographic operation per session at a time.
 When two threads attempt `C_*Init` on the same `CK_SESSION_HANDLE`
 simultaneously, exactly one must succeed and the other must return
 `CKR_OPERATION_ACTIVE`.  A module that returns `CKR_OK` to both racers
-silently corrupts session state — a real CVE class (NSS softoken has
+silently corrupts session state -- a real CVE class (some modules have
 had bugs of this shape).
 
 Existing `test_threading.py` runs threads but each opens a *new* session,

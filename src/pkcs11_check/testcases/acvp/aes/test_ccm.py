@@ -84,8 +84,7 @@ _CCM_ENCRYPT_VECTORS, _CCM_DECRYPT_VECTORS = _load_ccm_vectors()
 def test_acvp_aes_ccm_encrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CCM encryption from NIST ACVP vectors.
 
-    SoftHSM2: May not support all nonce/tag sizes.
-    Kryoptic: Generally supports CCM well.
+    Some modules may not support all nonce/tag sizes.
     """
     run_ccm_encrypt_test(p11_module_session, vec_id, vec)
 
@@ -165,8 +164,7 @@ def test_acvp_aes_ccm_ecma_encrypt(
     CCM-ECMA is a variant of CCM used in the ECMA-368 standard (UWB).
     Uses standard CKM_AES_CCM mechanism with ECMA-specific test vectors.
 
-    SoftHSM2: May not support all nonce/tag sizes.
-    Kryoptic: Generally supports CCM well.
+    Some modules may not support all nonce/tag sizes.
     """
     run_ccm_encrypt_test(p11_module_session, vec_id, vec)
 

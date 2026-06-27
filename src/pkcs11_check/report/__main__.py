@@ -3,13 +3,13 @@
 Single provider::
 
     pkcs11-check-report --report-log report.jsonl \\
-        [--results-json results.json] --provider softhsm2 --out out/
+        [--results-json results.json] --provider my-module --out out/
 
 Multiple providers (repeat ``--report-log NAME=path``; ``--results-json`` too)::
 
     pkcs11-check-report \\
-        --report-log softhsm2=sh.jsonl --report-log kryoptic=kry.jsonl \\
-        --results-json softhsm2=sh.results.json \\
+        --report-log module-a=a.jsonl --report-log module-b=b.jsonl \\
+        --results-json module-a=a.results.json \\
         --out out/
 
 Also callable as ``python -m pkcs11_check.report``.

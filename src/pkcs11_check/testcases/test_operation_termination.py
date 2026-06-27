@@ -13,11 +13,11 @@ A provider that leaves the operation active after a rejection violates the spec:
 the next C_*Init then returns CKR_OPERATION_ACTIVE.
 
 Observed offenders fail on DIFFERENT operations / inputs, so we probe several:
-  - kryoptic v1.5.0  verify: wrong-LENGTH sig -> CKR_SIGNATURE_LEN_RANGE, op left active;
-  - tpm2-pkcs11      verify: empty sig -> CKR_ARGUMENTS_BAD, op left active
-    (terminates fine on CKR_SIGNATURE_INVALID);
-  - BouncyHSM        verify AND digest: empty input -> CKR_ARGUMENTS_BAD, op left
-    active (its real-suite cascade was in digest, test_acvp_hash SHA2-224 tc148,
+  - verify: wrong-LENGTH sig -> CKR_SIGNATURE_LEN_RANGE, op left active (some modules);
+  - verify: empty sig -> CKR_ARGUMENTS_BAD, op left active (some modules; terminates
+    fine on CKR_SIGNATURE_INVALID);
+  - verify AND digest: empty input -> CKR_ARGUMENTS_BAD, op left active (some modules;
+    real-suite cascade observed in digest, test_acvp_hash SHA2-224 tc148,
     a 0-length message).
 
 Under the shared module-scoped session this single dangling operation cascaded
@@ -265,8 +265,8 @@ def test_c_verify_final_terminates_after_rejected_signature(p11_raw_session: Any
     The multipart analogue of test_c_verify_terminates_after_rejected_rsa_signature.
     PKCS#11 ("Functions for verifying signatures and MACs", C_VerifyFinal): "A call
     to C_VerifyFinal always terminates the active verification operation" -- including
-    a wrong-LENGTH signature (CKR_SIGNATURE_LEN_RANGE), which kryoptic's verify_final
-    leaves dangling exactly as its single-shot verify() does.
+    a wrong-LENGTH signature (CKR_SIGNATURE_LEN_RANGE), which some modules' verify_final
+    leave dangling exactly as their single-shot verify() does.
     """
     rs = p11_raw_session
     if not rs.has_mechanism("SHA256_RSA_PKCS"):
@@ -341,8 +341,8 @@ def _assert_digest_terminates(rs: Any, digest_mech: int, label: str) -> None:
     terminates the active digest operation unless it returns CKR_BUFFER_TOO_SMALL"
     -- so with an adequate output buffer the operation MUST be terminated for ANY
     return code. The empty-message digest is itself well-defined (the hash of the
-    empty string), so a compliant module returns CKR_OK for it; BouncyHSM instead
-    returns CKR_ARGUMENTS_BAD AND leaves the digest operation active (the exact
+    empty string), so a compliant module returns CKR_OK for it; some modules instead
+    return CKR_ARGUMENTS_BAD AND leave the digest operation active (the exact
     cascade trigger observed in test_acvp_hash, SHA2-224 tc148, a 0-length msg).
     """
     raw, sh = rs.raw, rs.sh
@@ -377,7 +377,7 @@ def _assert_digest_terminates(rs: Any, digest_mech: int, label: str) -> None:
 
 def test_c_digest_terminates_after_each_call(p11_raw_session: Any) -> None:
     """A single-shot C_Digest must leave no active operation, including for the
-    empty message (BouncyHSM's cascade trigger -- see test_acvp_hash)."""
+    empty message (a known cascade trigger -- see test_acvp_hash)."""
     rs = p11_raw_session
     for name, mech in _DIGEST_MECHS:
         if rs.has_mechanism(name):
@@ -395,10 +395,10 @@ def test_c_encrypt_terminates_after_multipart(
     always terminates the active encryption operation unless it returns
     CKR_BUFFER_TOO_SMALL ...". Parametrized over every multipart-encrypt mechanism
     the module advertises, on a FRESH function-scoped session so each mechanism's
-    own termination is tested in isolation. NSS (slot 0) leaves the operation
-    active after C_EncryptFinal for essentially every symmetric cipher -- a
-    widespread spec violation the shared-session run masked down to one collateral
-    failure; compliant modules (softhsm2, opencryptoki) pass.
+    own termination is tested in isolation. Some modules leave the operation
+    active after C_EncryptFinal for essentially every symmetric cipher - a
+    widespread spec violation that the shared-session run can mask down to one
+    collateral failure.
     """
     rs = p11_raw_session
     entry = mech_multipart_encrypt_entry

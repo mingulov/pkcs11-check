@@ -117,8 +117,8 @@ _DSA_PARAMETER_RUNTIME_REJECT_RVS = (
     CKR_BUFFER_TOO_SMALL,
 )
 
-# DSA parameter/key generation is heavy on several providers (10-32s per case
-# on NSS); the whole file is keygen-bound. Marked slow so a basic run can skip
+# DSA parameter/key generation is heavy on several modules (10-32s per case
+# on some modules); the whole file is keygen-bound. Marked slow so a basic run can skip
 # it with -m "not slow"; it still runs in the full profile.
 pytestmark = [pytest.mark.sign, pytest.mark.slow]
 

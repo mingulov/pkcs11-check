@@ -1,7 +1,7 @@
 """OpenSSL pkcs11-provider and p11-kit interop tests.
 
 Tests that real OpenSSL operations work through the pkcs11 provider,
-catching bugs like SoftHSM2 #722 (segfault on decrypt) and #729 (exit crash).
+catching bugs such as segfault-on-decrypt and exit-crash issues found in some modules.
 Also tests p11-kit proxy transparency.
 
 Requires: pkcs11-provider package, p11-kit
@@ -125,7 +125,7 @@ class TestOpenSSLPkcs11Provider:
     def test_openssl_genrsa_no_crash(self, p11_config: Any) -> None:
         """OpenSSL RSA keygen via subprocess - must not segfault.
 
-        SoftHSM2 #722: SIGSEGV on RSA operations via pkcs11-provider.
+        SIGSEGV on RSA operations via pkcs11-provider (observed on some modules).
         """
         if not _have_pkcs11_provider():
             pytest.skip("pkcs11-provider not installed")

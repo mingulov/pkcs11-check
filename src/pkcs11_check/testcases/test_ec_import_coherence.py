@@ -1,12 +1,12 @@
 """EC public key import coherence: a CKR_OK C_CreateObject must be honored.
 
 A module may cleanly reject an unsupported curve at import (skip — capability
-absent). What it must NOT do is claim success and not honor it: corePKCS11
-(probed 2026-06-09, triage H6) accepts a secp256k1 public key with CKR_OK while
-binding the stored key to P-256 — the resulting object is incoherent
-(C_GetAttributeValue returns CKR_OBJECT_HANDLE_INVALID; C_VerifyInit returns
-CKR_KEY_HANDLE_INVALID). Claimed success that is not honored is a lifecycle
-self-contradiction (classification model): ``fail``, never xfail/skip.
+absent). What it must NOT do is claim success and not honor it: some modules
+accept a foreign-curve public key with CKR_OK while binding the stored key to
+a different curve: the resulting object is incoherent (C_GetAttributeValue
+returns CKR_OBJECT_HANDLE_INVALID; C_VerifyInit returns CKR_KEY_HANDLE_INVALID).
+Claimed success that is not honored is a lifecycle self-contradiction
+(classification model): ``fail``, never xfail/skip.
 
 KAT suites (e.g. Wycheproof ECDSA) skip vectors of such curves via the same
 effect check (``ec_public_key_binding_defect``); this is the single dedicated

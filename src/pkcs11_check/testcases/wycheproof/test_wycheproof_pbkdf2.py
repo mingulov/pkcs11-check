@@ -2,7 +2,7 @@
 
 Tests PKCS#5 PBKDF2 (RFC 8018) with HMAC-SHA1/224/256/384/512.
 Uses CKM_PKCS5_PBKD2 mechanism with CK_PKCS5_PBKD2_PARAMS2.
-Skips on modules without PBKDF2 support (e.g., SoftHSM2).
+Skips on modules without PBKDF2 support.
 """
 
 from __future__ import annotations

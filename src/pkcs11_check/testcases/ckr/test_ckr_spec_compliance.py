@@ -164,7 +164,7 @@ class TestCKRTemplateCompliance:
         """Spec permits CKA_SENSITIVE=False / CKA_EXTRACTABLE=True at creation.
 
         Un-negotiated, canonical probe. Rejecting these as
-        CKR_ATTRIBUTE_READ_ONLY (craton-hsm one-way guards) is a policy
+        CKR_ATTRIBUTE_READ_ONLY (module one-way guards) is a policy
         deviation, recorded once here so the crypto suite's negotiated path does
         not hide it.
         """

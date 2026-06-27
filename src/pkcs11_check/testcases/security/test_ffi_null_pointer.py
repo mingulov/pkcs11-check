@@ -555,9 +555,9 @@ class TestNullPinBuffer:
     Destructive: ``test_set_pin_null_new_pin`` calls ``C_SetPIN`` with the
     real current user PIN as the old PIN, so a module that accepts it can
     change/corrupt the live token PIN. On modules that enforce a PIN retry
-    lockout (e.g. Kryoptic) this then locks the shared token and every later
-    login fails with ``CKR_PIN_LOCKED``. Must run only under
-    ``--p11-destructive`` against a throwaway/reprovisioned token.
+    lockout this then locks the shared token and every later login fails with
+    ``CKR_PIN_LOCKED``. Must run only under ``--p11-destructive`` against a
+    throwaway/reprovisioned token.
     """
 
     def test_init_pin_null_with_length(

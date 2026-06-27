@@ -214,7 +214,7 @@ _PROFILE_CACHE: dict[int, ProvisioningProfile] = {}
 #: ``_PROFILE_CACHE``.  ``build_wrap_context`` bootstraps key material (RSA/AES keygen +
 #: trial round-trips), so it MUST run once per session and be reused — rebuilding it on
 #: every provision leaks the bootstrap objects (observed as ``CKR_HOST_MEMORY`` on
-#: resource-limited modules like freehsm-c) and runs a keygen per KAT vector.  A
+#: resource-limited modules) and runs a keygen per KAT vector.  A
 #: legitimate ``None`` (no wrapping path) is cached via ``_WRAP_CONTEXT_COMPUTED`` so it
 #: is not re-probed on every provision.
 _WRAP_CONTEXT_CACHE: dict[int, WrapContext | None] = {}
@@ -229,7 +229,7 @@ _CREATE_PROHIBITED_RVS: frozenset[int] = frozenset(
         # Safety net: if even the storage-shape-negotiated template (which already drops the
         # benign policy attrs CKA_SENSITIVE/CKA_EXTRACTABLE) is still rejected read-only, the
         # module prohibits this create shape — route to unwrap/external/skip rather than
-        # hard-failing. craton 0.9.3 instead accepts the dropped variant (so it never reaches
+        # hard-failing. Some modules instead accept the dropped variant (so they never reach
         # here); this only catches modules that forbid the minimal shape outright.
         CKR_ATTRIBUTE_READ_ONLY,
     }
@@ -327,7 +327,7 @@ class ProvisioningProfile:
         The probe imports the throwaway key through the SAME storage-shape negotiation the
         real KAT import uses (``_storage_variants`` + ``negotiate_request``), so its verdict
         matches what ``import_ec_private_key_negotiated`` can actually achieve. A module that
-        rejects the canonical policy attrs on create (e.g. craton 0.9.3 returns
+        rejects the canonical policy attrs on create (e.g. returning
         CKR_ATTRIBUTE_READ_ONLY for CKA_EXTRACTABLE=true / CKA_SENSITIVE=false) but accepts
         the dropped-policy variant probes as ``create_available`` — the throwaway object's
         policy shape is irrelevant (it is destroyed immediately). The probe and the KAT EC
@@ -1127,7 +1127,7 @@ def provision_rsa_private_key(
 
 #: Attributes that MUST be stripped from the EC unwrap template.
 #: ``CKA_EC_PARAMS`` is READ_ONLY on C_UnwrapKey (derived from the PKCS#8 payload;
-#: softhsm2 returns CKR_ATTRIBUTE_READ_ONLY if supplied).
+#: some modules return CKR_ATTRIBUTE_READ_ONLY if supplied).
 #: ``CKA_VALUE`` comes from the encrypted blob, not the template.
 _EC_UNWRAP_STRIP: frozenset[int] = frozenset({CKA_EC_PARAMS, CKA_VALUE})
 

@@ -979,7 +979,7 @@ class TestSessionContextManager:
         CKR_SESSION_HANDLE_INVALID or CKR_SESSION_CLOSED per PKCS#11 spec
         session_mgmt_functions.md.
 
-        NSS deviation: NSS returns CKR_OK on C_GenerateRandom with a stale
+        Observed deviation: some modules return CKR_OK on C_GenerateRandom with a stale
         session handle (handle reuse or session ID recycling).
         """
         rs = p11_raw_session

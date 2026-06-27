@@ -103,7 +103,7 @@ EC_CURVE_UNSUPPORTED_RVS = (
 # output) is NOT routed here -- that stays a hard failure (self-contradiction).
 CIPHER_OP_RUNTIME_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
-    # Clean length-range reject of spec-valid input (opencryptoki CTR with a
+    # Clean length-range reject of spec-valid input (some modules reject CTR with a
     # 32B/17B payload, triage H5): advertised-but-not-operational deviation.
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
@@ -118,8 +118,8 @@ CIPHER_OP_RUNTIME_REJECT_RVS = (
 )
 
 # Clean codes a module may return at an HMAC *sign/verify* use site when the
-# HMAC mechanism is advertised but the operation is not operational (tpm2
-# advertises CKM_SHA*_HMAC but C_Sign returns CKR_GENERAL_ERROR). A produce
+# HMAC mechanism is advertised but the operation is not operational (some
+# modules advertise CKM_SHA*_HMAC but C_Sign returns CKR_GENERAL_ERROR). A produce
 # (sign) leg returning one of these -> xfail (advertised-but-not-operational);
 # the cross-verify comparison against a reference MAC stays a hard failure.
 # Mirrors the established local tuple in test_generic_secret.py (promoted here
@@ -147,7 +147,7 @@ CKO_DATA_NOT_SUPPORTED_RVS: tuple[int, ...] = (
 def skip_unless_create_object_supported(rs: Any) -> None:
     """Skip unless the module implements ``C_CreateObject``.
 
-    Cloud-KMS proxies (kmsp11) and other read-only modules do not implement
+    Cloud-KMS-class modules and other read-only modules do not implement
     object creation at all — every ``C_CreateObject`` returns
     ``CKR_FUNCTION_NOT_SUPPORTED``. Probing this once at the top of an
     object-creation/import test lets the suite skip cleanly (genuine capability
@@ -171,7 +171,7 @@ def skip_unless_generate_random_supported(rs: Any) -> None:
     """Skip unless the module implements ``C_GenerateRandom``.
 
     Several modules' RNG is non-operational: ``C_GenerateRandom`` returns
-    ``CKR_FUNCTION_FAILED`` (cryptech, corepkcs11) or ``CKR_FUNCTION_NOT_SUPPORTED``.
+    ``CKR_FUNCTION_FAILED`` or ``CKR_FUNCTION_NOT_SUPPORTED``.
     Probe once at the top of an RNG-dependent test so a non-operational RNG
     surfaces as a clean skip rather than cascading into statistical/protocol
     tests that assume randomness is available.
@@ -189,7 +189,7 @@ def skip_if_data_objects_unsupported(rs: Any) -> None:
 
     Use at the top of tests that exercise CKO_DATA semantics: a module that
     does not implement the data-object storage class rejects every create
-    (5+ providers including nethsm/corepkcs11/tpm2/wolfpkcs11/craton-hsm);
+    (several modules);
     this is a genuine capability absence (PKCS#11 v3.2 §6.4) and the right
     harness classification is ``skip``, not ``xfail``. Probe-style: tries a
     minimal CKO_DATA create and skips if it sees a CKO_DATA_NOT_SUPPORTED_RVS
@@ -394,7 +394,7 @@ def hmac_sign_or_xfail(
     label must be the mechanism name (e.g. "SHA256_HMAC") — it is used both
     for the has_mechanism gate and for the xfail/skip messages.
 
-    tpm2-pkcs11 advertises CKM_SHA*_HMAC yet C_Sign returns CKR_GENERAL_ERROR.
+    Some modules advertise CKM_SHA*_HMAC yet C_Sign returns CKR_GENERAL_ERROR.
     * mechanism NOT advertised → pytest.skip (capability genuinely absent)
     * advertised + HMAC_OP_RUNTIME_REJECT_RVS → xfail (advertised-but-not-operational)
     * any other failure (incl. wrong-MAC comparison by the caller) → hard fail
@@ -432,13 +432,14 @@ def unwrap_key_for_mechanism_roundtrip(
 
     The canonical template (variant 0) carries CKA_CLASS, CKA_KEY_TYPE and whatever
     policy attributes the caller supplied. Both CKA_CLASS and CKA_KEY_TYPE are kept in
-    every variant (opencryptoki requires CKA_CLASS on C_UnwrapKey and CKA_KEY_TYPE is
-    spec-mandatory). What modules disagree on is the *policy* attributes: opencryptoki
-    rejects CKA_EXTRACTABLE/CKA_SENSITIVE in an unwrap template (CKR_ATTRIBUTE_READ_ONLY)
-    whereas lenient modules (softhsm2) need CKA_EXTRACTABLE for the unwrapped value to be
-    readable. So on a clean template-shape reject, a second variant drops those policy
-    attributes. Provider-general: a module that accepts the policy attrs succeeds on
-    variant 0 and never retries; no provider identity is consulted. (Probed 2026-06-09.)
+    every variant (some modules require CKA_CLASS on C_UnwrapKey and CKA_KEY_TYPE is
+    spec-mandatory). What modules disagree on is the *policy* attributes: some strict
+    modules reject CKA_EXTRACTABLE/CKA_SENSITIVE in an unwrap template
+    (CKR_ATTRIBUTE_READ_ONLY) whereas lenient modules need CKA_EXTRACTABLE for the
+    unwrapped value to be readable. So on a clean template-shape reject, a second
+    variant drops those policy attributes. Provider-general: a module that accepts the
+    policy attrs succeeds on variant 0 and never retries; no provider identity is
+    consulted. (Probed 2026-06-09.)
     """
     from pkcs11_check.raw.recipes import unwrap_key
     from pkcs11_check.testcases._negotiation import negotiate_request, value_len_variant_allowed
@@ -471,7 +472,7 @@ def unwrap_key_for_mechanism_roundtrip(
 
 
 # C_CreateObject storage-shape rejects: the template rejects plus the clean codes
-# storage-oriented modules use for storage-model constraints (probed corePKCS11
+# storage-oriented modules use for storage-model constraints (observed on some modules
 # 2026-06-09: missing CKA_LABEL -> CKR_ARGUMENTS_BAD, CKA_TOKEN=False ->
 # CKR_ATTRIBUTE_VALUE_INVALID, CKA_SENSITIVE unknown to the HMAC key parser ->
 # CKR_ATTRIBUTE_TYPE_INVALID). Import-site only: at other sites these codes stay
@@ -542,9 +543,9 @@ def create_object_negotiated(
     """Create an object, negotiating storage-shape requirements (label / token).
 
     Variant 0 is the caller's spec-minimal template. Storage-oriented modules reject
-    it cleanly: corePKCS11 requires CKA_LABEL on every key object (CKR_ARGUMENTS_BAD
-    when absent), supports only token objects (CKR_ATTRIBUTE_VALUE_INVALID for
-    CKA_TOKEN=False) and rejects policy attributes its parsers do not know
+    it cleanly: some modules require CKA_LABEL on every key object (CKR_ARGUMENTS_BAD
+    when absent), support only token objects (CKR_ATTRIBUTE_VALUE_INVALID for
+    CKA_TOKEN=False) and reject policy attributes their parsers do not know
     (CKR_ATTRIBUTE_TYPE_INVALID for CKA_SENSITIVE). Retry variants add a unique
     CKA_LABEL, then CKA_TOKEN=True, then drop the benign policy attrs -- storage
     shape only; crypto-visible attributes are never changed and no provider
@@ -579,8 +580,8 @@ def create_object_negotiated(
             attempt, variants, label=purpose, shape_rejects=IMPORT_STORAGE_SHAPE_REJECTS
         )
     except _CkrError as exc:
-        # No C_CreateObject at all (Cloud-KMS proxy / no-import provider, e.g.
-        # kmsp11): every import setup site routes here, so skip uniformly rather
+        # No C_CreateObject at all (Cloud-KMS-class / no-import module):
+        # every import setup site routes here, so skip uniformly rather
         # than hard-failing each. Capability absent -> skip (genuine), not xfail.
         if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.skip("Module does not implement C_CreateObject")
@@ -667,9 +668,9 @@ def ec_public_key_binding_defect(rs: Any, handle: int, requested_params: bytes) 
     """Effect-check a just-created EC public key: is it bound to the requested curve?
 
     Some modules accept a foreign-curve import with CKR_OK but bind the key to
-    their only supported group (corePKCS11 binds everything to P-256; the object
-    is then incoherent -- attribute readback returns CKR_OBJECT_HANDLE_INVALID --
-    or reports different CKA_EC_PARAMS). Verify the effect, not the return code:
+    their only supported group (the object is then incoherent -- attribute readback
+    returns CKR_OBJECT_HANDLE_INVALID -- or reports different CKA_EC_PARAMS).
+    Verify the effect, not the return code:
     a CKR_OK whose object does not round-trip the requested curve is a defect.
     Returns None when coherent, else a reason string. KAT suites skip vectors of
     a defective curve (capability genuinely absent); the self-contradiction
@@ -704,8 +705,7 @@ def import_secret_key_negotiated(
 
     Same canonical template as ``raw.recipes.import_secret_key``; on a clean
     storage-shape reject it retries via ``create_object_negotiated`` variants
-    (unique CKA_LABEL, then CKA_TOKEN=TRUE -- corePKCS11-style label-keyed
-    token-only stores).
+    (unique CKA_LABEL, then CKA_TOKEN=TRUE -- for label-keyed token-only stores).
     """
     base: dict[Any, Any] = {
         CKA_CLASS: CKO_SECRET_KEY,
@@ -1328,7 +1328,7 @@ def assert_correct(
 # In-range advertised op that then refuses: the module advertised this exact
 # size/mech and then said it cannot do it. Narrow on purpose -- GENERAL_ERROR /
 # DEVICE_ERROR / wrong-output / crash are excluded and stay hard findings
-# (DEVICE_ERROR can mask a kryoptic crypto failure). Same narrow-explicit-reject-set
+# (DEVICE_ERROR can mask a crypto failure on some modules). Same narrow-explicit-reject-set
 # pattern as _DIGEST_OP_REJECT_RVS (test_sha3/test_crossverify).
 _IN_RANGE_NOT_OPERATIONAL_RVS: tuple[int, ...] = (
     CKR_FUNCTION_NOT_SUPPORTED,

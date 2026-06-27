@@ -52,10 +52,9 @@ pytestmark = pytest.mark.keymgmt
 def _skip_if_no_data_objects(p11_raw_session: Any) -> None:
     """Skip every CKO_DATA test when the module lacks data-object storage.
 
-    Five-plus providers (nethsm, corepkcs11, tpm2, wolfpkcs11, craton-hsm) do
-    not implement CKO_DATA; for them every test in this file is a genuine
-    capability absence (PKCS#11 v3.2 §6.4) and the right classification is
-    ``skip``, not ``xfail``.
+    Several modules do not implement CKO_DATA; for them every test in this file
+    is a genuine capability absence (PKCS#11 v3.2 §6.4) and the right
+    classification is ``skip``, not ``xfail``.
     """
     skip_if_data_objects_unsupported(p11_raw_session)
 
@@ -364,9 +363,9 @@ class TestDataObjectToken:
     ) -> None:
         """CKO_DATA with TOKEN=True persists across sessions.
 
-        NSS deviation: NSS slot 1 (Certificate DB) rejects token CKO_DATA
-        objects with CKR_ATTRIBUTE_VALUE_INVALID -- the slot does not support
-        persistent storage of generic data objects.
+        Some modules reject token=True CKO_DATA objects with
+        CKR_ATTRIBUTE_VALUE_INVALID -- the slot does not support persistent
+        storage of generic data objects.
         """
         rs = p11_raw_session
         skip_if_token_write_protected(rs.raw, rs.slot_id)

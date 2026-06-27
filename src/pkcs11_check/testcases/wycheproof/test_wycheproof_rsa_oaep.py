@@ -217,8 +217,8 @@ _ALL_OAEP_VECTORS = _load_oaep_vectors()
 
 
 # --- Canonical per-combo operability probe (triage H3) ------------------------
-# opencryptoki hard-failed 26 valid SHA-512/224|256 OAEP vectors with
-# CKR_ENCRYPTED_DATA_INVALID: the per-hash variant simply is not implemented.
+# Some modules hard-fail valid SHA-512/224|256 OAEP vectors with
+# CKR_ENCRYPTED_DATA_INVALID when the per-hash variant is not implemented.
 # One canonical decrypt per (sha, mgf) combo per process decides: combo dead ->
 # the valid-vector rejection is "advertised but not operational" (xfail); combo
 # works -> a valid-vector rejection is a real correctness finding (fail).

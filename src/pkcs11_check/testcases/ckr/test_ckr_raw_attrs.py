@@ -111,9 +111,9 @@ class TestKeyFunctionNotPermitted:
         """Key with CKA_ENCRYPT=False -> C_EncryptInit -> CKR_KEY_FUNCTION_NOT_PERMITTED.
 
         PKCS#11 v3.2: If CKA_ENCRYPT is False, C_EncryptInit MUST return
-        CKR_KEY_FUNCTION_NOT_PERMITTED. NSS returns CKR_OK, meaning the key permission
-        flag is silently ignored -- keys without CKA_ENCRYPT=True can still be used to
-        encrypt. This is a security finding.
+        CKR_KEY_FUNCTION_NOT_PERMITTED. Some modules return CKR_OK, meaning the key
+        permission flag is silently ignored -- keys without CKA_ENCRYPT=True can still
+        be used to encrypt. This is a security finding.
         """
         rc, out, err = _run(
             str(p11_config.module),
@@ -190,9 +190,9 @@ else:
         """Key with CKA_DECRYPT=False -> C_DecryptInit -> CKR_KEY_FUNCTION_NOT_PERMITTED.
 
         PKCS#11 v3.2: If CKA_DECRYPT is False, C_DecryptInit MUST return
-        CKR_KEY_FUNCTION_NOT_PERMITTED. NSS returns CKR_OK, meaning the key permission
-        flag is silently ignored -- keys without CKA_DECRYPT=True can still be used to
-        decrypt. This is a security finding.
+        CKR_KEY_FUNCTION_NOT_PERMITTED. Some modules return CKR_OK, meaning the key
+        permission flag is silently ignored -- keys without CKA_DECRYPT=True can still
+        be used to decrypt. This is a security finding.
         """
         rc, out, err = _run(
             str(p11_config.module),

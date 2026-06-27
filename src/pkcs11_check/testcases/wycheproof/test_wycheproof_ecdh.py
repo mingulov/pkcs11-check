@@ -295,8 +295,7 @@ def test_ecdh(p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[s
         if isinstance(exc, CkrAssertionError) and is_known_error(
             exc, _EC_PRIVATE_IMPORT_UNSUPPORTED_CKRS
         ):
-            # ECDH1_DERIVE is advertised (gate passed above) and providers that
-            # hit this branch (tpm2/wolfpkcs11/kryoptic per the D2 cross-check)
+            # ECDH1_DERIVE is advertised (gate passed above) and some modules
             # operationally derive named-curve ECDH -- the canonical private-key
             # import of a VALID vector is the only gap. "Advertised but not
             # operational" -> xfail, not skip. The CKR_CURVE_NOT_SUPPORTED/DOMAIN

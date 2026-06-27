@@ -1,7 +1,7 @@
 """Error-path tests for AES-KWP / AES-KW unwrap with corrupted wrapped key blobs.
 
 Targets heap overflows found in:
-- OpenCryptoki PR #932: heap overflow in AES-KWP unwrap
+- heap overflow in AES-KWP unwrap (module error path)
 - OpenSSL PR #30663: heap overflow in AES-KW unwrap with corrupted data
 
 All tests run in subprocess for crash safety. Each test generates a valid
@@ -240,7 +240,7 @@ target_key = gen_aes_key(raw, sh, 128, attrs={{
 
 try:
     try:
-        # output_size_hint: NSS softoken does not set the wrapped-key length on
+        # output_size_hint: some modules do not set the wrapped-key length on
         # the NULL-buffer size-query pass for AES-KEY-WRAP-KWP, so the two-call
         # protocol would fail with CKR_BUFFER_TOO_SMALL. 64 covers the 8-byte ICV
         # + up to 15 bytes padding for AES-128/192/256 targets (same hint as
@@ -338,7 +338,7 @@ class TestCorruptedUnwrap:
     not crash.
 
     References:
-    - OpenCryptoki PR #932: heap overflow in AES-KWP unwrap
+    - heap overflow in AES-KWP unwrap (module error path)
     - OpenSSL PR #30663: heap overflow in AES-KW unwrap
     - RFC 5649 (AES-KWP), RFC 3394 (AES-KW)
     """
@@ -396,7 +396,7 @@ class TestBitFlipUnwrap:
     but trigger heap corruption in decryption routines.
 
     References:
-    - OpenCryptoki PR #932
+    - heap overflow in AES-KWP unwrap (module error path)
     - OpenSSL PR #30663
     """
 

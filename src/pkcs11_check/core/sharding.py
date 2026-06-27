@@ -3,7 +3,7 @@
 Sharding is at **whole-file** granularity (preserves per-file isolation and
 file-scoped fixtures). Balance uses Longest-Processing-Time-first (LPT)
 bin-packing over per-file durations from a prior run's ``results.json`` so the
-heavy files (e.g. the ACVP-AES MCT files, ~11 min each on bouncyhsm) are spread
+heavy files (e.g. the ACVP-AES MCT files, ~11 min each on slow modules) are spread
 across shards rather than piling onto one — the difference between a ~Nx and a
 ~2x speedup. Files with no known duration get the median (so a first run with
 no history still balances by count).
@@ -31,15 +31,15 @@ def duration_by_unit_from_results(results_path: Path) -> dict[str, float]:
 
 
 # Files known to dominate wall time on transport-bound providers: the ACVP-AES
-# MCT cases run ~100k chained ops (~11 min each on bouncyhsm) and are indivisible
+# MCT cases run ~100k chained ops (~11 min each on slow modules) and are indivisible
 # at file granularity. Lacking a measured duration, they get a synthetic weight so
 # the balancer ISOLATES them into separate batches instead of lumping them (which
 # produces a straggler batch). Provider-agnostic: with a real oracle a measured
 # duration wins (a file a provider skips stays light); on a first run a skipped
 # heavy file just yields an instant batch the pool immediately moves past.
 DEFAULT_HEAVY_BASENAMES: tuple[str, ...] = (
-    # AES multi-block-chained (MCT) cases — ~11 min each on transport-bound
-    # providers (bouncyhsm), and other large ACVP-AES corpora.
+    # AES multi-block-chained (MCT) cases: ~11 min each on transport-bound
+    # providers, and other large ACVP-AES corpora.
     "test_cfb8.py",
     "test_ofb.py",
     "test_cfb128.py",
@@ -47,7 +47,7 @@ DEFAULT_HEAVY_BASENAMES: tuple[str, ...] = (
     "test_cts.py",
     "test_wrap.py",
     # Recurring long poles the count-balancer would otherwise lump into one
-    # straggler batch (e.g. test_parameter_validation.py ~553s on bouncyhsm,
+    # straggler batch (e.g. test_parameter_validation.py ~553s on slow modules,
     # 16s elsewhere; the big Wycheproof/ACVP/DSA corpora). A curated, static,
     # provider-agnostic list — NOT measured durations (those don't transfer
     # across providers, which depend on advertised mechanisms).

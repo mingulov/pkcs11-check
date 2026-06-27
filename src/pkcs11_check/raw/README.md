@@ -75,9 +75,9 @@ All take `raw: RawPKCS11` as first parameter and use `expect_rv()` for errors.
 - `gen_ec_keypair(raw, session, curve_oid, public_attrs, private_attrs)` - generate EC keypair
 - `import_secret_key(raw, session, key_type, value, attrs)` - import secret key
 - `destroy_quietly(raw, session, handle)` - destroy object, ignore errors
-- `encrypt_single(raw, session, key, mechanism, plaintext, *, output_overhead=0)` - single-part encrypt; `output_overhead` adds bytes beyond plaintext (e.g. 16 for GCM tag) for the NSS NULL-probe workaround
+- `encrypt_single(raw, session, key, mechanism, plaintext, *, output_overhead=0)` - single-part encrypt; `output_overhead` adds bytes beyond plaintext (e.g. 16 for GCM tag) for the NULL-probe workaround on modules that under-report the size
 - `decrypt_single(raw, session, key, mechanism, ciphertext, *, output_size_hint=0, retry_on_buffer_too_small=False)` - single-part decrypt
-- `sign_single(raw, session, key, mechanism, data, *, output_size_hint=0)` - single-part sign (use the hint for fixed-length sigs on NSS)
+- `sign_single(raw, session, key, mechanism, data, *, output_size_hint=0)` - single-part sign (use the hint for fixed-length sigs on modules that need a preallocated buffer)
 - `verify_single(raw, session, key, mechanism, data, signature)` - single-part verify
 - `digest_single(raw, session, mechanism, data)` - single-part digest
 - `encrypt_multipart(raw, session, key, mechanism, chunks)` - multi-part encrypt
@@ -85,7 +85,7 @@ All take `raw: RawPKCS11` as first parameter and use `expect_rv()` for errors.
 - `sign_multipart(raw, session, key, mechanism, chunks)` - multi-part sign
 - `verify_multipart(raw, session, key, mechanism, chunks, signature)` - multi-part verify
 - `digest_multipart(raw, session, mechanism, chunks)` - multi-part digest
-- `wrap_key(raw, session, wrapping_key, target_key, mechanism, *, output_size_hint=0)` - wrap key (use the hint for NSS AES-KEY-WRAP-KWP)
+- `wrap_key(raw, session, wrapping_key, target_key, mechanism, *, output_size_hint=0)` - wrap key (use the hint for AES-KEY-WRAP-KWP on modules that need a preallocated buffer)
 - `unwrap_key(raw, session, unwrapping_key, wrapped_key, mechanism, attrs)` - unwrap key
 - `derive_key(raw, session, base_key, mechanism, attrs)` - derive key
 - `generate_random(raw, session, length)` - generate random bytes

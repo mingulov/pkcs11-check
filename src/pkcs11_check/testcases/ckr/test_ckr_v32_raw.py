@@ -4,7 +4,7 @@ Tests C_VerifySignatureInit, C_EncapsulateKey, C_DecapsulateKey,
 C_WrapKeyAuthenticated, C_UnwrapKeyAuthenticated, C_AsyncGetID
 using RawPKCS11 with funclist32_ptr.
 
-Requires v3.2 module (Kryoptic). Skips on v2.40/v3.0 modules.
+Requires a v3.2 module. Skips on v2.40/v3.0 modules.
 All tests run in subprocess for safety.
 """
 

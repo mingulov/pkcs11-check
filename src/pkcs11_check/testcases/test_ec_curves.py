@@ -38,7 +38,7 @@ pytestmark = pytest.mark.crossverify
 # Unambiguous "advertised ECDSA sign is not operational" codes -> xfail (flag for
 # investigation). Deliberately NARROW: only FUNCTION_NOT_SUPPORTED (function/mech
 # absent) and FUNCTION_FAILED. CKR_GENERAL_ERROR / CKR_DEVICE_ERROR are NOT here --
-# they are catch-alls that may mask a real signing failure (kryoptic returns
+# they are catch-alls that may mask a real signing failure (some modules return
 # DEVICE_ERROR on a crypto/OpenSSL failure), so they stay a hard FAIL to be
 # investigated rather than quietly downgraded. A WRONG signature is independently
 # caught by the software verify below (crypto break -> fail).

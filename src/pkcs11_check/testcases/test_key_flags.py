@@ -237,7 +237,7 @@ class TestLocalFlag:
         PKCS#11 spec Table 18: CKA_LOCAL is True for keys generated on the token
         (C_GenerateKey / C_GenerateKeyPair), False for keys imported via C_CreateObject.
 
-        NSS deviation: NSS does not set CKA_LOCAL on generated keys.
+        Some modules do not set CKA_LOCAL on generated keys.
         """
         rs = p11_raw_session
         key = _gen_aes_key_or_xfail(rs, 256)
@@ -330,7 +330,7 @@ class TestLocalFlag:
         PKCS#11 spec Table 18: CKA_LOCAL is True for keys generated via
         C_GenerateKeyPair.
 
-        NSS deviation: NSS does not set CKA_LOCAL=True on the generated public key.
+        Some modules do not set CKA_LOCAL=True on the generated public key.
         """
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):

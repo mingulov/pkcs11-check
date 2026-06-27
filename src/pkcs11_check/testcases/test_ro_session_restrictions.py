@@ -322,7 +322,7 @@ class TestROTokenObjectCreation:
 
             # Provide a complete RSA template so modules that validate
             # templates before checking session type still reach the RO check.
-            # NSS requires CKA_PUBLIC_EXPONENT; without it, it returns
+            # Some modules require CKA_PUBLIC_EXPONENT; without it, they return
             # CKR_TEMPLATE_INCOMPLETE before the session-type check.
             pub_tmpl = template(
                 attr_ulong(CKA_MODULUS_BITS, 2048),
@@ -365,8 +365,8 @@ class TestROTokenObjectCreation:
 def _xfail_if_session_object_rejected_readonly(exc: AssertionError) -> None:
     """CKR_SESSION_READ_ONLY for a SESSION object is a deviation, not a finding
     to hard-fail: the spec defines that code for token-object writes in R/O
-    sessions; session-scoped objects are legal there (bouncyhsm rejects them
-    anyway, triage H4). The module still refused cleanly -> recorded xfail."""
+    sessions; session-scoped objects are legal there but some modules reject them
+    anyway. The module still refused cleanly -> recorded xfail."""
     if is_known_error(exc, (CKR_SESSION_READ_ONLY,)):
         classify(
             "not_operational",

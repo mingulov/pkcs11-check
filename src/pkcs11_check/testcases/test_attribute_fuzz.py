@@ -100,7 +100,7 @@ class TestMalformedAttributes:
                     CKA_TOKEN: False,
                 },
             )
-            # SoftHSM2 accepts - key won't be usable but no crash
+            # Some modules accept an empty key value - key won't be usable but no crash
             assert h != 0
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as e:
@@ -157,7 +157,7 @@ class TestMalformedAttributes:
         rs = p11_raw_session
         try:
             key = gen_aes_key(rs.raw, rs.sh, 0xFFFFFFFF * 8)
-            # Kryoptic silently truncates - key exists but may not be usable
+            # Some modules silently truncate large key sizes - key exists but may not be usable
             assert key != 0
             destroy_quietly(rs.raw, rs.sh, key)
         except (AssertionError, OverflowError, ValueError):

@@ -52,7 +52,7 @@ pytestmark = [
 
 # FIPS 203: the ML-KEM shared secret is always 32 bytes. PKCS#11 v3.2 requires the output
 # template to carry CKA_VALUE_LEN ("other attributes required by the key type must be
-# specified"); strict-but-conformant modules (opencryptoki) reject its absence.
+# specified"); strict-but-conformant modules reject its absence.
 _ML_KEM_SHARED_SECRET_BYTES = 32
 
 # A module that rejects importing a raw decapsulation key (dk only, no CKA_SEED) is exhibiting
@@ -188,7 +188,7 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_module_session: Any)
             attrs={
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_AES,
-                # Required by strict-but-conformant modules (opencryptoki) per PKCS#11 v3.2;
+                # Required by strict-but-conformant modules per PKCS#11 v3.2;
                 # lenient modules infer it. The ML-KEM shared secret is always 32 bytes.
                 CKA_VALUE_LEN: _ML_KEM_SHARED_SECRET_BYTES,
             },

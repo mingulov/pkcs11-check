@@ -3,8 +3,7 @@
 Tests key creation patterns used by common tools (pkcs11-tool, Java keytool)
 and concurrent object operations.
 
-References: Tookan paper (default templates), SoftHSM2 #845 (SQLite stress),
-rep11.md Iteration 2 (session/object hidden failures).
+References: Tookan paper (default templates), rep11.md Iteration 2 (session/object hidden failures).
 """
 
 from __future__ import annotations
@@ -115,7 +114,7 @@ class TestConcurrentFindObjects:
         """Sequential create/destroy interleaved with search - must not crash.
 
         Note: Truly concurrent multi-thread operations on a single PKCS#11
-        session can segfault SoftHSM2 (SQLite concurrency, #845).
+        session can segfault some modules (SQLite concurrency issues).
         This test uses sequential interleaving instead.
         """
         rs = p11_raw_session
@@ -147,7 +146,7 @@ class TestDBStress:
     def test_rapid_keygen_destroy_500(self, p11_raw_session: Any) -> None:
         """500 key gen+destroy cycles. Tests SQLite transaction handling.
 
-        Note: SoftHSM2 #845 - SQLite transaction errors under load.
+        Note: SQLite transaction errors can occur under load in some modules.
         Concurrent multi-thread on same session causes segfaults.
         Sequential rapid cycles are safer and still catch DB issues.
         """

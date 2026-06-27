@@ -6,8 +6,8 @@ Covers key generation, encryption/decryption (ECB, CBC, CBC_PAD),
 MAC signing/verification, and key derivation availability checks.
 
 Most modules do NOT support ARIA - all tests will skip cleanly on those
-platforms. Some Korean-standard-focused HSMs and certain NSS builds include
-ARIA support.
+platforms. Some Korean-standard-focused HSMs and certain specialized builds
+include ARIA support.
 """
 
 from __future__ import annotations

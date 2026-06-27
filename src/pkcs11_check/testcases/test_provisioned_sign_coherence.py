@@ -1,18 +1,17 @@
 """Coherence of pre-provisioned signing keys (no-import / Cloud-KMS-class providers).
 
-A generate-only, no-import provider (e.g. kmsp11 backed by Cloud KMS / fakekms)
-cannot seed keys via C_CreateObject, and C_GenerateKeyPair needs a vendor template.
-Its keys are instead created server-side and exposed as PKCS#11 objects. This test
-gives such a provider REAL crypto coverage with no import: for each findable
-private signing key it signs a message in PKCS#11 and verifies the signature in
-software against the key's exported public key. ``verify_roundtrip`` makes the
-local python-cryptography oracle the authority -- a signature the oracle rejects is
-a ``wrong_result`` crypto FAIL, so a broken module signing path is surfaced, not
-masked.
+A generate-only, no-import module cannot seed keys via C_CreateObject, and
+C_GenerateKeyPair may need a vendor template. Its keys are instead created
+server-side and exposed as PKCS#11 objects. This test gives such a module REAL
+crypto coverage with no import: for each findable private signing key it signs a
+message in PKCS#11 and verifies the signature in software against the key's
+exported public key. ``verify_roundtrip`` makes the local python-cryptography oracle
+the authority -- a signature the oracle rejects is a ``wrong_result`` crypto FAIL,
+so a broken module signing path is surfaced, not masked.
 
 Provider-general: it skips cleanly when the token exposes no findable signing keys
 (the common case for software HSMs whose tokens start empty), so it is a no-op
-everywhere except providers that pre-expose signing keys.
+everywhere except modules that pre-expose signing keys.
 """
 
 from __future__ import annotations
@@ -60,8 +59,8 @@ _EC_PARAMS = {
 }
 
 # Clean codes meaning "this key does not permit this mechanism" -> try next /
-# skip this key (NOT a finding: kmsp11 keys are single-algorithm, so an RSA-PSS
-# key cleanly refuses CKM_SHA256_RSA_PKCS).
+# skip this key (NOT a finding: single-algorithm modules refuse mechanisms not
+# provisioned for the key, so an RSA-PSS key cleanly refuses CKM_SHA256_RSA_PKCS).
 _MECH_NOT_FOR_KEY = (
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_MECHANISM_INVALID,

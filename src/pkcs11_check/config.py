@@ -31,8 +31,8 @@ class P11TestConfig(BaseSettings):
     timeout_operation: int = 30
     # Per-test timeout (pytest-timeout, signal method). Sized as a freeze/runaway
     # safety net, not a cap on legitimately-slow work: the slowest real tests are
-    # the ACVP AES MCT cases (~100k chained ops ≈ 110s on transport-bound modules
-    # like bouncyhsm), so 180s lets them always complete with margin while still
+    # the ACVP AES MCT cases (~100k chained ops, ~110s on transport-bound modules),
+    # so 180s lets them always complete with margin while still
     # catching genuine hangs.
     timeout_test: int = 180
     destructive: bool = False

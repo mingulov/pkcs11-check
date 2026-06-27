@@ -1,6 +1,6 @@
 """Tests for EdDSA (Ed25519/Ed448) key generation, signing, and properties.
 
-EdDSA is available on SoftHSM2 2.7.0+, Kryoptic, and NSS.
+EdDSA is available on some PKCS#11 modules.
 Uses the raw PKCS#11 API via pkcs11_check.raw.
 """
 

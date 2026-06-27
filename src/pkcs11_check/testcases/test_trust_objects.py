@@ -1,7 +1,7 @@
 """PKCS#11 trust object tests.
 
 CKO_TRUST objects bind trusted usages (server auth, code signing, etc.) to
-certificates.  They are primarily used by NSS; most other modules will not
+certificates.  Only some modules implement them; most modules will not
 have any trust objects present.  Tests skip gracefully when none are found.
 """
 
