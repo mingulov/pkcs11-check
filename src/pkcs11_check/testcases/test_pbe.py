@@ -611,7 +611,6 @@ class TestPBASHA1:
         NSS deviation: NSS generates a key with CKA_KEY_TYPE=CKK_GENERIC_SECRET (0x10)
         instead of CKK_SHA_1_HMAC (0x28) for CKM_PBA_SHA1_WITH_SHA1_HMAC -- NSS does
         not differentiate HMAC key types and uses the generic secret key type.
-        Tracked in docs/module-issues.md under NSS.
         """
         rs = p11_raw_session
         if not rs.has_mechanism("PBA_SHA1_WITH_SHA1_HMAC"):

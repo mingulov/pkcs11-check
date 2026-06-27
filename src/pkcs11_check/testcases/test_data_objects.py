@@ -367,7 +367,6 @@ class TestDataObjectToken:
         NSS deviation: NSS slot 1 (Certificate DB) rejects token CKO_DATA
         objects with CKR_ATTRIBUTE_VALUE_INVALID -- the slot does not support
         persistent storage of generic data objects.
-        Tracked in docs/module-issues.md under NSS.
         """
         rs = p11_raw_session
         skip_if_token_write_protected(rs.raw, rs.slot_id)

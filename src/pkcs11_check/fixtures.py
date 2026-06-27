@@ -201,8 +201,8 @@ def _restart_signature_rvs(
     Recovery triggers ONLY at the fixture open/login layer, where these codes
     cannot mean a legitimately-rejected operation. They must NEVER be treated as
     a restart signal inside a test-body assertion path -- e.g. CKR_DEVICE_ERROR
-    is also kryoptic's normal return for a rejected signature (see
-    docs/module-issues.md), so misusing it there would mask real findings.
+    is also a known legitimate provider return for a rejected signature, so misusing it there
+    would mask real findings.
     """
     from pkcs11_check.raw.types_std import (
         CKR_CRYPTOKI_NOT_INITIALIZED,

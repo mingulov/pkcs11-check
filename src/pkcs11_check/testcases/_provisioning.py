@@ -588,7 +588,7 @@ def select_strategy(
 #: ``CKR_KEY_SIZE_RANGE`` and ``CKR_ATTRIBUTE_VALUE_INVALID`` are the canonical
 #: size-refusal codes.  ``CKR_TEMPLATE_INCONSISTENT`` and ``CKR_FUNCTION_FAILED``
 #: are also included because some real HSM implementations return them for
-#: unsupported key sizes (see docs/module-issues.md for per-module notes).
+#: unsupported key sizes.
 #: An unexpected keygen error not in this set is re-raised as a finding.
 _RSA_SIZE_REFUSED: frozenset[int] = frozenset(
     {

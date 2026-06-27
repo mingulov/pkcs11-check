@@ -69,7 +69,7 @@ jobs:
         run: |
           # Functional smoke only: --marker "not security" excludes destructive
           # probes (e.g. isize::MAX ulDataLen boundary) that surface real
-          # provider defects (documented in docs/module-issues.md) and are
+          # provider defects and are
           # exercised in the full Docker matrix, not this per-push gate.
           uv run pkcs11-check test \
             --module /usr/lib/softhsm/libsofthsm2.so \

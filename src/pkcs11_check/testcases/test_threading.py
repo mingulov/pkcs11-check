@@ -6,8 +6,7 @@ carrying ``CKF_OS_LOCKING_OK`` (or four application mutex callbacks). With NULL
 ``pInitArgs`` the application promises single-threaded use and the library
 "need not perform any synchronization" -- so concurrent access is undefined
 behavior and a crash is *permitted*. That is documented **misuse**, not a module
-defect, so we never test it; the consequences are documented in
-docs/module-issues.md (SoftHSM2) instead. These tests therefore always
+defect, so we never test it. These tests therefore always
 initialize with ``CKF_OS_LOCKING_OK``.
 
 pkcs11-check's shared-session fixtures initialize with ``C_Initialize(None)``

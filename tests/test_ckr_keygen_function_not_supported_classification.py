@@ -6,7 +6,7 @@ tpm2-pkcs11 has no symmetric-keygen surface, so a negative C_GenerateKey probe
 deviation, so it must classify as **xfail** (noted, investigate later), not a
 hard fail. A wrong-accept (CKR_OK) on a non-permissive probe must still fail.
 
-See docs/findings/catalog.md PC-6 and docs/module-issues.md.
+See docs/findings/catalog.md PC-6.
 """
 
 from __future__ import annotations

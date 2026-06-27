@@ -111,7 +111,7 @@ Tests MUST record their verdict at the decision point via `classification.classi
 - **Audit Rule (2026-06-13)**: The migration of existing tests to shared sessions is complete (covering >95% of suite execution). Do not migrate the remaining 170+ files (security, lifecycle, low-count) to shared sessions; they must remain isolated on `p11_raw_session`.
 
 ### Module-specific behavior
-- Document module quirks in `docs/module-issues.md`, not as silent `pass` in code
+- Document module quirks in comments or via `compliance.note()`, not as silent `pass` in code
 - Use `compliance.note()` for spec deviations that aren't bugs
 - Use `pytest.xfail()` for known module bugs with an explanatory message - but see the Test-outcome classification model above: crypto-correctness and self-contradiction (policy/lifecycle/metadata) classes `fail`, they are NOT `xfail`ed
 - NSS uses slot 1 (Certificate DB), not slot 0. Pass `--p11-slot=1`

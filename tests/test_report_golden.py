@@ -48,7 +48,7 @@ def generate_markdown() -> str:
     """Build the provider markdown from the committed fixtures (no docs dependency)."""
     crashes = _crashes_from_results(MINI_RESULTS)
     groups = extract_groups(MINI_REPORT, crashes=crashes)
-    # empty module-issues so the golden is independent of docs/module-issues.md
+    # empty module-issues so the golden is provider-independent
     enrich(groups, module_issues_text="", provider=PROVIDER)
     return render_provider(PROVIDER, groups, pass_count=44957)
 

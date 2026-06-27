@@ -8,8 +8,7 @@ throwaway-token provisioner described here is not yet built.
 
 `test_ffi_null_pointer.py::TestNullPinBuffer::test_set_pin_null_new_pin` calls
 `C_SetPIN` with the **real current user PIN** as the old PIN and a NULL new-PIN
-pointer. On Kryoptic this mutates/corrupts the stored user PIN (see
-[module-issues.md](module-issues.md), Kryoptic "C_SetPIN with NULL new-PIN"),
+pointer. On Kryoptic this mutates/corrupts the stored user PIN,
 so every later `C_Login("1234")` fails `CKR_PIN_INCORRECT` and the token locks
 (`CKR_PIN_LOCKED`) after ~8 attempts. Because Kryoptic's token is a single
 shared on-disk SQLite DB and the per-unit runner never reprovisions it, one
