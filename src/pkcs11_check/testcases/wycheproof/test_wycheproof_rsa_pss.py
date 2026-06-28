@@ -13,7 +13,7 @@ from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.pack import mech_pss
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -333,6 +333,7 @@ def test_rsa_pss(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     modulus = pkcs11_bigint_from_hex(modulus_hex)
     exponent = pkcs11_bigint_from_hex(exp_hex)
     key_bits = len(modulus) * 8
+    set_params({"rsa_bits": str(key_bits), "hash": str(vec.get("_sha", ""))})
 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
         classify(

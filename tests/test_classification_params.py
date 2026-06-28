@@ -26,3 +26,27 @@ def test_params_default_none() -> None:
         C.classify("wrong_result", kind="crypto", mechanism="CKM_RSA_PKCS", operation="C_Decrypt")
     recs = C.serialize(C.get_records())
     assert recs[0]["params"] is None
+
+
+def test_active_params_inherited_by_classify() -> None:
+    C.clear()
+    C.set_params({"curve": "secp256k1"})
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("not_operational", mechanism="CKM_ECDSA", operation="C_Verify")
+    assert C.serialize(C.get_records())[0]["params"] == {"curve": "secp256k1"}
+
+
+def test_explicit_params_override_active() -> None:
+    C.clear()
+    C.set_params({"curve": "secp256k1"})
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("wrong_result", kind="crypto", params={"curve": "p256"})
+    assert C.serialize(C.get_records())[0]["params"] == {"curve": "p256"}
+
+
+def test_clear_resets_active_params() -> None:
+    C.set_params({"curve": "x"})
+    C.clear()
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("wrong_result", kind="crypto")
+    assert C.serialize(C.get_records())[0]["params"] is None

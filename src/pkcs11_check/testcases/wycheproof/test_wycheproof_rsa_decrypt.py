@@ -10,7 +10,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -170,6 +170,7 @@ def test_rsa_pkcs1_decrypt(
     exp2 = pkcs11_bigint_from_hex(pk.get("exponent2", ""))
     coefficient = pkcs11_bigint_from_hex(pk.get("coefficient", ""))
     key_bits = len(modulus) * 8
+    set_params({"rsa_bits": str(key_bits)})
 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
         # Cached broad import-reject: same advertised-but-not-operational signal

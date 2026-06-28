@@ -7,7 +7,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.pack import mech_bytes, mech_ccm
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -179,6 +179,7 @@ def test_aes_cmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
         pytest.skip("AES_CMAC not supported")
 
     key_bytes = bytes.fromhex(vec["key"])
+    set_params({"aes_bits": str(len(key_bytes) * 8)})
     msg = bytes.fromhex(vec["msg"])
     tag_expected = bytes.fromhex(vec["tag"])
     result = vec["result"]
@@ -253,6 +254,7 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
         pytest.skip("AES_KEY_WRAP not supported")
 
     key_bytes = bytes.fromhex(vec["key"])
+    set_params({"aes_bits": str(len(key_bytes) * 8)})
     msg_expected = bytes.fromhex(vec["msg"])
     ct = bytes.fromhex(vec["ct"])
     result = vec["result"]
@@ -383,6 +385,7 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
         pytest.skip("AES_KEY_WRAP_KWP not supported")
 
     key_bytes = bytes.fromhex(vec["key"])
+    set_params({"aes_bits": str(len(key_bytes) * 8)})
     msg = bytes.fromhex(vec["msg"])
     ct_expected = bytes.fromhex(vec["ct"])
     result = vec["result"]
@@ -478,6 +481,7 @@ def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
         pytest.skip("AES_CCM not supported")
 
     key_bytes = bytes.fromhex(vec["key"])
+    set_params({"aes_bits": str(len(key_bytes) * 8)})
     iv = bytes.fromhex(vec["iv"])
     aad = bytes.fromhex(vec["aad"])
     msg_expected = bytes.fromhex(vec["msg"])
@@ -595,6 +599,7 @@ def test_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
         pytest.skip("AES_GMAC not supported")
 
     key_bytes = bytes.fromhex(vec["key"])
+    set_params({"aes_bits": str(len(key_bytes) * 8)})
     iv = bytes.fromhex(vec["iv"])
     msg = bytes.fromhex(vec["msg"])  # AAD in GMAC context
     tag_expected = bytes.fromhex(vec["tag"])
@@ -682,6 +687,7 @@ def test_aes_xts(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
         pytest.skip("AES_XTS not supported")
 
     key_bytes = bytes.fromhex(vec["key"])
+    set_params({"aes_bits": str(len(key_bytes) * 8)})
     iv = bytes.fromhex(vec["iv"])
     msg = bytes.fromhex(vec["msg"])
     ct_expected = bytes.fromhex(vec["ct"])
