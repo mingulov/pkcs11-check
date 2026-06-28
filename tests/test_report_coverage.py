@@ -80,3 +80,183 @@ def test_crash_signal_surfaced_and_target_not_duplicated() -> None:
     assert "SIGSEGV" in crash_line, f"signal not surfaced: {crash_line}"
     # the target path must appear exactly once on the line (no '...py - ...py:' duplication)
     assert crash_line.count("test_overflow.py") == 1, f"target duplicated: {crash_line}"
+
+
+def test_data_quality_warnings_surfaced() -> None:
+    """quality.json data_quality_warnings (the report's own inputs were incomplete)
+    must be surfaced, not silently dropped (which would overstate completeness)."""
+    quality = {
+        "data_quality_warnings": [
+            "results.json unit lacks explicit test details; using aggregated skip_reasons only",
+        ],
+        "framework_skip_candidates": [],
+    }
+    out = render_provider("p", [_group()], quality=quality)
+    assert "lacks explicit test details" in out, "data_quality_warnings not surfaced"
+    assert "data quality" in out.lower() or "caveat" in out.lower()
+
+
+def test_end_to_end_kitchensink_surfaces_all_signals(tmp_path: Path) -> None:
+    """Drive the full generator (extract -> enrich -> render) over one rich dataset
+    spanning every signal, and assert each surfaces in the produced .md."""
+    import json
+
+    from pkcs11_check.report.__main__ import main
+
+    def cls(**kw: Any) -> dict[str, Any]:
+        base = {"reason": "", "outcome": "", "severity": "", "schema": 1}
+        base.update(kw)
+        return base
+
+    def tr(nodeid: str, recs: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "$report_type": "TestReport",
+            "when": "call",
+            "nodeid": nodeid,
+            "outcome": "failed",
+            "user_properties": [["pkcs11_classification", recs]],
+        }
+
+    records = [
+        # crypto break + oracle (soft-token caveat) + a curve param needing normalize
+        tr(
+            "t/test_ecdsa.py::a",
+            [
+                cls(
+                    reason="accepted_invalid",
+                    outcome="fail",
+                    severity="CRITICAL",
+                    kind="crypto",
+                    mechanism="CKM_ECDSA",
+                    operation="C_Verify",
+                    summary="forged sig accepted",
+                    params={"curve": "P-256"},
+                )
+            ],
+        ),
+        tr(
+            "t/test_ecdsa.py::b",
+            [
+                cls(
+                    reason="accepted_invalid",
+                    outcome="fail",
+                    severity="CRITICAL",
+                    kind="crypto",
+                    mechanism="CKM_ECDSA",
+                    operation="C_Verify",
+                    summary="forged sig accepted",
+                    params={"curve": "secp256r1"},
+                )
+            ],
+        ),
+        tr(
+            "t/test_oracle.py::c",
+            [
+                cls(
+                    reason="oracle",
+                    outcome="fail",
+                    severity="HIGH",
+                    kind="crypto",
+                    mechanism="CKM_RSA_PKCS",
+                    operation="C_Decrypt",
+                    summary="padding oracle",
+                )
+            ],
+        ),
+        # IN_RANGE contradiction (T2)
+        tr(
+            "t/test_cap.py::d",
+            [
+                cls(
+                    reason="not_operational",
+                    outcome="xfail",
+                    severity="INFO",
+                    mechanism="CKM_ECDSA",
+                    operation="C_Sign",
+                    actual_ckr="CKR_FUNCTION_NOT_SUPPORTED",
+                    summary="advertised in-range but refused",
+                    detail={"capability_verdict": "IN_RANGE", "key_size": 256},
+                )
+            ],
+        ),
+    ]
+    report = tmp_path / "report.jsonl"
+    report.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+    results = tmp_path / "results.json"
+    results.write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "passed": 900,
+                    "total": 1000,
+                    "failed": 3,
+                    "crashed": 1,
+                    "timeout": 0,
+                    "crash_limited": 0,
+                    "incomplete": False,
+                },
+                "coverage": {
+                    "mechanism_coverage": {
+                        "advertised_names": ["CKM_ECDSA", "CKM_RSA_PKCS"],
+                        "invoked": 2,
+                        "accepted_names": ["CKM_RSA_PKCS"],
+                        "rejected_cleanly_names": ["CKM_ECDSA"],
+                    }
+                },
+                "units": [
+                    {
+                        "target": "t/security/test_crash.py",
+                        "status": "crashed",
+                        "returncode": 11,
+                        "duration_s": 1.0,
+                    }
+                ],
+            }
+        )
+    )
+    quality = tmp_path / "quality.json"
+    quality.write_text(
+        json.dumps(
+            {
+                "data_quality_warnings": ["coverage.json not provided; counts approximate"],
+                "framework_skip_candidates": [
+                    {
+                        "reason": "AES_CCM not supported by module",
+                        "category": "missing_capability",
+                        "count": 4200,
+                    }
+                ],
+            }
+        )
+    )
+
+    rc = main(
+        [
+            "--report-log",
+            str(report),
+            "--results-json",
+            str(results),
+            "--provider",
+            "demo",
+            "--out",
+            str(tmp_path / "out"),
+        ]
+    )
+    assert rc == 0
+    md = (tmp_path / "out" / "demo.md").read_text()
+
+    # health + coverage
+    assert "passed 900/1000 (90%)" in md
+    assert "advertised 2 -> invoked 2 -> accepted 1 (rejected 1)" in md
+    # crypto break, oracle + soft-token caveat
+    assert "forged sig accepted" in md
+    assert "(soft-token caveat)" in md
+    # curve breakdown, normalized: P-256 and secp256r1 collapse to ONE bucket of 2
+    assert "curve=secp256r1 (2)" in md
+    assert "P-256" not in md
+    # T2 IN_RANGE contradiction
+    assert "contradiction" in md.lower()
+    # crash with signal, capability gaps, data-quality caveat
+    assert "SIGSEGV" in md
+    assert "AES_CCM not supported by module (x4200)" in md
+    assert "data quality caveat: coverage.json not provided" in md

@@ -50,3 +50,24 @@ def test_clear_resets_active_params() -> None:
     with pytest.raises(BaseException):  # noqa: B017,PT011
         C.classify("wrong_result", kind="crypto")
     assert C.serialize(C.get_records())[0]["params"] is None
+
+
+def test_set_params_normalizes_curve_aliases() -> None:
+    # cross-family curve forms must canonicalize so the report's per-curve buckets
+    # don't fragment (P-256 vs secp256r1, brainpoolP vs brainpoolp, ED-25519 vs ed25519)
+    cases = [
+        ("P-256", "secp256r1"),
+        ("P-256K", "secp256k1"),
+        ("P-384", "secp384r1"),
+        ("ED-25519", "ed25519"),
+        ("ED-448", "ed448"),
+        ("brainpoolP224r1", "brainpoolp224r1"),
+        ("secp256r1", "secp256r1"),
+        ("ed25519", "ed25519"),
+    ]
+    for raw, canon in cases:
+        C.clear()
+        C.set_params({"curve": raw})
+        with pytest.raises(BaseException):  # noqa: B017,PT011
+            C.classify("not_operational", mechanism="CKM_ECDSA")
+        assert C.serialize(C.get_records())[0]["params"] == {"curve": canon}, raw

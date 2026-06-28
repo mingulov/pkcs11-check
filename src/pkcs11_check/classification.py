@@ -102,6 +102,29 @@ _records: list[Classification] = []
 _active_params: dict[str, str] | None = None
 
 
+# Curve aliases: NIST P-* and ACVP ED-* names map to the canonical secp*/ed*
+# forms, and all curves lower-case, so equivalent curves from different vector
+# families share one report bucket instead of fragmenting.
+_CURVE_ALIASES: dict[str, str] = {
+    "p-192": "secp192r1",
+    "p-224": "secp224r1",
+    "p-256": "secp256r1",
+    "p-256k": "secp256k1",
+    "p-384": "secp384r1",
+    "p-521": "secp521r1",
+    "ed-25519": "ed25519",
+    "ed-448": "ed448",
+}
+
+
+def normalize_param(key: str, value: str) -> str:
+    """Canonicalize a param value so equivalent forms share one report bucket."""
+    if key == "curve":
+        lowered = value.lower()
+        return _CURVE_ALIASES.get(lowered, lowered)
+    return value
+
+
 def set_params(params: dict[str, str] | None) -> None:
     """Declare the discriminating params for the current test (curve/size/hash).
 
@@ -110,7 +133,7 @@ def set_params(params: dict[str, str] | None) -> None:
     """
     global _active_params
     if params:
-        cleaned = {k: v for k, v in params.items() if v}
+        cleaned = {k: normalize_param(k, v) for k, v in params.items() if v}
         _active_params = cleaned or None
     else:
         _active_params = None

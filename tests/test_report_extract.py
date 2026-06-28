@@ -143,7 +143,7 @@ def test_params_aggregate_into_param_breakdown(tmp_path: Path) -> None:
 
     groups = extract_groups(path, crashes=[])
     assert len(groups) == 1
-    assert groups[0]["param_breakdown"] == {"curve=brainpoolP224r1": 2, "curve=secp256r1": 1}
+    assert groups[0]["param_breakdown"] == {"curve=brainpoolp224r1": 2, "curve=secp256r1": 1}
 
 
 def test_no_params_yields_empty_param_breakdown(tmp_path: Path) -> None:

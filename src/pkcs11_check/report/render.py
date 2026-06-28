@@ -242,6 +242,13 @@ def render_provider(
         out.append(f"> {banner}")
         out.append("")
 
+    dq_raw = (quality or {}).get("data_quality_warnings")
+    dq_warnings = dq_raw if isinstance(dq_raw, list) else []
+    for warning in dq_warnings:
+        out.append(f"> data quality caveat: {warning}")
+    if dq_warnings:
+        out.append("")
+
     out.append("## before you report")
     out.append("")
     out.append(_THREAT_NOTE)
