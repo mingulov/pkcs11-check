@@ -48,6 +48,35 @@ _THREAT_NOTE = (
 )
 
 
+def _provenance_line(provenance: dict[str, Any] | None) -> str:
+    """One compact 'tested: <provider> | by pkcs11-check <ver> | data: ...' line, or ''."""
+    if not provenance:
+        return ""
+    parts: list[str] = []
+    prov = provenance.get("provider")
+    if isinstance(prov, dict):
+        ref = prov.get("ref") or ""
+        commit = (prov.get("commit") or "")[:8]
+        pin = ""
+        if prov.get("matches_manifest_pin") is True:
+            pin = " (matches pin)"
+        elif prov.get("matches_manifest_pin") is False:
+            pin = " (NOT pinned source)"
+        head = f"{prov.get('name', '?')} {ref}@{commit}".replace(" @", " ").strip()
+        parts.append(f"tested: {head}{pin}")
+    fw = provenance.get("framework")
+    if isinstance(fw, dict) and fw.get("version"):
+        parts.append(f"by pkcs11-check {fw['version']}")
+    data = provenance.get("test_data")
+    if isinstance(data, list) and data:
+        handles = ", ".join(
+            f"{d.get('name')}@{(d.get('commit') or '')[:8]}" for d in data if d.get("name")
+        )
+        if handles:
+            parts.append(f"data: {handles}")
+    return " | ".join(parts)
+
+
 def _top_params(param_breakdown: dict[str, int], top: int = 5) -> str:
     """Format the highest-count param combos, e.g. ``curve=secp256k1 (1747), ...``."""
     items = sorted(param_breakdown.items(), key=lambda kv: (-kv[1], kv[0]))[:top]
@@ -262,13 +291,15 @@ def render_provider(
     coverage: dict[str, Any] | None = None,
     units: list[dict[str, Any]] | None = None,
     quality: dict[str, Any] | None = None,
+    provenance: dict[str, Any] | None = None,
 ) -> str:
     """Render the noise-reduced markdown report for one provider.
 
     ``summary``/``coverage`` are the results.json blocks; ``units`` the results.json
     unit list (for the incomplete banner); ``quality`` the quality.json payload (for
-    the not-supported skip counts). All are optional so callers can render from groups
-    alone.
+    the not-supported skip counts); ``provenance`` the results.json provenance block
+    (for the compact header attribution line). All are optional so callers can render
+    from groups alone.
     """
     summary = summary or {}
     out: list[str] = [f"# {provider} - conformance report", ""]
@@ -285,6 +316,11 @@ def render_provider(
     for warning in dq_warnings:
         out.append(f"> data quality caveat: {warning}")
     if dq_warnings:
+        out.append("")
+
+    prov_line = _provenance_line(provenance)
+    if prov_line:
+        out.append(prov_line)
         out.append("")
 
     out.append("## before you report")

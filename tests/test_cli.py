@@ -107,6 +107,7 @@ class TestTestCommand:
             max_crashes_per_file: int,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
+            provenance: object = None,
         ) -> int:
             del console
             called["units"] = units
@@ -202,6 +203,7 @@ class TestTestCommand:
             max_crashes_per_file: int,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
+            provenance: object = None,
         ) -> int:
             del (
                 units,
@@ -283,6 +285,7 @@ class TestTestCommand:
             max_crashes_per_file: int,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
+            provenance: object = None,
         ) -> int:
             del (
                 pytest_args,
@@ -357,6 +360,7 @@ class TestTestCommand:
             max_crashes_per_file: int,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
+            provenance: object = None,
         ) -> int:
             del (
                 pytest_args,
@@ -443,6 +447,7 @@ class TestTestCommand:
             max_crashes_per_file: int,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
+            provenance: object = None,
         ) -> int:
             del (
                 units,
@@ -514,6 +519,7 @@ class TestTestCommand:
             max_crashes_per_file: int,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
+            provenance: object = None,
         ) -> int:
             del (
                 pytest_args,
@@ -687,6 +693,7 @@ class TestTestCommand:
             max_crashes_per_file: int,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
+            provenance: object = None,
         ) -> int:
             del (
                 units,
@@ -1108,6 +1115,7 @@ class TestTestCommand:
             max_crashes_per_file: int,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
+            provenance: object = None,
         ) -> int:
             del (
                 pytest_args,
@@ -1195,6 +1203,7 @@ class TestTestCommand:
             max_crashes_per_file: int,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
+            provenance: object = None,
         ) -> int:
             del (
                 pytest_args,
@@ -1297,6 +1306,7 @@ class TestTestCommand:
             max_crashes_per_file: int,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
+            provenance: object = None,
         ) -> int:
             del (
                 units,

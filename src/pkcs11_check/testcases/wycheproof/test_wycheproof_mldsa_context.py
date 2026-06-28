@@ -161,7 +161,7 @@ def test_mldsa_context(vec_id: str, vec: dict[str, Any], p11_module_session: Any
     msg = bytes.fromhex(vec.get("msg", ""))
     ctx = bytes.fromhex(vec.get("ctx", ""))
     is_overlong = "InvalidContext" in vec.get("flags", [])
-    set_params({"mldsa": _PARAM_LABELS.get(vec.get("_param_set"), "")})
+    set_params({"mldsa": _PARAM_LABELS.get(vec.get("_param_set", -1), "")})
 
     try:
         priv, pub = _import_keys(rs, vec)

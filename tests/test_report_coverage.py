@@ -119,6 +119,31 @@ def test_reproducer_handles_rendered_on_fail() -> None:
     assert "tc82-valid" in out, "vector_id reproducer not surfaced"
 
 
+def test_report_header_shows_provenance() -> None:
+    """Provenance from results.json must appear in the report header."""
+    prov = {
+        "framework": {"version": "v0.1.6-42-gc539616"},
+        "provider": {
+            "name": "softhsm2",
+            "ref": "2.7.0",
+            "commit": "8d4f1a2cdead",
+            "matches_manifest_pin": True,
+        },
+        "test_data": [{"name": "wycheproof", "commit": "ee7b4f7e"}],
+    }
+    out = render_provider("softhsm2", [_group()], provenance=prov)
+    assert "tested: softhsm2 2.7.0@8d4f1a2c" in out
+    assert "by pkcs11-check v0.1.6-42-gc539616" in out
+    assert "matches pin" in out
+    assert "wycheproof@ee7b4f7e" in out
+
+
+def test_report_header_provenance_absent_is_silent() -> None:
+    """When provenance is not provided the report must not emit a 'tested:' line."""
+    out = render_provider("softhsm2", [_group()])
+    assert "tested:" not in out
+
+
 def test_end_to_end_kitchensink_surfaces_all_signals(tmp_path: Path) -> None:
     """Drive the full generator (extract -> enrich -> render) over one rich dataset
     spanning every signal, and assert each surfaces in the produced .md."""
