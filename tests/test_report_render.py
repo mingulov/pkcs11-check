@@ -173,3 +173,28 @@ def test_undeclared_capability_appears_in_xfail_breakdown() -> None:
     reason_lines = [ln for ln in out.splitlines() if "undeclared_capability" in ln]
     assert reason_lines, "undeclared_capability not found in rendered output"
     assert any("15" in ln for ln in reason_lines), "undeclared_capability count line not found"
+
+
+def test_param_breakdown_shown_in_xfail_line() -> None:
+    xfail = _group(
+        reason="not_operational",
+        outcome="xfail",
+        severity="LOW",
+        kind=None,
+        mechanism="CKM_ECDSA",
+        operation="C_Verify",
+        expected_ckr=None,
+        actual_ckr="CKR_MECHANISM_INVALID",
+        summary="ECDSA not operational",
+        count=100,
+        param_breakdown={"curve=secp256k1": 60, "curve=brainpoolP224r1": 40},
+    )
+    out = render_provider("p", [xfail])
+    xline = next(ln for ln in out.splitlines() if ln.startswith("[100]"))
+    assert "by param:" in xline
+    assert "curve=secp256k1 (60)" in xline
+
+
+def test_param_breakdown_shown_in_fail_finding() -> None:
+    out = render_provider("p", [_group(param_breakdown={"rsa_bits=2048": 5})])
+    assert "params rsa_bits=2048 (5)" in out

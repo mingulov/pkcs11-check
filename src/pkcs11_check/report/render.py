@@ -18,6 +18,7 @@ unclassified are folded to one line per reason and heavy detail lives in the .js
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 from pkcs11_check.report import health
@@ -45,6 +46,12 @@ _THREAT_NOTE = (
     " deployment - not as a CVE, and not as something to forward to the module's authors"
     " without that assessment."
 )
+
+
+def _top_params(param_breakdown: dict[str, int], top: int = 5) -> str:
+    """Format the highest-count param combos, e.g. ``curve=secp256k1 (1747), ...``."""
+    items = sorted(param_breakdown.items(), key=lambda kv: (-kv[1], kv[0]))[:top]
+    return ", ".join(f"{k} ({n})" for k, n in items)
 
 
 def _kind_subheader(kind: str | None, reason: str) -> str:
@@ -78,6 +85,9 @@ def _finding_lines(g: dict[str, Any]) -> list[str]:
     nodeids = g.get("nodeids") or []
     if nodeids:
         detail.append(str(nodeids[0]))
+    param_breakdown = g.get("param_breakdown") or {}
+    if param_breakdown:
+        detail.append(f"params {_top_params(param_breakdown)}")
 
     lines = [headline]
     if detail:
@@ -146,7 +156,14 @@ def _xfail_section(groups: list[dict[str, Any]]) -> list[str]:
             str(top.get("summary") or "")
         )
         suffix = f" -> {routing}" if routing else ""
-        out.append(f"[{n}] {reason}{suffix} - e.g. {example}".rstrip())
+        line = f"[{n}] {reason}{suffix} - e.g. {example}".rstrip()
+        agg: Counter[str] = Counter()
+        for member in members:
+            for key, value in (member.get("param_breakdown") or {}).items():
+                agg[key] += int(value)
+        if agg:
+            line += f" | by param: {_top_params(dict(agg))}"
+        out.append(line)
     out.append("")
     return out
 
