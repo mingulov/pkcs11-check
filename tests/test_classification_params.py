@@ -52,6 +52,35 @@ def test_clear_resets_active_params() -> None:
     assert C.serialize(C.get_records())[0]["params"] is None
 
 
+def test_set_mechanism_inherited_by_classify() -> None:
+    # mechanism/operation are constant per vector-replay test; set once so the
+    # not_operational/xfail emission paths carry them (T5) without per-site wiring.
+    C.clear()
+    C.set_mechanism("CKM_ECDSA", operation="C_Verify")
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("not_operational")
+    rec = C.serialize(C.get_records())[0]
+    assert rec["mechanism"] == "CKM_ECDSA"
+    assert rec["operation"] == "C_Verify"
+
+
+def test_explicit_mechanism_overrides_active() -> None:
+    C.clear()
+    C.set_mechanism("CKM_ECDSA")
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("not_operational", mechanism="CKM_RSA_PKCS")
+    assert C.serialize(C.get_records())[0]["mechanism"] == "CKM_RSA_PKCS"
+
+
+def test_clear_resets_active_mechanism() -> None:
+    C.set_mechanism("CKM_X", operation="C_Sign")
+    C.clear()
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("wrong_result", kind="crypto")
+    rec = C.serialize(C.get_records())[0]
+    assert rec["mechanism"] is None and rec["operation"] is None
+
+
 def test_set_vector_inherited_by_classify() -> None:
     # source/vector_id are constant per vector-replay test invocation; set once and
     # every classify() (including the not_operational xfail paths) inherits the

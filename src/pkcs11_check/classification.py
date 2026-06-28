@@ -106,6 +106,11 @@ _active_params: dict[str, str] | None = None
 _active_source: str | None = None
 _active_vector_id: str | None = None
 
+# Operation identity (mechanism + C_* op) for the current test; set once, inherited by
+# every classify() (incl. the not_operational/xfail paths), cleared by clear().
+_active_mechanism: str | None = None
+_active_operation: str | None = None
+
 
 # Curve aliases: NIST P-* and ACVP ED-* names map to the canonical secp*/ed*
 # forms, and all curves lower-case, so equivalent curves from different vector
@@ -184,6 +189,18 @@ def set_vector(source: str | None, vector_id: str | None) -> None:
     _active_vector_id = vector_id or None
 
 
+def set_mechanism(mechanism: str | None, operation: str | None = None) -> None:
+    """Declare the operation identity (mechanism + C_* op) for the current test.
+
+    Every classify() afterwards inherits ``mechanism``/``operation`` unless it passes
+    its own. Set once per vector-replay test where the operation is constant, so the
+    not_operational/xfail paths carry the mechanism; cleared by clear().
+    """
+    global _active_mechanism, _active_operation
+    _active_mechanism = mechanism or None
+    _active_operation = operation or None
+
+
 def record(rec: Classification) -> None:
     """Record a classification for the current test."""
     _records.append(rec)
@@ -197,10 +214,13 @@ def get_records() -> list[Classification]:
 def clear() -> None:
     """Clear collected records and active context (call between tests)."""
     global _active_params, _active_source, _active_vector_id
+    global _active_mechanism, _active_operation
     _records.clear()
     _active_params = None
     _active_source = None
     _active_vector_id = None
+    _active_mechanism = None
+    _active_operation = None
 
 
 def serialize(records: list[Classification]) -> list[dict[str, Any]]:
@@ -264,6 +284,10 @@ def classify(
         source = _active_source
     if vector_id is None:
         vector_id = _active_vector_id
+    if mechanism is None:
+        mechanism = _active_mechanism
+    if operation is None:
+        operation = _active_operation
     outcome, severity = derive_verdict(reason, kind)
     expected_names = _ckr_names(expected)
     actual_name = _ckr_name(actual)
