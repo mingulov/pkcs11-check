@@ -89,6 +89,7 @@ class Classification:
     spec_ref: str = ""
     source: str | None = None
     vector_id: str | None = None
+    params: dict[str, str] | None = None
     detail: dict[str, Any] | None = None
     schema: int = 1
 
@@ -157,6 +158,7 @@ def classify(
     spec_ref: str | None = None,
     source: str | None = None,
     vector_id: str | None = None,
+    params: dict[str, str] | None = None,
     summary: str | None = None,
     detail: dict[str, Any] | None = None,
 ) -> None:
@@ -190,6 +192,7 @@ def classify(
             spec_ref=spec_ref or "",
             source=source,
             vector_id=vector_id,
+            params=params,
             detail=detail,
         )
     )
