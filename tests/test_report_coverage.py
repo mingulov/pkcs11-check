@@ -281,5 +281,6 @@ def test_end_to_end_kitchensink_surfaces_all_signals(tmp_path: Path) -> None:
     assert "contradiction" in md.lower()
     # crash with signal, capability gaps, data-quality caveat
     assert "SIGSEGV" in md
-    assert "AES_CCM not supported by module (x4200)" in md
+    # skip_reasons normalizes the phrasing to a per-mechanism "<mech> not supported"
+    assert "AES_CCM not supported (x4200)" in md
     assert "data quality caveat: coverage.json not provided" in md
