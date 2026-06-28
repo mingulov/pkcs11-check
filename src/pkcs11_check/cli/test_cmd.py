@@ -397,7 +397,8 @@ def test_command(
         raise typer.Exit(code=1 if manifest.status in {"crashed", "timeout"} else 2)
 
     run_provenance = _build_run_provenance(manifest, resolve_data_dir())
-    fw_version = run_provenance["framework"]["version"]
+    fw = run_provenance.get("framework") or {}
+    fw_version = fw.get("version") or "?"
     prov_info = run_provenance.get("provider") or {}
     if prov_info.get("name"):
         commit_short = (prov_info.get("commit") or "")[:8]
@@ -558,6 +559,7 @@ def test_command(
                     console=console,
                     granularity=runner_granularity,
                     max_crashes_per_file=max_crashes_per_file,
+                    provenance=run_provenance,
                 )
             except (FileNotFoundError, ValueError) as exc:
                 console.print(f"[red]Error:[/red] {exc}")
