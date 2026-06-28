@@ -362,6 +362,7 @@ def test_ecdsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
             "not_operational",
             label="ECDSA:DER-decode",
             summary=f"Cannot decode valid DER sig for {vec_id}: {exc}",
+            params={"curve": curve},
         )
 
     digest = hash_fn(msg).digest()
@@ -392,6 +393,7 @@ def test_ecdsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
                 "not_operational",
                 label="ECDSA:key-import",
                 summary=not_operational_reason("ECDSA:key-import", f"{curve}: {ckr_name(exc.rv)}"),
+                params={"curve": curve},
             )
         raise
 
@@ -410,6 +412,7 @@ def test_ecdsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
                     kind="crypto",
                     label="ECDSA",
                     summary=f"Invalid ECDSA sig {vec_id} accepted by module",
+                    params={"curve": curve},
                 )
             return
         if result == "valid" and not verified:
@@ -418,6 +421,7 @@ def test_ecdsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
                 kind="crypto",
                 label="ECDSA",
                 summary=f"Valid ECDSA sig {vec_id} rejected by module",
+                params={"curve": curve},
             )
     except AssertionError as exc:
         if result == "valid":
