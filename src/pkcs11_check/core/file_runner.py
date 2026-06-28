@@ -752,12 +752,14 @@ def write_isolated_json_report(
     *,
     per_unit_details: dict[str, dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
+    provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write an aggregated JSON report for an isolated run in unified format."""
     payload = _build_isolated_json_payload(
         state,
         per_unit_details=per_unit_details,
         coverage=coverage,
+        provenance=provenance,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -769,6 +771,7 @@ def _build_isolated_json_payload(
     *,
     per_unit_details: dict[str, dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
+    provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     details = per_unit_details or {}
 
@@ -840,6 +843,8 @@ def _build_isolated_json_payload(
     }
     if coverage:
         payload["coverage"] = coverage
+    if provenance:
+        payload["provenance"] = provenance
     return payload
 
 
@@ -1781,11 +1786,14 @@ def _emit_external_provision_banner(n: int) -> None:
     )
 
 
-def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[str, Any] | None:
+def postprocess_jsonl_to_unified(
+    jsonl_path: Path, output_path: Path, provenance: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Convert a pytest-reportlog JSONL file to pkcs11-check unified format.
 
     Groups tests by file and writes the unified JSON report.
     Used for ``--isolation none`` to produce consistent output.
+    If ``provenance`` is provided, it is included in the output payload.
     """
     file_counts: dict[str, dict[str, int]] = {}
 
@@ -1805,8 +1813,10 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
         _iter_report_log_records(jsonl_path),
         call_record_hook=_accumulate_file_count,
     )
+    # An empty / vacuous JSONL (no records at all) returns None from the builder;
+    # treat it as a zero-count run so we still produce a results.json payload.
     if detail is None:
-        return None
+        detail = {"counts": {key: 0 for key in _DETAIL_COUNT_KEYS}, "tests": []}
 
     # Group tests by file
     by_file: dict[str, list[dict[str, Any]]] = {}
@@ -1855,12 +1865,14 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
     summary["child_crash"] = child_crash
     summary["child_timeout"] = child_timeout
     summary["incomplete"] = summary["crash_limited"] > 0
-    payload = {
+    payload: dict[str, Any] = {
         "tool": "pkcs11-check",
         "kind": "test-run",
         "summary": summary,
         "units": units,
     }
+    if provenance:
+        payload["provenance"] = provenance
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -2779,6 +2791,7 @@ def run_isolated_pytest_units(
     console: Console,
     granularity: RunnerGranularity = "file",
     max_crashes_per_file: int = 10,
+    provenance: dict[str, Any] | None = None,
 ) -> int:
     """Run pytest units in fresh subprocesses and persist progress."""
     if not units:
@@ -2794,7 +2807,9 @@ def run_isolated_pytest_units(
         if report_config is not None:
             empty_state = FileRunState(units=[], fingerprint="", results=[])
             if report_config.output_format == "json":
-                payload = write_isolated_json_report(report_config.output_path, empty_state)
+                payload = write_isolated_json_report(
+                    report_config.output_path, empty_state, provenance=provenance
+                )
                 write_quality_json_report(
                     report_config.output_path.parent / "quality.json", payload
                 )
@@ -2909,6 +2924,7 @@ def run_isolated_pytest_units(
                     state,
                     per_unit_details=merged_details,
                     coverage=coverage_data,
+                    provenance=provenance,
                 )
                 quality_path = report_config.output_path.parent / "quality.json"
                 write_quality_json_report(
@@ -3813,6 +3829,7 @@ def run_isolated_pytest_units(
                     state,
                     per_unit_details=merged_details,
                     coverage=coverage_data,
+                    provenance=provenance,
                 )
                 quality_path = report_config.output_path.parent / "quality.json"
                 write_quality_json_report(

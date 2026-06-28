@@ -129,7 +129,7 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_module_session: Any) -
     msg = bytes.fromhex(vec.get("msg", ""))
     result = vec["result"]
     private_key_bytes = bytes.fromhex(private_key_hex)
-    set_params({"mldsa": _MLDSA_PARAM_LABELS.get(vec.get("_parameter_set"), "")})
+    set_params({"mldsa": _MLDSA_PARAM_LABELS.get(vec.get("_parameter_set", -1), "")})
 
     if vec.get("ctx", ""):
         # This suite signs without transmitting the vector's context, so the

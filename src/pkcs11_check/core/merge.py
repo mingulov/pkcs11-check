@@ -225,12 +225,17 @@ def merge_results_payloads(
     summary["child_timeout"] = child_timeout
     summary["incomplete"] = summary["crash_limited"] > 0 or summary["timeout"] > 0
 
+    merged_provenance = next(
+        (p["provenance"] for p in payloads if isinstance(p.get("provenance"), dict)), None
+    )
     merged: dict[str, Any] = {
         "tool": "pkcs11-check",
         "kind": "test-run",
         "summary": summary,
         "units": units,
     }
+    if merged_provenance:
+        merged["provenance"] = merged_provenance
     if coverage:
         merged["coverage"] = coverage
     if shard_meta is not None:
@@ -285,17 +290,20 @@ def _load_shard_payload(shard_dir: Path, warnings: list[str]) -> dict[str, Any] 
             )
 
     # results.json missing or corrupt: salvage from the shard's own JSONL.
+    # postprocess_jsonl_to_unified always returns a dict (never None), so the
+    # guard is unconditionally true and is omitted.  An empty JSONL yields a
+    # zero-count payload — no findings are lost — so the "LOST" warning below
+    # is correctly bypassed in that case.
     if report_path.exists():
         with tempfile.TemporaryDirectory() as tmp:
             payload = postprocess_jsonl_to_unified(report_path, Path(tmp) / "results.json")
-        if payload is not None:
-            total = int(payload.get("summary", {}).get("total", 0) or 0)
-            if not results_path.exists() and total > 0:
-                warnings.append(
-                    f"{shard_dir.name}: results.json missing; reconstructed "
-                    f"{total} outcomes from report.jsonl"
-                )
-            return payload
+        total = int(payload.get("summary", {}).get("total", 0) or 0)
+        if not results_path.exists() and total > 0:
+            warnings.append(
+                f"{shard_dir.name}: results.json missing; reconstructed "
+                f"{total} outcomes from report.jsonl"
+            )
+        return payload
 
     if results_path.exists():
         # Corrupt results.json AND no salvageable report.jsonl: a genuine loss.

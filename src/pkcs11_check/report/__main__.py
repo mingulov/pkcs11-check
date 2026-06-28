@@ -150,9 +150,16 @@ def _write_provider(
     coverage: dict[str, Any] | None = None,
     units: list[dict[str, Any]] | None = None,
     quality: dict[str, Any] | None = None,
+    provenance: dict[str, Any] | None = None,
 ) -> None:
     md = render_provider(
-        provider, groups, summary=summary, coverage=coverage, units=units, quality=quality
+        provider,
+        groups,
+        summary=summary,
+        coverage=coverage,
+        units=units,
+        quality=quality,
+        provenance=provenance,
     )
     (out_dir / f"{provider}.md").write_text(_DISCLAIMER + "\n\n" + md, encoding="utf-8")
     with (out_dir / f"{provider}.jsonl").open("w", encoding="utf-8") as fh:
@@ -264,6 +271,7 @@ def main(argv: list[str] | None = None) -> int:
             coverage=payload.get("coverage"),
             units=payload.get("units") or [],
             quality=_quality_for(results_json),
+            provenance=payload.get("provenance") or None,
         )
 
     if len(provider_groups) > 1:
