@@ -60,27 +60,43 @@ def ckm_name(mechanism_id: int) -> str:
 
 
 def constant_name(value: int, prefix: str = "") -> str:
-    """Return the name of a CK_CONSTANT by value, optionally filtering by prefix."""
+    """Return the name of a CK_CONSTANT by value, optionally filtering by prefix.
+
+    With a ``prefix`` only that family is consulted; an unknown value renders as
+    hex - it is NOT mis-decoded as a CKM_* mechanism whose value happens to match.
+    """
     if prefix:
-        lookup = _CK_PREFIX_LOOKUPS.get(prefix, {})
-        obj = lookup.get(value)
-        if obj is not None:
-            return str(obj)
+        obj = _CK_PREFIX_LOOKUPS.get(prefix, {}).get(value)
+        return str(obj) if obj is not None else f"0x{value:08x}"
     obj = _CKM_BY_VALUE.get(value)
-    if obj is not None:
-        return str(obj)
-    return f"0x{value:08x}"
+    return str(obj) if obj is not None else f"0x{value:08x}"
 
 
 _SUB_PARAM_PREFIXES: dict[str, str] = {"mgf": "CKG_", "kdf": "CKD_"}
 
 
+# Sub-params whose value is itself a mechanism (CKM_*); everything not listed
+# here and not in _SUB_PARAM_PREFIXES is an integer (length/bit-count/flag).
+_SUB_PARAM_MECHANISMS: frozenset[str] = frozenset(
+    {"hashAlg", "prf", "prfHashMechanism", "prfMechanism"}
+)
+
+
 def sub_param_name(param_name: str, value: int) -> str:
-    """Return the named constant for a sub-mechanism parameter value."""
+    """Return the display form for a sub-mechanism parameter value.
+
+    ``mgf``/``kdf`` decode to their CKG_/CKD_ constant; ``hashAlg``/``prf*`` are
+    mechanisms (CKM_*). Every other parameter is an integer (length, bit count,
+    flag) shown as its decimal value - NOT looked up as a constant, which would
+    mis-decode integers that collide with CK constant values (e.g. ``macLen=16``
+    decoding to ``CKM_DSA_KEY_PAIR_GEN``).
+    """
     prefix = _SUB_PARAM_PREFIXES.get(param_name)
     if prefix:
         return constant_name(value, prefix)
-    return ckm_name(value)
+    if param_name in _SUB_PARAM_MECHANISMS:
+        return ckm_name(value)
+    return str(value)
 
 
 _VERSION_SIZE = _PTR_SIZE
