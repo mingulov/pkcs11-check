@@ -119,6 +119,20 @@ def test_reproducer_handles_rendered_on_fail() -> None:
     assert "tc82-valid" in out, "vector_id reproducer not surfaced"
 
 
+def test_report_has_automated_check_caveat() -> None:
+    """The report must caveat that it is an automated check: it can miss real issues
+    AND over-report, and large fail/xfail counts are usually one behavior repeated
+    across many vectors, not that many distinct defects. Asks the reader to verify."""
+    out = render_provider("p", [_group()])
+    low = out.lower()
+    assert "automated" in low
+    assert "false positive" in low or "over-report" in low or "incorrect" in low
+    assert "miss" in low or "false negative" in low
+    # the count-amplification trap (a large count = one behavior x many test vectors)
+    assert "vector" in low and ("distinct" in low or "repeat" in low)
+    assert "verify" in low or "confirm" in low
+
+
 def test_report_header_shows_provenance() -> None:
     """Provenance from results.json must appear in the report header."""
     prov = {

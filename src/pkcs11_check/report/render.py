@@ -47,6 +47,17 @@ _THREAT_NOTE = (
     " without that assessment."
 )
 
+_AUTOMATION_NOTE = (
+    "This report is produced by an automated suite and is not hand-verified: it can both"
+    " MISS real issues (a probe that does not cover them, or a finding mis-bucketed as a"
+    " benign deviation - false negatives) and OVER-REPORT (false positives, or harness"
+    " artifacts that are not module defects). Also, a large fail/xfail count is usually one"
+    " underlying behavior repeated across many test vectors, not that many distinct defects"
+    " - read the per-finding count, the `by param` breakdown, and the reproducer before"
+    " concluding. Treat every line as a lead to verify against the module's behavior and the"
+    " PKCS#11 spec; investigate deeper before acting on or forwarding it."
+)
+
 
 def _provenance_line(provenance: dict[str, Any] | None) -> str:
     """One compact 'tested: <provider> | by pkcs11-check <ver> | data: ...' line, or ''."""
@@ -326,6 +337,8 @@ def render_provider(
     out.append("## before you report")
     out.append("")
     out.append(_THREAT_NOTE)
+    out.append("")
+    out.append(_AUTOMATION_NOTE)
     out.append("")
 
     out.extend(_crash_section(groups))
