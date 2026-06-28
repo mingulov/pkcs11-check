@@ -25,6 +25,20 @@ def test_advertised_not_operational_partitions() -> None:
     assert g["limbo"] == ["CKM_AES_CMAC"]  # advertised, not accepted/rejected/crashed
 
 
+def test_rejected_cleanly_excludes_also_accepted() -> None:
+    # A mechanism that SUCCEEDED in one canonical scenario and was cleanly refused in
+    # another is NOT a capability gap (it works). Listing CKM_RSA_PKCS under "rejected
+    # a canonical op" reads as "RSA is broken" - false and alarming. Only a mechanism
+    # rejected AND never accepted is a real advertised-but-doesn't-work gap.
+    mc = {
+        "advertised_names": ["CKM_RSA_PKCS", "CKM_AES_KEY_WRAP"],
+        "accepted_names": ["CKM_RSA_PKCS"],
+        "rejected_cleanly_names": ["CKM_RSA_PKCS", "CKM_AES_KEY_WRAP"],
+    }
+    g = advertised_not_operational(mc)
+    assert g["rejected_cleanly"] == ["CKM_AES_KEY_WRAP"], g["rejected_cleanly"]
+
+
 def test_advertised_not_operational_empty() -> None:
     assert advertised_not_operational(None) == {
         "rejected_cleanly": [],
