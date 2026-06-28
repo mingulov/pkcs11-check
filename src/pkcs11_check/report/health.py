@@ -58,14 +58,30 @@ def coverage_funnel(coverage: dict[str, Any] | None) -> str | None:
     func = cov.get("function_coverage") or {}
     parts: list[str] = []
     if mech:
-        advertised = len(mech.get("advertised_names", []))
-        invoked = int(mech.get("invoked", len(mech.get("invoked_names", []))))
-        accepted = len(mech.get("accepted_names", []))
-        rejected = len(mech.get("rejected_cleanly_names", []))
-        parts.append(
+        # The funnel is "of the advertised mechanisms": each stage is intersected with
+        # advertised so it stays a true subset chain. invoked_names can include
+        # mechanisms the harness probed but the module never advertised (so the raw
+        # invoked count exceeded advertised); those extras are surfaced separately
+        # rather than folded into the funnel.
+        adv = set(mech.get("advertised_names", []))
+        advertised = len(adv)
+        inv_names = mech.get("invoked_names")
+        if inv_names:
+            inv_set = set(inv_names)
+            invoked = len(adv & inv_set)
+            extra = len(inv_set - adv)
+        else:
+            invoked = int(mech.get("invoked", 0))
+            extra = 0
+        accepted = len(adv & set(mech.get("accepted_names", [])))
+        rejected = len(adv & set(mech.get("rejected_cleanly_names", [])))
+        line = (
             f"mechanisms advertised {advertised} -> invoked {invoked} -> "
             f"accepted {accepted} (rejected {rejected})"
         )
+        if extra:
+            line += f"; +{extra} invoked not advertised"
+        parts.append(line)
     if func:
         called = int(func.get("called", len(func.get("called_names", []))))
         available = int(func.get("available", 0))

@@ -81,6 +81,25 @@ def test_coverage_funnel_mechanism_and_function() -> None:
     assert "functions 60/68" in funnel
 
 
+def test_coverage_funnel_invoked_clamped_to_advertised() -> None:
+    # invoked_names may include mechanisms the harness probed that the module never
+    # advertised (e.g. CKM_HASH_ML_DSA_* on the real softhsm2 round); the funnel is
+    # "of advertised" so invoked must not exceed advertised (it read 88 > 84). The
+    # undeclared-probed extras are surfaced separately, not folded in.
+    cov = {
+        "mechanism_coverage": {
+            "advertised_names": ["A", "B", "C"],
+            "invoked_names": ["A", "B", "X", "Y"],  # 2 advertised + 2 not advertised
+            "accepted_names": ["A"],
+            "rejected_cleanly_names": ["B"],
+        }
+    }
+    funnel = coverage_funnel(cov)
+    assert funnel is not None
+    assert "advertised 3 -> invoked 2" in funnel, funnel  # 2, not 4 - monotonic
+    assert "+2 invoked not advertised" in funnel, funnel
+
+
 def test_coverage_funnel_none_when_absent() -> None:
     assert coverage_funnel(None) is None
     assert coverage_funnel({}) is None
