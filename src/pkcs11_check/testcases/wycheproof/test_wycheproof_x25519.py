@@ -12,7 +12,7 @@ from typing import Any, NoReturn
 import pytest
 from cryptography.exceptions import UnsupportedAlgorithm
 
-from pkcs11_check.classification import classify, set_params
+from pkcs11_check.classification import classify, set_mechanism, set_params
 from pkcs11_check.raw.pack import mech_ecdh
 from pkcs11_check.raw.recipes import (
     derive_key,
@@ -232,6 +232,7 @@ def test_xdh(p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[st
     encoding_name = vec["_encoding"]
     result = vec["result"]
     set_params({"curve": "x25519" if oid == X25519_OID else "x448"})
+    set_mechanism("CKM_ECDH1_DERIVE", operation="C_DeriveKey")
     try:
         private_bytes = decode_xdh_private_bytes(vec["private"], encoding_name)
     except _XDH_DECODE_ERRORS as exc:
