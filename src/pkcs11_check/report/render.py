@@ -59,6 +59,24 @@ def _kind_subheader(kind: str | None, reason: str) -> str:
     return f"{kind or 'other'} · {reason}"
 
 
+def _reproducer_handle(g: dict[str, Any], max_ids: int = 3) -> str:
+    """Format the reproducer handle (vector file + a few case ids) for a finding.
+
+    ``sources``/``vector_ids`` are computed and capped by the extractor; surfacing
+    them gives the reader a directly-runnable handle instead of leaving it in the
+    .jsonl. Returns ``""`` when neither is present.
+    """
+    sources = [str(s) for s in (g.get("sources") or [])][:2]
+    vector_ids = [str(v) for v in (g.get("vector_ids") or [])][:max_ids]
+    if not sources and not vector_ids:
+        return ""
+    parts = ", ".join(sources)
+    if vector_ids:
+        ids = " ".join(vector_ids)
+        parts = f"{parts} [{ids}]" if parts else ids
+    return f"repro {parts}"
+
+
 def _finding_lines(g: dict[str, Any]) -> list[str]:
     """Two lines for one finding group: a count-prefixed headline + detail."""
     op = g.get("operation") or ""
@@ -85,6 +103,9 @@ def _finding_lines(g: dict[str, Any]) -> list[str]:
     nodeids = g.get("nodeids") or []
     if nodeids:
         detail.append(str(nodeids[0]))
+    repro = _reproducer_handle(g)
+    if repro:
+        detail.append(repro)
     param_breakdown = g.get("param_breakdown") or {}
     if param_breakdown:
         detail.append(f"params {_top_params(param_breakdown)}")
@@ -119,30 +140,47 @@ def _crash_section(groups: list[dict[str, Any]]) -> list[str]:
     return out
 
 
-def _fail_section(severity: str, groups: list[dict[str, Any]]) -> list[str]:
-    """Render one severity section, grouping its members by kind/reason (count desc)."""
-    members = [
-        g
-        for g in groups
-        if g.get("outcome") == "fail"
-        and g.get("severity") == severity
-        and g.get("reason") not in ("unclassified", "crash")
-    ]
-    if not members:
-        return []
-    total = sum(int(g.get("count", 0)) for g in members)
-    out = [f"## {severity} - fail ({total})", ""]
-
+def _render_fail_buckets(members: list[dict[str, Any]]) -> list[str]:
+    """Group fail members by kind/reason (count desc) into ``###`` sub-sections."""
     buckets: dict[tuple[str | None, str], list[dict[str, Any]]] = {}
     for g in members:
         buckets.setdefault((g.get("kind"), str(g.get("reason"))), []).append(g)
-
+    out: list[str] = []
     for (kind, reason), grps in buckets.items():
         out.append(f"### {_kind_subheader(kind, reason)}")
         for g in sorted(grps, key=lambda x: -int(x.get("count", 0))):
             out.extend(_finding_lines(g))
         out.append("")
     return out
+
+
+def _is_scored_fail(g: dict[str, Any]) -> bool:
+    """A fail that counts toward the header total (excludes crash + unclassified)."""
+    return g.get("outcome") == "fail" and g.get("reason") not in ("unclassified", "crash")
+
+
+def _fail_section(severity: str, groups: list[dict[str, Any]]) -> list[str]:
+    """Render one severity section, grouping its members by kind/reason (count desc)."""
+    members = [g for g in groups if _is_scored_fail(g) and g.get("severity") == severity]
+    if not members:
+        return []
+    total = sum(int(g.get("count", 0)) for g in members)
+    return [f"## {severity} - fail ({total})", "", *_render_fail_buckets(members)]
+
+
+def _uncategorized_fail_section(groups: list[dict[str, Any]]) -> list[str]:
+    """Catch-all so a scored fail is NEVER silently dropped.
+
+    A fail whose severity is outside the four known sections is still counted by the
+    header (``health.outcome_counts``); without this section the header total would
+    exceed the rendered findings - a hidden finding. Render any such straggler under
+    an explicit ``## other severity`` heading.
+    """
+    members = [g for g in groups if _is_scored_fail(g) and g.get("severity") not in _FAIL_SECTIONS]
+    if not members:
+        return []
+    total = sum(int(g.get("count", 0)) for g in members)
+    return [f"## other severity - fail ({total})", "", *_render_fail_buckets(members)]
 
 
 def _xfail_section(groups: list[dict[str, Any]]) -> list[str]:
@@ -257,6 +295,7 @@ def render_provider(
     out.extend(_crash_section(groups))
     for severity in _FAIL_SECTIONS:
         out.extend(_fail_section(severity, groups))
+    out.extend(_uncategorized_fail_section(groups))
 
     mech_cov = (coverage or {}).get("mechanism_coverage")
     fsc = (quality or {}).get("framework_skip_candidates")

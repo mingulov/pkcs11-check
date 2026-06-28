@@ -6,6 +6,7 @@ information (a guard against 'computed but never rendered' regressions).
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from pkcs11_check.report.render import render_provider
@@ -94,6 +95,28 @@ def test_data_quality_warnings_surfaced() -> None:
     out = render_provider("p", [_group()], quality=quality)
     assert "lacks explicit test details" in out, "data_quality_warnings not surfaced"
     assert "data quality" in out.lower() or "caveat" in out.lower()
+
+
+def test_uncategorized_severity_fail_is_not_dropped() -> None:
+    """A scored fail whose severity is outside the four known sections must still
+    render. Otherwise the header counts it (outcome_counts) while the section loop
+    skips it - a silent finding drop, the exact failure this project forbids."""
+    g = _group(severity="INFO", reason="wrong_result", summary="oddball-severity fail")
+    out = render_provider("p", [g])
+    assert "oddball-severity fail" in out, "fail with an unknown severity was dropped"
+    assert "fail" in out.lower()
+
+
+def test_reproducer_handles_rendered_on_fail() -> None:
+    """vector_ids/sources are computed by extract but were never rendered; the
+    reproducer handle (vector file + case id) must surface, not hide in the .jsonl."""
+    g = _group(
+        vector_ids=["tc82-valid", "tc83-valid", "+40"],
+        sources=["hmac_sha1_test.json"],
+    )
+    out = render_provider("p", [g])
+    assert "hmac_sha1_test.json" in out, "source vector file not surfaced"
+    assert "tc82-valid" in out, "vector_id reproducer not surfaced"
 
 
 def test_end_to_end_kitchensink_surfaces_all_signals(tmp_path: Path) -> None:

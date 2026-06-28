@@ -116,12 +116,40 @@ _CURVE_ALIASES: dict[str, str] = {
     "ed-448": "ed448",
 }
 
+# Hash aliases: the CKM/CKK HMAC mechanism spellings map to the bare digest in the
+# canonical dash form, so a digest named in HMAC form (SHA512_HMAC) and the same
+# digest from an RSA/ECDSA vector (SHA-512) share one report bucket. Already-canonical
+# dash forms (SHA-512, SHA3-256, SHA-512/256) only need lower-casing.
+_HASH_ALIASES: dict[str, str] = {
+    "sha_1_hmac": "sha-1",
+    "sha224_hmac": "sha-224",
+    "sha256_hmac": "sha-256",
+    "sha384_hmac": "sha-384",
+    "sha512_hmac": "sha-512",
+    "sha512_224_hmac": "sha-512/224",
+    "sha512_256_hmac": "sha-512/256",
+    "sha3_224_hmac": "sha3-224",
+    "sha3_256_hmac": "sha3-256",
+    "sha3_384_hmac": "sha3-384",
+    "sha3_512_hmac": "sha3-512",
+}
+
 
 def normalize_param(key: str, value: str) -> str:
-    """Canonicalize a param value so equivalent forms share one report bucket."""
+    """Canonicalize a param value so equivalent forms share one report bucket.
+
+    The single source of truth for param-value canonicalization, applied at emission
+    (:func:`set_params`) and defensively in the report extractor. The high-cardinality
+    discriminating axes - ``curve`` and ``hash`` - are normalized to one vocabulary;
+    other keys (the ``*_bits`` sizes, ``mlkem``/``mldsa`` levels) are already consistent
+    decimal/level strings and pass through unchanged.
+    """
     if key == "curve":
         lowered = value.lower()
         return _CURVE_ALIASES.get(lowered, lowered)
+    if key == "hash":
+        lowered = value.lower()
+        return _HASH_ALIASES.get(lowered, lowered)
     return value
 
 
