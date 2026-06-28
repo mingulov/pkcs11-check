@@ -299,7 +299,8 @@ def render_provider(
 
     mech_cov = (coverage or {}).get("mechanism_coverage")
     fsc = (quality or {}).get("framework_skip_candidates")
-    capability = render_capability_gaps(mech_cov, fsc).rstrip()
+    mech_findings = (quality or {}).get("mechanism_findings")
+    capability = render_capability_gaps(mech_cov, fsc, mech_findings).rstrip()
     contradiction = _in_range_contradiction_line(groups)
     if contradiction:
         capability = f"{capability}\n{contradiction}"

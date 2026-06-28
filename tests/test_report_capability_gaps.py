@@ -4,9 +4,42 @@ from __future__ import annotations
 
 from pkcs11_check.report.capability import (
     advertised_not_operational,
+    never_invoked_advertised,
     render_capability_gaps,
     skip_reasons,
 )
+
+
+def test_never_invoked_advertised_from_mechanism_findings() -> None:
+    mf = [
+        {"mechanism": "CKM_DES3_CBC_ENCRYPT_DATA", "advertised": True, "invoked": False},
+        {"mechanism": "CKM_AES_CTR", "advertised": True, "invoked": True},
+        {"mechanism": "CKM_AES_CCM", "advertised": False, "invoked": False},  # not advertised
+    ]
+    assert never_invoked_advertised(mf) == ["CKM_DES3_CBC_ENCRYPT_DATA"]
+    assert never_invoked_advertised(None) == []
+
+
+def test_capability_gaps_splits_never_invoked_coverage_gap() -> None:
+    # Both advertised, neither accepted nor rejected -> both land in "limbo". The one
+    # the run never invoked is OUR coverage gap (not a module defect); the one that was
+    # invoked but inconclusive stays a module-behavior line. Conflating them mis-blames
+    # the module for mechanisms pkcs11-check simply never exercised.
+    mc = {
+        "advertised_names": ["CKM_AES_CTR", "CKM_DES3_CBC_ENCRYPT_DATA"],
+        "accepted_names": [],
+        "rejected_cleanly_names": [],
+    }
+    mf = [
+        {"mechanism": "CKM_DES3_CBC_ENCRYPT_DATA", "advertised": True, "invoked": False},
+        {"mechanism": "CKM_AES_CTR", "advertised": True, "invoked": True},
+    ]
+    out = render_capability_gaps(mc, [], mf)
+    assert "never invoked this run" in out
+    nline = next(line for line in out.splitlines() if "never invoked this run" in line)
+    assert "CKM_DES3_CBC_ENCRYPT_DATA" in nline
+    assert "CKM_AES_CTR" not in nline  # it WAS invoked - not a coverage gap
+    assert "invoked but no canonical accept/reject" in out
 
 MC = {
     "advertised_names": ["CKM_AES_GCM", "CKM_RSA_PKCS", "CKM_AES_CMAC", "CKM_DSA"],
