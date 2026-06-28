@@ -21,6 +21,7 @@ _TEARDOWN_FNS = frozenset({"C_Finalize", "C_CloseSession", "C_CloseAllSessions",
 # em dash (U+2014) and en dash (U+2013), built from code points to keep this
 # source ASCII; matched together with any surrounding whitespace.
 _DASH_RE = re.compile(rf"\s*[{chr(0x2014)}{chr(0x2013)}]\s*")
+_VECTOR_SUFFIX_RE = re.compile(r";\s*vector:\s*(.+)$", re.DOTALL)
 
 
 def truncate_hex(text: str, limit: int = 64) -> str:
@@ -59,14 +60,30 @@ def normalize_dashes(text: str) -> str:
     return _DASH_RE.sub(" - ", text)
 
 
+def collapse_redundant_vector(text: str) -> str:
+    """Drop a trailing ``; vector: X`` clause when ``X`` already appears earlier.
+
+    Several operability/xfail emitters append the per-vector exception after a detail
+    that already embeds the same CK_RV message, so the suffix is pure duplication. When
+    the vector text is NOT already present (e.g. ``canonical op OK; vector: <the actual
+    rejection>`` on an honest-deviation), it is informative and is kept.
+    """
+    match = _VECTOR_SUFFIX_RE.search(text)
+    if not match:
+        return text
+    vector = match.group(1).strip()
+    head = text[: match.start()].rstrip()
+    return head if vector and vector in head else text
+
+
 def sanitize_line(text: str) -> str:
     """Apply the generic per-line reductions used on every rendered finding line.
 
-    Order matters: collapse multi-line text first (drops bulk such as a crash's
-    stdout/stderr tail), then truncate any long hex left on the kept line, then
-    normalize dashes.
+    Order matters: drop a redundant duplicated ``; vector:`` suffix, collapse
+    multi-line text (drops bulk such as a crash's stdout/stderr tail), then truncate
+    any long hex left on the kept line, then normalize dashes.
     """
-    return normalize_dashes(truncate_hex(collapse_multiline(text)))
+    return normalize_dashes(truncate_hex(collapse_multiline(collapse_redundant_vector(text))))
 
 
 def _crashing_call(text: str) -> str | None:
