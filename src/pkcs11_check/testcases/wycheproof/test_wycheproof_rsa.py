@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     generate_random,
@@ -208,6 +208,7 @@ def test_rsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, Any
     modulus = pkcs11_bigint_from_hex(modulus_hex)
     exponent = pkcs11_bigint_from_hex(exp_hex)
     key_bits = len(modulus) * 8
+    set_params({"rsa_bits": str(key_bits), "hash": str(group.get("sha", ""))})
 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
         classify(

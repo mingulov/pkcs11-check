@@ -18,7 +18,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import fail_as, xfail_as
+from pkcs11_check.classification import fail_as, set_params, xfail_as
 from pkcs11_check.raw.pack import attr_ulong
 from pkcs11_check.raw.pack_mechanisms import mech_sign_context
 from pkcs11_check.raw.recipes import (
@@ -156,6 +156,7 @@ class TestMlDsaKeyGen:
             pytest.skip("ML_DSA_KEY_PAIR_GEN not supported by module")
 
         param_set_name = vec["param_set"]
+        set_params({"mldsa": str(vec.get("param_set", "")).removeprefix("ML-DSA-")})
         skip_duplicate_pkcs11_input(vec, "ML-DSA KeyGen")
 
         pub_key = priv_key = 0
@@ -206,6 +207,7 @@ class TestMlDsaSigGen:
         mech_name = _get_mech_name(pre_hash_for_check)
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} mechanism not supported by module")
+        set_params({"mldsa": str(vec.get("param_set", "")).removeprefix("ML-DSA-")})
 
         priv_key = 0
         try:
@@ -307,6 +309,7 @@ class TestMlDsaSigVer:
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} mechanism not supported by module")
         skip_unless_mechanism_flag(rs, mech_name, int(CKF_VERIFY))
+        set_params({"mldsa": str(vec.get("param_set", "")).removeprefix("ML-DSA-")})
 
         pub_key = 0
         try:

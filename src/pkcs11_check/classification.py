@@ -97,6 +97,24 @@ class Classification:
 # Global collector for the current test run.
 _records: list[Classification] = []
 
+# Params (curve/key-size/hash) attached to every classification from the current
+# test; set once per test and cleared by clear() between tests.
+_active_params: dict[str, str] | None = None
+
+
+def set_params(params: dict[str, str] | None) -> None:
+    """Declare the discriminating params for the current test (curve/size/hash).
+
+    Every classify() emitted afterwards inherits these unless it passes its own
+    ``params``. Cleared per-test by clear(), so it cannot leak across tests.
+    """
+    global _active_params
+    if params:
+        cleaned = {k: v for k, v in params.items() if v}
+        _active_params = cleaned or None
+    else:
+        _active_params = None
+
 
 def record(rec: Classification) -> None:
     """Record a classification for the current test."""
@@ -109,8 +127,10 @@ def get_records() -> list[Classification]:
 
 
 def clear() -> None:
-    """Clear collected records (call between tests)."""
+    """Clear collected records and active params (call between tests)."""
+    global _active_params
     _records.clear()
+    _active_params = None
 
 
 def serialize(records: list[Classification]) -> list[dict[str, Any]]:
@@ -168,6 +188,8 @@ def classify(
     or strings (passed through unchanged).  A ``fail`` raises ``pytest.fail`` and an
     ``xfail`` raises ``pytest.xfail``; ``pass`` returns normally.
     """
+    if params is None and _active_params is not None:
+        params = dict(_active_params)
     outcome, severity = derive_verdict(reason, kind)
     expected_names = _ckr_names(expected)
     actual_name = _ckr_name(actual)
