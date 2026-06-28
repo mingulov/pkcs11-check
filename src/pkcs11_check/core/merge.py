@@ -223,7 +223,7 @@ def merge_results_payloads(
     child_crash, child_timeout = compute_child_subprocess_counts(units)
     summary["child_crash"] = child_crash
     summary["child_timeout"] = child_timeout
-    summary["incomplete"] = summary["crash_limited"] > 0
+    summary["incomplete"] = summary["crash_limited"] > 0 or summary["timeout"] > 0
 
     merged: dict[str, Any] = {
         "tool": "pkcs11-check",
