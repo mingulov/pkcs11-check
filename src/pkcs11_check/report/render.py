@@ -18,12 +18,16 @@ unclassified are folded to one line per reason and heavy detail lives in the .js
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from typing import Any
 
 from pkcs11_check.report import health
 from pkcs11_check.report.capability import render_capability_gaps
 from pkcs11_check.report.sanitize import sanitize_line, summarize_crash, truncate_ckr_list
+
+# Parse a coverage.invoked_detail entry: ``CKM_X[k1=v1,k2=v2]`` -> mechanism, params.
+_INVOKED_DETAIL_RE = re.compile(r"^(CKM_[A-Z0-9_]+)\[(.+)\]$")
 
 _XFAIL_REASONS = ("not_operational", "nonspec_reject", "honest_deviation", "undeclared_capability")
 
@@ -45,6 +49,17 @@ _THREAT_NOTE = (
     " host), a different threat model. Treat each finding as a lead to assess against your"
     " deployment - not as a CVE, and not as something to forward to the module's authors"
     " without that assessment."
+)
+
+_AUTOMATION_NOTE = (
+    "This report is produced by an automated suite and is not hand-verified: it can both"
+    " MISS real issues (a probe that does not cover them, or a finding mis-bucketed as a"
+    " benign deviation - false negatives) and OVER-REPORT (false positives, or harness"
+    " artifacts that are not module defects). Also, a large fail/xfail count is usually one"
+    " underlying behavior repeated across many test vectors, not that many distinct defects"
+    " - read the per-finding count, the `by param` breakdown, and the reproducer before"
+    " concluding. Treat every line as a lead to verify against the module's behavior and the"
+    " PKCS#11 spec; investigate deeper before acting on or forwarding it."
 )
 
 
@@ -263,6 +278,48 @@ def _appendix(groups: list[dict[str, Any]]) -> list[str]:
     return ["## appendix", "", *lines]
 
 
+def _invoked_params_section(coverage: dict[str, Any] | None) -> list[str]:
+    """Surface the per-mechanism param variants the suite actually invoked.
+
+    ``coverage.invoked_detail`` carries entries like ``CKM_AES_GCM[tagBits=0]`` /
+    ``CKM_AES_CTR[counterBits=129]`` - evidence of which edge parameters were exercised,
+    computed but never rendered. Bare mechanisms (no ``[params]``) are omitted; the list
+    is capped with a ``(+N)`` overflow marker.
+    """
+    mc = (coverage or {}).get("mechanism_coverage") or {}
+    detail = mc.get("invoked_detail") or []
+    # group by mechanism, collapsing the value set per param key, so a 5x5 OAEP
+    # hashAlg/mgf matrix is one line rather than 25, while edge values stay visible.
+    grouped: dict[str, dict[str, set[str]]] = {}
+    total = 0
+    for entry in detail:
+        match = _INVOKED_DETAIL_RE.match(str(entry))
+        if not match:
+            continue
+        total += 1
+        mech, params = match.group(1), match.group(2)
+        keys = grouped.setdefault(mech, {})
+        for kv in params.split(","):
+            key, _, value = kv.partition("=")
+            keys.setdefault(key.strip(), set()).add(value.strip())
+    if not grouped:
+        return []
+
+    def _sort_key(value: str) -> tuple[int, int, str]:
+        # numeric values first, in numeric order (tagBits 8 before 128), then strings
+        return (0, int(value), "") if value.isdigit() else (1, 0, value)
+
+    out = [f"## mechanism params exercised ({total})", ""]
+    for mech in sorted(grouped):
+        body = "; ".join(
+            f"{key}={','.join(sorted(vals, key=_sort_key))}"
+            for key, vals in sorted(grouped[mech].items())
+        )
+        out.append(f"- {mech}[{body}]")
+    out.append("")
+    return out
+
+
 def _in_range_contradiction_line(groups: list[dict[str, Any]]) -> str:
     """Surface the T2 advertised-IN_RANGE-then-refused contradiction candidates.
 
@@ -327,6 +384,8 @@ def render_provider(
     out.append("")
     out.append(_THREAT_NOTE)
     out.append("")
+    out.append(_AUTOMATION_NOTE)
+    out.append("")
 
     out.extend(_crash_section(groups))
     for severity in _FAIL_SECTIONS:
@@ -343,6 +402,7 @@ def render_provider(
     out.append(capability)
     out.append("")
 
+    out.extend(_invoked_params_section(coverage))
     out.extend(_xfail_section(groups))
     out.extend(_appendix(groups))
 

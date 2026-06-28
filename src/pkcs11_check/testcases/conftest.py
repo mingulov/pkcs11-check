@@ -17,6 +17,7 @@ import pytest
 if TYPE_CHECKING:
     from pkcs11_check.raw.recipes import RSAUsage
 
+from pkcs11_check import classification as _classification
 from pkcs11_check.raw.api import ckm_name
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
@@ -62,6 +63,31 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._capability import Capability, capability_for
 from pkcs11_check.testcases._error_tuples import MECH_PARAM_UNSUPPORTED_ERRORS
 from pkcs11_check.testcases._operability import not_operational_reason
+
+
+def set_vector_context_from_node(node: Any) -> None:
+    """Set the classification source/vector_id context from a parametrized ``vec`` dict
+    on a test node, if it carries ``_source``/``_vector_id``. Extracted from the autouse
+    fixture so the selection logic is unit-testable without a live pytest run.
+    """
+    callspec = getattr(node, "callspec", None)
+    if callspec is None:
+        return
+    for value in callspec.params.values():
+        if isinstance(value, dict) and (value.get("_source") or value.get("_vector_id")):
+            _classification.set_vector(value.get("_source"), value.get("_vector_id"))
+            return
+
+
+@pytest.fixture(autouse=True)
+def _vector_reproducer_context(request: pytest.FixtureRequest) -> None:
+    """Attach a parametrized vector's reproducer identity (source/vector_id) to every
+    classify() the test emits - including the not_operational/xfail paths - without
+    per-emission-site wiring. A no-op for tests with no vector-dict parameter; the
+    classification context is reset per test by the plugin teardown (clear()).
+    """
+    set_vector_context_from_node(request.node)
+
 
 AES_KEYGEN_RUNTIME_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,

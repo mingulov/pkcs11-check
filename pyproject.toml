@@ -104,6 +104,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 "src/pkcs11_check/testcases/conftest.py" = ["N812"]  # classification imported as C is intentional
 "src/pkcs11_check/testcases/ckr/_ckr_spec.py" = ["N812"]  # classification imported as C is intentional
 "tests/test_provenance.py" = ["N812"]  # provenance imported as P is intentional
+"tests/test_vector_reproducer_fixture.py" = ["N812"]  # classification imported as C is intentional
 
 [tool.mypy]
 python_version = "3.12"

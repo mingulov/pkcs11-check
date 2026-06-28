@@ -6,6 +6,8 @@ passed 0/0 (0%) · fail 7 (CRITICAL 4 · HIGH 3) · crash 1 · xfail 3 · unclas
 
 A PKCS#11 module runs in-process, inside the calling application's trust boundary, and is generally built assuming the application calls the API as documented. This suite deliberately sends hostile input (oversized lengths, malformed templates, invalid parameters) that a correct caller never sends; a finding from such a probe is, on its own, usually a hardening opportunity rather than an exploitable vulnerability in the in-process model. It becomes security-relevant when the module is exposed across a trust boundary (a remote/network PKCS#11 service, a proxy, or a multi-tenant host), a different threat model. Treat each finding as a lead to assess against your deployment - not as a CVE, and not as something to forward to the module's authors without that assessment.
 
+This report is produced by an automated suite and is not hand-verified: it can both MISS real issues (a probe that does not cover them, or a finding mis-bucketed as a benign deviation - false negatives) and OVER-REPORT (false positives, or harness artifacts that are not module defects). Also, a large fail/xfail count is usually one underlying behavior repeated across many test vectors, not that many distinct defects - read the per-finding count, the `by param` breakdown, and the reproducer before concluding. Treat every line as a lead to verify against the module's behavior and the PKCS#11 spec; investigate deeper before acting on or forwarding it.
+
 ## CRASH (1)
 
 [1] tests/test_arithmetic_overflow.py - process crashed (SIGSEGV)
