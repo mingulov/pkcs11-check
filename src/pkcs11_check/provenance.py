@@ -63,3 +63,57 @@ def read_build_provenance(path: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def test_data_provenance(manifest: Mapping[str, Any], data_dir: Path) -> list[dict[str, Any]]:
+    """One record per data package in the manifest: repo/commit/hash + presence in data_dir.
+
+    Non-package top-level scalars (observed_at, policy strings) are skipped: a data entry
+    is a table carrying ``commit`` or ``archive_sha256``. ``present`` is a heuristic - the
+    data dir contains a subtree named after the package.
+    """
+    out: list[dict[str, Any]] = []
+    for name, entry in manifest.items():
+        if not isinstance(entry, dict):
+            continue
+        if "archive_sha256" not in entry and "commit" not in entry:
+            continue
+        out.append(
+            {
+                "name": name,
+                "repo": entry.get("repo"),
+                "commit": entry.get("commit"),
+                "archive_sha256": entry.get("archive_sha256"),
+                "present": (data_dir / name).exists(),
+            }
+        )
+    return out
+
+
+def assemble(
+    *,
+    env: Mapping[str, str],
+    repo_root: Path | None,
+    run_git: GitRunner = _run_git,
+    build_file: Path,
+    data_manifest: Mapping[str, Any],
+    data_dir: Path,
+    environment: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Assemble the full provenance dict from all sources; omit any absent source."""
+    prov: dict[str, Any] = {
+        "framework": framework_version(env=env, repo_root=repo_root, run_git=run_git)
+    }
+    build = read_build_provenance(build_file)
+    if isinstance(build.get("provider"), dict):
+        prov["provider"] = build["provider"]
+    if isinstance(build.get("crypto_backend"), dict):
+        prov["crypto_backend"] = build["crypto_backend"]
+    test_data = test_data_provenance(data_manifest, data_dir)
+    if test_data:
+        prov["test_data"] = test_data
+    if environment:
+        prov["environment"] = environment
+    if isinstance(build.get("extra"), dict) and build["extra"]:
+        prov["extra"] = build["extra"]
+    return prov
