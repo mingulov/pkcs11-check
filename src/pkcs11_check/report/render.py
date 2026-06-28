@@ -103,8 +103,17 @@ def _crash_section(groups: list[dict[str, Any]]) -> list[str]:
     total = sum(int(g.get("count", 0)) for g in crashes)
     out = [f"## CRASH ({total})", ""]
     for g in crashes:
-        target = g.get("test_file") or g.get("summary") or "?"
+        target = str(g.get("test_file") or g.get("summary") or "?")
         summ = summarize_crash(str(g.get("summary", "process crashed")))
+        # runner-side crashes summarize to "<target>: process crashed" - drop the
+        # leading target so it is not printed twice.
+        if summ.startswith(target):
+            summ = summ[len(target) :].lstrip(": ").strip() or "process crashed"
+        detail_raw = g.get("detail")
+        detail = detail_raw if isinstance(detail_raw, dict) else {}
+        tag = detail.get("signal") or detail.get("mode")
+        if tag and str(tag) not in summ:
+            summ = f"{summ} ({tag})"
         out.append(f"[{g.get('count', 0)}] {target} - {summ}")
     out.append("")
     return out
@@ -187,6 +196,26 @@ def _appendix(groups: list[dict[str, Any]]) -> list[str]:
     return ["## appendix", "", *lines]
 
 
+def _in_range_contradiction_line(groups: list[dict[str, Any]]) -> str:
+    """Surface the T2 advertised-IN_RANGE-then-refused contradiction candidates.
+
+    These are not_operational records the capability gate proved advertised in-range,
+    that then cleanly refused (detail.capability_verdict == "IN_RANGE") - the subset
+    worth investigating, distinct from honest capability gaps.
+    """
+    in_range = [
+        g
+        for g in groups
+        if isinstance(g.get("detail"), dict) and g["detail"].get("capability_verdict") == "IN_RANGE"
+    ]
+    if not in_range:
+        return ""
+    total = sum(int(g.get("count", 0)) for g in in_range)
+    mechs = sorted({str(g.get("mechanism")) for g in in_range if g.get("mechanism")})
+    examples = ", ".join(mechs[:6]) or "see .jsonl"
+    return f"- advertised IN-RANGE then refused (contradiction candidates): {total}: {examples}"
+
+
 def render_provider(
     provider: str,
     groups: list[dict[str, Any]],
@@ -213,6 +242,13 @@ def render_provider(
         out.append(f"> {banner}")
         out.append("")
 
+    dq_raw = (quality or {}).get("data_quality_warnings")
+    dq_warnings = dq_raw if isinstance(dq_raw, list) else []
+    for warning in dq_warnings:
+        out.append(f"> data quality caveat: {warning}")
+    if dq_warnings:
+        out.append("")
+
     out.append("## before you report")
     out.append("")
     out.append(_THREAT_NOTE)
@@ -224,7 +260,11 @@ def render_provider(
 
     mech_cov = (coverage or {}).get("mechanism_coverage")
     fsc = (quality or {}).get("framework_skip_candidates")
-    out.append(render_capability_gaps(mech_cov, fsc).rstrip())
+    capability = render_capability_gaps(mech_cov, fsc).rstrip()
+    contradiction = _in_range_contradiction_line(groups)
+    if contradiction:
+        capability = f"{capability}\n{contradiction}"
+    out.append(capability)
     out.append("")
 
     out.extend(_xfail_section(groups))

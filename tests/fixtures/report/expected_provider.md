@@ -8,7 +8,7 @@ A PKCS#11 module runs in-process, inside the calling application's trust boundar
 
 ## CRASH (1)
 
-[1] tests/test_arithmetic_overflow.py - tests/test_arithmetic_overflow.py: process crashed
+[1] tests/test_arithmetic_overflow.py - process crashed (SIGSEGV)
 
 ## CRITICAL - fail (4)
 
