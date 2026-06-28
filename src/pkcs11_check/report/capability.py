@@ -76,6 +76,18 @@ def advertised_not_operational(mechanism_coverage: dict[str, Any] | None) -> dic
     }
 
 
+def never_invoked_advertised(mechanism_findings: list[dict[str, Any]] | None) -> list[str]:
+    """Advertised mechanisms the run never invoked - a coverage gap on OUR side, not a
+    module defect. From quality.json ``mechanism_findings`` (names already CKM_ form)."""
+    out = set()
+    for mf in mechanism_findings or []:
+        if isinstance(mf, dict) and mf.get("advertised") and not mf.get("invoked"):
+            name = mf.get("mechanism")
+            if name:
+                out.add(str(name))
+    return sorted(out)
+
+
 def skip_reasons(
     framework_skip_candidates: list[dict[str, Any]] | None, limit: int = 10
 ) -> list[dict[str, Any]]:
@@ -97,16 +109,35 @@ def _capped(names: list[str], cap: int = 12) -> str:
 def render_capability_gaps(
     mechanism_coverage: dict[str, Any] | None,
     framework_skip_candidates: list[dict[str, Any]] | None,
+    mechanism_findings: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Render the capability-gap markdown section from coverage + skip candidates."""
+    """Render the capability-gap markdown section from coverage + skip candidates.
+
+    When ``mechanism_findings`` is given, the "no canonical accept/reject" (limbo) row
+    is split into the subset the run NEVER invoked (a coverage gap on our side, not a
+    module defect) versus those invoked-but-inconclusive, so the report does not
+    mis-blame the module for mechanisms pkcs11-check simply never exercised.
+    """
     gaps = advertised_not_operational(mechanism_coverage)
     lines = ["## capability gaps", ""]
     rows = [
         ("advertised but rejected a canonical op", gaps["rejected_cleanly"]),
         ("advertised but CRASHED on probe", gaps["crashed"]),
         ("advertised but TIMED OUT on probe", gaps["timeout"]),
-        ("advertised, no canonical accept/reject observed", gaps["limbo"]),
     ]
+    never = set(never_invoked_advertised(mechanism_findings))
+    if never:
+        limbo_never = [m for m in gaps["limbo"] if m in never]
+        limbo_other = [m for m in gaps["limbo"] if m not in never]
+        rows.append(
+            (
+                "advertised but never invoked this run (coverage gap, not a module defect)",
+                limbo_never,
+            )
+        )
+        rows.append(("advertised, invoked but no canonical accept/reject", limbo_other))
+    else:
+        rows.append(("advertised, no canonical accept/reject observed", gaps["limbo"]))
     any_row = False
     for label, names in rows:
         if names:
