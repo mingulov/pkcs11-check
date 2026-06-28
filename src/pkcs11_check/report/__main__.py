@@ -34,6 +34,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from pkcs11_check.report import health
 from pkcs11_check.report.correlate import correlate, enrich
 from pkcs11_check.report.extract import extract_groups
 from pkcs11_check.report.render import render_provider
@@ -140,19 +141,6 @@ def _resolve_module_issues_text(explicit: Path | None) -> str:
     return ""
 
 
-def _counts(groups: list[dict[str, Any]]) -> dict[str, int]:
-    out = {"fail": 0, "xfail": 0, "crash": 0}
-    for g in groups:
-        n = int(g.get("count", 0))
-        if g.get("reason") == "crash":
-            out["crash"] += n
-        elif g.get("outcome") == "xfail":
-            out["xfail"] += n
-        elif g.get("outcome") == "fail":
-            out["fail"] += n
-    return out
-
-
 def _write_provider(
     provider: str,
     groups: list[dict[str, Any]],
@@ -182,12 +170,18 @@ def _write_index(
         "",
         "# conformance index",
         "",
-        "| provider | fail | xfail | crash |",
-        "|---|---|---|---|",
+        "| provider | fail | xfail | crash | unclassified |",
+        "|---|---|---|---|---|",
     ]
     for provider in sorted(provider_groups):
-        c = _counts(provider_groups[provider])
-        lines.append(f"| [{provider}]({provider}.md) | {c['fail']} | {c['xfail']} | {c['crash']} |")
+        # health.outcome_counts is the single source of truth, matching each
+        # provider header: `fail` excludes the unclassified backlog, which gets
+        # its own column instead of inflating the headline fail number.
+        c = health.outcome_counts(provider_groups[provider])
+        lines.append(
+            f"| [{provider}]({provider}.md) | {c['fail']} | {c['xfail']} | "
+            f"{c['crash']} | {c['unclassified']} |"
+        )
     lines.append("")
     lines.append("## top universal themes")
     for theme in correlation["universal_themes"][:10]:
