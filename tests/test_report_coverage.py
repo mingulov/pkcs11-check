@@ -119,6 +119,32 @@ def test_reproducer_handles_rendered_on_fail() -> None:
     assert "tc82-valid" in out, "vector_id reproducer not surfaced"
 
 
+def test_invoked_mechanism_params_surfaced() -> None:
+    """coverage.invoked_detail (rich per-mechanism params, e.g. CKM_AES_GCM[tagBits=0])
+    is computed but was never rendered; surface the param variants that were exercised."""
+    coverage = {
+        "mechanism_coverage": {
+            "invoked_detail": [
+                "CKM_AES_GCM[tagBits=0]",
+                "CKM_AES_GCM[tagBits=128]",
+                "CKM_AES_CTR[counterBits=129]",
+                "CKM_RSA_PKCS",  # bare, no params - not param-detail
+            ]
+        }
+    }
+    out = render_provider("p", [_group()], coverage=coverage)
+    assert "mechanism param" in out.lower(), "invoked mechanism params not surfaced"
+    # grouped per mechanism, values collapsed per param key: CKM_AES_GCM[tagBits=0,128]
+    gcm = next(line for line in out.splitlines() if "CKM_AES_GCM" in line and "tagBits" in line)
+    assert "0" in gcm and "128" in gcm, gcm
+    assert "CKM_AES_CTR" in out and "129" in out
+
+
+def test_invoked_mechanism_params_absent_is_silent() -> None:
+    out = render_provider("p", [_group()], coverage={"mechanism_coverage": {"invoked_detail": []}})
+    assert "mechanism param" not in out.lower()
+
+
 def test_report_has_automated_check_caveat() -> None:
     """The report must caveat that it is an automated check: it can miss real issues
     AND over-report, and large fail/xfail counts are usually one behavior repeated
