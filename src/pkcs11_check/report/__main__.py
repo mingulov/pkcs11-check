@@ -34,7 +34,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pkcs11_check.report.capability import capability_audit, render_capability_section
 from pkcs11_check.report.correlate import correlate, enrich
 from pkcs11_check.report.extract import extract_groups
 from pkcs11_check.report.render import render_provider
@@ -80,16 +79,26 @@ def crashes_from_results(results_json: Path | None) -> list[dict[str, Any]]:
     return crashes
 
 
-def _summary_from_results(results_json: Path | None) -> dict[str, Any]:
-    """Read the ``summary`` dict from a ``results.json`` file, or return ``{}``."""
+def _payload_from_results(results_json: Path | None) -> dict[str, Any]:
+    """Read the full results.json payload (summary/coverage/units), or ``{}``."""
     if results_json is None:
         return {}
     try:
         payload = json.loads(results_json.read_text())
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return {}
-    summary = payload.get("summary") if isinstance(payload, dict) else None
-    return summary if isinstance(summary, dict) else {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _quality_for(results_json: Path | None) -> dict[str, Any]:
+    """Read quality.json sitting next to results.json, or ``{}``."""
+    if results_json is None:
+        return {}
+    try:
+        payload = json.loads((results_json.parent / "quality.json").read_text())
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _parse_named(values: list[str] | None, default_provider: str | None) -> dict[str, Path]:
@@ -148,16 +157,15 @@ def _write_provider(
     provider: str,
     groups: list[dict[str, Any]],
     out_dir: Path,
-    pass_count: int | None = None,
-    crash_limited: int = 0,
-    incomplete: bool = False,
+    *,
+    summary: dict[str, Any] | None = None,
+    coverage: dict[str, Any] | None = None,
+    units: list[dict[str, Any]] | None = None,
+    quality: dict[str, Any] | None = None,
 ) -> None:
     md = render_provider(
-        provider, groups, pass_count=pass_count, crash_limited=crash_limited, incomplete=incomplete
+        provider, groups, summary=summary, coverage=coverage, units=units, quality=quality
     )
-    # render_provider ends with a single trailing newline; the "\n" join yields
-    # one blank line before the appended "## capability audit" heading.
-    md = md + "\n" + render_capability_section(capability_audit(groups))
     (out_dir / f"{provider}.md").write_text(_DISCLAIMER + "\n\n" + md, encoding="utf-8")
     with (out_dir / f"{provider}.jsonl").open("w", encoding="utf-8") as fh:
         for group in groups:
@@ -250,17 +258,18 @@ def main(argv: list[str] | None = None) -> int:
     for provider, report_path in report_logs.items():
         results_json = results_jsons.get(provider)
         crashes = crashes_from_results(results_json)
+        payload = _payload_from_results(results_json)
         groups = extract_groups(report_path, crashes=crashes)
         enrich(groups, module_issues_text=module_issues, provider=provider)
         provider_groups[provider] = groups
-        summary = _summary_from_results(results_json)
         _write_provider(
             provider,
             groups,
             out_dir,
-            pass_count=summary.get("passed") if isinstance(summary.get("passed"), int) else None,
-            crash_limited=int(summary.get("crash_limited", 0) or 0),
-            incomplete=bool(summary.get("incomplete", False)),
+            summary=payload.get("summary") or {},
+            coverage=payload.get("coverage"),
+            units=payload.get("units") or [],
+            quality=_quality_for(results_json),
         )
 
     if len(provider_groups) > 1:
