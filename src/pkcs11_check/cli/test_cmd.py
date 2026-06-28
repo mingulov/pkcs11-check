@@ -5,14 +5,16 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import tomllib
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 import typer
 from pydantic import SecretStr
 from rich.console import Console
 
+from pkcs11_check import provenance as provenance_mod
 from pkcs11_check.config import P11TestConfig
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.file_runner import (
@@ -36,6 +38,7 @@ from pkcs11_check.core.test_selection import (
     load_disabled_baseline,
     write_deselect_file,
 )
+from pkcs11_check.testcases.data import SOURCES_TOML, resolve_data_dir
 
 console = Console(stderr=True)
 
@@ -44,6 +47,33 @@ _TESTCASES_DIR = str(Path(__file__).parent.parent / "testcases")
 
 def _preflight_timeout_seconds(test_timeout: int) -> int:
     return max(10, min(test_timeout, 60))
+
+
+def _build_run_provenance(manifest: Any, data_dir: Path) -> dict[str, Any]:
+    """Assemble the provenance block for this run (best-effort; never raises)."""
+    environment: dict[str, Any] | None = None
+    if getattr(manifest, "interface_version", None) is not None:
+        environment = {
+            "interface": manifest.interface_version,
+            "slots": manifest.slot_count,
+            "mechanisms": len(manifest.mechanisms),
+        }
+    try:
+        with open(SOURCES_TOML, "rb") as fh:
+            data_manifest: dict[str, Any] = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        data_manifest = {}
+    build_file = Path(
+        os.environ.get("PKCS11_CHECK_BUILD_PROVENANCE", "/etc/pkcs11-check/build-provenance.json")
+    )
+    return provenance_mod.assemble(
+        env=os.environ,
+        repo_root=Path(__file__).resolve().parents[3],
+        build_file=build_file,
+        data_manifest=data_manifest,
+        data_dir=data_dir,
+        environment=environment,
+    )
 
 
 def _combine_marker(marker: str | None, *, skip_slow: bool, only_slow: bool) -> str | None:
@@ -361,6 +391,18 @@ def test_command(
         manifest_path.unlink(missing_ok=True)
         raise typer.Exit(code=1 if manifest.status in {"crashed", "timeout"} else 2)
 
+    run_provenance = _build_run_provenance(manifest, resolve_data_dir())
+    fw_version = run_provenance["framework"]["version"]
+    prov_info = run_provenance.get("provider") or {}
+    prov_line = (
+        f"{prov_info.get('name', '?')} {prov_info.get('ref', '')}"
+        f"@{(prov_info.get('commit') or '')[:8]}"
+    ).strip()
+    console.print(
+        f"[dim]provenance: pkcs11-check {fw_version}"
+        f" | {prov_line or 'provider: build info absent'}[/dim]"
+    )
+
     pytest_args = _build_pytest_args(
         module=module,
         interface=interface,
@@ -550,7 +592,9 @@ def test_command(
                 provisioning_path.write_text(json.dumps(provisioning_data, indent=2) + "\n")
                 if provisioning_data["totals"].get("ran_via_external", 0) > 0:
                     _emit_external_provision_banner(provisioning_data["totals"]["ran_via_external"])
-            results_payload = postprocess_jsonl_to_unified(jsonl_p, unified_path)
+            results_payload = postprocess_jsonl_to_unified(
+                jsonl_p, unified_path, provenance=run_provenance
+            )
             quality_path = unified_path.parent / "quality.json"
             write_quality_json_report(
                 quality_path,
