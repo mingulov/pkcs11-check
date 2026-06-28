@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pkcs11_check.report.sanitize import (
     collapse_multiline,
+    collapse_redundant_vector,
     normalize_dashes,
     sanitize_line,
     summarize_crash,
@@ -13,6 +14,31 @@ from pkcs11_check.report.sanitize import (
 
 EM_DASH = chr(0x2014)
 EN_DASH = chr(0x2013)
+
+
+def test_collapse_redundant_vector_drops_duplicate_suffix() -> None:
+    # operability emitters append "; vector: {exc}" after a detail that already embeds
+    # the same CK_RV message - pure duplication, drop the suffix.
+    s = (
+        "AES_KEY_WRAP C_Encrypt: advertised but not operational (canonical AES_KEY_WRAP "
+        "encrypt rejected: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK)"
+        "; vector: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK"
+    )
+    out = collapse_redundant_vector(s)
+    assert out.count("Unexpected CK_RV CKR_MECHANISM_INVALID") == 1, out
+    assert "; vector:" not in out
+
+
+def test_collapse_keeps_informative_vector() -> None:
+    # when the vector text is NOT already present (canonical op OK, vector rejected) it
+    # is informative and must be kept.
+    s = (
+        "AES_CCM encrypt: mechanism operational but this request cleanly rejected "
+        "(canonical AES_CCM encrypt OK); vector: Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID"
+    )
+    out = collapse_redundant_vector(s)
+    assert "vector:" in out
+    assert "CKR_MECHANISM_PARAM_INVALID" in out
 
 
 def test_truncate_hex_leaves_short_runs_untouched() -> None:
