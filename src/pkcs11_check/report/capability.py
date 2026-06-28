@@ -65,7 +65,11 @@ def advertised_not_operational(mechanism_coverage: dict[str, Any] | None) -> dic
     crashed = set(mc.get("crashed_names", []))
     timeout = set(mc.get("timeout_names", []))
     return {
-        "rejected_cleanly": sorted(advertised & rejected),
+        # rejected AND never accepted: a real "advertised but no canonical op worked"
+        # gap. A mechanism that also appears in accepted_names worked in some scenario
+        # and was merely refused in another - not a gap, and listing it (e.g.
+        # CKM_RSA_PKCS) reads alarmingly as "the mechanism is broken".
+        "rejected_cleanly": sorted(advertised & rejected - accepted),
         "crashed": sorted(advertised & crashed),
         "timeout": sorted(advertised & timeout),
         "limbo": sorted(advertised - accepted - rejected - crashed - timeout),
