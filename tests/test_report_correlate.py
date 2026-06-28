@@ -108,3 +108,22 @@ def test_enrich_soft_token_caveat_for_oracle() -> None:
     groups = [_group(reason="oracle", kind="crypto", severity="HIGH")]
     enrich(groups, module_issues_text="", provider="p")
     assert groups[0].get("soft_token_caveat") is True
+
+
+def test_enrich_soft_token_caveat_not_set_for_crypto_accepted_invalid() -> None:
+    # a real crypto break (accepting an invalid signature) must NOT be softened
+    groups = [_group(reason="accepted_invalid", kind="crypto", severity="CRITICAL")]
+    enrich(groups, module_issues_text="", provider="p")
+    assert "soft_token_caveat" not in groups[0]
+
+
+def test_enrich_xfail_honest_deviation_routes_to_investigate() -> None:
+    groups = [_group(reason="honest_deviation", outcome="xfail", severity="LOW", kind=None)]
+    enrich(groups, module_issues_text="", provider="p")
+    assert groups[0]["routing"] == "INVESTIGATE"
+
+
+def test_enrich_xfail_not_operational_routes_to_capability_audit() -> None:
+    groups = [_group(reason="not_operational", outcome="xfail", severity="INFO", kind=None)]
+    enrich(groups, module_issues_text="", provider="p")
+    assert groups[0]["routing"] == "CAPABILITY_AUDIT"
