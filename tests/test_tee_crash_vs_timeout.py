@@ -55,3 +55,34 @@ def test_genuinely_hung_child_still_times_out() -> None:
             env=dict(os.environ),
             timeout=1,
         )
+
+
+def test_tee_captures_both_streams_and_returncode() -> None:
+    # tee must capture stdout AND stderr in full and return the real exit code.
+    # (The reader must not depend on select(), which cannot poll OS pipes on
+    # Windows -- issue #3.)
+    script = (
+        "import sys\n"
+        "sys.stdout.write('OUT-marker\\n'); sys.stdout.flush()\n"
+        "sys.stderr.write('ERR-marker\\n'); sys.stderr.flush()\n"
+        "sys.exit(3)\n"
+    )
+    rc, out, err = _run_subprocess_tee(
+        [sys.executable, "-c", script], env=dict(os.environ), timeout=10
+    )
+    assert rc == 3, rc
+    assert "OUT-marker" in out, out
+    assert "ERR-marker" in err, err
+
+
+def test_tee_captures_output_larger_than_pipe_buffer() -> None:
+    # Output bigger than the OS pipe buffer (~64KiB) must be captured in full:
+    # the reader has to drain concurrently with the child, not after it exits,
+    # or the child blocks on a full pipe and we deadlock/truncate.
+    n = 300_000
+    script = f"import sys\nsys.stdout.write('x' * {n})\nsys.stdout.flush()\n"
+    rc, out, _err = _run_subprocess_tee(
+        [sys.executable, "-c", script], env=dict(os.environ), timeout=10
+    )
+    assert rc == 0, rc
+    assert len(out) == n, len(out)

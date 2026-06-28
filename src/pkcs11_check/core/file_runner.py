@@ -7,17 +7,17 @@ import io
 import json
 import os
 import re
-import selectors
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from functools import cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import IO, Any, Literal
 from xml.etree import ElementTree as ET  # nosec B405
 
 from rich.console import Console
@@ -2729,44 +2729,62 @@ def _run_subprocess_tee(
     stdout_buf = io.BytesIO()
     stderr_buf = io.BytesIO()
 
-    sel = selectors.DefaultSelector()
-    if proc.stdout:
-        sel.register(proc.stdout, selectors.EVENT_READ, ("stdout", stdout_buf))
-    if proc.stderr:
-        sel.register(proc.stderr, selectors.EVENT_READ, ("stderr", stderr_buf))
+    # Drain each pipe in its own thread rather than selecting over the pipe fds:
+    # selectors.select() on an OS pipe is POSIX-only (Windows select() accepts
+    # only sockets -> WSAENOTSOCK, issue #3). Threads read+tee identically on both
+    # platforms and drain concurrently with the child, so output larger than the
+    # pipe buffer cannot deadlock the child.
+    console_lock = threading.Lock()
 
-    try:
-        deadline = time.monotonic() + timeout
-        while sel.get_map():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                # Deadline reached. The loop above ends only on pipe-EOF, so a
-                # child that already crashed/exited but whose stdout/stderr is
-                # held open by a *surviving grandchild* (e.g. a module that
-                # spawned a daemon inheriting our pipe fds) lands here too. Only
-                # a child that is still running is a genuine timeout — if it has
-                # already exited, report its real returncode (e.g. a crash
-                # signal) instead of synthesizing a timeout, so a crash is never
-                # masked as a timeout. See review finding R2.
-                if proc.poll() is None:
-                    proc.kill()
-                    proc.wait()  # reap; never leave a zombie behind (R5)
-                    raise subprocess.TimeoutExpired(cmd, timeout)
-                break
-            for key, _ in sel.select(timeout=min(remaining, 0.5)):
-                stream = key.fileobj
-                tag, buf = key.data
-                chunk = stream.read1(8192) if hasattr(stream, "read1") else stream.read(8192)  # type: ignore[union-attr]
+    def _pump(stream: IO[bytes], buf: io.BytesIO, is_stdout: bool) -> None:
+        try:
+            while True:
+                chunk = stream.read1(8192) if hasattr(stream, "read1") else stream.read(8192)
                 if not chunk:
-                    sel.unregister(stream)
-                    continue
+                    break
                 buf.write(chunk)
-                # Tee to console
-                target = sys.stdout.buffer if tag == "stdout" else sys.stderr.buffer
-                target.write(chunk)
-                target.flush()
-    finally:
-        sel.close()
+                target = sys.stdout.buffer if is_stdout else sys.stderr.buffer
+                with console_lock:
+                    target.write(chunk)
+                    target.flush()
+        except (OSError, ValueError):
+            # stream closed underneath us (e.g. proc.kill on the timeout path).
+            pass
+        finally:
+            try:
+                stream.close()
+            except OSError:
+                pass
+
+    threads: list[threading.Thread] = []
+    for stream, buf, is_stdout in (
+        (proc.stdout, stdout_buf, True),
+        (proc.stderr, stderr_buf, False),
+    ):
+        if stream is None:
+            continue
+        thread = threading.Thread(target=_pump, args=(stream, buf, is_stdout), daemon=True)
+        thread.start()
+        threads.append(thread)
+
+    deadline = time.monotonic() + timeout
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # The child is still running at the deadline -- a genuine timeout. Kill,
+        # reap (never leave a zombie behind, R5), and re-raise.
+        proc.kill()
+        proc.wait()
+        for thread in threads:
+            thread.join(timeout=max(0.0, deadline + 0.5 - time.monotonic()))
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    # The child exited on its own -- cleanly OR via a crash signal (negative
+    # returncode). Drain the readers, but never block past the deadline: a
+    # surviving grandchild may hold the pipes open (R2), and a crash must report
+    # its real returncode rather than being masked as a timeout.
+    for thread in threads:
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
     proc.wait()
     return (
