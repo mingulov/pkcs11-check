@@ -184,7 +184,9 @@ def test_mechanism_findings_dedup_bare_and_prefixed_names() -> None:
         },
     }
 
-    report = build_quality_audit(results=results, coverage=coverage, report_log_records=[selection_record])
+    report = build_quality_audit(
+        results=results, coverage=coverage, report_log_records=[selection_record]
+    )
     names = [f["mechanism"] for f in report["mechanism_findings"]]
     assert names.count("CKM_AES_CBC") == 1, names
     assert "AES_CBC" not in names, f"phantom bare twin not merged: {names}"

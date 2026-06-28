@@ -41,6 +41,7 @@ def test_capability_gaps_splits_never_invoked_coverage_gap() -> None:
     assert "CKM_AES_CTR" not in nline  # it WAS invoked - not a coverage gap
     assert "invoked but no canonical accept/reject" in out
 
+
 MC = {
     "advertised_names": ["CKM_AES_GCM", "CKM_RSA_PKCS", "CKM_AES_CMAC", "CKM_DSA"],
     "accepted_names": ["CKM_AES_GCM"],
@@ -96,7 +97,11 @@ def test_skip_reasons_merges_phrasing_variants() -> None:
     # module" vs "AES_CCM not supported") and prefixes (CKM_) from different skip sites;
     # the report listed it twice with split counts. Merge by mechanism token.
     fsc = [
-        {"reason": "AES_CCM not supported by module", "category": "missing_capability", "count": 8398},
+        {
+            "reason": "AES_CCM not supported by module",
+            "category": "missing_capability",
+            "count": 8398,
+        },
         {"reason": "AES_CCM not supported", "category": "missing_capability", "count": 554},
         {"reason": "CKM_DES3_KEY_GEN not supported", "category": "missing_capability", "count": 15},
     ]
