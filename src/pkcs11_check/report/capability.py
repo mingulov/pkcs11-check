@@ -9,7 +9,12 @@ advertised at all) is the coverage meta-check's job and is referenced, not recom
 
 from __future__ import annotations
 
+import re
 from typing import Any
+
+# Trailing wording on a skip reason ("AES_CCM not supported by module" /
+# "... not supported"), stripped to recover the mechanism token for merging.
+_SKIP_SUFFIX_RE = re.compile(r"\s+not supported( by module)?\.?$", re.IGNORECASE)
 
 
 def capability_audit(groups: list[dict[str, Any]]) -> dict[str, int]:
@@ -91,12 +96,24 @@ def never_invoked_advertised(mechanism_findings: list[dict[str, Any]] | None) ->
 def skip_reasons(
     framework_skip_candidates: list[dict[str, Any]] | None, limit: int = 10
 ) -> list[dict[str, Any]]:
-    """Top ``missing_capability`` skip reasons by vector count (descending, stable)."""
-    cands = [
-        c for c in (framework_skip_candidates or []) if c.get("category") == "missing_capability"
-    ]
-    cands.sort(key=lambda c: (-int(c.get("count", 0) or 0), str(c.get("reason", ""))))
-    return cands[:limit]
+    """Top ``missing_capability`` skip reasons by vector count, merged per mechanism.
+
+    The same mechanism arrives under different phrasings ("AES_CCM not supported by
+    module" vs "AES_CCM not supported") and prefixes (``CKM_``) from different skip
+    sites; merge by the mechanism token so a mechanism is one row with the summed
+    vector count, then take the top ``limit`` (count desc, name asc).
+    """
+    merged: dict[str, int] = {}
+    for c in framework_skip_candidates or []:
+        if c.get("category") != "missing_capability":
+            continue
+        reason = str(c.get("reason", ""))
+        mech = _SKIP_SUFFIX_RE.sub("", reason).strip()
+        mech = mech[4:] if mech.startswith("CKM_") else mech
+        key = mech or reason
+        merged[key] = merged.get(key, 0) + int(c.get("count", 0) or 0)
+    top = sorted(merged.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]
+    return [{"reason": f"{mech} not supported", "count": count} for mech, count in top]
 
 
 def _capped(names: list[str], cap: int = 12) -> str:

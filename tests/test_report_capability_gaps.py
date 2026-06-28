@@ -91,6 +91,19 @@ def test_skip_reasons_top_missing_capability_only() -> None:
     assert [s["reason"] for s in top] == ["AES_CTS not supported", "AES_CCM not supported"]
 
 
+def test_skip_reasons_merges_phrasing_variants() -> None:
+    # The same mechanism arrives under different phrasings ("AES_CCM not supported by
+    # module" vs "AES_CCM not supported") and prefixes (CKM_) from different skip sites;
+    # the report listed it twice with split counts. Merge by mechanism token.
+    fsc = [
+        {"reason": "AES_CCM not supported by module", "category": "missing_capability", "count": 8398},
+        {"reason": "AES_CCM not supported", "category": "missing_capability", "count": 554},
+        {"reason": "CKM_DES3_KEY_GEN not supported", "category": "missing_capability", "count": 15},
+    ]
+    reasons = {s["reason"]: s["count"] for s in skip_reasons(fsc)}
+    assert reasons == {"AES_CCM not supported": 8952, "DES3_KEY_GEN not supported": 15}, reasons
+
+
 def test_render_capability_gaps_content() -> None:
     out = render_capability_gaps(
         MC,
