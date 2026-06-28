@@ -52,6 +52,38 @@ def test_clear_resets_active_params() -> None:
     assert C.serialize(C.get_records())[0]["params"] is None
 
 
+def test_set_vector_inherited_by_classify() -> None:
+    # source/vector_id are constant per vector-replay test invocation; set once and
+    # every classify() (including the not_operational xfail paths) inherits the
+    # reproducer handle without per-emission-site wiring.
+    C.clear()
+    C.set_vector("wycheproof:rsa_test.json", "tcId=42")
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("not_operational", mechanism="CKM_RSA_PKCS")
+    rec = C.serialize(C.get_records())[0]
+    assert rec["source"] == "wycheproof:rsa_test.json"
+    assert rec["vector_id"] == "tcId=42"
+
+
+def test_explicit_source_overrides_active_vector() -> None:
+    C.clear()
+    C.set_vector("ctx-source", "ctx-vid")
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("wrong_result", kind="crypto", source="explicit-source")
+    rec = C.serialize(C.get_records())[0]
+    assert rec["source"] == "explicit-source"  # explicit wins
+    assert rec["vector_id"] == "ctx-vid"  # context fills the field left unset
+
+
+def test_clear_resets_active_vector() -> None:
+    C.set_vector("s", "v")
+    C.clear()
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("wrong_result", kind="crypto")
+    rec = C.serialize(C.get_records())[0]
+    assert rec["source"] is None and rec["vector_id"] is None
+
+
 def test_set_params_normalizes_hash_aliases() -> None:
     # hash values arrive in several spellings across vector families (dash form from
     # wycheproof/acvp RSA, CKM mechanism form from the HMAC suite); they must
