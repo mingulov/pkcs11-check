@@ -15,7 +15,7 @@ import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from pkcs11_check.classification import fail_as, xfail_as
+from pkcs11_check.classification import fail_as, set_params, xfail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -309,6 +309,7 @@ def test_acvp_ecdsa_sigver(
     if not rs.has_mechanism(mech_name):
         pytest.skip(f"{mech_name} not supported by module")
     skip_unless_mechanism_flag(rs, mech_int, int(CKF_VERIFY))
+    set_params({"curve": vec.get("ec_curve_name", "")})
     pub_key = 0
     try:
         try:
@@ -387,6 +388,7 @@ class TestEcdsaKeyGen:
             rs, "EC_KEY_PAIR_GEN", _CURVE_FIELD_BITS[vec["curve"]], label=vec_id
         )
         skip_duplicate_pkcs11_input(vec, "ECDSA KeyGen")
+        set_params({"curve": vec.get("ec_curve_name", "")})
         pub_key = priv_key = 0
         msg = b"ACVP keygen test"
         try:
@@ -443,6 +445,7 @@ class TestEcdsaSigGen:
         require_keygen_key_size(
             rs, "EC_KEY_PAIR_GEN", _CURVE_FIELD_BITS[vec["curve"]], label=vec_id
         )
+        set_params({"curve": vec.get("ec_curve_name", "")})
         pub_key = priv_key = 0
         try:
             try:
@@ -496,4 +499,5 @@ class TestDetEcdsa:
         mech_name: str = vec["mech_name"]
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} not supported by module")
+        set_params({"curve": vec.get("ec_curve_name", "")})
         pytest.skip(_DETERMINISTIC_ECDSA_SKIP)

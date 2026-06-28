@@ -19,7 +19,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from cryptography.hazmat.primitives.serialization import load_der_private_key
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     sign_single,
@@ -186,6 +186,7 @@ def test_rsa_pkcs1_siggen(
     mechanism: int = vec["_mechanism"]
     key_size: int = vec["_key_size"]
     sha: str = vec["_sha"]
+    set_params({"rsa_bits": str(key_size), "hash": sha})
 
     # Check mechanism availability before importing the key
     mech_display = _MECH_DISPLAY.get(mechanism, f"0x{mechanism:08x}")

@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
 )
@@ -138,6 +138,8 @@ def test_ed25519_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str,
     if not rs.has_mechanism("EDDSA"):
         pytest.skip("EDDSA not supported")
 
+    set_params({"curve": "ed25519"})
+
     msg = bytes.fromhex(vec["msg"])
     sig = bytes.fromhex(vec["sig"])
     result = vec["result"]
@@ -258,6 +260,8 @@ def test_ed448_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
     rs = p11_module_session
     if not rs.has_mechanism("EDDSA"):
         pytest.skip("EDDSA not supported")
+
+    set_params({"curve": "ed448"})
 
     msg = bytes.fromhex(vec["msg"])
     sig = bytes.fromhex(vec["sig"])

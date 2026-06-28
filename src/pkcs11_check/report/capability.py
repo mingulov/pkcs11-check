@@ -42,3 +42,79 @@ def render_capability_section(audit: dict[str, int]) -> str:
         "meta-check, not this summary._",
     ]
     return "\n".join(lines) + "\n"
+
+
+# --- capability-gap table (mechanism axis) ----------------------------------
+# Replaces the always-zero IN_RANGE "claimed_refused" scalar with a real view of
+# which advertised mechanisms do not work, plus what the module does not support
+# at all (from quality.json framework_skip_candidates). Curve/key-size axis is
+# added later once tests emit a structured `params` attribute.
+
+
+def advertised_not_operational(mechanism_coverage: dict[str, Any] | None) -> dict[str, list[str]]:
+    """Partition advertised mechanisms that do not cleanly work, via set algebra.
+
+    Returns sorted name lists for: ``rejected_cleanly`` (advertised yet a canonical
+    op was cleanly refused), ``crashed``, ``timeout``, and ``limbo`` (advertised but
+    never cleanly accepted nor rejected and did not crash/timeout).
+    """
+    mc = mechanism_coverage or {}
+    advertised = set(mc.get("advertised_names", []))
+    accepted = set(mc.get("accepted_names", []))
+    rejected = set(mc.get("rejected_cleanly_names", []))
+    crashed = set(mc.get("crashed_names", []))
+    timeout = set(mc.get("timeout_names", []))
+    return {
+        "rejected_cleanly": sorted(advertised & rejected),
+        "crashed": sorted(advertised & crashed),
+        "timeout": sorted(advertised & timeout),
+        "limbo": sorted(advertised - accepted - rejected - crashed - timeout),
+    }
+
+
+def skip_reasons(
+    framework_skip_candidates: list[dict[str, Any]] | None, limit: int = 10
+) -> list[dict[str, Any]]:
+    """Top ``missing_capability`` skip reasons by vector count (descending, stable)."""
+    cands = [
+        c for c in (framework_skip_candidates or []) if c.get("category") == "missing_capability"
+    ]
+    cands.sort(key=lambda c: (-int(c.get("count", 0) or 0), str(c.get("reason", ""))))
+    return cands[:limit]
+
+
+def _capped(names: list[str], cap: int = 12) -> str:
+    """Join names, truncating to ``cap`` with a ``(+N)`` overflow marker."""
+    if len(names) <= cap:
+        return ", ".join(names)
+    return ", ".join(names[:cap]) + f" (+{len(names) - cap})"
+
+
+def render_capability_gaps(
+    mechanism_coverage: dict[str, Any] | None,
+    framework_skip_candidates: list[dict[str, Any]] | None,
+) -> str:
+    """Render the capability-gap markdown section from coverage + skip candidates."""
+    gaps = advertised_not_operational(mechanism_coverage)
+    lines = ["## capability gaps", ""]
+    rows = [
+        ("advertised but rejected a canonical op", gaps["rejected_cleanly"]),
+        ("advertised but CRASHED on probe", gaps["crashed"]),
+        ("advertised but TIMED OUT on probe", gaps["timeout"]),
+        ("advertised, no canonical accept/reject observed", gaps["limbo"]),
+    ]
+    any_row = False
+    for label, names in rows:
+        if names:
+            any_row = True
+            lines.append(f"- {label} ({len(names)}): {_capped(names)}")
+    skips = skip_reasons(framework_skip_candidates)
+    if skips:
+        any_row = True
+        lines.append("")
+        lines.append("not supported by the module (vectors skipped):")
+        for s in skips:
+            lines.append(f"- {s.get('reason')} (x{int(s.get('count', 0) or 0)})")
+    if not any_row:
+        lines.append("- no advertised-capability gaps observed")
+    return "\n".join(lines) + "\n"

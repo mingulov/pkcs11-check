@@ -20,7 +20,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify, fail_as, xfail_as
+from pkcs11_check.classification import classify, fail_as, set_params, xfail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -172,6 +172,7 @@ def test_rfc6979_ecdsa_verify(p11_raw_session: Any) -> None:
     if not rs.has_mechanism("ECDSA_SHA256"):
         pytest.skip("ECDSA_SHA256 not supported by module")
 
+    set_params({"curve": "secp256r1"})
     pub_key = 0
     try:
         try:
@@ -223,6 +224,7 @@ def test_rfc6979_ecdsa_sign_deterministic(p11_raw_session: Any, p11_config: Any)
     if not rs.has_mechanism("ECDSA_SHA256"):
         pytest.skip("ECDSA_SHA256 not supported by module")
 
+    set_params({"curve": "secp256r1"})
     priv_key = 0
     try:
         try:

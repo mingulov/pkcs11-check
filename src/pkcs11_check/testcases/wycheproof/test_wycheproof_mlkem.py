@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.recipes import (
     decapsulate_key,
     destroy_quietly,
@@ -148,6 +148,7 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_module_session: Any)
     ciphertext = bytes.fromhex(vec.get("ct", vec.get("c", "")))
     expected_ss = bytes.fromhex(vec.get("ss", ""))
     result = vec["result"]
+    set_params({"mlkem": str(vec.get("_parameter_set", ""))})
 
     if not private_key_bytes or not ciphertext:
         pytest.skip("Missing key or ciphertext in vector")

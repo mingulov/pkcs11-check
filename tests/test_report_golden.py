@@ -42,11 +42,18 @@ def _crashes_from_results(path: Path) -> list[dict[str, Any]]:
 
 def generate_markdown() -> str:
     """Build the provider markdown from the committed fixtures (no docs dependency)."""
+    payload = json.loads(MINI_RESULTS.read_text())
     crashes = _crashes_from_results(MINI_RESULTS)
     groups = extract_groups(MINI_REPORT, crashes=crashes)
     # empty module-issues so the golden is provider-independent
     enrich(groups, module_issues_text="", provider=PROVIDER)
-    return render_provider(PROVIDER, groups, pass_count=44957)
+    return render_provider(
+        PROVIDER,
+        groups,
+        summary=payload.get("summary") or {},
+        coverage=payload.get("coverage"),
+        units=payload.get("units") or [],
+    )
 
 
 def test_generated_markdown_matches_golden() -> None:
@@ -61,7 +68,7 @@ def test_generated_markdown_matches_golden() -> None:
 def test_golden_size_budget() -> None:
     """Even spanning every reason + a crash, the report stays ~one screen."""
     md = generate_markdown()
-    assert len(md.splitlines()) < 60
+    assert len(md.splitlines()) < 90
 
 
 def test_golden_has_no_sha1() -> None:

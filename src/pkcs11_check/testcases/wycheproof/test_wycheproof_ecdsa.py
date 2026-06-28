@@ -13,7 +13,7 @@ from typing import Any, NoReturn
 import pytest
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -324,6 +324,7 @@ def test_ecdsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
     result = vec["result"]
     group = vec["_group"]
     curve = vec["_curve"]
+    set_params({"curve": curve})
     hash_fn = vec["_hash_fn"]
 
     pub_key_info = group.get("publicKey", {})

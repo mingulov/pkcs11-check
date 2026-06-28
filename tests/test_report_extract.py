@@ -129,3 +129,25 @@ def test_non_call_phase_reports_ignored(tmp_path: Path) -> None:
     groups = extract_groups(path, crashes=[])
     assert len(groups) == 1
     assert groups[0]["count"] == 1
+
+
+def test_params_aggregate_into_param_breakdown(tmp_path: Path) -> None:
+    # same group key, different curve params -> one group with a curve breakdown
+    path = tmp_path / "report.jsonl"
+    lines = [
+        _test_report("tests/test_ec.py::a", [_classification(params={"curve": "brainpoolP224r1"})]),
+        _test_report("tests/test_ec.py::b", [_classification(params={"curve": "brainpoolP224r1"})]),
+        _test_report("tests/test_ec.py::c", [_classification(params={"curve": "secp256r1"})]),
+    ]
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+
+    groups = extract_groups(path, crashes=[])
+    assert len(groups) == 1
+    assert groups[0]["param_breakdown"] == {"curve=brainpoolP224r1": 2, "curve=secp256r1": 1}
+
+
+def test_no_params_yields_empty_param_breakdown(tmp_path: Path) -> None:
+    path = tmp_path / "report.jsonl"
+    path.write_text(json.dumps(_test_report("t.py::a", [_classification()])) + "\n")
+    groups = extract_groups(path, crashes=[])
+    assert groups[0]["param_breakdown"] == {}

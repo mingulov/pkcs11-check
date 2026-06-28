@@ -21,13 +21,14 @@ Crash findings have no nodeid; their ``label`` is the crashing target/file.
 from __future__ import annotations
 
 import json
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Any
 
 # How many sample nodeids / vector ids to retain per group.
 _MAX_NODEIDS = 5
 _MAX_VECTOR_IDS = 8
+_MAX_PARAMS = 20
 
 GroupKey = tuple[str, str, str | None, str | None, str | None, tuple[str, ...], str | None]
 
@@ -113,9 +114,11 @@ def _new_group(rec: dict[str, Any], test_file: str) -> dict[str, Any]:
         "nodeids": [],
         "vector_ids": [],
         "sources": [],
+        "param_breakdown": {},
         # internal accumulators (dropped on finalize)
         "_vector_id_set": set(),
         "_source_set": set(),
+        "_param_counter": Counter(),
     }
 
 
@@ -129,6 +132,10 @@ def _accumulate(group: dict[str, Any], rec: dict[str, Any], nodeid: str | None) 
     src = rec.get("source")
     if src is not None:
         group["_source_set"].add(str(src))
+    params = rec.get("params")
+    if isinstance(params, dict) and params:
+        key = ",".join(f"{k}={params[k]}" for k in sorted(params))
+        group["_param_counter"][key] += 1
 
 
 def _finalize(group: dict[str, Any]) -> dict[str, Any]:
@@ -141,6 +148,7 @@ def _finalize(group: dict[str, Any]) -> dict[str, Any]:
     else:
         group["vector_ids"] = vids
     group["sources"] = sorted(group.pop("_source_set"))
+    group["param_breakdown"] = dict(group.pop("_param_counter").most_common(_MAX_PARAMS))
     return group
 
 
