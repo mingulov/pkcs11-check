@@ -25,6 +25,8 @@ from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Any
 
+from pkcs11_check.classification import normalize_param
+
 # How many sample nodeids / vector ids to retain per group.
 _MAX_NODEIDS = 5
 _MAX_VECTOR_IDS = 8
@@ -134,7 +136,7 @@ def _accumulate(group: dict[str, Any], rec: dict[str, Any], nodeid: str | None) 
         group["_source_set"].add(str(src))
     params = rec.get("params")
     if isinstance(params, dict) and params:
-        key = ",".join(f"{k}={params[k]}" for k in sorted(params))
+        key = ",".join(f"{k}={normalize_param(k, str(params[k]))}" for k in sorted(params))
         group["_param_counter"][key] += 1
 
 

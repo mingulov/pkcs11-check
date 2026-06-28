@@ -8,17 +8,17 @@ A PKCS#11 module runs in-process, inside the calling application's trust boundar
 
 ## CRASH (1)
 
-[1] tests/test_arithmetic_overflow.py - tests/test_arithmetic_overflow.py: process crashed
+[1] tests/test_arithmetic_overflow.py - process crashed (SIGSEGV)
 
 ## CRITICAL - fail (4)
 
 ### crypto · accepted_invalid
 [2] C_Verify CKM_ECDSA_SHA256 - ECDSA accepts forged signature
-  want CKR_SIGNATURE_INVALID · got CKR_OK · PKCS#11 v3.2 §6.8 · tests/test_acvp_ecdsa.py::test_sigver[tc1]
+  want CKR_SIGNATURE_INVALID · got CKR_OK · PKCS#11 v3.2 §6.8 · tests/test_acvp_ecdsa.py::test_sigver[tc1] · repro acvp [tc1 tc2]
 
 ### crypto · wrong_result
 [1] C_Decrypt CKM_RSA_PKCS_OAEP - RSA-OAEP decrypt returns wrong plaintext
-  got CKR_OK · PKCS#11 v3.2 §6.7 · tests/test_rsa_decrypt.py::test_wrong_output
+  got CKR_OK · PKCS#11 v3.2 §6.7 · tests/test_rsa_decrypt.py::test_wrong_output · repro wycheproof [tc77]
 
 ### policy · self_contradiction
 [1] C_GetAttributeValue CKM_AES_KEY_GEN - CKA_SENSITIVE key value extractable

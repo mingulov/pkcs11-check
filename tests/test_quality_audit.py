@@ -150,6 +150,51 @@ def test_build_quality_audit_uses_coverage_for_mechanism_findings() -> None:
     assert "selection telemetry not provided" in report["data_quality_warnings"]
 
 
+def test_mechanism_findings_dedup_bare_and_prefixed_names() -> None:
+    """Real SelectionReports emit BARE mechanism names (AES_CBC) while coverage emits
+    CKM_-prefixed (CKM_AES_CBC). Without normalization the same mechanism splits into
+    two findings: a phantom 'selected_but_not_invoked' twin of an accepted mechanism,
+    which is why mechanism_findings looked untrustworthy. One merged record per mech."""
+    results = {
+        "tool": "pkcs11-check",
+        "kind": "test-run",
+        "summary": {"passed": 0, "failed": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "error": 0},
+        "units": [],
+    }
+    coverage = {
+        "mechanism_coverage": {
+            "available": 1,
+            "available_names": ["CKM_AES_CBC"],
+            "invoked": 1,
+            "invoked_names": ["CKM_AES_CBC"],
+            "invoked_counts": {"CKM_AES_CBC": 1},
+            "accepted_names": ["CKM_AES_CBC"],
+            "not_invoked": 0,
+            "not_invoked_names": [],
+        },
+    }
+    selection_record = {
+        "$report_type": "SelectionReport",
+        "selection_coverage": {
+            "encrypt_roundtrip": {
+                "selected_mechanisms": ["AES_CBC"],  # BARE, as real reports emit
+                "rejected_mechanisms": [],
+                "rejected_reason_counts": {},
+            }
+        },
+    }
+
+    report = build_quality_audit(
+        results=results, coverage=coverage, report_log_records=[selection_record]
+    )
+    names = [f["mechanism"] for f in report["mechanism_findings"]]
+    assert names.count("CKM_AES_CBC") == 1, names
+    assert "AES_CBC" not in names, f"phantom bare twin not merged: {names}"
+    rec = next(f for f in report["mechanism_findings"] if f["mechanism"] == "CKM_AES_CBC")
+    assert rec["accepted"] and rec["selected"], rec  # telemetry from both sources merged
+    assert rec["status"] == "accepted", rec["status"]  # not the phantom selected_but_not_invoked
+
+
 def test_build_quality_audit_reports_mechanism_coverage_states() -> None:
     results = {
         "tool": "pkcs11-check",
