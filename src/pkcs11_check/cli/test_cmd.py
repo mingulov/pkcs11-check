@@ -51,29 +51,34 @@ def _preflight_timeout_seconds(test_timeout: int) -> int:
 
 def _build_run_provenance(manifest: Any, data_dir: Path) -> dict[str, Any]:
     """Assemble the provenance block for this run (best-effort; never raises)."""
-    environment: dict[str, Any] | None = None
-    if getattr(manifest, "interface_version", None) is not None:
-        environment = {
-            "interface": manifest.interface_version,
-            "slots": manifest.slot_count,
-            "mechanisms": len(manifest.mechanisms),
-        }
     try:
-        with open(SOURCES_TOML, "rb") as fh:
-            data_manifest: dict[str, Any] = tomllib.load(fh)
-    except (OSError, tomllib.TOMLDecodeError):
-        data_manifest = {}
-    build_file = Path(
-        os.environ.get("PKCS11_CHECK_BUILD_PROVENANCE", "/etc/pkcs11-check/build-provenance.json")
-    )
-    return provenance_mod.assemble(
-        env=os.environ,
-        repo_root=Path(__file__).resolve().parents[3],
-        build_file=build_file,
-        data_manifest=data_manifest,
-        data_dir=data_dir,
-        environment=environment,
-    )
+        environment: dict[str, Any] | None = None
+        if getattr(manifest, "interface_version", None) is not None:
+            environment = {
+                "interface": manifest.interface_version,
+                "slots": manifest.slot_count,
+                "mechanisms": len(manifest.mechanisms),
+            }
+        try:
+            with open(SOURCES_TOML, "rb") as fh:
+                data_manifest: dict[str, Any] = tomllib.load(fh)
+        except (OSError, tomllib.TOMLDecodeError):
+            data_manifest = {}
+        build_file = Path(
+            os.environ.get(
+                "PKCS11_CHECK_BUILD_PROVENANCE", "/etc/pkcs11-check/build-provenance.json"
+            )
+        )
+        return provenance_mod.assemble(
+            env=os.environ,
+            repo_root=Path(__file__).resolve().parents[3],
+            build_file=build_file,
+            data_manifest=data_manifest,
+            data_dir=data_dir,
+            environment=environment,
+        )
+    except Exception:  # noqa: BLE001  # best-effort: provenance must never abort the run
+        return {}
 
 
 def _combine_marker(marker: str | None, *, skip_slow: bool, only_slow: bool) -> str | None:
@@ -394,10 +399,12 @@ def test_command(
     run_provenance = _build_run_provenance(manifest, resolve_data_dir())
     fw_version = run_provenance["framework"]["version"]
     prov_info = run_provenance.get("provider") or {}
-    prov_line = (
-        f"{prov_info.get('name', '?')} {prov_info.get('ref', '')}"
-        f"@{(prov_info.get('commit') or '')[:8]}"
-    ).strip()
+    if prov_info.get("name"):
+        commit_short = (prov_info.get("commit") or "")[:8]
+        ref = prov_info.get("ref", "")
+        prov_line = f"{prov_info['name']} {ref}@{commit_short}".strip()
+    else:
+        prov_line = ""
     console.print(
         f"[dim]provenance: pkcs11-check {fw_version}"
         f" | {prov_line or 'provider: build info absent'}[/dim]"
@@ -598,7 +605,7 @@ def test_command(
             quality_path = unified_path.parent / "quality.json"
             write_quality_json_report(
                 quality_path,
-                results_payload or {},
+                results_payload,
                 coverage=coverage_data,
                 report_log_records=quality_records,
             )

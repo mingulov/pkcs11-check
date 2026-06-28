@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from pkcs11_check.core.file_runner import postprocess_jsonl_to_unified
+from pkcs11_check.core.merge import merge_results_payloads
 
 
 def test_postprocess_includes_provenance(tmp_path: Path) -> None:
@@ -24,3 +25,18 @@ def test_postprocess_omits_provenance_when_none(tmp_path: Path) -> None:
     postprocess_jsonl_to_unified(jsonl, out)
     payload = json.loads(out.read_text())
     assert "provenance" not in payload
+
+
+def test_merge_carries_provenance_from_first_payload() -> None:
+    prov = {"framework": {"version": "v1"}, "provider": {"name": "softhsm2"}}
+    p1 = {"summary": {"passed": 1}, "units": [], "provenance": prov}
+    p2 = {"summary": {"passed": 2}, "units": []}
+    merged = merge_results_payloads([p1, p2], coverage=None)
+    assert merged["provenance"] == prov
+
+
+def test_merge_omits_provenance_when_absent_in_all_payloads() -> None:
+    p1 = {"summary": {"passed": 1}, "units": []}
+    p2 = {"summary": {"passed": 2}, "units": []}
+    merged = merge_results_payloads([p1, p2], coverage=None)
+    assert "provenance" not in merged

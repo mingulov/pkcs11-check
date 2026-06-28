@@ -1783,7 +1783,7 @@ def _emit_external_provision_banner(n: int) -> None:
 
 def postprocess_jsonl_to_unified(
     jsonl_path: Path, output_path: Path, provenance: dict[str, Any] | None = None
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     """Convert a pytest-reportlog JSONL file to pkcs11-check unified format.
 
     Groups tests by file and writes the unified JSON report.
