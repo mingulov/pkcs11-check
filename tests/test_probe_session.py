@@ -6,8 +6,8 @@ against a real PKCS#11 shared library, not a Python mock.
 
 Mock module requirements: pkcs11-mock (https://github.com/Pkcs11Interop/pkcs11-mock)
 is a minimal C stub that returns CKR_OK for all operations and accepts any PIN.
-Build with: bash local-builds/build.sh pkcs11-mock
-or override with the P11TEST_MOCK_MODULE environment variable.
+Build from upstream (https://github.com/Pkcs11Interop/pkcs11-mock) and set
+P11TEST_MOCK_MODULE=/path/to/pkcs11-mock.so.
 """
 
 from __future__ import annotations
@@ -43,9 +43,9 @@ def _get_mock_module_path() -> str:
     path = _find_mock_module()
     if path is None:
         pytest.skip(
-            "pkcs11-mock.so not found; build with"
-            " 'bash local-builds/build.sh pkcs11-mock'"
-            " or set P11TEST_MOCK_MODULE to its path"
+            "pkcs11-mock.so not found; build from upstream"
+            " (https://github.com/Pkcs11Interop/pkcs11-mock)"
+            " and set P11TEST_MOCK_MODULE=/path/to/pkcs11-mock.so"
         )
     return path
 
@@ -89,3 +89,69 @@ def test_session_probe_opens_session_and_runs(tmp_path: Path) -> None:
     )
     assert proc.returncode == 0, proc.stderr
     assert "SESSION_OK:True" in proc.stdout
+
+
+def test_session_probe_writes_coverage(tmp_path: Path) -> None:
+    """I6 round-trip: _P11CHECK_SUBPROCESS_COVERAGE produces a parseable JSON file.
+
+    The call_log must contain "C_Initialize" (probe_main always calls it at Level.LOGIN).
+    A future rename of call_log / mechanism_counts fields would be caught here.
+    """
+    mock_path = _get_mock_module_path()
+
+    params = tmp_path / "params.json"
+    params.write_text(json.dumps({"module_path": mock_path}))
+
+    probe = _write_probe(tmp_path)
+    cov_path = tmp_path / "cov.json"
+
+    proc = subprocess.run(
+        [sys.executable, str(probe), str(params)],
+        capture_output=True,
+        text=True,
+        env={"PATH": "", "_P11CHECK_PIN": "1234", "_P11CHECK_SUBPROCESS_COVERAGE": str(cov_path)},
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    assert cov_path.exists(), "coverage file was not written"
+    data = json.loads(cov_path.read_text())
+
+    assert "call_log" in data, f"missing 'call_log' key; got: {list(data)}"
+    assert "mechanism_counts" in data, f"missing 'mechanism_counts' key; got: {list(data)}"
+
+    call_log = data["call_log"]
+    assert isinstance(call_log, dict) and call_log, f"call_log is empty or not a dict: {call_log!r}"
+    # C_Initialize is always called by probe_main at Level.LOGIN — assert the real key.
+    assert "C_Initialize" in call_log, (
+        f"expected 'C_Initialize' in call_log; got keys: {list(call_log)}"
+    )
+
+
+def test_session_probe_emits_rv_trace(tmp_path: Path) -> None:
+    """I7 round-trip: PKCS11_CHECK_RV_TRACE=1 causes P11_RV_TRACE_JSON: to appear in stdout."""
+    mock_path = _get_mock_module_path()
+
+    params = tmp_path / "params.json"
+    params.write_text(json.dumps({"module_path": mock_path}))
+
+    probe = _write_probe(tmp_path)
+
+    proc = subprocess.run(
+        [sys.executable, str(probe), str(params)],
+        capture_output=True,
+        text=True,
+        env={"PATH": "", "_P11CHECK_PIN": "1234", "PKCS11_CHECK_RV_TRACE": "1"},
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    marker = "P11_RV_TRACE_JSON:"
+    assert marker in proc.stdout, f"marker {marker!r} not found in stdout: {proc.stdout!r}"
+
+    # Extract the JSON after the LAST occurrence of the marker on its line.
+    last_json_str = next(
+        line.split(marker, 1)[1] for line in reversed(proc.stdout.splitlines()) if marker in line
+    )
+    trace = json.loads(last_json_str)
+    assert isinstance(trace, list), f"rv_trace is not a list: {trace!r}"
