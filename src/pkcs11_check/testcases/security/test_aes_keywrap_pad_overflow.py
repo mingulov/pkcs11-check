@@ -29,11 +29,8 @@ from pkcs11_check.raw.types_std import (
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
 )
-from pkcs11_check.testcases._subprocess_preamble import (
-    pin_from_config,
-    run_with_coverage,
-    subprocess_session_preamble,
-)
+from pkcs11_check.testcases._probes.runner import run_probe
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import classify_negative_rv
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
@@ -53,14 +50,6 @@ _ENCRYPT_REJECT_RVS = (
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
 )
-
-
-def _preamble(p11_config: Any) -> str:
-    return subprocess_session_preamble(
-        str(p11_config.module),
-        pin=pin_from_config(p11_config),
-        slot_label="pkcs11-check",
-    )
 
 
 def _parse_prefixed_int(output: str, prefix: str) -> int:
@@ -95,100 +84,26 @@ class TestAesKeyWrapPadOversizedLength:
         if not rs.has_mechanism("AES_KEY_WRAP_PAD"):
             pytest.skip("CKM_AES_KEY_WRAP_PAD not advertised")
 
-        script = (
-            _preamble(p11_config)
-            + f"""
-import ctypes
-from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
-from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.testcases.security.conftest import child_setup_reject_known
-from pkcs11_check.raw.types_std import (
-    CKA_ENCRYPT,
-    CKA_WRAP,
-    CKA_TOKEN,
-    CKM_AES_KEY_WRAP_PAD,
-    CKR_ARGUMENTS_BAD,
-    CKR_FUNCTION_FAILED,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-    CKR_OK,
-    CK_MECHANISM,
-    CK_ULONG,
-)
-
-_SETUP_REJECT_RVS = (
-    CKR_ARGUMENTS_BAD,
-    CKR_FUNCTION_FAILED,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-)
-
-wrap_key = 0
-try:
-    try:
-        wrap_key = gen_aes_key(raw, sh, 256, attrs={{
-            CKA_ENCRYPT: True,
-            CKA_WRAP: True,
-            CKA_TOKEN: False,
-        }})
-    except AssertionError as _exc:
-        if child_setup_reject_known(
-            _exc, _SETUP_REJECT_RVS, "AES-256 wrap-key generation rejected"
-        ):
-            raise SystemExit(0)
-        raise
-
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_AES_KEY_WRAP_PAD
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-
-    init_rv = raw.C_EncryptInit(sh, ctypes.byref(mech), wrap_key)
-    if init_rv != CKR_OK:
-        exc = CkrAssertionError(f"C_EncryptInit returned 0x{{init_rv:08x}}", init_rv)
-        if child_setup_reject_known(
-            exc, _SETUP_REJECT_RVS, "C_EncryptInit(CKM_AES_KEY_WRAP_PAD) rejected"
-        ):
-            raise SystemExit(0)
-        raise exc   # unexpected EncryptInit failure must surface, not be silenced
-
-    # Small real pData (64 bytes); ulDataLen is the oversized probe value.
-    # A conformant module must reject the length before reading pData.
-    pdata = (ctypes.c_ubyte * 64)(*range(64))
-    out_buf = (ctypes.c_ubyte * 128)()
-    out_len = CK_ULONG(128)
-    encrypt_rv = raw.C_Encrypt(
-        sh,
-        pdata,
-        {_OVERSIZED_DATALEN},
-        out_buf,
-        ctypes.byref(out_len),
-    )
-    print(f"ENCRYPT_RV:0x{{encrypt_rv:08x}}")
-finally:
-    if wrap_key:
-        destroy_quietly(raw, sh, wrap_key)
-cleanup()
-"""
+        result = run_probe(
+            "aes_keywrap_pad",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=15,
+            coverage="session",
         )
-
-        rc, stdout, stderr = run_with_coverage(script, timeout=15, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context=(f"C_Encrypt(CKM_AES_KEY_WRAP_PAD, ulDataLen={_OVERSIZED_DATALEN:#x})"),
         )
 
         # assert_subprocess_no_crash already ended the test via xfail_as() if a
         # SETUP_XFAIL line was present.  Only reach here on a live probe.
-        encrypt_rv = _parse_prefixed_int(stdout, "ENCRYPT_RV:")
+        encrypt_rv = _parse_prefixed_int(result.stdout, "ENCRYPT_RV:")
         classify_negative_rv(
             encrypt_rv,
             _ENCRYPT_REJECT_RVS,
