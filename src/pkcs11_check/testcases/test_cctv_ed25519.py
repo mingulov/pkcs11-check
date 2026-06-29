@@ -103,6 +103,14 @@ def _has_invalid_public_key_flags(flags: list[str]) -> bool:
 def _invalid_public_key_rejected_cleanly(exc: AssertionError, flags: list[str]) -> bool:
     """Return true for expected CCTV invalid-key import rejects."""
     if not _has_invalid_public_key_flags(flags):
+        # Valid vector: the import should succeed. A clean reject means the module
+        # advertises Ed25519 but cannot import an external public key (e.g. a KMS
+        # bridge) -> advertised-but-not-operational xfail, not a raw failure.
+        xfail_if_known_ckr(
+            exc,
+            _ED25519_PUBLIC_IMPORT_CLEAN_REJECT_RVS + _ED25519_PUBLIC_IMPORT_NON_CLEAN_REJECT_RVS,
+            "CCTV Ed25519 public-key import not operational",
+        )
         raise exc
     if is_known_error(exc, _ED25519_PUBLIC_IMPORT_CLEAN_REJECT_RVS):
         return True

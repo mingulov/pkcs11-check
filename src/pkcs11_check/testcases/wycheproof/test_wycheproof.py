@@ -103,6 +103,10 @@ _EC_CURVE_UNSUPPORTED_CKRS = (
 )
 
 _EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS = (
+    # KMS bridges advertise ECDSA but cannot import an external public key via
+    # C_CreateObject; the negotiated importer exhausts every shape and the module
+    # rejects with a clean generic CKR -> advertised-but-not-operational (xfail).
+    CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,

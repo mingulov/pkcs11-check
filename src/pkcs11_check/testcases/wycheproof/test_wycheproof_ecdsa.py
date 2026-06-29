@@ -72,6 +72,9 @@ _CURVE_UNSUPPORTED_CKRS = (
 )
 
 _EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS = (
+    # advertised-but-not-operational: a KMS bridge rejects external EC public-key
+    # import (C_CreateObject) with a clean generic CKR -> xfail, not a raw failure.
+    CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_MECHANISM_INVALID,

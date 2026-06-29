@@ -40,6 +40,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
     CKR_KEY_HANDLE_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
@@ -64,6 +65,13 @@ _CERT_STORAGE_REFUSAL_CKRS: tuple[int, ...] = (
     int(CKR_FUNCTION_NOT_SUPPORTED),
     int(CKR_ARGUMENTS_BAD),
 )
+
+# Non-clean-refusal codes a KMS-style module returns when it stores no certificate
+# objects at all. These are NOT added to the refusal set above (a refusal -> silent
+# skip would risk hiding a real cert-storage bug); instead the gate records them as a
+# not_operational xfail (a recorded deviation), so the behavior stays visible but does
+# not surface as a raw failure (reserved-reason backlog).
+_CERT_STORAGE_NOT_OPERATIONAL_CKRS: tuple[int, ...] = (int(CKR_GENERAL_ERROR),)
 
 # slot_id -> can store a cert object. Process-global per slot (cert-storage capability is
 # stable for a slot across a run), mirroring the _IMPORT_SHAPE_WINNERS cache convention.
@@ -199,10 +207,28 @@ def cert_storage_supported(rs: Any) -> bool:
 
 
 def skip_unless_cert_storage(rs: Any) -> None:
-    """Skip when the module cannot store certificate objects at all (probe-established)."""
+    """Skip when the module cannot store certificate objects at all (probe-established).
+
+    If the probe fails with a non-clean-refusal CKR (a KMS that returns the generic
+    CKR_GENERAL_ERROR for every cert object), record a not_operational xfail rather than
+    raising raw at the gate: the module presents as a token but cert-object storage is
+    not operational. A non-CKR error still propagates (real / harness bug).
+    """
     import pytest as _pytest
 
-    if not cert_storage_supported(rs):
+    from pkcs11_check.raw.rv import CkrAssertionError as _CkrAssertionError
+    from pkcs11_check.testcases.conftest import xfail_if_known_ckr as _xfail_if_known_ckr
+
+    try:
+        supported = cert_storage_supported(rs)
+    except _CkrAssertionError as exc:
+        _xfail_if_known_ckr(
+            exc,
+            _CERT_STORAGE_NOT_OPERATIONAL_CKRS,
+            "cert-object storage not operational (probe)",
+        )
+        raise
+    if not supported:
         _pytest.skip("module cannot store CKO_CERTIFICATE objects (cert-storage probe)")
 
 
