@@ -17,7 +17,6 @@ Real API names resolved from _subprocess_preamble.subprocess_session_preamble:
 from __future__ import annotations
 
 import atexit
-import json
 import os
 import sys
 from collections.abc import Callable
@@ -34,9 +33,13 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKU_USER,
 )
+from pkcs11_check.testcases._probes._emit import (
+    emit_rv_trace,
+    rv_trace_enabled,
+    rv_trace_maxlen,
+    write_coverage,
+)
 from pkcs11_check.testcases._probes.params import ProbeParams
-
-_RV_TRACE_MARKER = "P11_RV_TRACE_JSON:"
 
 
 class Level(StrEnum):
@@ -55,60 +58,25 @@ class ProbeContext:
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers (mirror the preamble's generated helper functions exactly)
+# Internal helpers (thin wrappers over _emit.py; keep RawPKCS11-specific logic here)
 # ---------------------------------------------------------------------------
 
 
-def _rv_trace_enabled() -> bool:
-    """True when rv-trace is requested via PKCS11_CHECK_RV_TRACE or the compact variant."""
-    value = os.environ.get("PKCS11_CHECK_RV_TRACE", "").strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    return bool(os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT"))
-
-
-def _rv_trace_maxlen() -> int | None:
-    """Ring-buffer window size from PKCS11_CHECK_RV_TRACE_COMPACT, or None (full)."""
-    value = os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT")
-    if not value:
-        return None
-    try:
-        maxlen = int(value)
-    except ValueError:
-        return None
-    return maxlen if maxlen > 0 else None
-
-
 def _emit_rv_trace(raw: RawPKCS11) -> None:
-    """Print the P11_RV_TRACE_JSON: marker line to stdout (atexit-registered; I7)."""
-    try:
-        print(
-            _RV_TRACE_MARKER + json.dumps(raw.rv_trace, separators=(",", ":")),
-            flush=True,
-        )
-    except (OSError, TypeError, ValueError):
-        pass
+    """Emit the P11_RV_TRACE_JSON: marker to stdout (atexit-registered; I7)."""
+    emit_rv_trace(raw.rv_trace)
 
 
 def _write_coverage(raw: RawPKCS11) -> None:
     """Write call_log + mechanism_counts to _P11CHECK_SUBPROCESS_COVERAGE (I6).
 
-    Key shape matches what run_with_coverage / get_preamble_subprocess_coverage expects:
-    - "call_log"          -> dict[str, int]
-    - "mechanism_counts"  -> dict[str, int]  (CKM ints converted to str for JSON)
+    Key shape: {"call_log": dict[str, int], "mechanism_counts": dict[str, int]}.
+    CKM int keys are converted to str for JSON compatibility.
     """
-    path = os.environ.get("_P11CHECK_SUBPROCESS_COVERAGE")
-    if not path:
-        return
-    try:
-        payload: dict[str, Any] = {
-            "call_log": raw.call_log,
-            "mechanism_counts": {str(k): v for k, v in raw.mechanism_counts.items()},
-        }
-        with open(path, "w") as fh:
-            json.dump(payload, fh)
-    except (OSError, TypeError, ValueError):
-        pass
+    write_coverage(
+        raw.call_log,
+        {str(k): v for k, v in raw.mechanism_counts.items()},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -141,8 +109,8 @@ def probe_main(
     # Enable RV trace before any C_* calls so initialisation appears in the trace (I7).
     # The atexit handler is registered first; atexit is LIFO so it fires *after* the
     # coverage/cleanup handler below -- matching the preamble's registration order.
-    if _rv_trace_enabled():
-        raw.enable_rv_trace(maxlen=_rv_trace_maxlen())
+    if rv_trace_enabled():
+        raw.enable_rv_trace(maxlen=rv_trace_maxlen())
         atexit.register(_emit_rv_trace, raw)
 
     # Mutable state shared with the cleanup closure (Python closures capture by

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -42,6 +43,46 @@ _VECTOR_DEPENDENT_MODULES: dict[str, tuple[Path, ...]] = {
     "test_wycheproof_kryoptic_classification.py": (WYCHEPROOF_DIR,),
     "test_wycheproof_provenance.py": (WYCHEPROOF_DIR,),
 }
+
+
+def _find_mock_module() -> str | None:
+    """Return the path to pkcs11-mock.so if discoverable, otherwise None.
+
+    Search order:
+    1. P11TEST_MOCK_MODULE env override (CI / developer explicit path).
+    2. Standard cache location built by the test-setup makefile.
+    3. Additional well-known locations (distro packages, Docker builds).
+    """
+    candidates = [
+        os.environ.get("P11TEST_MOCK_MODULE"),
+        str(Path.home() / ".cache" / "pkcs11-check-test" / "pkcs11-mock.so"),
+        "/tmp/pkcs11-mock-build/pkcs11-mock.so",  # noqa: S108 -- test temp path only
+        "/usr/lib/pkcs11/pkcs11-mock.so",
+        "/usr/lib64/libpkcs11-mock.so",
+        "/opt/pkcs11_mock/libpkcs11_mock.so",
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+@pytest.fixture(scope="session")
+def mock_module_path() -> str:
+    """Pytest fixture: absolute path to pkcs11-mock.so.
+
+    Skips the test (not fails) when the mock shared library is not installed.
+    Build from upstream (https://github.com/Pkcs11Interop/pkcs11-mock) and set
+    P11TEST_MOCK_MODULE=/path/to/pkcs11-mock.so to make it discoverable.
+    """
+    path = _find_mock_module()
+    if path is None:
+        pytest.skip(
+            "pkcs11-mock.so not found; build from upstream"
+            " (https://github.com/Pkcs11Interop/pkcs11-mock)"
+            " and set P11TEST_MOCK_MODULE=/path/to/pkcs11-mock.so"
+        )
+    return path
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: Iterable[pytest.Item]) -> None:

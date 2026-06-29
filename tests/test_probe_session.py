@@ -13,41 +13,10 @@ P11TEST_MOCK_MODULE=/path/to/pkcs11-mock.so.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
-
-import pytest
-
-
-def _find_mock_module() -> str | None:
-    """Return the path to pkcs11-mock.so if discoverable, otherwise None."""
-    candidates = [
-        os.environ.get("P11TEST_MOCK_MODULE"),
-        str(Path.home() / ".cache" / "pkcs11-check-test" / "pkcs11-mock.so"),
-        "/tmp/pkcs11-mock-build/pkcs11-mock.so",  # noqa: S108 -- test temp path only
-        "/usr/lib/pkcs11/pkcs11-mock.so",
-        "/usr/lib64/libpkcs11-mock.so",
-        "/opt/pkcs11_mock/libpkcs11_mock.so",
-    ]
-    for candidate in candidates:
-        if candidate and os.path.isfile(candidate):
-            return candidate
-    return None
-
-
-def _get_mock_module_path() -> str:
-    """Return path to pkcs11-mock.so, or pytest.skip if not available."""
-    path = _find_mock_module()
-    if path is None:
-        pytest.skip(
-            "pkcs11-mock.so not found; build from upstream"
-            " (https://github.com/Pkcs11Interop/pkcs11-mock)"
-            " and set P11TEST_MOCK_MODULE=/path/to/pkcs11-mock.so"
-        )
-    return path
 
 
 def _write_probe(tmp_path: Path) -> Path:
@@ -69,14 +38,12 @@ def _write_probe(tmp_path: Path) -> Path:
     return probe
 
 
-def test_session_probe_opens_session_and_runs(tmp_path: Path) -> None:
+def test_session_probe_opens_session_and_runs(tmp_path: Path, mock_module_path: str) -> None:
     """probe_main at Level.LOGIN opens a session and delivers a non-None sh to run_fn."""
-    mock_path = _get_mock_module_path()
-
     params = tmp_path / "params.json"
     # Do NOT hard-code slot_id: pkcs11-mock exposes slot 1, not 0. Omitting lets
     # probe_main discover the first available slot via get_slot_ids().
-    params.write_text(json.dumps({"module_path": mock_path}))
+    params.write_text(json.dumps({"module_path": mock_module_path}))
 
     probe = _write_probe(tmp_path)
 
@@ -91,16 +58,14 @@ def test_session_probe_opens_session_and_runs(tmp_path: Path) -> None:
     assert "SESSION_OK:True" in proc.stdout
 
 
-def test_session_probe_writes_coverage(tmp_path: Path) -> None:
+def test_session_probe_writes_coverage(tmp_path: Path, mock_module_path: str) -> None:
     """I6 round-trip: _P11CHECK_SUBPROCESS_COVERAGE produces a parseable JSON file.
 
     The call_log must contain "C_Initialize" (probe_main always calls it at Level.LOGIN).
     A future rename of call_log / mechanism_counts fields would be caught here.
     """
-    mock_path = _get_mock_module_path()
-
     params = tmp_path / "params.json"
-    params.write_text(json.dumps({"module_path": mock_path}))
+    params.write_text(json.dumps({"module_path": mock_module_path}))
 
     probe = _write_probe(tmp_path)
     cov_path = tmp_path / "cov.json"
@@ -128,12 +93,10 @@ def test_session_probe_writes_coverage(tmp_path: Path) -> None:
     )
 
 
-def test_session_probe_emits_rv_trace(tmp_path: Path) -> None:
+def test_session_probe_emits_rv_trace(tmp_path: Path, mock_module_path: str) -> None:
     """I7 round-trip: PKCS11_CHECK_RV_TRACE=1 causes P11_RV_TRACE_JSON: to appear in stdout."""
-    mock_path = _get_mock_module_path()
-
     params = tmp_path / "params.json"
-    params.write_text(json.dumps({"module_path": mock_path}))
+    params.write_text(json.dumps({"module_path": mock_module_path}))
 
     probe = _write_probe(tmp_path)
 
