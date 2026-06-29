@@ -17,7 +17,7 @@ from pkcs11_check.testcases._subprocess_preamble import get_preamble_subprocess_
 # ---------------------------------------------------------------------------
 
 
-def test_run_probe_passes_extra_and_injects_pin_via_env(tmp_path: object) -> None:
+def test_run_probe_passes_extra_and_injects_pin_via_env() -> None:
     """PIN travels only via _P11CHECK_PIN env; probe params carry the marker only."""
     result = run_probe(
         "_echo",

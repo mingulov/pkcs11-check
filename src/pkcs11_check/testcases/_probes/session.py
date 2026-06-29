@@ -17,6 +17,7 @@ Real API names resolved from _subprocess_preamble.subprocess_session_preamble:
 from __future__ import annotations
 
 import atexit
+import ctypes
 import os
 import sys
 from collections.abc import Callable
@@ -130,7 +131,7 @@ def probe_main(
         if _initialized[0]:
             try:
                 raw.C_Finalize(None)
-            except Exception:  # noqa: BLE001 -- atexit; suppress all module errors
+            except (AttributeError, OSError, ctypes.ArgumentError):
                 pass
 
     atexit.register(_cleanup)
