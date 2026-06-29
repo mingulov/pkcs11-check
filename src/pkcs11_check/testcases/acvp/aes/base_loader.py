@@ -5,19 +5,16 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-import pytest
-
-from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
+from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
 
 # Maximum vectors per direction for speed
 _MAX_PER_DIRECTION: int | None = None
 
-# Module-level skip if ACVP data not available
-if not ACVP_AVAILABLE:
-    pytest.skip(
-        "ACVP vectors not cloned (run: scripts/fetch-optional-data.sh acvp)",
-        allow_module_level=True,
-    )
+# NOTE: no module-level pytest.skip here. This helper is imported eagerly (via
+# base.py / the aes package), including during conftest loading, where pytest
+# does not catch a module-level Skipped -- it would crash pytest.main() instead
+# of skipping. Each leaf test module calls require_acvp_vectors() at module scope
+# (the collection path, where pytest does catch the skip). See acvp_loader.py.
 
 
 def _load_vectors(

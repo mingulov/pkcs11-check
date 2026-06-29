@@ -10,7 +10,7 @@ from pkcs11_check.classification import classify, fail_as, set_params, xfail_as
 from pkcs11_check.raw.pack_mechanisms import mech_gcm
 from pkcs11_check.raw.recipes import decrypt_single, destroy_quietly, encrypt_single
 from pkcs11_check.raw.types_std import CKM_AES_GMAC
-from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
+from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors, require_acvp_vectors
 from pkcs11_check.testcases.acvp.aes.base import (
     CKM_AES_GCM_SIV,
     _import_aes_key,
@@ -20,6 +20,8 @@ from pkcs11_check.testcases.acvp.aes.base import (
 )
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
+
+require_acvp_vectors()
 
 
 # =============================================================================

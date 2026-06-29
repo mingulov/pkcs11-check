@@ -42,6 +42,7 @@ from pkcs11_check.testcases._operability import (
     probe_operability,
     xfail_vacuous_reject,
 )
+from pkcs11_check.testcases.acvp.acvp_loader import require_acvp_vectors
 from pkcs11_check.testcases.acvp.aes.base import _import_aes_key, _load_vectors
 from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 
@@ -59,6 +60,8 @@ _UNWRAP_REJECT_RVS = {
 }
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
+
+require_acvp_vectors()
 
 # --- Canonical operability probe (triage H2) ---------------------------------
 # One canonical RFC 3394/5649 known answer per (mechanism, direction) per

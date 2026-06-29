@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases.acvp.acvp_loader import require_acvp_vectors
 from pkcs11_check.testcases.acvp.aes.base_cts import (
     load_cbc_cs_vectors,
     run_cbc_cs_decrypt_test,
@@ -25,6 +26,8 @@ from pkcs11_check.testcases.acvp.aes.base_cts import (
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 REQUIRED_MECHANISMS = ["AES_CTS"]
+
+require_acvp_vectors()
 
 
 # ---------------------------------------------------------------------------

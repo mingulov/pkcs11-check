@@ -17,9 +17,29 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from pkcs11_check.testcases.data import ACVP_DIR, load_json_cached
 
 ACVP_AVAILABLE = ACVP_DIR.exists()
+
+
+def require_acvp_vectors() -> None:
+    """Skip the calling test module when ACVP vectors are not present.
+
+    Call this at the module scope of a *leaf test module* only. pytest catches a
+    ``Skipped(allow_module_level=True)`` raised while it imports a test module
+    during collection, marking that module skipped. Do NOT call it from a helper
+    that is imported eagerly (a package ``__init__`` re-export, a ``conftest``, or
+    a module one of those pulls in): the skip would then fire outside the
+    collection path, where pytest does not catch it, and crash ``pytest.main()``
+    instead of skipping (regression: tests/test_acvp_collection_no_data.py).
+    """
+    if not ACVP_AVAILABLE:
+        pytest.skip(
+            "ACVP vectors not cloned (run: scripts/fetch-optional-data.sh acvp)",
+            allow_module_level=True,
+        )
 
 
 def _find_vector_dir(algorithm: str) -> Path | None:

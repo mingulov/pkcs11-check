@@ -1,28 +1,9 @@
-"""ACVP AES test suite - refactored into submodules."""
+"""ACVP AES test suite (split into submodules).
 
-# Re-export common items from base for convenience
-from pkcs11_check.testcases.acvp.aes.base import (
-    CKM_AES_GCM_SIV,
-    _import_aes_key,
-    _load_simple_vectors,
-    _load_vectors,
-    run_ccm_decrypt_test,
-    run_ccm_encrypt_test,
-    run_gcm_decrypt_test,
-    run_gcm_encrypt_test,
-    run_simple_decrypt_test,
-    run_simple_encrypt_test,
-)
-
-__all__ = [
-    "CKM_AES_GCM_SIV",
-    "_import_aes_key",
-    "_load_vectors",
-    "_load_simple_vectors",
-    "run_gcm_encrypt_test",
-    "run_gcm_decrypt_test",
-    "run_ccm_encrypt_test",
-    "run_ccm_decrypt_test",
-    "run_simple_encrypt_test",
-    "run_simple_decrypt_test",
-]
+Intentionally empty: importing this package must have no side effects. Modules
+import the helpers they need directly from ``base`` / ``base_loader`` / the
+``base_runner_*`` submodules. (A previous convenience re-export here eagerly
+imported ``base_loader``, which carried a module-level skip -- that fired during
+conftest loading and crashed collection when ACVP vectors were absent. See
+``acvp_loader.require_acvp_vectors`` and ``tests/test_acvp_collection_no_data.py``.)
+"""

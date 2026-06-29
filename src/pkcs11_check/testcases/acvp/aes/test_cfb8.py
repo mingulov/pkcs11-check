@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.types_std import CKM_AES_CFB8
+from pkcs11_check.testcases.acvp.acvp_loader import require_acvp_vectors
 from pkcs11_check.testcases.acvp.aes.base_loader import _load_simple_vectors
 from pkcs11_check.testcases.acvp.aes.base_runner_simple import (
     run_multiblock_decrypt_test,
@@ -20,6 +21,8 @@ from pkcs11_check.testcases.acvp.aes.base_runner_simple import (
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 REQUIRED_MECHANISMS = ["AES_CFB8"]
+
+require_acvp_vectors()
 
 _ALL_ENCRYPT, _ALL_DECRYPT = _load_simple_vectors("ACVP-AES-CFB8-1.0")
 _ENCRYPT_VECTORS = [(vid, v) for vid, v in _ALL_ENCRYPT if not v.get("is_multiblock")]
