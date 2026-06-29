@@ -5,6 +5,39 @@ from pathlib import Path
 from pkcs11_check import provenance as P
 
 
+def test_recompute_manifest_pin_corrects_stale_match() -> None:
+    # The build-baked matches_manifest_pin is a Docker-cache snapshot; recompute it from
+    # the authoritative baked commit + the live manifest (the release builds baked a stale
+    # `false` even though the current manifest matches - 2026-06-29 finding F2).
+    results = {
+        "provenance": {
+            "provider": {
+                "commit": "abc123",
+                "manifest_key": "softhsm2_release",
+                "matches_manifest_pin": False,
+            }
+        }
+    }
+    manifest = {"sources": {"softhsm2_release": {"commit": "abc123"}}}
+    assert P.recompute_manifest_pin(results, manifest) is True
+    assert results["provenance"]["provider"]["matches_manifest_pin"] is True
+
+
+def test_recompute_manifest_pin_reports_genuine_drift() -> None:
+    # A real drift (built commit != manifest pin, e.g. kmsp11) stays correctly false.
+    results = {"provenance": {"provider": {"commit": "e01c9b", "manifest_key": "k"}}}
+    manifest = {"sources": {"k": {"commit": "0ac563"}}}
+    assert P.recompute_manifest_pin(results, manifest) is True
+    assert results["provenance"]["provider"]["matches_manifest_pin"] is False
+
+
+def test_recompute_manifest_pin_noop_without_key_or_pin() -> None:
+    # No manifest_key baked, or no pin in the manifest -> leave the field untouched.
+    results = {"provenance": {"provider": {"commit": "abc"}}}
+    assert P.recompute_manifest_pin(results, {"sources": {}}) is False
+    assert "matches_manifest_pin" not in results["provenance"]["provider"]
+
+
 def test_framework_version_prefers_env() -> None:
     got = P.framework_version(
         env={"PKCS11_CHECK_FRAMEWORK_VERSION": "v0.1.6-42-gabc123-dirty"},

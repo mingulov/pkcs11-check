@@ -117,3 +117,29 @@ def assemble(
     if isinstance(build.get("extra"), dict) and build["extra"]:
         prov["extra"] = build["extra"]
     return prov
+
+
+def recompute_manifest_pin(results: dict[str, Any], manifest: Mapping[str, Any]) -> bool:
+    """Recompute ``provenance.provider.matches_manifest_pin`` from the baked ``commit`` +
+    ``manifest_key`` against the live manifest. Mutates ``results`` in place; returns
+    True if it set the field.
+
+    The build-baked boolean is a Docker layer-cache snapshot: a release image that was
+    not rebuilt keeps whatever it computed when last built, so it can disagree with the
+    current manifest (2026-06-29 finding F2). The baked ``commit`` is always the real
+    built commit, so re-deriving the boolean at pool/collection time makes the field
+    reflect the live manifest - false-positives from stale cache self-correct, and a
+    genuine drift (built commit != manifest pin) is reported honestly.
+    """
+    provider = (results.get("provenance") or {}).get("provider")
+    if not isinstance(provider, dict):
+        return False
+    commit = provider.get("commit")
+    key = provider.get("manifest_key")
+    if not commit or not key:
+        return False
+    pin = (manifest.get("sources") or {}).get(key, {}).get("commit")
+    if pin is None:
+        return False
+    provider["matches_manifest_pin"] = pin == commit
+    return True
