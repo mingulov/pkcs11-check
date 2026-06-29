@@ -1568,7 +1568,7 @@ from pkcs11_check.raw.types_std import (
 def _template_ptr(attrs):
     return cast(attrs.array, CK_ATTRIBUTE_PTR)
 
-raw = RawPKCS11.from_lib("{module}")
+raw = RawPKCS11.from_lib({module!r})
 raw.C_Initialize(None)
 sh = open_session(raw, get_slot_ids(raw)[0], CKF_SERIAL_SESSION | CKF_RW_SESSION)
 pin = {pin_arg}

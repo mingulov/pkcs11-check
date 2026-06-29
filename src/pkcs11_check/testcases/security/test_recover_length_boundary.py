@@ -20,9 +20,14 @@ from pkcs11_check.testcases._subprocess_preamble import (
     subprocess_session_preamble,
 )
 from pkcs11_check.testcases.conftest import classify_negative_rv
+from pkcs11_check.testcases.security._boundary_values import requires_64bit_ck_ulong
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
-pytestmark = [pytest.mark.security, pytest.mark.subprocess]
+pytestmark = [
+    pytest.mark.security,
+    pytest.mark.subprocess,
+    requires_64bit_ck_ulong,
+]
 
 _ISIZE_MAX_64 = 0x7FFFFFFFFFFFFFFF
 _ISIZE_MAX_PLUS_1_64 = 0x8000000000000000

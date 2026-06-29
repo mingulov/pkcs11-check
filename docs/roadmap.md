@@ -27,6 +27,20 @@ behavior is documented in the README and the rest of `docs/`.
   not a shipped per-provider allowlist - so result classification stays
   provider-neutral.
 
+- *Windows / cross-platform support.* The PKCS#11 ctypes ABI now supports Windows
+  (issue #3). The subprocess output reader no longer uses `select()` over pipes
+  (POSIX-only); the cryptoki structures pack 1-byte on Windows via a
+  platform-conditional `_CKStructure` base; the function-list version offset is
+  computed from the packed layout instead of assuming pointer-size padding;
+  `CK_ULONG` is 32-bit on Win64 (LLP64), handled by `ctypes.c_ulong` plus a
+  width gate that skips the 64-bit oversized-length probes (unrepresentable in a
+  32-bit `CK_ULONG`, gated on the type width not the OS name) rather than silently
+  truncating them; the runner classifies Windows NTSTATUS crash codes; and a
+  module's dependent DLLs resolve via `os.add_dll_directory`. Validated under Wine
+  (a pywine + SoftHSM2-for-Windows target), which faithfully reproduces the Win64
+  layout/width ABI. Remaining: a real-Windows pass (a VM, or CI `windows-latest`)
+  for final conformance sign-off. Wine is an ABI reproducer, not a conformance gate.
+
 - *SO (security officer) login flows.* CKU_SO workflows, including
   trusted-certificate import with `CKA_TRUSTED=True`, are not yet covered.
 

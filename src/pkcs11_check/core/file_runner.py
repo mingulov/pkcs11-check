@@ -2193,6 +2193,13 @@ def units_remaining_for_resume(units: list[str], state: FileRunState | None) -> 
     return [unit for unit in units if unit not in completed_ok]
 
 
+def _is_windows_crash_code(returncode: int) -> bool:
+    """True for an NTSTATUS exit code with error severity (top two bits set), e.g.
+    0xC0000005 (access violation). On Windows an unhandled exception terminates the
+    process with such a code instead of a negative POSIX signal."""
+    return (returncode & 0xFFFFFFFF) & 0xC0000000 == 0xC0000000
+
+
 def _status_from_returncode(returncode: int) -> str:
     if returncode == 0:
         return "passed"
@@ -2201,6 +2208,8 @@ def _status_from_returncode(returncode: int) -> str:
     if returncode == _TIMEOUT_RETURN_CODE:
         return "timeout"
     if returncode < 0:
+        return "crashed"
+    if sys.platform == "win32" and _is_windows_crash_code(returncode):
         return "crashed"
     return "failed"
 
@@ -2214,6 +2223,30 @@ _CRASH_SIGNALS: dict[int, str] = {
     -7: "SIGBUS",
 }
 
+# Windows NTSTATUS exception codes (the process exit code when a child dies on an
+# unhandled exception); the Windows-ABI counterpart of _CRASH_SIGNALS.
+_WINDOWS_EXCEPTION_NAMES: dict[int, str] = {
+    0xC0000005: "EXCEPTION_ACCESS_VIOLATION",
+    0xC00000FD: "EXCEPTION_STACK_OVERFLOW",
+    0xC000001D: "EXCEPTION_ILLEGAL_INSTRUCTION",
+    0xC0000094: "EXCEPTION_INT_DIVIDE_BY_ZERO",
+    0xC0000409: "STATUS_STACK_BUFFER_OVERRUN",
+    0xC0000374: "STATUS_HEAP_CORRUPTION",
+    0xC0000025: "EXCEPTION_NONCONTINUABLE_EXCEPTION",
+}
+
+
+def _crash_detail_name(returncode: int | None) -> str:
+    """Name a crash exit code: POSIX signal (negative) or Windows NTSTATUS (positive)."""
+    if returncode is None:
+        return "unknown"
+    if returncode < 0:
+        return _CRASH_SIGNALS.get(returncode, f"signal{abs(returncode)}")
+    if _is_windows_crash_code(returncode):
+        u = returncode & 0xFFFFFFFF
+        return _WINDOWS_EXCEPTION_NAMES.get(u, f"0x{u:08X}")
+    return f"exit{returncode}"
+
 
 def crash_classification(
     *,
@@ -2226,11 +2259,7 @@ def crash_classification(
     if timed_out:
         detail: dict[str, object] = {"mode": "timeout"}
     else:
-        signal = _CRASH_SIGNALS.get(
-            returncode,  # type: ignore[arg-type]
-            (f"signal{abs(returncode)}" if returncode else "unknown"),
-        )
-        detail = {"signal": signal, "returncode": returncode}
+        detail = {"signal": _crash_detail_name(returncode), "returncode": returncode}
     return {
         "schema": 1,
         "reason": "crash",
@@ -2700,6 +2729,10 @@ def _subprocess_plugin_env(base_env: Mapping[str, str], unit: str) -> dict[str, 
     """Per-unit env that disables pytest plugin autoload and enables only the
     plugins the unit needs. Behavior-preserving; only trims startup cost."""
     env = dict(base_env)
+    # UTF-8 so a unit's pytest subprocess output (rich marks etc.) does not crash on a
+    # Windows cp1252 console; no-op off Windows. setdefault respects an explicit value.
+    if sys.platform == "win32":
+        env.setdefault("PYTHONUTF8", "1")
     addopts = _unit_plugin_addopts(unit.split("::", 1)[0])
     if addopts is None:
         return env

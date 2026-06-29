@@ -5,12 +5,14 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import sys
 from collections import Counter, defaultdict, deque
 from ctypes import byref, c_void_p, cast
 from typing import Any
 
 from . import metadata_std
 from .types_std import *  # noqa: F401,F403,F405
+from .types_std import _CKStructure  # underscore name: not re-exported by ``*``
 
 _PTR_SIZE = ctypes.sizeof(c_void_p)
 
@@ -99,7 +101,20 @@ def sub_param_name(param_name: str, value: int) -> str:
     return str(value)
 
 
-_VERSION_SIZE = _PTR_SIZE
+class _CK_FUNCTION_LIST_HEAD(_CKStructure):  # noqa: N801 - mirrors a PKCS#11 C type name
+    """Mirror of the CK_FUNCTION_LIST header to derive the version-field footprint.
+
+    On Linux (natural alignment) CK_VERSION's 2 bytes pad up to the pointer boundary,
+    so the first function pointer sits at ``_PTR_SIZE``; under the packed Windows ABI it
+    sits at ``sizeof(CK_VERSION)``. The computed offset is correct on both platforms,
+    unlike the former hardcoded ``_PTR_SIZE`` (which raised an access violation on the
+    packed ABI - see docs spec 2026-06-29-windows-abi-support-design).
+    """
+
+    _fields_ = [("version", CK_VERSION), ("firstFunc", c_void_p)]
+
+
+_VERSION_SIZE = _CK_FUNCTION_LIST_HEAD.firstFunc.offset
 _V30_START = metadata_std.FUNCTION_INDICES["C_GetInterfaceList"]
 _V32_START = metadata_std.FUNCTION_INDICES["C_EncapsulateKey"]
 
@@ -324,6 +339,17 @@ def read_crash_journal(
     return done, last_incomplete
 
 
+def _windows_dll_directory(lib_path: str) -> str | None:
+    """Directory to add to the Windows DLL search path so a module's dependent DLLs
+    (e.g. a provider's bundled OpenSSL) resolve. None when not applicable: on POSIX, or
+    where os.add_dll_directory is absent. On Windows (py3.8+) ctypes.CDLL no longer
+    searches the module's own directory for its dependencies."""
+    if sys.platform != "win32" or not hasattr(os, "add_dll_directory"):
+        return None
+    directory = os.path.dirname(os.path.abspath(lib_path))
+    return directory if directory and os.path.isdir(directory) else None
+
+
 class RawPKCS11:
     """Raw ctypes access to PKCS#11 C_* functions."""
 
@@ -341,6 +367,8 @@ class RawPKCS11:
     ) -> None:
         self._funcs: dict[str, Any] = {}
         self._lib: ctypes.CDLL | None = None
+        # Windows DLL-search handles kept alive for the process (see _windows_dll_directory).
+        self._dll_dir_handles: list[Any] = []
         self._call_log: dict[str, int] = defaultdict(int)
         self._used_mechanisms: set[int] = set()
         self._mechanism_counts: Counter[int] = Counter()
@@ -443,6 +471,9 @@ class RawPKCS11:
         return int(function_list_ptr)
 
     def _load_from_lib(self, lib_path: str) -> None:
+        directory = _windows_dll_directory(lib_path)
+        if directory is not None and sys.platform == "win32":
+            self._dll_dir_handles.append(os.add_dll_directory(directory))
         self._lib = ctypes.CDLL(lib_path)
 
         try:

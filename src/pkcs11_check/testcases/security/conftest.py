@@ -128,6 +128,12 @@ def child_setup_reject_known(
 # and ``HONEYPOT_BUF`` (alias) for the child script to use as the buffer pointer.
 HONEYPOT_MMAP_CODE = """
 import mmap as _mmap
+if not hasattr(_mmap, "MAP_ANONYMOUS"):
+    # Windows mmap lacks MAP_ANONYMOUS/PROT_*; the demand-zero honeypot is POSIX-only.
+    # Self-report (sound) instead of crashing with AttributeError on non-POSIX platforms.
+    print("SETUP_XFAIL:demand-zero honeypot needs POSIX mmap (unavailable on this platform)")
+    cleanup()
+    raise SystemExit(0)
 _mm = None
 # Demand-zero mmap: try from 1 TiB down to 1 GiB. MAP_NORESERVE (Linux) reserves
 # no swap; the mapping outlasts HONEYPOT_PTR (OS reclaims at process exit).

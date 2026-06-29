@@ -83,10 +83,16 @@ from pkcs11_check.testcases.conftest import (
 from pkcs11_check.testcases.security._boundary_values import (
     OVERSIZE_WRITE_LEN,
     PROBE_OFFSET,
+    requires_64bit_ck_ulong,
 )
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
-pytestmark = [pytest.mark.security, pytest.mark.subprocess, pytest.mark.slow]
+pytestmark = [
+    pytest.mark.security,
+    pytest.mark.subprocess,
+    pytest.mark.slow,
+    requires_64bit_ck_ulong,
+]
 
 # CKRs that constitute a conformant rejection of an oversized 64-bit data length.
 # Memory-pressure codes are included: a provider that *attempts* the full 4 GiB+

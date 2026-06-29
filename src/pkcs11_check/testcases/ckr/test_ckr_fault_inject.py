@@ -67,7 +67,7 @@ class TestFaultInjection:
                 CK_ULONG, CKF_RW_SESSION, CKF_SERIAL_SESSION,
                 CKM_AES_ECB, CKR_DEVICE_REMOVED, CKR_OK, CKU_USER,
             )
-            os.environ["PKCS11_REAL_MODULE"] = "{module}"
+            os.environ["PKCS11_REAL_MODULE"] = {module!r}
             os.environ["PKCS11_INJECT_FUNCTION"] = "C_Encrypt"
             os.environ["PKCS11_INJECT_ERROR"] = "0x00000032"  # CKR_DEVICE_REMOVED
             raw = RawPKCS11.from_lib("{_PROXY_PATH}")
@@ -135,7 +135,7 @@ class TestFaultInjection:
                 CK_ULONG, CKF_RW_SESSION, CKF_SERIAL_SESSION,
                 CKM_SHA256_RSA_PKCS, CKR_DEVICE_ERROR, CKR_OK, CKU_USER,
             )
-            os.environ["PKCS11_REAL_MODULE"] = "{module}"
+            os.environ["PKCS11_REAL_MODULE"] = {module!r}
             os.environ["PKCS11_INJECT_FUNCTION"] = "C_Sign"
             os.environ["PKCS11_INJECT_ERROR"] = "0x00000030"  # CKR_DEVICE_ERROR
             raw = RawPKCS11.from_lib("{_PROXY_PATH}")
@@ -202,7 +202,7 @@ class TestFaultInjection:
                 CKF_RW_SESSION, CKF_SERIAL_SESSION,
                 CKM_AES_KEY_GEN, CKR_DEVICE_MEMORY, CKR_OK, CKU_USER,
             )
-            os.environ["PKCS11_REAL_MODULE"] = "{module}"
+            os.environ["PKCS11_REAL_MODULE"] = {module!r}
             os.environ["PKCS11_INJECT_FUNCTION"] = "C_GenerateKey"
             os.environ["PKCS11_INJECT_ERROR"] = "0x00000031"  # CKR_DEVICE_MEMORY
             raw = RawPKCS11.from_lib("{_PROXY_PATH}")
@@ -254,7 +254,7 @@ class TestFaultProxyBasic:
             import os
             from pkcs11_check.raw.api import RawPKCS11
             from pkcs11_check.raw.bootstrap import get_slot_ids
-            os.environ["PKCS11_REAL_MODULE"] = "{module}"
+            os.environ["PKCS11_REAL_MODULE"] = {module!r}
             raw = RawPKCS11.from_lib("{_PROXY_PATH}")
 {ckr_subprocess_rv_trace_setup(indent="            ")}
             raw.C_Initialize(None)
@@ -292,7 +292,7 @@ class TestFaultProxyBasic:
             from pkcs11_check.raw.types_std import (
                 CKF_RW_SESSION, CKF_SERIAL_SESSION, CKM_AES_ECB, CKU_USER,
             )
-            os.environ["PKCS11_REAL_MODULE"] = "{module}"
+            os.environ["PKCS11_REAL_MODULE"] = {module!r}
             raw = RawPKCS11.from_lib("{_PROXY_PATH}")
 {ckr_subprocess_rv_trace_setup(indent="            ")}
             raw.C_Initialize(None)

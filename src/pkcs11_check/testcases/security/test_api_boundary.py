@@ -17,6 +17,7 @@ Covers:
 
 from __future__ import annotations
 
+import ctypes
 from typing import Any
 
 import pytest
@@ -42,8 +43,9 @@ from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess]
 
-# 64-bit CK_ULONG max -- used as literal in subprocess script strings
-_CK_ULONG_MAX_64 = 0xFFFFFFFFFFFFFFFF
+# CK_ULONG max for the host ABI (2^64-1 on LP64, 2^32-1 on Win64 LLP64). Used as a
+# literal in subprocess script strings, so it must fit the child's CK_ULONG width.
+_CK_ULONG_MAX = ctypes.c_ulong(-1).value
 
 
 def _preamble(p11_config: Any) -> str:
@@ -69,7 +71,7 @@ class TestSessionHandleBoundary:
     _SESSION_FUNCTIONS = ["C_GetSessionInfo", "C_CloseSession", "C_GetOperationState"]
     _BOUNDARY_HANDLES = [
         pytest.param(0, id="zero"),
-        pytest.param(_CK_ULONG_MAX_64, id="max"),
+        pytest.param(_CK_ULONG_MAX, id="max"),
     ]
 
     @pytest.mark.parametrize("func_name", _SESSION_FUNCTIONS)
@@ -137,7 +139,7 @@ class TestObjectHandleBoundary:
     ]
     _BOUNDARY_HANDLES = [
         pytest.param(0, id="zero"),
-        pytest.param(_CK_ULONG_MAX_64, id="max"),
+        pytest.param(_CK_ULONG_MAX, id="max"),
     ]
 
     @pytest.mark.parametrize("func_name", _OBJECT_FUNCTIONS)
@@ -763,7 +765,7 @@ mech.pParameter = None
 mech.ulParameterLen = 0
 
 # CKA_VALUE_LEN = ULONG_MAX
-val_len = ctypes.c_ulong({_CK_ULONG_MAX_64})
+val_len = ctypes.c_ulong({_CK_ULONG_MAX})
 token_false = ctypes.c_ubyte(0)
 enc_true = ctypes.c_ubyte(1)
 
@@ -793,5 +795,5 @@ cleanup()
             rc,
             stdout,
             stderr,
-            context=f"C_GenerateKey(CKA_VALUE_LEN={_CK_ULONG_MAX_64:#x})",
+            context=f"C_GenerateKey(CKA_VALUE_LEN={_CK_ULONG_MAX:#x})",
         )

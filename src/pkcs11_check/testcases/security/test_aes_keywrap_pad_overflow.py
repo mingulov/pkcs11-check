@@ -17,6 +17,7 @@ allocation and crashes or corrupts memory.
 
 from __future__ import annotations
 
+import ctypes
 from typing import Any
 
 import pytest
@@ -38,9 +39,10 @@ from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess]
 
-# Oversized length: same value used in GCM length-guard probes — never allocated,
-# just passed to C_Encrypt as ulDataLen while pData points at a small real buffer.
-_OVERSIZED_DATALEN = 0xFFFFFFFFFFFFFFFF
+# Oversized length = CK_ULONG max for the host ABI (2^64-1 on LP64, 2^32-1 on Win64
+# LLP64): never allocated, just passed to C_Encrypt as ulDataLen while pData points at a
+# small real buffer. Width-relative so it is representable in the child's CK_ULONG.
+_OVERSIZED_DATALEN = ctypes.c_ulong(-1).value
 
 # Expected spec-correct rejections for an oversized-length encrypt call.
 # CKR_OK is intentionally absent: accepting a 2^64-byte wrap is always wrong.

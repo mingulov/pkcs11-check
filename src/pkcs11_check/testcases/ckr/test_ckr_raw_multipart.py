@@ -68,7 +68,7 @@ def _run_raw_test(module_path: str, pin: str | None, test_code: str) -> tuple[in
             CKR_ARGUMENTS_BAD, CKR_MECHANISM_INVALID,
         )
 
-        raw = RawPKCS11.from_lib("{module_path}")
+        raw = RawPKCS11.from_lib({module_path!r})
 {ckr_subprocess_rv_trace_setup(indent="        ")}
         rv = raw.C_Initialize(None)
         assert rv in (  # audit-ok: init idempotency

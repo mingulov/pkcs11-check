@@ -90,7 +90,7 @@ from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
 def _template_ptr(attrs):
     return cast(attrs.array, CK_ATTRIBUTE_PTR)
 
-raw = RawPKCS11.from_lib("{module}")
+raw = RawPKCS11.from_lib({module!r})
 {rv_trace_setup}
 rv = raw.C_Initialize(None)
 assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)  # audit-ok: positive-op init idempotency

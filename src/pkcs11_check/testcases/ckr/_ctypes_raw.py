@@ -50,7 +50,7 @@ def run_null_test(
         CK_RV = c_ulong
 
         # Load module
-        lib = ctypes.CDLL("{module_path}")
+        lib = ctypes.CDLL({module_path!r})
 
         # Get C_GetFunctionList (the only guaranteed exported symbol)
         C_GetFunctionList = lib.C_GetFunctionList

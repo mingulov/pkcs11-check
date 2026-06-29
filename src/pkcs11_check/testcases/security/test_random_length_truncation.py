@@ -35,9 +35,15 @@ from pkcs11_check.testcases._subprocess_preamble import (
     subprocess_session_preamble,
 )
 from pkcs11_check.testcases.conftest import classify_negative_rv
+from pkcs11_check.testcases.security._boundary_values import requires_64bit_ck_ulong
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
-pytestmark = [pytest.mark.security, pytest.mark.subprocess, pytest.mark.slow]
+pytestmark = [
+    pytest.mark.security,
+    pytest.mark.subprocess,
+    pytest.mark.slow,
+    requires_64bit_ck_ulong,
+]
 
 # 0x100000008: low 32 bits == 8, so a (int)/(word32) truncation writes only 8 bytes.
 _OVERSIZE_LEN = (1 << 32) + 8

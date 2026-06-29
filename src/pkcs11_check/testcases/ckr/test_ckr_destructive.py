@@ -98,7 +98,7 @@ def _run_destructive(test_code: str) -> tuple[int, str, str]:
             CKR_PIN_TOO_WEAK, CKR_TOKEN_NOT_INITIALIZED, CKR_ARGUMENTS_BAD,
             CKF_SERIAL_SESSION, CKF_RW_SESSION,
         )
-        raw = RawPKCS11.from_lib("{module}")
+        raw = RawPKCS11.from_lib({module!r})
 {ckr_subprocess_rv_trace_setup(indent="        ")}
         raw.C_Initialize(None)
         sc = ctypes.c_ulong(0)

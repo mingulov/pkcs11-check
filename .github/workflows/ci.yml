@@ -68,3 +68,44 @@ jobs:
             --isolation auto \
             --marker "not security" \
             --match "test_encrypt or test_sign or test_digest"
+
+  smoke-windows:
+    # Real-Windows conformance gate (the workspace's Wine smoke only *reproduces*
+    # the ABI). uv installs the package normally, so the pytest plugin entry point
+    # registers and the isolated `test` runner works natively -- unlike the Wine
+    # src-only mount. SoftHSM2-for-Windows (disig portable) is the provider.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8.1.0
+      - run: uv sync --frozen --extra dev
+      - name: Install SoftHSM2 for Windows + provision a token
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/disig/SoftHSM2-for-Windows/releases/download/v2.5.0/SoftHSM2-2.5.0-portable.zip'
+          $sha = '85273bcc1a6b90e877f7bb4f7e90221d57103d8f5241d154a79dd730a135b910'
+          Invoke-WebRequest -Uri $url -OutFile sh2.zip
+          if ((Get-FileHash sh2.zip -Algorithm SHA256).Hash -ne $sha) { throw 'SoftHSM2 sha256 mismatch' }
+          Expand-Archive -Path sh2.zip -DestinationPath sh2 -Force
+          $module = "$PWD\sh2\SoftHSM2\lib\softhsm2-x64.dll"
+          $conf = "$PWD\softhsm2.conf"
+          New-Item -ItemType Directory -Force tokens | Out-Null
+          "directories.tokendir = $PWD\tokens`nobjectstore.backend = file`nlog.level = ERROR" |
+            Set-Content -Path $conf -Encoding ascii
+          $env:SOFTHSM2_CONF = $conf
+          uv run python scripts/init_softhsm2_token.py "$module"
+          "P11_MODULE=$module" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "SOFTHSM2_CONF=$conf" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: doctor + info (real-Windows ABI smoke)
+        shell: pwsh
+        run: |
+          uv run pkcs11-check info   --module "$env:P11_MODULE"
+          uv run pkcs11-check doctor --module "$env:P11_MODULE"
+      - name: functional smoke (encrypt / sign / digest under the Windows ABI)
+        shell: pwsh
+        run: |
+          # Strict, like smoke-softhsm2: this clean functional subset passes on a
+          # conformant provider, so any finding here is a real Windows issue to fix.
+          uv run pkcs11-check test --module "$env:P11_MODULE" --pin 1234 `
+            --timeout 120 --isolation auto --marker "not security" `
+            --match "test_encrypt or test_sign or test_digest"

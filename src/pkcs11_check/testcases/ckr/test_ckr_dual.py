@@ -128,7 +128,7 @@ class TestOperationStateSubprocess:
                 CKF_RW_SESSION, CKF_SERIAL_SESSION, CKR_OPERATION_NOT_INITIALIZED, CKU_USER,
                 CK_ULONG,
             )
-            raw = RawPKCS11.from_lib("{module}")
+            raw = RawPKCS11.from_lib({module!r})
 {ckr_subprocess_rv_trace_setup(indent="            ")}
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
@@ -173,7 +173,7 @@ class TestOperationStateSubprocess:
                 CKF_RW_SESSION, CKF_SERIAL_SESSION, CKM_SHA256, CKR_OK,
                 CKR_OPERATION_ACTIVE, CKU_USER,
             )
-            raw = RawPKCS11.from_lib("{module}")
+            raw = RawPKCS11.from_lib({module!r})
 {ckr_subprocess_rv_trace_setup(indent="            ")}
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)

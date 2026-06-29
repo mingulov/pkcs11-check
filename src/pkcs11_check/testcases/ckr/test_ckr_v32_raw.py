@@ -76,7 +76,7 @@ from pkcs11_check.raw.types_std import (
     CK_MECHANISM, CKF_SERIAL_SESSION, CKF_RW_SESSION, CKU_USER,
 )
 
-raw = RawPKCS11.from_lib("{module}")
+raw = RawPKCS11.from_lib({module!r})
 raw.C_Initialize(None)
 {rv_trace_setup}
 

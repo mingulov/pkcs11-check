@@ -76,10 +76,15 @@ from pkcs11_check.testcases.conftest import (
 )
 from pkcs11_check.testcases.security._boundary_values import (
     TRUNCATION_LOW8,
+    requires_64bit_ck_ulong,
 )
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
-pytestmark = [pytest.mark.security, pytest.mark.subprocess]
+pytestmark = [
+    pytest.mark.security,
+    pytest.mark.subprocess,
+    requires_64bit_ck_ulong,
+]
 
 # 64-bit oversized length: low32 = 8, so a 32-bit-truncating module reads only 8 bytes.
 _OVERSIZE_LEN = (1 << 32) + 8

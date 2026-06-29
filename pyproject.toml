@@ -67,6 +67,7 @@ exclude = [
     "/artifacts.zip",
     "/*.zip",
     ".worktrees/",
+    ".claude/",
     ".serena/",
     ".github/",
     "AGENTS.md",

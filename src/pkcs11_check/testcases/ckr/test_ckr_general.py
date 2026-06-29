@@ -29,7 +29,7 @@ class TestInitializeErrors:
         script = textwrap.dedent(f"""\
             from pkcs11_check.raw.api import RawPKCS11
             from pkcs11_check.raw.types_std import CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED
-            raw = RawPKCS11.from_lib("{module}")
+            raw = RawPKCS11.from_lib({module!r})
             rv1 = raw.C_Initialize(None)
             rv2 = raw.C_Initialize(None)
             if rv2 == CKR_OK:
@@ -63,7 +63,7 @@ class TestInitializeErrors:
         script = textwrap.dedent(f"""\
             from pkcs11_check.raw.api import RawPKCS11
             from pkcs11_check.raw.types_std import CKR_OK, CKR_CRYPTOKI_NOT_INITIALIZED
-            raw = RawPKCS11.from_lib("{module}")
+            raw = RawPKCS11.from_lib({module!r})
             raw.C_Initialize(None)
             raw.C_Finalize(None)
             # Now try finalize again - should get NOT_INITIALIZED
@@ -98,7 +98,7 @@ class TestInitializeErrors:
             from ctypes import byref
             from pkcs11_check.raw.api import RawPKCS11
             from pkcs11_check.raw.types_std import CKR_OK, CKR_FUNCTION_NOT_SUPPORTED, CK_ULONG
-            raw = RawPKCS11.from_lib("{module}")
+            raw = RawPKCS11.from_lib({module!r})
             raw.C_Initialize(None)
             try:
                 count = CK_ULONG(0)

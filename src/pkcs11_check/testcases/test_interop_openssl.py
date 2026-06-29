@@ -137,7 +137,7 @@ class TestOpenSSLPkcs11Provider:
         script = f"""
         import subprocess, os
         env = os.environ.copy()
-        env["PKCS11_PROVIDER_MODULE"] = "{module}"
+        env["PKCS11_PROVIDER_MODULE"] = {module!r}
         r = subprocess.run(
             [{openssl!r}, "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048",
              "-provider", "default", "-out", "/dev/null"],

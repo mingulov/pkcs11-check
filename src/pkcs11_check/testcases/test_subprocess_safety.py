@@ -129,7 +129,7 @@ class TestPostFinalize:
         from pkcs11_check.raw.api import RawPKCS11
         from pkcs11_check.raw.bootstrap import get_slot_ids
         from pkcs11_check.raw.types_std import CK_ULONG
-        raw = RawPKCS11.from_lib("{module}")
+        raw = RawPKCS11.from_lib({module!r})
         raw.C_Initialize(None)
         get_slot_ids(raw)
         raw.C_Finalize(None)
@@ -150,7 +150,7 @@ class TestPostFinalize:
         script = f"""
         from pkcs11_check.raw.api import RawPKCS11
         from pkcs11_check.raw.bootstrap import get_slot_ids
-        raw = RawPKCS11.from_lib("{module}")
+        raw = RawPKCS11.from_lib({module!r})
         raw.C_Initialize(None)
         raw.C_Finalize(None)
         raw.C_Initialize(None)
@@ -174,7 +174,7 @@ class TestForkSafety:
         import os
         from pkcs11_check.raw.api import RawPKCS11
         from pkcs11_check.raw.bootstrap import get_slot_ids
-        raw = RawPKCS11.from_lib("{module}")
+        raw = RawPKCS11.from_lib({module!r})
         raw.C_Initialize(None)
         pid = os.fork()
         if pid == 0:
@@ -314,7 +314,7 @@ class TestSessionObjectProcessIsolation:
         label = b"crossproc-" + uuid.uuid4().bytes.hex().encode()[:16]
 
         # --- Parent: initialize, create session object ---
-        raw = RawPKCS11.from_lib("{module}")
+        raw = RawPKCS11.from_lib({module!r})
         rv = raw.C_Initialize(None)
         if rv != CKR_OK:
             print(f"FATAL:Parent_Init:0x{{rv:08x}}")
@@ -352,7 +352,7 @@ class TestSessionObjectProcessIsolation:
             # per PKCS#11 v3.2 fork semantics.
             raw.C_Finalize(None)
             try:
-                raw2 = RawPKCS11.from_lib("{module}")
+                raw2 = RawPKCS11.from_lib({module!r})
                 rv = raw2.C_Initialize(None)
                 if rv != CKR_OK:
                     print(f"CHILD_FATAL:Init:0x{{rv:08x}}")
@@ -555,7 +555,7 @@ class TestLibraryReload:
         from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION
         pin = {pin_repr}
         for i in range(5):
-            raw = RawPKCS11.from_lib("{module}")
+            raw = RawPKCS11.from_lib({module!r})
             raw.C_Initialize(None)
             try:
                 slots = get_slot_ids(raw, label="pkcs11-check")

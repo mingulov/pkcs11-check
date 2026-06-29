@@ -106,7 +106,7 @@ class TestNullParameters:
             from pkcs11_check.raw.api import RawPKCS11
             from pkcs11_check.raw.bootstrap import get_slot_ids
 {ckr_ctypes_subprocess_rv_trace_setup(indent="            ")}
-            raw = RawPKCS11.from_lib("{module}")
+            raw = RawPKCS11.from_lib({module!r})
 {ckr_subprocess_rv_trace_setup(indent="            ")}
             raw.C_Initialize(None)
             slot_ids = get_slot_ids(raw, token_present=True)
@@ -116,7 +116,7 @@ class TestNullParameters:
                 sys.exit(0)
             slot_id = slot_ids[0]
             # Load raw .so and call C_OpenSession with NULL phSession
-            so = ctypes.CDLL("{module}")
+            so = ctypes.CDLL({module!r})
             try:
                 C_OpenSession = so.C_OpenSession
             except AttributeError:
@@ -156,7 +156,7 @@ class TestNullParameters:
             from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
             from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CKU_USER
 {ckr_ctypes_subprocess_rv_trace_setup(indent="            ")}
-            raw = RawPKCS11.from_lib("{module}")
+            raw = RawPKCS11.from_lib({module!r})
 {ckr_subprocess_rv_trace_setup(indent="            ")}
             raw.C_Initialize(None)
             slot_ids = get_slot_ids(raw, token_present=True)
@@ -171,7 +171,7 @@ class TestNullParameters:
             if pin is not None:
                 login_user(raw, sess, CKU_USER, pin)
             # Get session handle for raw call
-            so = ctypes.CDLL("{module}")
+            so = ctypes.CDLL({module!r})
             try:
                 C_GenerateRandom = so.C_GenerateRandom
             except AttributeError:
