@@ -22,6 +22,15 @@ from pkcs11_check.testcases._subprocess_trace import RV_TRACE_MARKER, record_sub
 
 pytestmark = [pytest.mark.security, pytest.mark.stress]
 
+# os.fork() is POSIX-only. On Windows/Wine `os.fork` does not exist, so a fork-based
+# child script raises AttributeError and exits 1 - which the isolated runner would
+# otherwise record as a (false) module crash. Skip such tests where fork is absent;
+# fork-safety is a POSIX concept, so no coverage is lost on platforms that cannot fork.
+requires_fork = pytest.mark.skipif(
+    not hasattr(os, "fork"),
+    reason="os.fork() is POSIX-only; fork-safety is inapplicable on this platform",
+)
+
 
 def _run_script(
     script: str, env: dict[str, str] | None = None, timeout: int = 30
@@ -166,6 +175,7 @@ class TestPostFinalize:
 class TestForkSafety:
     """Test fork behavior - child must not crash or deadlock (task 7.4)."""
 
+    @requires_fork
     @pytest.mark.slow
     def test_fork_after_initialize(self, p11_config: Any) -> None:
         """Fork after C_Initialize - child reinitializes."""
@@ -255,6 +265,7 @@ class TestSessionObjectProcessIsolation:
     process MUST NOT see them.
     """
 
+    @requires_fork
     def test_session_object_not_visible_to_other_process(self, p11_config: Any) -> None:
         """Parent creates a session object; subprocess MUST NOT find it.
 
