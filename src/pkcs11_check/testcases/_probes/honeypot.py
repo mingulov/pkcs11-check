@@ -21,6 +21,10 @@ _HONEYPOT_SIZES = (1 << 40, 1 << 38, 1 << 36, 1 << 34, 1 << 32, 1 << 30)
 # does not own it).
 _honeypot_mapping: mmap.mmap | None = None
 
+# Cache the returned pointer to ensure idempotence: a second call returns the exact
+# same pointer without re-allocating.
+_honeypot_ptr: ctypes.POINTER(ctypes.c_ubyte) | None = None  # type: ignore[valid-type]
+
 
 class HoneypotUnavailable(RuntimeError):  # noqa: N818
     """The demand-zero buffer cannot be allocated on this platform/run.
@@ -33,22 +37,26 @@ def demand_zero_buffer() -> ctypes.POINTER(ctypes.c_ubyte):  # type: ignore[vali
     """Return a pointer into a large demand-zero mapping (reads as 0 far past any heap).
 
     Raises HoneypotUnavailable on non-POSIX (no MAP_ANONYMOUS) or if every size fails.
+    Idempotent: all calls return the exact same pointer (same process-lifetime mapping).
     """
-    global _honeypot_mapping
+    global _honeypot_mapping, _honeypot_ptr
     if not hasattr(mmap, "MAP_ANONYMOUS"):
         raise HoneypotUnavailable(
             "demand-zero honeypot needs POSIX mmap (unavailable on this platform)"
         )
+    if _honeypot_ptr is not None:
+        return _honeypot_ptr
     flags = mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS
     flags |= getattr(mmap, "MAP_NORESERVE", 0)
-    last_exc: OSError | None = None
+    last_exc: OSError | ValueError | None = None
     for size in _HONEYPOT_SIZES:
         try:
             mm = mmap.mmap(-1, size, flags=flags)
         except (OSError, ValueError) as exc:  # ValueError: size too large for this build
-            last_exc = exc if isinstance(exc, OSError) else last_exc
+            last_exc = exc
             continue
         _honeypot_mapping = mm
         one = (ctypes.c_ubyte * 1).from_buffer(mm)
-        return ctypes.cast(one, ctypes.POINTER(ctypes.c_ubyte))
+        _honeypot_ptr = ctypes.cast(one, ctypes.POINTER(ctypes.c_ubyte))
+        return _honeypot_ptr
     raise HoneypotUnavailable(f"demand-zero honeypot allocation failed: {last_exc}")

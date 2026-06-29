@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import sys
 
 import pytest
@@ -21,6 +22,14 @@ def test_demand_zero_buffer_is_readable_far_past_a_small_buffer() -> None:
     # The whole point: indices far beyond any honestly-provisioned buffer read as 0.
     assert ptr[0] == 0
     assert ptr[1 << 30] == 0  # 1 GiB in - inside the demand-zero mapping
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="POSIX mmap only")
+def test_demand_zero_buffer_is_idempotent() -> None:
+    ptr1 = demand_zero_buffer()
+    ptr2 = demand_zero_buffer()
+    # Both calls must return pointers to the same address (same process-lifetime mapping).
+    assert ctypes.cast(ptr1, ctypes.c_void_p).value == ctypes.cast(ptr2, ctypes.c_void_p).value
 
 
 def test_unavailable_carries_setup_xfail_reason(monkeypatch: pytest.MonkeyPatch) -> None:
