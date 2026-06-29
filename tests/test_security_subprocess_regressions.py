@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from pkcs11_check.testcases._probes.runner import ProbeResult
 from pkcs11_check.testcases.security import (
     test_api_boundary,
     test_arithmetic_overflow,
@@ -889,18 +890,17 @@ def test_recover_input_length_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """C_SignRecover input-length probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return (
-            0,
-            "SETUP_XFAIL:RSA recover keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
-            "",
+    def _capture(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        _xfail_stdout = (
+            "SETUP_XFAIL:RSA recover keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n"
         )
+        return ProbeResult(returncode=0, stdout=_xfail_stdout, stderr="")
 
-    monkeypatch.setattr(test_recover_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_recover_length_boundary, "run_probe", _capture)
 
     with pytest.raises(pytest.xfail.Exception):
         test_recover_length_boundary.TestRecoverInputLengthBoundary().test_sign_recover_huge_data_len_does_not_crash(
@@ -909,28 +909,28 @@ def test_recover_input_length_child_marks_setup_reject(
             0x7FFFFFFFFFFFFFFF,
         )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "_RECOVER_SETUP_RVS" in scripts[0]
-    assert "C_SignRecover" in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "recover_length"
+    assert params.get("which") == "sign_huge_data_len"
+    assert params.get("data_len") == 0x7FFFFFFFFFFFFFFF
 
 
 def test_recover_output_length_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """C_VerifyRecover output-length probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return (
-            0,
-            "SETUP_XFAIL:RSA recover keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
-            "",
+    def _capture(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        _xfail_stdout = (
+            "SETUP_XFAIL:RSA recover keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n"
         )
+        return ProbeResult(returncode=0, stdout=_xfail_stdout, stderr="")
 
-    monkeypatch.setattr(test_recover_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_recover_length_boundary, "run_probe", _capture)
 
     with pytest.raises(pytest.xfail.Exception):
         test_recover_length_boundary.TestRecoverOutputLengthBoundary().test_verify_recover_inflated_pul_data_len_does_not_crash(
@@ -938,10 +938,10 @@ def test_recover_output_length_child_marks_setup_reject(
             cfg,
         )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "_RECOVER_SETUP_RVS" in scripts[0]
-    assert "C_VerifyRecover" in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "recover_length"
+    assert params.get("which") == "verify_inflated_out_len"
 
 
 # ---------------------------------------------------------------------------
