@@ -64,6 +64,7 @@ from pkcs11_check.testcases.conftest import (
     gen_edwards_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
 )
+from pkcs11_check.testcases.security._boundary_values import requires_64bit_ck_ulong
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess]
@@ -327,6 +328,7 @@ def _classify_unhonorable_length_outcome(
     )
 
 
+@requires_64bit_ck_ulong
 class TestIsizeMaxDataLength:
     """Probe data functions with isize::MAX boundary lengths.
 
@@ -699,6 +701,7 @@ _MESSAGE_VERIFY_MULTIPART_FIELDS = [
 ]
 
 
+@requires_64bit_ck_ulong
 class TestMessageApiLengthBoundary:
     """v3.0 message APIs must reject huge claimed input lengths safely."""
 
@@ -1772,6 +1775,7 @@ _UPDATE_LENGTH_OPS = [
 ]
 
 
+@requires_64bit_ck_ulong
 class TestIsizeMaxUpdateLength:
     """Initialized update APIs must reject huge claimed input lengths safely."""
 
@@ -1928,6 +1932,7 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@requires_64bit_ck_ulong
 class TestRandomIsizeLength:
     """Random APIs must handle impossible claimed buffer lengths safely."""
 
@@ -2466,6 +2471,7 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@requires_64bit_ck_ulong
 class TestIsizeMaxOutputLength:
     """Probe OUTPUT buffer length parameters with isize::MAX boundary.
 
@@ -3302,6 +3308,7 @@ _AES_CBC_ENCRYPT_DATA_PARAM_CASES = (
 )
 
 
+@requires_64bit_ck_ulong
 class TestAesCbcEncryptDataMalformedParams:
     """CKM_AES_CBC_ENCRYPT_DATA must reject malformed nested data safely."""
 
@@ -3424,6 +3431,7 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@requires_64bit_ck_ulong
 class TestRsaPssSaltLengthBoundary:
     """RSA-PSS sLen (salt length) must reject impossible values safely.
 
@@ -3528,6 +3536,7 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@requires_64bit_ck_ulong
 class TestGcmAadLengthBoundary:
     """AES-GCM ulAADLen must not turn a tiny AAD buffer into a huge read.
 
@@ -3622,6 +3631,7 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@requires_64bit_ck_ulong
 class TestCcmAadLengthBoundary:
     """AES-CCM ulAADLen must not turn a tiny AAD buffer into a huge read.
 
@@ -3715,6 +3725,7 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@requires_64bit_ck_ulong
 class TestPbkdf2NestedLengthBoundary:
     """PBKDF2 nested byte fields must reject impossible claimed lengths safely."""
 
@@ -3886,6 +3897,7 @@ _PBE_LENGTH_MECHANISMS = (
 )
 
 
+@requires_64bit_ck_ulong
 class TestPbeNestedLengthBoundary:
     """PBE parameter byte fields must reject impossible claimed lengths safely."""
 
@@ -4176,6 +4188,7 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@requires_64bit_ck_ulong
 class TestTlsKdfRandomLengthBoundary:
     """TLS KDF nested random buffers must reject impossible claimed lengths."""
 
@@ -4492,6 +4505,7 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@requires_64bit_ck_ulong
 class TestSp800108NestedCountBoundary:
     """SP800-108 nested arrays must reject impossible counts safely."""
 
@@ -4814,6 +4828,7 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@requires_64bit_ck_ulong
 class TestRsaOaepSourceDataLengthBoundary:
     """RSA-OAEP ulSourceDataLen must not turn a tiny source buffer into a huge read.
 
@@ -4926,6 +4941,7 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@requires_64bit_ck_ulong
 class TestGcmIvLengthBoundary:
     """AES-GCM ulIvLen must not turn a tiny IV buffer into a huge read.
 
@@ -5019,6 +5035,7 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@requires_64bit_ck_ulong
 class TestGcmTagBitsLengthBoundary:
     """AES-GCM ulTagBits must reject impossible values safely.
 
@@ -5114,6 +5131,7 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@requires_64bit_ck_ulong
 class TestCcmNonceLengthBoundary:
     """AES-CCM ulNonceLen must reject impossible values safely.
 
@@ -5208,6 +5226,7 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@requires_64bit_ck_ulong
 class TestCcmMacLengthBoundary:
     """AES-CCM ulMACLen must reject impossible values safely.
 
@@ -5303,6 +5322,7 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@requires_64bit_ck_ulong
 class TestEddsaContextLengthBoundary:
     """EdDSA ulContextDataLen must not turn a tiny context buffer into a huge read.
 

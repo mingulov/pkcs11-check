@@ -42,6 +42,7 @@ from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
 )
+from pkcs11_check.testcases.security._boundary_values import requires_64bit_ck_ulong
 from pkcs11_check.testcases.security.conftest import (
     HONEYPOT_MMAP_CODE,
     assert_subprocess_no_crash,
@@ -394,6 +395,7 @@ _GCM_TAG_BITS = [
 ]
 
 
+@requires_64bit_ck_ulong
 class TestGcmTagBitsOverflow:
     """Probe AES-GCM with extreme ulTagBits values.
 
@@ -564,6 +566,7 @@ _TEMPLATE_OPS = [
 ]
 
 
+@requires_64bit_ck_ulong
 class TestTemplateCountOverflow:
     """Probe template-accepting functions with huge template counts.
 
@@ -777,6 +780,7 @@ if rv != CKR_OK:
 """
 
 
+@requires_64bit_ck_ulong
 class TestTemplateCountOverflowValidHandles:
     """Template-count overflow probes that reach real object-handle paths."""
 
@@ -868,6 +872,7 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@requires_64bit_ck_ulong
 class TestDeriveTemplateCountOverflowValidBase:
     """Template-count overflow probes that reach a valid C_DeriveKey base key path."""
 
@@ -1068,6 +1073,7 @@ if rv != CKR_OK:
 """
 
 
+@requires_64bit_ck_ulong
 class TestKemTemplateCountOverflow:
     """Template-count overflow probes for v3.2 KEM output templates."""
 
