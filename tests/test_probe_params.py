@@ -49,3 +49,17 @@ def test_load_rejects_non_object(tmp_path: Path) -> None:
     p.write_text(json.dumps([1, 2, 3]))
     with pytest.raises(ValueError):
         ProbeParams.load(str(p))
+
+
+def test_load_rejects_missing_module_path(tmp_path: Path) -> None:
+    p = tmp_path / "params.json"
+    p.write_text(json.dumps({"slot_id": 0}))
+    with pytest.raises(ValueError, match="module_path"):
+        ProbeParams.load(str(p))
+
+
+def test_load_rejects_non_dict_extra(tmp_path: Path) -> None:
+    p = tmp_path / "params.json"
+    p.write_text(json.dumps({"module_path": "/lib/x.so", "extra": "oops"}))
+    with pytest.raises(ValueError, match="extra.*object"):
+        ProbeParams.load(str(p))

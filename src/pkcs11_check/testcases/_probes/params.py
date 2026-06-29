@@ -49,6 +49,10 @@ class ProbeParams:
         if not isinstance(data, dict):
             raise ValueError("probe params JSON must be a JSON object")
         _check_no_pin(data)
+        if "module_path" not in data:
+            raise ValueError("probe params must include 'module_path'")
+        if "extra" in data and not isinstance(data["extra"], dict):
+            raise ValueError("probe params 'extra' must be an object")
         known = {"module_path", "slot_id", "slot_label", "interface", "extra"}
         extra = {k: v for k, v in data.items() if k not in known}
         if "extra" in data and isinstance(data["extra"], dict):
