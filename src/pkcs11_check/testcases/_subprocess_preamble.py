@@ -119,6 +119,24 @@ def run_with_coverage(
     return rc, out.strip(), err.strip()
 
 
+def ingest_subprocess_coverage(path: str) -> None:
+    """Read a child coverage JSON file into the preamble-path accumulators (I6).
+
+    No-op when ``path`` is empty or the file does not exist (e.g. the child
+    crashed before writing it).  All I/O and parse errors are silently swallowed
+    so a missing or corrupt coverage file never aborts the parent.
+    """
+    if not path or not os.path.exists(path):
+        return
+    try:
+        with open(path) as fh:
+            data: Any = json.load(fh)
+    except (OSError, ValueError):
+        return
+    _subprocess_call_counts.update(data.get("call_log", {}))
+    _subprocess_mechanism_counts.update(data.get("mechanism_counts", {}))
+
+
 def get_preamble_subprocess_coverage() -> tuple[Counter[str], Counter[str]]:
     """Return accumulated subprocess coverage and clear it."""
     func = Counter(_subprocess_call_counts)
