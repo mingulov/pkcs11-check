@@ -177,17 +177,18 @@ def test_rsa_verify_probe_xfails_setup_before_child(monkeypatch: pytest.MonkeyPa
         )
 
 
-def test_zero_length_aes_cbc_child_script_compiles(monkeypatch: pytest.MonkeyPatch) -> None:
-    """AES-CBC zero-length crash probe must generate valid Python."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+def test_zero_length_aes_cbc_probe_calls_run_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AES-CBC zero-length crash probe must invoke run_probe with correct params."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _compile_child(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        compile(script, "<api-boundary-zero-length-child>", "exec")
-        return 0, "", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(test_api_boundary, "gen_aes_key_or_xfail", lambda *_a, **_kw: 1)
     monkeypatch.setattr(test_api_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_api_boundary, "run_with_coverage", _compile_child)
+    monkeypatch.setattr(test_api_boundary, "run_probe", _stub_probe)
 
     test_api_boundary.TestZeroLengthData().test_zero_length_data(
         _RawSession(),
@@ -197,21 +198,28 @@ def test_zero_length_aes_cbc_child_script_compiles(monkeypatch: pytest.MonkeyPat
         "CKM_AES_CBC",
     )
 
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "api_boundary"
+    assert params.get("which") == "zero_length_aes"
+    assert params.get("operation") == "encrypt"
+    assert params.get("mech_name") == "CKM_AES_CBC"
+
 
 def test_zero_length_aes_probe_xfails_setup_before_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Zero-length AES crash probes should not spawn if setup keygen is unavailable."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
 
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(test_api_boundary, "gen_aes_key_or_xfail", _xfail_setup, raising=False)
-    monkeypatch.setattr(test_api_boundary, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_api_boundary, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
         test_api_boundary.TestZeroLengthData().test_zero_length_data(
