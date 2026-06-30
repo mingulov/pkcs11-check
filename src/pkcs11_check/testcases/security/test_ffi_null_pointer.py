@@ -25,11 +25,8 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.types_std import CKA_UNWRAP
-from pkcs11_check.testcases._subprocess_preamble import (
-    pin_from_config,
-    run_with_coverage,
-    subprocess_session_preamble,
-)
+from pkcs11_check.testcases._probes.runner import run_probe
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import (
     destroy_returned_handles,
     gen_aes_key_or_xfail,
@@ -37,22 +34,6 @@ from pkcs11_check.testcases.conftest import (
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess]
-
-
-def _preamble(p11_config: Any) -> str:
-    """Build subprocess session preamble from p11_config."""
-    return subprocess_session_preamble(
-        str(p11_config.module),
-        pin=p11_config.pin.get_secret_value() if p11_config.pin else None,
-    )
-
-
-def _preamble_no_login(p11_config: Any) -> str:
-    """Build subprocess session preamble without login."""
-    return subprocess_session_preamble(
-        str(p11_config.module),
-        pin=None,
-    )
 
 
 def _preflight_aes_key(
@@ -140,124 +121,21 @@ class TestNullDataUpdate:
                 rs,
                 purpose=f"{update_func} NULL-data crash probe setup",
             )
-            preamble = _preamble(p11_config)
-            body = f"""
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_AES_CBC, CK_ULONG, CKR_OK,
-)
-from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
-try:
-    iv = (ctypes.c_ubyte * 16)(*range(16))
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_AES_CBC
-    mech.pParameter = ctypes.cast(
-        ctypes.pointer(iv), ctypes.c_void_p
-    )
-    mech.ulParameterLen = 16
-    rv = raw.{init_func}(sh, ctypes.byref(mech), key)
-    print(f"init_rv={{rv}}")
-    if rv == CKR_OK:
-        out_len = CK_ULONG(256)
-        out_buf = (ctypes.c_ubyte * 256)()
-        rv2 = raw.{update_func}(
-            sh, None, 32, out_buf, ctypes.byref(out_len),
+        result = run_probe(
+            "ffi_null_pointer",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": f"update_{operation}",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
         )
-        print(f"rv={{rv2}}")
-    else:
-        print(f"rv={{rv}}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        elif operation == "sign":
-            preamble = _preamble(p11_config)
-            body = """
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_SHA256_HMAC, CKR_OK,
-    CKA_SIGN, CKA_VERIFY, CKA_TOKEN,
-)
-from pkcs11_check.raw.types_std import CKK_GENERIC_SECRET
-from pkcs11_check.raw.recipes import import_secret_key, destroy_quietly
-
-key = import_secret_key(raw, sh, CKK_GENERIC_SECRET, b'\\x00' * 32,
-    attrs={CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False})
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_HMAC
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_SignInit(sh, ctypes.byref(mech), key)
-    print(f"init_rv={rv}")
-    if rv == CKR_OK:
-        rv2 = raw.C_SignUpdate(sh, None, 32)
-        print(f"rv={rv2}")
-    else:
-        print(f"rv={rv}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        elif operation == "verify":
-            preamble = _preamble(p11_config)
-            body = """
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_SHA256_HMAC, CKR_OK,
-    CKA_SIGN, CKA_VERIFY, CKA_TOKEN,
-)
-from pkcs11_check.raw.types_std import CKK_GENERIC_SECRET
-from pkcs11_check.raw.recipes import import_secret_key, destroy_quietly
-
-key = import_secret_key(raw, sh, CKK_GENERIC_SECRET, b'\\x00' * 32,
-    attrs={CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False})
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_HMAC
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_VerifyInit(sh, ctypes.byref(mech), key)
-    print(f"init_rv={rv}")
-    if rv == CKR_OK:
-        rv2 = raw.C_VerifyUpdate(sh, None, 32)
-        print(f"rv={rv2}")
-    else:
-        print(f"rv={rv}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        elif operation == "digest":
-            preamble = _preamble(p11_config)
-            body = """
-import ctypes
-from pkcs11_check.raw.types_std import CK_MECHANISM, CKM_SHA256, CKR_OK
-
-mech = CK_MECHANISM()
-mech.mechanism = CKM_SHA256
-mech.pParameter = None
-mech.ulParameterLen = 0
-rv = raw.C_DigestInit(sh, ctypes.byref(mech))
-print(f"init_rv={rv}")
-if rv == CKR_OK:
-    rv2 = raw.C_DigestUpdate(sh, None, 32)
-    print(f"rv={rv2}")
-else:
-    print(f"rv={rv}")
-cleanup()
-"""
-        else:
-            raise ValueError(f"Unhandled operation: {operation}")
-
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context=f"{update_func}(data=NULL, data_len=32)",
         )
 
@@ -319,175 +197,26 @@ class TestNullOutputFinal:
         if not rs.has_mechanism(mech_check):
             pytest.skip(f"CKM_{mech_check} not supported")
 
-        if operation == "encrypt":
+        if operation in ("encrypt", "decrypt"):
             _preflight_aes_key(
                 rs,
-                purpose="C_EncryptFinal NULL-output crash probe setup",
+                purpose=f"{final_func} NULL-output crash probe setup",
             )
-            preamble = _preamble(p11_config)
-            body = """
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_AES_CBC, CK_ULONG, CKR_OK,
-)
-from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
-try:
-    iv = (ctypes.c_ubyte * 16)(*range(16))
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_AES_CBC
-    mech.pParameter = ctypes.cast(
-        ctypes.pointer(iv), ctypes.c_void_p
-    )
-    mech.ulParameterLen = 16
-    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
-    print(f"init_rv={rv}")
-    if rv == CKR_OK:
-        data = (ctypes.c_ubyte * 16)(*range(16))
-        upd_len = CK_ULONG(256)
-        upd_buf = (ctypes.c_ubyte * 256)()
-        rv2 = raw.C_EncryptUpdate(
-            sh, data, 16, upd_buf, ctypes.byref(upd_len),
+        result = run_probe(
+            "ffi_null_pointer",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": f"final_{operation}",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
         )
-        print(f"update_rv={rv2}")
-        if rv2 == CKR_OK:
-            fin_len = CK_ULONG(32)
-            rv3 = raw.C_EncryptFinal(
-                sh, None, ctypes.byref(fin_len),
-            )
-            print(f"rv={rv3}")
-        else:
-            print(f"rv={rv2}")
-    else:
-        print(f"rv={rv}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        elif operation == "decrypt":
-            _preflight_aes_key(
-                rs,
-                purpose="C_DecryptFinal NULL-output crash probe setup",
-            )
-            preamble = _preamble(p11_config)
-            body = """
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_AES_CBC, CK_ULONG, CKR_OK,
-)
-from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
-
-key = gen_aes_key(raw, sh, 256)
-try:
-    iv = (ctypes.c_ubyte * 16)(*range(16))
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_AES_CBC
-    mech.pParameter = ctypes.cast(
-        ctypes.pointer(iv), ctypes.c_void_p
-    )
-    mech.ulParameterLen = 16
-    rv = raw.C_DecryptInit(sh, ctypes.byref(mech), key)
-    print(f"init_rv={rv}")
-    if rv == CKR_OK:
-        data = (ctypes.c_ubyte * 16)(*range(16))
-        upd_len = CK_ULONG(256)
-        upd_buf = (ctypes.c_ubyte * 256)()
-        rv2 = raw.C_DecryptUpdate(
-            sh, data, 16, upd_buf, ctypes.byref(upd_len),
-        )
-        print(f"update_rv={rv2}")
-        if rv2 == CKR_OK:
-            fin_len = CK_ULONG(32)
-            rv3 = raw.C_DecryptFinal(
-                sh, None, ctypes.byref(fin_len),
-            )
-            print(f"rv={rv3}")
-        else:
-            print(f"rv={rv2}")
-    else:
-        print(f"rv={rv}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        elif operation == "sign":
-            preamble = _preamble(p11_config)
-            body = """
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_SHA256_HMAC, CK_ULONG, CKR_OK,
-    CKA_SIGN, CKA_VERIFY, CKA_TOKEN,
-)
-from pkcs11_check.raw.types_std import CKK_GENERIC_SECRET
-from pkcs11_check.raw.recipes import import_secret_key, destroy_quietly
-
-key = import_secret_key(raw, sh, CKK_GENERIC_SECRET, b'\\x00' * 32,
-    attrs={CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False})
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_HMAC
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_SignInit(sh, ctypes.byref(mech), key)
-    print(f"init_rv={rv}")
-    if rv == CKR_OK:
-        data = (ctypes.c_ubyte * 16)(*range(16))
-        rv2 = raw.C_SignUpdate(sh, data, 16)
-        print(f"update_rv={rv2}")
-        if rv2 == CKR_OK:
-            sig_len = CK_ULONG(512)
-            rv3 = raw.C_SignFinal(
-                sh, None, ctypes.byref(sig_len),
-            )
-            print(f"rv={rv3}")
-        else:
-            print(f"rv={rv2}")
-    else:
-        print(f"rv={rv}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        elif operation == "digest":
-            preamble = _preamble(p11_config)
-            body = """
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_SHA256, CK_ULONG, CKR_OK,
-)
-
-mech = CK_MECHANISM()
-mech.mechanism = CKM_SHA256
-mech.pParameter = None
-mech.ulParameterLen = 0
-rv = raw.C_DigestInit(sh, ctypes.byref(mech))
-print(f"init_rv={rv}")
-if rv == CKR_OK:
-    data = (ctypes.c_ubyte * 16)(*range(16))
-    rv2 = raw.C_DigestUpdate(sh, data, 16)
-    print(f"update_rv={rv2}")
-    if rv2 == CKR_OK:
-        dig_len = CK_ULONG(64)
-        rv3 = raw.C_DigestFinal(
-            sh, None, ctypes.byref(dig_len),
-        )
-        print(f"rv={rv3}")
-    else:
-        print(f"rv={rv2}")
-else:
-    print(f"rv={rv}")
-cleanup()
-"""
-        else:
-            raise ValueError(f"Unhandled operation: {operation}")
-
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context=f"{final_func}(output=NULL, length_query)",
         )
 
@@ -505,18 +234,20 @@ class TestNullRandomBuffer:
     """
 
     def test_seed_random_null_buffer(self, p11_config: Any) -> None:
-        preamble = _preamble(p11_config)
-        body = """
-rv = raw.C_SeedRandom(sh, None, 32)
-print(f"rv={rv}")
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "ffi_null_pointer",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "seed_random",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context="C_SeedRandom(data=NULL, data_len=32)",
         )
 
@@ -524,18 +255,20 @@ cleanup()
         self,
         p11_config: Any,
     ) -> None:
-        preamble = _preamble(p11_config)
-        body = """
-rv = raw.C_GenerateRandom(sh, None, 32)
-print(f"rv={rv}")
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "ffi_null_pointer",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "generate_random",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context="C_GenerateRandom(buf=NULL, buf_len=32)",
         )
 
@@ -564,67 +297,56 @@ class TestNullPinBuffer:
         self,
         p11_config: Any,
     ) -> None:
-        preamble = _preamble_no_login(p11_config)
-        body = """
-from pkcs11_check.raw.types_std import CKU_SO
-# Attempt SO login -- may fail (that's fine, we just want no crash)
-rv_login = raw.C_Login(sh, int(CKU_SO), None, 0)
-print(f"so_login_rv={rv_login}")
-rv = raw.C_InitPIN(sh, None, 8)
-print(f"rv={rv}")
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "ffi_null_pointer",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "init_pin_null",
+            },
+            pin=None,
+            timeout=10,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context="C_InitPIN(pin=NULL, pin_len=8)",
         )
 
     def test_set_pin_null_old_pin(self, p11_config: Any) -> None:
-        preamble = _preamble_no_login(p11_config)
-        body = """
-import ctypes
-from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR
-pin_buf = (ctypes.c_ubyte * 4)(0x31, 0x32, 0x33, 0x34)
-rv = raw.C_SetPIN(
-    sh, None, 8,
-    ctypes.cast(ctypes.pointer(pin_buf), CK_UTF8CHAR_PTR), 4,
-)
-print(f"rv={rv}")
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "ffi_null_pointer",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "set_pin_null_old_pin",
+            },
+            pin=None,
+            timeout=10,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context="C_SetPIN(old_pin=NULL, old_pin_len=8)",
         )
 
     def test_set_pin_null_new_pin(self, p11_config: Any) -> None:
-        preamble = _preamble_no_login(p11_config)
-        body = """
-import ctypes
-from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR
-pin_buf = (ctypes.c_ubyte * 4)(0x31, 0x32, 0x33, 0x34)
-rv = raw.C_SetPIN(
-    sh,
-    ctypes.cast(ctypes.pointer(pin_buf), CK_UTF8CHAR_PTR), 4,
-    None, 8,
-)
-print(f"rv={rv}")
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "ffi_null_pointer",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "set_pin_null_new_pin",
+            },
+            pin=None,
+            timeout=10,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context="C_SetPIN(new_pin=NULL, new_pin_len=8)",
         )
 
@@ -645,18 +367,20 @@ class TestNullOperationState:
         self,
         p11_config: Any,
     ) -> None:
-        preamble = _preamble(p11_config)
-        body = """
-rv = raw.C_SetOperationState(sh, None, 32, 0, 0)
-print(f"rv={rv}")
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "ffi_null_pointer",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "set_operation_state_null",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context="C_SetOperationState(state=NULL, state_len=32)",
         )
 
@@ -686,51 +410,20 @@ class TestNullWrapUnwrap:
             purpose="C_UnwrapKey NULL wrapped-data crash probe setup",
             attrs={CKA_UNWRAP: True},
         )
-        preamble = _preamble(p11_config)
-        body = """
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_AES_ECB, CK_OBJECT_HANDLE,
-    CK_ATTRIBUTE, CKA_CLASS, CKA_KEY_TYPE, CKA_TOKEN,
-    CKA_ENCRYPT, CKA_DECRYPT, CKA_UNWRAP,
-    CKO_SECRET_KEY, CKK_AES, CKA_VALUE_LEN, CK_ULONG,
-)
-from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
-
-wrap_key = gen_aes_key(raw, sh, 256, attrs={CKA_UNWRAP: True})
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_AES_ECB
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-
-    # Minimal template for the unwrapped key
-    token_false = ctypes.c_ubyte(0)
-    attr = CK_ATTRIBUTE()
-    attr.type = CKA_TOKEN
-    attr.pValue = ctypes.cast(
-        ctypes.pointer(token_false), ctypes.c_void_p,
-    )
-    attr.ulValueLen = 1
-
-    out_key = CK_OBJECT_HANDLE(0)
-    rv = raw.C_UnwrapKey(
-        sh, ctypes.byref(mech), wrap_key,
-        None, 32,
-        ctypes.pointer(attr), 1,
-        ctypes.byref(out_key),
-    )
-    print(f"rv={rv}")
-finally:
-    destroy_quietly(raw, sh, wrap_key)
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "ffi_null_pointer",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "unwrap_key_null_data",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context="C_UnwrapKey(wrapped=NULL, wrapped_len=32)",
         )
 
@@ -757,35 +450,20 @@ class TestHmacGeneralNullParam:
         rs = p11_raw_session
         if not rs.has_mechanism("SHA256_HMAC_GENERAL"):
             pytest.skip("CKM_SHA256_HMAC_GENERAL not supported")
-        preamble = _preamble(p11_config)
-        body = """
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_SHA256_HMAC_GENERAL,
-    CKA_SIGN, CKA_VERIFY, CKA_TOKEN,
-)
-from pkcs11_check.raw.types_std import CKK_GENERIC_SECRET
-from pkcs11_check.raw.recipes import import_secret_key, destroy_quietly
-
-key = import_secret_key(raw, sh, CKK_GENERIC_SECRET, b'\\x00' * 32,
-    attrs={CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False})
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_HMAC_GENERAL
-    mech.pParameter = None
-    mech.ulParameterLen = 8  # sizeof(CK_ULONG) on 64-bit
-    rv = raw.C_SignInit(sh, ctypes.byref(mech), key)
-    print(f"rv={rv}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "ffi_null_pointer",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "hmac_general_null_param",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context=("C_SignInit(CKM_SHA256_HMAC_GENERAL, pParameter=NULL, ulParameterLen=8)"),
         )
 
@@ -858,133 +536,21 @@ class TestNullDataOneShot:
                 rs,
                 purpose=f"{func_name} NULL-data crash probe setup",
             )
-            preamble = _preamble(p11_config)
-            init_func = "C_EncryptInit" if operation == "encrypt" else "C_DecryptInit"
-            body = f"""
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
-)
-from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_AES_ECB
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.{init_func}(sh, ctypes.byref(mech), key)
-    print(f"init_rv={{rv}}")
-    if rv == CKR_OK:
-        out_len = CK_ULONG(256)
-        out_buf = (ctypes.c_ubyte * 256)()
-        rv2 = raw.{func_name}(
-            sh, None, 32, out_buf, ctypes.byref(out_len),
+        result = run_probe(
+            "ffi_null_pointer",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": f"oneshot_{operation}",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
         )
-        print(f"rv={{rv2}}")
-    else:
-        print(f"rv={{rv}}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        elif operation == "sign":
-            preamble = _preamble(p11_config)
-            body = """
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_SHA256_HMAC, CK_ULONG, CKR_OK,
-    CKA_SIGN, CKA_VERIFY, CKA_TOKEN,
-)
-from pkcs11_check.raw.types_std import CKK_GENERIC_SECRET
-from pkcs11_check.raw.recipes import import_secret_key, destroy_quietly
-
-key = import_secret_key(raw, sh, CKK_GENERIC_SECRET, b'\\x00' * 32,
-    attrs={CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False})
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_HMAC
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_SignInit(sh, ctypes.byref(mech), key)
-    print(f"init_rv={rv}")
-    if rv == CKR_OK:
-        sig_len = CK_ULONG(512)
-        sig_buf = (ctypes.c_ubyte * 512)()
-        rv2 = raw.C_Sign(
-            sh, None, 32, sig_buf, ctypes.byref(sig_len),
-        )
-        print(f"rv={rv2}")
-    else:
-        print(f"rv={rv}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        elif operation == "verify":
-            preamble = _preamble(p11_config)
-            body = """
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_SHA256_HMAC, CKR_OK,
-    CKA_SIGN, CKA_VERIFY, CKA_TOKEN,
-)
-from pkcs11_check.raw.types_std import CKK_GENERIC_SECRET
-from pkcs11_check.raw.recipes import import_secret_key, destroy_quietly
-
-key = import_secret_key(raw, sh, CKK_GENERIC_SECRET, b'\\x00' * 32,
-    attrs={CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False})
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_HMAC
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_VerifyInit(sh, ctypes.byref(mech), key)
-    print(f"init_rv={rv}")
-    if rv == CKR_OK:
-        fake_sig = (ctypes.c_ubyte * 32)(*([0xAA] * 32))
-        rv2 = raw.C_Verify(sh, None, 32, fake_sig, 32)
-        print(f"rv={rv2}")
-    else:
-        print(f"rv={rv}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        elif operation == "digest":
-            preamble = _preamble(p11_config)
-            body = """
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_SHA256, CK_ULONG, CKR_OK,
-)
-
-mech = CK_MECHANISM()
-mech.mechanism = CKM_SHA256
-mech.pParameter = None
-mech.ulParameterLen = 0
-rv = raw.C_DigestInit(sh, ctypes.byref(mech))
-print(f"init_rv={rv}")
-if rv == CKR_OK:
-    dig_len = CK_ULONG(64)
-    digest_buf = (ctypes.c_ubyte * 64)()
-    rv2 = raw.C_Digest(
-        sh, None, 32, digest_buf, ctypes.byref(dig_len),
-    )
-    print(f"rv={rv2}")
-else:
-    print(f"rv={rv}")
-cleanup()
-"""
-        else:
-            raise ValueError(f"Unhandled operation: {operation}")
-
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context=f"{func_name}(data=NULL, data_len=32)",
         )
 
@@ -1018,67 +584,22 @@ class TestNullMessageApi:
             rs,
             purpose="C_EncryptMessage NULL plaintext crash probe setup",
         )
-        preamble = _preamble(p11_config)
-        body = """
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_AES_GCM, CK_ULONG, CKR_OK,
-    CK_GCM_MESSAGE_PARAMS, CKG_GENERATE,
-)
-from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
-
-if "C_MessageEncryptInit" not in raw.available_function_names():
-    print("not_supported")
-    cleanup()
-    raise SystemExit(0)
-
-key = gen_aes_key(raw, sh, 256)
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_AES_GCM
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_MessageEncryptInit(sh, ctypes.byref(mech), key)
-    print(f"init_rv={rv}")
-    if rv == CKR_OK:
-        iv_buf = (ctypes.c_ubyte * 12)()
-        tag_buf = (ctypes.c_ubyte * 16)()
-        params = CK_GCM_MESSAGE_PARAMS()
-        params.pIv = ctypes.cast(
-            ctypes.pointer(iv_buf), ctypes.c_void_p,
+        result = run_probe(
+            "ffi_null_pointer",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "encrypt_message_null_plaintext",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
         )
-        params.ulIvLen = 12
-        params.ulIvFixedBits = 0
-        params.ivGenerator = CKG_GENERATE
-        params.pTag = ctypes.cast(
-            ctypes.pointer(tag_buf), ctypes.c_void_p,
-        )
-        params.ulTagBits = 128
-        out_len = CK_ULONG(256)
-        out_buf = (ctypes.c_ubyte * 256)()
-        rv2 = raw.C_EncryptMessage(
-            sh,
-            ctypes.cast(ctypes.pointer(params), ctypes.c_void_p),
-            ctypes.sizeof(params),
-            None, 0,
-            None, 32,
-            out_buf, ctypes.byref(out_len),
-        )
-        print(f"rv={rv2}")
-    else:
-        print(f"rv={rv}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
-        if "not_supported" in stdout:
+        if "not_supported" in result.stdout:
             pytest.skip("C_MessageEncryptInit not available")
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context="C_EncryptMessage(plaintext=NULL, plaintext_len=32)",
         )
 
@@ -1094,67 +615,22 @@ cleanup()
             rs,
             purpose="C_DecryptMessage NULL ciphertext crash probe setup",
         )
-        preamble = _preamble(p11_config)
-        body = """
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_AES_GCM, CK_ULONG, CKR_OK,
-    CK_GCM_MESSAGE_PARAMS, CKG_GENERATE,
-)
-from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
-
-if "C_MessageDecryptInit" not in raw.available_function_names():
-    print("not_supported")
-    cleanup()
-    raise SystemExit(0)
-
-key = gen_aes_key(raw, sh, 256)
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_AES_GCM
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_MessageDecryptInit(sh, ctypes.byref(mech), key)
-    print(f"init_rv={rv}")
-    if rv == CKR_OK:
-        iv_buf = (ctypes.c_ubyte * 12)(*range(12))
-        tag_buf = (ctypes.c_ubyte * 16)()
-        params = CK_GCM_MESSAGE_PARAMS()
-        params.pIv = ctypes.cast(
-            ctypes.pointer(iv_buf), ctypes.c_void_p,
+        result = run_probe(
+            "ffi_null_pointer",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "decrypt_message_null_ciphertext",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
         )
-        params.ulIvLen = 12
-        params.ulIvFixedBits = 0
-        params.ivGenerator = CKG_GENERATE
-        params.pTag = ctypes.cast(
-            ctypes.pointer(tag_buf), ctypes.c_void_p,
-        )
-        params.ulTagBits = 128
-        out_len = CK_ULONG(256)
-        out_buf = (ctypes.c_ubyte * 256)()
-        rv2 = raw.C_DecryptMessage(
-            sh,
-            ctypes.cast(ctypes.pointer(params), ctypes.c_void_p),
-            ctypes.sizeof(params),
-            None, 0,
-            None, 32,
-            out_buf, ctypes.byref(out_len),
-        )
-        print(f"rv={rv2}")
-    else:
-        print(f"rv={rv}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
-        if "not_supported" in stdout:
+        if "not_supported" in result.stdout:
             pytest.skip("C_MessageDecryptInit not available")
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context="C_DecryptMessage(ciphertext=NULL, ciphertext_len=32)",
         )
 
@@ -1186,78 +662,22 @@ class TestNullKemApi:
             rs,
             purpose="C_DecapsulateKey NULL ciphertext crash probe setup",
         )
-        preamble = _preamble(p11_config)
-        body = """
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
-    CK_OBJECT_HANDLE, CK_ATTRIBUTE,
-    CKA_CLASS, CKA_KEY_TYPE, CKA_TOKEN,
-    CKO_SECRET_KEY, CKK_AES, CKA_VALUE_LEN,
-)
-from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
-
-if "C_DecapsulateKey" not in raw.available_function_names():
-    print("not_supported")
-    cleanup()
-    raise SystemExit(0)
-
-key = gen_aes_key(raw, sh, 256)
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_AES_ECB
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-
-    # Minimal template for the derived key
-    token_false = ctypes.c_ubyte(0)
-    cls_val = CK_ULONG(CKO_SECRET_KEY)
-    kt_val = CK_ULONG(CKK_AES)
-    vl_val = CK_ULONG(16)
-
-    attrs = (CK_ATTRIBUTE * 4)()
-    attrs[0].type = CKA_CLASS
-    attrs[0].pValue = ctypes.cast(
-        ctypes.pointer(cls_val), ctypes.c_void_p,
-    )
-    attrs[0].ulValueLen = ctypes.sizeof(CK_ULONG)
-    attrs[1].type = CKA_KEY_TYPE
-    attrs[1].pValue = ctypes.cast(
-        ctypes.pointer(kt_val), ctypes.c_void_p,
-    )
-    attrs[1].ulValueLen = ctypes.sizeof(CK_ULONG)
-    attrs[2].type = CKA_TOKEN
-    attrs[2].pValue = ctypes.cast(
-        ctypes.pointer(token_false), ctypes.c_void_p,
-    )
-    attrs[2].ulValueLen = 1
-    attrs[3].type = CKA_VALUE_LEN
-    attrs[3].pValue = ctypes.cast(
-        ctypes.pointer(vl_val), ctypes.c_void_p,
-    )
-    attrs[3].ulValueLen = ctypes.sizeof(CK_ULONG)
-
-    out_key = CK_OBJECT_HANDLE(0)
-    rv = raw.C_DecapsulateKey(
-        sh, ctypes.byref(mech), key,
-        ctypes.cast(attrs, ctypes.POINTER(CK_ATTRIBUTE)),
-        4,
-        None, 32,
-        ctypes.byref(out_key),
-    )
-    print(f"rv={rv}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
-        if "not_supported" in stdout:
+        result = run_probe(
+            "ffi_null_pointer",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "decapsulate_key_null_ciphertext",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+        )
+        if "not_supported" in result.stdout:
             pytest.skip("C_DecapsulateKey not available")
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context="C_DecapsulateKey(ciphertext=NULL, ciphertext_len=32)",
         )
 
@@ -1285,50 +705,37 @@ class TestNullInitToken:
     """
 
     def test_init_token_null_pin(self, p11_config: Any) -> None:
-        preamble = _preamble_no_login(p11_config)
-        body = """
-import ctypes
-from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR
-
-label_bytes = b"test_label" + b" " * 22  # 32-byte padded label
-label_buf = (ctypes.c_ubyte * 32)(*label_bytes)
-rv = raw.C_InitToken(
-    slot_id, None, 8,
-    ctypes.cast(ctypes.pointer(label_buf), CK_UTF8CHAR_PTR),
-)
-print(f"rv={rv}")
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "ffi_null_pointer",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "init_token_null_pin",
+            },
+            pin=None,
+            timeout=10,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context="C_InitToken(pin=NULL, pin_len=8, label=valid)",
         )
 
     def test_init_token_null_label(self, p11_config: Any) -> None:
-        preamble = _preamble_no_login(p11_config)
-        body = """
-import ctypes
-from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR
-
-pin_buf = (ctypes.c_ubyte * 4)(0x31, 0x32, 0x33, 0x34)
-rv = raw.C_InitToken(
-    slot_id,
-    ctypes.cast(ctypes.pointer(pin_buf), CK_UTF8CHAR_PTR),
-    4,
-    None,
-)
-print(f"rv={rv}")
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "ffi_null_pointer",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "init_token_null_label",
+            },
+            pin=None,
+            timeout=10,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context="C_InitToken(pin=valid, pin_len=4, label=NULL)",
         )

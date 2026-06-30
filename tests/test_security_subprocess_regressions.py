@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from pkcs11_check.testcases._probes.runner import ProbeResult
 from pkcs11_check.testcases.security import (
     test_api_boundary,
     test_arithmetic_overflow,
@@ -176,17 +177,18 @@ def test_rsa_verify_probe_xfails_setup_before_child(monkeypatch: pytest.MonkeyPa
         )
 
 
-def test_zero_length_aes_cbc_child_script_compiles(monkeypatch: pytest.MonkeyPatch) -> None:
-    """AES-CBC zero-length crash probe must generate valid Python."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+def test_zero_length_aes_cbc_probe_calls_run_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AES-CBC zero-length crash probe must invoke run_probe with correct params."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _compile_child(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        compile(script, "<api-boundary-zero-length-child>", "exec")
-        return 0, "", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(test_api_boundary, "gen_aes_key_or_xfail", lambda *_a, **_kw: 1)
     monkeypatch.setattr(test_api_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_api_boundary, "run_with_coverage", _compile_child)
+    monkeypatch.setattr(test_api_boundary, "run_probe", _stub_probe)
 
     test_api_boundary.TestZeroLengthData().test_zero_length_data(
         _RawSession(),
@@ -196,21 +198,28 @@ def test_zero_length_aes_cbc_child_script_compiles(monkeypatch: pytest.MonkeyPat
         "CKM_AES_CBC",
     )
 
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "api_boundary"
+    assert params.get("which") == "zero_length_aes"
+    assert params.get("operation") == "encrypt"
+    assert params.get("mech_name") == "CKM_AES_CBC"
+
 
 def test_zero_length_aes_probe_xfails_setup_before_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Zero-length AES crash probes should not spawn if setup keygen is unavailable."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
 
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(test_api_boundary, "gen_aes_key_or_xfail", _xfail_setup, raising=False)
-    monkeypatch.setattr(test_api_boundary, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_api_boundary, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
         test_api_boundary.TestZeroLengthData().test_zero_length_data(
@@ -231,7 +240,7 @@ def test_arithmetic_aes_probe_xfails_setup_before_child(
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(
@@ -240,7 +249,7 @@ def test_arithmetic_aes_probe_xfails_setup_before_child(
         _xfail_setup,
         raising=False,
     )
-    monkeypatch.setattr(test_arithmetic_overflow, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_arithmetic_overflow, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
         test_arithmetic_overflow.TestDataLengthOverflow().test_data_length_overflow(
@@ -252,20 +261,20 @@ def test_arithmetic_aes_probe_xfails_setup_before_child(
         )
 
 
-def test_arithmetic_aes_child_script_marks_setup_reject(
+def test_arithmetic_aes_probe_calls_run_probe_with_correct_params(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Arithmetic AES child scripts should classify setup rejects inside the child."""
+    """Arithmetic AES data-length probe must call run_probe with correct probe name and params."""
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(test_arithmetic_overflow, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_arithmetic_overflow, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_arithmetic_overflow, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_arithmetic_overflow, "run_probe", _stub_probe)
 
     test_arithmetic_overflow.TestDataLengthOverflow().test_data_length_overflow(
         _RawSession(),
@@ -275,21 +284,25 @@ def test_arithmetic_aes_child_script_marks_setup_reject(
         "C_EncryptInit",
     )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "arithmetic_overflow"
+    assert params.get("which") == "data_length_overflow"
+    assert params.get("func") == "C_Encrypt"
+    assert params.get("init_func") == "C_EncryptInit"
+    assert params.get("data_len") == 0x80000000
 
 
-def test_arithmetic_pss_child_script_marks_setup_reject(
+def test_arithmetic_pss_probe_calls_run_probe_with_correct_params(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Arithmetic RSA-PSS child scripts should classify keypair setup rejects."""
+    """Arithmetic RSA-PSS probe must call run_probe with correct probe name and params."""
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(
         test_arithmetic_overflow,
@@ -297,7 +310,7 @@ def test_arithmetic_pss_child_script_marks_setup_reject(
         lambda *_a, **_k: (1, 2),
     )
     monkeypatch.setattr(test_arithmetic_overflow, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_arithmetic_overflow, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_arithmetic_overflow, "run_probe", _stub_probe)
 
     test_arithmetic_overflow.TestPssSaltLengthOverflow().test_pss_salt_length_overflow(
         _RawSession(),
@@ -305,9 +318,11 @@ def test_arithmetic_pss_child_script_marks_setup_reject(
         0xFFFFFFFF,
     )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "KEYPAIR_RUNTIME_REJECT_RVS" in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "arithmetic_overflow"
+    assert params.get("which") == "pss_salt_length_overflow"
+    assert params.get("salt_len") == 0xFFFFFFFF
 
 
 def test_ffi_length_aes_probe_xfails_setup_before_child(
@@ -446,12 +461,12 @@ def test_ffi_null_update_aes_probe_xfails_setup_before_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """NULL-pointer AES update probes should preflight setup key generation."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=None)
 
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(
@@ -460,7 +475,7 @@ def test_ffi_null_update_aes_probe_xfails_setup_before_child(
         _xfail_setup,
         raising=False,
     )
-    monkeypatch.setattr(test_ffi_null_pointer, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_ffi_null_pointer, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
         test_ffi_null_pointer.TestNullDataUpdate().test_null_data_update(
@@ -477,12 +492,12 @@ def test_ffi_null_final_aes_probe_xfails_setup_before_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """NULL-output final probes should preflight setup key generation."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=None)
 
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(
@@ -491,7 +506,7 @@ def test_ffi_null_final_aes_probe_xfails_setup_before_child(
         _xfail_setup,
         raising=False,
     )
-    monkeypatch.setattr(test_ffi_null_pointer, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_ffi_null_pointer, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
         test_ffi_null_pointer.TestNullOutputFinal().test_null_output_final(
@@ -507,12 +522,12 @@ def test_ffi_null_oneshot_aes_probe_xfails_setup_before_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """NULL one-shot AES probes should preflight setup key generation."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=None)
 
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(
@@ -521,7 +536,7 @@ def test_ffi_null_oneshot_aes_probe_xfails_setup_before_child(
         _xfail_setup,
         raising=False,
     )
-    monkeypatch.setattr(test_ffi_null_pointer, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_ffi_null_pointer, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
         test_ffi_null_pointer.TestNullDataOneShot().test_null_data_oneshot(
@@ -537,12 +552,12 @@ def test_ffi_null_unwrap_probe_xfails_setup_before_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """NULL wrapped-data probes should preflight unwrap-key generation."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=None)
 
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(
@@ -551,7 +566,7 @@ def test_ffi_null_unwrap_probe_xfails_setup_before_child(
         _xfail_setup,
         raising=False,
     )
-    monkeypatch.setattr(test_ffi_null_pointer, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_ffi_null_pointer, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
         test_ffi_null_pointer.TestNullWrapUnwrap().test_unwrap_key_null_wrapped_data(
@@ -564,12 +579,12 @@ def test_ffi_null_kem_probe_xfails_setup_before_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """NULL KEM ciphertext probes should preflight setup key generation."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=None)
 
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(
@@ -578,7 +593,7 @@ def test_ffi_null_kem_probe_xfails_setup_before_child(
         _xfail_setup,
         raising=False,
     )
-    monkeypatch.setattr(test_ffi_null_pointer, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_ffi_null_pointer, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
         test_ffi_null_pointer.TestNullKemApi().test_decapsulate_key_null_ciphertext(
@@ -590,45 +605,45 @@ def test_ffi_null_kem_probe_xfails_setup_before_child(
 def test_ffi_null_pin_scripts_use_utf8char_pointers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """PIN child scripts should pass valid pins as CK_UTF8CHAR_PTR."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """PIN child probes must dispatch with the correct which keys."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=None)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "", ""
+    def _capture(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(test_ffi_null_pointer, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_null_pointer, "run_probe", _capture)
 
     test_ffi_null_pointer.TestNullPinBuffer().test_set_pin_null_old_pin(cfg)
     test_ffi_null_pointer.TestNullPinBuffer().test_set_pin_null_new_pin(cfg)
 
-    assert len(scripts) == 2
-    assert all("CK_UTF8CHAR_PTR" in script for script in scripts)
-    assert all(
-        "ctypes.cast(ctypes.pointer(pin_buf), CK_UTF8CHAR_PTR)" in script for script in scripts
-    )
+    assert len(calls) == 2
+    assert all(probe == "ffi_null_pointer" for probe, _ in calls)
+    which_values = {params.get("which") for _, params in calls}
+    assert which_values == {"set_pin_null_old_pin", "set_pin_null_new_pin"}
 
 
 def test_ffi_null_init_token_scripts_use_utf8char_pointers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C_InitToken child scripts should pass valid buffers as CK_UTF8CHAR_PTR."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """C_InitToken child probes must dispatch with the correct which keys."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=None)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "", ""
+    def _capture(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(test_ffi_null_pointer, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_null_pointer, "run_probe", _capture)
 
     test_ffi_null_pointer.TestNullInitToken().test_init_token_null_pin(cfg)
     test_ffi_null_pointer.TestNullInitToken().test_init_token_null_label(cfg)
 
-    assert len(scripts) == 2
-    assert all("CK_UTF8CHAR_PTR" in script for script in scripts)
-    assert "ctypes.cast(ctypes.pointer(label_buf), CK_UTF8CHAR_PTR)" in scripts[0]
+    assert len(calls) == 2
+    assert all(probe == "ffi_null_pointer" for probe, _ in calls)
+    which_values = {params.get("which") for _, params in calls}
+    assert which_values == {"init_token_null_pin", "init_token_null_label"}
 
 
 # ---------------------------------------------------------------------------
@@ -889,18 +904,17 @@ def test_recover_input_length_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """C_SignRecover input-length probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return (
-            0,
-            "SETUP_XFAIL:RSA recover keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
-            "",
+    def _capture(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        _xfail_stdout = (
+            "SETUP_XFAIL:RSA recover keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n"
         )
+        return ProbeResult(returncode=0, stdout=_xfail_stdout, stderr="")
 
-    monkeypatch.setattr(test_recover_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_recover_length_boundary, "run_probe", _capture)
 
     with pytest.raises(pytest.xfail.Exception):
         test_recover_length_boundary.TestRecoverInputLengthBoundary().test_sign_recover_huge_data_len_does_not_crash(
@@ -909,28 +923,28 @@ def test_recover_input_length_child_marks_setup_reject(
             0x7FFFFFFFFFFFFFFF,
         )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "_RECOVER_SETUP_RVS" in scripts[0]
-    assert "C_SignRecover" in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "recover_length"
+    assert params.get("which") == "sign_huge_data_len"
+    assert params.get("data_len") == 0x7FFFFFFFFFFFFFFF
 
 
 def test_recover_output_length_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """C_VerifyRecover output-length probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return (
-            0,
-            "SETUP_XFAIL:RSA recover keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
-            "",
+    def _capture(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        _xfail_stdout = (
+            "SETUP_XFAIL:RSA recover keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n"
         )
+        return ProbeResult(returncode=0, stdout=_xfail_stdout, stderr="")
 
-    monkeypatch.setattr(test_recover_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_recover_length_boundary, "run_probe", _capture)
 
     with pytest.raises(pytest.xfail.Exception):
         test_recover_length_boundary.TestRecoverOutputLengthBoundary().test_verify_recover_inflated_pul_data_len_does_not_crash(
@@ -938,10 +952,10 @@ def test_recover_output_length_child_marks_setup_reject(
             cfg,
         )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "_RECOVER_SETUP_RVS" in scripts[0]
-    assert "C_VerifyRecover" in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "recover_length"
+    assert params.get("which") == "verify_inflated_out_len"
 
 
 # ---------------------------------------------------------------------------
@@ -1121,83 +1135,73 @@ def test_isize_boundary_lengths_includes_truncation_ids() -> None:
 
 # ---------------------------------------------------------------------------
 # WS2 Phase 2 (Family B): demand-zero output-write truncation oracle for
-# C_Encrypt / C_Decrypt.  Each meta-test drives the probe with a monkeypatched
-# run_with_coverage, asserts the generated child script (a) marks setup rejects
-# inside the child (-> xfail, not a spurious probe failure), (b) carries the op
-# name and the demand-zero oracle markers, and (c) compiles as valid Python.
+# C_Encrypt / C_Decrypt.  Each meta-test drives the probe via a monkeypatched
+# run_probe, asserts the correct probe name and dispatch key, and confirms that
+# setup rejects xfail before the child is spawned.
 # ---------------------------------------------------------------------------
 
 _OUTPUT_TRUNCATION_PROBES = [
     pytest.param(
         "TestEncryptOutputLengthTruncation",
         "test_encrypt_oversized_length_rejects_or_honors",
-        "C_Encrypt",
+        "aes_ctr_encrypt",
         id="encrypt",
     ),
     pytest.param(
         "TestDecryptOutputLengthTruncation",
         "test_decrypt_oversized_length_rejects_or_honors",
-        "C_Decrypt",
+        "aes_ctr_decrypt",
         id="decrypt",
     ),
 ]
 
 
-@pytest.mark.parametrize("cls_name,method_name,op_fn", _OUTPUT_TRUNCATION_PROBES)
+@pytest.mark.parametrize("cls_name,method_name,which", _OUTPUT_TRUNCATION_PROBES)
 def test_output_truncation_child_marks_setup_reject_and_carries_oracle(
     monkeypatch: pytest.MonkeyPatch,
     cls_name: str,
     method_name: str,
-    op_fn: str,
+    which: str,
 ) -> None:
-    """C_Encrypt/C_Decrypt output-truncation child scripts must be well-formed.
+    """C_Encrypt/C_Decrypt output-truncation probe must invoke run_probe with correct params.
 
-    The child must classify keygen setup rejects (SETUP_XFAIL + the AES keygen
-    reject-set), drive the named op into a demand-zero (MAP_ANONYMOUS) oversize
-    buffer, sample the probe offset (UNDERFILL), and compile.  We return a
-    SETUP_XFAIL stdout so the probe xfails before the parent parses TARGET_RV.
+    Returns a SETUP_XFAIL stdout so the probe xfails before the parent parses TARGET_RV.
+    The probe name must be ``"output_length"`` and the ``which`` key must select the
+    correct cipher direction (aes_ctr_encrypt or aes_ctr_decrypt).
     """
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_output_length_truncation, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_output_length_truncation, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_output_length_truncation, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_output_length_truncation, "run_probe", _stub_probe)
 
     cls = getattr(test_output_length_truncation, cls_name)
     method = getattr(cls(), method_name)
     with pytest.raises(pytest.xfail.Exception):
         method(_RawSession(), cfg)
 
-    assert len(scripts) == 1
-    script = scripts[0]
-    # Setup-reject protocol present (keygen rejects -> child SETUP_XFAIL, not a fail).
-    assert "SETUP_XFAIL:" in script
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in script
-    # The probed op is wired in.
-    assert op_fn in script
-    # Demand-zero output oracle markers (mirrors the random-length template).
-    assert "MAP_ANONYMOUS" in script
-    assert "MAP_PRIVATE" in script
-    assert "UNDERFILL:" in script
-    assert "PROBE_OFF" in script
-    assert "CKM_AES_CTR" in script
-    # The full 64-bit oversize length, not a truncated value, is what gets passed.
-    assert str(test_output_length_truncation.OVERSIZE_WRITE_LEN) in script
-    # The generated child script must be valid Python.
-    compile(script, f"<output-truncation-{op_fn}-child>", "exec")
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "output_length"
+    assert params.get("which") == which
+    assert params.get("module_path") == "/tmp/fake-pkcs11.so"
 
 
-@pytest.mark.parametrize("cls_name,method_name,op_fn", _OUTPUT_TRUNCATION_PROBES)
+@pytest.mark.parametrize("cls_name,method_name,which", _OUTPUT_TRUNCATION_PROBES)
 def test_output_truncation_probe_xfails_setup_before_child(
     monkeypatch: pytest.MonkeyPatch,
     cls_name: str,
     method_name: str,
-    op_fn: str,
+    which: str,
 ) -> None:
     """Output-truncation probes must preflight keygen setup before spawning a child."""
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
@@ -1205,7 +1209,7 @@ def test_output_truncation_probe_xfails_setup_before_child(
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(
@@ -1214,7 +1218,7 @@ def test_output_truncation_probe_xfails_setup_before_child(
         _xfail_setup,
         raising=False,
     )
-    monkeypatch.setattr(test_output_length_truncation, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_output_length_truncation, "run_probe", _child_should_not_run)
 
     cls = getattr(test_output_length_truncation, cls_name)
     method = getattr(cls(), method_name)
