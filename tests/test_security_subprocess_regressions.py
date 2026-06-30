@@ -1129,83 +1129,73 @@ def test_isize_boundary_lengths_includes_truncation_ids() -> None:
 
 # ---------------------------------------------------------------------------
 # WS2 Phase 2 (Family B): demand-zero output-write truncation oracle for
-# C_Encrypt / C_Decrypt.  Each meta-test drives the probe with a monkeypatched
-# run_with_coverage, asserts the generated child script (a) marks setup rejects
-# inside the child (-> xfail, not a spurious probe failure), (b) carries the op
-# name and the demand-zero oracle markers, and (c) compiles as valid Python.
+# C_Encrypt / C_Decrypt.  Each meta-test drives the probe via a monkeypatched
+# run_probe, asserts the correct probe name and dispatch key, and confirms that
+# setup rejects xfail before the child is spawned.
 # ---------------------------------------------------------------------------
 
 _OUTPUT_TRUNCATION_PROBES = [
     pytest.param(
         "TestEncryptOutputLengthTruncation",
         "test_encrypt_oversized_length_rejects_or_honors",
-        "C_Encrypt",
+        "aes_ctr_encrypt",
         id="encrypt",
     ),
     pytest.param(
         "TestDecryptOutputLengthTruncation",
         "test_decrypt_oversized_length_rejects_or_honors",
-        "C_Decrypt",
+        "aes_ctr_decrypt",
         id="decrypt",
     ),
 ]
 
 
-@pytest.mark.parametrize("cls_name,method_name,op_fn", _OUTPUT_TRUNCATION_PROBES)
+@pytest.mark.parametrize("cls_name,method_name,which", _OUTPUT_TRUNCATION_PROBES)
 def test_output_truncation_child_marks_setup_reject_and_carries_oracle(
     monkeypatch: pytest.MonkeyPatch,
     cls_name: str,
     method_name: str,
-    op_fn: str,
+    which: str,
 ) -> None:
-    """C_Encrypt/C_Decrypt output-truncation child scripts must be well-formed.
+    """C_Encrypt/C_Decrypt output-truncation probe must invoke run_probe with correct params.
 
-    The child must classify keygen setup rejects (SETUP_XFAIL + the AES keygen
-    reject-set), drive the named op into a demand-zero (MAP_ANONYMOUS) oversize
-    buffer, sample the probe offset (UNDERFILL), and compile.  We return a
-    SETUP_XFAIL stdout so the probe xfails before the parent parses TARGET_RV.
+    Returns a SETUP_XFAIL stdout so the probe xfails before the parent parses TARGET_RV.
+    The probe name must be ``"output_length"`` and the ``which`` key must select the
+    correct cipher direction (aes_ctr_encrypt or aes_ctr_decrypt).
     """
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_output_length_truncation, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_output_length_truncation, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_output_length_truncation, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_output_length_truncation, "run_probe", _stub_probe)
 
     cls = getattr(test_output_length_truncation, cls_name)
     method = getattr(cls(), method_name)
     with pytest.raises(pytest.xfail.Exception):
         method(_RawSession(), cfg)
 
-    assert len(scripts) == 1
-    script = scripts[0]
-    # Setup-reject protocol present (keygen rejects -> child SETUP_XFAIL, not a fail).
-    assert "SETUP_XFAIL:" in script
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in script
-    # The probed op is wired in.
-    assert op_fn in script
-    # Demand-zero output oracle markers (mirrors the random-length template).
-    assert "MAP_ANONYMOUS" in script
-    assert "MAP_PRIVATE" in script
-    assert "UNDERFILL:" in script
-    assert "PROBE_OFF" in script
-    assert "CKM_AES_CTR" in script
-    # The full 64-bit oversize length, not a truncated value, is what gets passed.
-    assert str(test_output_length_truncation.OVERSIZE_WRITE_LEN) in script
-    # The generated child script must be valid Python.
-    compile(script, f"<output-truncation-{op_fn}-child>", "exec")
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "output_length"
+    assert params.get("which") == which
+    assert params.get("module_path") == "/tmp/fake-pkcs11.so"
 
 
-@pytest.mark.parametrize("cls_name,method_name,op_fn", _OUTPUT_TRUNCATION_PROBES)
+@pytest.mark.parametrize("cls_name,method_name,which", _OUTPUT_TRUNCATION_PROBES)
 def test_output_truncation_probe_xfails_setup_before_child(
     monkeypatch: pytest.MonkeyPatch,
     cls_name: str,
     method_name: str,
-    op_fn: str,
+    which: str,
 ) -> None:
     """Output-truncation probes must preflight keygen setup before spawning a child."""
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
@@ -1213,7 +1203,7 @@ def test_output_truncation_probe_xfails_setup_before_child(
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(
@@ -1222,7 +1212,7 @@ def test_output_truncation_probe_xfails_setup_before_child(
         _xfail_setup,
         raising=False,
     )
-    monkeypatch.setattr(test_output_length_truncation, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_output_length_truncation, "run_probe", _child_should_not_run)
 
     cls = getattr(test_output_length_truncation, cls_name)
     method = getattr(cls(), method_name)
