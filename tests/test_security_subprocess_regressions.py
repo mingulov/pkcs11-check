@@ -240,7 +240,7 @@ def test_arithmetic_aes_probe_xfails_setup_before_child(
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(
@@ -249,7 +249,7 @@ def test_arithmetic_aes_probe_xfails_setup_before_child(
         _xfail_setup,
         raising=False,
     )
-    monkeypatch.setattr(test_arithmetic_overflow, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_arithmetic_overflow, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
         test_arithmetic_overflow.TestDataLengthOverflow().test_data_length_overflow(
@@ -261,20 +261,20 @@ def test_arithmetic_aes_probe_xfails_setup_before_child(
         )
 
 
-def test_arithmetic_aes_child_script_marks_setup_reject(
+def test_arithmetic_aes_probe_calls_run_probe_with_correct_params(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Arithmetic AES child scripts should classify setup rejects inside the child."""
+    """Arithmetic AES data-length probe must call run_probe with correct probe name and params."""
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(test_arithmetic_overflow, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_arithmetic_overflow, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_arithmetic_overflow, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_arithmetic_overflow, "run_probe", _stub_probe)
 
     test_arithmetic_overflow.TestDataLengthOverflow().test_data_length_overflow(
         _RawSession(),
@@ -284,21 +284,25 @@ def test_arithmetic_aes_child_script_marks_setup_reject(
         "C_EncryptInit",
     )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "arithmetic_overflow"
+    assert params.get("which") == "data_length_overflow"
+    assert params.get("func") == "C_Encrypt"
+    assert params.get("init_func") == "C_EncryptInit"
+    assert params.get("data_len") == 0x80000000
 
 
-def test_arithmetic_pss_child_script_marks_setup_reject(
+def test_arithmetic_pss_probe_calls_run_probe_with_correct_params(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Arithmetic RSA-PSS child scripts should classify keypair setup rejects."""
+    """Arithmetic RSA-PSS probe must call run_probe with correct probe name and params."""
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(
         test_arithmetic_overflow,
@@ -306,7 +310,7 @@ def test_arithmetic_pss_child_script_marks_setup_reject(
         lambda *_a, **_k: (1, 2),
     )
     monkeypatch.setattr(test_arithmetic_overflow, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_arithmetic_overflow, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_arithmetic_overflow, "run_probe", _stub_probe)
 
     test_arithmetic_overflow.TestPssSaltLengthOverflow().test_pss_salt_length_overflow(
         _RawSession(),
@@ -314,9 +318,11 @@ def test_arithmetic_pss_child_script_marks_setup_reject(
         0xFFFFFFFF,
     )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "KEYPAIR_RUNTIME_REJECT_RVS" in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "arithmetic_overflow"
+    assert params.get("which") == "pss_salt_length_overflow"
+    assert params.get("salt_len") == 0xFFFFFFFF
 
 
 def test_ffi_length_aes_probe_xfails_setup_before_child(
