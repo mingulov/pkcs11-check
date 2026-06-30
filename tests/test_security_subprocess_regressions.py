@@ -455,12 +455,12 @@ def test_ffi_null_update_aes_probe_xfails_setup_before_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """NULL-pointer AES update probes should preflight setup key generation."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=None)
 
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(
@@ -469,7 +469,7 @@ def test_ffi_null_update_aes_probe_xfails_setup_before_child(
         _xfail_setup,
         raising=False,
     )
-    monkeypatch.setattr(test_ffi_null_pointer, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_ffi_null_pointer, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
         test_ffi_null_pointer.TestNullDataUpdate().test_null_data_update(
@@ -486,12 +486,12 @@ def test_ffi_null_final_aes_probe_xfails_setup_before_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """NULL-output final probes should preflight setup key generation."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=None)
 
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(
@@ -500,7 +500,7 @@ def test_ffi_null_final_aes_probe_xfails_setup_before_child(
         _xfail_setup,
         raising=False,
     )
-    monkeypatch.setattr(test_ffi_null_pointer, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_ffi_null_pointer, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
         test_ffi_null_pointer.TestNullOutputFinal().test_null_output_final(
@@ -516,12 +516,12 @@ def test_ffi_null_oneshot_aes_probe_xfails_setup_before_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """NULL one-shot AES probes should preflight setup key generation."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=None)
 
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(
@@ -530,7 +530,7 @@ def test_ffi_null_oneshot_aes_probe_xfails_setup_before_child(
         _xfail_setup,
         raising=False,
     )
-    monkeypatch.setattr(test_ffi_null_pointer, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_ffi_null_pointer, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
         test_ffi_null_pointer.TestNullDataOneShot().test_null_data_oneshot(
@@ -546,12 +546,12 @@ def test_ffi_null_unwrap_probe_xfails_setup_before_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """NULL wrapped-data probes should preflight unwrap-key generation."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=None)
 
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(
@@ -560,7 +560,7 @@ def test_ffi_null_unwrap_probe_xfails_setup_before_child(
         _xfail_setup,
         raising=False,
     )
-    monkeypatch.setattr(test_ffi_null_pointer, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_ffi_null_pointer, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
         test_ffi_null_pointer.TestNullWrapUnwrap().test_unwrap_key_null_wrapped_data(
@@ -573,12 +573,12 @@ def test_ffi_null_kem_probe_xfails_setup_before_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """NULL KEM ciphertext probes should preflight setup key generation."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=None)
 
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(
@@ -587,7 +587,7 @@ def test_ffi_null_kem_probe_xfails_setup_before_child(
         _xfail_setup,
         raising=False,
     )
-    monkeypatch.setattr(test_ffi_null_pointer, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_ffi_null_pointer, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
         test_ffi_null_pointer.TestNullKemApi().test_decapsulate_key_null_ciphertext(
@@ -599,45 +599,45 @@ def test_ffi_null_kem_probe_xfails_setup_before_child(
 def test_ffi_null_pin_scripts_use_utf8char_pointers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """PIN child scripts should pass valid pins as CK_UTF8CHAR_PTR."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """PIN child probes must dispatch with the correct which keys."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=None)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "", ""
+    def _capture(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(test_ffi_null_pointer, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_null_pointer, "run_probe", _capture)
 
     test_ffi_null_pointer.TestNullPinBuffer().test_set_pin_null_old_pin(cfg)
     test_ffi_null_pointer.TestNullPinBuffer().test_set_pin_null_new_pin(cfg)
 
-    assert len(scripts) == 2
-    assert all("CK_UTF8CHAR_PTR" in script for script in scripts)
-    assert all(
-        "ctypes.cast(ctypes.pointer(pin_buf), CK_UTF8CHAR_PTR)" in script for script in scripts
-    )
+    assert len(calls) == 2
+    assert all(probe == "ffi_null_pointer" for probe, _ in calls)
+    which_values = {params.get("which") for _, params in calls}
+    assert which_values == {"set_pin_null_old_pin", "set_pin_null_new_pin"}
 
 
 def test_ffi_null_init_token_scripts_use_utf8char_pointers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C_InitToken child scripts should pass valid buffers as CK_UTF8CHAR_PTR."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """C_InitToken child probes must dispatch with the correct which keys."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=None)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "", ""
+    def _capture(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(test_ffi_null_pointer, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_null_pointer, "run_probe", _capture)
 
     test_ffi_null_pointer.TestNullInitToken().test_init_token_null_pin(cfg)
     test_ffi_null_pointer.TestNullInitToken().test_init_token_null_label(cfg)
 
-    assert len(scripts) == 2
-    assert all("CK_UTF8CHAR_PTR" in script for script in scripts)
-    assert "ctypes.cast(ctypes.pointer(label_buf), CK_UTF8CHAR_PTR)" in scripts[0]
+    assert len(calls) == 2
+    assert all(probe == "ffi_null_pointer" for probe, _ in calls)
+    which_values = {params.get("which") for _, params in calls}
+    assert which_values == {"init_token_null_pin", "init_token_null_label"}
 
 
 # ---------------------------------------------------------------------------
