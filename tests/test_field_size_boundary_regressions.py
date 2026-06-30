@@ -1,22 +1,27 @@
 """Regression / structural meta-tests for test_field_size_boundary.py (WS2 Phase 3).
 
-Each test drives the probe with a monkeypatched run_with_coverage, asserts that:
-  (a) the generated child script carries the SETUP_XFAIL protocol,
-  (b) references the right op name and/or field name,
-  (c) carries the TARGET_RV print (so the parent can classify),
-  (d) compiles as valid Python (structural soundness gate).
-
-Tests return a SETUP_XFAIL stdout so assert_subprocess_no_crash xfails the
-probe before _parse_prefixed_int runs (avoiding the TARGET_RV missing assertion).
+After the _probes migration each test drives the probe via a monkeypatched
+``run_probe`` and asserts that:
+  (a) the parent calls ``run_probe("field_size", ...)`` with the correct ``which``
+      dispatch key and the right truncation-revealing constant in the params,
+  (b) a SETUP_XFAIL child stdout xfails the probe before the parent parses TARGET_RV,
+  (c) the C_FindObjects cap probe treats CKR_OK as benign (allow_ok=True),
+  (d) AES setup preflight runs before the child is spawned,
+  (e) the field_size probe module backs the oversized HKDF length with the shared
+      demand-zero honeypot (not a raw inline mmap).
 """
 
 from __future__ import annotations
 
+import inspect
 from types import SimpleNamespace
 
 import pytest
 
+from pkcs11_check.testcases._probes import field_size as field_size_probe
+from pkcs11_check.testcases._probes.runner import ProbeResult
 from pkcs11_check.testcases.security import test_field_size_boundary
+from pkcs11_check.testcases.security._boundary_values import TRUNCATION_LOW8
 
 
 class _Pin:
@@ -32,21 +37,30 @@ class _RawSession:
         return True
 
 
+def _setup_xfail_probe(
+    calls: list[tuple[str, dict[str, object]]],
+    stdout: str,
+) -> object:
+    """Return a run_probe stub that records its call and returns a SETUP_XFAIL result."""
+
+    def _stub(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(returncode=0, stdout=stdout, stderr="")
+
+    return _stub
+
+
 # ---------------------------------------------------------------------------
 # 1. CKA_MODULUS_BITS oversized value
 # ---------------------------------------------------------------------------
 
 
-def test_rsa_modulus_bits_oversize_child_marks_setup_reject(
+def test_rsa_modulus_bits_calls_run_probe_with_truncation_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """RSA modulus-bits oversize child script must mark keypair setup rejects."""
+    """RSA modulus-bits probe must call run_probe with the truncation-revealing value."""
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
-
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:RSA keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    calls: list[tuple[str, dict[str, object]]] = []
 
     monkeypatch.setattr(
         test_field_size_boundary,
@@ -54,40 +68,14 @@ def test_rsa_modulus_bits_oversize_child_marks_setup_reject(
         lambda *_a, **_k: (1, 2),
     )
     monkeypatch.setattr(test_field_size_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_field_size_boundary, "run_with_coverage", _capture)
-
-    with pytest.raises(pytest.xfail.Exception):
-        test_field_size_boundary.TestRsaModulusBitsOversizedValue().test_rsa_modulus_bits_oversized_value(
-            _RawSession(),
-            cfg,
-        )
-
-    assert len(scripts) == 1
-    script = scripts[0]
-    assert "CKM_RSA_PKCS_KEY_PAIR_GEN" in script
-    assert "CKA_MODULUS_BITS" in script
-    assert "TARGET_RV:" in script
-    compile(script, "<rsa-modulus-bits-oversize-child>", "exec")
-
-
-def test_rsa_modulus_bits_oversize_child_uses_truncation_value(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """RSA modulus-bits probe must use the truncation-revealing constant."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
-
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:RSA keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
-
     monkeypatch.setattr(
         test_field_size_boundary,
-        "gen_rsa_keypair_or_xfail",
-        lambda *_a, **_k: (1, 2),
+        "run_probe",
+        _setup_xfail_probe(
+            calls,
+            "SETUP_XFAIL:RSA keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+        ),
     )
-    monkeypatch.setattr(test_field_size_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_field_size_boundary, "run_with_coverage", _capture)
 
     with pytest.raises(pytest.xfail.Exception):
         test_field_size_boundary.TestRsaModulusBitsOversizedValue().test_rsa_modulus_bits_oversized_value(
@@ -95,9 +83,11 @@ def test_rsa_modulus_bits_oversize_child_uses_truncation_value(
             cfg,
         )
 
-    assert len(scripts) == 1
-    # The truncation value (1<<32)+2048 must appear in the child script.
-    assert str(test_field_size_boundary._MODULUS_BITS_TRUNC) in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "field_size"
+    assert params.get("which") == "rsa_modulus_bits"
+    assert params.get("modulus_bits") == test_field_size_boundary._MODULUS_BITS_TRUNC
 
 
 # ---------------------------------------------------------------------------
@@ -105,18 +95,21 @@ def test_rsa_modulus_bits_oversize_child_uses_truncation_value(
 # ---------------------------------------------------------------------------
 
 
-def test_dh_prime_bits_oversize_child_script_compiles(
+def test_dh_prime_bits_calls_run_probe_with_truncation_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DH prime-bits oversize child script must be syntactically valid Python."""
+    """DH prime-bits probe must call run_probe with the truncation-revealing value."""
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:DH keygen not operational: CKR_FUNCTION_NOT_SUPPORTED\n", ""
-
-    monkeypatch.setattr(test_field_size_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(
+        test_field_size_boundary,
+        "run_probe",
+        _setup_xfail_probe(
+            calls,
+            "SETUP_XFAIL:DH keygen not operational: CKR_FUNCTION_NOT_SUPPORTED\n",
+        ),
+    )
 
     with pytest.raises(pytest.xfail.Exception):
         test_field_size_boundary.TestPrimeBitsOversizedValue().test_dh_prime_bits_oversized_value(
@@ -124,27 +117,28 @@ def test_dh_prime_bits_oversize_child_script_compiles(
             cfg,
         )
 
-    assert len(scripts) == 1
-    script = scripts[0]
-    assert "CKM_DH_PKCS_KEY_PAIR_GEN" in script
-    assert "CKA_PRIME_BITS" in script
-    assert "TARGET_RV:" in script
-    assert str(test_field_size_boundary._PRIME_BITS_TRUNC) in script
-    compile(script, "<dh-prime-bits-oversize-child>", "exec")
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "field_size"
+    assert params.get("which") == "dh_prime_bits"
+    assert params.get("prime_bits") == test_field_size_boundary._PRIME_BITS_TRUNC
 
 
-def test_dsa_prime_bits_oversize_child_script_compiles(
+def test_dsa_prime_bits_calls_run_probe_with_truncation_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DSA prime-bits oversize child script must be syntactically valid Python."""
+    """DSA prime-bits probe must call run_probe with the truncation-revealing value."""
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:DSA keygen not operational: CKR_FUNCTION_NOT_SUPPORTED\n", ""
-
-    monkeypatch.setattr(test_field_size_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(
+        test_field_size_boundary,
+        "run_probe",
+        _setup_xfail_probe(
+            calls,
+            "SETUP_XFAIL:DSA keygen not operational: CKR_FUNCTION_NOT_SUPPORTED\n",
+        ),
+    )
 
     with pytest.raises(pytest.xfail.Exception):
         test_field_size_boundary.TestPrimeBitsOversizedValue().test_dsa_prime_bits_oversized_value(
@@ -152,13 +146,11 @@ def test_dsa_prime_bits_oversize_child_script_compiles(
             cfg,
         )
 
-    assert len(scripts) == 1
-    script = scripts[0]
-    assert "CKM_DSA_KEY_PAIR_GEN" in script
-    assert "CKA_PRIME_BITS" in script
-    assert "TARGET_RV:" in script
-    assert str(test_field_size_boundary._PRIME_BITS_TRUNC) in script
-    compile(script, "<dsa-prime-bits-oversize-child>", "exec")
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "field_size"
+    assert params.get("which") == "dsa_prime_bits"
+    assert params.get("prime_bits") == test_field_size_boundary._PRIME_BITS_TRUNC
 
 
 # ---------------------------------------------------------------------------
@@ -166,20 +158,23 @@ def test_dsa_prime_bits_oversize_child_script_compiles(
 # ---------------------------------------------------------------------------
 
 
-def test_aes_keygen_value_len_truncation_child_marks_setup_reject(
+def test_aes_value_len_calls_run_probe_with_truncation_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AES keygen value-len truncation probe must mark setup rejects in child."""
+    """AES keygen value-len probe must call run_probe with TRUNCATION_LOW8."""
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
-
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    calls: list[tuple[str, dict[str, object]]] = []
 
     monkeypatch.setattr(test_field_size_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_field_size_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_field_size_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(
+        test_field_size_boundary,
+        "run_probe",
+        _setup_xfail_probe(
+            calls,
+            "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+        ),
+    )
 
     with pytest.raises(pytest.xfail.Exception):
         test_field_size_boundary.TestGenerateKeyValueLenTruncation().test_aes_keygen_value_len_truncation(
@@ -187,16 +182,12 @@ def test_aes_keygen_value_len_truncation_child_marks_setup_reject(
             cfg,
         )
 
-    assert len(scripts) == 1
-    script = scripts[0]
-    assert "CKM_AES_KEY_GEN" in script
-    assert "CKA_VALUE_LEN" in script
-    assert "TARGET_RV:" in script
-    # The child must use the truncation-revealing value (not a normal 16/32/etc.).
-    from pkcs11_check.testcases.security._boundary_values import TRUNCATION_LOW8
-
-    assert str(TRUNCATION_LOW8) in script
-    compile(script, "<aes-keygen-value-len-truncation-child>", "exec")
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "field_size"
+    assert params.get("which") == "aes_value_len"
+    # The probe must use the truncation-revealing value (not a normal 16/32/etc.).
+    assert params.get("value_len") == TRUNCATION_LOW8
 
 
 def test_aes_keygen_value_len_truncation_xfails_setup_before_child(
@@ -208,7 +199,7 @@ def test_aes_keygen_value_len_truncation_xfails_setup_before_child(
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(
@@ -217,7 +208,7 @@ def test_aes_keygen_value_len_truncation_xfails_setup_before_child(
         _xfail_setup,
         raising=False,
     )
-    monkeypatch.setattr(test_field_size_boundary, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_field_size_boundary, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
         test_field_size_boundary.TestGenerateKeyValueLenTruncation().test_aes_keygen_value_len_truncation(
@@ -231,20 +222,21 @@ def test_aes_keygen_value_len_truncation_xfails_setup_before_child(
 # ---------------------------------------------------------------------------
 
 
-def test_find_objects_count_truncation_child_script_compiles(
+def test_find_objects_count_calls_run_probe_with_truncation_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C_FindObjects count probe child script must be syntactically valid Python."""
+    """C_FindObjects count probe must call run_probe with TRUNCATION_LOW8."""
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        # Simulate C_FindObjectsInit rejecting; assert_subprocess_no_crash converts
-        # SETUP_XFAIL lines to xfail, so we wrap the call in pytest.raises.
-        return 0, "SETUP_XFAIL:C_FindObjectsInit rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
-
-    monkeypatch.setattr(test_field_size_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(
+        test_field_size_boundary,
+        "run_probe",
+        _setup_xfail_probe(
+            calls,
+            "SETUP_XFAIL:C_FindObjectsInit rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+        ),
+    )
 
     # assert_subprocess_no_crash xfails when SETUP_XFAIL is in stdout.
     with pytest.raises(pytest.xfail.Exception):
@@ -253,18 +245,11 @@ def test_find_objects_count_truncation_child_script_compiles(
             cfg,
         )
 
-    assert len(scripts) == 1
-    script = scripts[0]
-    assert "C_FindObjects" in script
-    assert "C_FindObjectsInit" in script
-    # The truncation-revealing count must appear.
-    from pkcs11_check.testcases.security._boundary_values import TRUNCATION_LOW8
-
-    assert str(TRUNCATION_LOW8) in script
-    # Guard-byte detection must be present (this is a crash/overrun probe).
-    assert "GUARD_OVERWRITE:" in script
-    assert "guard" in script.lower()
-    compile(script, "<find-objects-count-truncation-child>", "exec")
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "field_size"
+    assert params.get("which") == "find_objects_count"
+    assert params.get("max_count") == TRUNCATION_LOW8
 
 
 def test_find_objects_count_probe_allows_ok_on_success(
@@ -277,12 +262,12 @@ def test_find_objects_count_probe_allows_ok_on_success(
     """
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _stub(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
         # Simulate C_FindObjects succeeding with count 0 (no objects found).
         stdout = "TARGET_RV:0x00000000\nCOUNT_OUT:0\nGUARD_OVERWRITE:0\n"
-        return 0, stdout, ""
+        return ProbeResult(returncode=0, stdout=stdout, stderr="")
 
-    monkeypatch.setattr(test_field_size_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_field_size_boundary, "run_probe", _stub)
 
     # Must NOT raise (CKR_OK is spec-legal for a cap field).
     test_field_size_boundary.TestFindObjectsCountTruncation().test_find_objects_oversized_count_survives(
@@ -291,28 +276,46 @@ def test_find_objects_count_probe_allows_ok_on_success(
     )
 
 
-# ---------------------------------------------------------------------------
-# 5. HKDF ulSaltLen / ulInfoLen truncation (mmap-backed behavioral comparison)
-# ---------------------------------------------------------------------------
-
-
-def test_hkdf_salt_len_truncation_child_script_compiles(
+def test_find_objects_count_probe_fails_on_guard_overwrite(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """HKDF salt-len truncation child script must be syntactically valid Python.
-
-    The new implementation uses a full-length mmap-backed salt buffer and detects
-    truncation via behavioral comparison (two derives, compare key material).
-    """
+    """A handle-buffer guard overwrite must fail (buffer overrun is the real finding)."""
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        # SETUP_XFAIL causes assert_subprocess_no_crash to raise xfail.
-        return 0, "SETUP_XFAIL:HKDF base key import not operational 0x00000054\n", ""
+    def _stub(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        # Simulate C_FindObjects writing past the 8-slot handle buffer.
+        stdout = "TARGET_RV:0x00000000\nCOUNT_OUT:0\nGUARD_OVERWRITE:3\n"
+        return ProbeResult(returncode=0, stdout=stdout, stderr="")
 
-    monkeypatch.setattr(test_field_size_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_field_size_boundary, "run_probe", _stub)
+
+    with pytest.raises(pytest.fail.Exception):
+        test_field_size_boundary.TestFindObjectsCountTruncation().test_find_objects_oversized_count_survives(
+            _RawSession(),
+            cfg,
+        )
+
+
+# ---------------------------------------------------------------------------
+# 5. HKDF ulSaltLen / ulInfoLen truncation (honeypot-backed behavioral comparison)
+# ---------------------------------------------------------------------------
+
+
+def test_hkdf_salt_len_calls_run_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HKDF salt-len probe must call run_probe with the oversized length."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    monkeypatch.setattr(
+        test_field_size_boundary,
+        "run_probe",
+        _setup_xfail_probe(
+            calls,
+            "SETUP_XFAIL:HKDF base key import not operational 0x00000054\n",
+        ),
+    )
 
     with pytest.raises(pytest.xfail.Exception):
         test_field_size_boundary.TestHkdfParamLengthTruncation().test_hkdf_salt_len_truncation(
@@ -320,38 +323,28 @@ def test_hkdf_salt_len_truncation_child_script_compiles(
             cfg,
         )
 
-    assert len(scripts) == 1
-    script = scripts[0]
-    assert "CKM_HKDF_DERIVE" in script
-    assert "ulSaltLen" in script or "CKF_HKDF_SALT_DATA" in script
-    # Behavioral comparison: probe reports PROBE_RV, TRUNCATED for classification.
-    assert "PROBE_RV:" in script
-    assert "TRUNCATED:" in script
-    # Must use mmap-backed buffer (demand-zero mapping, full OVERSIZE_LEN sized).
-    assert "mmap" in script
-    from pkcs11_check.testcases.security._boundary_values import TRUNCATION_LOW8
-
-    assert str(TRUNCATION_LOW8) in script
-    compile(script, "<hkdf-salt-len-truncation-child>", "exec")
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "field_size"
+    assert params.get("which") == "hkdf_salt_len"
+    assert params.get("oversize_len") == test_field_size_boundary._OVERSIZE_LEN
 
 
-def test_hkdf_info_len_truncation_child_script_compiles(
+def test_hkdf_info_len_calls_run_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """HKDF info-len truncation child script must be syntactically valid Python.
-
-    The new implementation uses a full-length mmap-backed info buffer and detects
-    truncation via behavioral comparison (two derives, compare key material).
-    """
+    """HKDF info-len probe must call run_probe with the oversized length."""
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        # SETUP_XFAIL causes assert_subprocess_no_crash to raise xfail.
-        return 0, "SETUP_XFAIL:HKDF base key import not operational 0x00000054\n", ""
-
-    monkeypatch.setattr(test_field_size_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(
+        test_field_size_boundary,
+        "run_probe",
+        _setup_xfail_probe(
+            calls,
+            "SETUP_XFAIL:HKDF base key import not operational 0x00000054\n",
+        ),
+    )
 
     with pytest.raises(pytest.xfail.Exception):
         test_field_size_boundary.TestHkdfParamLengthTruncation().test_hkdf_info_len_truncation(
@@ -359,81 +352,23 @@ def test_hkdf_info_len_truncation_child_script_compiles(
             cfg,
         )
 
-    assert len(scripts) == 1
-    script = scripts[0]
-    assert "CKM_HKDF_DERIVE" in script
-    assert "ulInfoLen" in script
-    # Behavioral comparison: probe reports PROBE_RV, TRUNCATED for classification.
-    assert "PROBE_RV:" in script
-    assert "TRUNCATED:" in script
-    # Must use mmap-backed buffer (demand-zero mapping, full OVERSIZE_LEN sized).
-    assert "mmap" in script
-    from pkcs11_check.testcases.security._boundary_values import TRUNCATION_LOW8
-
-    assert str(TRUNCATION_LOW8) in script
-    compile(script, "<hkdf-info-len-truncation-child>", "exec")
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "field_size"
+    assert params.get("which") == "hkdf_info_len"
+    assert params.get("oversize_len") == test_field_size_boundary._OVERSIZE_LEN
 
 
-def test_hkdf_salt_len_probe_uses_mmap_backed_buffer(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """HKDF salt-len probe must use a full-length mmap-backed salt buffer.
+def test_hkdf_probe_uses_demand_zero_honeypot_not_raw_mmap() -> None:
+    """The HKDF sub-probe must back the oversized length with the shared demand-zero honeypot.
 
-    The mmap is MAP_PRIVATE|MAP_ANONYMOUS and sized to the full oversized length,
-    so no read beyond the mapping occurs. This replaces the old small-real-buffer
-    approach which was unsound (a conformant 64-bit module would over-read).
-    Both probe and reference derives must point to non-NULL salt (CKF_HKDF_SALT_DATA).
+    The full-length salt/info buffer must come from ``demand_zero_buffer`` (MAP_PRIVATE|
+    MAP_ANONYMOUS, sized far past the 32-bit boundary) so no read beyond the mapping occurs.
+    A raw inline ``mmap.mmap(...)`` would re-implement the honeypot instead of reusing the
+    one guarded implementation, so it must not appear in the probe module.
     """
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
-
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:HKDF base key import not operational 0x00000054\n", ""
-
-    monkeypatch.setattr(test_field_size_boundary, "run_with_coverage", _capture)
-
-    with pytest.raises(pytest.xfail.Exception):
-        test_field_size_boundary.TestHkdfParamLengthTruncation().test_hkdf_salt_len_truncation(
-            _RawSession(),
-            cfg,
-        )
-
-    assert len(scripts) == 1
-    script = scripts[0]
-    # Must use a demand-zero mmap (not a small fixed-size ctypes array).
-    assert "MAP_PRIVATE" in script or "MAP_ANONYMOUS" in script or "mmap.mmap" in script
-    # The probe salt pointer must NOT be None (CKF_HKDF_SALT_DATA requires a real pointer).
-    assert "CKF_HKDF_SALT_DATA" in script
-
-
-def test_hkdf_info_len_probe_uses_mmap_backed_buffer(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """HKDF info-len probe must use a full-length mmap-backed info buffer.
-
-    The mmap is MAP_PRIVATE|MAP_ANONYMOUS and sized to the full oversized length,
-    so no read beyond the mapping occurs. This replaces the old small-real-buffer
-    approach which was unsound.
-    """
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
-
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:HKDF base key import not operational 0x00000054\n", ""
-
-    monkeypatch.setattr(test_field_size_boundary, "run_with_coverage", _capture)
-
-    with pytest.raises(pytest.xfail.Exception):
-        test_field_size_boundary.TestHkdfParamLengthTruncation().test_hkdf_info_len_truncation(
-            _RawSession(),
-            cfg,
-        )
-
-    assert len(scripts) == 1
-    script = scripts[0]
-    # Must use a demand-zero mmap (not a small fixed-size ctypes array).
-    assert "MAP_PRIVATE" in script or "MAP_ANONYMOUS" in script or "mmap.mmap" in script
-    # The probe info pointer must NOT be None; check the derive uses it.
-    assert "mmap_buf" in script
+    src = inspect.getsource(field_size_probe)
+    assert "demand_zero_buffer" in src, "HKDF probe must use the shared demand-zero honeypot"
+    assert "CKF_HKDF_SALT_DATA" in src, "salt sub-probe must point to a real (non-NULL) salt"
+    assert "PROBE_RV:" in src and "TRUNCATED:" in src, "behavioral comparison protocol required"
+    assert "mmap.mmap(" not in src, "probe must reuse the shared honeypot, not raw inline mmap"
