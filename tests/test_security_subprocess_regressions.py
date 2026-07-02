@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from pkcs11_check.testcases._probes import ffi_length as ffi_length_probe
 from pkcs11_check.testcases._probes.runner import ProbeResult
 from pkcs11_check.testcases.security import (
     test_api_boundary,
@@ -356,17 +357,27 @@ def test_ffi_length_aes_probe_xfails_setup_before_child(
 def test_ffi_length_aes_child_script_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """FFI length child scripts should classify setup rejects inside the child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """FFI length AES probe must classify a child setup reject (SETUP_XFAIL) as xfail.
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    The AES-keygen setup-reject logic now lives in the ``_probes/ffi_length.py`` child
+    (``AES_KEYGEN_RUNTIME_REJECT_RVS`` -> ``_setup_reject_or_raise``); when the child emits
+    ``SETUP_XFAIL`` the parent classifies it via ``_classify_unhonorable_length_outcome``
+    into an xfail rather than a silent pass.
+    """
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     with pytest.raises(pytest.xfail.Exception):
         test_ffi_length_boundary.TestIsizeMaxDataLength().test_encrypt_isize_boundary(
@@ -375,9 +386,12 @@ def test_ffi_length_aes_child_script_marks_setup_reject(
             0x8000000000000000,
         )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "ffi_length"
+    assert params.get("probe") == "encrypt_isize"
+    # The setup-reject logic must live in the probe child, keyed on AES_KEYGEN_RUNTIME_REJECT_RVS.
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in inspect.getsource(ffi_length_probe)
 
 
 def test_ffi_length_keypair_child_scripts_mark_setup_reject(
@@ -1098,17 +1112,26 @@ _F1_CATEGORY_A = [
 
 
 def test_f1_category_a_methods_parse_and_classify_target_rv() -> None:
-    """Every Category-A FFI length probe must parse + classify its child rv."""
+    """Every Category-A FFI length probe must parse + classify its child rv.
+
+    Migrated methods delegate the child ``TARGET_RV`` emission to the ``_probes/ffi_length.py``
+    module via ``run_probe``; not-yet-migrated methods still build an inline child script.
+    Either way the parent must classify the returned rv, and the child protocol string must
+    exist (inline in the parent body, or via a ``run_probe`` call backed by the probe module).
+    """
     src = inspect.getsource(test_ffi_length_boundary)
+    probe_src = inspect.getsource(ffi_length_probe)
     for name in _F1_CATEGORY_A:
         idx = src.index(f"def {name}(")
         end = src.index("\n    def ", idx + 1) if "\n    def " in src[idx + 1 :] else len(src)
         body = src[idx:end]
-        assert "TARGET_RV:" in body, f"{name}: child must print TARGET_RV:"
+        emits_rv = "TARGET_RV:" in body or "run_probe(" in body
+        assert emits_rv, f"{name}: child must print TARGET_RV: (inline or via run_probe)"
         classifies = (
             "classify_negative_rv(" in body or "_classify_unhonorable_length_outcome(" in body
         )
         assert classifies, f"{name}: parent must classify the rv"
+    assert "TARGET_RV:" in probe_src, "_probes/ffi_length.py must emit the TARGET_RV protocol"
 
 
 def test_no_dead_setup_xfail_classify_blocks() -> None:

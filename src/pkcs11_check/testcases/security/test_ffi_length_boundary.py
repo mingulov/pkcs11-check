@@ -49,6 +49,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import (
     SUBPROCESS_TIMEOUT_MARKER,
     SUBPROCESS_TIMEOUT_RC,
@@ -356,45 +357,19 @@ class TestIsizeMaxDataLength:
             purpose="C_Encrypt isize-boundary crash probe setup",
         )
         destroy_returned_handles(rs, setup_key)
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + _CHILD_SETUP_REJECT_HELPERS
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
-)
-from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
-
-try:
-    key = gen_aes_key(raw, sh, 256)
-except AssertionError as exc:
-    setup_xfail_if_known_ckr(
-        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
-    )
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_AES_ECB
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
-    if rv == CKR_OK:
-        out_len = CK_ULONG(256)
-        out_buf = (ctypes.c_ubyte * 256)()
-        rv2 = raw.C_Encrypt(
-            sh, _HONEYPOT_PTR, {data_len}, out_buf, ctypes.byref(out_len),
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "encrypt_isize",
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        print(f"TARGET_RV:0x{{rv2:08x}}")
-    else:
-        print(f"SETUP_XFAIL:C_EncryptInit not operational 0x{{rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -420,45 +395,19 @@ cleanup()
             purpose="C_Decrypt isize-boundary crash probe setup",
         )
         destroy_returned_handles(rs, setup_key)
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + _CHILD_SETUP_REJECT_HELPERS
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
-)
-from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
-
-try:
-    key = gen_aes_key(raw, sh, 256)
-except AssertionError as exc:
-    setup_xfail_if_known_ckr(
-        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
-    )
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_AES_ECB
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_DecryptInit(sh, ctypes.byref(mech), key)
-    if rv == CKR_OK:
-        out_len = CK_ULONG(256)
-        out_buf = (ctypes.c_ubyte * 256)()
-        rv2 = raw.C_Decrypt(
-            sh, _HONEYPOT_PTR, {data_len}, out_buf, ctypes.byref(out_len),
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "decrypt_isize",
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        print(f"TARGET_RV:0x{{rv2:08x}}")
-    else:
-        print(f"SETUP_XFAIL:C_DecryptInit not operational 0x{{rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -478,83 +427,19 @@ cleanup()
         rs = p11_raw_session
         if not rs.has_mechanism("SHA256_HMAC"):
             pytest.skip("CKM_SHA256_HMAC not supported")
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_SHA256_HMAC, CK_ULONG, CKR_OK,
-    CKA_SIGN, CKA_TOKEN, CKA_CLASS, CKA_KEY_TYPE, CKA_VALUE,
-    CKO_SECRET_KEY, CKK_GENERIC_SECRET,
-    CK_ATTRIBUTE, CK_OBJECT_HANDLE,
-)
-from pkcs11_check.raw.recipes import destroy_quietly
-
-# Import a 32-byte HMAC key via C_CreateObject
-key_bytes = (ctypes.c_ubyte * 32)(*range(32))
-cls_val = ctypes.c_ulong(CKO_SECRET_KEY)
-kt_val = ctypes.c_ulong(CKK_GENERIC_SECRET)
-sign_true = ctypes.c_ubyte(1)
-token_false = ctypes.c_ubyte(0)
-
-attrs = (CK_ATTRIBUTE * 5)()
-attrs[0].type = CKA_CLASS
-attrs[0].pValue = ctypes.cast(
-    ctypes.pointer(cls_val), ctypes.c_void_p,
-)
-attrs[0].ulValueLen = ctypes.sizeof(cls_val)
-attrs[1].type = CKA_KEY_TYPE
-attrs[1].pValue = ctypes.cast(
-    ctypes.pointer(kt_val), ctypes.c_void_p,
-)
-attrs[1].ulValueLen = ctypes.sizeof(kt_val)
-attrs[2].type = CKA_VALUE
-attrs[2].pValue = ctypes.cast(key_bytes, ctypes.c_void_p)
-attrs[2].ulValueLen = 32
-attrs[3].type = CKA_SIGN
-attrs[3].pValue = ctypes.cast(
-    ctypes.pointer(sign_true), ctypes.c_void_p,
-)
-attrs[3].ulValueLen = 1
-attrs[4].type = CKA_TOKEN
-attrs[4].pValue = ctypes.cast(
-    ctypes.pointer(token_false), ctypes.c_void_p,
-)
-attrs[4].ulValueLen = 1
-
-key = CK_OBJECT_HANDLE(0)
-rv = raw.C_CreateObject(
-    sh, ctypes.cast(attrs, ctypes.POINTER(CK_ATTRIBUTE)),
-    5, ctypes.byref(key),
-)
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:HMAC key import not operational 0x{{rv:08x}}")
-    cleanup()
-    raise SystemExit(0)
-
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_HMAC
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_SignInit(sh, ctypes.byref(mech), key.value)
-    if rv == CKR_OK:
-        sig_len = CK_ULONG(64)
-        sig_buf = (ctypes.c_ubyte * 64)()
-        rv2 = raw.C_Sign(
-            sh, _HONEYPOT_PTR, {data_len}, sig_buf, ctypes.byref(sig_len),
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "sign_isize",
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        print(f"TARGET_RV:0x{{rv2:08x}}")
-    else:
-        print(f"SETUP_XFAIL:C_SignInit not operational 0x{{rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, key.value)
-cleanup()
-"""
-        )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -575,34 +460,19 @@ cleanup()
         rs = p11_raw_session
         if not rs.has_mechanism("SHA256_HMAC"):
             pytest.skip("CKM_SHA256_HMAC not supported")
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.types_std import CK_MECHANISM, CKM_SHA256_HMAC, CKR_OK
-{_HMAC_KEY_IMPORT_HELPER}
-
-key = import_hmac_key(verify=True)
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_HMAC
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_VerifyInit(sh, ctypes.byref(mech), key.value)
-    if rv == CKR_OK:
-        sig_buf = (ctypes.c_ubyte * 32)()
-        rv2 = raw.C_Verify(sh, _HONEYPOT_PTR, {data_len}, sig_buf, 32)
-        print(f"TARGET_RV:0x{{rv2:08x}}")
-    else:
-        print(f"SETUP_XFAIL:C_VerifyInit not operational 0x{{rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, key.value)
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "verify_isize",
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -622,34 +492,19 @@ cleanup()
         rs = p11_raw_session
         if not rs.has_mechanism("SHA256"):
             pytest.skip("CKM_SHA256 not supported")
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_SHA256, CK_ULONG, CKR_OK,
-)
-
-mech = CK_MECHANISM()
-mech.mechanism = CKM_SHA256
-mech.pParameter = None
-mech.ulParameterLen = 0
-rv = raw.C_DigestInit(sh, ctypes.byref(mech))
-if rv == CKR_OK:
-    digest_len = CK_ULONG(64)
-    digest_buf = (ctypes.c_ubyte * 64)()
-    rv2 = raw.C_Digest(
-        sh, _HONEYPOT_PTR, {data_len}, digest_buf, ctypes.byref(digest_len),
-    )
-    print(f"TARGET_RV:0x{{rv2:08x}}")
-else:
-    print(f"SETUP_XFAIL:C_DigestInit not operational 0x{{rv:08x}}")
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "digest_isize",
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -1807,116 +1662,20 @@ class TestIsizeMaxUpdateLength:
         else:
             raise ValueError(f"Unhandled op: {op}")
 
-        preamble = _preamble(p11_config)
-        if op in {"C_EncryptUpdate", "C_DecryptUpdate"}:
-            init_op = "C_EncryptInit" if op == "C_EncryptUpdate" else "C_DecryptInit"
-            body = f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.types_std import CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK
-from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
-{_CHILD_SETUP_REJECT_HELPERS}
-
-try:
-    key = gen_aes_key(raw, sh, 256)
-except AssertionError as exc:
-    setup_xfail_if_known_ckr(
-        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
-    )
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_AES_ECB
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.{init_op}(sh, ctypes.byref(mech), key)
-    if rv == CKR_OK:
-        out_len = CK_ULONG(256)
-        out_buf = (ctypes.c_ubyte * 256)()
-        print("TARGET:{op}", flush=True)
-        print("LEN:{data_len}", flush=True)
-        rv2 = raw.{op}(sh, _HONEYPOT_PTR, {data_len}, out_buf, ctypes.byref(out_len))
-        print(f"TARGET_RV:0x{{rv2:08x}}")
-    else:
-        print(f"SETUP_XFAIL:{init_op} not operational 0x{{rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        elif op == "C_SignUpdate":
-            body = f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.types_std import CK_MECHANISM, CKM_SHA256_HMAC, CKR_OK
-{_HMAC_KEY_IMPORT_HELPER}
-
-key = import_hmac_key(sign=True)
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_HMAC
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_SignInit(sh, ctypes.byref(mech), key.value)
-    if rv == CKR_OK:
-        print("TARGET:C_SignUpdate", flush=True)
-        print("LEN:{data_len}", flush=True)
-        rv2 = raw.C_SignUpdate(sh, _HONEYPOT_PTR, {data_len})
-        print(f"TARGET_RV:0x{{rv2:08x}}")
-    else:
-        print(f"SETUP_XFAIL:C_SignInit not operational 0x{{rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, key.value)
-cleanup()
-"""
-        elif op == "C_VerifyUpdate":
-            body = f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.types_std import CK_MECHANISM, CKM_SHA256_HMAC, CKR_OK
-{_HMAC_KEY_IMPORT_HELPER}
-
-key = import_hmac_key(verify=True)
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_HMAC
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_VerifyInit(sh, ctypes.byref(mech), key.value)
-    if rv == CKR_OK:
-        print("TARGET:C_VerifyUpdate", flush=True)
-        print("LEN:{data_len}", flush=True)
-        rv2 = raw.C_VerifyUpdate(sh, _HONEYPOT_PTR, {data_len})
-        print(f"TARGET_RV:0x{{rv2:08x}}")
-    else:
-        print(f"SETUP_XFAIL:C_VerifyInit not operational 0x{{rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, key.value)
-cleanup()
-"""
-        elif op == "C_DigestUpdate":
-            body = f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.types_std import CK_MECHANISM, CKM_SHA256, CKR_OK
-
-mech = CK_MECHANISM()
-mech.mechanism = CKM_SHA256
-mech.pParameter = None
-mech.ulParameterLen = 0
-rv = raw.C_DigestInit(sh, ctypes.byref(mech))
-if rv == CKR_OK:
-    print("TARGET:C_DigestUpdate", flush=True)
-    print("LEN:{data_len}", flush=True)
-    rv2 = raw.C_DigestUpdate(sh, _HONEYPOT_PTR, {data_len})
-    print(f"TARGET_RV:0x{{rv2:08x}}")
-else:
-    print(f"SETUP_XFAIL:C_DigestInit not operational 0x{{rv:08x}}")
-cleanup()
-"""
-        else:
-            raise ValueError(f"Unhandled op: {op}")
-
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "update_isize",
+                "op": op,
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
+        )
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -1943,24 +1702,19 @@ class TestRandomIsizeLength:
         data_len: int,
     ) -> None:
         """``C_SeedRandom`` must reject an impossible claimed seed length cleanly."""
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import CKR_OK
-
-print("TARGET:C_SeedRandom", flush=True)
-print("LEN:{data_len}", flush=True)
-rv = raw.C_SeedRandom(sh, _HONEYPOT_PTR, {data_len})
-print(f"TARGET_RV:0x{{rv:08x}}")
-print(f"rv_name={{ckr_name(rv)}}")
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "seed_random_isize",
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -2493,83 +2247,19 @@ class TestIsizeMaxOutputLength:
         rs = p11_raw_session
         if not rs.has_mechanism("SHA256_HMAC"):
             pytest.skip("CKM_SHA256_HMAC not supported")
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + f"""
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_SHA256_HMAC, CK_ULONG, CKR_OK,
-    CKA_SIGN, CKA_TOKEN, CKA_CLASS, CKA_KEY_TYPE, CKA_VALUE,
-    CKO_SECRET_KEY, CKK_GENERIC_SECRET,
-    CK_ATTRIBUTE, CK_OBJECT_HANDLE,
-)
-from pkcs11_check.raw.recipes import destroy_quietly
-
-# Import a 32-byte HMAC key via C_CreateObject
-key_bytes = (ctypes.c_ubyte * 32)(*range(32))
-cls_val = ctypes.c_ulong(CKO_SECRET_KEY)
-kt_val = ctypes.c_ulong(CKK_GENERIC_SECRET)
-sign_true = ctypes.c_ubyte(1)
-token_false = ctypes.c_ubyte(0)
-
-attrs = (CK_ATTRIBUTE * 5)()
-attrs[0].type = CKA_CLASS
-attrs[0].pValue = ctypes.cast(
-    ctypes.pointer(cls_val), ctypes.c_void_p,
-)
-attrs[0].ulValueLen = ctypes.sizeof(cls_val)
-attrs[1].type = CKA_KEY_TYPE
-attrs[1].pValue = ctypes.cast(
-    ctypes.pointer(kt_val), ctypes.c_void_p,
-)
-attrs[1].ulValueLen = ctypes.sizeof(kt_val)
-attrs[2].type = CKA_VALUE
-attrs[2].pValue = ctypes.cast(key_bytes, ctypes.c_void_p)
-attrs[2].ulValueLen = 32
-attrs[3].type = CKA_SIGN
-attrs[3].pValue = ctypes.cast(
-    ctypes.pointer(sign_true), ctypes.c_void_p,
-)
-attrs[3].ulValueLen = 1
-attrs[4].type = CKA_TOKEN
-attrs[4].pValue = ctypes.cast(
-    ctypes.pointer(token_false), ctypes.c_void_p,
-)
-attrs[4].ulValueLen = 1
-
-key = CK_OBJECT_HANDLE(0)
-rv = raw.C_CreateObject(
-    sh, ctypes.cast(attrs, ctypes.POINTER(CK_ATTRIBUTE)),
-    5, ctypes.byref(key),
-)
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:HMAC key import not operational 0x{{rv:08x}}")
-    cleanup()
-    raise SystemExit(0)
-
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_HMAC
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_SignInit(sh, ctypes.byref(mech), key.value)
-    if rv == CKR_OK:
-        data = (ctypes.c_ubyte * 16)(*range(16))
-        sig_buf = (ctypes.c_ubyte * 64)()
-        sig_len = CK_ULONG({out_len})
-        rv2 = raw.C_Sign(
-            sh, data, 16, sig_buf, ctypes.byref(sig_len),
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "sign_isize_output",
+                "out_len": out_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+            coverage="session",
         )
-        print(f"TARGET_RV:0x{{rv2:08x}}")
-    else:
-        print(f"SETUP_XFAIL:C_SignInit not operational 0x{{rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, key.value)
-cleanup()
-"""
-        )
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -2595,34 +2285,19 @@ cleanup()
         rs = p11_raw_session
         if not rs.has_mechanism("SHA256"):
             pytest.skip("CKM_SHA256 not supported")
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + f"""
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_SHA256, CK_ULONG, CKR_OK,
-)
-
-mech = CK_MECHANISM()
-mech.mechanism = CKM_SHA256
-mech.pParameter = None
-mech.ulParameterLen = 0
-rv = raw.C_DigestInit(sh, ctypes.byref(mech))
-if rv == CKR_OK:
-    data = (ctypes.c_ubyte * 16)(*range(16))
-    digest_buf = (ctypes.c_ubyte * 64)()
-    digest_len = CK_ULONG({out_len})
-    rv2 = raw.C_Digest(
-        sh, data, 16, digest_buf, ctypes.byref(digest_len),
-    )
-    print(f"TARGET_RV:0x{{rv2:08x}}")
-else:
-    print(f"SETUP_XFAIL:C_DigestInit not operational 0x{{rv:08x}}")
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "digest_isize_output",
+                "out_len": out_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -2648,82 +2323,19 @@ cleanup()
         rs = p11_raw_session
         if not rs.has_mechanism("SHA256_HMAC"):
             pytest.skip("CKM_SHA256_HMAC not supported")
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + f"""
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_SHA256_HMAC, CK_ULONG, CKR_OK,
-    CKA_VERIFY, CKA_TOKEN, CKA_CLASS, CKA_KEY_TYPE, CKA_VALUE,
-    CKO_SECRET_KEY, CKK_GENERIC_SECRET,
-    CK_ATTRIBUTE, CK_OBJECT_HANDLE,
-)
-from pkcs11_check.raw.recipes import destroy_quietly
-
-# Import a 32-byte HMAC key via C_CreateObject
-key_bytes = (ctypes.c_ubyte * 32)(*range(32))
-cls_val = ctypes.c_ulong(CKO_SECRET_KEY)
-kt_val = ctypes.c_ulong(CKK_GENERIC_SECRET)
-verify_true = ctypes.c_ubyte(1)
-token_false = ctypes.c_ubyte(0)
-
-attrs = (CK_ATTRIBUTE * 5)()
-attrs[0].type = CKA_CLASS
-attrs[0].pValue = ctypes.cast(
-    ctypes.pointer(cls_val), ctypes.c_void_p,
-)
-attrs[0].ulValueLen = ctypes.sizeof(cls_val)
-attrs[1].type = CKA_KEY_TYPE
-attrs[1].pValue = ctypes.cast(
-    ctypes.pointer(kt_val), ctypes.c_void_p,
-)
-attrs[1].ulValueLen = ctypes.sizeof(kt_val)
-attrs[2].type = CKA_VALUE
-attrs[2].pValue = ctypes.cast(key_bytes, ctypes.c_void_p)
-attrs[2].ulValueLen = 32
-attrs[3].type = CKA_VERIFY
-attrs[3].pValue = ctypes.cast(
-    ctypes.pointer(verify_true), ctypes.c_void_p,
-)
-attrs[3].ulValueLen = 1
-attrs[4].type = CKA_TOKEN
-attrs[4].pValue = ctypes.cast(
-    ctypes.pointer(token_false), ctypes.c_void_p,
-)
-attrs[4].ulValueLen = 1
-
-key = CK_OBJECT_HANDLE(0)
-rv = raw.C_CreateObject(
-    sh, ctypes.cast(attrs, ctypes.POINTER(CK_ATTRIBUTE)),
-    5, ctypes.byref(key),
-)
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:HMAC key import not operational 0x{{rv:08x}}")
-    cleanup()
-    raise SystemExit(0)
-
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_HMAC
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_VerifyInit(sh, ctypes.byref(mech), key.value)
-    if rv == CKR_OK:
-        data = (ctypes.c_ubyte * 16)(*range(16))
-        sig_buf = (ctypes.c_ubyte * 64)()
-        rv2 = raw.C_Verify(
-            sh, data, 16, sig_buf, {sig_len},
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "verify_isize_sig_len",
+                "sig_len": sig_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+            coverage="session",
         )
-        print(f"TARGET_RV:0x{{rv2:08x}}")
-    else:
-        print(f"SETUP_XFAIL:C_VerifyInit not operational 0x{{rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, key.value)
-cleanup()
-"""
-        )
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
             rc,
             stdout,
