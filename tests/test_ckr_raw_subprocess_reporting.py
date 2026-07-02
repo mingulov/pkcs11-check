@@ -253,48 +253,48 @@ def test_raw_args_bad_setup_marker_is_xfail() -> None:
         )
 
 
-def test_raw_args_bad_encrypt_null_mech_script_marks_setup_reject(
+def test_raw_args_bad_encrypt_null_mech_dispatches_encrypt_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The NULL-mechanism probe should not assert on setup keygen rejects."""
-    scripts: list[str] = []
+    """The encrypt-init NULL-mechanism test dispatches the encrypt-init probe."""
+    calls: list[tuple[str, dict[str, Any]]] = []
 
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
         return SimpleNamespace(returncode=0, stdout="OK\n", stderr="")
 
-    monkeypatch.setattr(test_ckr_raw_args_bad.subprocess, "run", _run_subprocess)
+    monkeypatch.setattr(test_ckr_raw_args_bad, "run_probe", fake_run_probe)
 
     test_ckr_raw_args_bad.TestArgsBadNullPointers().test_encrypt_init_null_mechanism(
         SimpleNamespace(module="/tmp/provider.so", pin=None)
     )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "assert rv == CKR_OK" not in scripts[0]
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_raw_args_bad"
+    assert params["probe"] == "encrypt_init"
 
 
-def test_raw_args_bad_generate_key_null_mech_does_not_accept_ok(
+def test_raw_args_bad_generate_key_null_mech_dispatches_generate_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C_GenerateKey has no NULL-mechanism cancellation success path."""
-    scripts: list[str] = []
+    """The generate-key NULL-mechanism test dispatches the generate-key probe."""
+    calls: list[tuple[str, dict[str, Any]]] = []
 
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
         return SimpleNamespace(returncode=0, stdout="OK\n", stderr="")
 
-    monkeypatch.setattr(test_ckr_raw_args_bad.subprocess, "run", _run_subprocess)
+    monkeypatch.setattr(test_ckr_raw_args_bad, "run_probe", fake_run_probe)
 
     test_ckr_raw_args_bad.TestArgsBadNullPointers().test_generate_key_null_mechanism(
         SimpleNamespace(module="/tmp/provider.so", pin=None)
     )
 
-    assert len(scripts) == 1
-    probe = scripts[0].split("raw.C_GenerateKey(sh, null_pointer().pointer", 1)[1]
-    probe = probe.split('print("OK")', 1)[0]
-    assert "CKR_ARGUMENTS_BAD" in probe
-    assert "CKR_OK" not in probe
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_raw_args_bad"
+    assert params["probe"] == "generate_key"
 
 
 def test_ckr_dual_reports_positive_subprocess_exit_as_child_failure(
