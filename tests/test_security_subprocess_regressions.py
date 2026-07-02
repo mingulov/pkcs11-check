@@ -335,7 +335,7 @@ def test_ffi_length_aes_probe_xfails_setup_before_child(
     def _xfail_setup(*_args: object, **_kwargs: object) -> int:
         pytest.xfail("AES setup unavailable")
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+    def _child_should_not_run(*_args: object, **_kwargs: object) -> ProbeResult:
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(
@@ -344,7 +344,7 @@ def test_ffi_length_aes_probe_xfails_setup_before_child(
         _xfail_setup,
         raising=False,
     )
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
         test_ffi_length_boundary.TestIsizeMaxDataLength().test_encrypt_isize_boundary(
@@ -692,13 +692,17 @@ def test_ffi_null_init_token_scripts_use_utf8char_pointers(
 def test_ffi_length_oaep_source_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """RSA-OAEP source-data length probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """RSA-OAEP source-data length probe must classify setup rejects in the probe child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:RSA keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:RSA keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(
         test_ffi_length_boundary,
@@ -706,7 +710,7 @@ def test_ffi_length_oaep_source_child_marks_setup_reject(
         lambda *_a, **_k: (3, 4),
     )
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     for boundary in (0x7FFFFFFFFFFFFFFF, 0x8000000000000000):
         with pytest.raises(pytest.xfail.Exception):
@@ -716,25 +720,32 @@ def test_ffi_length_oaep_source_child_marks_setup_reject(
                 boundary,
             )
 
-    assert len(scripts) == 2
-    assert all("SETUP_XFAIL:" in script for script in scripts)
-    assert all("KEYPAIR_RUNTIME_REJECT_RVS" in script for script in scripts)
+    assert len(calls) == 2
+    assert all(probe == "ffi_length" for probe, _ in calls)
+    assert {params.get("probe") for _, params in calls} == {"rsa_oaep_source_data_length"}
+    assert "KEYPAIR_RUNTIME_REJECT_RVS" in inspect.getsource(
+        ffi_length_probe._run_rsa_oaep_source_data_length
+    )
 
 
 def test_ffi_length_gcm_iv_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AES-GCM IV-length probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """TestGcmIvLengthBoundary setup reject must be classified in the probe child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     for boundary in (0x7FFFFFFFFFFFFFFF, 0x8000000000000000):
         with pytest.raises(pytest.xfail.Exception):
@@ -744,25 +755,30 @@ def test_ffi_length_gcm_iv_child_marks_setup_reject(
                 boundary,
             )
 
-    assert len(scripts) == 2
-    assert all("SETUP_XFAIL:" in script for script in scripts)
-    assert all("AES_KEYGEN_RUNTIME_REJECT_RVS" in script for script in scripts)
+    assert len(calls) == 2
+    assert all(probe == "ffi_length" for probe, _ in calls)
+    assert {params.get("probe") for _, params in calls} == {"gcm_iv_length"}
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in inspect.getsource(ffi_length_probe._run_gcm_iv_length)
 
 
 def test_ffi_length_gcm_tag_bits_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AES-GCM tag-bits probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """TestGcmTagBitsLengthBoundary setup reject must be classified in the probe child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     for boundary in (0x7FFFFFFFFFFFFFFF, 0x8000000000000000):
         with pytest.raises(pytest.xfail.Exception):
@@ -772,25 +788,32 @@ def test_ffi_length_gcm_tag_bits_child_marks_setup_reject(
                 boundary,
             )
 
-    assert len(scripts) == 2
-    assert all("SETUP_XFAIL:" in script for script in scripts)
-    assert all("AES_KEYGEN_RUNTIME_REJECT_RVS" in script for script in scripts)
+    assert len(calls) == 2
+    assert all(probe == "ffi_length" for probe, _ in calls)
+    assert {params.get("probe") for _, params in calls} == {"gcm_tag_bits_length"}
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in inspect.getsource(
+        ffi_length_probe._run_gcm_tag_bits_length
+    )
 
 
 def test_ffi_length_ccm_nonce_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AES-CCM nonce-length probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """TestCcmNonceLengthBoundary setup reject must be classified in the probe child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     for boundary in (0x7FFFFFFFFFFFFFFF, 0x8000000000000000):
         with pytest.raises(pytest.xfail.Exception):
@@ -800,25 +823,32 @@ def test_ffi_length_ccm_nonce_child_marks_setup_reject(
                 boundary,
             )
 
-    assert len(scripts) == 2
-    assert all("SETUP_XFAIL:" in script for script in scripts)
-    assert all("AES_KEYGEN_RUNTIME_REJECT_RVS" in script for script in scripts)
+    assert len(calls) == 2
+    assert all(probe == "ffi_length" for probe, _ in calls)
+    assert {params.get("probe") for _, params in calls} == {"ccm_nonce_length"}
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in inspect.getsource(
+        ffi_length_probe._run_ccm_nonce_length
+    )
 
 
 def test_ffi_length_ccm_mac_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AES-CCM MAC-length probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """TestCcmMacLengthBoundary setup reject must be classified in the probe child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     for boundary in (0x7FFFFFFFFFFFFFFF, 0x8000000000000000):
         with pytest.raises(pytest.xfail.Exception):
@@ -828,21 +858,28 @@ def test_ffi_length_ccm_mac_child_marks_setup_reject(
                 boundary,
             )
 
-    assert len(scripts) == 2
-    assert all("SETUP_XFAIL:" in script for script in scripts)
-    assert all("AES_KEYGEN_RUNTIME_REJECT_RVS" in script for script in scripts)
+    assert len(calls) == 2
+    assert all(probe == "ffi_length" for probe, _ in calls)
+    assert {params.get("probe") for _, params in calls} == {"ccm_mac_length"}
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in inspect.getsource(
+        ffi_length_probe._run_ccm_mac_length
+    )
 
 
 def test_ffi_length_eddsa_context_child_uses_edwards_keygen(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """EdDSA context-length probe must use CKM_EC_EDWARDS_KEY_PAIR_GEN setup."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """EdDSA context-length probe must use CKM_EC_EDWARDS_KEY_PAIR_GEN setup in the child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:EC_EDWARDS keygen rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:EC_EDWARDS keygen rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(
         test_ffi_length_boundary,
@@ -851,22 +888,24 @@ def test_ffi_length_eddsa_context_child_uses_edwards_keygen(
         raising=False,
     )
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     for boundary in (0x7FFFFFFFFFFFFFFF, 0x8000000000000000):
         with pytest.raises(pytest.xfail.Exception):
-            test_ffi_length_boundary.TestEddsaContextLengthBoundary().test_eddsa_context_length_boundary(
+            test_ffi_length_boundary.TestEddsaContextLengthBoundary().test_eddsa_context_length_boundary(  # noqa: E501
                 _RawSession(),
                 cfg,
                 boundary,
             )
 
-    assert len(scripts) == 2
-    assert all("CKM_EC_EDWARDS_KEY_PAIR_GEN" in script for script in scripts)
-    assert all("gen_keypair" in script for script in scripts)
-    assert all("gen_ec_keypair" not in script for script in scripts)
-    assert all("SETUP_XFAIL:" in script for script in scripts)
-    assert all("KEYPAIR_RUNTIME_REJECT_RVS" in script for script in scripts)
+    assert len(calls) == 2
+    assert all(probe == "ffi_length" for probe, _ in calls)
+    assert {params.get("probe") for _, params in calls} == {"eddsa_context_length"}
+    eddsa_src = inspect.getsource(ffi_length_probe._run_eddsa_context_length)
+    assert "CKM_EC_EDWARDS_KEY_PAIR_GEN" in eddsa_src
+    assert "gen_keypair" in eddsa_src
+    assert "gen_ec_keypair" not in eddsa_src
+    assert "KEYPAIR_RUNTIME_REJECT_RVS" in eddsa_src
 
 
 # ---------------------------------------------------------------------------
@@ -877,17 +916,21 @@ def test_ffi_length_eddsa_context_child_uses_edwards_keygen(
 def test_ffi_length_encrypt_update_guard_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C_EncryptUpdate guard probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """C_EncryptUpdate probe must classify a setup reject in the probe child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     with pytest.raises(pytest.xfail.Exception):
         test_ffi_length_boundary.TestUpdateOutputGuard().test_encrypt_update_one_byte_output_preserves_guard(
@@ -895,26 +938,33 @@ def test_ffi_length_encrypt_update_guard_child_marks_setup_reject(
             cfg,
         )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
-    assert "C_EncryptUpdate" in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "ffi_length"
+    assert params.get("probe") == "encrypt_update_guard"
+    guard_src = inspect.getsource(ffi_length_probe._run_encrypt_update_guard)
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in guard_src
+    assert "C_EncryptUpdate" in guard_src
 
 
 def test_ffi_length_encrypt_final_continuation_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C_EncryptFinal continuation probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """C_EncryptFinal probe must classify a setup reject in the probe child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     with pytest.raises(pytest.xfail.Exception):
         test_ffi_length_boundary.TestContinueAfterNullOutputQuery().test_encrypt_final_continuation_after_size_query(
@@ -922,10 +972,13 @@ def test_ffi_length_encrypt_final_continuation_child_marks_setup_reject(
             cfg,
         )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
-    assert "C_EncryptFinal" in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "ffi_length"
+    assert params.get("probe") == "encrypt_final_continuation"
+    guard_src = inspect.getsource(ffi_length_probe._run_encrypt_final_continuation)
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in guard_src
+    assert "C_EncryptFinal" in guard_src
 
 
 # ---------------------------------------------------------------------------
@@ -999,17 +1052,21 @@ def test_recover_output_length_child_marks_setup_reject(
 def test_ffi_length_decrypt_update_guard_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C_DecryptUpdate guard probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """C_DecryptUpdate probe must classify a setup reject in the probe child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     with pytest.raises(pytest.xfail.Exception):
         test_ffi_length_boundary.TestUpdateOutputGuard().test_decrypt_update_one_byte_output_preserves_guard(
@@ -1017,26 +1074,33 @@ def test_ffi_length_decrypt_update_guard_child_marks_setup_reject(
             cfg,
         )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
-    assert "C_DecryptUpdate" in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "ffi_length"
+    assert params.get("probe") == "decrypt_update_guard"
+    guard_src = inspect.getsource(ffi_length_probe._run_decrypt_update_guard)
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in guard_src
+    assert "C_DecryptUpdate" in guard_src
 
 
 def test_ffi_length_encrypt_update_continuation_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C_EncryptUpdate continuation probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """C_EncryptUpdate probe must classify a setup reject in the probe child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     with pytest.raises(pytest.xfail.Exception):
         test_ffi_length_boundary.TestContinueAfterNullOutputQuery().test_encrypt_update_continuation_after_size_query(
@@ -1044,26 +1108,33 @@ def test_ffi_length_encrypt_update_continuation_child_marks_setup_reject(
             cfg,
         )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
-    assert "C_EncryptUpdate" in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "ffi_length"
+    assert params.get("probe") == "encrypt_update_continuation"
+    guard_src = inspect.getsource(ffi_length_probe._run_encrypt_update_continuation)
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in guard_src
+    assert "C_EncryptUpdate" in guard_src
 
 
 def test_ffi_length_decrypt_update_continuation_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C_DecryptUpdate continuation probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """C_DecryptUpdate probe must classify a setup reject in the probe child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     with pytest.raises(pytest.xfail.Exception):
         test_ffi_length_boundary.TestContinueAfterNullOutputQuery().test_decrypt_update_continuation_after_size_query(
@@ -1071,26 +1142,33 @@ def test_ffi_length_decrypt_update_continuation_child_marks_setup_reject(
             cfg,
         )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
-    assert "C_DecryptUpdate" in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "ffi_length"
+    assert params.get("probe") == "decrypt_update_continuation"
+    guard_src = inspect.getsource(ffi_length_probe._run_decrypt_update_continuation)
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in guard_src
+    assert "C_DecryptUpdate" in guard_src
 
 
 def test_ffi_length_decrypt_final_continuation_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C_DecryptFinal continuation probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """C_DecryptFinal probe must classify a setup reject in the probe child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     with pytest.raises(pytest.xfail.Exception):
         test_ffi_length_boundary.TestContinueAfterNullOutputQuery().test_decrypt_final_continuation_after_size_query(
@@ -1098,10 +1176,13 @@ def test_ffi_length_decrypt_final_continuation_child_marks_setup_reject(
             cfg,
         )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
-    assert "C_DecryptFinal" in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "ffi_length"
+    assert params.get("probe") == "decrypt_final_continuation"
+    guard_src = inspect.getsource(ffi_length_probe._run_decrypt_final_continuation)
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in guard_src
+    assert "C_DecryptFinal" in guard_src
 
 
 # ---------------------------------------------------------------------------
@@ -1309,17 +1390,21 @@ def test_output_truncation_skips_wrapkey_and_generatekey() -> None:
 def test_ffi_length_encrypt_single_shot_guard_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C_Encrypt single-shot guard probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """C_Encrypt probe must classify a setup reject in the probe child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     with pytest.raises(pytest.xfail.Exception):
         test_ffi_length_boundary.TestSingleShotOutputGuard().test_encrypt_one_byte_output_preserves_guard(
@@ -1327,28 +1412,34 @@ def test_ffi_length_encrypt_single_shot_guard_child_marks_setup_reject(
             cfg,
         )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
-    assert "C_Encrypt" in scripts[0]
-    assert "GUARD_OVERWRITE" in scripts[0]
-    compile(scripts[0], "<child-encrypt-guard>", "exec")
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "ffi_length"
+    assert params.get("probe") == "encrypt_single_shot_guard"
+    guard_src = inspect.getsource(ffi_length_probe._run_encrypt_single_shot_guard)
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in guard_src
+    assert "C_Encrypt" in guard_src
+    assert "GUARD_OVERWRITE" in inspect.getsource(ffi_length_probe._run_encrypt_single_shot_guard)
 
 
 def test_ffi_length_decrypt_single_shot_guard_child_marks_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C_Decrypt single-shot guard probe must classify setup rejects in child."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """C_Decrypt probe must classify a setup reject in the probe child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     with pytest.raises(pytest.xfail.Exception):
         test_ffi_length_boundary.TestSingleShotOutputGuard().test_decrypt_one_byte_output_preserves_guard(
@@ -1356,12 +1447,14 @@ def test_ffi_length_decrypt_single_shot_guard_child_marks_setup_reject(
             cfg,
         )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
-    assert "C_Decrypt" in scripts[0]
-    assert "GUARD_OVERWRITE" in scripts[0]
-    compile(scripts[0], "<child-decrypt-guard>", "exec")
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "ffi_length"
+    assert params.get("probe") == "decrypt_single_shot_guard"
+    guard_src = inspect.getsource(ffi_length_probe._run_decrypt_single_shot_guard)
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in guard_src
+    assert "C_Decrypt" in guard_src
+    assert "GUARD_OVERWRITE" in inspect.getsource(ffi_length_probe._run_decrypt_single_shot_guard)
 
 
 def test_run_with_coverage_hang_classifies_not_unclassified(
