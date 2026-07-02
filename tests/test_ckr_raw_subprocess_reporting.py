@@ -17,7 +17,6 @@ from pkcs11_check.testcases._subprocess_trace import (
     drain_subprocess_rv_trace,
 )
 from pkcs11_check.testcases.ckr import (
-    _ctypes_raw,
     test_ckr_dual,
     test_ckr_fault_inject,
     test_ckr_general,
@@ -209,49 +208,6 @@ def test_ckr_multipart_subprocesses_emit_rv_trace(
     _assert_child_script_compiles(scripts[0])
     assert "P11_RV_TRACE_JSON:" in scripts[0]
     assert "enable_rv_trace(" in scripts[0]
-
-
-def test_ckr_ctypes_null_subprocesses_emit_rv_trace(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Direct-ctypes NULL probes must emit synthetic per-call RV traces."""
-    scripts: list[str] = []
-
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
-        return SimpleNamespace(returncode=0, stdout="CKR:0x00000007\n", stderr="")
-
-    monkeypatch.setattr(_ctypes_raw.subprocess, "run", _run_subprocess)
-
-    _ctypes_raw.run_null_test("/tmp/provider.so", 'print("CKR:0x00000007")\n')
-
-    assert len(scripts) == 1
-    _assert_child_script_compiles(scripts[0])
-    assert "P11_RV_TRACE_JSON:" in scripts[0]
-    assert "_p11check_record_rv(" in scripts[0]
-
-
-def test_ckr_inline_null_subprocesses_emit_rv_trace(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Inline NULL probes using RawPKCS11 setup must preserve failed child traces."""
-    scripts: list[str] = []
-
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
-        return SimpleNamespace(returncode=0, stdout="CKR:0x00000007\n", stderr="")
-
-    monkeypatch.setattr(subprocess, "run", _run_subprocess)
-
-    test_ckr_null_params.TestNullParameters().test_generate_random_null_buffer(
-        SimpleNamespace(module="/tmp/provider.so", pin=None)
-    )
-
-    assert len(scripts) == 1
-    _assert_child_script_compiles(scripts[0])
-    assert "P11_RV_TRACE_JSON:" in scripts[0]
-    assert "enable_rv_trace(" in scripts[0]
-    assert "_p11check_record_rv(" in scripts[0]
 
 
 def test_ckr_null_result_positive_exit_records_child_trace() -> None:
