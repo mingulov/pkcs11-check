@@ -4,23 +4,20 @@ Tests CKR_KEY_FUNCTION_NOT_PERMITTED by creating keys with specific
 CKA_* attributes set to False, then using raw C_*Init calls that
 bypass the python-pkcs11 wrapper's attribute checks.
 
-All tests run in subprocess for safety.
+Each test launches the ``ckr_raw_attrs`` probe module (``_probes/ckr_raw_attrs.py``)
+via ``run_probe`` at ``Level.LOGIN``: the probe infra opens a session and -- only when a
+PIN is configured -- logs in, with the PIN travelling solely through the ``_P11CHECK_PIN``
+env var (never embedded in source or params -- Invariant I3).
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-import textwrap
 from typing import Any
 
 import pytest
 
-from pkcs11_check.testcases._subprocess_preamble import (
-    _P11CHECK_PIN_ENV,
-    subprocess_session_preamble,
-)
+from pkcs11_check.testcases._probes.runner import run_probe
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 from pkcs11_check.testcases.conftest import classify_policy_enforcement
 
@@ -45,63 +42,15 @@ def _classify_permission_flag(out: str, *, label: str) -> None:
     classify_policy_enforcement(claimed=claimed, violated=violated, label=label)
 
 
-_EXTRA_IMPORTS = """\
-import ctypes
-from ctypes import byref, cast
-
-from pkcs11_check.raw.types_std import (
-    CKA_DECRYPT,
-    CKA_ENCRYPT,
-    CKA_SIGN,
-    CKA_TOKEN,
-    CKA_VALUE_LEN,
-    CKM_AES_ECB,
-    CKM_AES_KEY_GEN,
-    CKM_SHA256_HMAC,
-    CKR_FUNCTION_FAILED,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-    CKR_OK,
-    CK_ATTRIBUTE_PTR,
-    CK_OBJECT_HANDLE,
-)
-from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.recipes import read_attributes
-
-
-def _template_ptr(attrs):
-    return cast(attrs.array, CK_ATTRIBUTE_PTR)
-
-
-def _claim(sh, key_value, attr):
-    # CLAIM:0 if the key reports the permission flag back as False (module
-    # claims the restriction), CLAIM:1 otherwise (not honored / absent).
-    vals = read_attributes(raw, sh, key_value, [attr])
-    print("CLAIM:0" if vals.get(attr) is False else "CLAIM:1")
-"""
-
-
-def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
-    preamble = subprocess_session_preamble(
-        module,
-        pin=pin,
-        extra_imports=_EXTRA_IMPORTS,
-    )
-    script = preamble + textwrap.dedent(code) + "\ncleanup()\n"
-    # Pass the PIN via the child env (never embed it in the script source).
-    env = os.environ.copy()
-    if pin is not None:
-        env[_P11CHECK_PIN_ENV] = pin
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
+def _run_probe(p11_config: Any, probe: str) -> tuple[int, str, str]:
+    result = run_probe(
+        "ckr_raw_attrs",
+        {"module_path": str(p11_config.module), "probe": probe},
+        pin=pin_from_config(p11_config),
         timeout=15,
-        env=env,
+        coverage="session",
     )
-    return result.returncode, result.stdout.strip(), result.stderr.strip()
+    return result.returncode, result.stdout, result.stderr
 
 
 class TestKeyFunctionNotPermitted:
@@ -115,32 +64,7 @@ class TestKeyFunctionNotPermitted:
         permission flag is silently ignored -- keys without CKA_ENCRYPT=True can still
         be used to encrypt. This is a security finding.
         """
-        rc, out, err = _run(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-# Generate key with ENCRYPT=False
-attrs = template(
-    attr_ulong(CKA_VALUE_LEN, 32),
-    attr_bool(CKA_ENCRYPT, False),
-    attr_bool(CKA_DECRYPT, True),
-    attr_bool(CKA_TOKEN, False),
-)
-mech_kg = mech_simple(CKM_AES_KEY_GEN)  # AES_KEY_GEN
-key = CK_OBJECT_HANDLE(0)
-rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:C_GenerateKey for CKA_ENCRYPT=False failed: {ckr_name(rv)}")
-else:
-    _claim(sh, key.value, CKA_ENCRYPT)
-    # Try EncryptInit with CKA_ENCRYPT=False key
-    mech = mech_simple(CKM_AES_ECB)  # AES_ECB
-    rv = raw.C_EncryptInit(sh, mech.byref(), key.value)
-    print(f"CKR:0x{rv:08x}")
-    # Report result without asserting -- outer test checks security compliance
-    print("OK")
-""",
-        )
+        rc, out, err = _run_probe(p11_config, "encrypt")
         assert_ckr_subprocess_ok(rc, out, err, context="C_EncryptInit with CKA_ENCRYPT=False")
         # policy: enforcing CKA_ENCRYPT=False is mandatory (PKCS#11 v3.2).
         # claimed = the key read CKA_ENCRYPT back as False; violated = EncryptInit
@@ -153,31 +77,7 @@ else:
 
     def test_sign_not_permitted(self, p11_config: Any) -> None:
         """Key with CKA_SIGN=False -> C_SignInit -> CKR_KEY_FUNCTION_NOT_PERMITTED."""
-        rc, out, err = _run(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-# Generate key with SIGN=False
-attrs = template(
-    attr_ulong(CKA_VALUE_LEN, 32),
-    attr_bool(CKA_SIGN, False),
-    attr_bool(CKA_ENCRYPT, True),
-    attr_bool(CKA_TOKEN, False),
-)
-mech_kg = mech_simple(CKM_AES_KEY_GEN)
-key = CK_OBJECT_HANDLE(0)
-rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:C_GenerateKey for CKA_SIGN=False failed: {ckr_name(rv)}")
-else:
-    _claim(sh, key.value, CKA_SIGN)
-    mech = mech_simple(CKM_SHA256_HMAC)  # sign mech to test CKA_SIGN=False
-    rv = raw.C_SignInit(sh, mech.byref(), key.value)
-    print(f"CKR:0x{rv:08x}")
-    # Report result without asserting -- outer test checks security compliance
-    print("OK")
-""",
-        )
+        rc, out, err = _run_probe(p11_config, "sign")
         assert_ckr_subprocess_ok(rc, out, err, context="C_SignInit with CKA_SIGN=False")
         # policy: enforcing CKA_SIGN=False is mandatory (PKCS#11 v3.2).
         _classify_permission_flag(
@@ -194,30 +94,7 @@ else:
         permission flag is silently ignored -- keys without CKA_DECRYPT=True can still
         be used to decrypt. This is a security finding.
         """
-        rc, out, err = _run(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-attrs = template(
-    attr_ulong(CKA_VALUE_LEN, 32),
-    attr_bool(CKA_DECRYPT, False),
-    attr_bool(CKA_ENCRYPT, True),
-    attr_bool(CKA_TOKEN, False),
-)
-mech_kg = mech_simple(CKM_AES_KEY_GEN)
-key = CK_OBJECT_HANDLE(0)
-rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:C_GenerateKey for CKA_DECRYPT=False failed: {ckr_name(rv)}")
-else:
-    _claim(sh, key.value, CKA_DECRYPT)
-    mech = mech_simple(CKM_AES_ECB)  # AES_ECB
-    rv = raw.C_DecryptInit(sh, mech.byref(), key.value)
-    print(f"CKR:0x{rv:08x}")
-    # Report result without asserting -- outer test checks security compliance
-    print("OK")
-""",
-        )
+        rc, out, err = _run_probe(p11_config, "decrypt")
         assert_ckr_subprocess_ok(rc, out, err, context="C_DecryptInit with CKA_DECRYPT=False")
         # policy: enforcing CKA_DECRYPT=False is mandatory (PKCS#11 v3.2).
         _classify_permission_flag(
