@@ -20,6 +20,7 @@ import pytest
 
 from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.compliance import ComplianceLevel, note
+from pkcs11_check.raw import types_std
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
@@ -1799,90 +1800,21 @@ class TestAesCbcEncryptDataMalformedParams:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CBC_ENCRYPT_DATA"):
             pytest.skip("CKM_AES_CBC_ENCRYPT_DATA not supported")
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + f"""
-import ctypes
-from pkcs11_check.raw.pack import attr_bool, attr_ulong, template
-from pkcs11_check.raw.recipes import destroy_quietly, import_secret_key
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CK_AES_CBC_ENCRYPT_DATA_PARAMS,
-    CK_MECHANISM,
-    CK_OBJECT_HANDLE,
-    CKA_CLASS,
-    CKA_DERIVE,
-    CKA_EXTRACTABLE,
-    CKA_KEY_TYPE,
-    CKA_SENSITIVE,
-    CKA_TOKEN,
-    CKA_VALUE_LEN,
-    CKK_AES,
-    CKM_AES_CBC_ENCRYPT_DATA,
-    CKO_SECRET_KEY,
-    CKR_OK,
-)
-
-data_len = {data_len}
-data_buf = (ctypes.c_ubyte * 16)(*range(16))
-base_key = 0
-try:
-    base_key = import_secret_key(
-        raw,
-        sh,
-        CKK_AES,
-        bytes(range(32)),
-        attrs={{
-            CKA_DERIVE: True,
-            CKA_TOKEN: False,
-        }},
-    )
-except AssertionError as exc:
-    print(f"SETUP_XFAIL:AES derive base-key import rejected: {{exc}}")
-    cleanup()
-    raise SystemExit(0)
-
-try:
-    params = CK_AES_CBC_ENCRYPT_DATA_PARAMS()
-    for idx in range(16):
-        params.iv[idx] = idx
-    params.pData = {p_data_expr}
-    params.length = data_len
-
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_AES_CBC_ENCRYPT_DATA
-    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
-    mech.ulParameterLen = ctypes.sizeof(params)
-
-    derived_template = template(
-        attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
-        attr_ulong(CKA_KEY_TYPE, CKK_AES),
-        attr_ulong(CKA_VALUE_LEN, 16),
-        attr_bool(CKA_SENSITIVE, False),
-        attr_bool(CKA_EXTRACTABLE, True),
-        attr_bool(CKA_TOKEN, False),
-    )
-    derived = CK_OBJECT_HANDLE(0)
-    print("TARGET_CALL:C_DeriveKey(AES_CBC_ENCRYPT_DATA,{case_label})", flush=True)
-    rv = raw.C_DeriveKey(
-        sh,
-        ctypes.byref(mech),
-        base_key,
-        derived_template.ptr,
-        derived_template.count,
-        ctypes.byref(derived),
-    )
-    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
-    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
-    if rv == CKR_OK:
-        destroy_quietly(raw, sh, derived.value)
-finally:
-    destroy_quietly(raw, sh, base_key)
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "aes_cbc_encrypt_data_malformed",
+                "case_label": case_label,
+                "null_data": p_data_expr == "None",
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -1926,68 +1858,19 @@ class TestRsaPssSaltLengthBoundary:
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
         if not rs.has_mechanism("SHA256_RSA_PKCS_PSS"):
             pytest.skip("CKM_SHA256_RSA_PKCS_PSS not supported")
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + _CHILD_SETUP_REJECT_HELPERS
-            + f"""
-import ctypes
-from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM,
-    CK_RSA_PKCS_PSS_PARAMS,
-    CK_ULONG,
-    CKA_SIGN,
-    CKA_TOKEN,
-    CKG_MGF1_SHA256,
-    CKM_SHA256,
-    CKM_SHA256_RSA_PKCS_PSS,
-    CKR_OK,
-)
-
-pub = priv = 0
-try:
-    pub, priv = gen_rsa_keypair(
-        raw,
-        sh,
-        2048,
-        public_attrs={{CKA_TOKEN: False}},
-        private_attrs={{CKA_SIGN: True, CKA_TOKEN: False}},
-    )
-except AssertionError as exc:
-    setup_xfail_if_known_ckr(
-        exc, KEYPAIR_RUNTIME_REJECT_RVS, "RSA keypair generation rejected",
-    )
-
-try:
-    params = CK_RSA_PKCS_PSS_PARAMS()
-    params.hashAlg = CKM_SHA256
-    params.mgf = CKG_MGF1_SHA256
-    params.sLen = {salt_len}
-
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_RSA_PKCS_PSS
-    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
-    mech.ulParameterLen = ctypes.sizeof(params)
-
-    rv = raw.C_SignInit(sh, ctypes.byref(mech), priv)
-    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
-    if rv == CKR_OK:
-        data = (ctypes.c_ubyte * 16)(*range(16))
-        sig_len = CK_ULONG(512)
-        sig_buf = (ctypes.c_ubyte * 512)()
-        print("TARGET_CALL:C_Sign(SHA256_RSA_PKCS_PSS,sLen={salt_len:#x})", flush=True)
-        rv = raw.C_Sign(sh, data, 16, sig_buf, ctypes.byref(sig_len))
-    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
-    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
-finally:
-    destroy_quietly(raw, sh, pub)
-    destroy_quietly(raw, sh, priv)
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "rsa_pss_salt_length",
+                "salt_len": salt_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
             rc,
             stdout,
@@ -2035,58 +1918,19 @@ class TestGcmAadLengthBoundary:
             purpose="AES-GCM AAD-length crash probe setup",
         )
         destroy_returned_handles(rs, setup_key)
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + _CHILD_SETUP_REJECT_HELPERS
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CK_AES_GCM_PARAMS,
-    CK_MECHANISM,
-    CK_ULONG,
-    CKM_AES_GCM,
-    CKR_OK,
-)
-
-try:
-    key = gen_aes_key(raw, sh, 256)
-except AssertionError as exc:
-    setup_xfail_if_known_ckr(
-        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
-    )
-try:
-    iv = (ctypes.c_ubyte * 12)(*range(12))
-    params = CK_AES_GCM_PARAMS()
-    params.pIv = ctypes.cast(iv, ctypes.c_void_p)
-    params.ulIvLen = 12
-    params.ulIvBits = 96
-    params.pAAD = ctypes.cast(_HONEYPOT_BUF, ctypes.c_void_p)
-    params.ulAADLen = {aad_len}
-    params.ulTagBits = 128
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_AES_GCM
-    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
-    mech.ulParameterLen = ctypes.sizeof(params)
-    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
-    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
-    if rv == CKR_OK:
-        pt = (ctypes.c_ubyte * 16)(*range(16))
-        out_len = CK_ULONG(64)
-        out = (ctypes.c_ubyte * 64)()
-        print("TARGET_CALL:C_Encrypt(AES_GCM,ulAADLen={aad_len:#x})", flush=True)
-        rv = raw.C_Encrypt(sh, pt, 16, out, ctypes.byref(out_len))
-    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
-    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "gcm_aad_length",
+                "aad_len": aad_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -2129,58 +1973,19 @@ class TestCcmAadLengthBoundary:
             purpose="AES-CCM AAD-length crash probe setup",
         )
         destroy_returned_handles(rs, setup_key)
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + _CHILD_SETUP_REJECT_HELPERS
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CK_AES_CCM_PARAMS,
-    CK_MECHANISM,
-    CK_ULONG,
-    CKM_AES_CCM,
-    CKR_OK,
-)
-
-try:
-    key = gen_aes_key(raw, sh, 256)
-except AssertionError as exc:
-    setup_xfail_if_known_ckr(
-        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
-    )
-try:
-    nonce = (ctypes.c_ubyte * 13)(*range(13))
-    params = CK_AES_CCM_PARAMS()
-    params.ulDataLen = 16
-    params.pNonce = ctypes.cast(nonce, ctypes.c_void_p)
-    params.ulNonceLen = 13
-    params.pAAD = ctypes.cast(_HONEYPOT_BUF, ctypes.c_void_p)
-    params.ulAADLen = {aad_len}
-    params.ulMACLen = 16
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_AES_CCM
-    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
-    mech.ulParameterLen = ctypes.sizeof(params)
-    rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
-    print(f"INIT_RV:0x{{rv:08x}}", flush=True)
-    if rv == CKR_OK:
-        pt = (ctypes.c_ubyte * 16)(*range(16))
-        out_len = CK_ULONG(64)
-        out = (ctypes.c_ubyte * 64)()
-        print("TARGET_CALL:C_Encrypt(AES_CCM,ulAADLen={aad_len:#x})", flush=True)
-        rv = raw.C_Encrypt(sh, pt, 16, out, ctypes.byref(out_len))
-    print(f"TARGET_RV:0x{{rv:08x}}", flush=True)
-    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}", flush=True)
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "ccm_aad_length",
+                "aad_len": aad_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -2220,106 +2025,20 @@ class TestPbkdf2NestedLengthBoundary:
         rs = p11_raw_session
         if not rs.has_mechanism("PKCS5_PBKD2"):
             pytest.skip("CKM_PKCS5_PBKD2 not supported")
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.recipes import destroy_quietly
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CK_ATTRIBUTE,
-    CK_MECHANISM,
-    CK_OBJECT_HANDLE,
-    CK_PKCS5_PBKD2_PARAMS2,
-    CK_ULONG,
-    CKA_CLASS,
-    CKA_EXTRACTABLE,
-    CKA_KEY_TYPE,
-    CKA_SENSITIVE,
-    CKA_TOKEN,
-    CKA_VALUE_LEN,
-    CKK_GENERIC_SECRET,
-    CKM_PKCS5_PBKD2,
-    CKO_SECRET_KEY,
-    CKP_PKCS5_PBKD2_HMAC_SHA256,
-    CKR_OK,
-    CKZ_SALT_SPECIFIED,
-)
-
-field = {field!r}
-data_len = {data_len}
-
-password_real = (ctypes.c_ubyte * 8)(*b"password")
-salt_real = (ctypes.c_ubyte * 8)(*b"salt1234")
-prf_data_real = (ctypes.c_ubyte * 4)(*b"prf!")
-
-params = CK_PKCS5_PBKD2_PARAMS2()
-params.saltSource = CKZ_SALT_SPECIFIED
-_salt_buf = _HONEYPOT_BUF if field == "salt" else salt_real
-params.pSaltSourceData = ctypes.cast(_salt_buf, ctypes.c_void_p)
-params.ulSaltSourceDataLen = data_len if field == "salt" else len(salt_real)
-params.iterations = 1024
-params.prf = CKP_PKCS5_PBKD2_HMAC_SHA256
-if field == "prf_data":
-    params.pPrfData = ctypes.cast(_HONEYPOT_BUF, ctypes.c_void_p)
-    params.ulPrfDataLen = data_len
-else:
-    params.pPrfData = None
-    params.ulPrfDataLen = 0
-_pw_buf = _HONEYPOT_BUF if field == "password" else password_real
-params.pPassword = ctypes.cast(_pw_buf, ctypes.c_void_p)
-params.ulPasswordLen = data_len if field == "password" else len(password_real)
-
-mech = CK_MECHANISM()
-mech.mechanism = CKM_PKCS5_PBKD2
-mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
-mech.ulParameterLen = ctypes.sizeof(params)
-
-cls_val = CK_ULONG(CKO_SECRET_KEY)
-kt_val = CK_ULONG(CKK_GENERIC_SECRET)
-value_len = CK_ULONG(32)
-token_false = ctypes.c_ubyte(0)
-sensitive_false = ctypes.c_ubyte(0)
-extractable_true = ctypes.c_ubyte(1)
-
-tmpl = (CK_ATTRIBUTE * 6)()
-tmpl[0].type = CKA_CLASS
-tmpl[0].pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
-tmpl[0].ulValueLen = ctypes.sizeof(cls_val)
-tmpl[1].type = CKA_KEY_TYPE
-tmpl[1].pValue = ctypes.cast(ctypes.pointer(kt_val), ctypes.c_void_p)
-tmpl[1].ulValueLen = ctypes.sizeof(kt_val)
-tmpl[2].type = CKA_VALUE_LEN
-tmpl[2].pValue = ctypes.cast(ctypes.pointer(value_len), ctypes.c_void_p)
-tmpl[2].ulValueLen = ctypes.sizeof(value_len)
-tmpl[3].type = CKA_TOKEN
-tmpl[3].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
-tmpl[3].ulValueLen = 1
-tmpl[4].type = CKA_SENSITIVE
-tmpl[4].pValue = ctypes.cast(ctypes.pointer(sensitive_false), ctypes.c_void_p)
-tmpl[4].ulValueLen = 1
-tmpl[5].type = CKA_EXTRACTABLE
-tmpl[5].pValue = ctypes.cast(ctypes.pointer(extractable_true), ctypes.c_void_p)
-tmpl[5].ulValueLen = 1
-
-key = CK_OBJECT_HANDLE(0)
-rv = raw.C_GenerateKey(
-    sh,
-    ctypes.byref(mech),
-    ctypes.cast(tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
-    6,
-    ctypes.byref(key),
-)
-print(f"TARGET_RV:0x{{rv:08x}}")
-print(f"TARGET_RV_NAME:{{ckr_name(rv)}}")
-if rv == CKR_OK:
-    destroy_quietly(raw, sh, key.value)
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "pbkdf2_nested_length",
+                "field": field,
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -2388,102 +2107,24 @@ class TestPbeNestedLengthBoundary:
         mech_name, mech_const, key_type_const, iv_len, sign_verify = pbe_case
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_const} not supported")
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.recipes import destroy_quietly
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CK_ATTRIBUTE,
-    CK_MECHANISM,
-    CK_OBJECT_HANDLE,
-    CK_PBE_PARAMS,
-    CK_ULONG,
-    CKA_DECRYPT,
-    CKA_ENCRYPT,
-    CKA_EXTRACTABLE,
-    CKA_KEY_TYPE,
-    CKA_SENSITIVE,
-    CKA_SIGN,
-    CKA_TOKEN,
-    CKA_VERIFY,
-    CKK_DES2,
-    CKK_DES3,
-    CKK_SHA_1_HMAC,
-    CKM_PBA_SHA1_WITH_SHA1_HMAC,
-    CKM_PBE_SHA1_DES2_EDE_CBC,
-    CKM_PBE_SHA1_DES3_EDE_CBC,
-    CKR_OK,
-)
-
-field = {field!r}
-data_len = {data_len}
-sign_verify = {sign_verify!r}
-
-init_vector = (ctypes.c_ubyte * {iv_len})()
-password_real = (ctypes.c_ubyte * 8)(*b"password")
-salt_real = (ctypes.c_ubyte * 8)(*b"salt1234")
-
-params = CK_PBE_PARAMS()
-params.pInitVector = ctypes.cast(init_vector, ctypes.c_void_p)
-_pw_buf = _HONEYPOT_BUF if field == "password" else password_real
-params.pPassword = ctypes.cast(_pw_buf, ctypes.c_void_p)
-params.ulPasswordLen = data_len if field == "password" else len(password_real)
-_salt_buf = _HONEYPOT_BUF if field == "salt" else salt_real
-params.pSalt = ctypes.cast(_salt_buf, ctypes.c_void_p)
-params.ulSaltLen = data_len if field == "salt" else len(salt_real)
-params.ulIteration = 1024
-
-mech = CK_MECHANISM()
-mech.mechanism = {mech_const}
-mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
-mech.ulParameterLen = ctypes.sizeof(params)
-
-key_type = CK_ULONG({key_type_const})
-token_false = ctypes.c_ubyte(0)
-sensitive_false = ctypes.c_ubyte(0)
-extractable_true = ctypes.c_ubyte(1)
-purpose_true = ctypes.c_ubyte(1)
-
-tmpl = (CK_ATTRIBUTE * 6)()
-tmpl[0].type = CKA_KEY_TYPE
-tmpl[0].pValue = ctypes.cast(ctypes.pointer(key_type), ctypes.c_void_p)
-tmpl[0].ulValueLen = ctypes.sizeof(key_type)
-tmpl[1].type = CKA_TOKEN
-tmpl[1].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
-tmpl[1].ulValueLen = 1
-tmpl[2].type = CKA_SENSITIVE
-tmpl[2].pValue = ctypes.cast(ctypes.pointer(sensitive_false), ctypes.c_void_p)
-tmpl[2].ulValueLen = 1
-tmpl[3].type = CKA_EXTRACTABLE
-tmpl[3].pValue = ctypes.cast(ctypes.pointer(extractable_true), ctypes.c_void_p)
-tmpl[3].ulValueLen = 1
-tmpl[4].type = CKA_SIGN if sign_verify else CKA_ENCRYPT
-tmpl[4].pValue = ctypes.cast(ctypes.pointer(purpose_true), ctypes.c_void_p)
-tmpl[4].ulValueLen = 1
-tmpl[5].type = CKA_VERIFY if sign_verify else CKA_DECRYPT
-tmpl[5].pValue = ctypes.cast(ctypes.pointer(purpose_true), ctypes.c_void_p)
-tmpl[5].ulValueLen = 1
-
-key = CK_OBJECT_HANDLE(0)
-rv = raw.C_GenerateKey(
-    sh,
-    ctypes.byref(mech),
-    ctypes.cast(tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
-    6,
-    ctypes.byref(key),
-)
-print(f"TARGET_RV:0x{{rv:08x}}")
-print(f"TARGET_RV_NAME:{{ckr_name(rv)}}")
-if rv == CKR_OK:
-    destroy_quietly(raw, sh, key.value)
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "pbe_nested_length",
+                "mechanism": getattr(types_std, mech_const),
+                "key_type": getattr(types_std, key_type_const),
+                "iv_len": iv_len,
+                "sign_verify": sign_verify,
+                "field": field,
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -2569,137 +2210,20 @@ class TestTlsKdfRandomLengthBoundary:
         rs = p11_raw_session
         if not rs.has_mechanism("TLS_KDF"):
             pytest.skip("CKM_TLS_KDF not supported")
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.recipes import destroy_quietly
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CK_ATTRIBUTE,
-    CK_MECHANISM,
-    CK_OBJECT_HANDLE,
-    CK_SSL3_RANDOM_DATA,
-    CK_TLS_KDF_PARAMS,
-    CK_ULONG,
-    CKA_CLASS,
-    CKA_DERIVE,
-    CKA_KEY_TYPE,
-    CKA_TOKEN,
-    CKA_VALUE,
-    CKA_VALUE_LEN,
-    CKK_GENERIC_SECRET,
-    CKM_SHA256,
-    CKM_TLS_KDF,
-    CKO_SECRET_KEY,
-    CKR_OK,
-)
-
-field = {field!r}
-data_len = {data_len}
-
-key_bytes = (ctypes.c_ubyte * 48)(*range(48))
-cls_val = ctypes.c_ulong(CKO_SECRET_KEY)
-kt_val = ctypes.c_ulong(CKK_GENERIC_SECRET)
-derive_true = ctypes.c_ubyte(1)
-token_false = ctypes.c_ubyte(0)
-
-key_tmpl = (CK_ATTRIBUTE * 5)()
-key_tmpl[0].type = CKA_CLASS
-key_tmpl[0].pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
-key_tmpl[0].ulValueLen = ctypes.sizeof(cls_val)
-key_tmpl[1].type = CKA_KEY_TYPE
-key_tmpl[1].pValue = ctypes.cast(ctypes.pointer(kt_val), ctypes.c_void_p)
-key_tmpl[1].ulValueLen = ctypes.sizeof(kt_val)
-key_tmpl[2].type = CKA_VALUE
-key_tmpl[2].pValue = ctypes.cast(key_bytes, ctypes.c_void_p)
-key_tmpl[2].ulValueLen = 48
-key_tmpl[3].type = CKA_DERIVE
-key_tmpl[3].pValue = ctypes.cast(ctypes.pointer(derive_true), ctypes.c_void_p)
-key_tmpl[3].ulValueLen = 1
-key_tmpl[4].type = CKA_TOKEN
-key_tmpl[4].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
-key_tmpl[4].ulValueLen = 1
-
-base_key = CK_OBJECT_HANDLE(0)
-rv = raw.C_CreateObject(
-    sh,
-    ctypes.cast(key_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
-    5,
-    ctypes.byref(base_key),
-)
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:TLS KDF base-key import rejected: {{ckr_name(rv)}}")
-    cleanup()
-    raise SystemExit(0)
-
-try:
-    label = (ctypes.c_ubyte * 12)(*b"test label!!")
-    client_random_real = (ctypes.c_ubyte * 32)(*range(32))
-    server_random_real = (ctypes.c_ubyte * 32)(*range(32))
-
-    random_info = CK_SSL3_RANDOM_DATA()
-    random_info.pClientRandom = ctypes.cast(
-        _HONEYPOT_BUF if field == "client" else client_random_real, ctypes.c_void_p,
-    )
-    random_info.ulClientRandomLen = data_len if field == "client" else 32
-    random_info.pServerRandom = ctypes.cast(
-        _HONEYPOT_BUF if field == "server" else server_random_real, ctypes.c_void_p,
-    )
-    random_info.ulServerRandomLen = data_len if field == "server" else 32
-
-    params = CK_TLS_KDF_PARAMS()
-    params.prfMechanism = CKM_SHA256
-    params.pLabel = ctypes.cast(label, ctypes.c_void_p)
-    params.ulLabelLength = len(label)
-    params.RandomInfo = random_info
-    params.pContextData = None
-    params.ulContextDataLength = 0
-
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_TLS_KDF
-    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
-    mech.ulParameterLen = ctypes.sizeof(params)
-
-    d_cls = ctypes.c_ulong(CKO_SECRET_KEY)
-    d_kt = ctypes.c_ulong(CKK_GENERIC_SECRET)
-    d_vl = CK_ULONG(32)
-    d_tok = ctypes.c_ubyte(0)
-    d_tmpl = (CK_ATTRIBUTE * 4)()
-    d_tmpl[0].type = CKA_CLASS
-    d_tmpl[0].pValue = ctypes.cast(ctypes.pointer(d_cls), ctypes.c_void_p)
-    d_tmpl[0].ulValueLen = ctypes.sizeof(d_cls)
-    d_tmpl[1].type = CKA_KEY_TYPE
-    d_tmpl[1].pValue = ctypes.cast(ctypes.pointer(d_kt), ctypes.c_void_p)
-    d_tmpl[1].ulValueLen = ctypes.sizeof(d_kt)
-    d_tmpl[2].type = CKA_VALUE_LEN
-    d_tmpl[2].pValue = ctypes.cast(ctypes.pointer(d_vl), ctypes.c_void_p)
-    d_tmpl[2].ulValueLen = ctypes.sizeof(d_vl)
-    d_tmpl[3].type = CKA_TOKEN
-    d_tmpl[3].pValue = ctypes.cast(ctypes.pointer(d_tok), ctypes.c_void_p)
-    d_tmpl[3].ulValueLen = 1
-
-    derived = CK_OBJECT_HANDLE(0)
-    rv = raw.C_DeriveKey(
-        sh,
-        ctypes.byref(mech),
-        base_key.value,
-        ctypes.cast(d_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
-        4,
-        ctypes.byref(derived),
-    )
-    print(f"TARGET_RV:0x{{rv:08x}}")
-    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}")
-    if rv == CKR_OK:
-        destroy_quietly(raw, sh, derived.value)
-finally:
-    destroy_quietly(raw, sh, base_key.value)
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "tls_kdf_random_length",
+                "field": field,
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -2779,126 +2303,19 @@ class TestSp800108NestedCountBoundary:
         rs = p11_raw_session
         if not rs.has_mechanism("SP800_108_COUNTER_KDF"):
             pytest.skip("CKM_SP800_108_COUNTER_KDF not supported")
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.recipes import destroy_quietly
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CK_ATTRIBUTE,
-    CK_MECHANISM,
-    CK_OBJECT_HANDLE,
-    CK_PRF_DATA_PARAM,
-    CK_SP800_108_BYTE_ARRAY,
-    CK_SP800_108_DKM_LENGTH,
-    CK_SP800_108_DKM_LENGTH_FORMAT,
-    CK_SP800_108_DKM_LENGTH_SUM_OF_KEYS,
-    CK_SP800_108_ITERATION_VARIABLE,
-    CK_SP800_108_COUNTER_FORMAT,
-    CK_SP800_108_KDF_PARAMS,
-    CK_ULONG,
-    CKA_CLASS,
-    CKA_DERIVE,
-    CKA_KEY_TYPE,
-    CKA_TOKEN,
-    CKA_VALUE,
-    CKA_VALUE_LEN,
-    CKK_AES,
-    CKK_GENERIC_SECRET,
-    CKM_SHA256_HMAC,
-    CKM_SP800_108_COUNTER_KDF,
-    CKO_SECRET_KEY,
-    CKR_OK,
-)
-
-key_bytes = (ctypes.c_ubyte * 32)(*range(32))
-cls_val = ctypes.c_ulong(CKO_SECRET_KEY)
-kt_val = ctypes.c_ulong(CKK_GENERIC_SECRET)
-derive_true = ctypes.c_ubyte(1)
-token_false = ctypes.c_ubyte(0)
-
-key_tmpl = (CK_ATTRIBUTE * 5)()
-key_tmpl[0].type = CKA_CLASS
-key_tmpl[0].pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
-key_tmpl[0].ulValueLen = ctypes.sizeof(cls_val)
-key_tmpl[1].type = CKA_KEY_TYPE
-key_tmpl[1].pValue = ctypes.cast(ctypes.pointer(kt_val), ctypes.c_void_p)
-key_tmpl[1].ulValueLen = ctypes.sizeof(kt_val)
-key_tmpl[2].type = CKA_VALUE
-key_tmpl[2].pValue = ctypes.cast(key_bytes, ctypes.c_void_p)
-key_tmpl[2].ulValueLen = 32
-key_tmpl[3].type = CKA_DERIVE
-key_tmpl[3].pValue = ctypes.cast(ctypes.pointer(derive_true), ctypes.c_void_p)
-key_tmpl[3].ulValueLen = 1
-key_tmpl[4].type = CKA_TOKEN
-key_tmpl[4].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
-key_tmpl[4].ulValueLen = 1
-
-base_key = CK_OBJECT_HANDLE(0)
-rv = raw.C_CreateObject(
-    sh,
-    ctypes.cast(key_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
-    5,
-    ctypes.byref(base_key),
-)
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:SP800-108 base-key import rejected: {{ckr_name(rv)}}")
-    cleanup()
-    raise SystemExit(0)
-
-derived = CK_OBJECT_HANDLE(0)
-try:
-    params = CK_SP800_108_KDF_PARAMS()
-    params.prfType = CKM_SHA256_HMAC
-    params.ulNumberOfDataParams = {data_len}
-    params.pDataParams = ctypes.cast(_HONEYPOT_BUF, ctypes.c_void_p)
-    params.ulAdditionalDerivedKeys = 0
-    params.pAdditionalDerivedKeys = None
-
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SP800_108_COUNTER_KDF
-    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
-    mech.ulParameterLen = ctypes.sizeof(params)
-
-    d_cls = ctypes.c_ulong(CKO_SECRET_KEY)
-    d_kt = ctypes.c_ulong(CKK_AES)
-    d_vl = CK_ULONG(16)
-    d_tok = ctypes.c_ubyte(0)
-    d_tmpl = (CK_ATTRIBUTE * 4)()
-    d_tmpl[0].type = CKA_CLASS
-    d_tmpl[0].pValue = ctypes.cast(ctypes.pointer(d_cls), ctypes.c_void_p)
-    d_tmpl[0].ulValueLen = ctypes.sizeof(d_cls)
-    d_tmpl[1].type = CKA_KEY_TYPE
-    d_tmpl[1].pValue = ctypes.cast(ctypes.pointer(d_kt), ctypes.c_void_p)
-    d_tmpl[1].ulValueLen = ctypes.sizeof(d_kt)
-    d_tmpl[2].type = CKA_VALUE_LEN
-    d_tmpl[2].pValue = ctypes.cast(ctypes.pointer(d_vl), ctypes.c_void_p)
-    d_tmpl[2].ulValueLen = ctypes.sizeof(d_vl)
-    d_tmpl[3].type = CKA_TOKEN
-    d_tmpl[3].pValue = ctypes.cast(ctypes.pointer(d_tok), ctypes.c_void_p)
-    d_tmpl[3].ulValueLen = 1
-
-    rv = raw.C_DeriveKey(
-        sh,
-        ctypes.byref(mech),
-        base_key.value,
-        ctypes.cast(d_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
-        4,
-        ctypes.byref(derived),
-    )
-    print(f"TARGET_RV:0x{{rv:08x}}")
-    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}")
-    if rv == CKR_OK:
-        destroy_quietly(raw, sh, derived.value)
-finally:
-    destroy_quietly(raw, sh, base_key.value)
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "sp800_108_data_param_count",
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -2919,153 +2336,19 @@ cleanup()
         rs = p11_raw_session
         if not rs.has_mechanism("SP800_108_COUNTER_KDF"):
             pytest.skip("CKM_SP800_108_COUNTER_KDF not supported")
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.recipes import destroy_quietly
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CK_ATTRIBUTE,
-    CK_DERIVED_KEY,
-    CK_MECHANISM,
-    CK_OBJECT_HANDLE,
-    CK_PRF_DATA_PARAM,
-    CK_SP800_108_BYTE_ARRAY,
-    CK_SP800_108_COUNTER_FORMAT,
-    CK_SP800_108_DKM_LENGTH,
-    CK_SP800_108_DKM_LENGTH_FORMAT,
-    CK_SP800_108_DKM_LENGTH_SUM_OF_KEYS,
-    CK_SP800_108_ITERATION_VARIABLE,
-    CK_SP800_108_KDF_PARAMS,
-    CK_ULONG,
-    CKA_CLASS,
-    CKA_DERIVE,
-    CKA_EXTRACTABLE,
-    CKA_KEY_TYPE,
-    CKA_SENSITIVE,
-    CKA_TOKEN,
-    CKA_VALUE,
-    CKA_VALUE_LEN,
-    CKK_AES,
-    CKK_GENERIC_SECRET,
-    CKM_SHA256_HMAC,
-    CKM_SP800_108_COUNTER_KDF,
-    CKO_SECRET_KEY,
-    CKR_OK,
-)
-
-key_bytes = (ctypes.c_ubyte * 32)(*range(32))
-cls_val = ctypes.c_ulong(CKO_SECRET_KEY)
-kt_val = ctypes.c_ulong(CKK_GENERIC_SECRET)
-derive_true = ctypes.c_ubyte(1)
-token_false = ctypes.c_ubyte(0)
-
-key_tmpl = (CK_ATTRIBUTE * 5)()
-key_tmpl[0].type = CKA_CLASS
-key_tmpl[0].pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
-key_tmpl[0].ulValueLen = ctypes.sizeof(cls_val)
-key_tmpl[1].type = CKA_KEY_TYPE
-key_tmpl[1].pValue = ctypes.cast(ctypes.pointer(kt_val), ctypes.c_void_p)
-key_tmpl[1].ulValueLen = ctypes.sizeof(kt_val)
-key_tmpl[2].type = CKA_VALUE
-key_tmpl[2].pValue = ctypes.cast(key_bytes, ctypes.c_void_p)
-key_tmpl[2].ulValueLen = 32
-key_tmpl[3].type = CKA_DERIVE
-key_tmpl[3].pValue = ctypes.cast(ctypes.pointer(derive_true), ctypes.c_void_p)
-key_tmpl[3].ulValueLen = 1
-key_tmpl[4].type = CKA_TOKEN
-key_tmpl[4].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
-key_tmpl[4].ulValueLen = 1
-
-base_key = CK_OBJECT_HANDLE(0)
-rv = raw.C_CreateObject(
-    sh,
-    ctypes.cast(key_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
-    5,
-    ctypes.byref(base_key),
-)
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:SP800-108 base-key import rejected: {{ckr_name(rv)}}")
-    cleanup()
-    raise SystemExit(0)
-
-primary = CK_OBJECT_HANDLE(0)
-try:
-    counter = CK_SP800_108_COUNTER_FORMAT()
-    counter.bLittleEndian = 0
-    counter.ulWidthInBits = 32
-    label = (ctypes.c_ubyte * 12)(*b"hardening-1")
-    context = (ctypes.c_ubyte * 12)(*b"hardening-2")
-    dkm = CK_SP800_108_DKM_LENGTH_FORMAT()
-    dkm.dkmLengthMethod = CK_SP800_108_DKM_LENGTH_SUM_OF_KEYS
-    dkm.bLittleEndian = 0
-    dkm.ulWidthInBits = 32
-
-    data_params = (CK_PRF_DATA_PARAM * 4)()
-    data_params[0].type = CK_SP800_108_ITERATION_VARIABLE
-    data_params[0].pValue = ctypes.cast(ctypes.pointer(counter), ctypes.c_void_p)
-    data_params[0].ulValueLen = ctypes.sizeof(counter)
-    data_params[1].type = CK_SP800_108_BYTE_ARRAY
-    data_params[1].pValue = ctypes.cast(label, ctypes.c_void_p)
-    data_params[1].ulValueLen = len(label)
-    data_params[2].type = CK_SP800_108_BYTE_ARRAY
-    data_params[2].pValue = ctypes.cast(context, ctypes.c_void_p)
-    data_params[2].ulValueLen = len(context)
-    data_params[3].type = CK_SP800_108_DKM_LENGTH
-    data_params[3].pValue = ctypes.cast(ctypes.pointer(dkm), ctypes.c_void_p)
-    data_params[3].ulValueLen = ctypes.sizeof(dkm)
-
-    params = CK_SP800_108_KDF_PARAMS()
-    params.prfType = CKM_SHA256_HMAC
-    params.ulNumberOfDataParams = 4
-    params.pDataParams = ctypes.cast(data_params, ctypes.c_void_p)
-    params.ulAdditionalDerivedKeys = {data_len}
-    params.pAdditionalDerivedKeys = ctypes.cast(_HONEYPOT_BUF, ctypes.c_void_p)
-
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SP800_108_COUNTER_KDF
-    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
-    mech.ulParameterLen = ctypes.sizeof(params)
-
-    d_cls = ctypes.c_ulong(CKO_SECRET_KEY)
-    d_kt = ctypes.c_ulong(CKK_AES)
-    d_vl = CK_ULONG(16)
-    d_tok = ctypes.c_ubyte(0)
-    d_tmpl = (CK_ATTRIBUTE * 4)()
-    d_tmpl[0].type = CKA_CLASS
-    d_tmpl[0].pValue = ctypes.cast(ctypes.pointer(d_cls), ctypes.c_void_p)
-    d_tmpl[0].ulValueLen = ctypes.sizeof(d_cls)
-    d_tmpl[1].type = CKA_KEY_TYPE
-    d_tmpl[1].pValue = ctypes.cast(ctypes.pointer(d_kt), ctypes.c_void_p)
-    d_tmpl[1].ulValueLen = ctypes.sizeof(d_kt)
-    d_tmpl[2].type = CKA_VALUE_LEN
-    d_tmpl[2].pValue = ctypes.cast(ctypes.pointer(d_vl), ctypes.c_void_p)
-    d_tmpl[2].ulValueLen = ctypes.sizeof(d_vl)
-    d_tmpl[3].type = CKA_TOKEN
-    d_tmpl[3].pValue = ctypes.cast(ctypes.pointer(d_tok), ctypes.c_void_p)
-    d_tmpl[3].ulValueLen = 1
-
-    rv = raw.C_DeriveKey(
-        sh,
-        ctypes.byref(mech),
-        base_key.value,
-        ctypes.cast(d_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
-        4,
-        ctypes.byref(primary),
-    )
-    print(f"TARGET_RV:0x{{rv:08x}}")
-    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}")
-    if rv == CKR_OK:
-        destroy_quietly(raw, sh, primary.value)
-finally:
-    destroy_quietly(raw, sh, base_key.value)
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "sp800_108_additional_derived_key_count",
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
