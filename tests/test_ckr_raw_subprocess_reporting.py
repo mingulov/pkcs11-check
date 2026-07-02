@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -99,38 +98,33 @@ def test_v30_raw_message_encrypt_dispatches_probe(
     assert params["probe"] == "message_encrypt_mech_invalid"
 
 
-@pytest.mark.parametrize(
-    "module",
-    # test_ckr_v30_raw migrated to the _probes run_probe path (Family B): its child
-    # script generation is gone, so the white-box rv-trace assertion below no longer
-    # applies to it (rv-trace preservation is now covered by the shared probe_main
-    # infra + the run_probe dispatch test below).  test_ckr_v32_raw still hand-rolls
-    # its child script, so it stays covered here.
-    [test_ckr_v32_raw],
-)
-def test_versioned_raw_subprocesses_emit_and_record_rv_trace(
+def test_v32_raw_verify_signature_dispatches_probe(
     monkeypatch: pytest.MonkeyPatch,
-    module: Any,
 ) -> None:
-    """Hand-rolled v3.x CKR subprocesses must feed failed reports with child traces."""
-    marker = 'P11_RV_TRACE_JSON:[{"i":0,"fn":"C_Test","rv":48,"rv_name":"CKR_DEVICE_ERROR"}]'
-    scripts: list[str] = []
+    """The migrated v3.2 CKR test dispatches the ``ckr_v32_raw`` probe via run_probe.
 
-    def run_child(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
-        scripts.append(args[2])
-        return subprocess.CompletedProcess(args=args, returncode=1, stdout=marker, stderr="")
+    Replaces the deleted white-box rv-trace / script-string assertion for
+    ``test_ckr_v32_raw`` (its hand-rolled child-script generation is gone; rv-trace
+    preservation is now covered by the shared ``probe_main`` infra).  The PIN routes
+    through run_probe's ``pin=`` only (never the params), and the probe name +
+    ``probe`` key select the right child body.
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
 
-    monkeypatch.setattr(module.subprocess, "run", run_child)
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
+        return SimpleNamespace(returncode=0, stdout="CKR:0x00000070\nOK\n", stderr="")
 
-    module._run("/fake/p11.so", None, "print('OK')\n")
+    monkeypatch.setattr(test_ckr_v32_raw, "run_probe", fake_run_probe)
 
-    assert len(scripts) == 1
-    _assert_child_script_compiles(scripts[0])
-    assert "P11_RV_TRACE_JSON:" in scripts[0]
-    assert "raw.enable_rv_trace(" in scripts[0]
-    assert drain_subprocess_rv_trace() == [
-        {"i": 0, "fn": "C_Test", "rv": 48, "rv_name": "CKR_DEVICE_ERROR"}
-    ]
+    test_ckr_v32_raw.TestVerifySignatureErrors().test_mechanism_invalid(
+        SimpleNamespace(module="/tmp/provider.so", pin=None)
+    )
+
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_v32_raw"
+    assert params["probe"] == "verify_signature_mech_invalid"
 
 
 def test_ckr_subprocess_helper_reports_positive_exit_as_child_failure() -> None:
