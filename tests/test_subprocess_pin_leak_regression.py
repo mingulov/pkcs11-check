@@ -4,7 +4,7 @@ Batch B / M1 follow-up. Three files build their own subprocess boilerplate and
 previously interpolated the user PIN into the ``-c`` script (exposing it in the
 child argv via ``ps``/``/proc`` and in any traceback):
 
-- ``ckr/test_ckr_raw_state.py`` (own ``subprocess.run``)
+- ``ckr/test_ckr_raw_state.py`` (now via ``run_probe`` -> ``_probes/ckr_raw_state.py``)
 - ``test_dual_function.py`` (via ``run_raw_script``)
 - ``test_sign_recover.py`` (via ``run_raw_script``)
 
@@ -21,7 +21,6 @@ from typing import Any
 import pytest
 
 from pkcs11_check.testcases import test_dual_function, test_sign_recover
-from pkcs11_check.testcases._subprocess_preamble import _P11CHECK_PIN_ENV
 from pkcs11_check.testcases.ckr import test_ckr_raw_state
 
 _PIN = "s3cr3t-PIN-DO-NOT-LEAK"
@@ -35,58 +34,48 @@ def _cfg() -> SimpleNamespace:
     )
 
 
-# --- ckr/test_ckr_raw_state.py (own subprocess.run) ------------------------
+# --- ckr/test_ckr_raw_state.py (via run_probe) -----------------------------
 
 
-def test_ckr_raw_state_pin_not_in_script_or_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ckr_raw_state_pin_routed_to_run_probe_not_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, Any] = {}
 
-    class _Result:
-        returncode = 0
-        stdout = "CKR:0x00000000\nOK"
-        stderr = ""
+    def _fake_run_probe(
+        probe: str, params: dict[str, Any], *, pin: str | None = None, **_kwargs: Any
+    ) -> SimpleNamespace:
+        captured["probe"] = probe
+        captured["params"] = params
+        captured["pin"] = pin
+        return SimpleNamespace(returncode=0, stdout="CKR:0x00000000\nOK", stderr="")
 
-    def _fake_run(args: list[str], **kwargs: Any) -> _Result:
-        captured["args"] = args
-        captured["env"] = kwargs.get("env")
-        return _Result()
+    monkeypatch.setattr(test_ckr_raw_state, "run_probe", _fake_run_probe)
 
-    monkeypatch.setattr(test_ckr_raw_state.subprocess, "run", _fake_run)
-
-    # Run a probe that goes through _run() and builds + spawns the child script.
+    # Run a probe that goes through _run_probe() and launches the child probe module.
     test_ckr_raw_state.TestOperationActive().test_double_encrypt_init(_cfg())
 
-    args = captured["args"]
-    env = captured["env"]
-    # The script is the last argv element ("-c", <script>). The PIN must not be
-    # anywhere in the argv (script text included).
-    assert all(_PIN not in arg for arg in args)
-    # The PIN must be forwarded via the child env under the agreed key.
-    assert env[_P11CHECK_PIN_ENV] == _PIN
-    # Sanity: the script reads the PIN from the environment, not a literal.
-    script = args[-1]
-    assert "_os.environ.get" in script
-    assert "login_user(" in script
+    # The PIN must be forwarded to run_probe via pin= only (the runner injects it into
+    # the child env under _P11CHECK_PIN); it must never appear in the probe params.
+    assert captured["pin"] == _PIN
+    assert _PIN not in str(captured["params"])
 
 
-def test_ckr_raw_state_no_pin_means_no_env_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ckr_raw_state_no_pin_means_pin_none(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
-    class _Result:
-        returncode = 0
-        stdout = "CKR:0x00000000\nOK"
-        stderr = ""
+    def _fake_run_probe(
+        probe: str, params: dict[str, Any], *, pin: str | None = None, **_kwargs: Any
+    ) -> SimpleNamespace:
+        captured["pin"] = pin
+        return SimpleNamespace(returncode=0, stdout="CKR:0x00000000\nOK", stderr="")
 
-    def _fake_run(args: list[str], **kwargs: Any) -> _Result:
-        captured["env"] = kwargs.get("env")
-        return _Result()
-
-    monkeypatch.setattr(test_ckr_raw_state.subprocess, "run", _fake_run)
+    monkeypatch.setattr(test_ckr_raw_state, "run_probe", _fake_run_probe)
 
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", slot=0, pin=None)
     test_ckr_raw_state.TestOperationActive().test_double_encrypt_init(cfg)
 
-    assert _P11CHECK_PIN_ENV not in captured["env"]
+    assert captured["pin"] is None
 
 
 # --- test_dual_function.py / test_sign_recover.py (run_raw_script) ---------

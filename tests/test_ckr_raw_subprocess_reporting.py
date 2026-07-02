@@ -149,24 +149,30 @@ def test_fault_proxy_subprocesses_emit_rv_trace(
     assert "enable_rv_trace(" in scripts[0]
 
 
-def test_operation_state_raw_subprocesses_emit_rv_trace(
+def test_double_encrypt_init_dispatches_state_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Operation-state CKR subprocesses must preserve setup-xfail child traces."""
-    scripts: list[str] = []
+    """The double-EncryptInit state test dispatches the operation-state probe.
 
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
+    (rv-trace preservation is now handled + covered in the shared ``probe_main``
+    infra, so the legacy in-script rv-trace assertions are dropped here.)
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
         return SimpleNamespace(returncode=0, stdout="CKR:0x00000000\nOK\n", stderr="")
 
-    monkeypatch.setattr(test_ckr_raw_state.subprocess, "run", _run_subprocess)
+    monkeypatch.setattr(test_ckr_raw_state, "run_probe", fake_run_probe)
 
-    test_ckr_raw_state._run("/tmp/provider.so", None, 'print("OK")\n')
+    test_ckr_raw_state.TestOperationActive().test_double_encrypt_init(
+        SimpleNamespace(module="/tmp/provider.so", pin=None)
+    )
 
-    assert len(scripts) == 1
-    _assert_child_script_compiles(scripts[0])
-    assert "P11_RV_TRACE_JSON:" in scripts[0]
-    assert "enable_rv_trace(" in scripts[0]
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_raw_state"
+    assert params["probe"] == "double_encrypt_init"
 
 
 def test_ckr_multipart_subprocesses_emit_rv_trace(

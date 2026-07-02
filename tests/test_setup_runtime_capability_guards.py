@@ -2211,7 +2211,7 @@ def test_raw_state_setup_keygen_failure_is_xfail(
 ) -> None:
     monkeypatch.setattr(
         test_ckr_raw_state,
-        "_run",
+        "_run_probe",
         lambda *_args, **_kwargs: (
             0,
             "SETUP_XFAIL:C_GenerateKey failed:CKR_MECHANISM_INVALID",
@@ -2222,25 +2222,6 @@ def test_raw_state_setup_keygen_failure_is_xfail(
 
     with pytest.raises(pytest.xfail.Exception, match="C_GenerateKey failed"):
         test_ckr_raw_state.TestOperationActive().test_double_encrypt_init(config)
-
-
-def test_raw_state_script_formats_setup_ckr_name(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[list[str]] = []
-
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        calls.append(args)
-        return SimpleNamespace(returncode=0, stdout="OK\n", stderr="")
-
-    monkeypatch.setattr(test_ckr_raw_state.subprocess, "run", _run_subprocess)
-
-    rc, out, err = test_ckr_raw_state._run("/tmp/provider.so", None, "print('OK')\n")
-
-    assert rc == 0
-    assert out == "OK"
-    assert err == ""
-    assert "SETUP_XFAIL:C_GenerateKey failed:{ckr_name(rv)}" in calls[0][2]
 
 
 def test_mech_wrap_builds_rc2_cbc_params() -> None:
