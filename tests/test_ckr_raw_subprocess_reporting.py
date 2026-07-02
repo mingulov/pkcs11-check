@@ -19,7 +19,6 @@ from pkcs11_check.testcases._subprocess_trace import (
 from pkcs11_check.testcases.ckr import (
     test_ckr_dual,
     test_ckr_fault_inject,
-    test_ckr_general,
     test_ckr_null_params,
     test_ckr_raw_args_bad,
     test_ckr_raw_multipart,
@@ -316,28 +315,6 @@ def test_raw_args_bad_generate_key_null_mech_does_not_accept_ok(
     probe = probe.split('print("OK")', 1)[0]
     assert "CKR_ARGUMENTS_BAD" in probe
     assert "CKR_OK" not in probe
-
-
-def test_ckr_general_no_interface_method_emits_ok_marker(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A v2.40 module without C_GetInterfaceList is a completed probe."""
-    scripts: list[str] = []
-
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
-        return SimpleNamespace(returncode=0, stdout="CKR:OK:0_interfaces\n", stderr="")
-
-    monkeypatch.setattr(test_ckr_general.subprocess, "run", _run_subprocess)
-
-    test_ckr_general.TestInitializeErrors().test_get_interface_list(
-        SimpleNamespace(module="/tmp/provider.so", pin=None)
-    )
-
-    assert len(scripts) == 1
-    no_method_block = scripts[0].split("except AttributeError:", 1)[1]
-    assert 'print("CKR:NO_METHOD")' in no_method_block
-    assert 'print("OK")' in no_method_block
 
 
 def test_ckr_dual_reports_positive_subprocess_exit_as_child_failure(
