@@ -201,24 +201,33 @@ def test_double_encrypt_init_dispatches_state_probe(
     assert params["probe"] == "double_encrypt_init"
 
 
-def test_ckr_multipart_subprocesses_emit_rv_trace(
+def test_multipart_encrypt_update_dispatches_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Multipart raw subprocess tests must preserve failed child traces."""
-    scripts: list[str] = []
+    """The migrated multipart CKR test dispatches the ``ckr_raw_multipart`` probe.
 
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
+    Replaces the deleted white-box rv-trace / script-string assertion for
+    ``test_ckr_raw_multipart`` (its hand-rolled child-script generation is gone; rv-trace
+    preservation is now covered by the shared ``probe_main`` infra).  The PIN routes through
+    run_probe's ``pin=`` only (never the params), and the probe name + ``probe`` key select
+    the right child body.
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
         return SimpleNamespace(returncode=0, stdout="CKR:0x00000091\nOK\n", stderr="")
 
-    monkeypatch.setattr(test_ckr_raw_multipart.subprocess, "run", _run_subprocess)
+    monkeypatch.setattr(test_ckr_raw_multipart, "run_probe", fake_run_probe)
 
-    test_ckr_raw_multipart._run_raw_test("/tmp/provider.so", None, 'print("OK")\n')
+    test_ckr_raw_multipart.TestMultipartNotInitialized().test_encrypt_update_no_init(
+        SimpleNamespace(module="/tmp/provider.so", pin=None)
+    )
 
-    assert len(scripts) == 1
-    _assert_child_script_compiles(scripts[0])
-    assert "P11_RV_TRACE_JSON:" in scripts[0]
-    assert "enable_rv_trace(" in scripts[0]
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_raw_multipart"
+    assert params["probe"] == "encrypt_update"
 
 
 def test_ckr_null_result_positive_exit_records_child_trace() -> None:

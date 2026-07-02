@@ -7,26 +7,27 @@ Tests CKR conditions that python-pkcs11 wrapper prevents:
 - C_DigestUpdate/Final without C_DigestInit
 - C_DigestUpdate after a successful C_DigestFinal (operation-terminated state)
 
-All tests run in subprocess for safety (raw calls can crash on bugs).
+Each test launches the ``ckr_raw_multipart`` probe module (``_probes/ckr_raw_multipart.py``)
+via ``run_probe`` at ``Level.LOGIN``: the probe infra opens a session and -- only when a PIN is
+configured -- logs in, with the PIN travelling solely through the ``_P11CHECK_PIN`` env var
+(never embedded in source or params -- Invariant I3).  This CLOSES the legacy leak that
+formatted the PIN literal into the generated child-script source.  The probe drives the
+per-test multipart call and prints the resulting ``CKR:0x...`` line for the parent-side
+``_classify_multipart_ckr`` classifier.  Raw calls run in the subprocess for crash survival.
 
 Requires: pkcs11.raw.RawPKCS11
 """
 
 from __future__ import annotations
 
-import subprocess
-import sys
-import textwrap
 from typing import Any
 
 import pytest
 
 from pkcs11_check.raw.types_std import CKR_OPERATION_NOT_INITIALIZED
-from pkcs11_check.testcases.ckr._subprocess import (
-    assert_ckr_subprocess_ok,
-    ckr_subprocess_cleanup_setup,
-    ckr_subprocess_rv_trace_setup,
-)
+from pkcs11_check.testcases._probes.runner import run_probe
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
+from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
@@ -53,63 +54,16 @@ def _classify_multipart_ckr(out: str, *, label: str) -> None:
     classify_negative_rv(rv, (CKR_OPERATION_NOT_INITIALIZED,), label=label)
 
 
-def _run_raw_test(module_path: str, pin: str | None, test_code: str) -> tuple[int, str, str]:
-    """Run a raw PKCS#11 test in subprocess."""
-    pin_arg = f'"{pin}"' if pin else "None"
-    script = textwrap.dedent(f"""\
-        import ctypes, os
-        from pkcs11_check.raw.api import RawPKCS11
-        from pkcs11_check.raw.types_std import (
-            CK_NOTIFY, CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_OK,
-            CKR_OPERATION_NOT_INITIALIZED,
-            CKR_OPERATION_ACTIVE, CKR_KEY_FUNCTION_NOT_PERMITTED,
-            CKR_BUFFER_TOO_SMALL, CKR_DATA_LEN_RANGE,
-            CK_MECHANISM, CKF_SERIAL_SESSION, CKF_RW_SESSION,
-            CKR_ARGUMENTS_BAD, CKR_MECHANISM_INVALID,
-        )
-
-        raw = RawPKCS11.from_lib({module_path!r})
-{ckr_subprocess_rv_trace_setup(indent="        ")}
-        rv = raw.C_Initialize(None)
-        assert rv in (  # audit-ok: init idempotency
-            CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED
-        ), f"Init failed: 0x{{rv:08x}}"
-
-        # Get first slot
-        slot_count = ctypes.c_ulong(0)
-        raw.C_GetSlotList(1, None, ctypes.byref(slot_count))
-        slots = (ctypes.c_ulong * slot_count.value)()
-        raw.C_GetSlotList(1, slots, ctypes.byref(slot_count))
-
-        # Open session (use CK_NOTIFY() to create null function pointer)
-        session = ctypes.c_ulong(0)
-        rv = raw.C_OpenSession(slots[0], CKF_SERIAL_SESSION | CKF_RW_SESSION,
-                               None, CK_NOTIFY(), ctypes.byref(session))
-        assert rv == CKR_OK, f"OpenSession failed: 0x{{rv:08x}}"
-        sh = session.value
-{ckr_subprocess_cleanup_setup(indent="        ")}
-
-        # Login if needed
-        pin = {pin_arg}
-        if pin:
-            pin_bytes = pin.encode()
-            pin_buf = (ctypes.c_ubyte * len(pin_bytes))(*pin_bytes)
-            raw.C_Login(sh, 1, pin_buf, len(pin_bytes))
-
-{textwrap.indent(textwrap.dedent(test_code), "        ")}
-
-        _p11check_cleanup_session()
-    """)
-    import os
-
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
+def _run_probe(p11_config: Any, probe: str) -> tuple[int, str, str]:
+    """Launch the ``ckr_raw_multipart`` probe (Level.LOGIN) and return (rc, out, err)."""
+    result = run_probe(
+        "ckr_raw_multipart",
+        {"module_path": str(p11_config.module), "probe": probe},
+        pin=pin_from_config(p11_config),
         timeout=15,
-        env=os.environ.copy(),
+        coverage="session",
     )
-    return result.returncode, result.stdout.strip(), result.stderr.strip()
+    return result.returncode, result.stdout, result.stderr
 
 
 class TestMultipartNotInitialized:
@@ -117,159 +71,61 @@ class TestMultipartNotInitialized:
 
     def test_encrypt_update_no_init(self, p11_config: Any) -> None:
         """C_EncryptUpdate without C_EncryptInit."""
-        rc, out, err = _run_raw_test(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-            data = (ctypes.c_ubyte * 16)(*([0]*16))
-            out = (ctypes.c_ubyte * 32)()
-            out_len = ctypes.c_ulong(32)
-            rv = raw.C_EncryptUpdate(sh, data, 16, out, ctypes.byref(out_len))
-            print(f"CKR:0x{rv:08x}")
-            print("OK")
-            """,
-        )
+        rc, out, err = _run_probe(p11_config, "encrypt_update")
         assert_ckr_subprocess_ok(rc, out, err, context="C_EncryptUpdate without init")
         _classify_multipart_ckr(out, label="C_EncryptUpdate without C_EncryptInit")
 
     def test_encrypt_final_no_init(self, p11_config: Any) -> None:
         """C_EncryptFinal without C_EncryptInit."""
-        rc, out, err = _run_raw_test(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-            out = (ctypes.c_ubyte * 32)()
-            out_len = ctypes.c_ulong(32)
-            rv = raw.C_EncryptFinal(sh, out, ctypes.byref(out_len))
-            print(f"CKR:0x{rv:08x}")
-            print("OK")
-            """,
-        )
+        rc, out, err = _run_probe(p11_config, "encrypt_final")
         assert_ckr_subprocess_ok(rc, out, err, context="C_EncryptFinal without init")
         _classify_multipart_ckr(out, label="C_EncryptFinal without C_EncryptInit")
 
     def test_decrypt_update_no_init(self, p11_config: Any) -> None:
         """C_DecryptUpdate without C_DecryptInit."""
-        rc, out, err = _run_raw_test(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-            data = (ctypes.c_ubyte * 16)(*([0]*16))
-            out = (ctypes.c_ubyte * 32)()
-            out_len = ctypes.c_ulong(32)
-            rv = raw.C_DecryptUpdate(sh, data, 16, out, ctypes.byref(out_len))
-            print(f"CKR:0x{rv:08x}")
-            print("OK")
-            """,
-        )
+        rc, out, err = _run_probe(p11_config, "decrypt_update")
         assert_ckr_subprocess_ok(rc, out, err, context="C_DecryptUpdate without init")
         _classify_multipart_ckr(out, label="C_DecryptUpdate without C_DecryptInit")
 
     def test_sign_update_no_init(self, p11_config: Any) -> None:
         """C_SignUpdate without C_SignInit."""
-        rc, out, err = _run_raw_test(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-            data = (ctypes.c_ubyte * 16)(*([0]*16))
-            rv = raw.C_SignUpdate(sh, data, 16)
-            print(f"CKR:0x{rv:08x}")
-            print("OK")
-            """,
-        )
+        rc, out, err = _run_probe(p11_config, "sign_update")
         assert_ckr_subprocess_ok(rc, out, err, context="C_SignUpdate without init")
         _classify_multipart_ckr(out, label="C_SignUpdate without C_SignInit")
 
     def test_digest_update_no_init(self, p11_config: Any) -> None:
         """C_DigestUpdate without C_DigestInit."""
-        rc, out, err = _run_raw_test(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-            data = (ctypes.c_ubyte * 16)(*([0]*16))
-            rv = raw.C_DigestUpdate(sh, data, 16)
-            print(f"CKR:0x{rv:08x}")
-            print("OK")
-            """,
-        )
+        rc, out, err = _run_probe(p11_config, "digest_update")
         assert_ckr_subprocess_ok(rc, out, err, context="C_DigestUpdate without init")
         _classify_multipart_ckr(out, label="C_DigestUpdate without C_DigestInit")
 
     def test_digest_final_no_init(self, p11_config: Any) -> None:
         """C_DigestFinal without C_DigestInit."""
-        rc, out, err = _run_raw_test(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-            out = (ctypes.c_ubyte * 64)()
-            out_len = ctypes.c_ulong(64)
-            rv = raw.C_DigestFinal(sh, out, ctypes.byref(out_len))
-            print(f"CKR:0x{rv:08x}")
-            print("OK")
-            """,
-        )
+        rc, out, err = _run_probe(p11_config, "digest_final")
         assert_ckr_subprocess_ok(rc, out, err, context="C_DigestFinal without init")
         _classify_multipart_ckr(out, label="C_DigestFinal without C_DigestInit")
 
     def test_decrypt_final_no_init(self, p11_config: Any) -> None:
         """C_DecryptFinal without C_DecryptInit."""
-        rc, out, err = _run_raw_test(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-            out = (ctypes.c_ubyte * 32)()
-            out_len = ctypes.c_ulong(32)
-            rv = raw.C_DecryptFinal(sh, out, ctypes.byref(out_len))
-            print(f"CKR:0x{rv:08x}")
-            print("OK")
-            """,
-        )
+        rc, out, err = _run_probe(p11_config, "decrypt_final")
         assert_ckr_subprocess_ok(rc, out, err, context="C_DecryptFinal without init")
         _classify_multipart_ckr(out, label="C_DecryptFinal without C_DecryptInit")
 
     def test_sign_final_no_init(self, p11_config: Any) -> None:
         """C_SignFinal without C_SignInit."""
-        rc, out, err = _run_raw_test(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-            out = (ctypes.c_ubyte * 256)()
-            out_len = ctypes.c_ulong(256)
-            rv = raw.C_SignFinal(sh, out, ctypes.byref(out_len))
-            print(f"CKR:0x{rv:08x}")
-            print("OK")
-            """,
-        )
+        rc, out, err = _run_probe(p11_config, "sign_final")
         assert_ckr_subprocess_ok(rc, out, err, context="C_SignFinal without init")
         _classify_multipart_ckr(out, label="C_SignFinal without C_SignInit")
 
     def test_verify_update_no_init(self, p11_config: Any) -> None:
         """C_VerifyUpdate without C_VerifyInit."""
-        rc, out, err = _run_raw_test(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-            data = (ctypes.c_ubyte * 16)(*([0]*16))
-            rv = raw.C_VerifyUpdate(sh, data, 16)
-            print(f"CKR:0x{rv:08x}")
-            print("OK")
-            """,
-        )
+        rc, out, err = _run_probe(p11_config, "verify_update")
         assert_ckr_subprocess_ok(rc, out, err, context="C_VerifyUpdate without init")
         _classify_multipart_ckr(out, label="C_VerifyUpdate without C_VerifyInit")
 
     def test_verify_final_no_init(self, p11_config: Any) -> None:
         """C_VerifyFinal without C_VerifyInit."""
-        rc, out, err = _run_raw_test(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-            sig = (ctypes.c_ubyte * 32)(*([0]*32))
-            rv = raw.C_VerifyFinal(sh, sig, 32)
-            print(f"CKR:0x{rv:08x}")
-            print("OK")
-            """,
-        )
+        rc, out, err = _run_probe(p11_config, "verify_final")
         assert_ckr_subprocess_ok(rc, out, err, context="C_VerifyFinal without init")
         _classify_multipart_ckr(out, label="C_VerifyFinal without C_VerifyInit")
 
@@ -299,45 +155,7 @@ class TestUpdateAfterFinal:
         CKR_OK here means the module accepted data into a finished digest (lifecycle
         self-contradiction: accepted_invalid).
         """
-        rc, out, err = _run_raw_test(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-            from pkcs11_check.raw.types_std import CKM_SHA256
-
-            mech = CK_MECHANISM()
-            mech.mechanism = int(CKM_SHA256)
-            mech.pParameter = None
-            mech.ulParameterLen = 0
-
-            # Init
-            rv_init = raw.C_DigestInit(sh, ctypes.byref(mech))
-            if rv_init != CKR_OK:
-                print(f"SETUP_XFAIL: C_DigestInit(SHA256) not operational: 0x{rv_init:08x}")
-                print("OK")
-            else:
-                # Feed some data
-                data = (ctypes.c_ubyte * 4)(*[0x61, 0x62, 0x63, 0x64])
-                rv_upd = raw.C_DigestUpdate(sh, data, 4)
-                if rv_upd != CKR_OK:
-                    print(f"SETUP_XFAIL: C_DigestUpdate failed: 0x{rv_upd:08x}")
-                    print("OK")
-                else:
-                    # Finalize
-                    digest_buf = (ctypes.c_ubyte * 64)()
-                    digest_len = ctypes.c_ulong(64)
-                    rv_final = raw.C_DigestFinal(sh, digest_buf, ctypes.byref(digest_len))
-                    if rv_final != CKR_OK:
-                        print(f"SETUP_XFAIL: C_DigestFinal failed: 0x{rv_final:08x}")
-                        print("OK")
-                    else:
-                        # Probe: C_DigestUpdate after Final — must return OPERATION_NOT_INITIALIZED
-                        data2 = (ctypes.c_ubyte * 4)(*[0x65, 0x66, 0x67, 0x68])
-                        rv = raw.C_DigestUpdate(sh, data2, 4)
-                        print(f"CKR:0x{rv:08x}")
-                        print("OK")
-            """,
-        )
+        rc, out, err = _run_probe(p11_config, "digest_update_after_final")
         assert_ckr_subprocess_ok(rc, out, err, context="C_DigestUpdate after C_DigestFinal")
         _classify_multipart_ckr(out, label="C_DigestUpdate after C_DigestFinal")
 
@@ -349,60 +167,6 @@ class TestUpdateAfterFinal:
         CKR_OK here means the module accepted plaintext into a finished encryption (lifecycle
         self-contradiction: accepted_invalid).
         """
-        rc, out, err = _run_raw_test(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-            from pkcs11_check.raw.types_std import CKM_AES_ECB
-            from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
-
-            # Generate a 128-bit AES key for encrypt
-            key_handle = 0
-            try:
-                key_handle = gen_aes_key(raw, sh, 128)
-            except AssertionError as exc:
-                print(f"SETUP_XFAIL: AES_KEY_GEN not operational: {exc}")
-                print("OK")
-            if key_handle:
-                mech_enc = CK_MECHANISM()
-                mech_enc.mechanism = int(CKM_AES_ECB)
-                mech_enc.pParameter = None
-                mech_enc.ulParameterLen = 0
-
-                rv_init = raw.C_EncryptInit(sh, ctypes.byref(mech_enc), key_handle)
-                if rv_init != CKR_OK:
-                    destroy_quietly(raw, sh, key_handle)
-                    print(f"SETUP_XFAIL: C_EncryptInit(AES_ECB) not operational: 0x{rv_init:08x}")
-                    print("OK")
-                else:
-                    # Feed one block
-                    plain = (ctypes.c_ubyte * 16)(*([0]*16))
-                    enc_buf = (ctypes.c_ubyte * 32)()
-                    enc_len = ctypes.c_ulong(32)
-                    rv_upd = raw.C_EncryptUpdate(sh, plain, 16, enc_buf, ctypes.byref(enc_len))
-                    if rv_upd != CKR_OK:
-                        destroy_quietly(raw, sh, key_handle)
-                        print(f"SETUP_XFAIL: C_EncryptUpdate failed: 0x{rv_upd:08x}")
-                        print("OK")
-                    else:
-                        # Finalize
-                        fin_buf = (ctypes.c_ubyte * 32)()
-                        fin_len = ctypes.c_ulong(32)
-                        rv_final = raw.C_EncryptFinal(sh, fin_buf, ctypes.byref(fin_len))
-                        destroy_quietly(raw, sh, key_handle)
-                        if rv_final != CKR_OK:
-                            print(f"SETUP_XFAIL: C_EncryptFinal failed: 0x{rv_final:08x}")
-                            print("OK")
-                        else:
-                            # Probe: C_EncryptUpdate after Final — must be OPERATION_NOT_INITIALIZED
-                            plain2 = (ctypes.c_ubyte * 16)(*([0xff]*16))
-                            enc_buf2 = (ctypes.c_ubyte * 32)()
-                            enc_len2 = ctypes.c_ulong(32)
-                            rv = raw.C_EncryptUpdate(sh, plain2, 16, enc_buf2,
-                                                     ctypes.byref(enc_len2))
-                            print(f"CKR:0x{rv:08x}")
-                            print("OK")
-            """,
-        )
+        rc, out, err = _run_probe(p11_config, "encrypt_update_after_final")
         assert_ckr_subprocess_ok(rc, out, err, context="C_EncryptUpdate after C_EncryptFinal")
         _classify_multipart_ckr(out, label="C_EncryptUpdate after C_EncryptFinal")
