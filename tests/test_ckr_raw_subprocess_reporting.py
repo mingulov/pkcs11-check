@@ -225,27 +225,34 @@ def test_ckr_subprocess_helper_requires_ok_marker() -> None:
         assert_ckr_subprocess_ok(0, "CKR:0x00000000\n", "", context="CKR setup probe")
 
 
-def test_universal_fault_proxy_subprocess_emits_rv_trace(
+def test_universal_fault_proxy_dispatches_device_removed_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Universal fault-proxy subprocess must preserve child traces."""
-    scripts: list[str] = []
+    """The fault-proxy universal test dispatches the device-removed probe.
 
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
+    module_path is the fault-proxy; the real module + injection config ride in the
+    probe params as plain data (never a PIN).  (rv-trace preservation is now handled +
+    covered in the shared ``probe_main`` infra, so the legacy in-script rv-trace
+    assertions are dropped here.)
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
         return SimpleNamespace(returncode=0, stdout="OK:DEVICE_REMOVED\n", stderr="")
 
     monkeypatch.setattr(Path, "exists", lambda _self: True)
-    monkeypatch.setattr(test_ckr_universal.subprocess, "run", _run_subprocess)
+    monkeypatch.setattr(test_ckr_universal, "run_probe", fake_run_probe)
 
     test_ckr_universal.TestUniversalRealTriggers().test_device_removed_via_fault_proxy(
         SimpleNamespace(module="/tmp/provider.so")
     )
 
-    assert len(scripts) == 1
-    _assert_child_script_compiles(scripts[0])
-    assert "P11_RV_TRACE_JSON:" in scripts[0]
-    assert "enable_rv_trace(" in scripts[0]
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_universal"
+    assert params["probe"] == "device_removed"
+    assert params["real_module"] == "/tmp/provider.so"
 
 
 def test_raw_args_bad_setup_marker_is_xfail() -> None:
