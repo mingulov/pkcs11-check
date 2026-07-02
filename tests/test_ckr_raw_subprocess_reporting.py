@@ -31,10 +31,6 @@ from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 RawCheck = Callable[[int, str, str, str], None]
 
 
-def _assert_child_script_compiles(script: str) -> None:
-    compile(script, "<pkcs11-check-child-script>", "exec")
-
-
 def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
     names = set(mechanisms)
     return SimpleNamespace(
@@ -147,32 +143,36 @@ def test_ckr_subprocess_helper_converts_setup_marker_to_xfail() -> None:
         )
 
 
-def test_fault_proxy_subprocesses_emit_rv_trace(
+def test_fault_proxy_dispatches_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Fault-proxy CKR subprocesses must preserve setup-xfail child traces."""
-    scripts: list[str] = []
+    """The migrated fault-proxy CKR test dispatches the ``ckr_fault_inject`` probe.
 
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
-        return SimpleNamespace(
-            returncode=0,
-            stdout="OK:encrypt_decrypt_roundtrip\n",
-            stderr="",
-        )
+    Replaces the deleted white-box script-string / rv-trace assertion for
+    ``test_ckr_fault_inject`` (its hand-rolled child-script generation is gone; rv-trace
+    preservation is now covered by the shared ``probe_main`` infra).  ``module_path`` is the
+    fault-proxy; the real module rides in the probe params as plain data (``real_module``,
+    never a PIN), and the probe name + ``probe`` key select the right child body.
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
+        return SimpleNamespace(returncode=0, stdout="OK:encrypt_decrypt_roundtrip\n", stderr="")
 
     monkeypatch.setattr(test_ckr_fault_inject, "_skip_if_no_proxy", lambda: None)
     monkeypatch.setattr(test_ckr_fault_inject, "_PROXY_PATH", "/tmp/fault-proxy.so")
-    monkeypatch.setattr(test_ckr_fault_inject.subprocess, "run", _run_subprocess)
+    monkeypatch.setattr(test_ckr_fault_inject, "run_probe", fake_run_probe)
 
     test_ckr_fault_inject.TestFaultProxyBasic().test_proxy_encrypt_decrypt(
         SimpleNamespace(module="/tmp/provider.so", pin=None)
     )
 
-    assert len(scripts) == 1
-    _assert_child_script_compiles(scripts[0])
-    assert "P11_RV_TRACE_JSON:" in scripts[0]
-    assert "enable_rv_trace(" in scripts[0]
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_fault_inject"
+    assert params["probe"] == "proxy_encrypt_decrypt"
+    assert params["real_module"] == "/tmp/provider.so"
 
 
 def test_double_encrypt_init_dispatches_state_probe(
