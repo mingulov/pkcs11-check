@@ -72,9 +72,41 @@ def test_raw_check_reports_positive_exit_as_subprocess_failure(check: RawCheck) 
         check(1, "CKR:0x00000007", "AssertionError: unexpected CKR", "C_Test")
 
 
+def test_v30_raw_message_encrypt_dispatches_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The migrated v3.0 CKR test dispatches the ``ckr_v30_raw`` probe via run_probe.
+
+    Replaces the deleted white-box script-string assertion for ``test_ckr_v30_raw``:
+    the PIN routes through run_probe's ``pin=`` only (never the params), and the probe
+    name + ``probe`` key select the right child body.
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
+        return SimpleNamespace(returncode=0, stdout="CKR:0x00000070\nOK\n", stderr="")
+
+    monkeypatch.setattr(test_ckr_v30_raw, "run_probe", fake_run_probe)
+
+    test_ckr_v30_raw.TestMessageEncryptErrors().test_mechanism_invalid(
+        SimpleNamespace(module="/tmp/provider.so", pin=None)
+    )
+
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_v30_raw"
+    assert params["probe"] == "message_encrypt_mech_invalid"
+
+
 @pytest.mark.parametrize(
     "module",
-    [test_ckr_v30_raw, test_ckr_v32_raw],
+    # test_ckr_v30_raw migrated to the _probes run_probe path (Family B): its child
+    # script generation is gone, so the white-box rv-trace assertion below no longer
+    # applies to it (rv-trace preservation is now covered by the shared probe_main
+    # infra + the run_probe dispatch test below).  test_ckr_v32_raw still hand-rolls
+    # its child script, so it stays covered here.
+    [test_ckr_v32_raw],
 )
 def test_versioned_raw_subprocesses_emit_and_record_rv_trace(
     monkeypatch: pytest.MonkeyPatch,
