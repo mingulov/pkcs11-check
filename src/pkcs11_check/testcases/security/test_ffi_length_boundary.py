@@ -595,88 +595,20 @@ class TestMessageApiLengthBoundary:
 
         aad_len = data_len if field == "associated_data" else 16
         plaintext_len = data_len if field == "plaintext" else 16
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + _CHILD_SETUP_REJECT_HELPERS
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CK_GCM_MESSAGE_PARAMS,
-    CK_MECHANISM,
-    CKM_AES_GCM,
-    CKR_OK,
-    CK_ULONG,
-)
-
-try:
-    key = gen_aes_key(raw, sh, 256)
-except AssertionError as exc:
-    setup_xfail_if_known_ckr(
-        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
-    )
-
-try:
-    init_iv = (ctypes.c_ubyte * 12)(*range(12))
-    init_tag = (ctypes.c_ubyte * 16)()
-    init_params = CK_GCM_MESSAGE_PARAMS()
-    init_params.pIv = ctypes.cast(init_iv, ctypes.c_void_p)
-    init_params.ulIvLen = 12
-    init_params.ulIvFixedBits = 0
-    init_params.ivGenerator = 0
-    init_params.pTag = ctypes.cast(init_tag, ctypes.c_void_p)
-    init_params.ulTagBits = 128
-
-    init_mech = CK_MECHANISM()
-    init_mech.mechanism = CKM_AES_GCM
-    init_mech.pParameter = ctypes.cast(ctypes.pointer(init_params), ctypes.c_void_p)
-    init_mech.ulParameterLen = ctypes.sizeof(init_params)
-
-    rv = raw.C_MessageEncryptInit(sh, ctypes.byref(init_mech), key)
-    if rv != CKR_OK:
-        print(f"SETUP_XFAIL:C_MessageEncryptInit rejected: {{ckr_name(rv)}}")
-        cleanup()
-        raise SystemExit(0)
-
-    msg_iv = (ctypes.c_ubyte * 12)(*range(12, 24))
-    msg_tag = (ctypes.c_ubyte * 16)()
-    msg_params = CK_GCM_MESSAGE_PARAMS()
-    msg_params.pIv = ctypes.cast(msg_iv, ctypes.c_void_p)
-    msg_params.ulIvLen = 12
-    msg_params.ulIvFixedBits = 0
-    msg_params.ivGenerator = 0
-    msg_params.pTag = ctypes.cast(msg_tag, ctypes.c_void_p)
-    msg_params.ulTagBits = 128
-
-    aad = _HONEYPOT_PTR if {aad_len!r} != 16 else (ctypes.c_ubyte * 16)(*range(16))
-    plaintext = _HONEYPOT_PTR if {plaintext_len!r} != 16 else (ctypes.c_ubyte * 16)(*range(16, 32))
-    out_len = CK_ULONG(256)
-    out_buf = (ctypes.c_ubyte * 256)()
-
-    rv = raw.C_EncryptMessage(
-        sh,
-        ctypes.cast(ctypes.pointer(msg_params), ctypes.c_void_p),
-        ctypes.sizeof(msg_params),
-        aad,
-        {aad_len},
-        plaintext,
-        {plaintext_len},
-        out_buf,
-        ctypes.byref(out_len),
-    )
-    print(f"TARGET_RV:0x{{rv:08x}}")
-    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}")
-    final_rv = raw.C_MessageEncryptFinal(sh)
-    print(f"FINAL_RV:0x{{final_rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "encrypt_message",
+                "aad_len": aad_len,
+                "plaintext_len": plaintext_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -721,93 +653,20 @@ cleanup()
 
         aad_len = data_len if field == "associated_data" else 16
         ciphertext_len = data_len if field == "ciphertext" else 16
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + _CHILD_SETUP_REJECT_HELPERS
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CK_GCM_MESSAGE_PARAMS,
-    CK_MECHANISM,
-    CKM_AES_GCM,
-    CKR_OK,
-    CK_ULONG,
-)
-
-try:
-    key = gen_aes_key(raw, sh, 256)
-except AssertionError as exc:
-    setup_xfail_if_known_ckr(
-        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
-    )
-
-try:
-    init_iv = (ctypes.c_ubyte * 12)(*range(12))
-    init_tag = (ctypes.c_ubyte * 16)()
-    init_params = CK_GCM_MESSAGE_PARAMS()
-    init_params.pIv = ctypes.cast(init_iv, ctypes.c_void_p)
-    init_params.ulIvLen = 12
-    init_params.ulIvFixedBits = 0
-    init_params.ivGenerator = 0
-    init_params.pTag = ctypes.cast(init_tag, ctypes.c_void_p)
-    init_params.ulTagBits = 128
-
-    init_mech = CK_MECHANISM()
-    init_mech.mechanism = CKM_AES_GCM
-    init_mech.pParameter = ctypes.cast(ctypes.pointer(init_params), ctypes.c_void_p)
-    init_mech.ulParameterLen = ctypes.sizeof(init_params)
-
-    rv = raw.C_MessageDecryptInit(sh, ctypes.byref(init_mech), key)
-    if rv != CKR_OK:
-        print(f"SETUP_XFAIL:C_MessageDecryptInit rejected: {{ckr_name(rv)}}")
-        cleanup()
-        raise SystemExit(0)
-
-    msg_iv = (ctypes.c_ubyte * 12)(*range(12, 24))
-    msg_tag = (ctypes.c_ubyte * 16)(*range(24, 40))
-    msg_params = CK_GCM_MESSAGE_PARAMS()
-    msg_params.pIv = ctypes.cast(msg_iv, ctypes.c_void_p)
-    msg_params.ulIvLen = 12
-    msg_params.ulIvFixedBits = 0
-    msg_params.ivGenerator = 0
-    msg_params.pTag = ctypes.cast(msg_tag, ctypes.c_void_p)
-    msg_params.ulTagBits = 128
-
-    aad = (
-        _HONEYPOT_PTR if {aad_len!r} != 16 else (ctypes.c_ubyte * 16)(*range(16))
-    )
-    ciphertext = (
-        _HONEYPOT_PTR if {ciphertext_len!r} != 16
-        else (ctypes.c_ubyte * 16)(*range(40, 56))
-    )
-    out_len = CK_ULONG(256)
-    out_buf = (ctypes.c_ubyte * 256)()
-
-    rv = raw.C_DecryptMessage(
-        sh,
-        ctypes.cast(ctypes.pointer(msg_params), ctypes.c_void_p),
-        ctypes.sizeof(msg_params),
-        aad,
-        {aad_len},
-        ciphertext,
-        {ciphertext_len},
-        out_buf,
-        ctypes.byref(out_len),
-    )
-    print(f"TARGET_RV:0x{{rv:08x}}")
-    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}")
-    final_rv = raw.C_MessageDecryptFinal(sh)
-    print(f"FINAL_RV:0x{{final_rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "decrypt_message",
+                "aad_len": aad_len,
+                "ciphertext_len": ciphertext_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -855,108 +714,20 @@ cleanup()
         )
         destroy_returned_handles(rs, setup_key)
 
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + _CHILD_SETUP_REJECT_HELPERS
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CKF_END_OF_MESSAGE,
-    CK_GCM_MESSAGE_PARAMS,
-    CK_MECHANISM,
-    CKM_AES_GCM,
-    CKR_OK,
-    CK_ULONG,
-)
-
-try:
-    key = gen_aes_key(raw, sh, 256)
-except AssertionError as exc:
-    setup_xfail_if_known_ckr(
-        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
-    )
-
-try:
-    init_iv = (ctypes.c_ubyte * 12)(*range(12))
-    init_tag = (ctypes.c_ubyte * 16)(*range(12, 28))
-    init_params = CK_GCM_MESSAGE_PARAMS()
-    init_params.pIv = ctypes.cast(init_iv, ctypes.c_void_p)
-    init_params.ulIvLen = 12
-    init_params.ulIvFixedBits = 0
-    init_params.ivGenerator = 0
-    init_params.pTag = ctypes.cast(init_tag, ctypes.c_void_p)
-    init_params.ulTagBits = 128
-
-    init_mech = CK_MECHANISM()
-    init_mech.mechanism = CKM_AES_GCM
-    init_mech.pParameter = ctypes.cast(ctypes.pointer(init_params), ctypes.c_void_p)
-    init_mech.ulParameterLen = ctypes.sizeof(init_params)
-
-    rv = raw.C_MessageDecryptInit(sh, ctypes.byref(init_mech), key)
-    if rv != CKR_OK:
-        print(f"SETUP_XFAIL:C_MessageDecryptInit rejected: {{ckr_name(rv)}}")
-        cleanup()
-        raise SystemExit(0)
-
-    msg_iv = (ctypes.c_ubyte * 12)(*range(28, 40))
-    msg_tag = (ctypes.c_ubyte * 16)(*range(40, 56))
-    msg_params = CK_GCM_MESSAGE_PARAMS()
-    msg_params.pIv = ctypes.cast(msg_iv, ctypes.c_void_p)
-    msg_params.ulIvLen = 12
-    msg_params.ulIvFixedBits = 0
-    msg_params.ivGenerator = 0
-    msg_params.pTag = ctypes.cast(msg_tag, ctypes.c_void_p)
-    msg_params.ulTagBits = 128
-
-    out_len = CK_ULONG(256)
-    out_buf = (ctypes.c_ubyte * 256)()
-
-    if "{op}" == "C_DecryptMessageBegin":
-        rv = raw.C_DecryptMessageBegin(
-            sh,
-            ctypes.cast(ctypes.pointer(msg_params), ctypes.c_void_p),
-            ctypes.sizeof(msg_params),
-            _HONEYPOT_PTR,
-            {data_len},
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "decrypt_message_multipart",
+                "op": op,
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-    else:
-        ciphertext = (ctypes.c_ubyte * 16)(*range(56, 72))
-        rv = raw.C_DecryptMessageBegin(
-            sh,
-            ctypes.cast(ctypes.pointer(msg_params), ctypes.c_void_p),
-            ctypes.sizeof(msg_params),
-            ciphertext,
-            16,
-        )
-        if rv != CKR_OK:
-            print(f"SETUP_XFAIL:C_DecryptMessageBegin rejected: {{ckr_name(rv)}}")
-            cleanup()
-            raise SystemExit(0)
-        rv = raw.C_DecryptMessageNext(
-            sh,
-            None,
-            0,
-            _HONEYPOT_PTR,
-            {data_len},
-            out_buf,
-            ctypes.byref(out_len),
-            CKF_END_OF_MESSAGE,
-        )
-
-    print(f"TARGET_RV:0x{{rv:08x}}")
-    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}")
-    final_rv = raw.C_MessageDecryptFinal(sh)
-    print(f"FINAL_RV:0x{{final_rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -1000,62 +771,19 @@ cleanup()
         )
         destroy_returned_handles(rs, pub, priv)
 
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + _CHILD_SETUP_REJECT_HELPERS
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CKA_SIGN,
-    CKA_TOKEN,
-    CK_MECHANISM,
-    CKM_SHA256_RSA_PKCS,
-    CKR_OK,
-    CK_ULONG,
-)
-
-try:
-    pub, priv = gen_rsa_keypair(
-        raw,
-        sh,
-        2048,
-        public_attrs={{CKA_TOKEN: False}},
-        private_attrs={{CKA_SIGN: True, CKA_TOKEN: False}},
-    )
-except AssertionError as exc:
-    setup_xfail_if_known_ckr(
-        exc, KEYPAIR_RUNTIME_REJECT_RVS, "RSA keypair generation rejected",
-    )
-
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_RSA_PKCS
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_MessageSignInit(sh, ctypes.byref(mech), priv)
-    if rv != CKR_OK:
-        print(f"SETUP_XFAIL:C_MessageSignInit rejected: {{ckr_name(rv)}}")
-        cleanup()
-        raise SystemExit(0)
-
-    sig_len = CK_ULONG(512)
-    sig_buf = (ctypes.c_ubyte * 512)()
-    rv = raw.C_SignMessage(sh, None, 0, _HONEYPOT_PTR, {data_len}, sig_buf, ctypes.byref(sig_len))
-    print(f"TARGET_RV:0x{{rv:08x}}")
-    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}")
-    final_rv = raw.C_MessageSignFinal(sh)
-    print(f"FINAL_RV:0x{{final_rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, pub)
-    destroy_quietly(raw, sh, priv)
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "sign_message",
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -1104,86 +832,20 @@ cleanup()
         normal_data_len = 16
         verify_data_len = data_len if field == "data" else normal_data_len
         signature_len = data_len if field == "signature" else 256
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + _CHILD_SETUP_REJECT_HELPERS
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair, sign_single
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CKA_SIGN,
-    CKA_TOKEN,
-    CKA_VERIFY,
-    CK_MECHANISM,
-    CKM_SHA256_RSA_PKCS,
-    CKR_OK,
-)
-
-try:
-    pub, priv = gen_rsa_keypair(
-        raw,
-        sh,
-        2048,
-        public_attrs={{CKA_VERIFY: True, CKA_TOKEN: False}},
-        private_attrs={{CKA_SIGN: True, CKA_TOKEN: False}},
-    )
-except AssertionError as exc:
-    setup_xfail_if_known_ckr(
-        exc, KEYPAIR_RUNTIME_REJECT_RVS, "RSA keypair generation rejected",
-    )
-
-try:
-    data_bytes = bytes(range({normal_data_len}))
-    try:
-        signature = sign_single(raw, sh, priv, CKM_SHA256_RSA_PKCS, data_bytes)
-    except AssertionError as exc:
-        rv = getattr(exc, "rv", None)
-        detail = ckr_name(rv) if rv is not None else str(exc)
-        print(f"SETUP_XFAIL:standard signature generation rejected: {{detail}}")
-        cleanup()
-        raise SystemExit(0)
-
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_RSA_PKCS
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_MessageVerifyInit(sh, ctypes.byref(mech), pub)
-    if rv != CKR_OK:
-        print(f"SETUP_XFAIL:C_MessageVerifyInit rejected: {{ckr_name(rv)}}")
-        cleanup()
-        raise SystemExit(0)
-
-    data = (
-        _HONEYPOT_PTR if {verify_data_len!r} != {normal_data_len}
-        else (ctypes.c_ubyte * {normal_data_len})(*range({normal_data_len}))
-    )
-    sig_buf = (
-        _HONEYPOT_PTR if {signature_len!r} != 256
-        else (ctypes.c_ubyte * len(signature))(*signature)
-    )
-    rv = raw.C_VerifyMessage(
-        sh,
-        None,
-        0,
-        data,
-        {verify_data_len},
-        sig_buf,
-        {signature_len},
-    )
-    print(f"TARGET_RV:0x{{rv:08x}}")
-    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}")
-    final_rv = raw.C_MessageVerifyFinal(sh)
-    print(f"FINAL_RV:0x{{final_rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, pub)
-    destroy_quietly(raw, sh, priv)
-cleanup()
-"""
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "verify_message",
+                "verify_data_len": verify_data_len,
+                "signature_len": signature_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -1234,83 +896,20 @@ cleanup()
         )
         destroy_returned_handles(rs, pub, priv)
 
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + _CHILD_SETUP_REJECT_HELPERS
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CKA_SIGN,
-    CKA_TOKEN,
-    CKF_END_OF_MESSAGE,
-    CK_MECHANISM,
-    CKM_SHA256_RSA_PKCS,
-    CKR_OK,
-    CK_ULONG,
-)
-
-try:
-    pub, priv = gen_rsa_keypair(
-        raw,
-        sh,
-        2048,
-        public_attrs={{CKA_TOKEN: False}},
-        private_attrs={{CKA_SIGN: True, CKA_TOKEN: False}},
-    )
-except AssertionError as exc:
-    setup_xfail_if_known_ckr(
-        exc, KEYPAIR_RUNTIME_REJECT_RVS, "RSA keypair generation rejected",
-    )
-
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_RSA_PKCS
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_MessageSignInit(sh, ctypes.byref(mech), priv)
-    if rv != CKR_OK:
-        print(f"SETUP_XFAIL:C_MessageSignInit rejected: {{ckr_name(rv)}}")
-        cleanup()
-        raise SystemExit(0)
-
-    sig_len = CK_ULONG(512)
-    sig_buf = (ctypes.c_ubyte * 512)()
-
-    if "{op}" == "C_SignMessageBegin":
-        rv = raw.C_SignMessageBegin(sh, None, 0, _HONEYPOT_PTR, {data_len})
-    else:
-        data = (ctypes.c_ubyte * 16)(*range(16))
-        rv = raw.C_SignMessageBegin(sh, None, 0, data, 16)
-        if rv != CKR_OK:
-            print(f"SETUP_XFAIL:C_SignMessageBegin rejected: {{ckr_name(rv)}}")
-            cleanup()
-            raise SystemExit(0)
-        rv = raw.C_SignMessageNext(
-            sh,
-            None,
-            0,
-            _HONEYPOT_PTR,
-            {data_len},
-            sig_buf,
-            ctypes.byref(sig_len),
-            CKF_END_OF_MESSAGE,
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "sign_message_multipart",
+                "op": op,
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-
-    print(f"TARGET_RV:0x{{rv:08x}}")
-    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}")
-    final_rv = raw.C_MessageSignFinal(sh)
-    print(f"FINAL_RV:0x{{final_rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, pub)
-    destroy_quietly(raw, sh, priv)
-cleanup()
-"""
-        )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -1365,99 +964,22 @@ cleanup()
         begin_param_len = data_len if field == "begin_parameter" else 0
         next_data_len = data_len if field == "next_data" else normal_data_len
         next_signature_len = data_len if field == "next_signature" else 256
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + _CHILD_SETUP_REJECT_HELPERS
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.recipes import destroy_quietly, gen_rsa_keypair, sign_single
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CKA_SIGN,
-    CKA_TOKEN,
-    CKA_VERIFY,
-    CKF_END_OF_MESSAGE,
-    CK_MECHANISM,
-    CKM_SHA256_RSA_PKCS,
-    CKR_OK,
-)
-
-try:
-    pub, priv = gen_rsa_keypair(
-        raw,
-        sh,
-        2048,
-        public_attrs={{CKA_VERIFY: True, CKA_TOKEN: False}},
-        private_attrs={{CKA_SIGN: True, CKA_TOKEN: False}},
-    )
-except AssertionError as exc:
-    setup_xfail_if_known_ckr(
-        exc, KEYPAIR_RUNTIME_REJECT_RVS, "RSA keypair generation rejected",
-    )
-
-try:
-    data_bytes = bytes(range({normal_data_len}))
-    try:
-        signature = sign_single(raw, sh, priv, CKM_SHA256_RSA_PKCS, data_bytes)
-    except AssertionError as exc:
-        rv = getattr(exc, "rv", None)
-        detail = ckr_name(rv) if rv is not None else str(exc)
-        print(f"SETUP_XFAIL:standard signature generation rejected: {{detail}}")
-        cleanup()
-        raise SystemExit(0)
-
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_SHA256_RSA_PKCS
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_MessageVerifyInit(sh, ctypes.byref(mech), pub)
-    if rv != CKR_OK:
-        print(f"SETUP_XFAIL:C_MessageVerifyInit rejected: {{ckr_name(rv)}}")
-        cleanup()
-        raise SystemExit(0)
-
-    if "{field}" == "begin_parameter":
-        rv = raw.C_VerifyMessageBegin(
-            sh, ctypes.cast(_HONEYPOT_BUF, ctypes.c_void_p), {begin_param_len},
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "verify_message_multipart",
+                "field": field,
+                "begin_param_len": begin_param_len,
+                "next_data_len": next_data_len,
+                "next_signature_len": next_signature_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-    else:
-        rv = raw.C_VerifyMessageBegin(sh, None, 0)
-        if rv != CKR_OK:
-            print(f"SETUP_XFAIL:C_VerifyMessageBegin rejected: {{ckr_name(rv)}}")
-            cleanup()
-            raise SystemExit(0)
-        data = (
-            _HONEYPOT_PTR if {next_data_len!r} != {normal_data_len}
-            else (ctypes.c_ubyte * {normal_data_len})(*range({normal_data_len}))
-        )
-        sig_buf = (
-            _HONEYPOT_PTR if {next_signature_len!r} != 256
-            else (ctypes.c_ubyte * len(signature))(*signature)
-        )
-        rv = raw.C_VerifyMessageNext(
-            sh,
-            None,
-            0,
-            data,
-            {next_data_len},
-            sig_buf,
-            {next_signature_len},
-            CKF_END_OF_MESSAGE,
-        )
-
-    print(f"TARGET_RV:0x{{rv:08x}}")
-    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}")
-    final_rv = raw.C_MessageVerifyFinal(sh)
-    print(f"FINAL_RV:0x{{final_rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, pub)
-    destroy_quietly(raw, sh, priv)
-cleanup()
-"""
-        )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
@@ -1505,108 +1027,20 @@ cleanup()
         )
         destroy_returned_handles(rs, setup_key)
 
-        preamble = _preamble(p11_config)
-        script = (
-            preamble
-            + _CHILD_SETUP_REJECT_HELPERS
-            + f"""
-import ctypes
-{_HONEYPOT_MMAP_CODE}
-from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CKF_END_OF_MESSAGE,
-    CK_GCM_MESSAGE_PARAMS,
-    CK_MECHANISM,
-    CKM_AES_GCM,
-    CKR_OK,
-    CK_ULONG,
-)
-
-try:
-    key = gen_aes_key(raw, sh, 256)
-except AssertionError as exc:
-    setup_xfail_if_known_ckr(
-        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
-    )
-
-try:
-    init_iv = (ctypes.c_ubyte * 12)(*range(12))
-    init_tag = (ctypes.c_ubyte * 16)()
-    init_params = CK_GCM_MESSAGE_PARAMS()
-    init_params.pIv = ctypes.cast(init_iv, ctypes.c_void_p)
-    init_params.ulIvLen = 12
-    init_params.ulIvFixedBits = 0
-    init_params.ivGenerator = 0
-    init_params.pTag = ctypes.cast(init_tag, ctypes.c_void_p)
-    init_params.ulTagBits = 128
-
-    init_mech = CK_MECHANISM()
-    init_mech.mechanism = CKM_AES_GCM
-    init_mech.pParameter = ctypes.cast(ctypes.pointer(init_params), ctypes.c_void_p)
-    init_mech.ulParameterLen = ctypes.sizeof(init_params)
-
-    rv = raw.C_MessageEncryptInit(sh, ctypes.byref(init_mech), key)
-    if rv != CKR_OK:
-        print(f"SETUP_XFAIL:C_MessageEncryptInit rejected: {{ckr_name(rv)}}")
-        cleanup()
-        raise SystemExit(0)
-
-    msg_iv = (ctypes.c_ubyte * 12)(*range(12, 24))
-    msg_tag = (ctypes.c_ubyte * 16)()
-    msg_params = CK_GCM_MESSAGE_PARAMS()
-    msg_params.pIv = ctypes.cast(msg_iv, ctypes.c_void_p)
-    msg_params.ulIvLen = 12
-    msg_params.ulIvFixedBits = 0
-    msg_params.ivGenerator = 0
-    msg_params.pTag = ctypes.cast(msg_tag, ctypes.c_void_p)
-    msg_params.ulTagBits = 128
-
-    out_len = CK_ULONG(256)
-    out_buf = (ctypes.c_ubyte * 256)()
-
-    if "{op}" == "C_EncryptMessageBegin":
-        rv = raw.C_EncryptMessageBegin(
-            sh,
-            ctypes.cast(ctypes.pointer(msg_params), ctypes.c_void_p),
-            ctypes.sizeof(msg_params),
-            _HONEYPOT_PTR,
-            {data_len},
+        result = run_probe(
+            "ffi_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "encrypt_message_multipart",
+                "op": op,
+                "data_len": data_len,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-    else:
-        plaintext = (ctypes.c_ubyte * 16)(*range(16))
-        rv = raw.C_EncryptMessageBegin(
-            sh,
-            ctypes.cast(ctypes.pointer(msg_params), ctypes.c_void_p),
-            ctypes.sizeof(msg_params),
-            plaintext,
-            16,
-        )
-        if rv != CKR_OK:
-            print(f"SETUP_XFAIL:C_EncryptMessageBegin rejected: {{ckr_name(rv)}}")
-            cleanup()
-            raise SystemExit(0)
-        rv = raw.C_EncryptMessageNext(
-            sh,
-            None,
-            0,
-            _HONEYPOT_PTR,
-            {data_len},
-            out_buf,
-            ctypes.byref(out_len),
-            CKF_END_OF_MESSAGE,
-        )
-
-    print(f"TARGET_RV:0x{{rv:08x}}")
-    print(f"TARGET_RV_NAME:{{ckr_name(rv)}}")
-    final_rv = raw.C_MessageEncryptFinal(sh)
-    print(f"FINAL_RV:0x{{final_rv:08x}}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
-        )
-        rc, stdout, stderr = run_with_coverage(script, timeout=30, pin=pin_from_config(p11_config))
+        rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
