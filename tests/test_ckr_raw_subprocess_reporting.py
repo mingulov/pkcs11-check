@@ -169,26 +169,6 @@ def test_operation_state_raw_subprocesses_emit_rv_trace(
     assert "enable_rv_trace(" in scripts[0]
 
 
-def test_ckr_dual_subprocesses_emit_rv_trace(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Operation-state subprocess tests must preserve failed child traces."""
-    scripts: list[str] = []
-
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
-        return SimpleNamespace(returncode=0, stdout="OK:encrypt_without_init\n", stderr="")
-
-    monkeypatch.setattr(test_ckr_dual.subprocess, "run", _run_subprocess)
-
-    test_ckr_dual.TestOperationStateSubprocess().test_encrypt_without_init(
-        SimpleNamespace(module="/tmp/provider.so", pin=None)
-    )
-
-    assert len(scripts) == 1
-    _assert_child_script_compiles(scripts[0])
-    assert "P11_RV_TRACE_JSON:" in scripts[0]
-    assert "enable_rv_trace(" in scripts[0]
-
-
 def test_ckr_multipart_subprocesses_emit_rv_trace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -322,15 +302,14 @@ def test_ckr_dual_reports_positive_subprocess_exit_as_child_failure(
 ) -> None:
     """CKR operation-state child assertion exits must not be labelled crashes."""
 
-    def run_child(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            args=args,
+    def fake_run_probe(probe: str, params: Any, **_kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(
             returncode=1,
             stdout="",
             stderr="AssertionError: setup failed",
         )
 
-    monkeypatch.setattr(test_ckr_dual.subprocess, "run", run_child)
+    monkeypatch.setattr(test_ckr_dual, "run_probe", fake_run_probe)
 
     test_case = test_ckr_dual.TestOperationStateSubprocess()
     with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
@@ -378,57 +357,45 @@ def test_ckr_dual_sign_then_encrypt_xfails_advertised_aes_setup_reject(
         test_ckr_dual.TestOperationStateWrapper().test_sign_then_encrypt(rs)
 
 
-def test_encrypt_without_init_child_does_not_require_aes_setup(
+def test_encrypt_without_init_dispatches_encrypt_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C_Encrypt without C_EncryptInit should not fail during AES key setup."""
+    """The encrypt-without-init test dispatches its own probe (no AES key setup)."""
+    calls: list[tuple[str, dict[str, Any]]] = []
 
-    def run_child(
-        args: list[str],
-        *unused_args: object,
-        **unused_kwargs: object,
-    ) -> subprocess.CompletedProcess[str]:
-        script = args[2]
-        assert "gen_aes_key" not in script
-        assert "raw.C_Encrypt(" in script
-        assert "CKR_OPERATION_NOT_INITIALIZED" in script
-        return subprocess.CompletedProcess(
-            args=args,
-            returncode=0,
-            stdout="OK:encrypt_without_init\n",
-            stderr="",
-        )
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
+        return SimpleNamespace(returncode=0, stdout="OK:encrypt_without_init\n", stderr="")
 
-    monkeypatch.setattr(test_ckr_dual.subprocess, "run", run_child)
+    monkeypatch.setattr(test_ckr_dual, "run_probe", fake_run_probe)
 
     test_case = test_ckr_dual.TestOperationStateSubprocess()
     test_case.test_encrypt_without_init(SimpleNamespace(module="/fake/p11.so", pin=None))
 
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_dual"
+    assert params["probe"] == "encrypt_without_init"
 
-def test_double_digest_init_child_checks_operation_active(
+
+def test_double_digest_init_dispatches_digest_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The double-DigestInit subprocess should test the state violation directly."""
+    """The double-DigestInit test dispatches the operation-active probe."""
+    calls: list[tuple[str, dict[str, Any]]] = []
 
-    def run_child(
-        args: list[str],
-        *unused_args: object,
-        **unused_kwargs: object,
-    ) -> subprocess.CompletedProcess[str]:
-        script = args[2]
-        assert "digest_single" not in script
-        assert script.count("raw.C_DigestInit(") == 2
-        assert "CKR_OPERATION_ACTIVE" in script
-        return subprocess.CompletedProcess(
-            args=args,
-            returncode=0,
-            stdout="OK:double_digest_init_active\n",
-            stderr="",
-        )
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
+        return SimpleNamespace(returncode=0, stdout="OK:double_digest_init_active\n", stderr="")
 
-    monkeypatch.setattr(test_ckr_dual.subprocess, "run", run_child)
+    monkeypatch.setattr(test_ckr_dual, "run_probe", fake_run_probe)
 
     test_case = test_ckr_dual.TestOperationStateSubprocess()
     test_case.test_double_digest_init_via_subprocess(
         SimpleNamespace(module="/fake/p11.so", pin=None)
     )
+
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_dual"
+    assert params["probe"] == "double_digest_init"
