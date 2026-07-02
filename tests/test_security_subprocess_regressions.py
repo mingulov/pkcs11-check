@@ -397,13 +397,23 @@ def test_ffi_length_aes_child_script_marks_setup_reject(
 def test_ffi_length_keypair_child_scripts_mark_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """EC/RSA FFI child scripts should not expose setup keygen as probe failures."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """EC/RSA FFI probes must classify a child setup reject (SETUP_XFAIL) as xfail.
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    The keypair-keygen setup-reject logic now lives in the ``_probes/ffi_length.py`` child
+    (``KEYPAIR_RUNTIME_REJECT_RVS`` -> ``_setup_reject_or_raise``); when the child emits
+    ``SETUP_XFAIL`` the parent classifies it (via ``assert_subprocess_no_crash``) into an
+    xfail rather than exposing setup keygen as a probe failure.
+    """
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:keypair generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(
         test_ffi_length_boundary,
@@ -416,7 +426,7 @@ def test_ffi_length_keypair_child_scripts_mark_setup_reject(
         lambda *_a, **_k: (3, 4),
     )
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     with pytest.raises(pytest.xfail.Exception):
         test_ffi_length_boundary.TestMechanismNullInnerParams().test_ecdh_null_public_data(
@@ -429,27 +439,31 @@ def test_ffi_length_keypair_child_scripts_mark_setup_reject(
             cfg,
         )
 
-    assert len(scripts) == 2
-    assert all("SETUP_XFAIL:" in script for script in scripts)
-    assert all("KEYPAIR_RUNTIME_REJECT_RVS" in script for script in scripts)
+    assert len(calls) == 2
+    assert all(probe == "ffi_length" for probe, _ in calls)
+    assert {params.get("probe") for _, params in calls} == {
+        "ecdh_null_public_data",
+        "oaep_null_source_data",
+    }
+    # The setup-reject logic must live in the probe child, keyed on KEYPAIR_RUNTIME_REJECT_RVS.
+    assert "KEYPAIR_RUNTIME_REJECT_RVS" in inspect.getsource(ffi_length_probe)
 
 
 def test_ffi_length_eddsa_child_script_uses_edwards_keygen(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Ed25519 crash probes must use CKM_EC_EDWARDS_KEY_PAIR_GEN setup."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    scripts: list[str] = []
+    """Ed25519 crash probes must use CKM_EC_EDWARDS_KEY_PAIR_GEN setup (in the probe child)."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        scripts.append(script)
-        return 0, "SETUP_XFAIL:EC_EDWARDS keygen rejected: CKR_FUNCTION_NOT_SUPPORTED\n", ""
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        calls.append((probe, dict(params)))
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:EC_EDWARDS keygen rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            stderr="",
+        )
 
-    monkeypatch.setattr(
-        test_ffi_length_boundary,
-        "gen_ec_keypair_or_xfail",
-        lambda *_a, **_k: (1, 2),
-    )
     monkeypatch.setattr(
         test_ffi_length_boundary,
         "gen_edwards_keypair_or_xfail",
@@ -457,7 +471,7 @@ def test_ffi_length_eddsa_child_script_uses_edwards_keygen(
         raising=False,
     )
     monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
-    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_probe", _stub_probe)
 
     with pytest.raises(pytest.xfail.Exception):
         test_ffi_length_boundary.TestEddsaNullContext().test_eddsa_null_context_data(
@@ -465,10 +479,15 @@ def test_ffi_length_eddsa_child_script_uses_edwards_keygen(
             cfg,
         )
 
-    assert len(scripts) == 1
-    assert "CKM_EC_EDWARDS_KEY_PAIR_GEN" in scripts[0]
-    assert "gen_keypair" in scripts[0]
-    assert "gen_ec_keypair" not in scripts[0]
+    assert len(calls) == 1
+    probe_name, params = calls[0]
+    assert probe_name == "ffi_length"
+    assert params.get("probe") == "eddsa_null_context_data"
+    # The EdDSA keygen (Edwards) must live in the probe child, not via gen_ec_keypair.
+    eddsa_src = inspect.getsource(ffi_length_probe._run_eddsa_null_context_data)
+    assert "CKM_EC_EDWARDS_KEY_PAIR_GEN" in eddsa_src
+    assert "gen_keypair" in eddsa_src
+    assert "gen_ec_keypair" not in eddsa_src
 
 
 def test_ffi_null_update_aes_probe_xfails_setup_before_child(
