@@ -1388,32 +1388,29 @@ def test_ffi_length_decrypt_single_shot_guard_child_marks_setup_reject(
     assert "GUARD_OVERWRITE" in inspect.getsource(ffi_length_probe._run_decrypt_single_shot_guard)
 
 
-def test_run_with_coverage_hang_classifies_not_unclassified(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_probe_hang_classifies_as_crash_finding_not_unclassified() -> None:
     """A subprocess hang (module did not return) must classify as a crash-class
     finding, never escape as an unclassified TimeoutExpired leak.
 
     Regression for the kryoptic CKA_VALUE_LEN=(1<<32)+8 hang found by the
     softhsm2/kryoptic pool validation: the module tried to allocate ~4 GiB and
-    hung, and run_with_coverage's TimeoutExpired previously leaked unclassified.
+    hung. Since the probe-script extraction the launch path is ``run_probe``,
+    which converts the child TimeoutExpired into rc 124 + the timeout marker (I8);
+    ``assert_subprocess_completed`` must then turn that into a recorded finding.
     """
-    import subprocess as _sp
-
+    from pkcs11_check.testcases._probes.runner import run_probe
     from pkcs11_check.testcases._subprocess_preamble import (
         SUBPROCESS_TIMEOUT_MARKER,
         SUBPROCESS_TIMEOUT_RC,
-        run_with_coverage,
     )
     from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 
-    def _raise_timeout(*_a: object, **_k: object) -> object:
-        raise _sp.TimeoutExpired(cmd="x", timeout=10, output="partial", stderr="")
-
-    monkeypatch.setattr(_sp, "run", _raise_timeout)
-    rc, _out, err = run_with_coverage("print('unused')", timeout=10)
-    assert rc == SUBPROCESS_TIMEOUT_RC
-    assert SUBPROCESS_TIMEOUT_MARKER in err
+    # The _echo probe sleeps past the 1s timeout, forcing run_probe's hang path.
+    result = run_probe("_echo", {"module_path": "/nonexistent.so", "sleep": 5}, timeout=1)
+    assert result.returncode == SUBPROCESS_TIMEOUT_RC
+    assert SUBPROCESS_TIMEOUT_MARKER in result.stderr
     # The parent must turn the hang into a recorded (crash-class) finding.
     with pytest.raises(pytest.fail.Exception):
-        assert_subprocess_completed(rc, _out, err, context="probe hang regression")
+        assert_subprocess_completed(
+            result.returncode, result.stdout, result.stderr, context="probe hang regression"
+        )
