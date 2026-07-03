@@ -33,7 +33,6 @@ Most modules do not support these - tests skip cleanly.
 
 from __future__ import annotations
 
-import textwrap
 from ctypes import byref, c_ubyte, c_ulong, sizeof
 from typing import Any
 
@@ -102,8 +101,8 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPED_KEY_LEN_RANGE,
     CKR_WRAPPING_KEY_HANDLE_INVALID,
 )
-from pkcs11_check.testcases._raw_subprocess import run_raw_script
-from pkcs11_check.testcases._subprocess_preamble import subprocess_session_preamble
+from pkcs11_check.testcases._probes.runner import run_probe
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     classify_policy_enforcement,
@@ -175,63 +174,29 @@ _DERIVE_TEMPLATE_ENFORCEMENT_RVS = (
     CKR_TEMPLATE_INCONSISTENT,
 )
 
-_EXTRA_IMPORTS = """\
-import ctypes
-import sys
-from ctypes import byref
-"""
 
-_RAW_CLEANUP = """\
-close_session_quietly(raw, hSession)
-raw.C_Finalize(None)
-"""
-
-
-def _build_preamble(p11_config: Any) -> str:
-    """Build subprocess session preamble from p11_config."""
-    module_path = str(p11_config.module)
-    pin = p11_config.pin.get_secret_value() if p11_config.pin else None
-    slot_index = p11_config.slot if p11_config.slot is not None else 0
-
-    preamble = subprocess_session_preamble(
-        module_path,
-        pin=pin,
-        extra_imports=_EXTRA_IMPORTS,
-    )
-
-    # When a non-default slot index is requested, close the default session
-    # and reopen with the correct slot from the list.
-    if slot_index != 0:
-        slot_override = textwrap.dedent(f"""\
-            close_session_quietly(raw, sh)
-            slot_ids = get_slot_ids(raw)
-            if len(slot_ids) <= {slot_index}:
-                print(f"FATAL:GetSlotList:index={slot_index}:count={{len(slot_ids)}}")
-                raw.C_Finalize(None)
-                sys.exit(1)
-            sh = open_session(raw, slot_ids[{slot_index}], CKF_SERIAL_SESSION | CKF_RW_SESSION)
-        """)
-        preamble = preamble + slot_override
-
-    # Alias sh -> hSession for compatibility with script bodies
-    preamble = preamble + "hSession = sh\n"
-    return preamble
-
-
-def _run_config_script(
+def _run_gap_probe(
     p11_config: Any,
-    script_body: str,
+    probe: str,
     *,
     timeout: int = 10,
 ) -> tuple[int, str, str]:
-    pin = p11_config.pin.get_secret_value() if p11_config.pin else None
-    return run_raw_script(
-        _build_preamble(p11_config),
-        script_body,
-        cleanup=_RAW_CLEANUP,
+    """Launch the ``remaining_gaps`` probe under the configured session.
+
+    The child (``_probes/remaining_gaps.py``, dispatched on ``probe``) reproduces the legacy
+    per-config session setup: C_Initialize, slot-index resolution, RW session, login-if-PIN.
+    The PIN travels ONLY via ``run_probe(pin=...)`` -> ``_P11CHECK_PIN`` env (Invariant I3);
+    it is never embedded in params/argv/source.  Coverage + rv-trace are recorded by
+    ``run_probe`` (I6/I7).
+    """
+    result = run_probe(
+        "remaining_gaps",
+        {"module_path": str(p11_config.module), "slot_id": p11_config.slot, "probe": probe},
+        pin=pin_from_config(p11_config),
         timeout=timeout,
-        pin=pin,
+        coverage="session",
     )
+    return result.returncode, result.stdout, result.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -860,15 +825,7 @@ class TestLegacyParallelFunctions:
 
     def test_get_function_status_returns_not_parallel(self, p11_config: Any) -> None:
         """C_GetFunctionStatus must return CKR_FUNCTION_NOT_PARALLEL."""
-        returncode, stdout, stderr = _run_config_script(
-            p11_config,
-            """\
-rv = raw.C_GetFunctionStatus(hSession)
-print(f"GFS:0x{rv:08x}")
-rv2 = raw.C_CancelFunction(hSession)
-print(f"CF:0x{rv2:08x}")
-""",
-        )
+        returncode, stdout, stderr = _run_gap_probe(p11_config, "get_function_status")
         if returncode != 0:
             classify(
                 "honest_deviation",
@@ -910,13 +867,7 @@ print(f"CF:0x{rv2:08x}")
 
     def test_cancel_function_returns_not_parallel(self, p11_config: Any) -> None:
         """C_CancelFunction must return CKR_FUNCTION_NOT_PARALLEL."""
-        returncode, stdout, stderr = _run_config_script(
-            p11_config,
-            """\
-rv = raw.C_CancelFunction(hSession)
-print(f"CF:0x{rv:08x}")
-""",
-        )
+        returncode, stdout, stderr = _run_gap_probe(p11_config, "cancel_function")
         if returncode != 0:
             classify(
                 "honest_deviation",
@@ -1203,18 +1154,7 @@ class TestDualFunctionRemaining:
 
     def test_sign_encrypt_update_callable(self, p11_config: Any) -> None:
         """C_SignEncryptUpdate (index 56) exists and returns a defined CKR code."""
-        returncode, stdout, stderr = _run_config_script(
-            p11_config,
-            """\
-if "C_SignEncryptUpdate" not in raw.available_function_names():
-    print("SKIP:C_SignEncryptUpdate not in function list")
-    sys.exit(0)
-part = (ctypes.c_ubyte * 4)(*b"test")
-out_len = ctypes.c_ulong()
-rv = raw.C_SignEncryptUpdate(hSession, part, 4, None, byref(out_len))
-print(f"SEU:0x{rv:08x}")
-""",
-        )
+        returncode, stdout, stderr = _run_gap_probe(p11_config, "sign_encrypt_update")
         if "SKIP:" in stdout:
             pytest.skip(stdout.strip())
         if returncode < 0:
@@ -1239,18 +1179,7 @@ print(f"SEU:0x{rv:08x}")
 
     def test_decrypt_verify_update_callable(self, p11_config: Any) -> None:
         """C_DecryptVerifyUpdate (index 57) exists and returns a defined CKR code."""
-        returncode, stdout, stderr = _run_config_script(
-            p11_config,
-            """\
-if "C_DecryptVerifyUpdate" not in raw.available_function_names():
-    print("SKIP:C_DecryptVerifyUpdate not in function list")
-    sys.exit(0)
-part = (ctypes.c_ubyte * 4)(*b"test")
-out_len = ctypes.c_ulong()
-rv = raw.C_DecryptVerifyUpdate(hSession, part, 4, None, byref(out_len))
-print(f"DVU:0x{rv:08x}")
-""",
-        )
+        returncode, stdout, stderr = _run_gap_probe(p11_config, "decrypt_verify_update")
         if "SKIP:" in stdout:
             pytest.skip(stdout.strip())
         if returncode < 0:
