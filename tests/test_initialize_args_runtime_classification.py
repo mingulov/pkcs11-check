@@ -27,7 +27,7 @@ from pkcs11_check.testcases import test_initialize_args as tia
 
 
 def _patch(monkeypatch: pytest.MonkeyPatch, rv: int) -> None:
-    monkeypatch.setattr(tia, "_run_init_args_script", lambda *_a, **_k: (0, str(int(rv)), ""))
+    monkeypatch.setattr(tia, "_run_init_args_probe", lambda *_a, **_k: (0, str(int(rv)), ""))
     monkeypatch.setattr(tia, "_parse_rv", lambda stdout: int(stdout))
 
 
