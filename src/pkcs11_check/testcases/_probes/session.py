@@ -56,6 +56,7 @@ class ProbeContext:
     sh: int | None
     slot_id: int | None
     cleanup: Callable[[], None]
+    module_path: str
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +138,9 @@ def probe_main(
     atexit.register(_cleanup)
 
     slot_id = params.slot_id
-    ctx = ProbeContext(raw=raw, sh=None, slot_id=slot_id, cleanup=_cleanup)
+    ctx = ProbeContext(
+        raw=raw, sh=None, slot_id=slot_id, cleanup=_cleanup, module_path=params.module_path
+    )
 
     if level == Level.LOAD:
         run_fn(ctx, params.extra)
