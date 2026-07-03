@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from pkcs11_check.testcases.ckr import _subprocess
 
 
@@ -22,12 +20,3 @@ def test_ckr_subprocess_cleanup_registers_idempotent_session_cleanup() -> None:
     cleanup_pos = script.index("def _p11check_cleanup_session():")
     register_pos = script.index("_p11check_atexit.register(_p11check_cleanup_session)")
     assert register_pos > cleanup_pos
-
-
-def test_destructive_ckr_subprocesses_use_registered_cleanup() -> None:
-    source = Path("src/pkcs11_check/testcases/ckr/test_ckr_destructive.py").read_text()
-
-    assert "ckr_subprocess_rv_trace_setup" in source
-    assert source.count("ckr_subprocess_cleanup_setup()") >= 4
-    assert 'globals().get("_p11check_cleanup_session")' in source
-    assert "{ckr_subprocess_cleanup_setup()}" not in source

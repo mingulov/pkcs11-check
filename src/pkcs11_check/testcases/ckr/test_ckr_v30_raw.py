@@ -1,127 +1,41 @@
 """CKR tests for v3.0 functions via raw ctypes calls.
 
 Tests C_MessageEncryptInit, C_MessageDecryptInit, C_MessageSignInit,
-C_MessageVerifyInit, C_LoginUser, C_SessionCancel using RawPKCS11
+C_MessageVerifyInit, C_EncryptMessage, C_SessionCancel using RawPKCS11
 with funclist3_ptr for v3.0 function access.
 
 Requires v3.0+ module. Skips on v2.40 modules.
-All tests run in subprocess for safety.
+
+Each test launches the ``ckr_v30_raw`` probe module (``_probes/ckr_v30_raw.py``) via
+``run_probe`` at ``Level.LOGIN``: the probe infra opens a session and -- only when a PIN is
+configured -- logs in, with the PIN travelling solely through the ``_P11CHECK_PIN`` env var
+(never embedded in source or params -- Invariant I3).  This CLOSES the legacy leak that
+formatted the PIN literal into the generated child-script source.  The probe drives the
+per-test v3.0 call and prints the resulting ``CKR:0x...`` line for the ``_check`` classifier.
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-import textwrap
 from typing import Any
 
 import pytest
 
 from pkcs11_check.classification import fail_as
-from pkcs11_check.testcases._subprocess_trace import record_subprocess_rv_trace
-from pkcs11_check.testcases.ckr._subprocess import ckr_subprocess_cleanup_setup
+from pkcs11_check.testcases._probes.runner import run_probe
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
-_RV_TRACE_SETUP = """\
-import atexit as _p11check_atexit
-import json as _p11check_json
-import os as _p11check_os
 
-
-def _p11check_rv_trace_enabled():
-    _value = _p11check_os.environ.get("PKCS11_CHECK_RV_TRACE", "")
-    if _value.strip().lower() in ("1", "true", "yes", "on"):
-        return True
-    return bool(_p11check_os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT"))
-
-
-def _p11check_rv_trace_maxlen():
-    _value = _p11check_os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT")
-    if not _value:
-        return None
-    try:
-        _maxlen = int(_value)
-    except ValueError:
-        return None
-    return _maxlen if _maxlen > 0 else None
-
-
-if _p11check_rv_trace_enabled():
-    raw.enable_rv_trace(maxlen=_p11check_rv_trace_maxlen())
-
-    def _p11check_emit_rv_trace():
-        try:
-            print(
-                "P11_RV_TRACE_JSON:"
-                + _p11check_json.dumps(raw.rv_trace, separators=(",", ":")),
-                flush=True,
-            )
-        except (OSError, TypeError, ValueError):
-            pass
-
-    _p11check_atexit.register(_p11check_emit_rv_trace)
-"""
-
-_SCRIPT_TEMPLATE = """\
-import ctypes, os, sys
-from pkcs11_check.raw.api import RawPKCS11
-from pkcs11_check.raw.bootstrap import get_slot_ids, open_session, login_user
-from pkcs11_check.raw.types_std import (
-    CKR_OK, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED,
-    CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_KEY_TYPE_INCONSISTENT,
-    CKR_FUNCTION_NOT_SUPPORTED, CKR_ARGUMENTS_BAD, CKR_OPERATION_ACTIVE,
-    CK_MECHANISM, CKF_SERIAL_SESSION, CKF_RW_SESSION, CKU_USER,
-)
-
-raw = RawPKCS11.from_lib({module!r})
-raw.C_Initialize(None)
-{rv_trace_setup}
-
-# Check if v3.0 functions are available
-if raw.interface_version == "2.40":
-    print("SKIP:v2.40_only")
-    raw.C_Finalize(None)
-    sys.exit(0)
-
-if "C_MessageEncryptInit" not in raw._funcs:
-    print("SKIP:no_v3_funcs")
-    raw.C_Finalize(None)
-    sys.exit(0)
-
-# Open session
-slots = get_slot_ids(raw, token_present=True)
-sh = open_session(raw, slots[0], CKF_SERIAL_SESSION | CKF_RW_SESSION)
-{cleanup_setup}
-pin = {pin_arg}
-if pin:
-    login_user(raw, sh, CKU_USER, pin.encode())
-
-{test_code}
-
-_p11check_cleanup_session()
-"""
-
-
-def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
-    pin_arg = f'"{pin}"' if pin else "None"
-    script = _SCRIPT_TEMPLATE.format(
-        module=module,
-        pin_arg=pin_arg,
-        rv_trace_setup=textwrap.dedent(_RV_TRACE_SETUP),
-        cleanup_setup=ckr_subprocess_cleanup_setup(),
-        test_code=textwrap.dedent(code),
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
+def _run_probe(p11_config: Any, probe: str) -> tuple[int, str, str]:
+    result = run_probe(
+        "ckr_v30_raw",
+        {"module_path": str(p11_config.module), "probe": probe},
+        pin=pin_from_config(p11_config),
         timeout=15,
-        env=os.environ.copy(),
+        coverage="session",
     )
-    record_subprocess_rv_trace(result.stdout, result.stderr)
-    return result.returncode, result.stdout.strip(), result.stderr.strip()
+    return result.returncode, result.stdout, result.stderr
 
 
 def _check(rc: int, out: str, err: str, func: str) -> None:
@@ -151,45 +65,12 @@ class TestMessageEncryptErrors:
 
     def test_mechanism_invalid(self, p11_config: Any) -> None:
         """C_MessageEncryptInit with digest mechanism -> CKR_MECHANISM_INVALID."""
-        rc, out, err = _run(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-mech = CK_MECHANISM()
-mech.mechanism = 0x0250  # CKM_SHA256 - not an encrypt mechanism
-key = ctypes.c_ulong(0)  # dummy key handle
-rv = raw.C_MessageEncryptInit(sh, ctypes.byref(mech), 0)
-print(f"CKR:0x{rv:08x}")
-# MECHANISM_INVALID, KEY_HANDLE_INVALID, FUNCTION_NOT_SUPPORTED - all acceptable
-assert rv != CKR_OK, f"Should have rejected SHA256 for message encrypt"
-print("OK")
-""",
-        )
+        rc, out, err = _run_probe(p11_config, "message_encrypt_mech_invalid")
         _check(rc, out, err, "C_MessageEncryptInit")
 
     def test_operation_not_initialized(self, p11_config: Any) -> None:
         """C_EncryptMessage without Init -> CKR_OPERATION_NOT_INITIALIZED."""
-        rc, out, err = _run(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-# Try EncryptMessage without MessageEncryptInit
-data = (ctypes.c_ubyte * 16)(*([0]*16))
-out = (ctypes.c_ubyte * 32)()
-out_len = ctypes.c_ulong(32)
-if "C_EncryptMessage" in raw._funcs:
-    rv = raw.C_EncryptMessage(sh, None, 0, data, 16, None, 0, out, ctypes.byref(out_len))
-    print(f"CKR:0x{rv:08x}")
-    assert rv in (
-        CKR_OPERATION_NOT_INITIALIZED,
-        CKR_FUNCTION_NOT_SUPPORTED,
-        CKR_ARGUMENTS_BAD,
-    ), f"Got 0x{rv:08x}"
-else:
-    print("SKIP:no_EncryptMessage")
-print("OK")
-""",
-        )
+        rc, out, err = _run_probe(p11_config, "encrypt_message_no_init")
         _check(rc, out, err, "C_EncryptMessage")
 
 
@@ -199,18 +80,7 @@ class TestMessageDecryptErrors:
 
     def test_mechanism_invalid(self, p11_config: Any) -> None:
         """C_MessageDecryptInit with digest mechanism."""
-        rc, out, err = _run(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-mech = CK_MECHANISM()
-mech.mechanism = 0x0250  # SHA256
-rv = raw.C_MessageDecryptInit(sh, ctypes.byref(mech), 0)
-print(f"CKR:0x{rv:08x}")
-assert rv != CKR_OK
-print("OK")
-""",
-        )
+        rc, out, err = _run_probe(p11_config, "message_decrypt_mech_invalid")
         _check(rc, out, err, "C_MessageDecryptInit")
 
 
@@ -220,18 +90,7 @@ class TestMessageSignErrors:
 
     def test_mechanism_invalid(self, p11_config: Any) -> None:
         """C_MessageSignInit with encrypt mechanism."""
-        rc, out, err = _run(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-mech = CK_MECHANISM()
-mech.mechanism = 0x1081  # AES_ECB - not a sign mechanism
-rv = raw.C_MessageSignInit(sh, ctypes.byref(mech), 0)
-print(f"CKR:0x{rv:08x}")
-assert rv != CKR_OK
-print("OK")
-""",
-        )
+        rc, out, err = _run_probe(p11_config, "message_sign_mech_invalid")
         _check(rc, out, err, "C_MessageSignInit")
 
 
@@ -241,18 +100,7 @@ class TestMessageVerifyErrors:
 
     def test_mechanism_invalid(self, p11_config: Any) -> None:
         """C_MessageVerifyInit with encrypt mechanism."""
-        rc, out, err = _run(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-mech = CK_MECHANISM()
-mech.mechanism = 0x1081  # AES_ECB
-rv = raw.C_MessageVerifyInit(sh, ctypes.byref(mech), 0)
-print(f"CKR:0x{rv:08x}")
-assert rv != CKR_OK
-print("OK")
-""",
-        )
+        rc, out, err = _run_probe(p11_config, "message_verify_mech_invalid")
         _check(rc, out, err, "C_MessageVerifyInit")
 
 
@@ -262,17 +110,5 @@ class TestSessionCancelErrors:
 
     def test_cancel_no_operation(self, p11_config: Any) -> None:
         """C_SessionCancel with no active operation."""
-        rc, out, err = _run(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-if "C_SessionCancel" in raw._funcs:
-    rv = raw.C_SessionCancel(sh, 0)
-    print(f"CKR:0x{rv:08x}")
-    # OK or OPERATION_ACTIVE - both acceptable
-    print("OK")
-else:
-    print("SKIP:no_SessionCancel")
-""",
-        )
+        rc, out, err = _run_probe(p11_config, "session_cancel_no_operation")
         _check(rc, out, err, "C_SessionCancel")

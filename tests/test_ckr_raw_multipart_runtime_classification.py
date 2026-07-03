@@ -14,6 +14,7 @@ the printed ``CKR:0x...`` line:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -33,7 +34,11 @@ def _cfg() -> Any:
 
 def _patch(monkeypatch: pytest.MonkeyPatch, rv: int) -> None:
     out = f"CKR:0x{int(rv):08x}\nOK"
-    monkeypatch.setattr(trm, "_run_raw_test", lambda *_a, **_k: (0, out, ""))
+    monkeypatch.setattr(
+        trm,
+        "run_probe",
+        lambda *_a, **_k: SimpleNamespace(returncode=0, stdout=out, stderr=""),
+    )
     monkeypatch.setattr(trm, "assert_ckr_subprocess_ok", lambda *_a, **_k: None)
 
 

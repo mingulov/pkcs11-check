@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,10 +16,8 @@ from pkcs11_check.testcases._subprocess_trace import (
     drain_subprocess_rv_trace,
 )
 from pkcs11_check.testcases.ckr import (
-    _ctypes_raw,
     test_ckr_dual,
     test_ckr_fault_inject,
-    test_ckr_general,
     test_ckr_null_params,
     test_ckr_raw_args_bad,
     test_ckr_raw_multipart,
@@ -32,10 +29,6 @@ from pkcs11_check.testcases.ckr import (
 from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 
 RawCheck = Callable[[int, str, str, str], None]
-
-
-def _assert_child_script_compiles(script: str) -> None:
-    compile(script, "<pkcs11-check-child-script>", "exec")
 
 
 def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
@@ -74,33 +67,60 @@ def test_raw_check_reports_positive_exit_as_subprocess_failure(check: RawCheck) 
         check(1, "CKR:0x00000007", "AssertionError: unexpected CKR", "C_Test")
 
 
-@pytest.mark.parametrize(
-    "module",
-    [test_ckr_v30_raw, test_ckr_v32_raw],
-)
-def test_versioned_raw_subprocesses_emit_and_record_rv_trace(
+def test_v30_raw_message_encrypt_dispatches_probe(
     monkeypatch: pytest.MonkeyPatch,
-    module: Any,
 ) -> None:
-    """Hand-rolled v3.x CKR subprocesses must feed failed reports with child traces."""
-    marker = 'P11_RV_TRACE_JSON:[{"i":0,"fn":"C_Test","rv":48,"rv_name":"CKR_DEVICE_ERROR"}]'
-    scripts: list[str] = []
+    """The migrated v3.0 CKR test dispatches the ``ckr_v30_raw`` probe via run_probe.
 
-    def run_child(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
-        scripts.append(args[2])
-        return subprocess.CompletedProcess(args=args, returncode=1, stdout=marker, stderr="")
+    Replaces the deleted white-box script-string assertion for ``test_ckr_v30_raw``:
+    the PIN routes through run_probe's ``pin=`` only (never the params), and the probe
+    name + ``probe`` key select the right child body.
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
 
-    monkeypatch.setattr(module.subprocess, "run", run_child)
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
+        return SimpleNamespace(returncode=0, stdout="CKR:0x00000070\nOK\n", stderr="")
 
-    module._run("/fake/p11.so", None, "print('OK')\n")
+    monkeypatch.setattr(test_ckr_v30_raw, "run_probe", fake_run_probe)
 
-    assert len(scripts) == 1
-    _assert_child_script_compiles(scripts[0])
-    assert "P11_RV_TRACE_JSON:" in scripts[0]
-    assert "raw.enable_rv_trace(" in scripts[0]
-    assert drain_subprocess_rv_trace() == [
-        {"i": 0, "fn": "C_Test", "rv": 48, "rv_name": "CKR_DEVICE_ERROR"}
-    ]
+    test_ckr_v30_raw.TestMessageEncryptErrors().test_mechanism_invalid(
+        SimpleNamespace(module="/tmp/provider.so", pin=None)
+    )
+
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_v30_raw"
+    assert params["probe"] == "message_encrypt_mech_invalid"
+
+
+def test_v32_raw_verify_signature_dispatches_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The migrated v3.2 CKR test dispatches the ``ckr_v32_raw`` probe via run_probe.
+
+    Replaces the deleted white-box rv-trace / script-string assertion for
+    ``test_ckr_v32_raw`` (its hand-rolled child-script generation is gone; rv-trace
+    preservation is now covered by the shared ``probe_main`` infra).  The PIN routes
+    through run_probe's ``pin=`` only (never the params), and the probe name +
+    ``probe`` key select the right child body.
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
+        return SimpleNamespace(returncode=0, stdout="CKR:0x00000070\nOK\n", stderr="")
+
+    monkeypatch.setattr(test_ckr_v32_raw, "run_probe", fake_run_probe)
+
+    test_ckr_v32_raw.TestVerifySignatureErrors().test_mechanism_invalid(
+        SimpleNamespace(module="/tmp/provider.so", pin=None)
+    )
+
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_v32_raw"
+    assert params["probe"] == "verify_signature_mech_invalid"
 
 
 def test_ckr_subprocess_helper_reports_positive_exit_as_child_failure() -> None:
@@ -123,135 +143,91 @@ def test_ckr_subprocess_helper_converts_setup_marker_to_xfail() -> None:
         )
 
 
-def test_fault_proxy_subprocesses_emit_rv_trace(
+def test_fault_proxy_dispatches_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Fault-proxy CKR subprocesses must preserve setup-xfail child traces."""
-    scripts: list[str] = []
+    """The migrated fault-proxy CKR test dispatches the ``ckr_fault_inject`` probe.
 
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
-        return SimpleNamespace(
-            returncode=0,
-            stdout="OK:encrypt_decrypt_roundtrip\n",
-            stderr="",
-        )
+    Replaces the deleted white-box script-string / rv-trace assertion for
+    ``test_ckr_fault_inject`` (its hand-rolled child-script generation is gone; rv-trace
+    preservation is now covered by the shared ``probe_main`` infra).  ``module_path`` is the
+    fault-proxy; the real module rides in the probe params as plain data (``real_module``,
+    never a PIN), and the probe name + ``probe`` key select the right child body.
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
+        return SimpleNamespace(returncode=0, stdout="OK:encrypt_decrypt_roundtrip\n", stderr="")
 
     monkeypatch.setattr(test_ckr_fault_inject, "_skip_if_no_proxy", lambda: None)
     monkeypatch.setattr(test_ckr_fault_inject, "_PROXY_PATH", "/tmp/fault-proxy.so")
-    monkeypatch.setattr(test_ckr_fault_inject.subprocess, "run", _run_subprocess)
+    monkeypatch.setattr(test_ckr_fault_inject, "run_probe", fake_run_probe)
 
     test_ckr_fault_inject.TestFaultProxyBasic().test_proxy_encrypt_decrypt(
         SimpleNamespace(module="/tmp/provider.so", pin=None)
     )
 
-    assert len(scripts) == 1
-    _assert_child_script_compiles(scripts[0])
-    assert "P11_RV_TRACE_JSON:" in scripts[0]
-    assert "enable_rv_trace(" in scripts[0]
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_fault_inject"
+    assert params["probe"] == "proxy_encrypt_decrypt"
+    assert params["real_module"] == "/tmp/provider.so"
 
 
-def test_operation_state_raw_subprocesses_emit_rv_trace(
+def test_double_encrypt_init_dispatches_state_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Operation-state CKR subprocesses must preserve setup-xfail child traces."""
-    scripts: list[str] = []
+    """The double-EncryptInit state test dispatches the operation-state probe.
 
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
+    (rv-trace preservation is now handled + covered in the shared ``probe_main``
+    infra, so the legacy in-script rv-trace assertions are dropped here.)
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
         return SimpleNamespace(returncode=0, stdout="CKR:0x00000000\nOK\n", stderr="")
 
-    monkeypatch.setattr(test_ckr_raw_state.subprocess, "run", _run_subprocess)
+    monkeypatch.setattr(test_ckr_raw_state, "run_probe", fake_run_probe)
 
-    test_ckr_raw_state._run("/tmp/provider.so", None, 'print("OK")\n')
-
-    assert len(scripts) == 1
-    _assert_child_script_compiles(scripts[0])
-    assert "P11_RV_TRACE_JSON:" in scripts[0]
-    assert "enable_rv_trace(" in scripts[0]
-
-
-def test_ckr_dual_subprocesses_emit_rv_trace(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Operation-state subprocess tests must preserve failed child traces."""
-    scripts: list[str] = []
-
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
-        return SimpleNamespace(returncode=0, stdout="OK:encrypt_without_init\n", stderr="")
-
-    monkeypatch.setattr(test_ckr_dual.subprocess, "run", _run_subprocess)
-
-    test_ckr_dual.TestOperationStateSubprocess().test_encrypt_without_init(
+    test_ckr_raw_state.TestOperationActive().test_double_encrypt_init(
         SimpleNamespace(module="/tmp/provider.so", pin=None)
     )
 
-    assert len(scripts) == 1
-    _assert_child_script_compiles(scripts[0])
-    assert "P11_RV_TRACE_JSON:" in scripts[0]
-    assert "enable_rv_trace(" in scripts[0]
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_raw_state"
+    assert params["probe"] == "double_encrypt_init"
 
 
-def test_ckr_multipart_subprocesses_emit_rv_trace(
+def test_multipart_encrypt_update_dispatches_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Multipart raw subprocess tests must preserve failed child traces."""
-    scripts: list[str] = []
+    """The migrated multipart CKR test dispatches the ``ckr_raw_multipart`` probe.
 
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
+    Replaces the deleted white-box rv-trace / script-string assertion for
+    ``test_ckr_raw_multipart`` (its hand-rolled child-script generation is gone; rv-trace
+    preservation is now covered by the shared ``probe_main`` infra).  The PIN routes through
+    run_probe's ``pin=`` only (never the params), and the probe name + ``probe`` key select
+    the right child body.
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
         return SimpleNamespace(returncode=0, stdout="CKR:0x00000091\nOK\n", stderr="")
 
-    monkeypatch.setattr(test_ckr_raw_multipart.subprocess, "run", _run_subprocess)
+    monkeypatch.setattr(test_ckr_raw_multipart, "run_probe", fake_run_probe)
 
-    test_ckr_raw_multipart._run_raw_test("/tmp/provider.so", None, 'print("OK")\n')
-
-    assert len(scripts) == 1
-    _assert_child_script_compiles(scripts[0])
-    assert "P11_RV_TRACE_JSON:" in scripts[0]
-    assert "enable_rv_trace(" in scripts[0]
-
-
-def test_ckr_ctypes_null_subprocesses_emit_rv_trace(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Direct-ctypes NULL probes must emit synthetic per-call RV traces."""
-    scripts: list[str] = []
-
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
-        return SimpleNamespace(returncode=0, stdout="CKR:0x00000007\n", stderr="")
-
-    monkeypatch.setattr(_ctypes_raw.subprocess, "run", _run_subprocess)
-
-    _ctypes_raw.run_null_test("/tmp/provider.so", 'print("CKR:0x00000007")\n')
-
-    assert len(scripts) == 1
-    _assert_child_script_compiles(scripts[0])
-    assert "P11_RV_TRACE_JSON:" in scripts[0]
-    assert "_p11check_record_rv(" in scripts[0]
-
-
-def test_ckr_inline_null_subprocesses_emit_rv_trace(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Inline NULL probes using RawPKCS11 setup must preserve failed child traces."""
-    scripts: list[str] = []
-
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
-        return SimpleNamespace(returncode=0, stdout="CKR:0x00000007\n", stderr="")
-
-    monkeypatch.setattr(subprocess, "run", _run_subprocess)
-
-    test_ckr_null_params.TestNullParameters().test_generate_random_null_buffer(
+    test_ckr_raw_multipart.TestMultipartNotInitialized().test_encrypt_update_no_init(
         SimpleNamespace(module="/tmp/provider.so", pin=None)
     )
 
-    assert len(scripts) == 1
-    _assert_child_script_compiles(scripts[0])
-    assert "P11_RV_TRACE_JSON:" in scripts[0]
-    assert "enable_rv_trace(" in scripts[0]
-    assert "_p11check_record_rv(" in scripts[0]
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_raw_multipart"
+    assert params["probe"] == "encrypt_update"
 
 
 def test_ckr_null_result_positive_exit_records_child_trace() -> None:
@@ -284,27 +260,34 @@ def test_ckr_subprocess_helper_requires_ok_marker() -> None:
         assert_ckr_subprocess_ok(0, "CKR:0x00000000\n", "", context="CKR setup probe")
 
 
-def test_universal_fault_proxy_subprocess_emits_rv_trace(
+def test_universal_fault_proxy_dispatches_device_removed_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Universal fault-proxy subprocess must preserve child traces."""
-    scripts: list[str] = []
+    """The fault-proxy universal test dispatches the device-removed probe.
 
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
+    module_path is the fault-proxy; the real module + injection config ride in the
+    probe params as plain data (never a PIN).  (rv-trace preservation is now handled +
+    covered in the shared ``probe_main`` infra, so the legacy in-script rv-trace
+    assertions are dropped here.)
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
         return SimpleNamespace(returncode=0, stdout="OK:DEVICE_REMOVED\n", stderr="")
 
     monkeypatch.setattr(Path, "exists", lambda _self: True)
-    monkeypatch.setattr(test_ckr_universal.subprocess, "run", _run_subprocess)
+    monkeypatch.setattr(test_ckr_universal, "run_probe", fake_run_probe)
 
     test_ckr_universal.TestUniversalRealTriggers().test_device_removed_via_fault_proxy(
         SimpleNamespace(module="/tmp/provider.so")
     )
 
-    assert len(scripts) == 1
-    _assert_child_script_compiles(scripts[0])
-    assert "P11_RV_TRACE_JSON:" in scripts[0]
-    assert "enable_rv_trace(" in scripts[0]
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_universal"
+    assert params["probe"] == "device_removed"
+    assert params["real_module"] == "/tmp/provider.so"
 
 
 def test_raw_args_bad_setup_marker_is_xfail() -> None:
@@ -318,70 +301,48 @@ def test_raw_args_bad_setup_marker_is_xfail() -> None:
         )
 
 
-def test_raw_args_bad_encrypt_null_mech_script_marks_setup_reject(
+def test_raw_args_bad_encrypt_null_mech_dispatches_encrypt_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The NULL-mechanism probe should not assert on setup keygen rejects."""
-    scripts: list[str] = []
+    """The encrypt-init NULL-mechanism test dispatches the encrypt-init probe."""
+    calls: list[tuple[str, dict[str, Any]]] = []
 
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
         return SimpleNamespace(returncode=0, stdout="OK\n", stderr="")
 
-    monkeypatch.setattr(test_ckr_raw_args_bad.subprocess, "run", _run_subprocess)
+    monkeypatch.setattr(test_ckr_raw_args_bad, "run_probe", fake_run_probe)
 
     test_ckr_raw_args_bad.TestArgsBadNullPointers().test_encrypt_init_null_mechanism(
         SimpleNamespace(module="/tmp/provider.so", pin=None)
     )
 
-    assert len(scripts) == 1
-    assert "SETUP_XFAIL:" in scripts[0]
-    assert "assert rv == CKR_OK" not in scripts[0]
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_raw_args_bad"
+    assert params["probe"] == "encrypt_init"
 
 
-def test_raw_args_bad_generate_key_null_mech_does_not_accept_ok(
+def test_raw_args_bad_generate_key_null_mech_dispatches_generate_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C_GenerateKey has no NULL-mechanism cancellation success path."""
-    scripts: list[str] = []
+    """The generate-key NULL-mechanism test dispatches the generate-key probe."""
+    calls: list[tuple[str, dict[str, Any]]] = []
 
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
         return SimpleNamespace(returncode=0, stdout="OK\n", stderr="")
 
-    monkeypatch.setattr(test_ckr_raw_args_bad.subprocess, "run", _run_subprocess)
+    monkeypatch.setattr(test_ckr_raw_args_bad, "run_probe", fake_run_probe)
 
     test_ckr_raw_args_bad.TestArgsBadNullPointers().test_generate_key_null_mechanism(
         SimpleNamespace(module="/tmp/provider.so", pin=None)
     )
 
-    assert len(scripts) == 1
-    probe = scripts[0].split("raw.C_GenerateKey(sh, null_pointer().pointer", 1)[1]
-    probe = probe.split('print("OK")', 1)[0]
-    assert "CKR_ARGUMENTS_BAD" in probe
-    assert "CKR_OK" not in probe
-
-
-def test_ckr_general_no_interface_method_emits_ok_marker(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A v2.40 module without C_GetInterfaceList is a completed probe."""
-    scripts: list[str] = []
-
-    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        scripts.append(args[2])
-        return SimpleNamespace(returncode=0, stdout="CKR:OK:0_interfaces\n", stderr="")
-
-    monkeypatch.setattr(test_ckr_general.subprocess, "run", _run_subprocess)
-
-    test_ckr_general.TestInitializeErrors().test_get_interface_list(
-        SimpleNamespace(module="/tmp/provider.so", pin=None)
-    )
-
-    assert len(scripts) == 1
-    no_method_block = scripts[0].split("except AttributeError:", 1)[1]
-    assert 'print("CKR:NO_METHOD")' in no_method_block
-    assert 'print("OK")' in no_method_block
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_raw_args_bad"
+    assert params["probe"] == "generate_key"
 
 
 def test_ckr_dual_reports_positive_subprocess_exit_as_child_failure(
@@ -389,15 +350,14 @@ def test_ckr_dual_reports_positive_subprocess_exit_as_child_failure(
 ) -> None:
     """CKR operation-state child assertion exits must not be labelled crashes."""
 
-    def run_child(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            args=args,
+    def fake_run_probe(probe: str, params: Any, **_kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(
             returncode=1,
             stdout="",
             stderr="AssertionError: setup failed",
         )
 
-    monkeypatch.setattr(test_ckr_dual.subprocess, "run", run_child)
+    monkeypatch.setattr(test_ckr_dual, "run_probe", fake_run_probe)
 
     test_case = test_ckr_dual.TestOperationStateSubprocess()
     with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
@@ -445,57 +405,45 @@ def test_ckr_dual_sign_then_encrypt_xfails_advertised_aes_setup_reject(
         test_ckr_dual.TestOperationStateWrapper().test_sign_then_encrypt(rs)
 
 
-def test_encrypt_without_init_child_does_not_require_aes_setup(
+def test_encrypt_without_init_dispatches_encrypt_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C_Encrypt without C_EncryptInit should not fail during AES key setup."""
+    """The encrypt-without-init test dispatches its own probe (no AES key setup)."""
+    calls: list[tuple[str, dict[str, Any]]] = []
 
-    def run_child(
-        args: list[str],
-        *unused_args: object,
-        **unused_kwargs: object,
-    ) -> subprocess.CompletedProcess[str]:
-        script = args[2]
-        assert "gen_aes_key" not in script
-        assert "raw.C_Encrypt(" in script
-        assert "CKR_OPERATION_NOT_INITIALIZED" in script
-        return subprocess.CompletedProcess(
-            args=args,
-            returncode=0,
-            stdout="OK:encrypt_without_init\n",
-            stderr="",
-        )
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
+        return SimpleNamespace(returncode=0, stdout="OK:encrypt_without_init\n", stderr="")
 
-    monkeypatch.setattr(test_ckr_dual.subprocess, "run", run_child)
+    monkeypatch.setattr(test_ckr_dual, "run_probe", fake_run_probe)
 
     test_case = test_ckr_dual.TestOperationStateSubprocess()
     test_case.test_encrypt_without_init(SimpleNamespace(module="/fake/p11.so", pin=None))
 
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_dual"
+    assert params["probe"] == "encrypt_without_init"
 
-def test_double_digest_init_child_checks_operation_active(
+
+def test_double_digest_init_dispatches_digest_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The double-DigestInit subprocess should test the state violation directly."""
+    """The double-DigestInit test dispatches the operation-active probe."""
+    calls: list[tuple[str, dict[str, Any]]] = []
 
-    def run_child(
-        args: list[str],
-        *unused_args: object,
-        **unused_kwargs: object,
-    ) -> subprocess.CompletedProcess[str]:
-        script = args[2]
-        assert "digest_single" not in script
-        assert script.count("raw.C_DigestInit(") == 2
-        assert "CKR_OPERATION_ACTIVE" in script
-        return subprocess.CompletedProcess(
-            args=args,
-            returncode=0,
-            stdout="OK:double_digest_init_active\n",
-            stderr="",
-        )
+    def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((probe, params))
+        return SimpleNamespace(returncode=0, stdout="OK:double_digest_init_active\n", stderr="")
 
-    monkeypatch.setattr(test_ckr_dual.subprocess, "run", run_child)
+    monkeypatch.setattr(test_ckr_dual, "run_probe", fake_run_probe)
 
     test_case = test_ckr_dual.TestOperationStateSubprocess()
     test_case.test_double_digest_init_via_subprocess(
         SimpleNamespace(module="/fake/p11.so", pin=None)
     )
+
+    assert len(calls) == 1
+    probe, params = calls[0]
+    assert probe == "ckr_dual"
+    assert params["probe"] == "double_digest_init"

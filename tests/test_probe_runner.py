@@ -6,6 +6,9 @@ timeout -> rc 124 + marker, and coverage routing to the correct accumulator (I6)
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 import pytest
 
 from pkcs11_check.testcases._probes.runner import ProbeResult, run_probe
@@ -99,3 +102,43 @@ def test_run_probe_coverage_raw_routes_to_raw_accumulator() -> None:
 
     assert raw_call.get("C_Echo") == 1, f"raw counter: {dict(raw_call)}"
     assert not preamble_call, f"preamble counter should be empty but got: {dict(preamble_call)}"
+
+
+# ---------------------------------------------------------------------------
+# Params temp-file retention (deferred minor #5)
+# ---------------------------------------------------------------------------
+
+
+def _run_failing_probe() -> None:
+    """Drive a failed probe (rc 124) via the _echo sleep+timeout path."""
+    result = run_probe("_echo", {"module_path": "/nonexistent.so", "sleep": 3}, timeout=1)
+    assert result.returncode == 124, result.stderr
+
+
+def test_run_probe_deletes_params_temp_file_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """By default the params temp file is removed even when the probe fails, so
+    expected crash/timeout outcomes do not accumulate p11probe-*.json in TMPDIR."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.delenv("PKCS11_CHECK_KEEP_PROBE_PARAMS", raising=False)
+
+    _run_failing_probe()
+
+    assert not list(tmp_path.glob("p11probe-*.json")), "params temp file not deleted by default"
+    assert not list(tmp_path.glob("p11cov-*.json")), "coverage temp file leaked"
+
+
+def test_run_probe_retains_params_temp_file_when_debug_env_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With PKCS11_CHECK_KEEP_PROBE_PARAMS set, a failed probe keeps its params
+    temp file for standalone repro; the coverage temp is still removed."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setenv("PKCS11_CHECK_KEEP_PROBE_PARAMS", "1")
+
+    _run_failing_probe()
+
+    retained = list(tmp_path.glob("p11probe-*.json"))
+    assert len(retained) == 1, f"expected exactly one retained params file, got {retained}"
+    assert not list(tmp_path.glob("p11cov-*.json")), "coverage temp file must still be removed"

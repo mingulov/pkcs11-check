@@ -42,152 +42,12 @@ from pkcs11_check.raw.recipes import (
 )
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import CKM_RSA_X_509, CKR_FUNCTION_NOT_SUPPORTED
+from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
-from pkcs11_check.testcases._raw_subprocess import run_raw_script
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import KEYPAIR_RUNTIME_REJECT_RVS, assert_correct
 
 pytestmark = pytest.mark.full
-
-_SCRIPT_PREAMBLE = """\
-import binascii
-import ctypes
-import sys
-from ctypes import byref, c_ubyte, cast
-
-from pkcs11_check.raw import CK_ATTRIBUTE_PTR, CK_OBJECT_HANDLE, RawPKCS11
-from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
-    CKA_KEY_TYPE,
-    CKA_MODULUS_BITS,
-    CKA_PUBLIC_EXPONENT,
-    CKA_SIGN_RECOVER,
-    CKA_TOKEN,
-    CKA_VERIFY_RECOVER,
-    CKF_RW_SESSION,
-    CKF_SERIAL_SESSION,
-    CKK_RSA,
-    CKM_RSA_PKCS_KEY_PAIR_GEN,
-    CKM_RSA_X_509,
-    CKO_PRIVATE_KEY,
-    CKO_PUBLIC_KEY,
-    CKR_ARGUMENTS_BAD,
-    CKR_BUFFER_TOO_SMALL,
-    CKR_CRYPTOKI_ALREADY_INITIALIZED,
-    CKR_DATA_LEN_RANGE,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_MECHANISM_INVALID,
-    CKR_OK,
-    CKR_OPERATION_NOT_INITIALIZED,
-)
-from pkcs11_check.raw.bootstrap import close_session_quietly, get_slot_ids, login_user, open_session
-from pkcs11_check.raw.pack import attr_bool, attr_bytes, attr_ulong, mech_simple, template
-
-
-def _template_ptr(attrs):
-    return cast(attrs.ptr, CK_ATTRIBUTE_PTR)
-
-
-def _byte_array(data: bytes):
-    return (c_ubyte * len(data)).from_buffer_copy(data)
-
-
-raw = RawPKCS11.from_lib({module_path!r})
-hSession = None
-rv = raw.C_Initialize(None)
-if rv not in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED):
-    print(f"FATAL:Initialize:0x{{rv:08x}}")
-    sys.exit(1)
-
-slot_ids = get_slot_ids(raw)
-if len(slot_ids) <= {slot_index}:
-    print(f"FATAL:GetSlotList:index={slot_index}:count={{len(slot_ids)}}")
-    raw.C_Finalize(None)
-    sys.exit(1)
-
-hSession = open_session(raw, slot_ids[{slot_index}], CKF_SERIAL_SESSION | CKF_RW_SESSION)
-
-import os as _os
-_PIN = _os.environ.get("_P11CHECK_PIN")
-if _PIN:
-    login_user(raw, hSession, 1, _PIN.encode())
-"""
-
-_KEYGEN_SCRIPT = """\
-    pub_template = template(
-        attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY),
-        attr_ulong(CKA_KEY_TYPE, CKK_RSA),
-        attr_ulong(CKA_MODULUS_BITS, 2048),
-        attr_bool(CKA_TOKEN, False),
-        attr_bool(CKA_VERIFY_RECOVER, True),
-        attr_bytes(CKA_PUBLIC_EXPONENT, b"\\x01\\x00\\x01"),
-    )
-    prv_template = template(
-        attr_ulong(CKA_CLASS, CKO_PRIVATE_KEY),
-        attr_ulong(CKA_KEY_TYPE, CKK_RSA),
-        attr_bool(CKA_TOKEN, False),
-        attr_bool(CKA_SIGN_RECOVER, True),
-    )
-
-    kg_mech = mech_simple(CKM_RSA_PKCS_KEY_PAIR_GEN)
-    hPub = CK_OBJECT_HANDLE(0)
-    hPrv = CK_OBJECT_HANDLE(0)
-    rv = raw.C_GenerateKeyPair(
-        hSession,
-        kg_mech.byref(),
-        _template_ptr(pub_template),
-        pub_template.count,
-        _template_ptr(prv_template),
-        prv_template.count,
-        byref(hPub),
-        byref(hPrv),
-    )
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID):
-        print(f"SKIP:GenerateKeyPairUnsupported:0x{rv:08x}")
-        sys.exit(0)
-    if rv != CKR_OK:
-        print(f"FATAL:GenerateKeyPair:0x{rv:08x}")
-        sys.exit(1)
-    print(f"KEYGEN_OK:{hPub.value}:{hPrv.value}")
-"""
-
-_SCRIPT_CLEANUP = """\
-close_session_quietly(raw, hSession)
-raw.C_Finalize(None)
-"""
-
-
-def _run_script(
-    module_path: str,
-    slot_index: int,
-    pin: str | None,
-    script_body: str,
-    timeout: int = 30,
-) -> tuple[int, str, str]:
-    # The PIN is forwarded to the child via the env (run_raw_script's ``pin``
-    # arg), never interpolated into the script text -- so it cannot appear in
-    # the child argv (``ps``/``/proc``) or any traceback.
-    return run_raw_script(
-        _SCRIPT_PREAMBLE.format(
-            module_path=module_path,
-            slot_index=slot_index,
-        ),
-        script_body,
-        cleanup=_SCRIPT_CLEANUP,
-        timeout=timeout,
-        pin=pin,
-    )
-
-
-def _get_params(p11_config: Any) -> tuple[str, int, str | None]:
-    """Extract (module_path, slot_index, pin) from config fixture.
-
-    The PIN is returned as a plain ``str`` (or None) only to be forwarded into
-    the child env by :func:`_run_script`; it is never embedded in script text.
-    """
-    module_path = str(p11_config.module)
-    slot_index = p11_config.slot if p11_config.slot is not None else 0
-    pin = p11_config.pin.get_secret_value() if p11_config.pin else None
-    return module_path, slot_index, pin
 
 
 def _handle_subprocess_failure(returncode: int, stdout: str, stderr: str) -> None:
@@ -258,51 +118,18 @@ class TestSignRecover:
         if not _has_rsa_x509(p11_module):
             pytest.skip("CKM_RSA_X_509 not supported by this module")
 
-        module_path, slot_index, pin = _get_params(p11_config)
-
-        script = (
-            _KEYGEN_SCRIPT
-            + """\
-    sr_mech = mech_simple(CKM_RSA_X_509)
-
-    # Input must be exactly 256 bytes (RSA-2048 modulus size)
-    # Use PKCS#1 v1.5-style padding: 0x00 0x01 0xFF...FF 0x00 <data>
-    data = b"Hello sign-recover"
-    pad_len = 256 - 3 - len(data)
-    padded = b"\\x00\\x01" + b"\\xff" * pad_len + b"\\x00" + data
-    padded_buf = _byte_array(padded)
-
-    rv = raw.C_SignRecoverInit(hSession, sr_mech.byref(), hPrv)
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED):
-        print(f"SKIP:SignRecoverInitUnsupported:0x{rv:08x}")
-        sys.exit(0)
-    if rv != CKR_OK:
-        print(f"FATAL:SignRecoverInit:0x{rv:08x}")
-        sys.exit(1)
-
-    # Length query
-    sig_len = ctypes.c_ulong(0)
-    rv = raw.C_SignRecover(hSession, padded_buf, len(padded), None, byref(sig_len))
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID):
-        print(f"SKIP:SignRecoverUnsupported:0x{rv:08x}")
-        sys.exit(0)
-    if rv != CKR_OK:
-        print(f"FATAL:SignRecoverLen:0x{rv:08x}")
-        sys.exit(1)
-
-    sig_buf = (c_ubyte * sig_len.value)()
-    rv = raw.C_SignRecover(hSession, padded_buf, len(padded), sig_buf, byref(sig_len))
-    if rv != CKR_OK:
-        print(f"FATAL:SignRecover:0x{rv:08x}")
-        sys.exit(1)
-
-    sig_hex = binascii.hexlify(bytes(sig_buf[:sig_len.value])).decode()
-    print(f"SIG_LEN:{sig_len.value}")
-    print(f"SIG:{sig_hex}")
-"""
+        result = run_probe(
+            "sign_recover",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "sign_recover_produces_output",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-
-        returncode, stdout, stderr = _run_script(module_path, slot_index, pin, script)
+        returncode, stdout, stderr = result.returncode, result.stdout, result.stderr
         lines_map = _parse_output(stdout)
 
         if "SKIP" in lines_map:
@@ -330,80 +157,18 @@ class TestSignRecover:
         if not _has_rsa_x509(p11_module):
             pytest.skip("CKM_RSA_X_509 not supported by this module")
 
-        module_path, slot_index, pin = _get_params(p11_config)
-
-        script = (
-            _KEYGEN_SCRIPT
-            + """\
-    sr_mech = mech_simple(CKM_RSA_X_509)
-
-    # Input: exactly 256 bytes with PKCS#1 type-1 padding
-    data = b"Round-trip test data"
-    pad_len = 256 - 3 - len(data)
-    padded = b"\\x00\\x01" + b"\\xff" * pad_len + b"\\x00" + data
-    padded_buf = _byte_array(padded)
-    padded_hex = binascii.hexlify(padded).decode()
-    print(f"ORIGINAL:{padded_hex}")
-
-    # --- Sign-recover ---
-    rv = raw.C_SignRecoverInit(hSession, sr_mech.byref(), hPrv)
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED):
-        print(f"SKIP:SignRecoverInitUnsupported:0x{rv:08x}")
-        sys.exit(0)
-    if rv != CKR_OK:
-        print(f"FATAL:SignRecoverInit:0x{rv:08x}")
-        sys.exit(1)
-
-    # Length query
-    sig_len = ctypes.c_ulong(0)
-    rv = raw.C_SignRecover(hSession, padded_buf, len(padded), None, byref(sig_len))
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID):
-        print(f"SKIP:SignRecoverUnsupported:0x{rv:08x}")
-        sys.exit(0)
-    if rv != CKR_OK:
-        print(f"FATAL:SignRecoverLen:0x{rv:08x}")
-        sys.exit(1)
-
-    sig_buf = (c_ubyte * sig_len.value)()
-    rv = raw.C_SignRecover(hSession, padded_buf, len(padded), sig_buf, byref(sig_len))
-    if rv != CKR_OK:
-        print(f"FATAL:SignRecover:0x{rv:08x}")
-        sys.exit(1)
-    sig_bytes = bytes(sig_buf[:sig_len.value])
-    sig_in = _byte_array(sig_bytes)
-    print(f"SIG_LEN:{sig_len.value}")
-
-    # --- Verify-recover ---
-    rv = raw.C_VerifyRecoverInit(hSession, sr_mech.byref(), hPub)
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED):
-        print(f"SKIP:VerifyRecoverInitUnsupported:0x{rv:08x}")
-        sys.exit(0)
-    if rv != CKR_OK:
-        print(f"FATAL:VerifyRecoverInit:0x{rv:08x}")
-        sys.exit(1)
-
-    # Length query
-    rec_len = ctypes.c_ulong(0)
-    rv = raw.C_VerifyRecover(hSession, sig_in, len(sig_bytes), None, byref(rec_len))
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID):
-        print(f"SKIP:VerifyRecoverUnsupported:0x{rv:08x}")
-        sys.exit(0)
-    if rv != CKR_OK:
-        print(f"FATAL:VerifyRecoverLen:0x{rv:08x}")
-        sys.exit(1)
-
-    rec_buf = (c_ubyte * rec_len.value)()
-    rv = raw.C_VerifyRecover(hSession, sig_in, len(sig_bytes), rec_buf, byref(rec_len))
-    if rv != CKR_OK:
-        print(f"FATAL:VerifyRecover:0x{rv:08x}")
-        sys.exit(1)
-
-    recovered_hex = binascii.hexlify(bytes(rec_buf[:rec_len.value])).decode()
-    print(f"RECOVERED:{recovered_hex}")
-"""
+        result = run_probe(
+            "sign_recover",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "verify_recover_round_trip",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-
-        returncode, stdout, stderr = _run_script(module_path, slot_index, pin, script)
+        returncode, stdout, stderr = result.returncode, result.stdout, result.stderr
         lines_map = _parse_output(stdout)
 
         if "SKIP" in lines_map:
@@ -436,42 +201,18 @@ class TestSignRecover:
         if not _has_rsa_x509(p11_module):
             pytest.skip("CKM_RSA_X_509 not supported by this module")
 
-        module_path, slot_index, pin = _get_params(p11_config)
-
-        script = (
-            _KEYGEN_SCRIPT
-            + """\
-    sr_mech = mech_simple(CKM_RSA_X_509)
-
-    rv = raw.C_SignRecoverInit(hSession, sr_mech.byref(), hPrv)
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED):
-        print(f"SKIP:SignRecoverInitUnsupported:0x{rv:08x}")
-        sys.exit(0)
-    if rv != CKR_OK:
-        print(f"FATAL:SignRecoverInit:0x{rv:08x}")
-        sys.exit(1)
-
-    # Data shorter than modulus - must be rejected
-    short_data = b"too short"
-    short_data_buf = _byte_array(short_data)
-    sig_len = ctypes.c_ulong(256)
-    sig_buf = (c_ubyte * 256)()
-    rv = raw.C_SignRecover(hSession, short_data_buf, len(short_data), sig_buf, byref(sig_len))
-
-    if rv == CKR_OK:
-        print("RESULT:ACCEPTED_SHORT_DATA")
-    else:
-        print(f"RESULT:REJECTED:0x{rv:08x}")
-        # Any non-OK return is acceptable - the module correctly rejected it
-        acceptable = {CKR_DATA_LEN_RANGE, CKR_ARGUMENTS_BAD, CKR_BUFFER_TOO_SMALL,
-                      CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID}
-        if rv not in acceptable:
-            # Non-standard CKR - still a valid rejection; note it
-            print(f"NOTE:NonStandardRejection:0x{rv:08x}")
-"""
+        result = run_probe(
+            "sign_recover",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "sign_recover_wrong_data_length",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
-
-        returncode, stdout, stderr = _run_script(module_path, slot_index, pin, script)
+        returncode, stdout, stderr = result.returncode, result.stdout, result.stderr
         lines_map = _parse_output(stdout)
 
         if "SKIP" in lines_map:
@@ -484,8 +225,8 @@ class TestSignRecover:
         # The module should not silently accept wrong-length data.
         # Some modules pad internally and accept any length - this is non-standard
         # for CKM_RSA_X_509 but we don't fail on it; we just note it.
-        result = lines_map["RESULT"]
-        if result == "ACCEPTED_SHORT_DATA":
+        result_line = lines_map["RESULT"]
+        if result_line == "ACCEPTED_SHORT_DATA":
             classify(
                 "honest_deviation",
                 kind="crypto",

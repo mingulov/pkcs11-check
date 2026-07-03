@@ -31,73 +31,32 @@ Marked `@pytest.mark.destructive` because of the Init/Finalize cycles.
 
 from __future__ import annotations
 
-import subprocess
-import sys
-import textwrap
 from typing import Any
 
 import pytest
 
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.types_std import CKR_ARGUMENTS_BAD, CKR_CANT_LOCK, CKR_OK
+from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = [pytest.mark.destructive, pytest.mark.access]
 
 
-def _run_init_args_script(p11_config: Any, args_setup: str) -> tuple[int, str, str]:
-    """Execute a subprocess that loads the module, runs C_Initialize with the
-    args_setup snippet (which must define a variable `init_args_ptr`), and
-    prints the returned CKR as `RV=0x<hex>`.
+def _run_init_args_probe(p11_config: Any, probe: str, timeout: int = 15) -> tuple[int, str, str]:
+    """Run the ``initialize_args`` probe in a subprocess and return (rc, stdout, stderr).
 
-    The args_setup snippet runs after the imports and CDLL load.  Available
-    bindings inside it:
-      - ``lib`` — ctypes.CDLL of the module
-      - ``CK_C_INITIALIZE_ARGS``, ``CK_CREATEMUTEX`` etc — from types_std
-      - ``ctypes``, ``byref``, ``c_void_p``, ``cast``
+    The child (``_probes/initialize_args.py``) loads the module via raw ctypes and calls
+    ``C_Initialize`` (or, for the ``finalize_reserved_non_null`` probe, ``C_Finalize``) with
+    the ``CK_C_INITIALIZE_ARGS`` setup selected by ``probe``.  The raw CDLL path has no
+    RawPKCS11 wrapper, so coverage routes to the raw accumulator (``coverage="raw"``).  No
+    PIN / session / login is involved (I3).
     """
-    module_path = str(p11_config.module)
-    script = textwrap.dedent(f"""
-        import ctypes
-        from ctypes import POINTER, byref, c_void_p, cast
-
-        from pkcs11_check.raw.types_std import (
-            CK_C_INITIALIZE_ARGS,
-            CK_CREATEMUTEX, CK_DESTROYMUTEX, CK_LOCKMUTEX, CK_UNLOCKMUTEX,
-            CK_RV,
-            CKF_OS_LOCKING_OK,
-            CKR_CANT_LOCK, CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_OK,
-        )
-
-        lib = ctypes.CDLL({module_path!r})
-
-        # The args_setup block defines `init_args_ptr` — either None
-        # (meaning pass NULL to C_Initialize) or a pointer to a struct.
-        {textwrap.indent(args_setup, "        ").strip()}
-
-        # Call C_Initialize directly; bypass RawPKCS11 wrapper to avoid
-        # any framework-level fallback logic.
-        c_init = lib.C_Initialize
-        c_init.restype = CK_RV
-        c_init.argtypes = [c_void_p]
-
-        rv = c_init(init_args_ptr)
-        print(f"RV=0x{{rv:08x}}")
-
-        # Best-effort Finalize so the module is left clean.
-        try:
-            c_final = lib.C_Finalize
-            c_final.restype = CK_RV
-            c_final.argtypes = [c_void_p]
-            c_final(None)
-        except Exception:
-            pass
-    """)
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
-        timeout=15,
+    result = run_probe(
+        "initialize_args",
+        {"module_path": str(p11_config.module), "slot_id": p11_config.slot, "probe": probe},
+        timeout=timeout,
+        coverage="raw",
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
@@ -114,10 +73,7 @@ class TestInitArgsMatrix:
 
     def test_init_null_args(self, p11_config: Any) -> None:
         """Mode A: `C_Initialize(NULL)` is the universally-accepted default."""
-        rc, stdout, stderr = _run_init_args_script(
-            p11_config,
-            "init_args_ptr = None",
-        )
+        rc, stdout, stderr = _run_init_args_probe(p11_config, "null_args")
         if rc < 0:
             classify(
                 "crash",
@@ -136,13 +92,7 @@ class TestInitArgsMatrix:
 
         Per spec §5.4 this is a "no-locks" mode — module must not crash.
         """
-        rc, stdout, stderr = _run_init_args_script(
-            p11_config,
-            """
-            args = CK_C_INITIALIZE_ARGS()  # all fields zero-initialised
-            init_args_ptr = cast(byref(args), c_void_p)
-            """,
-        )
+        rc, stdout, stderr = _run_init_args_probe(p11_config, "empty_struct")
         if rc < 0:
             classify(
                 "crash",
@@ -168,14 +118,7 @@ class TestInitArgsMatrix:
         The standard initialization mode for multi-threaded apps.  Module
         is expected to succeed unless it's strictly single-threaded.
         """
-        rc, stdout, stderr = _run_init_args_script(
-            p11_config,
-            """
-            args = CK_C_INITIALIZE_ARGS()
-            args.flags = int(CKF_OS_LOCKING_OK)
-            init_args_ptr = cast(byref(args), c_void_p)
-            """,
-        )
+        rc, stdout, stderr = _run_init_args_probe(p11_config, "os_locking_only")
         if rc < 0:
             classify(
                 "crash",
@@ -197,31 +140,7 @@ class TestInitArgsMatrix:
         CKR_OK; the module should accept them or reject with
         CKR_CANT_LOCK if it can't use app-supplied locks.
         """
-        rc, stdout, stderr = _run_init_args_script(
-            p11_config,
-            """
-            def _create(pp):
-                return int(CKR_OK)
-            def _destroy(p):
-                return int(CKR_OK)
-            def _lock(p):
-                return int(CKR_OK)
-            def _unlock(p):
-                return int(CKR_OK)
-
-            create_fn = CK_CREATEMUTEX(_create)
-            destroy_fn = CK_DESTROYMUTEX(_destroy)
-            lock_fn = CK_LOCKMUTEX(_lock)
-            unlock_fn = CK_UNLOCKMUTEX(_unlock)
-
-            args = CK_C_INITIALIZE_ARGS()
-            args.CreateMutex = create_fn
-            args.DestroyMutex = destroy_fn
-            args.LockMutex = lock_fn
-            args.UnlockMutex = unlock_fn
-            init_args_ptr = cast(byref(args), c_void_p)
-            """,
-        )
+        rc, stdout, stderr = _run_init_args_probe(p11_config, "app_mutex_callbacks")
         if rc < 0:
             classify(
                 "crash",
@@ -252,32 +171,7 @@ class TestInitArgsMatrix:
         Both CKR_OK and CKR_CANT_LOCK are spec-compliant; the test
         verifies no crash.
         """
-        rc, stdout, stderr = _run_init_args_script(
-            p11_config,
-            """
-            def _create(pp):
-                return int(CKR_OK)
-            def _destroy(p):
-                return int(CKR_OK)
-            def _lock(p):
-                return int(CKR_OK)
-            def _unlock(p):
-                return int(CKR_OK)
-
-            create_fn = CK_CREATEMUTEX(_create)
-            destroy_fn = CK_DESTROYMUTEX(_destroy)
-            lock_fn = CK_LOCKMUTEX(_lock)
-            unlock_fn = CK_UNLOCKMUTEX(_unlock)
-
-            args = CK_C_INITIALIZE_ARGS()
-            args.CreateMutex = create_fn
-            args.DestroyMutex = destroy_fn
-            args.LockMutex = lock_fn
-            args.UnlockMutex = unlock_fn
-            args.flags = int(CKF_OS_LOCKING_OK)
-            init_args_ptr = cast(byref(args), c_void_p)
-            """,
-        )
+        rc, stdout, stderr = _run_init_args_probe(p11_config, "both_callbacks_and_os_locking")
         if rc < 0:
             classify(
                 "crash",
@@ -308,14 +202,7 @@ class TestInitArgsMatrix:
         violation by the caller.  Modules that accept it silently are
         non-compliant.
         """
-        rc, stdout, stderr = _run_init_args_script(
-            p11_config,
-            """
-            args = CK_C_INITIALIZE_ARGS()
-            args.pReserved = c_void_p(0xDEADBEEF)
-            init_args_ptr = cast(byref(args), c_void_p)
-            """,
-        )
+        rc, stdout, stderr = _run_init_args_probe(p11_config, "reserved_non_null")
         if rc < 0:
             classify(
                 "crash",
@@ -356,28 +243,7 @@ class TestInitArgsMatrix:
         The spec is unambiguous: either ALL four callbacks must be
         supplied, or NONE.  Partial callbacks indicate caller bug.
         """
-        rc, stdout, stderr = _run_init_args_script(
-            p11_config,
-            """
-            def _create(pp):
-                return int(CKR_OK)
-            def _destroy(p):
-                return int(CKR_OK)
-            def _lock(p):
-                return int(CKR_OK)
-
-            create_fn = CK_CREATEMUTEX(_create)
-            destroy_fn = CK_DESTROYMUTEX(_destroy)
-            lock_fn = CK_LOCKMUTEX(_lock)
-
-            args = CK_C_INITIALIZE_ARGS()
-            args.CreateMutex = create_fn
-            args.DestroyMutex = destroy_fn
-            args.LockMutex = lock_fn
-            # UnlockMutex left as NULL — deliberate
-            init_args_ptr = cast(byref(args), c_void_p)
-            """,
-        )
+        rc, stdout, stderr = _run_init_args_probe(p11_config, "partial_callbacks")
         if rc < 0:
             classify(
                 "crash",
@@ -412,53 +278,6 @@ class TestInitArgsMatrix:
         )
 
 
-def _run_finalize_reserved_script(p11_config: Any) -> tuple[int, str, str]:
-    """Execute a subprocess that initializes the module then calls C_Finalize with a non-NULL
-    pReserved pointer.  Prints the C_Finalize return value as ``RV=0x<hex>``.
-
-    Must run in its own subprocess: the call sequence modifies the library's global
-    initialization state, which would corrupt any shared session in the parent process.
-    """
-    module_path = str(p11_config.module)
-    script = textwrap.dedent(f"""
-        import ctypes
-        from ctypes import byref, c_void_p, cast
-
-        from pkcs11_check.raw.types_std import (
-            CK_RV,
-            CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_OK,
-        )
-
-        lib = ctypes.CDLL({module_path!r})
-
-        # Initialize first (C_Initialize(NULL) is universally-accepted per spec §5.4).
-        c_init = lib.C_Initialize
-        c_init.restype = CK_RV
-        c_init.argtypes = [c_void_p]
-        rv_init = c_init(None)
-        assert rv_init in (  # audit-ok: init idempotency; asserting setup success
-            int(CKR_OK), int(CKR_CRYPTOKI_ALREADY_INITIALIZED)
-        ), f"C_Initialize failed: 0x{{rv_init:08x}}"
-
-        # Call C_Finalize with a non-NULL pReserved (spec §11.4 requires
-        # CKR_ARGUMENTS_BAD; many modules tolerate it and return CKR_OK).
-        c_final = lib.C_Finalize
-        c_final.restype = CK_RV
-        c_final.argtypes = [c_void_p]
-
-        dummy = ctypes.c_ulong(0xDEADBEEF)
-        rv = c_final(cast(byref(dummy), c_void_p))
-        print(f"RV=0x{{rv:08x}}")
-    """)
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-    return result.returncode, result.stdout.strip(), result.stderr.strip()
-
-
 class TestFinalizeArgs:
     """C_Finalize argument-validation tests, each run in its own subprocess."""
 
@@ -477,7 +296,7 @@ class TestFinalizeArgs:
           truly reserved and ignoring it is safe).
         - Any other clean code -> xfail/nonspec_reject (noted deviation).
         """
-        rc, stdout, stderr = _run_finalize_reserved_script(p11_config)
+        rc, stdout, stderr = _run_init_args_probe(p11_config, "finalize_reserved_non_null")
         if rc < 0:
             classify(
                 "crash",

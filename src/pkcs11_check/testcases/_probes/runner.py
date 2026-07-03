@@ -121,15 +121,18 @@ def run_probe(
 
         return ProbeResult(returncode=rc, stdout=out, stderr=err)
     finally:
-        # Keep params file on failure for standalone repro; remove on success.
-        if rc is not None and rc == 0:
-            for p in (params_path, cov_path):
-                try:
-                    os.unlink(p)
-                except OSError:
-                    pass
-        else:
+        # The params file is a standalone-repro artifact, useful only for a
+        # failed probe. Retain it only when the debug env var is set AND the probe
+        # failed; otherwise always delete it. Now that run_probe drives real
+        # probes, expected crash(rc<0)/timeout(124) outcomes are routine, so
+        # unconditional on-failure retention would accumulate p11probe-*.json in
+        # TMPDIR without bound. The coverage temp is always removed.
+        keep_params = (
+            rc is not None and rc != 0 and bool(os.environ.get("PKCS11_CHECK_KEEP_PROBE_PARAMS"))
+        )
+        to_remove = [cov_path] if keep_params else [cov_path, params_path]
+        for p in to_remove:
             try:
-                os.unlink(cov_path)
+                os.unlink(p)
             except OSError:
                 pass
