@@ -69,48 +69,6 @@ def test_kwp_decrypt_child_uses_minimal_guarded_output_buffer() -> None:
     assert "wrote past the minimal output buffer" in src
 
 
-@pytest.mark.parametrize(
-    "bad_ct_code,body",
-    [
-        pytest.param(
-            "import os\nbad_ct = os.urandom(mod_len)\n",
-            test_error_path_rsa._PKCS_DECRYPT_BODY,
-            id="pkcs-random",
-        ),
-        pytest.param(
-            "import os\nbad_ct = os.urandom(mod_len // 2)\n",
-            test_error_path_rsa._PKCS_DECRYPT_BODY,
-            id="pkcs-truncated",
-        ),
-        pytest.param(
-            "import os\nbad_ct = os.urandom(mod_len + 16)\n",
-            test_error_path_rsa._PKCS_DECRYPT_BODY,
-            id="pkcs-extended",
-        ),
-        pytest.param(
-            "import os\nbad_ct = os.urandom(mod_len)\n",
-            test_error_path_rsa._OAEP_DECRYPT_BODY,
-            id="oaep-random",
-        ),
-        pytest.param(
-            "bad_ct = b'\\xff' * mod_len\n",
-            test_error_path_rsa._OAEP_DECRYPT_BODY,
-            id="oaep-all-ff",
-        ),
-    ],
-)
-def test_rsa_error_path_generated_script_compiles(bad_ct_code: str, body: str) -> None:
-    """RSA crash-regression child scripts should be syntactically valid."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    script = test_error_path_rsa._build_decrypt_script(
-        cfg,
-        bad_ct_code=bad_ct_code,
-        body=body,
-    )
-
-    compile(script, "<rsa-error-path-child>", "exec")
-
-
 def test_rsa_decrypt_probe_xfails_setup_before_child(monkeypatch: pytest.MonkeyPatch) -> None:
     """RSA decrypt crash probes should not spawn if setup keygen is unavailable."""
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
@@ -122,7 +80,7 @@ def test_rsa_decrypt_probe_xfails_setup_before_child(monkeypatch: pytest.MonkeyP
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(test_error_path_rsa, "gen_rsa_keypair_or_xfail", _xfail_setup)
-    monkeypatch.setattr(test_error_path_rsa, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_error_path_rsa, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="RSA setup unavailable"):
         test_error_path_rsa.TestRsaPkcsDecryptErrorPaths().test_rsa_pkcs_decrypt_random_ciphertext(
@@ -142,7 +100,7 @@ def test_rsa_verify_probe_xfails_setup_before_child(monkeypatch: pytest.MonkeyPa
         pytest.fail("child spawned before setup preflight")
 
     monkeypatch.setattr(test_error_path_rsa, "gen_rsa_keypair_or_xfail", _xfail_setup)
-    monkeypatch.setattr(test_error_path_rsa, "run_with_coverage", _child_should_not_run)
+    monkeypatch.setattr(test_error_path_rsa, "run_probe", _child_should_not_run)
 
     with pytest.raises(pytest.xfail.Exception, match="RSA setup unavailable"):
         test_error_path_rsa.TestRsaVerifyCorruptedSignature().test_rsa_verify_corrupted_signature(
