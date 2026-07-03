@@ -290,8 +290,10 @@ def test_sign_recover_subprocess_keygen_reject_is_xfail(
     monkeypatch.setattr(test_sign_recover, "_has_rsa_x509", lambda _module: True)
     monkeypatch.setattr(
         test_sign_recover,
-        "_run_script",
-        lambda *_args, **_kwargs: (1, "FATAL:GenerateKeyPair:0x00000013", ""),
+        "run_probe",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1, stdout="FATAL:GenerateKeyPair:0x00000013", stderr=""
+        ),
     )
     config = SimpleNamespace(module="/tmp/mock-pkcs11.so", slot=0, pin=None)
 
