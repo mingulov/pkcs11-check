@@ -28,7 +28,7 @@ def test_dual_digest_encrypt_skips_before_child_when_aes_setup_missing(
 ) -> None:
     monkeypatch.setattr(
         test_dual_function,
-        "_run_script",
+        "run_probe",
         lambda *_args, **_kwargs: pytest.fail("child subprocess should not run"),
     )
 
@@ -44,7 +44,7 @@ def test_dual_decrypt_digest_skips_before_child_when_digest_setup_missing(
 ) -> None:
     monkeypatch.setattr(
         test_dual_function,
-        "_run_script",
+        "run_probe",
         lambda *_args, **_kwargs: pytest.fail("child subprocess should not run"),
     )
 
