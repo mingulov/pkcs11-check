@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from pkcs11_check.testcases._probes import error_path_kwp as error_path_kwp_probe
 from pkcs11_check.testcases._probes import ffi_length as ffi_length_probe
 from pkcs11_check.testcases._probes.runner import ProbeResult
 from pkcs11_check.testcases.security import (
@@ -19,13 +20,6 @@ from pkcs11_check.testcases.security import (
     test_recover_length_boundary,
 )
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
-from pkcs11_check.testcases.security.test_error_path_kwp import (
-    _APIS,
-    _CORRUPTION_CODE,
-    _DECRYPT_CODE,
-    _MECHANISMS,
-    _build_script,
-)
 
 
 class _Pin:
@@ -63,37 +57,16 @@ def test_assert_subprocess_no_crash_converts_setup_marker_to_xfail() -> None:
         )
 
 
-@pytest.mark.parametrize("corruption", ["aiv", "padding", "length", "truncate"])
-@pytest.mark.parametrize(
-    "api",
-    [pytest.param(param.values[0], id=str(param.id)) for param in _APIS],
-)
-@pytest.mark.parametrize(
-    "ckm_name",
-    [pytest.param(param.values[1], id=str(param.id)) for param in _MECHANISMS],
-)
-def test_kwp_error_path_generated_script_compiles(
-    ckm_name: str,
-    api: str,
-    corruption: str,
-) -> None:
-    """The generated AES-KWP crash-regression child script is valid Python."""
-    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
-    script = _build_script(
-        cfg,
-        ckm_name=ckm_name,
-        corruption_code=_CORRUPTION_CODE.format(corruption=corruption),
-        api=api,
-    )
-
-    compile(script, "<kwp-error-path-child>", "exec")
-
-
 def test_kwp_decrypt_child_uses_minimal_guarded_output_buffer() -> None:
-    """The decrypt crash path must expose output-buffer overwrites."""
-    assert "minimal_len = max(0, len(corrupted) - 8)" in _DECRYPT_CODE
-    assert 'guard_sentinel = b"PKCS11CHK"' in _DECRYPT_CODE
-    assert "wrote past the minimal output buffer" in _DECRYPT_CODE
+    """The decrypt crash path must expose output-buffer overwrites.
+
+    The AES-KWP/KW error-path child now lives in ``_probes/error_path_kwp.py``;
+    the minimal guarded-output-buffer logic must survive the migration.
+    """
+    src = inspect.getsource(error_path_kwp_probe)
+    assert "minimal_len = max(0, len(corrupted) - 8)" in src
+    assert 'guard_sentinel = b"PKCS11CHK"' in src
+    assert "wrote past the minimal output buffer" in src
 
 
 @pytest.mark.parametrize(

@@ -45,12 +45,17 @@ def test_kwp_wrap_setup_passes_output_size_hint() -> None:
     (which does not report the wrapped-key length on the NULL-buffer size-query
     pass for AES-KEY-WRAP-KWP) does not fail the setup with CKR_BUFFER_TOO_SMALL.
     Without it, NSS hard-failed all 21 corrupted/bit-flip KWP unwrap probes at
-    setup (2026-06-09)."""
+    setup (2026-06-09).
+
+    The wrap setup now lives in the ``_probes/error_path_kwp.py`` probe child
+    (a real ``wrap_key_recipe(..., output_size_hint=64)`` call), so the guard
+    reads the probe module source and walks its AST for the hinted call.
+    """
     import ast
     from pathlib import Path
 
-    src = Path("src/pkcs11_check/testcases/security/test_error_path_kwp.py").read_text()
-    # The subprocess script template must call wrap_key_recipe with the hint.
+    src = Path("src/pkcs11_check/testcases/_probes/error_path_kwp.py").read_text()
+    # The probe child must call wrap_key_recipe with the hint.
     assert "output_size_hint=64" in src
     tree = ast.parse(src)
     hinted = any(
@@ -60,6 +65,4 @@ def test_kwp_wrap_setup_passes_output_size_hint() -> None:
         and any(kw.arg == "output_size_hint" for kw in node.keywords)
         for node in ast.walk(tree)
     )
-    # wrap_key_recipe inside the f-string template is text, not AST; the string
-    # assertion above covers it. This guards any real (non-template) call too.
-    assert hinted or "output_size_hint=64" in src
+    assert hinted, "probe must call wrap_key_recipe(..., output_size_hint=...)"
