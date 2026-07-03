@@ -22,12 +22,6 @@ import os
 from collections import Counter
 from typing import Any
 
-# Environment variable carrying the user PIN into the child subprocess. The PIN
-# is passed here (not interpolated into the script) so it never appears in the
-# child argv or in any generated source string. Mirrors the redaction handling
-# already applied to PIN-bearing env keys in ``core/file_runner.py``.
-_P11CHECK_PIN_ENV = "_P11CHECK_PIN"
-
 # A probe subprocess that hangs (the module did not return on the probe input)
 # is surfaced via this marker on stderr + a sentinel returncode, so the parent's
 # assert_subprocess_completed classifies the hang as a crash-class finding rather

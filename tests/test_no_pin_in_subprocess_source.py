@@ -51,6 +51,13 @@ def _is_pin_name(node: ast.AST) -> bool:
     return isinstance(node, ast.Name) and node.id in _PIN_NAMES
 
 
+def _is_str_like(node: ast.AST) -> bool:
+    """True for a string literal or f-string -- a string-concatenation operand."""
+    return (isinstance(node, ast.Constant) and isinstance(node.value, str)) or isinstance(
+        node, ast.JoinedStr
+    )
+
+
 def _classify(expr: ast.expr) -> str | None:
     """Return a leak-kind label if ``expr`` carries a plaintext PIN, else None.
 
@@ -101,6 +108,17 @@ def _scan_file(path: pathlib.Path) -> list[str]:
                     kind = _classify(operand)
                     if kind:
                         flag(node.lineno, "%-format", kind)
+        # "..." + <pin>  /  <pin> + "..."  (string concatenation).  Only the
+        # non-string operand is classified; string templates are covered by the
+        # f-string / .format() / % branches above (avoids double-flagging).
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            if _is_str_like(node.left) or _is_str_like(node.right):
+                for operand in (node.left, node.right):
+                    if _is_str_like(operand):
+                        continue
+                    kind = _classify(operand)
+                    if kind:
+                        flag(node.lineno, "+-concat", kind)
     return offenders
 
 
