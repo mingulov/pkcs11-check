@@ -14,12 +14,12 @@ import os
 import shutil
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 
 pytestmark = [pytest.mark.interop, pytest.mark.stress]
@@ -133,19 +133,14 @@ class TestOpenSSLPkcs11Provider:
         openssl = _require_openssl()
         module = str(p11_config.module)
 
-        # Generate RSA key via OpenSSL with PKCS#11 - just verify no crash
-        script = f"""
-        import subprocess, os
-        env = os.environ.copy()
-        env["PKCS11_PROVIDER_MODULE"] = {module!r}
-        r = subprocess.run(
-            [{openssl!r}, "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048",
-             "-provider", "default", "-out", "/dev/null"],
-            capture_output=True, timeout=30, env=env,
+        # Generate RSA key via OpenSSL with PKCS#11 - just verify no crash.  The openssl
+        # call runs in its own child process (via the _probes.openssl_genpkey wrapper
+        # module, launched with paths in the env - no source interpolation) so a provider
+        # RSA-keygen SIGSEGV kills only that child.
+        rc, out, err = _run(
+            [sys.executable, "-m", "pkcs11_check.testcases._probes.openssl_genpkey"],
+            env={"PKCS11_PROVIDER_MODULE": module, "P11CHECK_OPENSSL_BIN": openssl},
         )
-        print(f"rc={{r.returncode}}")
-        """
-        rc, out, err = _run([sys.executable, "-c", textwrap.dedent(script).strip()])
         assert_subprocess_completed(rc, out, err, context="OpenSSL genpkey subprocess wrapper")
 
 
@@ -170,22 +165,13 @@ class TestP11KitProxy:
         if proxy_path is None:
             pytest.skip("p11-kit not installed")
 
-        # Use raw PKCS#11 API via subprocess to avoid crash contamination
-        script = textwrap.dedent(f"""\
-            from pkcs11_check.raw.api import RawPKCS11
-            try:
-                raw = RawPKCS11.from_lib("{proxy_path}")
-                raw.C_Initialize()
-                print("OK: p11-kit proxy loaded and initialized")
-                raw.C_Finalize()
-            except Exception as e:
-                print(f"ERROR: {{type(e).__name__}}: {{e}}")
-        """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
+        # Use raw PKCS#11 API via subprocess (the _probes.p11kit_proxy_load module) to
+        # avoid crash contamination.
+        result = run_probe(
+            "p11kit_proxy_load",
+            {"module_path": str(proxy_path)},
             timeout=30,
+            coverage="session",
         )
         assert result.returncode == 0, (
             f"p11-kit proxy crashed (rc={result.returncode}): {result.stderr}"
