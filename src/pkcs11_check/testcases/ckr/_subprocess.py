@@ -5,9 +5,10 @@ from __future__ import annotations
 import textwrap
 
 from pkcs11_check.classification import fail_as, xfail_as
+from pkcs11_check.testcases._probes.honeypot import SETUP_XFAIL_PREFIX
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 
-_SETUP_XFAIL_PREFIX = "SETUP_XFAIL:"
+_SETUP_XFAIL_PREFIX = SETUP_XFAIL_PREFIX  # single source: the probe-layer sentinel
 # A child probe that observed a genuine break (e.g. a wrong-key operation that
 # actually produced output) emits BREAK: and the parent hard-fails it.
 _BREAK_PREFIX = "BREAK:"
