@@ -85,7 +85,7 @@ class TestMechanismObjects:
                 attrs = read_attributes(rs.raw, rs.sh, obj_h, [CKA_MECHANISM_TYPE])
                 mtype = attrs[CKA_MECHANISM_TYPE]
             except AssertionError:
-                continue
+                continue  # audit-ok: enumeration probe; unreadable object skipped
             if isinstance(mtype, int) and mtype < vendor_base and mtype not in known:
                 from pkcs11_check.compliance import ComplianceLevel, note
 

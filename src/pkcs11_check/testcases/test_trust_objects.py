@@ -120,7 +120,7 @@ class TestTrustObjects:
                 assert val in _KNOWN_TRUST_VALUES, f"Unknown TRUST_SERVER_AUTH value 0x{val:08X}"
             except AssertionError:
                 # Not all trust objects have SERVER_AUTH
-                continue
+                continue  # audit-ok: optional-attribute probe; attribute may be absent
 
     def test_trust_usage_attributes_readable(self, p11_raw_session: Any) -> None:
         """Trust usage attributes are readable where present."""
@@ -146,6 +146,6 @@ class TestTrustObjects:
                 )
             except AssertionError:
                 # Attribute may not be present on this object
-                continue
+                continue  # audit-ok: optional-attribute probe; attribute may be absent
         if read_count == 0:
             pytest.skip("No trust usage attributes readable on first trust object")

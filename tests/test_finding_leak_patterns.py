@@ -18,20 +18,26 @@ _OR_RV_NE_ZERO = re.compile(r"\bor\s+rv\s*!=\s*0\b")
 _TUPLE_EXCEPT_ASSERTION = re.compile(r"^\s*except\s*\(")
 
 
-def _swallow_pass(lines: list[str], i: int) -> bool:
-    """True if the ``except`` at line ``i`` swallows the caught exception with ``pass``.
+_SWALLOW_BODY = re.compile(r"^(?:pass|continue|break|return\b.*)$")
 
-    Skips blank AND comment-only lines between the ``except`` and its body, and strips
-    any trailing ``# comment`` on the body line before matching, so a comment cannot be
-    used to evade detection (``pass  # reason`` is still a swallow). A ``# audit-ok:`` on
-    any line from the ``except`` through the ``pass`` (inclusive) is the sanctioned exemption.
+
+def _swallow_pass(lines: list[str], i: int) -> bool:
+    """True if the ``except`` at line ``i`` swallows the caught exception.
+
+    A swallow is a handler whose first statement merely discards the exception: ``pass``,
+    ``continue``, ``break``, or ``return`` (all silently drop a caught AssertionError /
+    CkrAssertionError, which is how the classifier carries a finding). Skips blank AND
+    comment-only lines between the ``except`` and its body, and strips any trailing
+    ``# comment`` on the body line before matching, so a comment cannot be used to evade
+    detection (``pass  # reason`` is still a swallow). A ``# audit-ok:`` on any line from the
+    ``except`` through the body line (inclusive) is the sanctioned exemption.
     """
     j = i + 1
     while j < len(lines) and (not lines[j].strip() or lines[j].lstrip().startswith("#")):
         j += 1
     if j >= len(lines):
         return False
-    if lines[j].split("#", 1)[0].strip() != "pass":
+    if not _SWALLOW_BODY.match(lines[j].split("#", 1)[0].strip()):
         return False
     return not any("# audit-ok:" in lines[k] for k in range(i, j + 1))
 
@@ -65,7 +71,7 @@ def _flag(path: Path) -> list[str]:
         ):
             if _swallow_pass(lines, i):
                 hits.append(
-                    f"{path}:{i + 1}: tuple-form `except (…AssertionError…): pass`"
+                    f"{path}:{i + 1}: tuple-form `except (…AssertionError…): <swallow>`"
                     " swallows a finding"
                 )
             i += 1
@@ -119,6 +125,17 @@ def test_guard_ignores_real_handler_body() -> None:
     """A handler that does real work (not a bare discard) is not a swallow."""
     assert _swallow_pass(["    except AssertionError:", "        raise"], 0) is False
     assert _swallow_pass(["    except AssertionError as e:", "        xfail_as(e)"], 0) is False
+
+
+def test_guard_flags_return_continue_break_swallow() -> None:
+    """return/continue/break discard a caught finding-carrying exception just like pass."""
+    assert _swallow_pass(["    except AssertionError:", "        return None"], 0) is True
+    assert _swallow_pass(["    except AssertionError:", "        continue"], 0) is True
+    assert _swallow_pass(["    except AssertionError:", "        break"], 0) is True
+    # audit-ok still exempts, and a real body is still not a swallow
+    exempt = ["    except AssertionError:", "        return x  # audit-ok: x"]
+    assert _swallow_pass(exempt, 0) is False
+    assert _swallow_pass(["    except AssertionError:", "        returned = 1"], 0) is False
 
 
 def test_no_finding_leak_patterns() -> None:

@@ -158,7 +158,7 @@ class TestConflictingUsageAttrs:
             )
             destroy_quietly(rs.raw, rs.sh, key)
         except AssertionError:
-            return  # Strict module rejects conflicting attrs - GOOD
+            return  # audit-ok: policy probe; strict module rejecting conflicting attrs is correct
 
         from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -183,7 +183,7 @@ class TestConflictingUsageAttrs:
             )
             destroy_quietly(rs.raw, rs.sh, key)
         except AssertionError:
-            return  # Strict module - good
+            return  # audit-ok: policy probe; a strict module rejecting this is correct
 
         from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -254,7 +254,7 @@ class TestSensitivePreservation:
                     {CKA_EXTRACTABLE: True},
                 )
             except AssertionError:
-                return  # Correct: reject the escalation attempt
+                return  # audit-ok: policy probe; rejecting the escalation attempt is correct
 
             try:
                 copy_attrs = read_attributes(rs.raw, rs.sh, copied, [CKA_EXTRACTABLE])

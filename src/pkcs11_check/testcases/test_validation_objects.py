@@ -127,7 +127,7 @@ class TestValidationObjects:
                 auth = attrs[CKA_VALIDATION_AUTHORITY_TYPE]
             except AssertionError:
                 # Not all modules expose this optional attribute
-                continue
+                continue  # audit-ok: optional-attribute probe; the attribute is optional
             if auth < vendor_base:
                 assert auth in _KNOWN_AUTHORITY_TYPES, f"Unknown authority type 0x{auth:08X}"
 
@@ -146,7 +146,7 @@ class TestValidationObjects:
                 )
             except AssertionError:
                 # Optional attribute - some modules may not expose it
-                continue
+                continue  # audit-ok: optional-attribute probe; the attribute is optional
 
     def test_validation_objects_are_read_only(self, p11_raw_session: Any) -> None:
         """CKO_VALIDATION objects reject C_SetAttributeValue."""

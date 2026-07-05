@@ -114,7 +114,7 @@ class TestProfileObjects:
                 else:
                     pid = int(raw_val)
             except (AssertionError, KeyError):
-                continue
+                continue  # audit-ok: enumeration probe; unreadable object skipped
             if pid < CKP_VENDOR_DEFINED:
                 assert pid in _KNOWN_PROFILE_IDS, f"Unknown non-vendor profile ID 0x{pid:08X}"
 
@@ -165,14 +165,14 @@ def _read_profile_ids(rs: Any) -> set[int]:
     try:
         handles = find_objects(rs.raw, rs.sh, template_from_dict({CKA_CLASS: CKO_PROFILE}))
     except AssertionError:
-        return set()
+        return set()  # audit-ok: enumeration probe; empty-set = capability signal (caller skips)
 
     pids: set[int] = set()
     for h in handles:
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_PROFILE_ID])
         except AssertionError:
-            continue
+            continue  # audit-ok: enumeration probe; object missing CKA_PROFILE_ID
         if CKA_PROFILE_ID not in attrs:
             continue
         raw_val = attrs[CKA_PROFILE_ID]

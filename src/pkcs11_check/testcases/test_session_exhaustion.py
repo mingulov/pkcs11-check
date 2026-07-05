@@ -58,7 +58,7 @@ class TestSessionExhaustion:
                     sh = raw_open_session(rs.raw, rs.slot_id, flags)
                     sessions.append(sh)
                 except AssertionError:
-                    break  # CKR_SESSION_COUNT or similar
+                    break  # audit-ok: resource-exhaustion probe; clean session-count limit ok
         finally:
             pass
 

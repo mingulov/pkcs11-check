@@ -110,7 +110,7 @@ class TestHwFeatureEnumeration:
                     else int(raw_val)
                 )
             except (AssertionError, KeyError):
-                continue
+                continue  # audit-ok: enumeration probe; unreadable object skipped
             if hw_type < CKH_VENDOR_DEFINED:
                 assert hw_type in _KNOWN_HW_FEATURE_TYPES, (
                     f"Unknown non-vendor HW feature type 0x{hw_type:08X}"
@@ -149,7 +149,7 @@ class TestHwFeatureClock:
                 if hw_type == CKH_CLOCK:
                     clocks.append(feat)
             except (AssertionError, KeyError):
-                continue
+                continue  # audit-ok: enumeration probe; unreadable object skipped
         return clocks
 
     def test_clock_value_format(self, p11_raw_session: Any) -> None:
@@ -203,7 +203,7 @@ class TestHwFeatureCounter:
                 if hw_type == CKH_MONOTONIC_COUNTER:
                     counters.append(feat)
             except (AssertionError, KeyError):
-                continue
+                continue  # audit-ok: enumeration probe; unreadable object skipped
         return counters
 
     def test_counter_has_value(self, p11_raw_session: Any) -> None:

@@ -159,7 +159,7 @@ class TestWeakRsaKeySize:
         try:
             pub, priv = gen_rsa_keypair(rs.raw, rs.sh, bits)
         except (AssertionError, OSError):
-            return  # Module rejected weak key size -- good
+            return  # audit-ok: hardening probe; rejecting the weak key size is correct
         try:
             note(
                 f"Module accepts {bits}-bit RSA key generation",
@@ -258,7 +258,7 @@ class TestRsaPkcsV15Encrypt:
         try:
             info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS)
         except (AssertionError, OSError):
-            return  # Cannot query mechanism info
+            return  # audit-ok: capability probe; mechanism-info may be unavailable
         if info["flags"] & int(CKF_ENCRYPT):
             note(
                 "Module supports CKM_RSA_PKCS encryption (PKCS v1.5 padding)",
@@ -306,7 +306,7 @@ class TestWeakKeySizeAcceptance:
         try:
             key_h = gen_aes_key(rs.raw, rs.sh, bits, mechanism=mechanism)
         except (AssertionError, OSError):
-            return  # Module rejected weak key size -- good
+            return  # audit-ok: hardening probe; rejecting the weak key size is correct
         try:
             note(
                 f"Module accepts {description}",
@@ -531,7 +531,7 @@ class TestSmallRsaPublicKeyImport:
         try:
             key_h = import_rsa_public_key(rs.raw, rs.sh, n=self._RSA512_N, e=self._RSA512_E)
         except (AssertionError, OSError):
-            return  # Module rejected the small key -- no finding
+            return  # audit-ok: hardening probe; rejecting the small key is correct
 
         try:
             note(

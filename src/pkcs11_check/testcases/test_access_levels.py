@@ -837,7 +837,7 @@ class TestTrustedAttribute:
             )
         except AssertionError:
             # Expected: module rejects CKA_TRUSTED from USER
-            return
+            return  # audit-ok: policy probe; rejecting CKA_TRUSTED write from USER is correct
 
         # If we get here, module allowed creating a CKA_TRUSTED key from a
         # USER session — a security boundary violation. Closes Phase 4.5

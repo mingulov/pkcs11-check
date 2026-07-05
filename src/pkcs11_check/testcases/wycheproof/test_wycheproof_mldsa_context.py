@@ -144,7 +144,7 @@ def _context_signing_operational(rs: Any, priv: int, pub: int, msg: bytes) -> bo
             rs.raw, rs.sh, pub, CKM_ML_DSA, msg, sig, mech_param=param
         )
     except CkrAssertionError:
-        return False
+        return False  # audit-ok: operability probe; CkrAssertionError means not operational
 
 
 @pytest.mark.parametrize(
