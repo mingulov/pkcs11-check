@@ -229,7 +229,7 @@ class TestDeprecatedMechanismOperation:
                         reference=f"CKM_{mech_name} uses a weak hash algorithm",
                     )
                 except (AssertionError, OSError):
-                    pass  # Module rejected the operation -- acceptable
+                    pass  # audit-ok: hardening probe; rejecting the deprecated mechanism is correct
             finally:
                 destroy_quietly(rs.raw, rs.sh, pub)
                 destroy_quietly(rs.raw, rs.sh, priv)

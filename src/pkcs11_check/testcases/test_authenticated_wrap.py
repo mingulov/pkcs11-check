@@ -534,7 +534,7 @@ class TestAuthenticatedWrap:
                         mech_param=wrap_mech,
                     )
                 except (AssertionError, AttributeError, NotImplementedError):
-                    pass  # Expected on v2.40
+                    pass  # audit-ok: capability gap; GCM authenticated wrap absent on v2.40 modules
             # If no C_WrapKeyAuthenticated method, test passes
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

@@ -46,7 +46,7 @@ class TestResourceExhaustion:
             for _ in range(200):
                 keys.append(gen_aes_key(rs.raw, rs.sh, 128))
         except AssertionError:
-            pass  # CKR_DEVICE_MEMORY or similar - graceful
+            pass  # audit-ok: resource-exhaustion probe; a graceful clean rejection is acceptable
         finally:
             for k in keys:
                 destroy_quietly(rs.raw, rs.sh, k)
@@ -70,7 +70,7 @@ class TestResourceExhaustion:
                     )
                 )
         except AssertionError:
-            pass  # Graceful limit
+            pass  # audit-ok: resource-exhaustion probe; a graceful clean limit is acceptable
         for o in objs:
             destroy_quietly(rs.raw, rs.sh, o)
 

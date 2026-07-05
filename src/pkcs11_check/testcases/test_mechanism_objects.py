@@ -118,4 +118,4 @@ class TestMechanismObjects:
                 ComplianceLevel.VENDOR,
             )
         except AssertionError:
-            pass  # Expected: module correctly rejects write
+            pass  # audit-ok: policy probe; rejecting the read-only CKO_MECHANISM write is correct

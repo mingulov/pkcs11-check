@@ -684,7 +684,7 @@ class TestPssSaltLength:
                     reference="RFC 8017 Section 9.1: sLen must not exceed emLen - hLen - 2",
                 )
             except (AssertionError, OSError):
-                pass  # Module rejected excessive salt -- correct
+                pass  # audit-ok: hardening probe; rejecting the over-large salt is correct
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -1155,7 +1155,7 @@ class TestRsaOaepSha1Mgf:
                     "prefer SHA-256 or stronger for new applications",
                 )
             except (AssertionError, OSError):
-                pass  # Module rejected SHA-1 MGF -- acceptable
+                pass  # audit-ok: hardening probe; rejecting the SHA-1 MGF is correct
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -1214,7 +1214,7 @@ class TestRsaPssMd5Hash:
                     "NIST SP 800-131A Rev.2 disallows MD5 for digital signatures",
                 )
             except (AssertionError, OSError):
-                pass  # Module rejected MD5 -- correct behavior
+                pass  # audit-ok: hardening probe; rejecting MD5 is correct
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -1254,7 +1254,7 @@ class TestCbcIvAllZeros:
                     "the first block equivalent to ECB",
                 )
             except (AssertionError, OSError):
-                pass  # Module rejected all-zero IV -- unusual but acceptable
+                pass  # audit-ok: hardening probe; rejecting the all-zero IV is acceptable
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 

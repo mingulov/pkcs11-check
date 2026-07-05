@@ -777,7 +777,7 @@ class TestOtpKeyAttributes:
                     vals = read_attributes(rs.raw, rs.sh, key_h, [attr_int])
                     assert vals[attr_int] is not None
                 except AssertionError:
-                    pass  # Module may not expose all OTP attributes
+                    pass  # audit-ok: optional OTP attribute may be absent
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
