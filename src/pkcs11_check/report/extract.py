@@ -20,12 +20,17 @@ Crash findings have no nodeid; their ``label`` is the crashing target/file.
 
 from __future__ import annotations
 
-import json
 from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Any
 
 from pkcs11_check.classification import normalize_param
+from pkcs11_check.core.report_log import (
+    iter_report_log_records as _iter_report_records,
+)
+from pkcs11_check.core.report_log import (
+    user_property as _user_property,
+)
 
 # How many sample nodeids / vector ids to retain per group.
 _MAX_NODEIDS = 5
@@ -33,30 +38,6 @@ _MAX_VECTOR_IDS = 8
 _MAX_PARAMS = 20
 
 GroupKey = tuple[str, str, str | None, str | None, str | None, tuple[str, ...], str | None]
-
-
-def _iter_report_records(path: Path) -> list[dict[str, Any]]:
-    """Yield JSON objects from a JSONL report log, skipping blank/garbage lines."""
-    records: list[dict[str, Any]] = []
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(obj, dict):
-            records.append(obj)
-    return records
-
-
-def _user_property(report: dict[str, Any], key: str) -> Any:
-    """Return the value for ``key`` in a report's ``user_properties`` list."""
-    for pair in report.get("user_properties", []) or []:
-        if isinstance(pair, (list, tuple)) and len(pair) == 2 and pair[0] == key:
-            return pair[1]
-    return None
 
 
 def _classifications_from_report(report: dict[str, Any]) -> list[dict[str, Any]]:

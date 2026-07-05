@@ -13,6 +13,12 @@ from pathlib import Path
 from typing import Literal
 
 from pkcs11_check.core.collection import CollectedPytestItem
+from pkcs11_check.core.report_log import (
+    iter_report_log_records as _iter_report_log_records,
+)
+from pkcs11_check.core.report_log import (
+    map_report_outcome as _map_report_outcome,
+)
 
 
 @dataclass(frozen=True)
@@ -169,33 +175,6 @@ def build_disabled_selection_plan(
 
 def _load_report_log_records(path: Path) -> list[dict[str, object]]:
     return list(_iter_report_log_records(path))
-
-
-def _iter_report_log_records(path: Path) -> Iterable[dict[str, object]]:
-    try:
-        fh = path.open(encoding="utf-8")
-    except (FileNotFoundError, OSError):
-        return
-
-    with fh:
-        for raw_line in fh:
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(payload, dict):
-                yield payload
-
-
-def _map_report_outcome(raw_outcome: str, wasxfail: object) -> str:
-    if raw_outcome == "passed" and wasxfail is not None:
-        return "xpassed"
-    if raw_outcome == "skipped" and wasxfail is not None:
-        return "xfailed"
-    return raw_outcome
 
 
 def _collect_report_evidence(

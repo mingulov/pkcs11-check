@@ -25,6 +25,12 @@ from rich.console import Console
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.preflight import load_manifest
 from pkcs11_check.core.quality_audit import build_quality_audit
+from pkcs11_check.core.report_log import (
+    iter_report_log_records as _iter_report_log_records,
+)
+from pkcs11_check.core.report_log import (
+    map_report_outcome as _map_outcome,
+)
 from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS, compute_child_subprocess_counts
 from pkcs11_check.core.test_selection import extract_required_mechanisms, write_deselect_file
 
@@ -977,25 +983,6 @@ def write_isolated_report(
 def _load_report_log_records(jsonl_path: Path) -> list[dict[str, Any]]:
     """Load parseable JSONL report-log records from disk (streamed line-by-line)."""
     return list(_iter_report_log_records(jsonl_path))
-
-
-def _iter_report_log_records(jsonl_path: Path) -> Iterable[dict[str, Any]]:
-    """Yield parseable JSONL report-log records from disk line-by-line."""
-    try:
-        fh = jsonl_path.open(encoding="utf-8")
-    except (FileNotFoundError, OSError):
-        return
-    with fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(rec, dict):
-                yield rec
 
 
 def _report_record_cache_dir(state_file: Path) -> Path:
@@ -2330,16 +2317,6 @@ def _flatten_longrepr(longrepr: Any) -> str:
                         parts.append("\n".join(lines))
         return "\n".join(parts) if parts else ""
     return str(longrepr)
-
-
-def _map_outcome(raw_outcome: str, wasxfail: str | None) -> str:
-    """Map a raw pytest-reportlog outcome to the unified outcome value."""
-    if raw_outcome == "passed" and wasxfail is not None:
-        return "xpassed"
-    if raw_outcome == "skipped" and wasxfail is not None:
-        return "xfailed"
-    # "failed" stays "failed" regardless of wasxfail (strict xfail)
-    return raw_outcome
 
 
 def _identify_crash_culprit_from_records(
