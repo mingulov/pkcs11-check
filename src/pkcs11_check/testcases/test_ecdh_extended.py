@@ -20,8 +20,8 @@ from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import (
     attr_bytes,
-    mech_bytes,
     mech_ecdh,
+    mech_ulong,
 )
 from pkcs11_check.raw.recipes import (
     derive_key,
@@ -445,7 +445,7 @@ class TestXEdDSA:
         try:
             data = b"XEdDSA test message for signing"
             # XEdDSA param is the hash type; 0 = SHA-512 per spec
-            xeddsa_param = mech_bytes(CKM_XEDDSA, (0).to_bytes(4, "little"))
+            xeddsa_param = mech_ulong(CKM_XEDDSA, 0)
             try:
                 sig = sign_single(
                     rs.raw,
@@ -462,7 +462,7 @@ class TestXEdDSA:
                 raise
             assert len(sig) > 0
             # Verify the just-produced signature with the same key.
-            xeddsa_v = mech_bytes(CKM_XEDDSA, (0).to_bytes(4, "little"))
+            xeddsa_v = mech_ulong(CKM_XEDDSA, 0)
             try:
                 result = verify_single(
                     rs.raw,
@@ -511,7 +511,7 @@ class TestXEdDSA:
 
         try:
             data = b"XEdDSA bad signature test"
-            xeddsa_param = mech_bytes(CKM_XEDDSA, (0).to_bytes(4, "little"))
+            xeddsa_param = mech_ulong(CKM_XEDDSA, 0)
             try:
                 sig = sign_single(
                     rs.raw,
@@ -537,7 +537,7 @@ class TestXEdDSA:
                 bad_sig_arr[0] ^= 0xFF
                 bad_sig = bytes(bad_sig_arr)
 
-                xeddsa_v = mech_bytes(CKM_XEDDSA, (0).to_bytes(4, "little"))
+                xeddsa_v = mech_ulong(CKM_XEDDSA, 0)
                 result = verify_single(
                     rs.raw,
                     rs.sh,

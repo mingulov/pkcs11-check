@@ -9,19 +9,17 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 
 from __future__ import annotations
 
-import ctypes
 from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.pack import mech_bytes, mech_string_data
+from pkcs11_check.raw.pack import mech_string_data, mech_ulong
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
-    CK_ULONG,
     CKA_CLASS,
     CKA_DERIVE,
     CKA_EXTRACTABLE,
@@ -121,11 +119,6 @@ def _derive_generic_secret(
     )
 
 
-def _ulong_bytes(value: int) -> bytes:
-    """Serialize a CK_ULONG to raw bytes (native byte order)."""
-    return bytes(ctypes.string_at(ctypes.addressof(CK_ULONG(value)), ctypes.sizeof(CK_ULONG)))
-
-
 # ---------------------------------------------------------------------------
 # TestConcatenateBaseAndKey
 # ---------------------------------------------------------------------------
@@ -148,14 +141,13 @@ class TestConcatenateBaseAndKey:
         second = _import_generic_secret(rs, second_bytes)
         derived = 0
         try:
-            # CK_OBJECT_HANDLE is a single CK_ULONG - pass as raw bytes
-            param_bytes = _ulong_bytes(second)
+            # CK_OBJECT_HANDLE is a single CK_ULONG parameter
             derived = _derive_generic_secret(
                 rs,
                 base,
                 CKM_CONCATENATE_BASE_AND_KEY,
                 len(expected) * 8,
-                mech_param=mech_bytes(CKM_CONCATENATE_BASE_AND_KEY, param_bytes),
+                mech_param=mech_ulong(CKM_CONCATENATE_BASE_AND_KEY, second),
             )
             derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert_correct(
@@ -186,13 +178,12 @@ class TestConcatenateBaseAndKey:
         second = _import_generic_secret(rs, second_bytes)
         derived = 0
         try:
-            param_bytes = _ulong_bytes(second)
             derived = _derive_generic_secret(
                 rs,
                 base,
                 CKM_CONCATENATE_BASE_AND_KEY,
                 32 * 8,
-                mech_param=mech_bytes(CKM_CONCATENATE_BASE_AND_KEY, param_bytes),
+                mech_param=mech_ulong(CKM_CONCATENATE_BASE_AND_KEY, second),
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 32
@@ -519,7 +510,7 @@ class TestExtractKeyFromKey:
                 base,
                 CKM_EXTRACT_KEY_FROM_KEY,
                 128,
-                mech_param=mech_bytes(CKM_EXTRACT_KEY_FROM_KEY, _ulong_bytes(0)),
+                mech_param=mech_ulong(CKM_EXTRACT_KEY_FROM_KEY, 0),
             )
             derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert_correct(
@@ -553,7 +544,7 @@ class TestExtractKeyFromKey:
                 base,
                 CKM_EXTRACT_KEY_FROM_KEY,
                 128,
-                mech_param=mech_bytes(CKM_EXTRACT_KEY_FROM_KEY, _ulong_bytes(128)),
+                mech_param=mech_ulong(CKM_EXTRACT_KEY_FROM_KEY, 128),
             )
             derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert_correct(
@@ -590,14 +581,14 @@ class TestExtractKeyFromKey:
                 base,
                 CKM_EXTRACT_KEY_FROM_KEY,
                 128,
-                mech_param=mech_bytes(CKM_EXTRACT_KEY_FROM_KEY, _ulong_bytes(0)),
+                mech_param=mech_ulong(CKM_EXTRACT_KEY_FROM_KEY, 0),
             )
             derived_b = _derive_generic_secret(
                 rs,
                 base,
                 CKM_EXTRACT_KEY_FROM_KEY,
                 128,
-                mech_param=mech_bytes(CKM_EXTRACT_KEY_FROM_KEY, _ulong_bytes(128)),
+                mech_param=mech_ulong(CKM_EXTRACT_KEY_FROM_KEY, 128),
             )
             val_a = read_attributes(rs.raw, rs.sh, derived_a, [CKA_VALUE])[CKA_VALUE]
             val_b = read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE])[CKA_VALUE]

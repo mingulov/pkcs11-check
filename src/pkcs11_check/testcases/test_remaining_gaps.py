@@ -39,7 +39,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify, xfail_as
-from pkcs11_check.raw.pack import mech_bytes
+from pkcs11_check.raw.pack import mech_ulong
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     read_attributes,
@@ -1111,7 +1111,7 @@ class TestTier1Stragglers:
                     key,
                     CKM_AES_CMAC_GENERAL,
                     b"test data for cmac general",
-                    mech_param=mech_bytes(CKM_AES_CMAC_GENERAL, mac_len.to_bytes(8, "little")),
+                    mech_param=mech_ulong(CKM_AES_CMAC_GENERAL, mac_len),
                 )
             except AssertionError as e:
                 # Advertised but the operation does not complete: a clean operational
