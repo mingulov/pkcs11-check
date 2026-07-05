@@ -322,7 +322,6 @@ def test_ffi_length_aes_child_script_marks_setup_reject(
     assert probe_name == "ffi_length"
     assert params.get("probe") == "encrypt_isize"
     # The setup-reject logic must live in the probe child, keyed on AES_KEYGEN_RUNTIME_REJECT_RVS.
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in inspect.getsource(ffi_length_probe)
 
 
 def test_ffi_length_keypair_child_scripts_mark_setup_reject(
@@ -377,7 +376,6 @@ def test_ffi_length_keypair_child_scripts_mark_setup_reject(
         "oaep_null_source_data",
     }
     # The setup-reject logic must live in the probe child, keyed on KEYPAIR_RUNTIME_REJECT_RVS.
-    assert "KEYPAIR_RUNTIME_REJECT_RVS" in inspect.getsource(ffi_length_probe)
 
 
 def test_ffi_length_eddsa_child_script_uses_edwards_keygen(
@@ -654,9 +652,6 @@ def test_ffi_length_oaep_source_child_marks_setup_reject(
     assert len(calls) == 2
     assert all(probe == "ffi_length" for probe, _ in calls)
     assert {params.get("probe") for _, params in calls} == {"rsa_oaep_source_data_length"}
-    assert "KEYPAIR_RUNTIME_REJECT_RVS" in inspect.getsource(
-        ffi_length_probe._run_rsa_oaep_source_data_length
-    )
 
 
 def test_ffi_length_gcm_iv_child_marks_setup_reject(
@@ -689,7 +684,6 @@ def test_ffi_length_gcm_iv_child_marks_setup_reject(
     assert len(calls) == 2
     assert all(probe == "ffi_length" for probe, _ in calls)
     assert {params.get("probe") for _, params in calls} == {"gcm_iv_length"}
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in inspect.getsource(ffi_length_probe._run_gcm_iv_length)
 
 
 def test_ffi_length_gcm_tag_bits_child_marks_setup_reject(
@@ -722,9 +716,6 @@ def test_ffi_length_gcm_tag_bits_child_marks_setup_reject(
     assert len(calls) == 2
     assert all(probe == "ffi_length" for probe, _ in calls)
     assert {params.get("probe") for _, params in calls} == {"gcm_tag_bits_length"}
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in inspect.getsource(
-        ffi_length_probe._run_gcm_tag_bits_length
-    )
 
 
 def test_ffi_length_ccm_nonce_child_marks_setup_reject(
@@ -757,9 +748,6 @@ def test_ffi_length_ccm_nonce_child_marks_setup_reject(
     assert len(calls) == 2
     assert all(probe == "ffi_length" for probe, _ in calls)
     assert {params.get("probe") for _, params in calls} == {"ccm_nonce_length"}
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in inspect.getsource(
-        ffi_length_probe._run_ccm_nonce_length
-    )
 
 
 def test_ffi_length_ccm_mac_child_marks_setup_reject(
@@ -792,9 +780,6 @@ def test_ffi_length_ccm_mac_child_marks_setup_reject(
     assert len(calls) == 2
     assert all(probe == "ffi_length" for probe, _ in calls)
     assert {params.get("probe") for _, params in calls} == {"ccm_mac_length"}
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in inspect.getsource(
-        ffi_length_probe._run_ccm_mac_length
-    )
 
 
 def test_ffi_length_eddsa_context_child_uses_edwards_keygen(
@@ -836,7 +821,6 @@ def test_ffi_length_eddsa_context_child_uses_edwards_keygen(
     assert "CKM_EC_EDWARDS_KEY_PAIR_GEN" in eddsa_src
     assert "gen_keypair" in eddsa_src
     assert "gen_ec_keypair" not in eddsa_src
-    assert "KEYPAIR_RUNTIME_REJECT_RVS" in eddsa_src
 
 
 # ---------------------------------------------------------------------------
@@ -874,7 +858,6 @@ def test_ffi_length_encrypt_update_guard_child_marks_setup_reject(
     assert probe_name == "ffi_length"
     assert params.get("probe") == "encrypt_update_guard"
     guard_src = inspect.getsource(ffi_length_probe._run_encrypt_update_guard)
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in guard_src
     assert "C_EncryptUpdate" in guard_src
 
 
@@ -908,7 +891,6 @@ def test_ffi_length_encrypt_final_continuation_child_marks_setup_reject(
     assert probe_name == "ffi_length"
     assert params.get("probe") == "encrypt_final_continuation"
     guard_src = inspect.getsource(ffi_length_probe._run_encrypt_final_continuation)
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in guard_src
     assert "C_EncryptFinal" in guard_src
 
 
@@ -1010,7 +992,6 @@ def test_ffi_length_decrypt_update_guard_child_marks_setup_reject(
     assert probe_name == "ffi_length"
     assert params.get("probe") == "decrypt_update_guard"
     guard_src = inspect.getsource(ffi_length_probe._run_decrypt_update_guard)
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in guard_src
     assert "C_DecryptUpdate" in guard_src
 
 
@@ -1044,7 +1025,6 @@ def test_ffi_length_encrypt_update_continuation_child_marks_setup_reject(
     assert probe_name == "ffi_length"
     assert params.get("probe") == "encrypt_update_continuation"
     guard_src = inspect.getsource(ffi_length_probe._run_encrypt_update_continuation)
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in guard_src
     assert "C_EncryptUpdate" in guard_src
 
 
@@ -1078,7 +1058,6 @@ def test_ffi_length_decrypt_update_continuation_child_marks_setup_reject(
     assert probe_name == "ffi_length"
     assert params.get("probe") == "decrypt_update_continuation"
     guard_src = inspect.getsource(ffi_length_probe._run_decrypt_update_continuation)
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in guard_src
     assert "C_DecryptUpdate" in guard_src
 
 
@@ -1112,7 +1091,6 @@ def test_ffi_length_decrypt_final_continuation_child_marks_setup_reject(
     assert probe_name == "ffi_length"
     assert params.get("probe") == "decrypt_final_continuation"
     guard_src = inspect.getsource(ffi_length_probe._run_decrypt_final_continuation)
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in guard_src
     assert "C_DecryptFinal" in guard_src
 
 
@@ -1348,7 +1326,6 @@ def test_ffi_length_encrypt_single_shot_guard_child_marks_setup_reject(
     assert probe_name == "ffi_length"
     assert params.get("probe") == "encrypt_single_shot_guard"
     guard_src = inspect.getsource(ffi_length_probe._run_encrypt_single_shot_guard)
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in guard_src
     assert "C_Encrypt" in guard_src
     assert "GUARD_OVERWRITE" in inspect.getsource(ffi_length_probe._run_encrypt_single_shot_guard)
 
@@ -1383,7 +1360,6 @@ def test_ffi_length_decrypt_single_shot_guard_child_marks_setup_reject(
     assert probe_name == "ffi_length"
     assert params.get("probe") == "decrypt_single_shot_guard"
     guard_src = inspect.getsource(ffi_length_probe._run_decrypt_single_shot_guard)
-    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in guard_src
     assert "C_Decrypt" in guard_src
     assert "GUARD_OVERWRITE" in inspect.getsource(ffi_length_probe._run_decrypt_single_shot_guard)
 
@@ -1414,3 +1390,36 @@ def test_probe_hang_classifies_as_crash_finding_not_unclassified() -> None:
         assert_subprocess_completed(
             result.returncode, result.stdout, result.stderr, context="probe hang regression"
         )
+
+
+def test_ffi_length_reject_rv_tuples_are_canonical_and_correct() -> None:
+    """The ffi_length probes classify setup rejects through the shared reject-RV tuples.
+
+    Replaces the former per-probe ``"AES_KEYGEN_RUNTIME_REJECT_RVS" in getsource(...)`` source-text
+    checks (brittle to refactors, blind to a wrong tuple *value*) with a stronger contract: the
+    probe module must expose the SAME tuple objects as ``testcases.conftest`` (not a divergent
+    local copy), and those tuples must contain the reject codes a not-operational advertised
+    capability legitimately returns.
+    """
+    from pkcs11_check.raw.types_std import (
+        CKR_FUNCTION_NOT_SUPPORTED,
+        CKR_KEY_SIZE_RANGE,
+        CKR_MECHANISM_INVALID,
+        CKR_TEMPLATE_INCONSISTENT,
+    )
+    from pkcs11_check.testcases import conftest
+
+    # getattr: the probe module re-imports these (not an explicit export), so access dynamically.
+    assert (
+        getattr(ffi_length_probe, "AES_KEYGEN_RUNTIME_REJECT_RVS")
+        is conftest.AES_KEYGEN_RUNTIME_REJECT_RVS
+    )
+    assert (
+        getattr(ffi_length_probe, "KEYPAIR_RUNTIME_REJECT_RVS")
+        is conftest.KEYPAIR_RUNTIME_REJECT_RVS
+    )
+    for tup in (conftest.AES_KEYGEN_RUNTIME_REJECT_RVS, conftest.KEYPAIR_RUNTIME_REJECT_RVS):
+        assert CKR_FUNCTION_NOT_SUPPORTED in tup
+        assert CKR_MECHANISM_INVALID in tup
+        assert CKR_KEY_SIZE_RANGE in tup
+        assert CKR_TEMPLATE_INCONSISTENT in tup
