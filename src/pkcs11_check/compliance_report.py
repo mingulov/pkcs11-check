@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from pkcs11_check.compliance import ComplianceNote, get_notes
+from pkcs11_check.core.report_log import iter_report_log_records
 from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS as _OUTCOME_KEYS
 
 # _OUTCOME_KEYS is the single canonical outcome vocabulary (core.run_metrics); importing it
@@ -744,32 +745,21 @@ def _rv_trace_from_user_properties(user_properties: Any) -> list[Mapping[str, An
 
 def _counts_from_report_jsonl(jsonl_path: Path) -> dict[str, dict[str, int]] | None:
     counts: dict[str, dict[str, int]] = {}
-    try:
-        fh = jsonl_path.open(encoding="utf-8")
-    except OSError:
-        return None
-    with fh:
-        for line in fh:
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
+    for record in iter_report_log_records(jsonl_path):
+        if record.get("$report_type", "TestReport") != "TestReport":
+            continue
+        trace = _rv_trace_from_user_properties(record.get("user_properties"))
+        if not trace:
+            continue
+        outcome = _outcome_from_pytest_report(
+            str(record.get("outcome", "")),
+            record.get("wasxfail"),
+        )
+        for entry in trace:
+            fn = entry.get("fn")
+            if not isinstance(fn, str) or not fn.startswith("C_"):
                 continue
-            if not isinstance(record, Mapping):
-                continue
-            if record.get("$report_type", "TestReport") != "TestReport":
-                continue
-            trace = _rv_trace_from_user_properties(record.get("user_properties"))
-            if not trace:
-                continue
-            outcome = _outcome_from_pytest_report(
-                str(record.get("outcome", "")),
-                record.get("wasxfail"),
-            )
-            for entry in trace:
-                fn = entry.get("fn")
-                if not isinstance(fn, str) or not fn.startswith("C_"):
-                    continue
-                _add_outcome(_counts_for_base(counts, fn), outcome)
+            _add_outcome(_counts_for_base(counts, fn), outcome)
     return counts or None
 
 

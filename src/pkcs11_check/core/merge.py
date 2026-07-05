@@ -40,6 +40,7 @@ from pkcs11_check.core.file_runner import (
     postprocess_jsonl_to_unified,
     write_quality_json_report,
 )
+from pkcs11_check.core.report_log import user_property_names as _user_property_names
 from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS, compute_child_subprocess_counts
 from pkcs11_check.testcases._subprocess_trace import extract_subprocess_rv_trace
 
@@ -76,14 +77,6 @@ def _ends_with_newline(path: Path) -> bool:
 
 def _record_needs_rv_trace(record: dict[str, Any]) -> bool:
     return record.get("outcome") == "failed" or record.get("wasxfail") is not None
-
-
-def _user_property_names(record: dict[str, Any]) -> set[str]:
-    names: set[str] = set()
-    for prop in record.get("user_properties") or []:
-        if isinstance(prop, (list, tuple)) and prop:
-            names.add(str(prop[0]))
-    return names
 
 
 def _record_text(value: Any) -> str:
