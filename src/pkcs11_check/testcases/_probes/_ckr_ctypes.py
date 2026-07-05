@@ -20,38 +20,28 @@ import ctypes
 from collections.abc import Callable
 from typing import Any, cast
 
+from pkcs11_check.raw.api import function_list_header_size
+from pkcs11_check.raw.metadata_std import FUNCTION_INDICES
+
 # CK_RV is a CK_ULONG.
 _CK_RV = ctypes.c_ulong
 
-# Function indices into CK_FUNCTION_LIST (0-based, *after* the leading CK_VERSION field),
-# in pkcs11f.h order.  Verbatim from the legacy ckr/_ctypes_raw.py bootstrap.
-#
-#   0=C_Initialize, 1=C_Finalize, 2=C_GetInfo, 3=C_GetFunctionList,
-#   4=C_GetSlotList, 5=C_GetSlotInfo, 6=C_GetTokenInfo,
-#   7=C_GetMechanismList, 8=C_GetMechanismInfo, 9=C_InitToken,
-#   10=C_InitPIN, 11=C_SetPIN, 12=C_OpenSession, 13=C_CloseSession,
-#   14=C_CloseAllSessions, 15=C_GetSessionInfo, 16=C_GetOperationState,
-#   17=C_SetOperationState, 18=C_Login, 19=C_Logout, ... 42=C_SignInit, 43=C_Sign,
-#   ..., 48=C_GenerateRandom.
-FUNC_INDICES: dict[str, int] = {
-    "C_Initialize": 0,
-    "C_Finalize": 1,
-    "C_GetInfo": 2,
-    "C_GetSlotList": 4,
-    "C_GetSlotInfo": 5,
-    "C_GetTokenInfo": 6,
-    "C_OpenSession": 12,
-    "C_CloseSession": 13,
-    "C_EncryptInit": 29,
-    "C_Encrypt": 30,
-    "C_DecryptInit": 33,
-    "C_Decrypt": 34,
-    "C_DigestInit": 37,
-    "C_Digest": 38,
-    "C_SignInit": 42,
-    "C_Sign": 43,
-    "C_GenerateRandom": 48,
-}
+# Function indices come from the single generated source of truth (raw.metadata_std) so this
+# by-hand bootstrap can never drift from the ABI the rest of the framework targets.  (A prior
+# hand copy had drifted: C_GenerateRandom was 48, which is actually C_VerifyInit's slot.)
+FUNC_INDICES: dict[str, int] = FUNCTION_INDICES
+
+# Offset of the first C_* pointer after the CK_VERSION header, ABI-derived from raw.api -- NOT
+# sizeof(c_void_p), which only coincides on natural-aligned ABIs and is wrong under the packed
+# Windows ABI (where the first pointer sits at sizeof(CK_VERSION)).  The pointer *stride* between
+# slots genuinely is sizeof(c_void_p) on every ABI.
+_HEADER_SIZE = function_list_header_size()
+_PTR_SIZE = ctypes.sizeof(ctypes.c_void_p)
+
+
+def _slot_offset(index: int, *, header_size: int, ptr_size: int) -> int:
+    """Byte offset of function-pointer slot ``index``, counted after the CK_VERSION header."""
+    return header_size + index * ptr_size
 
 
 def make_caller(func_list: Any) -> tuple[Callable[..., int], Callable[[int], int]]:
@@ -78,13 +68,12 @@ def make_caller(func_list: Any) -> tuple[Callable[..., int], Callable[[int], int
     probe can hand the module a NULL / malformed argument the RawPKCS11 wrapper would
     otherwise reject.  A crash from such a call is a finding (docs/probe-soundness.md).
     """
-    ptr_size = ctypes.sizeof(ctypes.c_void_p)
     base = func_list.value
 
     def get_func(index: int) -> int:
-        # The version field is a CK_VERSION (2 bytes) padded to pointer alignment;
-        # the function pointers follow, one pointer-width apart.
-        offset = ptr_size + (index * ptr_size)
+        # First C_* pointer sits at the ABI-correct header offset (packed on Windows); the
+        # pointers then follow one stride apart.
+        offset = _slot_offset(index, header_size=_HEADER_SIZE, ptr_size=_PTR_SIZE)
         addr = ctypes.cast(base + offset, ctypes.POINTER(ctypes.c_void_p)).contents.value
         # Runtime value is an integer address for every implemented function; cast keeps
         # the ctypes `int | None` annotation off the public signature (behaviour verbatim
@@ -94,7 +83,11 @@ def make_caller(func_list: Any) -> tuple[Callable[..., int], Callable[[int], int
     def call_func(name: str, *args: Any) -> int:
         idx = FUNC_INDICES[name]
         addr = get_func(idx)
-        # Build a ctypes callable: CK_RV (*func)(arg_types...) from the actual arg types.
+        # Build the CK_RV (*)(arg_types...) signature from the caller's OWN ctypes objects.
+        # This is deliberate: the whole point of this bootstrap is to hand the module the
+        # exact (possibly NULL / malformed) arguments a probe constructs, which the RawPKCS11
+        # wrapper would reject.  Do NOT switch to static argtypes -- that would coerce/reject
+        # the fault arguments and defeat the probe.  A non-ctypes arg fails loud here.
         arg_types = [type(a) for a in args]
         func_type = ctypes.CFUNCTYPE(_CK_RV, *arg_types)
         func = func_type(addr)

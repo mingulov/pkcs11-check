@@ -119,6 +119,16 @@ _V30_START = metadata_std.FUNCTION_INDICES["C_GetInterfaceList"]
 _V32_START = metadata_std.FUNCTION_INDICES["C_EncapsulateKey"]
 
 
+def function_list_header_size() -> int:
+    """Byte offset of the first ``C_*`` pointer in a CK_FUNCTION_LIST for the current ABI.
+
+    Derived from the packing-aware struct offset (``sizeof(CK_VERSION)`` padded to the
+    pointer boundary on natural-aligned ABIs, ``sizeof(CK_VERSION)`` under ``_pack_=1`` on
+    Windows) so callers that walk the table by hand never hardcode ``sizeof(c_void_p)``.
+    """
+    return _VERSION_SIZE
+
+
 def _resolve_ctype(name: str) -> Any:
     return globals()[name]
 
