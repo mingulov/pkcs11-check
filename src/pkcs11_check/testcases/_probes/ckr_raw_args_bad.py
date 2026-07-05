@@ -101,7 +101,7 @@ def _init_with_null_mech(ctx: ProbeContext, *, encrypt: bool, label: str) -> Non
     init = ctx.raw.C_EncryptInit if encrypt else ctx.raw.C_DecryptInit
     rv = init(ctx.sh, null_pointer().pointer, key.value)
     print(f"CKR:0x{rv:08x}")
-    assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"
+    assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"  # audit-ok: v3.0 NULL-mech cancel = CKR_OK
     print("OK")
 
 
@@ -117,7 +117,7 @@ def _sign_init(ctx: ProbeContext) -> None:
     # PKCS#11 v3.2: NULL mech ptr => ARGUMENTS_BAD; some modules interpret it as MECHANISM_INVALID
     rv = ctx.raw.C_SignInit(ctx.sh, null_pointer().pointer, 0)
     print(f"CKR:0x{rv:08x}")
-    assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"
+    assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"  # audit-ok: v3.0 NULL-mech cancel = CKR_OK
     print("OK")
 
 
@@ -125,7 +125,7 @@ def _verify_init(ctx: ProbeContext) -> None:
     # PKCS#11 v3.2: NULL mech ptr => ARGUMENTS_BAD; some modules interpret it as MECHANISM_INVALID
     rv = ctx.raw.C_VerifyInit(ctx.sh, null_pointer().pointer, 0)
     print(f"CKR:0x{rv:08x}")
-    assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"
+    assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"  # audit-ok: v3.0 NULL-mech cancel = CKR_OK
     print("OK")
 
 
