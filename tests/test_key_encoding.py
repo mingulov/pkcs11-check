@@ -9,8 +9,24 @@ from cryptography.hazmat.primitives.asymmetric import (  # noqa: E501
     x25519,
 )
 
-from pkcs11_check.raw.key_encoding import ec_pkcs8_from_private, rsa_pkcs8_from_crt
+from pkcs11_check.raw.key_encoding import (
+    _decode_der_oid,
+    ec_pkcs8_from_private,
+    rsa_pkcs8_from_crt,
+)
 from pkcs11_check.raw.types_std import CKK_EC, CKK_EC_EDWARDS, CKK_EC_MONTGOMERY
+
+
+def test_decode_der_oid_empty_input_raises_value_error() -> None:
+    """Malformed (empty/too-short) EC params must raise the documented ValueError.
+
+    Regression: the guard message indexed data[0], so empty input raised IndexError
+    (an opaque harness exception) instead of a clean, classifiable ValueError.
+    """
+    with pytest.raises(ValueError):
+        _decode_der_oid(b"")
+    with pytest.raises(ValueError):
+        _decode_der_oid(b"\x06")  # tag only, no length byte
 
 
 def _b(i: int) -> bytes:

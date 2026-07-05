@@ -114,6 +114,24 @@ def to_ubyte_buf(data: bytes) -> ctypes.Array[ctypes.c_ubyte]:
     return (ctypes.c_ubyte * n).from_buffer_copy(data)
 
 
+def _alloc_module_output(size: int, *, what: str) -> ctypes.Array[ctypes.c_ubyte]:
+    """Allocate a ``CK_BYTE * size`` output buffer sized from a module-reported length.
+
+    A conformant module reports its real output length; a module that reports an absurd
+    length (e.g. an error sentinel left in the length out-param) would make the allocation
+    raise an opaque ``OverflowError``/``MemoryError`` that surfaces as a cryptic harness
+    error and masks the real finding.  Re-raise it as a legible ``ValueError`` naming the
+    reported size and call so the module's bad length report stays diagnosable.  No upper
+    cap is imposed, so a genuinely-large legitimate output is never rejected.
+    """
+    try:
+        return (ctypes.c_ubyte * size)()
+    except (OverflowError, MemoryError) as exc:
+        raise ValueError(
+            f"{what}: module reported an implausible output length ({size} bytes)"
+        ) from exc
+
+
 def _cancel_operation(raw: RawPKCS11, session: int, flags: int) -> None:
     """Best-effort cancel of a dangling active operation on ``session``.
 
@@ -291,7 +309,7 @@ def _two_call_output(
             # module unexpectedly needs more space — the size query is skipped
             # for speed, but a wrong guess is recovered, never silently dropped.
             size = out_len.value
-            out_buf = (ctypes.c_ubyte * size)()
+            out_buf = _alloc_module_output(size, what=call_fn)
             out_len = CK_ULONG(size)
             rv = fn(*args, out_buf, byref(out_len))
         expect_rv(rv, CKR_OK)
@@ -301,14 +319,14 @@ def _two_call_output(
     rv = fn(*args, None, byref(out_len))
     expect_rv(rv, CKR_OK, CKR_BUFFER_TOO_SMALL)
     size = out_len.value
-    out_buf = (ctypes.c_ubyte * size)()
+    out_buf = _alloc_module_output(size, what=call_fn)
     out_len = CK_ULONG(size)
     rv = fn(*args, out_buf, byref(out_len))
     if retry_on_buffer_too_small and rv == CKR_BUFFER_TOO_SMALL and out_len.value > size:
         # Module under-reported the required size but set out_len to the
         # correct value on failure.  Re-allocate and retry.
         size = out_len.value
-        out_buf = (ctypes.c_ubyte * size)()
+        out_buf = _alloc_module_output(size, what=call_fn)
         out_len = CK_ULONG(size)
         rv = fn(*args, out_buf, byref(out_len))
     expect_rv(rv, CKR_OK)
@@ -1032,7 +1050,7 @@ def verify_recover_single(
     if rv in _VERIFY_FAIL_RVS:
         return False, b""
     expect_rv(rv, CKR_OK)
-    rec_buf = (ctypes.c_ubyte * rec_len.value)()
+    rec_buf = _alloc_module_output(rec_len.value, what="C_VerifyRecover")
     rv = raw.C_VerifyRecover(session, sig_buf, len(signature), rec_buf, byref(rec_len))
     if rv in _VERIFY_FAIL_RVS:
         return False, b""
@@ -1121,7 +1139,7 @@ def read_attributes(
         if _is_unavailable(size):
             buffers.append(None)
             continue
-        buf = (ctypes.c_ubyte * size)()
+        buf = _alloc_module_output(size, what="C_GetAttributeValue")
         tmpl[i].pValue = ctypes.cast(buf, ctypes.c_void_p)
         tmpl[i].ulValueLen = size
         buffers.append(buf)
