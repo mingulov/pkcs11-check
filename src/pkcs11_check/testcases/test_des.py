@@ -27,7 +27,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify
-from pkcs11_check.raw.pack import mech_bytes, mech_simple
+from pkcs11_check.raw.pack import mech_bytes, mech_simple, mech_ulong
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -627,10 +627,7 @@ class TestDESMAC:
                     key,
                     CKM_DES_MAC_GENERAL,
                     data,
-                    mech_param=mech_bytes(
-                        CKM_DES_MAC_GENERAL,
-                        mac_len.to_bytes(8, "little"),
-                    ),
+                    mech_param=mech_ulong(CKM_DES_MAC_GENERAL, mac_len),
                 )
             except AssertionError as exc:
                 if is_known_error(exc, {CKR_MECHANISM_INVALID}):
@@ -644,7 +641,7 @@ class TestDESMAC:
                 CKM_DES_MAC_GENERAL,
                 data,
                 mac,
-                mech_param=mech_bytes(CKM_DES_MAC_GENERAL, mac_len.to_bytes(8, "little")),
+                mech_param=mech_ulong(CKM_DES_MAC_GENERAL, mac_len),
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -1050,7 +1047,7 @@ class TestDES3MAC:
                 key,
                 CKM_DES3_MAC_GENERAL,
                 data,
-                mech_param=mech_bytes(CKM_DES3_MAC_GENERAL, mac_len.to_bytes(8, "little")),
+                mech_param=mech_ulong(CKM_DES3_MAC_GENERAL, mac_len),
             )
             assert len(mac) == mac_len
             assert verify_single(
@@ -1060,7 +1057,7 @@ class TestDES3MAC:
                 CKM_DES3_MAC_GENERAL,
                 data,
                 mac,
-                mech_param=mech_bytes(CKM_DES3_MAC_GENERAL, mac_len.to_bytes(8, "little")),
+                mech_param=mech_ulong(CKM_DES3_MAC_GENERAL, mac_len),
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -1135,7 +1132,7 @@ class TestDES3MAC:
                 key,
                 CKM_DES3_CMAC_GENERAL,
                 data,
-                mech_param=mech_bytes(CKM_DES3_CMAC_GENERAL, mac_len.to_bytes(8, "little")),
+                mech_param=mech_ulong(CKM_DES3_CMAC_GENERAL, mac_len),
             )
             assert len(mac) == mac_len
             assert verify_single(
@@ -1145,7 +1142,7 @@ class TestDES3MAC:
                 CKM_DES3_CMAC_GENERAL,
                 data,
                 mac,
-                mech_param=mech_bytes(CKM_DES3_CMAC_GENERAL, mac_len.to_bytes(8, "little")),
+                mech_param=mech_ulong(CKM_DES3_CMAC_GENERAL, mac_len),
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

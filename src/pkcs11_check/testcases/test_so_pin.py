@@ -231,6 +231,6 @@ class TestSetPIN:
             try:
                 set_pin(rs.raw, s2, new_pin, pin_bytes)
             except AssertionError:
-                pass  # Best-effort restore; token may need re-init if this fails
+                pass  # audit-ok: best-effort PIN restore in cleanup, not the assertion under test
             rs.raw.C_Logout(s2)
             close_session_quietly(rs.raw, s2)

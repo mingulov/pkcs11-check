@@ -106,7 +106,7 @@ def test_exhaustive_cert_import_no_crash(
         try:
             read_attributes(rs.raw, rs.sh, h, [CKA_SUBJECT, CKA_ISSUER, CKA_SERIAL_NUMBER])
         except AssertionError:
-            pass  # CKR error reading attrs is fine, crash is not
+            pass  # audit-ok: clean CKR error ok; a crash is caught by subprocess isolation
 
         # C_GetObjectSize may also trigger internal parsing.
         try:

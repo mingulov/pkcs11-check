@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify
-from pkcs11_check.raw.pack import mech_bytes, mech_ctr
+from pkcs11_check.raw.pack import mech_bytes, mech_ctr, mech_ulong
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -644,7 +644,7 @@ class TestAESMACGeneral:
                 key,
                 CKM_AES_MAC_GENERAL,
                 data,
-                mech_param=mech_bytes(CKM_AES_MAC_GENERAL, mac_len.to_bytes(8, "little")),
+                mech_param=mech_ulong(CKM_AES_MAC_GENERAL, mac_len),
             )
             assert len(mac) == mac_len
             assert verify_single(
@@ -654,7 +654,7 @@ class TestAESMACGeneral:
                 CKM_AES_MAC_GENERAL,
                 data,
                 mac,
-                mech_param=mech_bytes(CKM_AES_MAC_GENERAL, mac_len.to_bytes(8, "little")),
+                mech_param=mech_ulong(CKM_AES_MAC_GENERAL, mac_len),
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -693,7 +693,7 @@ class TestAESMACGeneral:
                 key1,
                 CKM_AES_MAC_GENERAL,
                 data,
-                mech_param=mech_bytes(CKM_AES_MAC_GENERAL, mac_len.to_bytes(8, "little")),
+                mech_param=mech_ulong(CKM_AES_MAC_GENERAL, mac_len),
             )
             mac2 = sign_single(
                 rs.raw,
@@ -701,7 +701,7 @@ class TestAESMACGeneral:
                 key2,
                 CKM_AES_MAC_GENERAL,
                 data,
-                mech_param=mech_bytes(CKM_AES_MAC_GENERAL, mac_len.to_bytes(8, "little")),
+                mech_param=mech_ulong(CKM_AES_MAC_GENERAL, mac_len),
             )
             if mac1 == mac2:
                 classify(
@@ -730,18 +730,13 @@ class TestAESMACGeneral:
         )
         try:
             data = b"Variable MAC length test data!"
-            import ctypes
-
             mac = sign_single(
                 rs.raw,
                 rs.sh,
                 key,
                 CKM_AES_MAC_GENERAL,
                 data,
-                mech_param=mech_bytes(
-                    CKM_AES_MAC_GENERAL,
-                    mac_len.to_bytes(ctypes.sizeof(ctypes.c_ulong), "little"),
-                ),
+                mech_param=mech_ulong(CKM_AES_MAC_GENERAL, mac_len),
             )
             assert len(mac) == mac_len, f"Requested {mac_len}-byte MAC, got {len(mac)} bytes"
         finally:

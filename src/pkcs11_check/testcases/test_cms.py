@@ -173,7 +173,7 @@ class TestCMSSig:
         try:
             get_mechanism_info(rs.raw, rs.slot_id, CKM_CMS_SIG)
         except AssertionError:
-            pass  # mechanism not available
+            pass  # audit-ok: capability probe; CKM_CMS_SIG mechanism-info may be unavailable
 
     def test_cms_sig_rejects_missing_params(self, p11_raw_session: Any) -> None:
         """CKM_CMS_SIG sign attempt with RSA key and no params must fail cleanly.

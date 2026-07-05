@@ -170,4 +170,4 @@ class TestValidationObjects:
                 summary="Module accepted C_SetAttributeValue on CKO_VALIDATION",
             )
         except AssertionError:
-            pass  # Expected: module rejected the write
+            pass  # audit-ok: policy probe; rejecting read-only CKO_VALIDATION write is correct

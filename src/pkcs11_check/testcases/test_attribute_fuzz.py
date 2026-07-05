@@ -161,7 +161,7 @@ class TestMalformedAttributes:
             assert key != 0
             destroy_quietly(rs.raw, rs.sh, key)
         except (AssertionError, OverflowError, ValueError):
-            pass  # Correct to reject
+            pass  # audit-ok: negative test; rejecting the oversized key length is correct
 
     def test_missing_class_attribute(self, p11_raw_session: Any) -> None:
         """Creating object without CKA_CLASS must fail."""
@@ -229,7 +229,7 @@ class TestMalformedAttributes:
             )
             destroy_quietly(rs.raw, rs.sh, h)
         except (AssertionError, TypeError, ValueError):
-            pass  # Correct: reject bad type
+            pass  # audit-ok: negative test; rejecting the wrong-typed attribute is correct
 
 
 class TestLargeAttributes:

@@ -128,7 +128,7 @@ class TestCertificateLifecycle:
                         summary="Successfully modified label on non-modifiable cert",
                     )
             except AssertionError:
-                pass  # Expected
+                pass  # audit-ok: policy probe; rejecting non-modifiable cert label edit is correct
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
 
