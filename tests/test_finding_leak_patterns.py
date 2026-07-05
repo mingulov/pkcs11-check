@@ -7,6 +7,7 @@ for a genuinely-lenient positive-op / capability / lifecycle site.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -133,4 +134,71 @@ def test_no_finding_leak_patterns() -> None:
         "Finding-hiding patterns found. Fix (route through the classifier) or "
         "annotate the line with `# audit-ok: <reason>` if it is a genuinely-lenient "
         "positive-op/capability/lifecycle site:\n" + "\n".join(hits)
+    )
+
+
+# --- D2: named-tuple CKR_OK acceptance on negative ops (blind spot of the regex above) ---
+# The `assert rv in (CKR_OK, ...)` checks above only see a *literal* tuple. Accepting CKR_OK
+# via a named tuple/set -- `assert rv in _ACCEPT` where `_ACCEPT = (..., CKR_OK)` -- is invisible
+# to them. This AST check resolves module-level names so a CKR_OK acceptance can't hide behind a
+# name. A genuinely-sanctioned CKR_OK (e.g. a v3.0 NULL-mech cancel) is annotated `# audit-ok:`.
+
+
+def _named_ckr_ok_membership_hits(source: str, path: str) -> list[str]:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    lines = source.splitlines()
+    ok_names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, (ast.Tuple, ast.List, ast.Set)):
+            elems = {n.id for n in ast.walk(node.value) if isinstance(n, ast.Name)}
+            if "CKR_OK" in elems:
+                ok_names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    if not ok_names:
+        return []
+    hits: list[str] = []
+    for nd in ast.walk(tree):
+        test = getattr(nd, "test", None)
+        if not (isinstance(nd, (ast.Assert, ast.If)) and isinstance(test, ast.Compare)):
+            continue
+        if not (test.ops and isinstance(test.ops[0], ast.In) and test.comparators):
+            continue
+        target = test.comparators[0]
+        if isinstance(target, ast.Name) and target.id in ok_names:
+            line_text = lines[nd.lineno - 1] if nd.lineno - 1 < len(lines) else ""
+            if "# audit-ok:" not in line_text:
+                hits.append(f"{path}:{nd.lineno} (in {target.id})")
+    return hits
+
+
+def test_guard_flags_named_ckr_ok_membership() -> None:
+    src = (
+        "_ACCEPT = (CKR_ARGUMENTS_BAD, CKR_OK)\n"
+        "def probe(rv):\n"
+        "    assert rv in _ACCEPT\n"
+    )
+    assert _named_ckr_ok_membership_hits(src, "x.py") == ["x.py:3 (in _ACCEPT)"]
+
+
+def test_guard_named_ckr_ok_respects_audit_ok() -> None:
+    src = "_ACCEPT = (CKR_OK,)\ndef p(rv):\n    assert rv in _ACCEPT  # audit-ok: v3.0 cancel\n"
+    assert _named_ckr_ok_membership_hits(src, "x.py") == []
+
+
+def test_guard_named_ckr_ok_ignores_error_only_tuples() -> None:
+    src = "_E = (CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED)\ndef p(rv):\n    assert rv in _E\n"
+    assert _named_ckr_ok_membership_hits(src, "x.py") == []
+
+
+def test_no_named_ckr_ok_membership_acceptance() -> None:
+    hits: list[str] = []
+    for path in sorted(_ROOT.rglob("*.py")):
+        rel = path.relative_to(_ROOT.parent.parent.parent)
+        hits.extend(_named_ckr_ok_membership_hits(path.read_text(), str(rel)))
+    assert not hits, (
+        "CKR_OK accepted on a negative op via a named tuple/set. Route through the classifier "
+        "or annotate the assertion `# audit-ok: <spec reason>` if the CKR_OK is sanctioned:\n  "
+        + "\n  ".join(hits)
     )
