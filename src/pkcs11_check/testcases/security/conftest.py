@@ -119,42 +119,5 @@ def child_setup_reject_known(
     return False
 
 
-# Demand-zero honeypot backing for oversized-length probes (see docs/probe-soundness.md).
-# Make the caller buffer HONEST: a probe that passes a length larger than its real
-# buffer over-reads OUR buffer (harness-induced); routing the buffer through a
-# demand-zero mmap (cheap until touched) means a conformant module that honors a
-# large length reads real zeroed pages instead of faulting -- so any crash that
-# remains is the module's own internal/alloc-wrap/write-side bug, a real finding.
-# The child must already have ``ctypes`` imported and a ``cleanup()`` in scope
-# (the probe preambles provide both). Defines ``HONEYPOT_PTR`` (POINTER(c_ubyte))
-# and ``HONEYPOT_BUF`` (alias) for the child script to use as the buffer pointer.
-HONEYPOT_MMAP_CODE = """
-import mmap as _mmap
-if not hasattr(_mmap, "MAP_ANONYMOUS"):
-    # Windows mmap lacks MAP_ANONYMOUS/PROT_*; the demand-zero honeypot is POSIX-only.
-    # Self-report (sound) instead of crashing with AttributeError on non-POSIX platforms.
-    print("SETUP_XFAIL:demand-zero honeypot needs POSIX mmap (unavailable on this platform)")
-    cleanup()
-    raise SystemExit(0)
-_mm = None
-# Demand-zero mmap: try from 1 TiB down to 1 GiB. MAP_NORESERVE (Linux) reserves
-# no swap; the mapping outlasts HONEYPOT_PTR (OS reclaims at process exit).
-for _honeypot_sz in (1 << 40, 1 << 38, 1 << 36, 1 << 34, 1 << 32, 1 << 30):
-    try:
-        _mm = _mmap.mmap(
-            -1, _honeypot_sz,
-            _mmap.MAP_PRIVATE | _mmap.MAP_ANONYMOUS | getattr(_mmap, "MAP_NORESERVE", 0),
-            _mmap.PROT_READ | _mmap.PROT_WRITE,
-        )
-        break
-    except (OSError, ValueError):
-        _mm = None
-if _mm is None:
-    print("SETUP_XFAIL:honeypot mmap failed to allocate")
-    cleanup()
-    raise SystemExit(0)
-# 1-byte ctypes view avoids building a ctypes array descriptor for the full size.
-_honeypot_one = (ctypes.c_ubyte * 1).from_buffer(_mm)
-HONEYPOT_PTR = ctypes.cast(_honeypot_one, ctypes.POINTER(ctypes.c_ubyte))
-HONEYPOT_BUF = HONEYPOT_PTR
-"""
+# NOTE: the legacy f-string demand-zero honeypot template (HONEYPOT_MMAP_CODE) was removed
+# after the probe-extraction migration; probes now call _probes/honeypot.demand_zero_buffer().
