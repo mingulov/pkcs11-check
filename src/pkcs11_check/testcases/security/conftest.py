@@ -26,6 +26,7 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPED_KEY_INVALID,
     CKR_WRAPPED_KEY_LEN_RANGE,
 )
+from pkcs11_check.testcases._probes.honeypot import SETUP_XFAIL_PREFIX
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 
 # Clean rejection of boundary/invalid inputs (not crash, not OK)
@@ -59,7 +60,8 @@ DATA_REJECT_CKRS = {
 # CKR names for subprocess output parsing
 BOUNDARY_REJECT_NAMES = frozenset(ckr_name(int(c)) for c in BOUNDARY_REJECT_CKRS)
 DATA_REJECT_NAMES = frozenset(ckr_name(int(c)) for c in DATA_REJECT_CKRS)
-SETUP_XFAIL_PREFIX = "SETUP_XFAIL:"
+# SETUP_XFAIL_PREFIX (the parent<->child sentinel) is imported from the probe layer above,
+# so this conftest's scanners use the single canonical definition rather than a local copy.
 
 
 def assert_subprocess_no_crash(

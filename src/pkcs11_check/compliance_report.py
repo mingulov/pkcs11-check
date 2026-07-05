@@ -13,18 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from pkcs11_check.compliance import ComplianceNote, get_notes
+from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS as _OUTCOME_KEYS
 
-_OUTCOME_KEYS: tuple[str, ...] = (
-    "passed",
-    "failed",
-    "skipped",
-    "xfailed",
-    "xpassed",
-    "error",
-    "crashed",
-    "timeout",
-    "crash_limited",
-)
+# _OUTCOME_KEYS is the single canonical outcome vocabulary (core.run_metrics); importing it
+# here (rather than re-listing it) keeps the compliance counts in lockstep with the metrics
+# and report layers if a new outcome status is ever added.
 
 _COMPLIANCE_NOTE_FIELDS: tuple[str, ...] = (
     "description",

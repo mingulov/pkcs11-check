@@ -142,8 +142,8 @@ def _classify_unhonorable_length_outcome(
     - rv in reject_rvs -> pass.
     - other clean code -> xfail (nonspec_reject).
     """
+    from pkcs11_check.testcases._probes.honeypot import SETUP_XFAIL_PREFIX
     from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
-    from pkcs11_check.testcases.security.conftest import SETUP_XFAIL_PREFIX
 
     # SETUP_XFAIL: setup (keygen/Init) cleanly errored before the probe ran.
     for line in stdout.splitlines():
