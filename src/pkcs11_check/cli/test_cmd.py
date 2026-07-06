@@ -201,6 +201,39 @@ def _isolated_report_config(output: str, output_file: str | None) -> IsolatedRep
     return IsolatedReportConfig("junit", Path(output_file or "pkcs11-check-results.xml"))
 
 
+def _assemble_json_artifacts_from_jsonl(
+    jsonl_p: Path, output_file: str | None, run_provenance: dict[str, Any]
+) -> None:
+    """Build the results/coverage/quality/provisioning JSON artifacts from a raw report JSONL.
+
+    Used by the non-isolated (``--isolation none``) path; the isolated path produces the same
+    artifacts inside ``run_isolated_pytest_units``. Consumes (deletes) the raw JSONL when done.
+    """
+    unified_path = Path(output_file or "pkcs11-check-results.json")
+    unified_path.parent.mkdir(parents=True, exist_ok=True)
+    coverage_data = extract_coverage_from_jsonl(jsonl_p)
+    quality_records = extract_quality_report_records_from_jsonl(jsonl_p)
+    if coverage_data:
+        (unified_path.parent / "coverage.json").write_text(
+            json.dumps(coverage_data, indent=2) + "\n"
+        )
+    provisioning_data = extract_provisioning_from_jsonl(jsonl_p)
+    if provisioning_data is not None:
+        (unified_path.parent / "provisioning.json").write_text(
+            json.dumps(provisioning_data, indent=2) + "\n"
+        )
+        if provisioning_data["totals"].get("ran_via_external", 0) > 0:
+            _emit_external_provision_banner(provisioning_data["totals"]["ran_via_external"])
+    results_payload = postprocess_jsonl_to_unified(jsonl_p, unified_path, provenance=run_provenance)
+    write_quality_json_report(
+        unified_path.parent / "quality.json",
+        results_payload,
+        coverage=coverage_data,
+        report_log_records=quality_records,
+    )
+    jsonl_p.unlink(missing_ok=True)
+
+
 def test_command(
     module: Path = typer.Option(..., "--module", "-m", help="Path to PKCS#11 module"),
     interface: str = typer.Option("auto", "--interface", "-i", help="Interface version"),
@@ -587,31 +620,7 @@ def test_command(
             if deselect_path is not None:
                 deselect_path.unlink(missing_ok=True)
         if output == "json" and jsonl_raw is not None:
-            jsonl_p = Path(jsonl_raw)
-            unified_path = Path(output_file or "pkcs11-check-results.json")
-            unified_path.parent.mkdir(parents=True, exist_ok=True)
-            coverage_data = extract_coverage_from_jsonl(jsonl_p)
-            quality_records = extract_quality_report_records_from_jsonl(jsonl_p)
-            if coverage_data:
-                coverage_path = unified_path.parent / "coverage.json"
-                coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
-            provisioning_data = extract_provisioning_from_jsonl(jsonl_p)
-            if provisioning_data is not None:
-                provisioning_path = unified_path.parent / "provisioning.json"
-                provisioning_path.write_text(json.dumps(provisioning_data, indent=2) + "\n")
-                if provisioning_data["totals"].get("ran_via_external", 0) > 0:
-                    _emit_external_provision_banner(provisioning_data["totals"]["ran_via_external"])
-            results_payload = postprocess_jsonl_to_unified(
-                jsonl_p, unified_path, provenance=run_provenance
-            )
-            quality_path = unified_path.parent / "quality.json"
-            write_quality_json_report(
-                quality_path,
-                results_payload,
-                coverage=coverage_data,
-                report_log_records=quality_records,
-            )
-            jsonl_p.unlink(missing_ok=True)
+            _assemble_json_artifacts_from_jsonl(Path(jsonl_raw), output_file, run_provenance)
         raise typer.Exit(code=int(exit_code))
     finally:
         manifest_path.unlink(missing_ok=True)
