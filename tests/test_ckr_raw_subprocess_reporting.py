@@ -9,12 +9,12 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.core.subprocess_trace import (
+    drain_subprocess_rv_trace,
+)
 from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
-from pkcs11_check.testcases._subprocess_trace import (
-    drain_subprocess_rv_trace,
-)
 from pkcs11_check.testcases.ckr import (
     test_ckr_dual,
     test_ckr_fault_inject,

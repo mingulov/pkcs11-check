@@ -417,7 +417,7 @@ def test_xfailed_subprocess_report_gets_recorded_child_rv_trace() -> None:
     from pathlib import Path
 
     from pkcs11_check import plugin
-    from pkcs11_check.testcases._subprocess_trace import record_subprocess_rv_trace
+    from pkcs11_check.core.subprocess_trace import record_subprocess_rv_trace
 
     item = SimpleNamespace(
         funcargs={},
@@ -446,7 +446,7 @@ def test_xfailed_subprocess_report_prefers_child_trace_over_empty_parent_trace()
     from pathlib import Path
 
     from pkcs11_check import plugin
-    from pkcs11_check.testcases._subprocess_trace import record_subprocess_rv_trace
+    from pkcs11_check.core.subprocess_trace import record_subprocess_rv_trace
 
     parent_raw = _stub_raw({})
     parent_raw.enable_rv_trace()

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from pkcs11_check.core.subprocess_trace import drain_subprocess_rv_trace
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
-from pkcs11_check.testcases._subprocess_trace import drain_subprocess_rv_trace
 
 
 def test_subprocess_result_policy_reports_signal_crash() -> None:

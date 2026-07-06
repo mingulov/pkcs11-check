@@ -42,7 +42,7 @@ from pkcs11_check.core.file_runner import (
 )
 from pkcs11_check.core.report_log import user_property_names as _user_property_names
 from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS, compute_child_subprocess_counts
-from pkcs11_check.testcases._subprocess_trace import extract_subprocess_rv_trace
+from pkcs11_check.core.subprocess_trace import extract_subprocess_rv_trace
 
 _SUMMARY_KEYS = RESULT_OUTCOME_KEYS
 

@@ -58,6 +58,10 @@ def _digest_args(pytest_args: list[str]) -> list[str]:
 def _iter_input_files() -> list[Path]:
     """All files whose content can change what pytest collects: package source
     plus the resolved vendor vector data."""
+    # Deliberate lazy import of the test-vector data roots: the collection cache must know
+    # which data dirs affect collection to invalidate correctly (an inherent cache<->data
+    # coupling), and those roots belong in testcases.data. Importing at call time keeps it a
+    # localised seam and avoids a core<->testcases import cycle at module load.
     from pkcs11_check.testcases.data import (
         ACVP_DIR,
         CCTV_DIR,

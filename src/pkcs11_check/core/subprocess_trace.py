@@ -1,4 +1,9 @@
-"""Parent-side storage for child subprocess RV traces."""
+"""The child-subprocess RV-trace wire protocol: the ``P11_RV_TRACE_JSON:`` marker parser and
+parent-side accumulation of the most recent trace.
+
+This is infrastructure (a subprocess wire-protocol parser), so it lives in ``core`` and is
+imported downward by both ``core`` (merge/plugin) and ``testcases`` -- never the reverse.
+"""
 
 from __future__ import annotations
 
