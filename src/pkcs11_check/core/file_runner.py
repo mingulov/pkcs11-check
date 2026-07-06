@@ -52,6 +52,11 @@ UNIT_STATUS_PRIORITY: tuple[str, ...] = (
 _RESUME_COMPLETE_STATUSES = {"passed", "empty", "escalated", "crash_limited"}
 _DETAIL_COUNT_KEYS = RESULT_OUTCOME_KEYS
 _SPECIAL_DETAIL_OUTCOMES = {"crashed", "timeout", "passed-in-isolation"}
+
+
+def _empty_counts() -> dict[str, int]:
+    """A fresh per-unit outcome-counts dict, every canonical outcome key zeroed."""
+    return dict.fromkeys(_DETAIL_COUNT_KEYS, 0)
 _MAX_TIMEOUT_RETRIES = 3
 # Exit code when the selection (module/marker/match/path) collected ZERO tests:
 # a run that executed nothing must not report success. Maps to the contract's
@@ -473,7 +478,7 @@ def _group_results_by_file(
     out: list[tuple[str, list[FileRunResult], dict[str, Any]]] = []
     for file_target in order:
         file_results = groups[file_target]
-        merged_counts: dict[str, int] = {key: 0 for key in _DETAIL_COUNT_KEYS}
+        merged_counts: dict[str, int] = _empty_counts()
         merged_tests: list[dict[str, Any]] = []
         merged_compliance_notes: list[dict[str, Any]] = []
         merged_skip_reasons: dict[str, int] = {}
@@ -500,7 +505,7 @@ def _group_results_by_file(
 
 
 def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
-    counts = {key: 0 for key in _DETAIL_COUNT_KEYS}
+    counts = _empty_counts()
     tests: list[dict[str, Any]] = []
     compliance_notes: list[dict[str, Any]] = []
     skip_reasons: dict[str, int] = {}
@@ -553,7 +558,7 @@ def _ensure_timeout_recorded(detail: dict[str, Any] | None, unit: str) -> dict[s
     normalized — never a second, double-counted timeout.
     """
     result: dict[str, Any] = detail if detail is not None else {}
-    counts = result.setdefault("counts", {key: 0 for key in _DETAIL_COUNT_KEYS})
+    counts = result.setdefault("counts", _empty_counts())
     tests = result.setdefault("tests", [])
     if counts.get("timeout", 0) == 0:
         tests.append(
@@ -585,7 +590,7 @@ def _synthetic_file_skip_detail(
         nodeids = []
 
     skipped = len(nodeids) if nodeids else 1
-    counts = {key: 0 for key in _DETAIL_COUNT_KEYS}
+    counts = _empty_counts()
     counts["skipped"] = skipped
     return {
         "counts": counts,
@@ -1790,7 +1795,7 @@ def postprocess_jsonl_to_unified(
         if not file_part:
             return
         if file_part not in file_counts:
-            file_counts[file_part] = {key: 0 for key in _DETAIL_COUNT_KEYS}
+            file_counts[file_part] = _empty_counts()
         outcome = _map_outcome(rec.get("outcome", "passed"), rec.get("wasxfail"))
         file_counts[file_part][outcome] = file_counts[file_part].get(outcome, 0) + 1
 
@@ -1803,7 +1808,7 @@ def postprocess_jsonl_to_unified(
     # An empty / vacuous JSONL (no records at all) returns None from the builder;
     # treat it as a zero-count run so we still produce a results.json payload.
     if detail is None:
-        detail = {"counts": {key: 0 for key in _DETAIL_COUNT_KEYS}, "tests": []}
+        detail = {"counts": _empty_counts(), "tests": []}
 
     # Group tests by file
     by_file: dict[str, list[dict[str, Any]]] = {}
@@ -1820,13 +1825,13 @@ def postprocess_jsonl_to_unified(
             continue
         compliance_notes_by_file.setdefault(file_part, []).append(dict(note))
 
-    summary: dict[str, int] = {key: 0 for key in _DETAIL_COUNT_KEYS}
+    summary: dict[str, int] = _empty_counts()
     units: list[dict[str, Any]] = []
 
     for target in sorted(
         set(list(by_file.keys()) + list(file_counts.keys()) + list(compliance_notes_by_file.keys()))
     ):
-        counts = file_counts.get(target, {key: 0 for key in _DETAIL_COUNT_KEYS})
+        counts = file_counts.get(target, _empty_counts())
         for key in summary:
             summary[key] += counts.get(key, 0)
         has_failure = any(
@@ -3164,7 +3169,7 @@ def run_isolated_pytest_units(
                                         to_culprit_entry["stderr"] = confirm_err
                                     if to_accum_detail is None:
                                         to_accum_detail = {
-                                            "counts": {key: 0 for key in _DETAIL_COUNT_KEYS},
+                                            "counts": _empty_counts(),
                                             "tests": [],
                                         }
                                     to_accum_detail["tests"].append(to_culprit_entry)
@@ -3545,7 +3550,7 @@ def run_isolated_pytest_units(
                                         culprit_entry["stderr"] = confirm_err
                                     if accumulated_detail is None:
                                         accumulated_detail = {
-                                            "counts": {key: 0 for key in _DETAIL_COUNT_KEYS},
+                                            "counts": _empty_counts(),
                                             "tests": [],
                                         }
                                     accumulated_detail["tests"].append(culprit_entry)
