@@ -26,7 +26,13 @@ from enum import StrEnum
 from typing import Any
 
 from pkcs11_check.raw.api import RawPKCS11
-from pkcs11_check.raw.bootstrap import close_session_quietly, get_slot_ids, login_user, open_session
+from pkcs11_check.raw.bootstrap import (
+    close_session_quietly,
+    get_slot_ids,
+    login_user,
+    open_session,
+    resolve_slot_id,
+)
 from pkcs11_check.raw.types_std import (
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
@@ -156,12 +162,14 @@ def probe_main(
         return
 
     # --- Slot discovery (SESSION and LOGIN) ---
-    if slot_id is None:
-        slots = get_slot_ids(raw)
-        if not slots:
-            print("SETUP_XFAIL:no slot with a present token")
-            return
-        slot_id = slots[0]
+    # params.slot_id is a slot INDEX (config.slot semantics), not a raw slot ID: resolve it
+    # through the present-token slot list exactly as fixtures.py does. Passing the raw index to
+    # C_OpenSession crashes with CKR_SLOT_ID_INVALID on dynamic-slot modules (index != id).
+    slots = get_slot_ids(raw)
+    if not slots:
+        print("SETUP_XFAIL:no slot with a present token")
+        return
+    slot_id = resolve_slot_id(slots, slot_id)
     ctx.slot_id = slot_id
 
     # --- Open session ---
