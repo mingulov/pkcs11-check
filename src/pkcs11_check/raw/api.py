@@ -11,6 +11,7 @@ from ctypes import byref, c_void_p, cast
 from typing import Any
 
 from . import metadata_std
+from ._platform import windows_dll_directory as _windows_dll_directory
 from .types_std import *  # noqa: F401,F403,F405
 from .types_std import _CKStructure  # underscore name: not re-exported by ``*``
 
@@ -347,17 +348,6 @@ def read_crash_journal(
         last_i = max(pending)
         last_incomplete = {k: v for k, v in pending[last_i].items() if k != "ev"}
     return done, last_incomplete
-
-
-def _windows_dll_directory(lib_path: str) -> str | None:
-    """Directory to add to the Windows DLL search path so a module's dependent DLLs
-    (e.g. a provider's bundled OpenSSL) resolve. None when not applicable: on POSIX, or
-    where os.add_dll_directory is absent. On Windows (py3.8+) ctypes.CDLL no longer
-    searches the module's own directory for its dependencies."""
-    if sys.platform != "win32" or not hasattr(os, "add_dll_directory"):
-        return None
-    directory = os.path.dirname(os.path.abspath(lib_path))
-    return directory if directory and os.path.isdir(directory) else None
 
 
 class RawPKCS11:
