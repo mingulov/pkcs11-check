@@ -1392,10 +1392,15 @@ def _multipart_output(
         parts: list[bytes] = []
         for chunk in chunks:
             in_buf = to_ubyte_buf(chunk)
-            # Allocate a conservative output buffer upfront (chunk + 256 bytes for
-            # block cipher expansion). Do NOT use the two-call size-probe pattern for
-            # Update functions -- probing feeds the same chunk twice, corrupting cipher
-            # state. The Final two-call pattern remains correct.
+            # Allocate a conservative output buffer upfront: chunk + 256 bytes. A single
+            # C_EncryptUpdate/C_DecryptUpdate emits at most the input length plus one cipher
+            # block held back for buffering/padding (<=32 bytes for every PKCS#11 block cipher;
+            # AEAD tags are emitted at Final, not Update), so +256 is an ~8x margin that is
+            # provably sufficient for every conformant mechanism. Do NOT fall back to the
+            # two-call size-probe / re-feed-the-chunk pattern for Update functions -- that
+            # corrupts cipher state; the Final two-call pattern remains correct. A module that
+            # still returns CKR_BUFFER_TOO_SMALL here needed more than a block over the input on
+            # an Update, which is non-conformant -- expect_rv(CKR_OK) surfaces it as a finding.
             max_out = len(chunk) + 256
             out_buf = (ctypes.c_ubyte * max_out)()
             out_len = CK_ULONG(max_out)
