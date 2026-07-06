@@ -35,6 +35,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from pkcs11_check.raw._platform import windows_dll_directory
 from pkcs11_check.testcases._probes._emit import (
     emit_rv_trace,
     rv_trace_enabled,
@@ -67,23 +68,16 @@ class RawCtypesContext:
 # ---------------------------------------------------------------------------
 
 
-def _windows_dll_dir(lib_path: str) -> str | None:
-    """Directory to add to the Windows DLL search path before loading a module.
-
-    Returns None on POSIX or when os.add_dll_directory is absent.  Mirrors
-    raw/api.py::_windows_dll_directory (I11).
-    """
-    if sys.platform != "win32" or not hasattr(os, "add_dll_directory"):
-        return None
-    directory = os.path.dirname(os.path.abspath(lib_path))
-    return directory if directory and os.path.isdir(directory) else None
+# Windows DLL-search handles kept alive for the process (add_dll_directory returns a cookie
+# that must outlive the CDLL; api.py keeps its own per-instance list).
+_dll_dir_handles: list[Any] = []
 
 
 def _load_cdll(lib_path: str) -> ctypes.CDLL:
-    """Load a PKCS#11 .so / .dll, adding its directory to the Windows search path (I11)."""
-    dll_dir = _windows_dll_dir(lib_path)
+    """Load a PKCS#11 .so / .dll, adding its directory to the Windows DLL search path (I11)."""
+    dll_dir = windows_dll_directory(lib_path)
     if dll_dir is not None:
-        os.add_dll_directory(dll_dir)  # type: ignore[attr-defined]  # Windows-only
+        _dll_dir_handles.append(os.add_dll_directory(dll_dir))  # type: ignore[attr-defined]
     return ctypes.CDLL(lib_path)
 
 
