@@ -8,9 +8,9 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.core.subprocess_trace import drain_subprocess_rv_trace
 from pkcs11_check.testcases import test_v30_session
 from pkcs11_check.testcases._probes import v30_session
-from pkcs11_check.testcases._subprocess_trace import drain_subprocess_rv_trace
 
 
 def test_session_cancel_subprocess_failure_records_child_rv_trace(

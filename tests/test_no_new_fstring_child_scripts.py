@@ -36,8 +36,8 @@ _HELPER_MODULES = {
     "_subprocess_preamble.py",
     "_raw_subprocess.py",
     "_subprocess_result.py",
-    "_subprocess_trace.py",
     "_subprocess.py",  # ckr/_subprocess.py
+    # (the rv-trace wire-protocol parser moved to core/subprocess_trace.py — no longer here)
 }
 
 # Files with a sanctioned, reviewed inline ``sys.executable -c`` child.  See the

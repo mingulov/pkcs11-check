@@ -19,6 +19,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from pkcs11_check.core.subprocess_trace import record_subprocess_rv_trace
 from pkcs11_check.testcases._probes.params import ProbeParams
 from pkcs11_check.testcases._raw_subprocess import ingest_raw_subprocess_coverage
 from pkcs11_check.testcases._subprocess_preamble import (
@@ -26,7 +27,6 @@ from pkcs11_check.testcases._subprocess_preamble import (
     SUBPROCESS_TIMEOUT_RC,
     ingest_subprocess_coverage,
 )
-from pkcs11_check.testcases._subprocess_trace import record_subprocess_rv_trace
 
 
 def _as_text(stream: str | bytes | None) -> str:
