@@ -44,6 +44,19 @@ def get_slot_ids(raw: RawPKCS11, token_present: bool = True, label: str | None =
     return matching
 
 
+def resolve_slot_id(slots: list[int], slot_index: int | None) -> int:
+    """Resolve a slot *index* (``config.slot`` / ``--slot`` semantics) to a real slot ID.
+
+    ``config.slot`` is an index into the present-token slot list, not a raw PKCS#11 slot ID
+    (which can be a large dynamic value on SoftHSM2/kryoptic/tpm2/wolfPKCS11). The session
+    fixtures and the probe harness MUST resolve it identically; keeping the logic here is the
+    single source both call, so a probe can never again pass the raw index to ``C_OpenSession``
+    and crash with ``CKR_SLOT_ID_INVALID``. ``slots`` must be non-empty (callers check).
+    """
+    idx = slot_index if slot_index is not None else 0
+    return slots[idx] if idx < len(slots) else slots[0]
+
+
 def open_session(raw: RawPKCS11, slot_id: int, flags: int) -> int:
     session = CK_SESSION_HANDLE()
     expect_rv(

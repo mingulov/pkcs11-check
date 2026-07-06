@@ -147,15 +147,16 @@ def _open_raw_session(
     Returns (raw, session_handle, slot_id, logged_in).
     Caller is responsible for logout and close.
     """
-    from pkcs11_check.raw.bootstrap import get_slot_ids, login_user
+    from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, resolve_slot_id
     from pkcs11_check.raw.bootstrap import open_session as raw_open_session
     from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CKU_USER
 
     raw = p11_module.raw
     _apply_rv_trace(raw, p11_config)
     slots = get_slot_ids(raw)
-    slot_idx = p11_config.slot if p11_config.slot is not None else 0
-    slot_id = slots[slot_idx] if slot_idx < len(slots) else slots[0]
+    # config.slot is an index into the present-token slots (shared resolver: the probe harness
+    # uses the same one, so parent and probe subprocess always pick the same slot).
+    slot_id = resolve_slot_id(slots, p11_config.slot)
 
     flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
     sh = raw_open_session(raw, slot_id, flags)
