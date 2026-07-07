@@ -92,6 +92,34 @@ def _write_coverage(raw: RawPKCS11) -> None:
 # ---------------------------------------------------------------------------
 
 
+class _ProbeTeardown:
+    """Idempotent child teardown: write coverage, close the session, C_Finalize -- at most once.
+
+    Extracted from ``probe_main`` so the run-at-most-once contract is directly testable. It is
+    both registered via ``atexit`` and exposed as ``ctx.cleanup`` (a probe may trigger it
+    explicitly), so double invocation must be a no-op after the first run.
+    """
+
+    def __init__(self, raw: RawPKCS11) -> None:
+        self.raw = raw
+        self.sh: int | None = None
+        self.initialized = False
+        self._done = False
+
+    def __call__(self) -> None:
+        if self._done:
+            return
+        self._done = True
+        _write_coverage(self.raw)
+        if self.sh is not None:
+            close_session_quietly(self.raw, self.sh)
+        if self.initialized:
+            try:
+                self.raw.C_Finalize(None)
+            except (AttributeError, OSError, ctypes.ArgumentError):
+                pass
+
+
 def probe_main(
     run_fn: Callable[[ProbeContext, dict[str, Any]], None],
     *,
@@ -121,31 +149,12 @@ def probe_main(
         raw.enable_rv_trace(maxlen=rv_trace_maxlen())
         atexit.register(_emit_rv_trace, raw)
 
-    # Mutable state shared with the cleanup closure (Python closures capture by
-    # reference; single-element lists work where nonlocal would require nested def).
-    _initialized: list[bool] = [False]
-    _sh_ref: list[int | None] = [None]
-    _done: list[bool] = [False]
-
-    def _cleanup() -> None:
-        """Write coverage, close session, finalize (idempotent; atexit-registered)."""
-        if _done[0]:
-            return
-        _done[0] = True
-        _write_coverage(raw)
-        if _sh_ref[0] is not None:
-            close_session_quietly(raw, _sh_ref[0])
-        if _initialized[0]:
-            try:
-                raw.C_Finalize(None)
-            except (AttributeError, OSError, ctypes.ArgumentError):
-                pass
-
-    atexit.register(_cleanup)
+    teardown = _ProbeTeardown(raw)
+    atexit.register(teardown)
 
     slot_id = params.slot_id
     ctx = ProbeContext(
-        raw=raw, sh=None, slot_id=slot_id, cleanup=_cleanup, module_path=params.module_path
+        raw=raw, sh=None, slot_id=slot_id, cleanup=teardown, module_path=params.module_path
     )
 
     if level == Level.LOAD:
@@ -155,7 +164,7 @@ def probe_main(
     # --- C_Initialize (all levels above LOAD) ---
     rv = raw.C_Initialize(None)
     assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), f"C_Initialize: 0x{rv:08x}"
-    _initialized[0] = True
+    teardown.initialized = True
 
     if level == Level.INIT:
         run_fn(ctx, params.extra)
@@ -174,7 +183,7 @@ def probe_main(
 
     # --- Open session ---
     sh = open_session(raw, slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)
-    _sh_ref[0] = sh
+    teardown.sh = sh
     ctx.sh = sh
 
     # --- Login (I3: only when PIN env var is set; never call login with None PIN) ---
