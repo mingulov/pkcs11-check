@@ -5173,6 +5173,23 @@ def test_load_available_mechanisms_no_manifest() -> None:
     assert result is None
 
 
+def test_incomplete_is_true_when_a_unit_times_out() -> None:
+    # A timeout abandons the rest of that unit's tests, so coverage is incomplete even with zero
+    # crash_limited. The single-run payload must agree with merge.py (crash_limited > 0 OR
+    # timeout > 0) so the INCOMPLETE-COVERAGE banner fires for non-pool runs too.
+    state = FileRunState(
+        units=["t.py"],
+        fingerprint="abc",
+        results=[
+            FileRunResult(target="t.py", status="timeout", returncode=124, duration_s=1.0),
+        ],
+    )
+    s = _build_isolated_json_payload(state)["summary"]
+    assert s["timeout"] >= 1
+    assert s["crash_limited"] == 0
+    assert s["incomplete"] is True  # timeout > 0, even with no crash_limited
+
+
 def test_child_metrics_and_incomplete_excluded_from_total() -> None:
     # Two test-level results so _group_results_by_file uses the test-level grouping
     # path (has_test_level=True): test_x ran and failed (child-crash marker),

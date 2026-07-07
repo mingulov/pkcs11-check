@@ -44,6 +44,18 @@ def test_load_rejects_pin(tmp_path: Path) -> None:
         ProbeParams.load(str(p))
 
 
+def test_dump_rejects_pin_nested_in_extra() -> None:
+    # I3 is defense-in-depth: a PIN-bearing key at ANY depth (not just top level) must be
+    # rejected before it can be serialized to the params temp file.
+    with pytest.raises(PinInParamsError):
+        ProbeParams.dump({"module_path": "/lib/x.so", "extra": {"pin": "SECRET"}})
+
+
+def test_dump_rejects_pin_nested_in_a_list() -> None:
+    with pytest.raises(PinInParamsError):
+        ProbeParams.dump({"module_path": "/lib/x.so", "extra": {"items": [{"so_pin": "1234"}]}})
+
+
 def test_load_rejects_non_object(tmp_path: Path) -> None:
     p = tmp_path / "params.json"
     p.write_text(json.dumps([1, 2, 3]))

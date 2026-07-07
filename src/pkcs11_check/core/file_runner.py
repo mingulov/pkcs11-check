@@ -846,7 +846,7 @@ def _build_isolated_json_payload(
     child_crash, child_timeout = compute_child_subprocess_counts(units_out)
     summary["child_crash"] = child_crash
     summary["child_timeout"] = child_timeout
-    summary["incomplete"] = summary["crash_limited"] > 0
+    summary["incomplete"] = summary["crash_limited"] > 0 or summary["timeout"] > 0
 
     payload: dict[str, Any] = {
         "tool": "pkcs11-check",
@@ -1858,7 +1858,7 @@ def postprocess_jsonl_to_unified(
     child_crash, child_timeout = compute_child_subprocess_counts(units)
     summary["child_crash"] = child_crash
     summary["child_timeout"] = child_timeout
-    summary["incomplete"] = summary["crash_limited"] > 0
+    summary["incomplete"] = summary["crash_limited"] > 0 or summary["timeout"] > 0
     payload: dict[str, Any] = {
         "tool": "pkcs11-check",
         "kind": "test-run",
