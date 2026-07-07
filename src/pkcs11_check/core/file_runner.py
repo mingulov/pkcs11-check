@@ -7,17 +7,17 @@ import io
 import json
 import os
 import re
-import selectors
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from functools import cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import IO, Any, Literal
 from xml.etree import ElementTree as ET  # nosec B405
 
 from rich.console import Console
@@ -25,6 +25,12 @@ from rich.console import Console
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.preflight import load_manifest
 from pkcs11_check.core.quality_audit import build_quality_audit
+from pkcs11_check.core.report_log import (
+    iter_report_log_records as _iter_report_log_records,
+)
+from pkcs11_check.core.report_log import (
+    map_report_outcome as _map_outcome,
+)
 from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS, compute_child_subprocess_counts
 from pkcs11_check.core.test_selection import extract_required_mechanisms, write_deselect_file
 
@@ -46,6 +52,11 @@ UNIT_STATUS_PRIORITY: tuple[str, ...] = (
 _RESUME_COMPLETE_STATUSES = {"passed", "empty", "escalated", "crash_limited"}
 _DETAIL_COUNT_KEYS = RESULT_OUTCOME_KEYS
 _SPECIAL_DETAIL_OUTCOMES = {"crashed", "timeout", "passed-in-isolation"}
+
+
+def _empty_counts() -> dict[str, int]:
+    """A fresh per-unit outcome-counts dict, every canonical outcome key zeroed."""
+    return dict.fromkeys(_DETAIL_COUNT_KEYS, 0)
 _MAX_TIMEOUT_RETRIES = 3
 # Exit code when the selection (module/marker/match/path) collected ZERO tests:
 # a run that executed nothing must not report success. Maps to the contract's
@@ -467,7 +478,7 @@ def _group_results_by_file(
     out: list[tuple[str, list[FileRunResult], dict[str, Any]]] = []
     for file_target in order:
         file_results = groups[file_target]
-        merged_counts: dict[str, int] = {key: 0 for key in _DETAIL_COUNT_KEYS}
+        merged_counts: dict[str, int] = _empty_counts()
         merged_tests: list[dict[str, Any]] = []
         merged_compliance_notes: list[dict[str, Any]] = []
         merged_skip_reasons: dict[str, int] = {}
@@ -494,7 +505,7 @@ def _group_results_by_file(
 
 
 def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
-    counts = {key: 0 for key in _DETAIL_COUNT_KEYS}
+    counts = _empty_counts()
     tests: list[dict[str, Any]] = []
     compliance_notes: list[dict[str, Any]] = []
     skip_reasons: dict[str, int] = {}
@@ -547,7 +558,7 @@ def _ensure_timeout_recorded(detail: dict[str, Any] | None, unit: str) -> dict[s
     normalized — never a second, double-counted timeout.
     """
     result: dict[str, Any] = detail if detail is not None else {}
-    counts = result.setdefault("counts", {key: 0 for key in _DETAIL_COUNT_KEYS})
+    counts = result.setdefault("counts", _empty_counts())
     tests = result.setdefault("tests", [])
     if counts.get("timeout", 0) == 0:
         tests.append(
@@ -579,7 +590,7 @@ def _synthetic_file_skip_detail(
         nodeids = []
 
     skipped = len(nodeids) if nodeids else 1
-    counts = {key: 0 for key in _DETAIL_COUNT_KEYS}
+    counts = _empty_counts()
     counts["skipped"] = skipped
     return {
         "counts": counts,
@@ -752,12 +763,14 @@ def write_isolated_json_report(
     *,
     per_unit_details: dict[str, dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
+    provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write an aggregated JSON report for an isolated run in unified format."""
     payload = _build_isolated_json_payload(
         state,
         per_unit_details=per_unit_details,
         coverage=coverage,
+        provenance=provenance,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -769,6 +782,7 @@ def _build_isolated_json_payload(
     *,
     per_unit_details: dict[str, dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
+    provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     details = per_unit_details or {}
 
@@ -840,6 +854,8 @@ def _build_isolated_json_payload(
     }
     if coverage:
         payload["coverage"] = coverage
+    if provenance:
+        payload["provenance"] = provenance
     return payload
 
 
@@ -972,25 +988,6 @@ def write_isolated_report(
 def _load_report_log_records(jsonl_path: Path) -> list[dict[str, Any]]:
     """Load parseable JSONL report-log records from disk (streamed line-by-line)."""
     return list(_iter_report_log_records(jsonl_path))
-
-
-def _iter_report_log_records(jsonl_path: Path) -> Iterable[dict[str, Any]]:
-    """Yield parseable JSONL report-log records from disk line-by-line."""
-    try:
-        fh = jsonl_path.open(encoding="utf-8")
-    except (FileNotFoundError, OSError):
-        return
-    with fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(rec, dict):
-                yield rec
 
 
 def _report_record_cache_dir(state_file: Path) -> Path:
@@ -1781,11 +1778,14 @@ def _emit_external_provision_banner(n: int) -> None:
     )
 
 
-def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[str, Any] | None:
+def postprocess_jsonl_to_unified(
+    jsonl_path: Path, output_path: Path, provenance: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Convert a pytest-reportlog JSONL file to pkcs11-check unified format.
 
     Groups tests by file and writes the unified JSON report.
     Used for ``--isolation none`` to produce consistent output.
+    If ``provenance`` is provided, it is included in the output payload.
     """
     file_counts: dict[str, dict[str, int]] = {}
 
@@ -1795,7 +1795,7 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
         if not file_part:
             return
         if file_part not in file_counts:
-            file_counts[file_part] = {key: 0 for key in _DETAIL_COUNT_KEYS}
+            file_counts[file_part] = _empty_counts()
         outcome = _map_outcome(rec.get("outcome", "passed"), rec.get("wasxfail"))
         file_counts[file_part][outcome] = file_counts[file_part].get(outcome, 0) + 1
 
@@ -1805,8 +1805,10 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
         _iter_report_log_records(jsonl_path),
         call_record_hook=_accumulate_file_count,
     )
+    # An empty / vacuous JSONL (no records at all) returns None from the builder;
+    # treat it as a zero-count run so we still produce a results.json payload.
     if detail is None:
-        return None
+        detail = {"counts": _empty_counts(), "tests": []}
 
     # Group tests by file
     by_file: dict[str, list[dict[str, Any]]] = {}
@@ -1823,13 +1825,13 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
             continue
         compliance_notes_by_file.setdefault(file_part, []).append(dict(note))
 
-    summary: dict[str, int] = {key: 0 for key in _DETAIL_COUNT_KEYS}
+    summary: dict[str, int] = _empty_counts()
     units: list[dict[str, Any]] = []
 
     for target in sorted(
         set(list(by_file.keys()) + list(file_counts.keys()) + list(compliance_notes_by_file.keys()))
     ):
-        counts = file_counts.get(target, {key: 0 for key in _DETAIL_COUNT_KEYS})
+        counts = file_counts.get(target, _empty_counts())
         for key in summary:
             summary[key] += counts.get(key, 0)
         has_failure = any(
@@ -1855,12 +1857,14 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
     summary["child_crash"] = child_crash
     summary["child_timeout"] = child_timeout
     summary["incomplete"] = summary["crash_limited"] > 0
-    payload = {
+    payload: dict[str, Any] = {
         "tool": "pkcs11-check",
         "kind": "test-run",
         "summary": summary,
         "units": units,
     }
+    if provenance:
+        payload["provenance"] = provenance
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -2181,6 +2185,13 @@ def units_remaining_for_resume(units: list[str], state: FileRunState | None) -> 
     return [unit for unit in units if unit not in completed_ok]
 
 
+def _is_windows_crash_code(returncode: int) -> bool:
+    """True for an NTSTATUS exit code with error severity (top two bits set), e.g.
+    0xC0000005 (access violation). On Windows an unhandled exception terminates the
+    process with such a code instead of a negative POSIX signal."""
+    return (returncode & 0xFFFFFFFF) & 0xC0000000 == 0xC0000000
+
+
 def _status_from_returncode(returncode: int) -> str:
     if returncode == 0:
         return "passed"
@@ -2189,6 +2200,8 @@ def _status_from_returncode(returncode: int) -> str:
     if returncode == _TIMEOUT_RETURN_CODE:
         return "timeout"
     if returncode < 0:
+        return "crashed"
+    if sys.platform == "win32" and _is_windows_crash_code(returncode):
         return "crashed"
     return "failed"
 
@@ -2202,6 +2215,30 @@ _CRASH_SIGNALS: dict[int, str] = {
     -7: "SIGBUS",
 }
 
+# Windows NTSTATUS exception codes (the process exit code when a child dies on an
+# unhandled exception); the Windows-ABI counterpart of _CRASH_SIGNALS.
+_WINDOWS_EXCEPTION_NAMES: dict[int, str] = {
+    0xC0000005: "EXCEPTION_ACCESS_VIOLATION",
+    0xC00000FD: "EXCEPTION_STACK_OVERFLOW",
+    0xC000001D: "EXCEPTION_ILLEGAL_INSTRUCTION",
+    0xC0000094: "EXCEPTION_INT_DIVIDE_BY_ZERO",
+    0xC0000409: "STATUS_STACK_BUFFER_OVERRUN",
+    0xC0000374: "STATUS_HEAP_CORRUPTION",
+    0xC0000025: "EXCEPTION_NONCONTINUABLE_EXCEPTION",
+}
+
+
+def _crash_detail_name(returncode: int | None) -> str:
+    """Name a crash exit code: POSIX signal (negative) or Windows NTSTATUS (positive)."""
+    if returncode is None:
+        return "unknown"
+    if returncode < 0:
+        return _CRASH_SIGNALS.get(returncode, f"signal{abs(returncode)}")
+    if _is_windows_crash_code(returncode):
+        u = returncode & 0xFFFFFFFF
+        return _WINDOWS_EXCEPTION_NAMES.get(u, f"0x{u:08X}")
+    return f"exit{returncode}"
+
 
 def crash_classification(
     *,
@@ -2214,11 +2251,7 @@ def crash_classification(
     if timed_out:
         detail: dict[str, object] = {"mode": "timeout"}
     else:
-        signal = _CRASH_SIGNALS.get(
-            returncode,  # type: ignore[arg-type]
-            (f"signal{abs(returncode)}" if returncode else "unknown"),
-        )
-        detail = {"signal": signal, "returncode": returncode}
+        detail = {"signal": _crash_detail_name(returncode), "returncode": returncode}
     return {
         "schema": 1,
         "reason": "crash",
@@ -2289,16 +2322,6 @@ def _flatten_longrepr(longrepr: Any) -> str:
                         parts.append("\n".join(lines))
         return "\n".join(parts) if parts else ""
     return str(longrepr)
-
-
-def _map_outcome(raw_outcome: str, wasxfail: str | None) -> str:
-    """Map a raw pytest-reportlog outcome to the unified outcome value."""
-    if raw_outcome == "passed" and wasxfail is not None:
-        return "xpassed"
-    if raw_outcome == "skipped" and wasxfail is not None:
-        return "xfailed"
-    # "failed" stays "failed" regardless of wasxfail (strict xfail)
-    return raw_outcome
 
 
 def _identify_crash_culprit_from_records(
@@ -2688,6 +2711,10 @@ def _subprocess_plugin_env(base_env: Mapping[str, str], unit: str) -> dict[str, 
     """Per-unit env that disables pytest plugin autoload and enables only the
     plugins the unit needs. Behavior-preserving; only trims startup cost."""
     env = dict(base_env)
+    # UTF-8 so a unit's pytest subprocess output (rich marks etc.) does not crash on a
+    # Windows cp1252 console; no-op off Windows. setdefault respects an explicit value.
+    if sys.platform == "win32":
+        env.setdefault("PYTHONUTF8", "1")
     addopts = _unit_plugin_addopts(unit.split("::", 1)[0])
     if addopts is None:
         return env
@@ -2717,44 +2744,62 @@ def _run_subprocess_tee(
     stdout_buf = io.BytesIO()
     stderr_buf = io.BytesIO()
 
-    sel = selectors.DefaultSelector()
-    if proc.stdout:
-        sel.register(proc.stdout, selectors.EVENT_READ, ("stdout", stdout_buf))
-    if proc.stderr:
-        sel.register(proc.stderr, selectors.EVENT_READ, ("stderr", stderr_buf))
+    # Drain each pipe in its own thread rather than selecting over the pipe fds:
+    # selectors.select() on an OS pipe is POSIX-only (Windows select() accepts
+    # only sockets -> WSAENOTSOCK, issue #3). Threads read+tee identically on both
+    # platforms and drain concurrently with the child, so output larger than the
+    # pipe buffer cannot deadlock the child.
+    console_lock = threading.Lock()
 
-    try:
-        deadline = time.monotonic() + timeout
-        while sel.get_map():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                # Deadline reached. The loop above ends only on pipe-EOF, so a
-                # child that already crashed/exited but whose stdout/stderr is
-                # held open by a *surviving grandchild* (e.g. a module that
-                # spawned a daemon inheriting our pipe fds) lands here too. Only
-                # a child that is still running is a genuine timeout — if it has
-                # already exited, report its real returncode (e.g. a crash
-                # signal) instead of synthesizing a timeout, so a crash is never
-                # masked as a timeout. See review finding R2.
-                if proc.poll() is None:
-                    proc.kill()
-                    proc.wait()  # reap; never leave a zombie behind (R5)
-                    raise subprocess.TimeoutExpired(cmd, timeout)
-                break
-            for key, _ in sel.select(timeout=min(remaining, 0.5)):
-                stream = key.fileobj
-                tag, buf = key.data
-                chunk = stream.read1(8192) if hasattr(stream, "read1") else stream.read(8192)  # type: ignore[union-attr]
+    def _pump(stream: IO[bytes], buf: io.BytesIO, is_stdout: bool) -> None:
+        try:
+            while True:
+                chunk = stream.read1(8192) if hasattr(stream, "read1") else stream.read(8192)
                 if not chunk:
-                    sel.unregister(stream)
-                    continue
+                    break
                 buf.write(chunk)
-                # Tee to console
-                target = sys.stdout.buffer if tag == "stdout" else sys.stderr.buffer
-                target.write(chunk)
-                target.flush()
-    finally:
-        sel.close()
+                target = sys.stdout.buffer if is_stdout else sys.stderr.buffer
+                with console_lock:
+                    target.write(chunk)
+                    target.flush()
+        except (OSError, ValueError):
+            # stream closed underneath us (e.g. proc.kill on the timeout path).
+            pass
+        finally:
+            try:
+                stream.close()
+            except OSError:
+                pass
+
+    threads: list[threading.Thread] = []
+    for stream, buf, is_stdout in (
+        (proc.stdout, stdout_buf, True),
+        (proc.stderr, stderr_buf, False),
+    ):
+        if stream is None:
+            continue
+        thread = threading.Thread(target=_pump, args=(stream, buf, is_stdout), daemon=True)
+        thread.start()
+        threads.append(thread)
+
+    deadline = time.monotonic() + timeout
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # The child is still running at the deadline -- a genuine timeout. Kill,
+        # reap (never leave a zombie behind, R5), and re-raise.
+        proc.kill()
+        proc.wait()
+        for thread in threads:
+            thread.join(timeout=max(0.0, deadline + 0.5 - time.monotonic()))
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    # The child exited on its own -- cleanly OR via a crash signal (negative
+    # returncode). Drain the readers, but never block past the deadline: a
+    # surviving grandchild may hold the pipes open (R2), and a crash must report
+    # its real returncode rather than being masked as a timeout.
+    for thread in threads:
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
     proc.wait()
     return (
@@ -2779,6 +2824,7 @@ def run_isolated_pytest_units(
     console: Console,
     granularity: RunnerGranularity = "file",
     max_crashes_per_file: int = 10,
+    provenance: dict[str, Any] | None = None,
 ) -> int:
     """Run pytest units in fresh subprocesses and persist progress."""
     if not units:
@@ -2794,7 +2840,9 @@ def run_isolated_pytest_units(
         if report_config is not None:
             empty_state = FileRunState(units=[], fingerprint="", results=[])
             if report_config.output_format == "json":
-                payload = write_isolated_json_report(report_config.output_path, empty_state)
+                payload = write_isolated_json_report(
+                    report_config.output_path, empty_state, provenance=provenance
+                )
                 write_quality_json_report(
                     report_config.output_path.parent / "quality.json", payload
                 )
@@ -2909,6 +2957,7 @@ def run_isolated_pytest_units(
                     state,
                     per_unit_details=merged_details,
                     coverage=coverage_data,
+                    provenance=provenance,
                 )
                 quality_path = report_config.output_path.parent / "quality.json"
                 write_quality_json_report(
@@ -3120,7 +3169,7 @@ def run_isolated_pytest_units(
                                         to_culprit_entry["stderr"] = confirm_err
                                     if to_accum_detail is None:
                                         to_accum_detail = {
-                                            "counts": {key: 0 for key in _DETAIL_COUNT_KEYS},
+                                            "counts": _empty_counts(),
                                             "tests": [],
                                         }
                                     to_accum_detail["tests"].append(to_culprit_entry)
@@ -3501,7 +3550,7 @@ def run_isolated_pytest_units(
                                         culprit_entry["stderr"] = confirm_err
                                     if accumulated_detail is None:
                                         accumulated_detail = {
-                                            "counts": {key: 0 for key in _DETAIL_COUNT_KEYS},
+                                            "counts": _empty_counts(),
                                             "tests": [],
                                         }
                                     accumulated_detail["tests"].append(culprit_entry)
@@ -3813,6 +3862,7 @@ def run_isolated_pytest_units(
                     state,
                     per_unit_details=merged_details,
                     coverage=coverage_data,
+                    provenance=provenance,
                 )
                 quality_path = report_config.output_path.parent / "quality.json"
                 write_quality_json_report(

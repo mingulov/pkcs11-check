@@ -105,7 +105,15 @@ def _known_issue_match(group: dict[str, Any], section_text: str) -> bool:
     return kindword is None
 
 
-_SOFT_TOKEN_ORACLE_REASONS = ("oracle",)
+# Per-reason routing for xfail deviations. An xfail is a recorded deviation to
+# investigate, not a blanket "docs-only"; honest_deviation is a positive-op
+# operability failure that may be a real bug.
+_XFAIL_ROUTING = {
+    "not_operational": "CAPABILITY_AUDIT",
+    "nonspec_reject": "SPEC_REVIEW",
+    "honest_deviation": "INVESTIGATE",
+    "undeclared_capability": "METADATA_REVIEW",
+}
 
 
 def enrich(groups: list[dict[str, Any]], module_issues_text: str, provider: str) -> None:
@@ -127,7 +135,7 @@ def enrich(groups: list[dict[str, Any]], module_issues_text: str, provider: str)
             group["routing"] = "HARNESS_FIX"
         elif outcome == "xfail":
             group["category"] = "deviation"
-            group["routing"] = "DOCS_ONLY"
+            group["routing"] = _XFAIL_ROUTING.get(reason, "DEVIATION_REVIEW")
         else:  # any fail (incl. crash)
             group["category"] = "PROVIDER_BUG"
             group["routing"] = "PROVIDER_REPORT"
@@ -135,10 +143,8 @@ def enrich(groups: list[dict[str, Any]], module_issues_text: str, provider: str)
                 group["category"] = "KNOWN_ISSUE"
                 group["routing"] = "DOCS_ONLY"
 
-        # padding-oracle class: oracle reason, or crypto-kind acceptance findings,
-        # carry a soft-token caveat (a soft token can have timing/value oracles
-        # that a real HSM would not).
-        if reason in _SOFT_TOKEN_ORACLE_REASONS or (
-            group.get("kind") == "crypto" and reason in ("oracle", "accepted_invalid")
-        ):
+        # Soft-token caveat: ONLY genuine timing/value-oracle findings (reason
+        # "oracle"). Do NOT tag crypto accepted_invalid / crash breaks - those are
+        # real on any backend and must not be softened.
+        if reason == "oracle":
             group["soft_token_caveat"] = True

@@ -18,6 +18,10 @@ from pkcs11_check.core.preflight import (
     load_manifest,
     run_preflight_subprocess,
 )
+from pkcs11_check.core.subprocess_trace import (
+    drain_subprocess_rv_trace,
+    extract_subprocess_rv_trace,
+)
 from pkcs11_check.core.test_selection import parse_disabled_nodeids
 
 # Re-export fixtures so pytest discovers them
@@ -43,10 +47,6 @@ from pkcs11_check.raw.types_std import (
     CKF_MESSAGE_SIGN,
     CKF_MESSAGE_VERIFY,
     CKR_OK,
-)
-from pkcs11_check.testcases._subprocess_trace import (
-    drain_subprocess_rv_trace,
-    extract_subprocess_rv_trace,
 )
 from pkcs11_check.testcases.mechanism_selection import (
     ENCRYPT_ROUNDTRIP,

@@ -34,7 +34,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pkcs11_check.report.capability import capability_audit, render_capability_section
+from pkcs11_check.report import health
 from pkcs11_check.report.correlate import correlate, enrich
 from pkcs11_check.report.extract import extract_groups
 from pkcs11_check.report.render import render_provider
@@ -80,16 +80,26 @@ def crashes_from_results(results_json: Path | None) -> list[dict[str, Any]]:
     return crashes
 
 
-def _summary_from_results(results_json: Path | None) -> dict[str, Any]:
-    """Read the ``summary`` dict from a ``results.json`` file, or return ``{}``."""
+def _payload_from_results(results_json: Path | None) -> dict[str, Any]:
+    """Read the full results.json payload (summary/coverage/units), or ``{}``."""
     if results_json is None:
         return {}
     try:
         payload = json.loads(results_json.read_text())
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return {}
-    summary = payload.get("summary") if isinstance(payload, dict) else None
-    return summary if isinstance(summary, dict) else {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _quality_for(results_json: Path | None) -> dict[str, Any]:
+    """Read quality.json sitting next to results.json, or ``{}``."""
+    if results_json is None:
+        return {}
+    try:
+        payload = json.loads((results_json.parent / "quality.json").read_text())
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _parse_named(values: list[str] | None, default_provider: str | None) -> dict[str, Path]:
@@ -131,33 +141,26 @@ def _resolve_module_issues_text(explicit: Path | None) -> str:
     return ""
 
 
-def _counts(groups: list[dict[str, Any]]) -> dict[str, int]:
-    out = {"fail": 0, "xfail": 0, "crash": 0}
-    for g in groups:
-        n = int(g.get("count", 0))
-        if g.get("reason") == "crash":
-            out["crash"] += n
-        elif g.get("outcome") == "xfail":
-            out["xfail"] += n
-        elif g.get("outcome") == "fail":
-            out["fail"] += n
-    return out
-
-
 def _write_provider(
     provider: str,
     groups: list[dict[str, Any]],
     out_dir: Path,
-    pass_count: int | None = None,
-    crash_limited: int = 0,
-    incomplete: bool = False,
+    *,
+    summary: dict[str, Any] | None = None,
+    coverage: dict[str, Any] | None = None,
+    units: list[dict[str, Any]] | None = None,
+    quality: dict[str, Any] | None = None,
+    provenance: dict[str, Any] | None = None,
 ) -> None:
     md = render_provider(
-        provider, groups, pass_count=pass_count, crash_limited=crash_limited, incomplete=incomplete
+        provider,
+        groups,
+        summary=summary,
+        coverage=coverage,
+        units=units,
+        quality=quality,
+        provenance=provenance,
     )
-    # render_provider ends with a single trailing newline; the "\n" join yields
-    # one blank line before the appended "## capability audit" heading.
-    md = md + "\n" + render_capability_section(capability_audit(groups))
     (out_dir / f"{provider}.md").write_text(_DISCLAIMER + "\n\n" + md, encoding="utf-8")
     with (out_dir / f"{provider}.jsonl").open("w", encoding="utf-8") as fh:
         for group in groups:
@@ -174,12 +177,18 @@ def _write_index(
         "",
         "# conformance index",
         "",
-        "| provider | fail | xfail | crash |",
-        "|---|---|---|---|",
+        "| provider | fail | xfail | crash | unclassified |",
+        "|---|---|---|---|---|",
     ]
     for provider in sorted(provider_groups):
-        c = _counts(provider_groups[provider])
-        lines.append(f"| [{provider}]({provider}.md) | {c['fail']} | {c['xfail']} | {c['crash']} |")
+        # health.outcome_counts is the single source of truth, matching each
+        # provider header: `fail` excludes the unclassified backlog, which gets
+        # its own column instead of inflating the headline fail number.
+        c = health.outcome_counts(provider_groups[provider])
+        lines.append(
+            f"| [{provider}]({provider}.md) | {c['fail']} | {c['xfail']} | "
+            f"{c['crash']} | {c['unclassified']} |"
+        )
     lines.append("")
     lines.append("## top universal themes")
     for theme in correlation["universal_themes"][:10]:
@@ -250,17 +259,19 @@ def main(argv: list[str] | None = None) -> int:
     for provider, report_path in report_logs.items():
         results_json = results_jsons.get(provider)
         crashes = crashes_from_results(results_json)
+        payload = _payload_from_results(results_json)
         groups = extract_groups(report_path, crashes=crashes)
         enrich(groups, module_issues_text=module_issues, provider=provider)
         provider_groups[provider] = groups
-        summary = _summary_from_results(results_json)
         _write_provider(
             provider,
             groups,
             out_dir,
-            pass_count=summary.get("passed") if isinstance(summary.get("passed"), int) else None,
-            crash_limited=int(summary.get("crash_limited", 0) or 0),
-            incomplete=bool(summary.get("incomplete", False)),
+            summary=payload.get("summary") or {},
+            coverage=payload.get("coverage"),
+            units=payload.get("units") or [],
+            quality=_quality_for(results_json),
+            provenance=payload.get("provenance") or None,
         )
 
     if len(provider_groups) > 1:

@@ -89,12 +89,116 @@ class Classification:
     spec_ref: str = ""
     source: str | None = None
     vector_id: str | None = None
+    params: dict[str, str] | None = None
     detail: dict[str, Any] | None = None
     schema: int = 1
 
 
 # Global collector for the current test run.
 _records: list[Classification] = []
+
+# Params (curve/key-size/hash) attached to every classification from the current
+# test; set once per test and cleared by clear() between tests.
+_active_params: dict[str, str] | None = None
+
+# Reproducer identity (vector file + case id) for the current vector-replay test;
+# set once per test, inherited by every classify(), cleared by clear().
+_active_source: str | None = None
+_active_vector_id: str | None = None
+
+# Operation identity (mechanism + C_* op) for the current test; set once, inherited by
+# every classify() (incl. the not_operational/xfail paths), cleared by clear().
+_active_mechanism: str | None = None
+_active_operation: str | None = None
+
+
+# Curve aliases: NIST P-* and ACVP ED-* names map to the canonical secp*/ed*
+# forms, and all curves lower-case, so equivalent curves from different vector
+# families share one report bucket instead of fragmenting.
+_CURVE_ALIASES: dict[str, str] = {
+    "p-192": "secp192r1",
+    "p-224": "secp224r1",
+    "p-256": "secp256r1",
+    "p-256k": "secp256k1",
+    "p-384": "secp384r1",
+    "p-521": "secp521r1",
+    "ed-25519": "ed25519",
+    "ed-448": "ed448",
+}
+
+# Hash aliases: the CKM/CKK HMAC mechanism spellings map to the bare digest in the
+# canonical dash form, so a digest named in HMAC form (SHA512_HMAC) and the same
+# digest from an RSA/ECDSA vector (SHA-512) share one report bucket. Already-canonical
+# dash forms (SHA-512, SHA3-256, SHA-512/256) only need lower-casing.
+_HASH_ALIASES: dict[str, str] = {
+    "sha_1_hmac": "sha-1",
+    "sha224_hmac": "sha-224",
+    "sha256_hmac": "sha-256",
+    "sha384_hmac": "sha-384",
+    "sha512_hmac": "sha-512",
+    "sha512_224_hmac": "sha-512/224",
+    "sha512_256_hmac": "sha-512/256",
+    "sha3_224_hmac": "sha3-224",
+    "sha3_256_hmac": "sha3-256",
+    "sha3_384_hmac": "sha3-384",
+    "sha3_512_hmac": "sha3-512",
+}
+
+
+def normalize_param(key: str, value: str) -> str:
+    """Canonicalize a param value so equivalent forms share one report bucket.
+
+    The single source of truth for param-value canonicalization, applied at emission
+    (:func:`set_params`) and defensively in the report extractor. The high-cardinality
+    discriminating axes - ``curve`` and ``hash`` - are normalized to one vocabulary;
+    other keys (the ``*_bits`` sizes, ``mlkem``/``mldsa`` levels) are already consistent
+    decimal/level strings and pass through unchanged.
+    """
+    if key == "curve":
+        lowered = value.lower()
+        return _CURVE_ALIASES.get(lowered, lowered)
+    if key == "hash":
+        lowered = value.lower()
+        return _HASH_ALIASES.get(lowered, lowered)
+    return value
+
+
+def set_params(params: dict[str, str] | None) -> None:
+    """Declare the discriminating params for the current test (curve/size/hash).
+
+    Every classify() emitted afterwards inherits these unless it passes its own
+    ``params``. Cleared per-test by clear(), so it cannot leak across tests.
+    """
+    global _active_params
+    if params:
+        cleaned = {k: normalize_param(k, v) for k, v in params.items() if v}
+        _active_params = cleaned or None
+    else:
+        _active_params = None
+
+
+def set_vector(source: str | None, vector_id: str | None) -> None:
+    """Declare the reproducer identity (vector file + case id) for the current test.
+
+    Every classify() afterwards inherits ``source``/``vector_id`` unless it passes its
+    own. Set once per vector-replay test (e.g. by the autouse vector-context fixture);
+    cleared by clear() so it cannot leak across tests.
+    """
+    global _active_source, _active_vector_id
+    _active_source = source or None
+    _active_vector_id = vector_id or None
+
+
+def set_mechanism(mechanism: str | None, operation: str | None = None) -> None:
+    """Declare the operation identity (mechanism + C_* op) for the current test.
+
+    Every classify() afterwards inherits ``mechanism``/``operation`` unless it passes
+    its own. Set once per vector-replay test where the operation is constant, so the
+    not_operational/xfail paths carry the mechanism; cleared by clear().
+    """
+    global _active_mechanism, _active_operation
+    _active_mechanism = mechanism or None
+    _active_operation = operation or None
 
 
 def record(rec: Classification) -> None:
@@ -108,8 +212,15 @@ def get_records() -> list[Classification]:
 
 
 def clear() -> None:
-    """Clear collected records (call between tests)."""
+    """Clear collected records and active context (call between tests)."""
+    global _active_params, _active_source, _active_vector_id
+    global _active_mechanism, _active_operation
     _records.clear()
+    _active_params = None
+    _active_source = None
+    _active_vector_id = None
+    _active_mechanism = None
+    _active_operation = None
 
 
 def serialize(records: list[Classification]) -> list[dict[str, Any]]:
@@ -157,6 +268,7 @@ def classify(
     spec_ref: str | None = None,
     source: str | None = None,
     vector_id: str | None = None,
+    params: dict[str, str] | None = None,
     summary: str | None = None,
     detail: dict[str, Any] | None = None,
 ) -> None:
@@ -166,6 +278,16 @@ def classify(
     or strings (passed through unchanged).  A ``fail`` raises ``pytest.fail`` and an
     ``xfail`` raises ``pytest.xfail``; ``pass`` returns normally.
     """
+    if params is None and _active_params is not None:
+        params = dict(_active_params)
+    if source is None:
+        source = _active_source
+    if vector_id is None:
+        vector_id = _active_vector_id
+    if mechanism is None:
+        mechanism = _active_mechanism
+    if operation is None:
+        operation = _active_operation
     outcome, severity = derive_verdict(reason, kind)
     expected_names = _ckr_names(expected)
     actual_name = _ckr_name(actual)
@@ -190,6 +312,7 @@ def classify(
             spec_ref=spec_ref or "",
             source=source,
             vector_id=vector_id,
+            params=params,
             detail=detail,
         )
     )

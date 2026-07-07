@@ -5,14 +5,16 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import tomllib
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 import typer
 from pydantic import SecretStr
 from rich.console import Console
 
+from pkcs11_check import provenance as provenance_mod
 from pkcs11_check.config import P11TestConfig
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.file_runner import (
@@ -36,6 +38,7 @@ from pkcs11_check.core.test_selection import (
     load_disabled_baseline,
     write_deselect_file,
 )
+from pkcs11_check.testcases.data import SOURCES_TOML, resolve_data_dir
 
 console = Console(stderr=True)
 
@@ -44,6 +47,38 @@ _TESTCASES_DIR = str(Path(__file__).parent.parent / "testcases")
 
 def _preflight_timeout_seconds(test_timeout: int) -> int:
     return max(10, min(test_timeout, 60))
+
+
+def _build_run_provenance(manifest: Any, data_dir: Path) -> dict[str, Any]:
+    """Assemble the provenance block for this run (best-effort; never raises)."""
+    try:
+        environment: dict[str, Any] | None = None
+        if getattr(manifest, "interface_version", None) is not None:
+            environment = {
+                "interface": manifest.interface_version,
+                "slots": manifest.slot_count,
+                "mechanisms": len(manifest.mechanisms),
+            }
+        try:
+            with open(SOURCES_TOML, "rb") as fh:
+                data_manifest: dict[str, Any] = tomllib.load(fh)
+        except (OSError, tomllib.TOMLDecodeError):
+            data_manifest = {}
+        build_file = Path(
+            os.environ.get(
+                "PKCS11_CHECK_BUILD_PROVENANCE", "/etc/pkcs11-check/build-provenance.json"
+            )
+        )
+        return provenance_mod.assemble(
+            env=os.environ,
+            repo_root=Path(__file__).resolve().parents[3],
+            build_file=build_file,
+            data_manifest=data_manifest,
+            data_dir=data_dir,
+            environment=environment,
+        )
+    except Exception:  # noqa: BLE001  # best-effort: provenance must never abort the run
+        return {}
 
 
 def _combine_marker(marker: str | None, *, skip_slow: bool, only_slow: bool) -> str | None:
@@ -164,6 +199,39 @@ def _isolated_report_config(output: str, output_file: str | None) -> IsolatedRep
         jsonl_path = results_path.parent / "report.jsonl"
         return IsolatedReportConfig("json", results_path, jsonl_path=jsonl_path)
     return IsolatedReportConfig("junit", Path(output_file or "pkcs11-check-results.xml"))
+
+
+def _assemble_json_artifacts_from_jsonl(
+    jsonl_p: Path, output_file: str | None, run_provenance: dict[str, Any]
+) -> None:
+    """Build the results/coverage/quality/provisioning JSON artifacts from a raw report JSONL.
+
+    Used by the non-isolated (``--isolation none``) path; the isolated path produces the same
+    artifacts inside ``run_isolated_pytest_units``. Consumes (deletes) the raw JSONL when done.
+    """
+    unified_path = Path(output_file or "pkcs11-check-results.json")
+    unified_path.parent.mkdir(parents=True, exist_ok=True)
+    coverage_data = extract_coverage_from_jsonl(jsonl_p)
+    quality_records = extract_quality_report_records_from_jsonl(jsonl_p)
+    if coverage_data:
+        (unified_path.parent / "coverage.json").write_text(
+            json.dumps(coverage_data, indent=2) + "\n"
+        )
+    provisioning_data = extract_provisioning_from_jsonl(jsonl_p)
+    if provisioning_data is not None:
+        (unified_path.parent / "provisioning.json").write_text(
+            json.dumps(provisioning_data, indent=2) + "\n"
+        )
+        if provisioning_data["totals"].get("ran_via_external", 0) > 0:
+            _emit_external_provision_banner(provisioning_data["totals"]["ran_via_external"])
+    results_payload = postprocess_jsonl_to_unified(jsonl_p, unified_path, provenance=run_provenance)
+    write_quality_json_report(
+        unified_path.parent / "quality.json",
+        results_payload,
+        coverage=coverage_data,
+        report_log_records=quality_records,
+    )
+    jsonl_p.unlink(missing_ok=True)
 
 
 def test_command(
@@ -361,6 +429,21 @@ def test_command(
         manifest_path.unlink(missing_ok=True)
         raise typer.Exit(code=1 if manifest.status in {"crashed", "timeout"} else 2)
 
+    run_provenance = _build_run_provenance(manifest, resolve_data_dir())
+    fw = run_provenance.get("framework") or {}
+    fw_version = fw.get("version") or "?"
+    prov_info = run_provenance.get("provider") or {}
+    if prov_info.get("name"):
+        commit_short = (prov_info.get("commit") or "")[:8]
+        ref = prov_info.get("ref", "")
+        prov_line = f"{prov_info['name']} {ref}@{commit_short}".strip()
+    else:
+        prov_line = ""
+    console.print(
+        f"[dim]provenance: pkcs11-check {fw_version}"
+        f" | {prov_line or 'provider: build info absent'}[/dim]"
+    )
+
     pytest_args = _build_pytest_args(
         module=module,
         interface=interface,
@@ -509,6 +592,7 @@ def test_command(
                     console=console,
                     granularity=runner_granularity,
                     max_crashes_per_file=max_crashes_per_file,
+                    provenance=run_provenance,
                 )
             except (FileNotFoundError, ValueError) as exc:
                 console.print(f"[red]Error:[/red] {exc}")
@@ -536,29 +620,7 @@ def test_command(
             if deselect_path is not None:
                 deselect_path.unlink(missing_ok=True)
         if output == "json" and jsonl_raw is not None:
-            jsonl_p = Path(jsonl_raw)
-            unified_path = Path(output_file or "pkcs11-check-results.json")
-            unified_path.parent.mkdir(parents=True, exist_ok=True)
-            coverage_data = extract_coverage_from_jsonl(jsonl_p)
-            quality_records = extract_quality_report_records_from_jsonl(jsonl_p)
-            if coverage_data:
-                coverage_path = unified_path.parent / "coverage.json"
-                coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
-            provisioning_data = extract_provisioning_from_jsonl(jsonl_p)
-            if provisioning_data is not None:
-                provisioning_path = unified_path.parent / "provisioning.json"
-                provisioning_path.write_text(json.dumps(provisioning_data, indent=2) + "\n")
-                if provisioning_data["totals"].get("ran_via_external", 0) > 0:
-                    _emit_external_provision_banner(provisioning_data["totals"]["ran_via_external"])
-            results_payload = postprocess_jsonl_to_unified(jsonl_p, unified_path)
-            quality_path = unified_path.parent / "quality.json"
-            write_quality_json_report(
-                quality_path,
-                results_payload or {},
-                coverage=coverage_data,
-                report_log_records=quality_records,
-            )
-            jsonl_p.unlink(missing_ok=True)
+            _assemble_json_artifacts_from_jsonl(Path(jsonl_raw), output_file, run_provenance)
         raise typer.Exit(code=int(exit_code))
     finally:
         manifest_path.unlink(missing_ok=True)

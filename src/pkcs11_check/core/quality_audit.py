@@ -782,8 +782,9 @@ def _collect_mechanism_findings(
     selected_to_scenarios: dict[str, list[str]] = defaultdict(list)
     for scenario, selected in selected_mechanisms_by_scenario.items():
         for mechanism in selected:
-            selected_to_scenarios[mechanism].append(scenario)
-            state_names["selected"].add(mechanism)
+            nm = _normalize_mechanism_name(mechanism)
+            selected_to_scenarios[nm].append(scenario)
+            state_names["selected"].add(nm)
 
     findings: list[dict[str, Any]] = []
     mechanisms_with_state = set().union(*state_names.values())
@@ -820,36 +821,51 @@ def _collect_mechanism_findings(
     return findings, None
 
 
+def _normalize_mechanism_name(name: str) -> str:
+    """Canonicalize a mechanism name to its ``CKM_``-prefixed form.
+
+    Scenario-selection telemetry emits bare names (``AES_CBC``) while coverage emits
+    ``CKM_``-prefixed names (``CKM_AES_CBC``); normalizing to one form keeps a mechanism
+    a single merged finding instead of a phantom split across the two spellings (an
+    accepted mechanism otherwise also showed a false ``selected_but_not_invoked`` twin).
+    """
+    name = str(name)
+    return name if name.startswith("CKM_") else f"CKM_{name}"
+
+
+def _norm_mech_set(value: Any) -> set[str]:
+    """``_string_list`` then canonicalize each mechanism name (CKM_ form)."""
+    return {_normalize_mechanism_name(n) for n in _string_list(value)}
+
+
 def _mechanism_state_name_sets(
     mechanism_coverage: Mapping[str, Any],
 ) -> dict[str, set[str]]:
-    advertised = set(
-        _string_list(
-            mechanism_coverage.get(
-                "advertised_names",
-                mechanism_coverage.get("available_names"),
-            )
+    advertised = _norm_mech_set(
+        mechanism_coverage.get(
+            "advertised_names",
+            mechanism_coverage.get("available_names"),
         )
     )
-    available = set(_string_list(mechanism_coverage.get("available_names")))
+    available = _norm_mech_set(mechanism_coverage.get("available_names"))
     advertised.update(available)
-    invoked = set(_string_list(mechanism_coverage.get("invoked_names")))
-    not_invoked = set(_string_list(mechanism_coverage.get("not_invoked_names")))
+    invoked = _norm_mech_set(mechanism_coverage.get("invoked_names"))
+    not_invoked = _norm_mech_set(mechanism_coverage.get("not_invoked_names"))
     if not not_invoked and available:
         not_invoked = available - invoked
     return {
         "advertised": advertised,
-        "selected": set(_string_list(mechanism_coverage.get("selected_names"))),
-        "selection_rejected": set(_string_list(mechanism_coverage.get("selection_rejected_names"))),
-        "attempted": set(_string_list(mechanism_coverage.get("attempted_names"))),
+        "selected": _norm_mech_set(mechanism_coverage.get("selected_names")),
+        "selection_rejected": _norm_mech_set(mechanism_coverage.get("selection_rejected_names")),
+        "attempted": _norm_mech_set(mechanism_coverage.get("attempted_names")),
         "invoked": invoked,
-        "accepted": set(_string_list(mechanism_coverage.get("accepted_names"))),
-        "rejected_cleanly": set(_string_list(mechanism_coverage.get("rejected_cleanly_names"))),
-        "skipped_by_capability": set(
-            _string_list(mechanism_coverage.get("skipped_by_capability_names"))
+        "accepted": _norm_mech_set(mechanism_coverage.get("accepted_names")),
+        "rejected_cleanly": _norm_mech_set(mechanism_coverage.get("rejected_cleanly_names")),
+        "skipped_by_capability": _norm_mech_set(
+            mechanism_coverage.get("skipped_by_capability_names")
         ),
-        "crashed": set(_string_list(mechanism_coverage.get("crashed_names"))),
-        "timeout": set(_string_list(mechanism_coverage.get("timeout_names"))),
+        "crashed": _norm_mech_set(mechanism_coverage.get("crashed_names")),
+        "timeout": _norm_mech_set(mechanism_coverage.get("timeout_names")),
         "not_invoked": not_invoked,
     }
 
