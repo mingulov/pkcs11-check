@@ -133,6 +133,23 @@ def test_total_loss_shard_is_warned_not_silent(tmp_path: Path) -> None:
     assert any("LOST" in w for w in warnings), warnings
 
 
+def test_corrupt_results_with_empty_jsonl_is_warned_lost(tmp_path: Path) -> None:
+    s0 = _make_shard(
+        tmp_path, "shard-0", results=True, jsonl=[_call("test_ok.py::test_pass", "passed")]
+    )
+    # shard1: corrupt results.json (proof the shard RAN) but an EMPTY report.jsonl -> the
+    # zero-count salvage is a genuine loss and must be warned, not silently accepted.
+    s1 = tmp_path / "shard-1"
+    s1.mkdir()
+    (s1 / "report.jsonl").write_text("")
+    (s1 / "results.json").write_text("{ truncated")
+
+    merged = merge_shard_dirs([s0, s1], tmp_path / "out")
+
+    warnings = merged.get("shards", {}).get("warnings", [])
+    assert any("LOST" in w for w in warnings), warnings
+
+
 def _summary(**over: int) -> dict[str, object]:
     base = {
         "passed": 0,

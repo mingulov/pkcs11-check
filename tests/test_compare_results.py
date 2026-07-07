@@ -65,6 +65,14 @@ def test_unknown_status_in_current_is_flagged_not_hidden() -> None:
     assert c.has_regressions is True  # conservative: never silently pass
 
 
+def test_unknown_status_identical_in_both_files_is_still_flagged() -> None:
+    # An unrecognized status present identically in baseline and current must not be silently
+    # skipped by the equality short-circuit; compare-results must never let an unknown pass.
+    c = _cmp({"a.py": "weird"}, {}, {"a.py": "weird"}, {})
+    assert ("a.py", "weird") in c.unknown_statuses
+    assert c.has_regressions is True
+
+
 def test_status_class_covers_every_framework_unit_status() -> None:
     # Structural binding: every status the producer can emit must classify to a
     # real (non-"unknown") class. A new status added to the producer fails here.

@@ -234,7 +234,11 @@ def _xfail_section(groups: list[dict[str, Any]]) -> list[str]:
         return []
     total = sum(int(g.get("count", 0)) for g in xfails)
     out = [f"## deviations (xfail) ({total})", ""]
-    for reason in _XFAIL_REASONS:
+    # Render the known reasons in a stable order, then any leftover reason, so the per-reason
+    # lines always sum to the heading total (a new xfail reason can never go uncounted).
+    present = {str(g.get("reason") or "") for g in xfails}
+    leftover = sorted(present - set(_XFAIL_REASONS))
+    for reason in (*_XFAIL_REASONS, *leftover):
         members = [g for g in xfails if g.get("reason") == reason]
         if not members:
             continue

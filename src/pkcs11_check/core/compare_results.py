@@ -117,6 +117,10 @@ def compare_results(
         curr_status = curr_map.get(target, "absent")
 
         if base_status == curr_status:
+            # An unrecognized status identical in both files still must not slip through: the
+            # equality short-circuit would otherwise hide it from the unknown-status report.
+            if base_status != "absent" and status_class(base_status) == "unknown":
+                unknown_statuses.append((target, base_status))
             continue
 
         transitions[target] = (base_status, curr_status)

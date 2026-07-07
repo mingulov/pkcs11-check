@@ -32,6 +32,20 @@ def test_single_slot_any_index_resolves_to_it() -> None:
     assert resolve_slot_id([42], 1) == 42
 
 
+def test_negative_index_clamps_to_first_slot_not_python_negative_indexing() -> None:
+    # A negative config.slot must NOT silently select the last slot (Python's slots[-1]); it is
+    # out of range, so it clamps to the first present-token slot like any other out-of-range idx.
+    assert resolve_slot_id([500, 600, 700], -1) == 500
+    assert resolve_slot_id([500, 600, 700], -99) == 500
+
+
+def test_empty_slot_list_raises_a_clear_error_not_indexerror() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="present-token slot"):
+        resolve_slot_id([], 0)
+
+
 def _calls_resolve_slot_id(module_path) -> bool:
     import ast
     import pathlib
