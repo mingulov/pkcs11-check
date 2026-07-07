@@ -12,6 +12,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check.classification import set_params
 from pkcs11_check.raw.pack import (
     PackedMechanism,
     mech_pbkdf2,
@@ -200,6 +201,7 @@ def test_pbkdf2(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> No
     dk_expected = bytes.fromhex(vec["dk"])
     result = vec["result"]
     prf = vec["_prf"]
+    set_params({"hash": vec.get("_prf_name", "")})
 
     # Build PBKDF2 mechanism params
     pbkdf2_param = mech_pbkdf2(

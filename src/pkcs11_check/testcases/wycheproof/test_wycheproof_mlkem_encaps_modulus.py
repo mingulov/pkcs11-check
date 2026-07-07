@@ -35,6 +35,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import set_params
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encapsulate_key,
@@ -172,6 +173,7 @@ def test_mlkem_encaps_modulus_overflow(
         pytest.skip("ML_KEM not supported")
 
     ps_bits = vec["_parameter_set"]
+    set_params({"mlkem": str(ps_bits)})
     if not _raw_ek_import_supported(rs, ps_bits):
         pytest.skip("module does not support raw ML-KEM encapsulation-key import + encapsulate")
 

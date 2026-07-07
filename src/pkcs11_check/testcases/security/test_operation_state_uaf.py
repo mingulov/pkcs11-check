@@ -53,11 +53,8 @@ from pkcs11_check.raw.types_std import (
     CKR_OBJECT_HANDLE_INVALID,
     CKR_OPERATION_NOT_INITIALIZED,
 )
-from pkcs11_check.testcases._subprocess_preamble import (
-    pin_from_config,
-    run_with_coverage,
-    subprocess_session_preamble,
-)
+from pkcs11_check.testcases._probes.runner import run_probe
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import classify_negative_rv
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
@@ -110,102 +107,9 @@ def _parse_line(output: str, prefix: str) -> str | None:
     return None
 
 
-def _preamble(p11_config: Any) -> str:
-    return subprocess_session_preamble(
-        str(p11_config.module),
-        pin=pin_from_config(p11_config),
-    )
-
-
 # ---------------------------------------------------------------------------
 # Sign probe (CKM_SHA256_HMAC)
 # ---------------------------------------------------------------------------
-
-_SIGN_UAF_IMPORTS = """
-import ctypes
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CK_ATTRIBUTE,
-    CK_MECHANISM,
-    CK_OBJECT_HANDLE,
-    CK_ULONG,
-    CKA_CLASS,
-    CKA_KEY_TYPE,
-    CKA_SIGN,
-    CKA_TOKEN,
-    CKA_VALUE,
-    CKK_GENERIC_SECRET,
-    CKM_SHA256_HMAC,
-    CKO_SECRET_KEY,
-    CKR_OK,
-)
-"""
-
-_SIGN_UAF_BODY = """
-# --- create a 32-byte generic-secret key with CKA_SIGN ---
-key_bytes = (ctypes.c_ubyte * 32)(*range(32))
-cls_val = CK_ULONG(CKO_SECRET_KEY)
-key_type_val = CK_ULONG(CKK_GENERIC_SECRET)
-token_false = ctypes.c_ubyte(0)
-sign_true = ctypes.c_ubyte(1)
-
-tmpl = (CK_ATTRIBUTE * 5)()
-tmpl[0].type = CKA_CLASS
-tmpl[0].pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
-tmpl[0].ulValueLen = ctypes.sizeof(cls_val)
-tmpl[1].type = CKA_KEY_TYPE
-tmpl[1].pValue = ctypes.cast(ctypes.pointer(key_type_val), ctypes.c_void_p)
-tmpl[1].ulValueLen = ctypes.sizeof(key_type_val)
-tmpl[2].type = CKA_TOKEN
-tmpl[2].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
-tmpl[2].ulValueLen = 1
-tmpl[3].type = CKA_VALUE
-tmpl[3].pValue = ctypes.cast(key_bytes, ctypes.c_void_p)
-tmpl[3].ulValueLen = 32
-tmpl[4].type = CKA_SIGN
-tmpl[4].pValue = ctypes.cast(ctypes.pointer(sign_true), ctypes.c_void_p)
-tmpl[4].ulValueLen = 1
-
-key = CK_OBJECT_HANDLE(0)
-rv = raw.C_CreateObject(
-    sh,
-    ctypes.cast(tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
-    5,
-    ctypes.byref(key),
-)
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:HMAC key import rejected: {ckr_name(rv)}")
-    cleanup()
-    raise SystemExit(0)
-
-# --- C_SignInit ---
-mech = CK_MECHANISM()
-mech.mechanism = CKM_SHA256_HMAC
-mech.pParameter = None
-mech.ulParameterLen = 0
-rv = raw.C_SignInit(sh, ctypes.byref(mech), key.value)
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:C_SignInit(CKM_SHA256_HMAC) failed: {ckr_name(rv)}")
-    raw.C_DestroyObject(sh, key.value)
-    cleanup()
-    raise SystemExit(0)
-
-# --- C_DestroyObject while sign operation is active ---
-destroy_rv = raw.C_DestroyObject(sh, key.value)
-print(f"DESTROY_RV:0x{destroy_rv:08x}")
-
-# --- C_Sign on possibly-freed state ---
-data = (ctypes.c_ubyte * 16)(*range(16))
-sig_len = CK_ULONG(0)
-sign_rv = raw.C_Sign(sh, data, 16, None, ctypes.byref(sig_len))
-print(f"SIGN_RV:0x{sign_rv:08x}")
-if sign_rv == CKR_OK:
-    sig_buf = (ctypes.c_ubyte * sig_len.value)()
-    sign_rv2 = raw.C_Sign(sh, data, 16, sig_buf, ctypes.byref(sig_len))
-    print(f"SIGN_RV2:0x{sign_rv2:08x}")
-
-cleanup()
-"""
 
 
 class TestSignOperationStateUAF:
@@ -228,12 +132,18 @@ class TestSignOperationStateUAF:
         if not rs.has_mechanism("SHA256_HMAC"):
             pytest.skip("CKM_SHA256_HMAC not supported")
 
-        body = _SIGN_UAF_IMPORTS + _SIGN_UAF_BODY
-        rc, out, err = run_with_coverage(
-            _preamble(p11_config) + body,
-            timeout=15,
+        result = run_probe(
+            "operation_state_uaf",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "sign",
+            },
             pin=pin_from_config(p11_config),
+            timeout=15,
+            coverage="session",
         )
+        rc, out, err = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
             rc,
             out,
@@ -270,153 +180,6 @@ _AES_UAF_CASES = [
     ("AES-GCM", "AES_GCM", "CKM_AES_GCM"),
 ]
 
-_AES_UAF_IMPORTS = """
-import ctypes
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.recipes import gen_aes_key
-from pkcs11_check.raw.types_std import (
-    CK_AES_CTR_PARAMS,
-    CK_AES_GCM_PARAMS,
-    CK_MECHANISM,
-    CK_ULONG,
-    CKA_DECRYPT,
-    CKA_ENCRYPT,
-    CKA_TOKEN,
-    CKM_AES_CBC,
-    CKM_AES_CTR,
-    CKM_AES_ECB,
-    CKM_AES_GCM,
-    CKR_OK,
-)
-from pkcs11_check.testcases.conftest import AES_KEYGEN_RUNTIME_REJECT_RVS
-from pkcs11_check.testcases.security.conftest import child_setup_reject_known
-"""
-
-
-def _mech_setup(ckm: str, suffix: str) -> str:
-    """Return mechanism-parameter setup lines for ``ckm``.
-
-    Variable names are qualified with ``suffix`` so an oracle reference
-    mechanism and the probe mechanism can coexist in the same generated script.
-    The caller must already have created ``CK_MECHANISM()`` as ``mech{suffix}``.
-    The returned string always ends with ``\\n``.
-    """
-    m = f"mech{suffix}"
-    if ckm == "CKM_AES_ECB":
-        return f"{m}.mechanism = CKM_AES_ECB\n{m}.pParameter = None\n{m}.ulParameterLen = 0\n"
-    if ckm == "CKM_AES_CBC":
-        iv = f"iv{suffix}"
-        return (
-            f"{iv} = (ctypes.c_ubyte * 16)(*range(16))\n"
-            f"{m}.mechanism = CKM_AES_CBC\n"
-            f"{m}.pParameter = ctypes.cast({iv}, ctypes.c_void_p)\n"
-            f"{m}.ulParameterLen = 16\n"
-        )
-    if ckm == "CKM_AES_CTR":
-        p = f"ctr_params{suffix}"
-        return (
-            f"{p} = CK_AES_CTR_PARAMS()\n"
-            f"{p}.ulCounterBits = 32\n"
-            f"for i in range(16):\n"
-            f"    {p}.cb[i] = i\n"
-            f"{m}.mechanism = CKM_AES_CTR\n"
-            f"{m}.pParameter = ctypes.cast(ctypes.byref({p}), ctypes.c_void_p)\n"
-            f"{m}.ulParameterLen = ctypes.sizeof({p})\n"
-        )
-    # CKM_AES_GCM
-    iv = f"gcm_iv{suffix}"
-    p = f"gcm_params{suffix}"
-    return (
-        f"{iv} = (ctypes.c_ubyte * 12)(*range(12))\n"
-        f"{p} = CK_AES_GCM_PARAMS()\n"
-        f"{p}.pIv = ctypes.cast({iv}, ctypes.c_void_p)\n"
-        f"{p}.ulIvLen = 12\n"
-        f"{p}.ulIvBits = 96\n"
-        f"{p}.pAAD = None\n"
-        f"{p}.ulAADLen = 0\n"
-        f"{p}.ulTagBits = 128\n"
-        f"{m}.mechanism = CKM_AES_GCM\n"
-        f"{m}.pParameter = ctypes.cast(ctypes.byref({p}), ctypes.c_void_p)\n"
-        f"{m}.ulParameterLen = ctypes.sizeof({p})\n"
-    )
-
-
-def _aes_uaf_body(op: str, ckm: str, with_oracle: bool) -> str:
-    """Return the subprocess body for the AES destroy-mid-operation UAF probe.
-
-    ``op`` is ``"Encrypt"`` or ``"Decrypt"``.  ``ckm`` is one of the
-    ``CKM_AES_*`` constant names from ``_AES_UAF_CASES``.  When
-    ``with_oracle`` is ``True`` (only meaningful for ``op="Encrypt"``), a
-    complete encryption with the live key is performed first and the output is
-    printed as ``EXPECTED:<hex>``; if the post-destroy encryption also
-    completes the output is printed as ``ENCRYPT_CT:<hex>`` so the test can
-    compare them for a crypto self-contradiction.
-    """
-    op_upper = op.upper()
-    probe_mech = _mech_setup(ckm, "")
-
-    parts: list[str] = [
-        "try:\n"
-        "    aes_key = gen_aes_key(\n"
-        "        raw, sh, 128,\n"
-        "        attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},\n"
-        "    )\n"
-        "except AssertionError as exc:\n"
-        "    if child_setup_reject_known(\n"
-        '        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected"\n'
-        "    ):\n"
-        "        cleanup(); raise SystemExit(0)\n"
-        "    raise\n",
-    ]
-
-    if with_oracle and op == "Encrypt":
-        oracle_mech = _mech_setup(ckm, "_ref")
-        parts.append(
-            "# --- oracle: encrypt with live key to capture EXPECTED ciphertext ---\n"
-            "mech_ref = CK_MECHANISM()\n"
-            f"{oracle_mech}"
-            "rv_ref = raw.C_EncryptInit(sh, ctypes.byref(mech_ref), aes_key)\n"
-            "if rv_ref == CKR_OK:\n"
-            "    plain_ref = (ctypes.c_ubyte * 16)(*range(16))\n"
-            "    exp_len = CK_ULONG(0)\n"
-            "    rv_ref2 = raw.C_Encrypt(sh, plain_ref, 16, None, ctypes.byref(exp_len))\n"
-            "    if rv_ref2 == CKR_OK and exp_len.value > 0:\n"
-            "        exp_buf = (ctypes.c_ubyte * exp_len.value)()\n"
-            "        rv_ref3 = raw.C_Encrypt(\n"
-            "            sh, plain_ref, 16, exp_buf, ctypes.byref(exp_len)\n"
-            "        )\n"
-            "        if rv_ref3 == CKR_OK:\n"
-            '            print("EXPECTED:" + bytes(exp_buf[:exp_len.value]).hex())\n',
-        )
-
-    parts.append(
-        "mech = CK_MECHANISM()\n"
-        f"{probe_mech}"
-        f"rv = raw.C_{op}Init(sh, ctypes.byref(mech), aes_key)\n"
-        "if rv != CKR_OK:\n"
-        f'    print(f"SETUP_XFAIL:C_{op}Init({ckm}) failed: {{ckr_name(rv)}}")\n'
-        "    raw.C_DestroyObject(sh, aes_key); cleanup(); raise SystemExit(0)\n"
-        "destroy_rv = raw.C_DestroyObject(sh, aes_key)\n"
-        'print(f"DESTROY_RV:0x{destroy_rv:08x}")\n'
-        "data = (ctypes.c_ubyte * 16)(*range(16))\n"
-        "out_len = CK_ULONG(0)\n"
-        f"op_rv = raw.C_{op}(sh, data, 16, None, ctypes.byref(out_len))\n"
-        f'print(f"{op_upper}_RV:0x{{op_rv:08x}}")\n'
-        "if op_rv == CKR_OK and out_len.value > 0:\n"
-        "    out_buf = (ctypes.c_ubyte * out_len.value)()\n"
-        f"    op_rv2 = raw.C_{op}(sh, data, 16, out_buf, ctypes.byref(out_len))\n"
-        f'    print(f"{op_upper}_RV2:0x{{op_rv2:08x}}")\n',
-    )
-
-    if with_oracle and op == "Encrypt":
-        parts.append(
-            "    if op_rv2 == CKR_OK:\n"
-            '        print("ENCRYPT_CT:" + bytes(out_buf[:out_len.value]).hex())\n',
-        )
-
-    parts.append("cleanup()\n")
-    return "".join(parts)
-
 
 @pytest.mark.parametrize("label,mech_name,ckm", _AES_UAF_CASES)
 class TestAesEncryptDestroyUAF:
@@ -446,12 +209,19 @@ class TestAesEncryptDestroyUAF:
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"CKM_{mech_name} not supported")
 
-        body = _aes_uaf_body("Encrypt", ckm, with_oracle=True)
-        rc, out, err = run_with_coverage(
-            _preamble(p11_config) + _AES_UAF_IMPORTS + body,
-            timeout=15,
+        result = run_probe(
+            "operation_state_uaf",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "aes_encrypt",
+                "ckm": ckm,
+            },
             pin=pin_from_config(p11_config),
+            timeout=15,
+            coverage="session",
         )
+        rc, out, err = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
             rc,
             out,
@@ -514,12 +284,19 @@ class TestAesDecryptDestroyUAF:
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"CKM_{mech_name} not supported")
 
-        body = _aes_uaf_body("Decrypt", ckm, with_oracle=False)
-        rc, out, err = run_with_coverage(
-            _preamble(p11_config) + _AES_UAF_IMPORTS + body,
-            timeout=15,
+        result = run_probe(
+            "operation_state_uaf",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "aes_decrypt",
+                "ckm": ckm,
+            },
             pin=pin_from_config(p11_config),
+            timeout=15,
+            coverage="session",
         )
+        rc, out, err = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
             rc,
             out,
@@ -548,87 +325,6 @@ class TestAesDecryptDestroyUAF:
 # Digest probe (CKM_SHA256 + C_DigestKey on destroyed handle)
 # ---------------------------------------------------------------------------
 
-_DIGEST_UAF_IMPORTS = """
-import ctypes
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CK_ATTRIBUTE,
-    CK_MECHANISM,
-    CK_OBJECT_HANDLE,
-    CK_ULONG,
-    CKA_CLASS,
-    CKA_KEY_TYPE,
-    CKA_TOKEN,
-    CKA_VALUE,
-    CKK_GENERIC_SECRET,
-    CKM_SHA256,
-    CKO_SECRET_KEY,
-    CKR_OK,
-)
-"""
-
-_DIGEST_UAF_BODY = """
-# --- create a 32-byte generic-secret key ---
-key_bytes = (ctypes.c_ubyte * 32)(*range(32))
-cls_val = CK_ULONG(CKO_SECRET_KEY)
-key_type_val = CK_ULONG(CKK_GENERIC_SECRET)
-token_false = ctypes.c_ubyte(0)
-
-tmpl = (CK_ATTRIBUTE * 4)()
-tmpl[0].type = CKA_CLASS
-tmpl[0].pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
-tmpl[0].ulValueLen = ctypes.sizeof(cls_val)
-tmpl[1].type = CKA_KEY_TYPE
-tmpl[1].pValue = ctypes.cast(ctypes.pointer(key_type_val), ctypes.c_void_p)
-tmpl[1].ulValueLen = ctypes.sizeof(key_type_val)
-tmpl[2].type = CKA_TOKEN
-tmpl[2].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
-tmpl[2].ulValueLen = 1
-tmpl[3].type = CKA_VALUE
-tmpl[3].pValue = ctypes.cast(key_bytes, ctypes.c_void_p)
-tmpl[3].ulValueLen = 32
-
-key = CK_OBJECT_HANDLE(0)
-rv = raw.C_CreateObject(
-    sh,
-    ctypes.cast(tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
-    4,
-    ctypes.byref(key),
-)
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:key import rejected: {ckr_name(rv)}")
-    cleanup()
-    raise SystemExit(0)
-
-if "C_DigestKey" not in raw.available_function_names():
-    print("SETUP_XFAIL:C_DigestKey is not exposed by this interface")
-    raw.C_DestroyObject(sh, key.value)
-    cleanup()
-    raise SystemExit(0)
-
-# --- C_DigestInit ---
-mech = CK_MECHANISM()
-mech.mechanism = CKM_SHA256
-mech.pParameter = None
-mech.ulParameterLen = 0
-rv = raw.C_DigestInit(sh, ctypes.byref(mech))
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:C_DigestInit(CKM_SHA256) failed: {ckr_name(rv)}")
-    raw.C_DestroyObject(sh, key.value)
-    cleanup()
-    raise SystemExit(0)
-
-# --- C_DestroyObject before C_DigestKey ---
-destroy_rv = raw.C_DestroyObject(sh, key.value)
-print(f"DESTROY_RV:0x{destroy_rv:08x}")
-
-# --- C_DigestKey on possibly-freed handle ---
-digest_key_rv = raw.C_DigestKey(sh, key.value)
-print(f"DIGEST_KEY_RV:0x{digest_key_rv:08x}")
-
-cleanup()
-"""
-
 
 class TestDigestOperationStateUAF:
     """``C_DigestKey`` on a destroyed handle must not cause a use-after-free crash."""
@@ -650,12 +346,18 @@ class TestDigestOperationStateUAF:
         if not rs.has_mechanism("SHA256"):
             pytest.skip("CKM_SHA256 not supported")
 
-        body = _DIGEST_UAF_IMPORTS + _DIGEST_UAF_BODY
-        rc, out, err = run_with_coverage(
-            _preamble(p11_config) + body,
-            timeout=15,
+        result = run_probe(
+            "operation_state_uaf",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "digest",
+            },
             pin=pin_from_config(p11_config),
+            timeout=15,
+            coverage="session",
         )
+        rc, out, err = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
             rc,
             out,
@@ -675,88 +377,6 @@ class TestDigestOperationStateUAF:
 # ---------------------------------------------------------------------------
 # Verify probe (CKM_SHA256_HMAC)
 # ---------------------------------------------------------------------------
-
-_VERIFY_UAF_IMPORTS = """
-import ctypes
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CK_ATTRIBUTE,
-    CK_MECHANISM,
-    CK_OBJECT_HANDLE,
-    CK_ULONG,
-    CKA_CLASS,
-    CKA_KEY_TYPE,
-    CKA_TOKEN,
-    CKA_VALUE,
-    CKA_VERIFY,
-    CKK_GENERIC_SECRET,
-    CKM_SHA256_HMAC,
-    CKO_SECRET_KEY,
-    CKR_OK,
-)
-"""
-
-_VERIFY_UAF_BODY = """
-# --- import a 32-byte generic-secret key with CKA_VERIFY ---
-key_bytes = (ctypes.c_ubyte * 32)(*range(32))
-cls_val = CK_ULONG(CKO_SECRET_KEY)
-key_type_val = CK_ULONG(CKK_GENERIC_SECRET)
-token_false = ctypes.c_ubyte(0)
-verify_true = ctypes.c_ubyte(1)
-
-tmpl = (CK_ATTRIBUTE * 5)()
-tmpl[0].type = CKA_CLASS
-tmpl[0].pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
-tmpl[0].ulValueLen = ctypes.sizeof(cls_val)
-tmpl[1].type = CKA_KEY_TYPE
-tmpl[1].pValue = ctypes.cast(ctypes.pointer(key_type_val), ctypes.c_void_p)
-tmpl[1].ulValueLen = ctypes.sizeof(key_type_val)
-tmpl[2].type = CKA_TOKEN
-tmpl[2].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
-tmpl[2].ulValueLen = 1
-tmpl[3].type = CKA_VALUE
-tmpl[3].pValue = ctypes.cast(key_bytes, ctypes.c_void_p)
-tmpl[3].ulValueLen = 32
-tmpl[4].type = CKA_VERIFY
-tmpl[4].pValue = ctypes.cast(ctypes.pointer(verify_true), ctypes.c_void_p)
-tmpl[4].ulValueLen = 1
-
-key = CK_OBJECT_HANDLE(0)
-rv = raw.C_CreateObject(
-    sh,
-    ctypes.cast(tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
-    5,
-    ctypes.byref(key),
-)
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:HMAC verify key import rejected: {ckr_name(rv)}")
-    cleanup()
-    raise SystemExit(0)
-
-# --- C_VerifyInit ---
-mech = CK_MECHANISM()
-mech.mechanism = CKM_SHA256_HMAC
-mech.pParameter = None
-mech.ulParameterLen = 0
-rv = raw.C_VerifyInit(sh, ctypes.byref(mech), key.value)
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:C_VerifyInit(CKM_SHA256_HMAC) failed: {ckr_name(rv)}")
-    raw.C_DestroyObject(sh, key.value)
-    cleanup()
-    raise SystemExit(0)
-
-# --- C_DestroyObject while verify operation is active ---
-destroy_rv = raw.C_DestroyObject(sh, key.value)
-print(f"DESTROY_RV:0x{destroy_rv:08x}")
-
-# --- C_Verify on possibly-freed state (dummy 32-byte signature) ---
-data = (ctypes.c_ubyte * 16)(*range(16))
-dummy_sig = (ctypes.c_ubyte * 32)(0)
-verify_rv = raw.C_Verify(sh, data, 16, dummy_sig, 32)
-print(f"VERIFY_RV:0x{verify_rv:08x}")
-
-cleanup()
-"""
 
 
 class TestVerifyOperationStateUAF:
@@ -780,12 +400,18 @@ class TestVerifyOperationStateUAF:
         if not rs.has_mechanism("SHA256_HMAC"):
             pytest.skip("CKM_SHA256_HMAC not supported")
 
-        body = _VERIFY_UAF_IMPORTS + _VERIFY_UAF_BODY
-        rc, out, err = run_with_coverage(
-            _preamble(p11_config) + body,
-            timeout=15,
+        result = run_probe(
+            "operation_state_uaf",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "verify",
+            },
             pin=pin_from_config(p11_config),
+            timeout=15,
+            coverage="session",
         )
+        rc, out, err = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
             rc,
             out,
@@ -813,135 +439,6 @@ class TestVerifyOperationStateUAF:
 # CKR (e.g. CKR_KEY_HANDLE_INVALID / CKR_OBJECT_HANDLE_INVALID) without
 # dereferencing freed memory.
 
-_DERIVE_UAF_IMPORTS = """
-import ctypes
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.ec import encode_named_curve_parameters
-from pkcs11_check.raw.pack_mechanisms import mech_ecdh
-from pkcs11_check.raw.recipes import gen_ec_keypair, read_attributes
-from pkcs11_check.raw.types_std import (
-    CK_ATTRIBUTE,
-    CK_MECHANISM,
-    CK_OBJECT_HANDLE,
-    CK_ULONG,
-    CKA_CLASS,
-    CKA_DERIVE,
-    CKA_EC_POINT,
-    CKA_EXTRACTABLE,
-    CKA_KEY_TYPE,
-    CKA_SENSITIVE,
-    CKA_TOKEN,
-    CKD_NULL,
-    CKK_GENERIC_SECRET,
-    CKM_ECDH1_DERIVE,
-    CKM_EC_KEY_PAIR_GEN,
-    CKO_SECRET_KEY,
-    CKR_OK,
-)
-from pkcs11_check.testcases.security.conftest import child_setup_reject_known
-"""
-
-_DERIVE_UAF_BODY = """
-# --- generate two EC keypairs on P-256 ---
-curve_oid = encode_named_curve_parameters("secp256r1")
-
-pub_a = CK_OBJECT_HANDLE(0)
-priv_a = CK_OBJECT_HANDLE(0)
-
-# Build the key pair template manually to keep the child script self-contained.
-try:
-    pub_a_h, priv_a_h = gen_ec_keypair(
-        raw,
-        sh,
-        curve_oid,
-        public_attrs={CKA_DERIVE: False, CKA_TOKEN: False},
-        private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
-    )
-except AssertionError as exc:
-    print(f"SETUP_XFAIL:EC keypair generation rejected: {exc}")
-    cleanup()
-    raise SystemExit(0)
-
-try:
-    pub_b_h, priv_b_h = gen_ec_keypair(
-        raw,
-        sh,
-        curve_oid,
-        public_attrs={CKA_DERIVE: False, CKA_TOKEN: False},
-        private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
-    )
-except AssertionError as exc:
-    print(f"SETUP_XFAIL:EC keypair (peer) generation rejected: {exc}")
-    raw.C_DestroyObject(sh, pub_a_h)
-    raw.C_DestroyObject(sh, priv_a_h)
-    cleanup()
-    raise SystemExit(0)
-
-# --- read the peer public-key EC point ---
-try:
-    attrs_b = read_attributes(raw, sh, pub_b_h, [CKA_EC_POINT])
-    ec_point_b = bytes(attrs_b[CKA_EC_POINT])
-except AssertionError as exc:
-    print(f"SETUP_XFAIL:Could not read peer EC point: {exc}")
-    for h in (pub_a_h, priv_a_h, pub_b_h, priv_b_h):
-        raw.C_DestroyObject(sh, h)
-    cleanup()
-    raise SystemExit(0)
-
-# Destroy peer keypair — only the peer's public point is needed hereafter.
-raw.C_DestroyObject(sh, pub_b_h)
-raw.C_DestroyObject(sh, priv_b_h)
-
-# --- destroy the *base* private key before C_DeriveKey ---
-destroy_rv = raw.C_DestroyObject(sh, priv_a_h)
-print(f"DESTROY_RV:0x{destroy_rv:08x}")
-raw.C_DestroyObject(sh, pub_a_h)
-
-# --- derive template: a 32-byte generic-secret ---
-cls_val = CK_ULONG(CKO_SECRET_KEY)
-key_type_val = CK_ULONG(CKK_GENERIC_SECRET)
-val_len_val = CK_ULONG(32)
-token_false = ctypes.c_ubyte(0)
-sensitive_false = ctypes.c_ubyte(0)
-extractable_true = ctypes.c_ubyte(1)
-
-derive_tmpl = (CK_ATTRIBUTE * 5)()
-derive_tmpl[0].type = CKA_CLASS
-derive_tmpl[0].pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
-derive_tmpl[0].ulValueLen = ctypes.sizeof(cls_val)
-derive_tmpl[1].type = CKA_KEY_TYPE
-derive_tmpl[1].pValue = ctypes.cast(ctypes.pointer(key_type_val), ctypes.c_void_p)
-derive_tmpl[1].ulValueLen = ctypes.sizeof(key_type_val)
-derive_tmpl[2].type = CKA_TOKEN
-derive_tmpl[2].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
-derive_tmpl[2].ulValueLen = 1
-derive_tmpl[3].type = CKA_SENSITIVE
-derive_tmpl[3].pValue = ctypes.cast(ctypes.pointer(sensitive_false), ctypes.c_void_p)
-derive_tmpl[3].ulValueLen = 1
-derive_tmpl[4].type = CKA_EXTRACTABLE
-derive_tmpl[4].pValue = ctypes.cast(ctypes.pointer(extractable_true), ctypes.c_void_p)
-derive_tmpl[4].ulValueLen = 1
-
-packed_mech = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=ec_point_b)
-derived_key = CK_OBJECT_HANDLE(0)
-
-# --- C_DeriveKey with the already-destroyed private key handle ---
-derive_rv = raw.C_DeriveKey(
-    sh,
-    packed_mech.byref(),
-    priv_a_h,
-    ctypes.cast(derive_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
-    5,
-    ctypes.byref(derived_key),
-)
-print(f"DERIVE_RV:0x{derive_rv:08x}")
-
-if derive_rv == CKR_OK and derived_key.value != 0:
-    raw.C_DestroyObject(sh, derived_key.value)
-
-cleanup()
-"""
-
 
 class TestDeriveOperationStateUAF:
     """``C_DeriveKey`` with a destroyed base-key handle must not cause a UAF crash."""
@@ -965,12 +462,18 @@ class TestDeriveOperationStateUAF:
         if not rs.has_mechanism("ECDH1_DERIVE"):
             pytest.skip("CKM_ECDH1_DERIVE not supported")
 
-        body = _DERIVE_UAF_IMPORTS + _DERIVE_UAF_BODY
-        rc, out, err = run_with_coverage(
-            _preamble(p11_config) + body,
-            timeout=15,
+        result = run_probe(
+            "operation_state_uaf",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "derive",
+            },
             pin=pin_from_config(p11_config),
+            timeout=15,
+            coverage="session",
         )
+        rc, out, err = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
             rc,
             out,
@@ -1001,116 +504,6 @@ class TestDeriveOperationStateUAF:
 # A crash is the only finding; completion and clean rejection are both
 # conformant (CWE-416, PKCS#11 object-lifecycle / session-sharing semantics).
 
-_XSESSION_UAF_IMPORTS = """
-import ctypes
-from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import (
-    CK_ATTRIBUTE,
-    CK_MECHANISM,
-    CK_NOTIFY,
-    CK_OBJECT_HANDLE,
-    CK_SESSION_HANDLE,
-    CK_ULONG,
-    CKA_CLASS,
-    CKA_KEY_TYPE,
-    CKA_SIGN,
-    CKA_TOKEN,
-    CKA_VALUE,
-    CKF_RW_SESSION,
-    CKF_SERIAL_SESSION,
-    CKK_GENERIC_SECRET,
-    CKM_SHA256_HMAC,
-    CKO_SECRET_KEY,
-    CKR_OK,
-)
-"""
-
-_XSESSION_UAF_BODY = """
-# --- create a TOKEN sign key on session A (sh) ---
-key_bytes = (ctypes.c_ubyte * 32)(*range(32))
-cls_val = CK_ULONG(CKO_SECRET_KEY)
-key_type_val = CK_ULONG(CKK_GENERIC_SECRET)
-token_true = ctypes.c_ubyte(1)
-sign_true = ctypes.c_ubyte(1)
-
-tmpl = (CK_ATTRIBUTE * 5)()
-tmpl[0].type = CKA_CLASS
-tmpl[0].pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
-tmpl[0].ulValueLen = ctypes.sizeof(cls_val)
-tmpl[1].type = CKA_KEY_TYPE
-tmpl[1].pValue = ctypes.cast(ctypes.pointer(key_type_val), ctypes.c_void_p)
-tmpl[1].ulValueLen = ctypes.sizeof(key_type_val)
-tmpl[2].type = CKA_TOKEN
-tmpl[2].pValue = ctypes.cast(ctypes.pointer(token_true), ctypes.c_void_p)
-tmpl[2].ulValueLen = 1
-tmpl[3].type = CKA_VALUE
-tmpl[3].pValue = ctypes.cast(key_bytes, ctypes.c_void_p)
-tmpl[3].ulValueLen = 32
-tmpl[4].type = CKA_SIGN
-tmpl[4].pValue = ctypes.cast(ctypes.pointer(sign_true), ctypes.c_void_p)
-tmpl[4].ulValueLen = 1
-
-token_key = CK_OBJECT_HANDLE(0)
-rv = raw.C_CreateObject(
-    sh,
-    ctypes.cast(tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
-    5,
-    ctypes.byref(token_key),
-)
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:TOKEN HMAC key creation not operational: {ckr_name(rv)}")
-    cleanup()
-    raise SystemExit(0)
-
-# --- open session B on the same slot ---
-sh_b = CK_SESSION_HANDLE(0)
-rv_b = raw.C_OpenSession(
-    slot_id,
-    CKF_SERIAL_SESSION | CKF_RW_SESSION,
-    None,
-    CK_NOTIFY(),
-    ctypes.byref(sh_b),
-)
-if rv_b != CKR_OK:
-    print(f"SETUP_XFAIL:C_OpenSession(session B) failed: {ckr_name(rv_b)}")
-    raw.C_DestroyObject(sh, token_key.value)
-    cleanup()
-    raise SystemExit(0)
-
-# --- C_SignInit in session A with the token key ---
-mech = CK_MECHANISM()
-mech.mechanism = CKM_SHA256_HMAC
-mech.pParameter = None
-mech.ulParameterLen = 0
-rv = raw.C_SignInit(sh, ctypes.byref(mech), token_key.value)
-if rv != CKR_OK:
-    print(f"SETUP_XFAIL:C_SignInit(CKM_SHA256_HMAC) in session A failed: {ckr_name(rv)}")
-    raw.C_DestroyObject(sh, token_key.value)
-    raw.C_CloseSession(sh_b.value)
-    cleanup()
-    raise SystemExit(0)
-
-# --- C_DestroyObject from session B ---
-destroy_rv = raw.C_DestroyObject(sh_b.value, token_key.value)
-print(f"DESTROY_RV:0x{destroy_rv:08x}")
-
-# --- C_Sign in session A (operation may reference freed/invalid key) ---
-data = (ctypes.c_ubyte * 16)(*range(16))
-sig_len = CK_ULONG(0)
-xsession_rv = raw.C_Sign(sh, data, 16, None, ctypes.byref(sig_len))
-print(f"XSESSION_SIGN_RV:0x{xsession_rv:08x}")
-if xsession_rv == CKR_OK:
-    sig_buf = (ctypes.c_ubyte * sig_len.value)()
-    xsession_rv2 = raw.C_Sign(sh, data, 16, sig_buf, ctypes.byref(sig_len))
-    print(f"XSESSION_SIGN_RV2:0x{xsession_rv2:08x}")
-
-# --- clean up session B and token object (best-effort; may already be gone) ---
-raw.C_DestroyObject(sh_b.value, token_key.value)
-raw.C_CloseSession(sh_b.value)
-
-cleanup()
-"""
-
 
 class TestCrossSessionOperationStateUAF:
     """Cross-session UAF: token key destroyed from session B during active sign in A."""
@@ -1135,12 +528,18 @@ class TestCrossSessionOperationStateUAF:
         if not rs.has_mechanism("SHA256_HMAC"):
             pytest.skip("CKM_SHA256_HMAC not supported")
 
-        body = _XSESSION_UAF_IMPORTS + _XSESSION_UAF_BODY
-        rc, out, err = run_with_coverage(
-            _preamble(p11_config) + body,
-            timeout=15,
+        result = run_probe(
+            "operation_state_uaf",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "cross_session",
+            },
             pin=pin_from_config(p11_config),
+            timeout=15,
+            coverage="session",
         )
+        rc, out, err = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
             rc,
             out,
@@ -1175,74 +574,6 @@ class TestCrossSessionOperationStateUAF:
 # store entry is freed by C_DestroyObject, the subsequent C_Sign walks freed
 # memory (CWE-416).  The probe is single-threaded and sequential.
 
-_ECDSA_SIGN_UAF_IMPORTS = """
-import ctypes
-from pkcs11_check.raw.ec import encode_named_curve_parameters
-from pkcs11_check.raw.recipes import gen_ec_keypair
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM,
-    CK_ULONG,
-    CKA_SIGN,
-    CKA_TOKEN,
-    CKA_VERIFY,
-    CKM_ECDSA,
-    CKR_OK,
-)
-from pkcs11_check.testcases.conftest import KEYPAIR_RUNTIME_REJECT_RVS
-from pkcs11_check.testcases.security.conftest import child_setup_reject_known
-"""
-
-_ECDSA_SIGN_UAF_BODY = """
-# --- generate a session P-256 EC keypair (CKA_SIGN on private) ---
-curve_oid = encode_named_curve_parameters("secp256r1")
-try:
-    pub_h, priv_h = gen_ec_keypair(
-        raw,
-        sh,
-        curve_oid,
-        public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
-        private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
-    )
-except AssertionError as exc:
-    if child_setup_reject_known(
-        exc, KEYPAIR_RUNTIME_REJECT_RVS, "EC keypair generation rejected"
-    ):
-        cleanup()
-        raise SystemExit(0)
-    raise
-
-raw.C_DestroyObject(sh, pub_h)
-
-# --- C_SignInit with CKM_ECDSA ---
-mech = CK_MECHANISM()
-mech.mechanism = CKM_ECDSA
-mech.pParameter = None
-mech.ulParameterLen = 0
-rv = raw.C_SignInit(sh, ctypes.byref(mech), priv_h)
-if rv != CKR_OK:
-    from pkcs11_check.raw.rv import ckr_name as _cn
-    print(f"SETUP_XFAIL:C_SignInit(CKM_ECDSA) failed: {_cn(rv)}")
-    raw.C_DestroyObject(sh, priv_h)
-    cleanup()
-    raise SystemExit(0)
-
-# --- C_DestroyObject on the private key while sign operation is active ---
-destroy_rv = raw.C_DestroyObject(sh, priv_h)
-print(f"DESTROY_RV:0x{destroy_rv:08x}")
-
-# --- C_Sign on possibly-freed key reference (two-pass) ---
-data = (ctypes.c_ubyte * 32)(*range(32))
-sig_len = CK_ULONG(0)
-sign_rv = raw.C_Sign(sh, data, 32, None, ctypes.byref(sig_len))
-print(f"SIGN_RV:0x{sign_rv:08x}")
-if sign_rv == CKR_OK and sig_len.value > 0:
-    sig_buf = (ctypes.c_ubyte * sig_len.value)()
-    sign_rv2 = raw.C_Sign(sh, data, 32, sig_buf, ctypes.byref(sig_len))
-    print(f"SIGN_RV2:0x{sign_rv2:08x}")
-
-cleanup()
-"""
-
 
 class TestSignEcdsaOperationStateUAF:
     """``C_Sign`` (ECDSA) after ``C_DestroyObject`` on the private key must not crash."""
@@ -1266,12 +597,18 @@ class TestSignEcdsaOperationStateUAF:
         if not rs.has_mechanism("ECDSA"):
             pytest.skip("CKM_ECDSA not supported")
 
-        body = _ECDSA_SIGN_UAF_IMPORTS + _ECDSA_SIGN_UAF_BODY
-        rc, out, err = run_with_coverage(
-            _preamble(p11_config) + body,
-            timeout=15,
+        result = run_probe(
+            "operation_state_uaf",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "ecdsa_sign",
+            },
             pin=pin_from_config(p11_config),
+            timeout=15,
+            coverage="session",
         )
+        rc, out, err = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
             rc,
             out,
@@ -1308,66 +645,6 @@ class TestSignEcdsaOperationStateUAF:
 # intentionally invalid (256 zero bytes) so a clean decrypt error is acceptable;
 # the only hard requirement is no crash.
 
-_RSA_DECRYPT_UAF_IMPORTS = """
-import ctypes
-from pkcs11_check.raw.recipes import RSAUsage, gen_rsa_keypair
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM,
-    CK_ULONG,
-    CKM_RSA_PKCS,
-    CKR_OK,
-)
-from pkcs11_check.testcases.conftest import KEYPAIR_RUNTIME_REJECT_RVS
-from pkcs11_check.testcases.security.conftest import child_setup_reject_known
-"""
-
-_RSA_DECRYPT_UAF_BODY = """
-# --- generate a session RSA-2048 keypair (CKA_DECRYPT on private) ---
-try:
-    pub_h, priv_h = gen_rsa_keypair(raw, sh, 2048, usage=RSAUsage.DECRYPT)
-except AssertionError as exc:
-    if child_setup_reject_known(
-        exc, KEYPAIR_RUNTIME_REJECT_RVS, "RSA keypair generation rejected"
-    ):
-        cleanup()
-        raise SystemExit(0)
-    raise
-
-raw.C_DestroyObject(sh, pub_h)
-
-# --- C_DecryptInit with CKM_RSA_PKCS ---
-mech = CK_MECHANISM()
-mech.mechanism = CKM_RSA_PKCS
-mech.pParameter = None
-mech.ulParameterLen = 0
-rv = raw.C_DecryptInit(sh, ctypes.byref(mech), priv_h)
-if rv != CKR_OK:
-    from pkcs11_check.raw.rv import ckr_name as _cn
-    print(f"SETUP_XFAIL:C_DecryptInit(CKM_RSA_PKCS) failed: {_cn(rv)}")
-    raw.C_DestroyObject(sh, priv_h)
-    cleanup()
-    raise SystemExit(0)
-
-# --- C_DestroyObject on the private key while decrypt operation is active ---
-destroy_rv = raw.C_DestroyObject(sh, priv_h)
-print(f"DESTROY_RV:0x{destroy_rv:08x}")
-
-# --- C_Decrypt on possibly-freed key reference (two-pass, modulus-sized zero input) ---
-# 256 zero bytes is an invalid RSA-PKCS#1 v1.5 ciphertext; a clean decrypt error
-# (e.g. CKR_FUNCTION_FAILED, CKR_ENCRYPTED_DATA_INVALID) is acceptable.  No crash is the
-# only hard requirement.
-ciphertext = (ctypes.c_ubyte * 256)(0)
-dec_len = CK_ULONG(0)
-dec_rv = raw.C_Decrypt(sh, ciphertext, 256, None, ctypes.byref(dec_len))
-print(f"DECRYPT_RV:0x{dec_rv:08x}")
-if dec_rv == CKR_OK and dec_len.value > 0:
-    dec_buf = (ctypes.c_ubyte * dec_len.value)()
-    dec_rv2 = raw.C_Decrypt(sh, ciphertext, 256, dec_buf, ctypes.byref(dec_len))
-    print(f"DECRYPT_RV2:0x{dec_rv2:08x}")
-
-cleanup()
-"""
-
 
 class TestDecryptRsaOperationStateUAF:
     """``C_Decrypt`` (RSA_PKCS) after ``C_DestroyObject`` on the active key must not crash."""
@@ -1391,12 +668,18 @@ class TestDecryptRsaOperationStateUAF:
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
 
-        body = _RSA_DECRYPT_UAF_IMPORTS + _RSA_DECRYPT_UAF_BODY
-        rc, out, err = run_with_coverage(
-            _preamble(p11_config) + body,
-            timeout=30,
+        result = run_probe(
+            "operation_state_uaf",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "rsa_decrypt",
+            },
             pin=pin_from_config(p11_config),
+            timeout=30,
+            coverage="session",
         )
+        rc, out, err = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
             rc,
             out,

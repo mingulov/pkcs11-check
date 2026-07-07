@@ -10,7 +10,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.der import ecdsa_sig_der_to_p1363
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -192,6 +192,9 @@ def test_dsa(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
 
     msg = bytes.fromhex(vec["msg"])
     result = vec["result"]
+    prime_hex = vec["_group"].get("publicKey", {}).get("p", "")
+    dsa_bits = int(prime_hex, 16).bit_length() if prime_hex else 0
+    set_params({"dsa_bits": str(dsa_bits), "hash": str((vec.get("_group") or {}).get("sha", ""))})
     sig_error = vec.get("_pkcs11_sig_error")
     if sig_error is not None:
         if result == "valid":

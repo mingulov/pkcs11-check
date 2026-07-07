@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify
-from pkcs11_check.raw.pack import mech_bytes, mech_simple
+from pkcs11_check.raw.pack import mech_bytes, mech_simple, mech_ulong
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -449,7 +449,7 @@ class TestSEEDMAC:
                 key,
                 CKM_SEED_MAC_GENERAL,
                 data,
-                mech_param=mech_bytes(CKM_SEED_MAC_GENERAL, mac_len.to_bytes(8, "little")),
+                mech_param=mech_ulong(CKM_SEED_MAC_GENERAL, mac_len),
             )
             assert len(mac) == mac_len
             assert verify_single(
@@ -459,7 +459,7 @@ class TestSEEDMAC:
                 CKM_SEED_MAC_GENERAL,
                 data,
                 mac,
-                mech_param=mech_bytes(CKM_SEED_MAC_GENERAL, mac_len.to_bytes(8, "little")),
+                mech_param=mech_ulong(CKM_SEED_MAC_GENERAL, mac_len),
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

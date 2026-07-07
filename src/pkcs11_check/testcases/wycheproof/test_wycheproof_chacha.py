@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.pack import mech_chacha20_poly1305
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -75,6 +75,7 @@ def test_chacha20_poly1305(p11_module_session: Any, vec_id: str, vec: dict[str, 
     ct = bytes.fromhex(vec["ct"])
     tag = bytes.fromhex(vec["tag"])
     result = vec["result"]
+    set_params({"cipher": "chacha20-poly1305"})
 
     # The ChaCha20 key is the subject key of the advertised AEAD op (it decrypts
     # the supplied ct||tag), so its negotiated import is the canonical capability

@@ -9,9 +9,6 @@ Source: PKCS#11 v3.2 (OPERATION_ACTIVE, OPERATION_NOT_INITIALIZED).
 
 from __future__ import annotations
 
-import subprocess
-import sys
-import textwrap
 from typing import Any
 
 import pytest
@@ -27,11 +24,9 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS,
 )
+from pkcs11_check.testcases._probes.runner import ProbeResult, run_probe
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
-from pkcs11_check.testcases.ckr._subprocess import (
-    ckr_subprocess_cleanup_setup,
-    ckr_subprocess_rv_trace_setup,
-)
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
@@ -40,9 +35,7 @@ from pkcs11_check.testcases.conftest import (
 pytestmark = pytest.mark.access
 
 
-def _assert_operation_subprocess_ok(
-    result: subprocess.CompletedProcess[str], *, context: str
-) -> None:
+def _assert_operation_subprocess_ok(result: ProbeResult, *, context: str) -> None:
     assert_subprocess_completed(result.returncode, result.stdout, result.stderr, context=context)
     assert "OK:" in result.stdout, (
         f"{context}: child subprocess did not emit an OK marker; "
@@ -104,97 +97,32 @@ class TestOperationStateWrapper:
 
 
 class TestOperationStateSubprocess:
-    """State machine tests requiring raw C API access (subprocess)."""
+    """State machine tests requiring raw C API access (subprocess).
+
+    Each test launches the ``ckr_dual`` probe module (``_probes/ckr_dual.py``) via
+    ``run_probe`` at ``Level.LOGIN``: the probe infra opens a session and -- only when a
+    PIN is configured -- logs in, with the PIN travelling solely through the
+    ``_P11CHECK_PIN`` env var (never embedded in source or params -- Invariant I3).
+    """
 
     def test_encrypt_without_init(self, p11_config: Any) -> None:
-        """C_Encrypt without C_EncryptInit -> CKR_OPERATION_NOT_INITIALIZED.
-
-        Uses subprocess with raw API.
-        """
-        import os
-
-        module = str(p11_config.module)
-        pin = p11_config.pin.get_secret_value() if p11_config.pin else None
-        pin_arg = f'"{pin}"' if pin else "None"
-
-        script = textwrap.dedent(f"""\
-            import ctypes
-            from ctypes import byref
-            from pkcs11_check.raw.api import RawPKCS11
-            from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
-            from pkcs11_check.raw.recipes import to_ubyte_buf
-            from pkcs11_check.raw.rv import expect_rv
-            from pkcs11_check.raw.types_std import (
-                CKF_RW_SESSION, CKF_SERIAL_SESSION, CKR_OPERATION_NOT_INITIALIZED, CKU_USER,
-                CK_ULONG,
-            )
-            raw = RawPKCS11.from_lib("{module}")
-{ckr_subprocess_rv_trace_setup(indent="            ")}
-            raw.C_Initialize(None)
-            slots = get_slot_ids(raw)
-            sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
-{ckr_subprocess_cleanup_setup(indent="            ")}
-            pin = {pin_arg}
-            if pin is not None:
-                login_user(raw, sh, CKU_USER, pin.encode())
-            data = to_ubyte_buf(b"\\x00" * 16)
-            out_len = CK_ULONG(0)
-            rv = raw.C_Encrypt(sh, data, len(data), None, byref(out_len))
-            expect_rv(rv, CKR_OPERATION_NOT_INITIALIZED)
-            print("OK:encrypt_without_init")
-            _p11check_cleanup_session()
-        """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
+        """C_Encrypt without C_EncryptInit -> CKR_OPERATION_NOT_INITIALIZED."""
+        result = run_probe(
+            "ckr_dual",
+            {"module_path": str(p11_config.module), "probe": "encrypt_without_init"},
+            pin=pin_from_config(p11_config),
             timeout=15,
-            env=os.environ.copy(),
+            coverage="session",
         )
         _assert_operation_subprocess_ok(result, context="C_Encrypt without C_EncryptInit")
 
     def test_double_digest_init_via_subprocess(self, p11_config: Any) -> None:
-        """Two DigestInit calls without Digest -> second should get OPERATION_ACTIVE.
-
-        Test via raw calls in subprocess.
-        """
-        import os
-
-        module = str(p11_config.module)
-        pin = p11_config.pin.get_secret_value() if p11_config.pin else None
-        pin_arg = f'"{pin}"' if pin else "None"
-
-        script = textwrap.dedent(f"""\
-            from pkcs11_check.raw.api import RawPKCS11
-            from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
-            from pkcs11_check.raw.pack import mech_simple
-            from pkcs11_check.raw.rv import expect_rv
-            from pkcs11_check.raw.types_std import (
-                CKF_RW_SESSION, CKF_SERIAL_SESSION, CKM_SHA256, CKR_OK,
-                CKR_OPERATION_ACTIVE, CKU_USER,
-            )
-            raw = RawPKCS11.from_lib("{module}")
-{ckr_subprocess_rv_trace_setup(indent="            ")}
-            raw.C_Initialize(None)
-            slots = get_slot_ids(raw)
-            sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
-{ckr_subprocess_cleanup_setup(indent="            ")}
-            pin = {pin_arg}
-            if pin is not None:
-                login_user(raw, sh, CKU_USER, pin.encode())
-            mech = mech_simple(CKM_SHA256)
-            rv = raw.C_DigestInit(sh, mech.byref())
-            expect_rv(rv, CKR_OK)
-            rv = raw.C_DigestInit(sh, mech.byref())
-            expect_rv(rv, CKR_OPERATION_ACTIVE)
-            print("OK:double_digest_init_active")
-            _p11check_cleanup_session()
-        """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
+        """Two DigestInit calls without Digest -> second should get OPERATION_ACTIVE."""
+        result = run_probe(
+            "ckr_dual",
+            {"module_path": str(p11_config.module), "probe": "double_digest_init"},
+            pin=pin_from_config(p11_config),
             timeout=15,
-            env=os.environ.copy(),
+            coverage="session",
         )
         _assert_operation_subprocess_ok(result, context="double C_DigestInit")

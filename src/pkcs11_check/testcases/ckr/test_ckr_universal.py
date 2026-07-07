@@ -9,9 +9,6 @@ that handles them across all functions.
 
 from __future__ import annotations
 
-import subprocess
-import sys
-import textwrap
 from typing import Any
 
 import pytest
@@ -28,17 +25,14 @@ from pkcs11_check.raw.types_std import (
     CKR_SESSION_HANDLE_INVALID,
     CKR_TOKEN_NOT_PRESENT,
 )
+from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases.ckr._ckr_spec import (
     _SESSION_UNIVERSAL,
     _TOKEN_UNIVERSAL,
     _UNIVERSAL,
     full_compat,
 )
-from pkcs11_check.testcases.ckr._subprocess import (
-    assert_ckr_subprocess_ok,
-    ckr_subprocess_cleanup_setup,
-    ckr_subprocess_rv_trace_setup,
-)
+from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 
 pytestmark = pytest.mark.access
 
@@ -114,28 +108,11 @@ class TestUniversalRealTriggers:
         auto-initialize on each function call (vendor extension). This is an intentional
         design choice, not a crash, but deviates from the PKCS#11 spec.
         """
-        import os
-
-        script = textwrap.dedent(f"""\
-            from pkcs11_check.raw.api import RawPKCS11
-            from pkcs11_check.raw.types_std import CKR_CRYPTOKI_NOT_INITIALIZED
-            import ctypes
-            raw = RawPKCS11.from_lib("{p11_config.module}")
-            raw.C_Initialize(None)
-            raw.C_Finalize(None)
-            # Now call something - should get NOT_INITIALIZED
-            sc = ctypes.c_ulong(0)
-            rv = raw.C_GetSlotList(1, None, ctypes.byref(sc))
-            print(f"CKR:0x{{rv:08x}}")
-            # Report result without asserting -- outer test checks compliance
-            print("OK")
-        """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
+        result = run_probe(
+            "ckr_universal",
+            {"module_path": str(p11_config.module), "probe": "not_initialized"},
             timeout=15,
-            env=os.environ.copy(),
+            coverage="session",
         )
         assert_ckr_subprocess_ok(
             result.returncode,
@@ -181,38 +158,21 @@ class TestUniversalRealTriggers:
         if proxy is None:
             pytest.skip("fault-proxy not built")
 
-        script = textwrap.dedent(f"""\
-            import os, ctypes
-            from pkcs11_check.raw.api import RawPKCS11
-            from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
-            from pkcs11_check.raw.types_std import (
-                CKF_RW_SESSION, CKF_SERIAL_SESSION, CKR_DEVICE_REMOVED, CKR_OK,
-            )
-            os.environ["PKCS11_REAL_MODULE"] = "{p11_config.module}"
-            os.environ["PKCS11_INJECT_FUNCTION"] = "C_GenerateRandom"
-            os.environ["PKCS11_INJECT_ERROR"] = "0x00000032"  # DEVICE_REMOVED
-            raw = RawPKCS11.from_lib("{proxy}")
-{ckr_subprocess_rv_trace_setup(indent="            ")}
-            raw.C_Initialize(None)
-            slots = get_slot_ids(raw)
-            sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
-{ckr_subprocess_cleanup_setup(indent="            ")}
-            buf = (ctypes.c_ubyte * 32)()
-            rv = raw.C_GenerateRandom(sh, buf, 32)
-            if rv == CKR_DEVICE_REMOVED:
-                print("OK:DEVICE_REMOVED")
-            elif rv == CKR_OK:
-                print("FAIL")
-            else:
-                print(f"OTHER:0x{{rv:08x}}")
-            _p11check_cleanup_session()
-        """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
+        # module_path is the fault-proxy; the real module + injection config travel as
+        # plain data through extra (never a PIN) and are set into the child environment
+        # (PKCS11_REAL_MODULE / PKCS11_INJECT_FUNCTION / PKCS11_INJECT_ERROR) before the
+        # proxy loads -- the probe module does this in _main, ahead of probe_main.
+        result = run_probe(
+            "ckr_universal",
+            {
+                "module_path": str(proxy),
+                "probe": "device_removed",
+                "real_module": str(p11_config.module),
+                "inject_function": "C_GenerateRandom",
+                "inject_error": "0x00000032",  # DEVICE_REMOVED
+            },
             timeout=15,
-            env=os.environ.copy(),
+            coverage="session",
         )
         assert_ckr_subprocess_ok(
             result.returncode,

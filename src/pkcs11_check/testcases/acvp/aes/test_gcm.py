@@ -6,11 +6,11 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, fail_as, xfail_as
+from pkcs11_check.classification import classify, fail_as, set_params, xfail_as
 from pkcs11_check.raw.pack_mechanisms import mech_gcm
 from pkcs11_check.raw.recipes import decrypt_single, destroy_quietly, encrypt_single
 from pkcs11_check.raw.types_std import CKM_AES_GMAC
-from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
+from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors, require_acvp_vectors
 from pkcs11_check.testcases.acvp.aes.base import (
     CKM_AES_GCM_SIV,
     _import_aes_key,
@@ -20,6 +20,8 @@ from pkcs11_check.testcases.acvp.aes.base import (
 )
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
+
+require_acvp_vectors()
 
 
 # =============================================================================
@@ -71,6 +73,7 @@ _GCM_ENCRYPT_VECTORS, _GCM_DECRYPT_VECTORS = _load_gcm_vectors()
 )
 def test_acvp_aes_gcm_encrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-GCM encryption from NIST ACVP vectors."""
+    set_params({"aes_bits": str(len(vec.get("key") or b"") * 8)})
     run_gcm_encrypt_test(p11_module_session, vec_id, vec)
 
 
@@ -79,6 +82,7 @@ def test_acvp_aes_gcm_encrypt(p11_module_session: Any, vec_id: str, vec: dict[st
 )
 def test_acvp_aes_gcm_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-GCM decryption from NIST ACVP vectors."""
+    set_params({"aes_bits": str(len(vec.get("key") or b"") * 8)})
     run_gcm_decrypt_test(p11_module_session, vec_id, vec)
 
 
@@ -135,6 +139,7 @@ def test_acvp_aes_gcm_siv_encrypt(
     rs = p11_module_session
     if not rs.has_mechanism("AES_GCM_SIV"):
         pytest.skip("AES_GCM_SIV not supported")
+    set_params({"aes_bits": str(len(vec.get("key") or b"") * 8)})
     try:
         param = mech_gcm(CKM_AES_GCM_SIV, vec["iv"], aad=vec.get("aad"), tag_bits=128)
     except (AssertionError, ValueError, TypeError) as exc:
@@ -176,6 +181,7 @@ def test_acvp_aes_gcm_siv_decrypt(
     rs = p11_module_session
     if not rs.has_mechanism("AES_GCM_SIV"):
         pytest.skip("AES_GCM_SIV not supported")
+    set_params({"aes_bits": str(len(vec.get("key") or b"") * 8)})
     try:
         param = mech_gcm(CKM_AES_GCM_SIV, vec["iv"], aad=vec.get("aad"), tag_bits=128)
     except (AssertionError, ValueError, TypeError) as exc:
@@ -247,6 +253,7 @@ def test_acvp_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
     rs = p11_module_session
     if not rs.has_mechanism("AES_GMAC"):
         pytest.skip("AES_GMAC not supported")
+    set_params({"aes_bits": str(len(vec.get("key") or b"") * 8)})
     try:
         gmac_param = mech_gcm(
             CKM_AES_GMAC, vec["iv"], aad=vec.get("aad"), tag_bits=vec["tag_len_bits"]
@@ -345,6 +352,7 @@ _XPN_ENCRYPT_VECTORS, _XPN_DECRYPT_VECTORS = _load_xpn_vectors()
 )
 def test_acvp_aes_xpn_encrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-XPN encryption from NIST ACVP vectors."""
+    set_params({"aes_bits": str(len(vec.get("key") or b"") * 8)})
     run_gcm_encrypt_test(p11_module_session, vec_id, vec)
 
 
@@ -353,4 +361,5 @@ def test_acvp_aes_xpn_encrypt(p11_module_session: Any, vec_id: str, vec: dict[st
 )
 def test_acvp_aes_xpn_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-XPN decryption from NIST ACVP vectors."""
+    set_params({"aes_bits": str(len(vec.get("key") or b"") * 8)})
     run_gcm_decrypt_test(p11_module_session, vec_id, vec)

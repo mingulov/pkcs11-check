@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
+from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors, require_acvp_vectors
 from pkcs11_check.testcases.acvp.aes.base import (
     _load_vectors,
     run_ccm_decrypt_test,
@@ -20,6 +20,8 @@ from pkcs11_check.testcases.acvp.aes.base import (
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 REQUIRED_MECHANISMS = ["AES_CCM"]
+
+require_acvp_vectors()
 
 
 # =============================================================================

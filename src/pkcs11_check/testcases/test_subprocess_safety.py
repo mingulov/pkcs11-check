@@ -1,7 +1,7 @@
 """Subprocess safety tests - post-Finalize, fork, library reload.
 
-These tests run Python scripts in subprocesses to avoid corrupting
-the main test session. They test crash scenarios safely.
+These tests drive the module in a fresh subprocess (via the ``subprocess_safety`` probe) to
+avoid corrupting the main test session. They exercise crash scenarios safely.
 
 References: rep11.md Iteration 3, fork detection and exit crash bugs found in some modules.
 """
@@ -9,113 +9,53 @@ References: rep11.md Iteration 3, fork detection and exit crash bugs found in so
 from __future__ import annotations
 
 import os
-import signal
-import subprocess
-import sys
-import textwrap
 from typing import Any
 
 import pytest
 
 from pkcs11_check.classification import classify, fail_as
-from pkcs11_check.testcases._subprocess_trace import RV_TRACE_MARKER, record_subprocess_rv_trace
+from pkcs11_check.testcases._probes.runner import run_probe
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 
 pytestmark = [pytest.mark.security, pytest.mark.stress]
 
-
-def _run_script(
-    script: str, env: dict[str, str] | None = None, timeout: int = 30
-) -> tuple[int, str]:
-    """Run a Python script in a subprocess. Returns (exit_code, output)."""
-    script = _inject_rv_trace_emitter(textwrap.dedent(script))
-    process = subprocess.Popen(
-        [sys.executable, "-c", textwrap.dedent(script)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=env,
-        start_new_session=True,
-    )
-    try:
-        stdout, stderr = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-            stdout, stderr = process.communicate(timeout=2)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            stdout, stderr = process.communicate()
-        record_subprocess_rv_trace(stdout, stderr)
-        raise subprocess.TimeoutExpired(process.args, timeout, output=stdout, stderr=stderr)
-    output = stdout + stderr
-    record_subprocess_rv_trace(output)
-    return process.returncode, output
-
-
-def _inject_rv_trace_emitter(script: str) -> str:
-    """Enable RV tracing in direct subprocess-safety scripts when requested."""
-    if "RawPKCS11.from_lib(" not in script:
-        return script
-    lines = script.splitlines()
-    for index, line in enumerate(lines):
-        if "raw = RawPKCS11.from_lib(" in line:
-            indent = line[: len(line) - len(line.lstrip())]
-            lines.insert(index + 1, f"{indent}_p11check_enable_rv_trace()")
-            break
-    instrumented_script = "\n".join(lines) + "\n"
-    return f"""
-import atexit as _p11check_atexit
-import json as _p11check_json
-import os as _p11check_os
-import signal as _p11check_signal
-
-
-def _p11check_rv_trace_enabled():
-    _value = _p11check_os.environ.get("PKCS11_CHECK_RV_TRACE", "")
-    if _value.strip().lower() in ("1", "true", "yes", "on"):
-        return True
-    return bool(_p11check_os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT"))
-
-
-def _p11check_rv_trace_maxlen():
-    _value = _p11check_os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT")
-    if not _value:
-        return None
-    try:
-        _maxlen = int(_value)
-    except ValueError:
-        return None
-    return _maxlen if _maxlen > 0 else None
-
-
-def _p11check_emit_rv_trace():
-    _raw = globals().get("raw")
-    if _raw is None:
-        return
-    try:
-        print(
-            "{RV_TRACE_MARKER}"
-            + _p11check_json.dumps(_raw.rv_trace, separators=(",", ":")),
-            flush=True,
-        )
-    except (OSError, TypeError, ValueError):
-        pass
-
-
-def _p11check_enable_rv_trace():
-    _raw = globals().get("raw")
-    if _raw is not None and _p11check_rv_trace_enabled():
-        _raw.enable_rv_trace(maxlen=_p11check_rv_trace_maxlen())
-
-
-_p11check_atexit.register(_p11check_emit_rv_trace)
-_p11check_signal.signal(
-    _p11check_signal.SIGTERM,
-    lambda _signum, _frame: (_p11check_emit_rv_trace(), _p11check_os._exit(124)),
+# os.fork() is POSIX-only. On Windows/Wine `os.fork` does not exist, so a fork-based
+# probe raises AttributeError and exits 1 - which the isolated runner would otherwise
+# record as a (false) module crash. Skip such tests where fork is absent; fork-safety is
+# a POSIX concept, so no coverage is lost on platforms that cannot fork.
+requires_fork = pytest.mark.skipif(
+    not hasattr(os, "fork"),
+    reason="os.fork() is POSIX-only; fork-safety is inapplicable on this platform",
 )
 
-{instrumented_script}
-"""
+
+def _run_probe(
+    p11_config: Any,
+    probe: str,
+    *,
+    timeout: int,
+    with_pin: bool = False,
+    with_slot: bool = False,
+) -> tuple[int, str]:
+    """Run a ``subprocess_safety`` probe; return ``(returncode, stdout + stderr)``.
+
+    Mirrors the legacy ``_run_script`` return contract so each per-test classifier keeps
+    scanning a single combined-output string. When ``with_pin`` is set the PIN travels ONLY
+    via ``run_probe(pin=...)`` -> ``_P11CHECK_PIN`` env (Invariant I3); it is never embedded
+    in the probe params or source. Coverage routes to the session accumulator; rv-trace is
+    recorded by ``run_probe`` (I7).
+    """
+    params: dict[str, Any] = {"module_path": str(p11_config.module), "probe": probe}
+    if with_slot:
+        params["slot_id"] = p11_config.slot
+    result = run_probe(
+        "subprocess_safety",
+        params,
+        pin=pin_from_config(p11_config) if with_pin else None,
+        timeout=timeout,
+        coverage="session",
+    )
+    return result.returncode, result.stdout + result.stderr
 
 
 class TestPostFinalize:
@@ -123,42 +63,13 @@ class TestPostFinalize:
 
     def test_post_finalize_get_slot_list(self, p11_config: Any) -> None:
         """C_GetSlotList after C_Finalize must not crash."""
-        module = str(p11_config.module)
-        script = f"""
-        from ctypes import byref
-        from pkcs11_check.raw.api import RawPKCS11
-        from pkcs11_check.raw.bootstrap import get_slot_ids
-        from pkcs11_check.raw.types_std import CK_ULONG
-        raw = RawPKCS11.from_lib("{module}")
-        raw.C_Initialize(None)
-        get_slot_ids(raw)
-        raw.C_Finalize(None)
-        try:
-            count = CK_ULONG(0)
-            raw.C_GetSlotList(1, None, byref(count))
-            print("OK: returned after finalize")
-        except Exception as e:
-            print(f"OK: raised {{type(e).__name__}}")
-        """
-        rc, output = _run_script(script)
+        rc, output = _run_probe(p11_config, "post_finalize_get_slot_list", timeout=30)
         assert rc == 0, f"Post-finalize crashed (rc={rc}): {output}"
         assert "OK:" in output
 
     def test_reinitialize_after_finalize(self, p11_config: Any) -> None:
         """C_Initialize after C_Finalize must work."""
-        module = str(p11_config.module)
-        script = f"""
-        from pkcs11_check.raw.api import RawPKCS11
-        from pkcs11_check.raw.bootstrap import get_slot_ids
-        raw = RawPKCS11.from_lib("{module}")
-        raw.C_Initialize(None)
-        raw.C_Finalize(None)
-        raw.C_Initialize(None)
-        slots = get_slot_ids(raw)
-        print(f"OK: reinit, {{len(slots)}} slots")
-        raw.C_Finalize(None)
-        """
-        rc, output = _run_script(script)
+        rc, output = _run_probe(p11_config, "reinitialize_after_finalize", timeout=30)
         assert rc == 0, f"Reinit crashed (rc={rc}): {output}"
         assert "OK:" in output
 
@@ -166,39 +77,11 @@ class TestPostFinalize:
 class TestForkSafety:
     """Test fork behavior - child must not crash or deadlock (task 7.4)."""
 
+    @requires_fork
     @pytest.mark.slow
     def test_fork_after_initialize(self, p11_config: Any) -> None:
         """Fork after C_Initialize - child reinitializes."""
-        module = str(p11_config.module)
-        script = f"""
-        import os
-        from pkcs11_check.raw.api import RawPKCS11
-        from pkcs11_check.raw.bootstrap import get_slot_ids
-        raw = RawPKCS11.from_lib("{module}")
-        raw.C_Initialize(None)
-        pid = os.fork()
-        if pid == 0:
-            try:
-                raw.C_Finalize(None)
-                raw.C_Initialize(None)
-                get_slot_ids(raw)
-                raw.C_Finalize(None)
-                os._exit(0)
-            except Exception as exc:
-                print(f"CHILD_EXC:{{type(exc).__name__}}:{{exc}}", flush=True)
-                os._exit(1)
-        else:
-            _, status = os.waitpid(pid, 0)
-            raw.C_Finalize(None)
-            if os.WIFSIGNALED(status):
-                child_signal = os.WTERMSIG(status)
-                print(f"CHILD_SIGNAL:{{child_signal}}")
-                child_exit = -child_signal
-            else:
-                child_exit = os.WEXITSTATUS(status)
-            print(f"CHILD_EXIT:{{child_exit}}")
-        """
-        rc, output = _run_script(script, timeout=15)
+        rc, output = _run_probe(p11_config, "fork_after_initialize", timeout=15)
         if rc != 0:
             classify(
                 "crash",
@@ -255,6 +138,7 @@ class TestSessionObjectProcessIsolation:
     process MUST NOT see them.
     """
 
+    @requires_fork
     def test_session_object_not_visible_to_other_process(self, p11_config: Any) -> None:
         """Parent creates a session object; subprocess MUST NOT find it.
 
@@ -276,145 +160,16 @@ class TestSessionObjectProcessIsolation:
         need additional setup that the subprocess test framework already
         documents.
         """
-        module = str(p11_config.module)
-        pin = p11_config.pin.get_secret_value() if p11_config.pin else None
-        pin_repr = f'b"{pin}"' if pin is not None else "None"
-        slot = p11_config.slot if p11_config.slot is not None else 0
-        script = f"""
-        import os
-        import sys
-        import uuid
-        from ctypes import byref, c_ubyte
-        from pkcs11_check.raw.api import RawPKCS11
-        from pkcs11_check.raw.bootstrap import (
-            close_session_quietly, get_slot_ids, login_user, open_session,
-        )
-        from pkcs11_check.raw.pack import attr_bool, attr_bytes, attr_ulong, template
-        from pkcs11_check.raw.types_std import (
-            CK_OBJECT_HANDLE, CK_ULONG,
-            CKA_CLASS, CKA_LABEL, CKA_PRIVATE, CKA_TOKEN, CKA_VALUE,
-            CKF_RW_SESSION, CKF_SERIAL_SESSION,
-            CKO_DATA, CKR_OK, CKR_USER_ALREADY_LOGGED_IN, CKR_USER_TYPE_INVALID,
-        )
-
-        # Login error swallow rule: catch only the two documented
-        # "already logged in / wrong user type" cases per the project login policy.
-        # PIN handling section. Other login failures must surface.
-        _LOGIN_OK_TO_IGNORE = ("CKR_USER_ALREADY_LOGGED_IN", "CKR_USER_TYPE_INVALID")
-
-        def _safe_login(raw_obj, sess_h, user_type, pin_bytes):
-            try:
-                login_user(raw_obj, sess_h, user_type, pin_bytes)
-            except AssertionError as e:
-                msg = str(e)
-                if not any(code in msg for code in _LOGIN_OK_TO_IGNORE):
-                    raise
-
-        pin = {pin_repr}
-        label = b"crossproc-" + uuid.uuid4().bytes.hex().encode()[:16]
-
-        # --- Parent: initialize, create session object ---
-        raw = RawPKCS11.from_lib("{module}")
-        rv = raw.C_Initialize(None)
-        if rv != CKR_OK:
-            print(f"FATAL:Parent_Init:0x{{rv:08x}}")
-            sys.exit(1)
-        slot_list = get_slot_ids(raw)
-        if {slot} >= len(slot_list):
-            print(f"FATAL:Slot:{slot}>={{len(slot_list)}}")
-            raw.C_Finalize(None); sys.exit(1)
-        slot_id = slot_list[{slot}]
-        sh = open_session(raw, slot_id, CKF_RW_SESSION | CKF_SERIAL_SESSION)
-        if pin is not None:
-            try:
-                _safe_login(raw, sh, 1, pin)
-            except AssertionError as e:
-                print(f"FATAL:Parent_Login:{{e}}")
-                close_session_quietly(raw, sh); raw.C_Finalize(None); sys.exit(1)
-        tmpl = template(
-            attr_ulong(CKA_CLASS, CKO_DATA),
-            attr_bool(CKA_TOKEN, False),
-            attr_bool(CKA_PRIVATE, False),
-            attr_bytes(CKA_LABEL, label),
-            attr_bytes(CKA_VALUE, b"parent-data"),
-        )
-        h = CK_OBJECT_HANDLE(0)
-        rv = raw.C_CreateObject(sh, tmpl.ptr, tmpl.count, byref(h))
-        if rv != CKR_OK:
-            print(f"FATAL:Parent_CreateObject:0x{{rv:08x}}")
-            close_session_quietly(raw, sh); raw.C_Finalize(None); sys.exit(1)
-        print(f"PARENT_LABEL:{{label.decode()}}")
-
-        # --- Fork a child that re-Initializes (different application) ---
-        pid = os.fork()
-        if pid == 0:
-            # Child: must Finalize the inherited handle before re-Initializing,
-            # per PKCS#11 v3.2 fork semantics.
-            raw.C_Finalize(None)
-            try:
-                raw2 = RawPKCS11.from_lib("{module}")
-                rv = raw2.C_Initialize(None)
-                if rv != CKR_OK:
-                    print(f"CHILD_FATAL:Init:0x{{rv:08x}}")
-                    sys.stdout.flush(); os._exit(2)
-                slot_list2 = get_slot_ids(raw2)
-                slot_id2 = slot_list2[{slot}]
-                sh2 = open_session(raw2, slot_id2, CKF_RW_SESSION | CKF_SERIAL_SESSION)
-                if pin is not None:
-                    try:
-                        _safe_login(raw2, sh2, 1, pin)
-                    except AssertionError as e:
-                        print(f"CHILD_FATAL:Login:{{e}}")
-                        sys.stdout.flush(); os._exit(6)
-                # Find-objects by the parent's label.
-                find_tmpl = template(
-                    attr_bytes(CKA_LABEL, label),
-                    attr_ulong(CKA_CLASS, CKO_DATA),
-                )
-                rv = raw2.C_FindObjectsInit(sh2, find_tmpl.ptr, find_tmpl.count)
-                if rv != CKR_OK:
-                    print(f"CHILD_FATAL:FindInit:0x{{rv:08x}}")
-                    sys.stdout.flush(); os._exit(3)
-                handles = (CK_OBJECT_HANDLE * 8)()
-                count = CK_ULONG(0)
-                rv = raw2.C_FindObjects(sh2, handles, 8, byref(count))
-                raw2.C_FindObjectsFinal(sh2)
-                if rv != CKR_OK:
-                    print(f"CHILD_FATAL:Find:0x{{rv:08x}}")
-                    sys.stdout.flush(); os._exit(4)
-                print(f"CHILD_FOUND:{{count.value}}")
-                close_session_quietly(raw2, sh2)
-                raw2.C_Finalize(None)
-                sys.stdout.flush()
-                os._exit(0)
-            except Exception as exc:
-                # `except Exception` (not BaseException) so
-                # KeyboardInterrupt / SystemExit / signal-raised exits
-                # propagate normally. The exit-5 path is only for
-                # in-process Python errors that the parent can use to
-                # disambiguate "init worked but later step crashed"
-                # from "init never started".
-                print(f"CHILD_EXC:{{type(exc).__name__}}:{{exc}}")
-                sys.stdout.flush()
-                os._exit(5)
-        else:
-            _, status = os.waitpid(pid, 0)
-            if os.WIFSIGNALED(status):
-                child_signal = os.WTERMSIG(status)
-                print(f"CHILD_SIGNAL:{{child_signal}}")
-                child_exit = -child_signal
-            else:
-                child_exit = os.WEXITSTATUS(status)
-            print(f"CHILD_EXIT:{{child_exit}}")
-            # Parent cleanup
-            raw.C_DestroyObject(sh, h)
-            close_session_quietly(raw, sh)
-            raw.C_Finalize(None)
-        """
         # 90s timeout: daemon-backed modules may need cold-start headroom
         # for post-fork re-Initialize. Real-world fork+TPM2_Startup
         # can exceed 30s on busy systems.
-        rc, output = _run_script(script, timeout=90)
+        rc, output = _run_probe(
+            p11_config,
+            "session_object_isolation",
+            timeout=90,
+            with_pin=True,
+            with_slot=True,
+        )
         if rc != 0:
             if "FATAL:Parent_CreateObject:" in output:
                 classify(
@@ -545,33 +300,7 @@ class TestLibraryReload:
         or daemon not provisioned. These are module
         environment limitations, not crashes, so xfail.
         """
-        module = str(p11_config.module)
-        pin = p11_config.pin.get_secret_value() if p11_config.pin else None
-        pin_repr = f'b"{pin}"' if pin is not None else "None"
-        script = f"""
-        from pkcs11_check.raw.api import RawPKCS11
-        from pkcs11_check.raw.bootstrap import get_slot_ids, open_session, login_user
-        from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
-        from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION
-        pin = {pin_repr}
-        for i in range(5):
-            raw = RawPKCS11.from_lib("{module}")
-            raw.C_Initialize(None)
-            try:
-                slots = get_slot_ids(raw, label="pkcs11-check")
-                if not slots:
-                    slots = get_slot_ids(raw)
-                sh = open_session(raw, slots[0], CKF_RW_SESSION | CKF_SERIAL_SESSION)
-                if pin is not None:
-                    login_user(raw, sh, 1, pin)
-                key = gen_aes_key(raw, sh, 128)
-                destroy_quietly(raw, sh, key)
-                raw.C_CloseSession(sh)
-            finally:
-                raw.C_Finalize(None)
-        print("OK: 5 cycles")
-        """
-        rc, output = _run_script(script, timeout=30)
+        rc, output = _run_probe(p11_config, "reload_cycle_5x", timeout=30, with_pin=True)
         if rc < 0:
             # Negative exit code = killed by signal (crash/segfault) -- real module bug
             classify(

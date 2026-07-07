@@ -13,7 +13,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify, xfail_as
+from pkcs11_check.classification import classify, set_mechanism, set_params, xfail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_bytes, mech_gcm
 from pkcs11_check.raw.recipes import (
@@ -103,6 +103,10 @@ _EC_CURVE_UNSUPPORTED_CKRS = (
 )
 
 _EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS = (
+    # KMS bridges advertise ECDSA but cannot import an external public key via
+    # C_CreateObject; the negotiated importer exhausts every shape and the module
+    # rejects with a clean generic CKR -> advertised-but-not-operational (xfail).
+    CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
@@ -433,6 +437,8 @@ class TestECDSAP256Wycheproof:
         sig_der = bytes.fromhex(vec["sig"])
         result = vec["result"]
         group = vec["_group"]
+        set_params({"curve": "secp256r1"})
+        set_mechanism("CKM_ECDSA", operation="C_Verify")
 
         # Get EC public key point from the group's publicKey dict
         pub_key_info = group.get("publicKey", {})
@@ -624,6 +630,8 @@ class TestECDSAP384Wycheproof:
         sig_der = bytes.fromhex(vec["sig"])
         result = vec["result"]
         group = vec["_group"]
+        set_params({"curve": "secp384r1"})
+        set_mechanism("CKM_ECDSA", operation="C_Verify")
 
         pub_key_info = group.get("publicKey", {})
         uncompressed_hex = pub_key_info.get("uncompressed", "")

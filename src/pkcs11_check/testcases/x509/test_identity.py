@@ -109,7 +109,7 @@ def test_limbo_identity_closeness(
                 destroy_quietly(rs.raw, rs.sh, cert_h)
 
         except AssertionError:
-            continue
+            continue  # audit-ok: enumeration probe; unreadable object skipped
 
     if errors:
         # Phase 5 P1a: a clean failure of the positive sign leg with a valid

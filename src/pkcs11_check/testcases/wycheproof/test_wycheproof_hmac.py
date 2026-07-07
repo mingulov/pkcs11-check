@@ -6,7 +6,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify, xfail_as
+from pkcs11_check.classification import classify, set_params, xfail_as
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_secret_key,
@@ -206,6 +206,7 @@ def test_hmac_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, An
     mech_display = _MECH_NAMES.get(mechanism, f"0x{mechanism:08x}")
     if not rs.has_mechanism(mech_display):
         pytest.skip(f"{mech_display} not supported by module")
+    set_params({"hash": mech_display})
 
     cache_key = (mechanism, len(key_bytes))
     if cache_key in _UNSUPPORTED_HMAC_KEYS:

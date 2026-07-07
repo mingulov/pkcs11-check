@@ -5,11 +5,11 @@ from __future__ import annotations
 import pytest
 
 from pkcs11_check.classification import classify
-from pkcs11_check.testcases._subprocess_preamble import SUBPROCESS_TIMEOUT_MARKER
-from pkcs11_check.testcases._subprocess_trace import (
+from pkcs11_check.core.subprocess_trace import (
     RV_TRACE_MARKER,
     record_subprocess_rv_trace,
 )
+from pkcs11_check.testcases._subprocess_preamble import SUBPROCESS_TIMEOUT_MARKER
 
 
 def _format_subprocess_stream(text: str, *, limit: int = 500) -> str:

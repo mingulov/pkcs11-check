@@ -18,10 +18,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import os
-import subprocess
-import sys
-import textwrap
 from collections.abc import Callable, Mapping
 from ctypes import byref
 from typing import Any
@@ -91,6 +87,8 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._probes.runner import run_probe
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     destroy_returned_handles,
@@ -1551,50 +1549,20 @@ class TestTLS12Extended:
             destroy_quietly(rs.raw, rs.sh, pms)
 
 
-_NEG_ATTR_SCRIPT = """\
-import ctypes, sys
-from ctypes import byref, cast
+def _run_neg(p11_config: Any, probe: str) -> tuple[int, str, str]:
+    """Run a TLS negative-attribute probe; return ``(returncode, stdout, stderr)`` (stripped).
 
-from pkcs11_check.raw.api import RawPKCS11
-from pkcs11_check.raw.types_std import CKR_OK
-from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
-from pkcs11_check.raw.pack import attr_bool, attr_bytes, attr_ulong, mech_simple, template
-from pkcs11_check.raw.types_std import (
-    CKF_RW_SESSION, CKF_SERIAL_SESSION, CK_ATTRIBUTE_PTR, CK_OBJECT_HANDLE,
-    CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_KEY_NOT_WRAPPABLE,
-)
-
-
-def _template_ptr(attrs):
-    return cast(attrs.array, CK_ATTRIBUTE_PTR)
-
-raw = RawPKCS11.from_lib("{module}")
-raw.C_Initialize(None)
-sh = open_session(raw, get_slot_ids(raw)[0], CKF_SERIAL_SESSION | CKF_RW_SESSION)
-pin = {pin_arg}
-if pin is not None:
-    login_user(raw, sh, 1, pin.encode())
-
-{test_code}
-
-raw.C_CloseSession(sh)
-raw.C_Finalize(None)
-"""
-
-
-def _run_neg(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
-    pin_arg = repr(pin) if pin is not None else "None"
-    script = _NEG_ATTR_SCRIPT.format(
-        module=module,
-        pin_arg=pin_arg,
-        test_code=textwrap.dedent(code),
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
+    The child body lives in ``_probes/tls12.py``, dispatched on ``extra["probe"]``.  The PIN
+    travels ONLY via ``run_probe(pin=...)`` -> ``_P11CHECK_PIN`` env (Invariant I3); it is
+    never embedded in the probe params or source.  Coverage routes to the session accumulator;
+    rv-trace is recorded by ``run_probe`` (I7).
+    """
+    result = run_probe(
+        "tls12",
+        {"module_path": str(p11_config.module), "probe": probe},
+        pin=pin_from_config(p11_config),
         timeout=15,
-        env=os.environ.copy(),
+        coverage="session",
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
@@ -1614,43 +1582,7 @@ class TestTLSNegativeAttributes:
             if not rs.has_mechanism("TLS_MASTER_KEY_DERIVE"):
                 pytest.skip("No TLS master key derive mechanism")
 
-        rc, out, err = _run_neg(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-# Create generic secret key with DERIVE=False
-val = bytes(range(48))
-attrs = template(
-    attr_ulong(0x0000, 4),  # CKA_CLASS = CKO_SECRET_KEY (4)
-    attr_ulong(0x0100, 0x10),  # CKA_KEY_TYPE = CKK_GENERIC_SECRET (0x10)
-    attr_bytes(0x0011, val),  # CKA_VALUE
-    attr_ulong(0x0161, 48),  # CKA_VALUE_LEN
-    attr_bool(0x010C, False),  # CKA_DERIVE = FALSE
-    attr_bool(0x0001, False),  # CKA_TOKEN = FALSE
-    attr_bool(0x0103, False),  # CKA_SENSITIVE = FALSE
-    attr_bool(0x0162, True),  # CKA_EXTRACTABLE = TRUE
-)
-key = CK_OBJECT_HANDLE(0)
-rv = raw.C_CreateObject(sh, _template_ptr(attrs), attrs.count, byref(key))
-if rv != CKR_OK:
-    print(f"SKIP:create_failed:0x{rv:08x}")
-    sys.exit(0)
-
-# Try C_DeriveKey - should be rejected
-mech = mech_simple(0x000003E0)  # CKM_TLS12_MASTER_KEY_DERIVE
-out_key = CK_OBJECT_HANDLE(0)
-rv = raw.C_DeriveKey(sh, mech.byref(), key.value, None, 0, byref(out_key))
-print(f"CKR:0x{rv:08x}")
-if rv in (CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_KEY_NOT_WRAPPABLE):
-    print("OK:KEY_FUNCTION_NOT_PERMITTED")
-elif rv == 0:
-    print("FAIL:allowed_derive_with_DERIVE_false")
-else:
-    print(f"REJECTED:0x{rv:08x}")
-
-raw.C_DestroyObject(sh, key.value)
-""",
-        )
+        rc, out, err = _run_neg(p11_config, "derive_without_derive_attr")
         if "SKIP:" in out:
             pytest.skip(out)
         assert rc == 0, f"Subprocess crashed: {err[-300:]}"
@@ -1664,42 +1596,7 @@ raw.C_DestroyObject(sh, key.value)
             if not rs.has_mechanism("TLS_MAC"):
                 pytest.skip("No TLS MAC mechanism")
 
-        rc, out, err = _run_neg(
-            str(p11_config.module),
-            p11_config.pin.get_secret_value() if p11_config.pin else None,
-            """\
-# Create generic secret key with SIGN=False
-val = bytes(range(32))
-attrs = template(
-    attr_ulong(0x0000, 4),  # CKA_CLASS = CKO_SECRET_KEY
-    attr_ulong(0x0100, 0x10),  # CKA_KEY_TYPE = CKK_GENERIC_SECRET
-    attr_bytes(0x0011, val),  # CKA_VALUE
-    attr_ulong(0x0161, 32),  # CKA_VALUE_LEN
-    attr_bool(0x0108, False),  # CKA_SIGN = FALSE
-    attr_bool(0x0001, False),  # CKA_TOKEN = FALSE
-    attr_bool(0x0103, False),  # CKA_SENSITIVE = FALSE
-    attr_bool(0x0162, True),  # CKA_EXTRACTABLE = TRUE
-)
-key = CK_OBJECT_HANDLE(0)
-rv = raw.C_CreateObject(sh, _template_ptr(attrs), attrs.count, byref(key))
-if rv != CKR_OK:
-    print(f"SKIP:create_failed:0x{rv:08x}")
-    sys.exit(0)
-
-# Try C_SignInit with CKA_SIGN=False key
-mech = mech_simple(0x000003D8)  # CKM_TLS12_MAC
-rv = raw.C_SignInit(sh, mech.byref(), key.value)
-print(f"CKR:0x{rv:08x}")
-if rv == 0x69:
-    print("OK:KEY_FUNCTION_NOT_PERMITTED")
-elif rv == 0:
-    print("FAIL:allowed_sign_with_SIGN_false")
-else:
-    print(f"REJECTED:0x{rv:08x}")
-
-raw.C_DestroyObject(sh, key.value)
-""",
-        )
+        rc, out, err = _run_neg(p11_config, "sign_without_sign_attr")
         if "SKIP:" in out:
             pytest.skip(out)
         assert rc == 0, f"Subprocess crashed: {err[-300:]}"

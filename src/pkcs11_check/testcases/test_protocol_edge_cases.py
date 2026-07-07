@@ -30,6 +30,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._probes.runner import run_probe
 
 pytestmark = pytest.mark.security
 
@@ -45,7 +46,7 @@ class TestResourceExhaustion:
             for _ in range(200):
                 keys.append(gen_aes_key(rs.raw, rs.sh, 128))
         except AssertionError:
-            pass  # CKR_DEVICE_MEMORY or similar - graceful
+            pass  # audit-ok: resource-exhaustion probe; a graceful clean rejection is acceptable
         finally:
             for k in keys:
                 destroy_quietly(rs.raw, rs.sh, k)
@@ -69,7 +70,7 @@ class TestResourceExhaustion:
                     )
                 )
         except AssertionError:
-            pass  # Graceful limit
+            pass  # audit-ok: resource-exhaustion probe; a graceful clean limit is acceptable
         for o in objs:
             destroy_quietly(rs.raw, rs.sh, o)
 
@@ -105,30 +106,15 @@ class TestSpecAmbiguousCalls:
 
     def test_double_initialize(self, p11_config: Any) -> None:
         """C_Initialize called twice - must return OK or ALREADY_INITIALIZED."""
-        import subprocess
-        import sys
-        import textwrap
-
-        module = str(p11_config.module)
-        script = f"""
-        from pkcs11_check.raw.api import RawPKCS11
-        from pkcs11_check.raw.types_std import CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED
-        raw = RawPKCS11.from_lib("{module}")
-        raw.C_Initialize(None)
-        rv = raw.C_Initialize(None)
-        if rv == CKR_OK:
-            print("OK: second init succeeded")
-        elif rv == CKR_CRYPTOKI_ALREADY_INITIALIZED:
-            print("OK: CKR_CRYPTOKI_ALREADY_INITIALIZED")
-        else:
-            print(f"OK: 0x{{rv:08x}}")
-        raw.C_Finalize(None)
-        """
-        result = subprocess.run(
-            [sys.executable, "-c", textwrap.dedent(script)],
-            capture_output=True,
-            text=True,
+        result = run_probe(
+            "protocol_edge_cases",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "double_initialize",
+            },
             timeout=15,
+            coverage="session",
         )
         assert result.returncode == 0, f"Double init crashed: {result.stderr}"
         assert "OK:" in result.stdout

@@ -11,7 +11,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.pack import mech_ecdh
 from pkcs11_check.raw.recipes import (
     derive_key,
@@ -239,6 +239,7 @@ def test_ecdh(p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[s
         pytest.skip(f"Duplicate PKCS#11 ECDH operation input; covered by {duplicate_of}")
 
     curve = vec["_curve"]
+    set_params({"curve": curve})
     encoding_name = vec["_encoding"]
     try:
         oid = ec_params_for_curve(curve)

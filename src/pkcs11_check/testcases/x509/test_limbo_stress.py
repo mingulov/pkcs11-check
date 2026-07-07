@@ -81,7 +81,7 @@ def test_exhaustive_cert_import_no_crash(
             },
         )
     except AssertionError:
-        return  # Rejection on import is fine
+        return  # audit-ok: malformed input; clean rejection ok (isolation catches crashes)
 
     try:
         # Verify CKA_VALUE round-trips correctly.  If the module corrupts
@@ -106,7 +106,7 @@ def test_exhaustive_cert_import_no_crash(
         try:
             read_attributes(rs.raw, rs.sh, h, [CKA_SUBJECT, CKA_ISSUER, CKA_SERIAL_NUMBER])
         except AssertionError:
-            pass  # CKR error reading attrs is fine, crash is not
+            pass  # audit-ok: clean CKR error ok; a crash is caught by subprocess isolation
 
         # C_GetObjectSize may also trigger internal parsing.
         try:
@@ -147,7 +147,7 @@ def test_exhaustive_crl_import_no_crash(
             },
         )
     except AssertionError:
-        return  # Rejection or "not supported" is fine
+        return  # audit-ok: malformed input; rejection/unsupported ok (isolation catches crashes)
 
     try:
         # Verify CKA_VALUE round-trips correctly.

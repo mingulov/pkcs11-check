@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_pqc_private_key,
@@ -59,6 +59,13 @@ _PARAM_MAP: dict[int, int] = {
     CKP_ML_DSA_44: CKP_ML_DSA_44,
     CKP_ML_DSA_65: CKP_ML_DSA_65,
     CKP_ML_DSA_87: CKP_ML_DSA_87,
+}
+
+# Bare ML-DSA parameter-set labels for per-parameter-set report breakdown.
+_MLDSA_PARAM_LABELS: dict[int, str] = {
+    CKP_ML_DSA_44: "44",
+    CKP_ML_DSA_65: "65",
+    CKP_ML_DSA_87: "87",
 }
 
 # Only noseed vectors have raw private keys suitable for CKA_VALUE import.
@@ -122,6 +129,7 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_module_session: Any) -
     msg = bytes.fromhex(vec.get("msg", ""))
     result = vec["result"]
     private_key_bytes = bytes.fromhex(private_key_hex)
+    set_params({"mldsa": _MLDSA_PARAM_LABELS.get(vec.get("_parameter_set", -1), "")})
 
     if vec.get("ctx", ""):
         # This suite signs without transmitting the vector's context, so the

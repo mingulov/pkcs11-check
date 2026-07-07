@@ -12,7 +12,7 @@ from ctypes import byref
 from typing import Any
 
 from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
-from pkcs11_check.raw.pack import attr_bytes, mech_bytes, mech_simple
+from pkcs11_check.raw.pack import attr_bytes, mech_bytes, mech_simple, mech_ulong
 from pkcs11_check.raw.pack_mechanisms import (
     mech_ccm,
     mech_chacha20,
@@ -392,7 +392,7 @@ def build_test_params(mech_id: int, recipe: ParamRecipe) -> Any:
         return mech_eddsa(CKM(mech_id))
     elif style == "mac_general":
         mac_len = d.get("mac_len", 8)
-        return mech_bytes(CKM(mech_id), mac_len.to_bytes(8, "little"))
+        return mech_ulong(CKM(mech_id), mac_len)
     elif style == "pbe":
         password = b"test1234"
         salt = os.urandom(8)
@@ -1040,7 +1040,7 @@ def build_params_from_vector(mech_id: int, recipe: ParamRecipe, vec: dict[str, A
 
     if style == "mac_general":
         mac_len_general: int = vp.get("mac_len", d.get("mac_len", 8))
-        return mech_bytes(CKM(mech_id), mac_len_general.to_bytes(8, "little"))
+        return mech_ulong(CKM(mech_id), mac_len_general)
 
     if style == "chacha20_poly1305":
         iv_hex_cp: str | None = vp.get("iv_hex")

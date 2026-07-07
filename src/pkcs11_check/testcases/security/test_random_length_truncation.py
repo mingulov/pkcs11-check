@@ -29,21 +29,21 @@ from pkcs11_check.raw.types_std import (
     CKR_RANDOM_NO_RNG,
     CKR_RANDOM_SEED_NOT_SUPPORTED,
 )
-from pkcs11_check.testcases._subprocess_preamble import (
-    pin_from_config,
-    run_with_coverage,
-    subprocess_session_preamble,
-)
+from pkcs11_check.testcases._probes.runner import run_probe
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import classify_negative_rv
+from pkcs11_check.testcases.security._boundary_values import requires_64bit_ck_ulong
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
-pytestmark = [pytest.mark.security, pytest.mark.subprocess, pytest.mark.slow]
+pytestmark = [
+    pytest.mark.security,
+    pytest.mark.subprocess,
+    pytest.mark.slow,
+    requires_64bit_ck_ulong,
+]
 
 # 0x100000008: low 32 bits == 8, so a (int)/(word32) truncation writes only 8 bytes.
 _OVERSIZE_LEN = (1 << 32) + 8
-
-# 1 MiB is safely past both an (int) and a (word32) truncation of 0x100000008 (=8).
-_PROBE_OFFSET = 1 << 20
 
 # CKRs that constitute a conformant rejection of an oversized random length.
 _GENRAND_REJECT_RVSS = (
@@ -65,13 +65,6 @@ _SEEDRAND_REJECT_RVSS = (
     CKR_RANDOM_NO_RNG,
     CKR_RANDOM_SEED_NOT_SUPPORTED,
 )
-
-
-def _preamble(p11_config: Any) -> str:
-    return subprocess_session_preamble(
-        str(p11_config.module),
-        pin=pin_from_config(p11_config),
-    )
 
 
 def _parse_prefixed_int(output: str, prefix: str) -> int:
@@ -106,52 +99,33 @@ class TestGenerateRandomLengthTruncation:
         A 32-bit cast of ``ulRandomLen`` silently truncates to its low 32 bits,
         writing far fewer bytes than requested while returning ``CKR_OK``.
         """
-        body = f"""
-import ctypes
-import mmap as _mmap
-
-from pkcs11_check.raw.types_std import CKR_OK
-
-LEN = {_OVERSIZE_LEN}          # 0x100000008 -- low 32 bits = 8
-PROBE_OFF = {_PROBE_OFFSET}    # 1 MiB, past any 32-bit truncation
-
-mm = _mmap.mmap(
-    -1, LEN,
-    _mmap.MAP_PRIVATE | _mmap.MAP_ANONYMOUS,
-    _mmap.PROT_READ | _mmap.PROT_WRITE,
-)
-buf = (ctypes.c_ubyte * LEN).from_buffer(mm)
-
-rv = raw.C_GenerateRandom(sh, ctypes.cast(buf, ctypes.POINTER(ctypes.c_ubyte)), LEN)
-print("GENRAND_RV:0x%08x" % rv)
-
-if rv == CKR_OK:
-    sample = bytes(mm[PROBE_OFF : PROBE_OFF + 64])
-    underfill = 1 if sample == b"\\x00" * 64 else 0
-    print("UNDERFILL:%d" % underfill)
-
-# Release ctypes buffer before mmap; the OS reclaims the mapping at process exit.
-del buf
-mm = None
-cleanup()
-"""
-        script = _preamble(p11_config) + body
-        # Timeout: a truncating module measures ~0s; a correctly honoring module could take
-        # significant time filling 4 GiB.  180 s is generous for an honoring module
-        # while keeping slow CI bounded.
-        rc, stdout, stderr = run_with_coverage(script, timeout=180, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "random_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "generate",
+                "length": _OVERSIZE_LEN,
+            },
+            pin=pin_from_config(p11_config),
+            # Timeout: a truncating module measures ~0s; a correctly honoring module could
+            # take significant time filling 4 GiB.  180 s is generous for an honoring
+            # module while keeping slow CI bounded.
+            timeout=180,
+            coverage="session",
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context=f"C_GenerateRandom(ptr, len=0x{_OVERSIZE_LEN:x})",
         )
 
-        rv = _parse_prefixed_int(stdout, "GENRAND_RV:")
-        underfill = _parse_prefixed_int_optional(stdout, "UNDERFILL:")
+        rv = _parse_prefixed_int(result.stdout, "GENRAND_RV:")
+        underfill = _parse_prefixed_int_optional(result.stdout, "UNDERFILL:")
 
         assert rv != 0 or underfill is not None, (
-            f"GENRAND_RV=CKR_OK but UNDERFILL line missing: {stdout[-300:]}"
+            f"GENRAND_RV=CKR_OK but UNDERFILL line missing: {result.stdout[-300:]}"
         )
 
         if rv != 0:
@@ -202,37 +176,26 @@ class TestSeedRandomLengthTruncation:
         Seed-path length truncation cannot be distinguished from a full honor by
         return code alone; detection is limited to checking for a clean reject.
         """
-        body = f"""
-import ctypes
-import mmap as _mmap
-
-LEN = {_OVERSIZE_LEN}          # 0x100000008 -- low 32 bits = 8
-
-mm = _mmap.mmap(
-    -1, LEN,
-    _mmap.MAP_PRIVATE | _mmap.MAP_ANONYMOUS,
-    _mmap.PROT_READ | _mmap.PROT_WRITE,
-)
-buf = (ctypes.c_ubyte * LEN).from_buffer(mm)
-
-rv = raw.C_SeedRandom(sh, ctypes.cast(buf, ctypes.POINTER(ctypes.c_ubyte)), LEN)
-print("SEEDRAND_RV:0x%08x" % rv)
-
-# Release ctypes buffer before mmap; the OS reclaims the mapping at process exit.
-del buf
-mm = None
-cleanup()
-"""
-        script = _preamble(p11_config) + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=180, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "random_length",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "seed",
+                "length": _OVERSIZE_LEN,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=180,
+            coverage="session",
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context=f"C_SeedRandom(ptr, len=0x{_OVERSIZE_LEN:x})",
         )
 
-        rv = _parse_prefixed_int(stdout, "SEEDRAND_RV:")
+        rv = _parse_prefixed_int(result.stdout, "SEEDRAND_RV:")
 
         if rv != 0:
             # Module rejected the oversized seed length -- classify (pass or xfail).

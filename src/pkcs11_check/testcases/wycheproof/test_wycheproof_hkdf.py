@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.pack import mech_hkdf
 from pkcs11_check.raw.recipes import (
     derive_key,
@@ -96,6 +96,7 @@ def test_hkdf(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
     hash_mech = _SHA_HASH_MECHS.get(sha)
     if hash_mech is None:
         pytest.skip(f"No hash mechanism mapping for {sha}")
+    set_params({"hash": sha})
 
     # Import IKM as a generic secret key. The IKM is the subject key of the
     # advertised HKDF op (it is what the derive runs FROM), so its negotiated

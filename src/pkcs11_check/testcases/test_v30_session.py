@@ -15,8 +15,6 @@ Source: PKCS#11 v3.0 Sec.5.5  C_Login / C_LoginUser
 
 from __future__ import annotations
 
-import json
-import textwrap
 from typing import Any
 
 import pytest
@@ -51,8 +49,8 @@ from pkcs11_check.raw.types_std import (
     CKU_CONTEXT_SPECIFIC,
     CKU_USER,
 )
-from pkcs11_check.testcases._raw_subprocess import run_raw_script
-from pkcs11_check.testcases._subprocess_preamble import _P11CHECK_PIN_ENV
+from pkcs11_check.testcases._probes.runner import run_probe
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail
 
@@ -721,6 +719,31 @@ class TestLoginLogoutCycle:
 # ---------------------------------------------------------------------------
 
 
+def _run_cancel_after_digest_probe(p11_config: Any) -> tuple[int, str, str]:
+    """Run the ``v30_session`` cancel-after-digest probe and return (rc, stdout, stderr).
+
+    The child (``_probes/v30_session.py``) loads the module via raw ctypes, negotiates the
+    v3.0 interface exactly as the legacy inline script did, then drives
+    C_DigestInit -> C_SessionCancel(flags=0) -> C_DigestInit.  The raw CDLL path has no
+    RawPKCS11 coverage wrapper, so coverage routes to the raw accumulator
+    (``coverage="raw"``).  The PIN travels only via ``_P11CHECK_PIN`` (I3); the slot index is
+    the positional index into the discovered slot list (legacy ``p11_config.slot`` semantics).
+    """
+    slot_index = p11_config.slot if p11_config.slot is not None else 0
+    result = run_probe(
+        "v30_session",
+        {
+            "module_path": str(p11_config.module),
+            "probe": "cancel_after_digest_init",
+            "slot_index": slot_index,
+        },
+        pin=pin_from_config(p11_config),
+        timeout=15,
+        coverage="raw",
+    )
+    return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+
 @pytest.mark.needs_function("C_SessionCancel")
 class TestSessionCancel:
     """C_SessionCancel (v3.0+) cancels active cryptographic operations.
@@ -827,119 +850,7 @@ class TestSessionCancel:
         Source: PKCS#11 v3.0 Sec.5.15 - after C_SessionCancel, the session may
         be used for new operations without a C_Finalize/C_Initialize cycle.
         """
-        module_path = str(p11_config.module)
-        pin_value = p11_config.pin.get_secret_value() if p11_config.pin is not None else None
-        slot_index = p11_config.slot if p11_config.slot is not None else 0
-
-        boilerplate = textwrap.dedent(
-            f"""\
-            import ctypes
-            import os
-            from ctypes import c_ulong, c_ubyte, c_void_p, byref, pointer, POINTER
-            from pkcs11_check.raw.api import RawPKCS11
-            from pkcs11_check.raw.bootstrap import get_slot_ids
-            from pkcs11_check.raw.types_std import (
-                CK_MECHANISM, CK_NOTIFY, CKR_CRYPTOKI_ALREADY_INITIALIZED,
-                CKR_OK, CKR_FUNCTION_NOT_SUPPORTED, CKR_USER_ALREADY_LOGGED_IN,
-                CKF_SERIAL_SESSION, CKF_RW_SESSION, CKU_USER, CKM_SHA256,
-            )
-
-            # Load module and negotiate v3.0 interface for C_SessionCancel
-            lib = ctypes.CDLL({json.dumps(module_path)})
-            get_fl = lib.C_GetFunctionList
-            get_fl.restype = c_ulong
-            get_fl.argtypes = [POINTER(c_void_p)]
-            fl_ptr = c_void_p()
-            rv = get_fl(byref(fl_ptr))
-            assert rv == CKR_OK, f"C_GetFunctionList: 0x{{rv:08x}}"
-
-            fl3_val = 0
-            try:
-                get_iface = lib.C_GetInterface
-                get_iface.restype = c_ulong
-                get_iface.argtypes = [c_void_p, c_void_p, POINTER(c_void_p), c_ulong]
-                fl3_ptr = c_void_p()
-                rv = get_iface(None, None, byref(fl3_ptr), 0)
-                if rv == CKR_OK and fl3_ptr.value:
-                    fl3_val = fl3_ptr.value
-            except AttributeError:
-                pass  # Module does not export C_GetInterface
-
-            raw = RawPKCS11(fl_ptr.value, funclist3_ptr=fl3_val)
-            """
-        )
-
-        script = textwrap.dedent(
-            f"""\
-
-            rv = raw.C_Initialize(None)
-            assert rv in (  # audit-ok: init idempotency
-                CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED
-            ), f"C_Initialize: 0x{{rv:08x}}"
-
-            session_handle = c_ulong(0)
-            slot_ids = get_slot_ids(raw)
-            assert len(slot_ids) > {slot_index}, (
-                f"slot index {slot_index} unavailable; found {{len(slot_ids)}} slots"
-            )
-            rv = raw.C_OpenSession(
-                slot_ids[{slot_index}], CKF_SERIAL_SESSION | CKF_RW_SESSION,
-                None, CK_NOTIFY(), byref(session_handle),
-            )
-            assert rv == CKR_OK, f"C_OpenSession: 0x{{rv:08x}}"
-            hSession = session_handle.value
-
-            _pin = os.environ.get({json.dumps(_P11CHECK_PIN_ENV)})
-            if _pin:
-                pin = _pin.encode()
-                pin_buf = (c_ubyte * len(pin))(*pin)
-                rv = raw.C_Login(hSession, CKU_USER, pin_buf, len(pin))
-                assert rv in (  # audit-ok: login idempotency
-                    CKR_OK, CKR_USER_ALREADY_LOGGED_IN
-                ), f"C_Login: 0x{{rv:08x}}"
-
-            mech = CK_MECHANISM(CKM_SHA256, None, 0)
-            rv = raw.C_DigestInit(hSession, pointer(mech))
-            if rv != CKR_OK:
-                print(f"SKIP:C_DigestInit=0x{{rv:08x}}")
-                _p11check_cleanup_raw_subprocess()
-                exit(0)
-
-            # Attempt C_SessionCancel via RawPKCS11
-            try:
-                rv_cancel = raw.C_SessionCancel(hSession, 0)
-            except AttributeError:
-                print("CANCEL:NOT_AVAILABLE")
-                _p11check_cleanup_raw_subprocess()
-                exit(0)
-
-            if rv_cancel == CKR_OK:
-                print("CANCEL:OK")
-            elif rv_cancel == CKR_FUNCTION_NOT_SUPPORTED:
-                print("CANCEL:NOT_SUPPORTED")
-            else:
-                print(f"CANCEL:0x{{rv_cancel:08x}}")
-                _p11check_cleanup_raw_subprocess()
-                exit(0)
-
-            # Session should accept a new DigestInit after cancel.
-            rv2 = raw.C_DigestInit(hSession, pointer(mech))
-            if rv2 == CKR_OK:
-                print("REDIGEST:OK")
-            else:
-                print(f"REDIGEST:0x{{rv2:08x}}")
-
-            _p11check_cleanup_raw_subprocess()
-            """
-        )
-
-        rc, stdout, stderr = run_raw_script(
-            boilerplate,
-            script,
-            cleanup="raw.C_CloseSession(hSession)\nraw.C_Finalize(None)\n",
-            timeout=15,
-            pin=pin_value,
-        )
+        rc, stdout, stderr = _run_cancel_after_digest_probe(p11_config)
         assert_subprocess_completed(
             rc,
             stdout,

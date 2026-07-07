@@ -5,16 +5,24 @@ Each test runs in subprocess with a TEMPORARY throwaway token to avoid
 damaging the main test token.
 
 Marked @destructive - skipped unless --p11-destructive is passed.
+
+The destructive child logic lives in the ``ckr_destructive`` probe module
+(``_probes/ckr_destructive.py``), launched via ``run_probe`` at ``Level.INIT``; the parent
+mints a disposable token, points the module config at the child via the
+``PKCS11_CHECK_TOKEN_CONF_ENV``-named env var, and classifies the child's ``CKR:0x...`` line
+here (never inside the child) via ``_classify_destructive_ckr``.  These probes provision and
+log into their OWN throwaway token with hardcoded test SO/user PINs; the configured
+``p11_config`` PIN is never read, embedded, or forwarded (Invariant I3).
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
-import textwrap
+from collections.abc import Iterator
 
 import pytest
 
@@ -27,10 +35,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TOKEN_NOT_INITIALIZED,
     CKR_USER_NOT_LOGGED_IN,
 )
-from pkcs11_check.testcases.ckr._subprocess import (
-    ckr_subprocess_cleanup_setup,
-    ckr_subprocess_rv_trace_setup,
-)
+from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess, pytest.mark.destructive]
@@ -79,8 +84,33 @@ def _mint_throwaway_token() -> tuple[str, str, str] | None:
     return module_path, conf_path, token_dir
 
 
-def _run_destructive(test_code: str) -> tuple[int, str, str]:
-    """Run a destructive test against a temporary throwaway token."""
+@contextlib.contextmanager
+def _conf_env(conf_path: str) -> Iterator[None]:
+    """Point the module's config env var (PKCS11_CHECK_TOKEN_CONF_ENV) at ``conf_path``.
+
+    ``run_probe`` inherits the parent's ``os.environ`` into the child, so the module's
+    config file (e.g. ``SOFTHSM2_CONF``) is exposed to the child by temporarily setting the
+    named env var here and restoring it afterward. This carries the throwaway-token config
+    path only -- never a PIN (Invariant I3).
+    """
+    conf_env_var = os.environ.get("PKCS11_CHECK_TOKEN_CONF_ENV")
+    if not conf_env_var:
+        yield
+        return
+    had_prev = conf_env_var in os.environ
+    prev = os.environ.get(conf_env_var)
+    os.environ[conf_env_var] = conf_path
+    try:
+        yield
+    finally:
+        if had_prev and prev is not None:
+            os.environ[conf_env_var] = prev
+        else:
+            os.environ.pop(conf_env_var, None)
+
+
+def _run_destructive(probe: str) -> tuple[int, str, str]:
+    """Run a destructive probe against a temporary throwaway token."""
     mint_result = _mint_throwaway_token()
     if mint_result is None:
         pytest.skip(
@@ -88,50 +118,16 @@ def _run_destructive(test_code: str) -> tuple[int, str, str]:
             "(set PKCS11_CHECK_THROWAWAY_MODULE and PKCS11_CHECK_TOKEN_MINT_CMD)"
         )
     module, conf_path, token_dir = mint_result
-    script = (
-        textwrap.dedent(f"""\
-        import os, ctypes
-        from pkcs11_check.raw.api import RawPKCS11
-        from pkcs11_check.raw.types_std import (
-            CKR_OK, CKR_SESSION_EXISTS, CKR_PIN_INCORRECT,
-            CKR_PIN_LEN_RANGE, CKR_USER_NOT_LOGGED_IN, CKR_PIN_LOCKED,
-            CKR_PIN_TOO_WEAK, CKR_TOKEN_NOT_INITIALIZED, CKR_ARGUMENTS_BAD,
-            CKF_SERIAL_SESSION, CKF_RW_SESSION,
-        )
-        raw = RawPKCS11.from_lib("{module}")
-{ckr_subprocess_rv_trace_setup(indent="        ")}
-        raw.C_Initialize(None)
-        sc = ctypes.c_ulong(0)
-        raw.C_GetSlotList(1, None, ctypes.byref(sc))
-        sl = (ctypes.c_ulong * sc.value)()
-        raw.C_GetSlotList(1, sl, ctypes.byref(sc))
-        slot = sl[0]
-    """)
-        + textwrap.dedent(test_code)
-        + textwrap.dedent("""\
-        _p11check_cleanup = globals().get("_p11check_cleanup_session")
-        if _p11check_cleanup is not None:
-            _p11check_cleanup()
-        else:
-            raw.C_Finalize(None)
-    """)
-    )
-
-    env = os.environ.copy()
-    conf_env_var = os.environ.get("PKCS11_CHECK_TOKEN_CONF_ENV")
-    if conf_env_var:
-        env[conf_env_var] = conf_path
-
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env=env,
-    )
-
-    shutil.rmtree(token_dir, ignore_errors=True)
-
+    try:
+        with _conf_env(conf_path):
+            result = run_probe(
+                "ckr_destructive",
+                {"module_path": module, "probe": probe},
+                timeout=15,
+                coverage="session",
+            )
+    finally:
+        shutil.rmtree(token_dir, ignore_errors=True)
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 
@@ -140,27 +136,7 @@ class TestInitTokenErrors:
 
     def test_init_token_session_exists(self) -> None:
         """C_InitToken with open session -> CKR_SESSION_EXISTS."""
-        rc, out, err = _run_destructive(
-            """\
-# Open a session first
-sess = ctypes.c_ulong(0)
-rv = raw.C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess))
-assert rv == CKR_OK, f"OpenSession: 0x{rv:08x}"
-sh = sess.value
-"""
-            + ckr_subprocess_cleanup_setup()
-            + """\
-
-# Try InitToken with session open
-so_pin = b"87654321"
-so_pin_buf = (ctypes.c_ubyte * len(so_pin))(*so_pin)
-label = b"reinit-test     "  # 32 bytes padded
-label_buf = (ctypes.c_ubyte * 32)(*label.ljust(32))
-rv = raw.C_InitToken(slot, so_pin_buf, len(so_pin), label_buf)
-print(f"CKR:0x{rv:08x}")
-print("OK")
-"""
-        )
+        rc, out, err = _run_destructive("init_token_session_exists")
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
         _classify_destructive_ckr(
@@ -169,15 +145,7 @@ print("OK")
 
     def test_init_token_wrong_so_pin(self) -> None:
         """C_InitToken with wrong SO PIN -> CKR_PIN_INCORRECT."""
-        rc, out, err = _run_destructive("""\
-wrong_pin = b"WRONGPIN"
-pin_buf = (ctypes.c_ubyte * len(wrong_pin))(*wrong_pin)
-label = b"reinit-test     "
-label_buf = (ctypes.c_ubyte * 32)(*label.ljust(32))
-rv = raw.C_InitToken(slot, pin_buf, len(wrong_pin), label_buf)
-print(f"CKR:0x{rv:08x}")
-print("OK")
-""")
+        rc, out, err = _run_destructive("init_token_wrong_so_pin")
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
         _classify_destructive_ckr(
@@ -190,27 +158,7 @@ class TestSetPINErrors:
 
     def test_set_pin_wrong_old(self) -> None:
         """C_SetPIN with wrong old PIN -> CKR_PIN_INCORRECT."""
-        rc, out, err = _run_destructive(
-            """\
-sess = ctypes.c_ulong(0)
-rv = raw.C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess))
-assert rv == CKR_OK
-sh = sess.value
-"""
-            + ckr_subprocess_cleanup_setup()
-            + """\
-# Login with correct PIN first
-pin = b"1234"
-raw.C_Login(sh, 1, (ctypes.c_ubyte * 4)(*pin), 4)
-# Try SetPIN with wrong old PIN
-wrong = b"WRONG"
-new_pin = b"5678"
-rv = raw.C_SetPIN(sh, (ctypes.c_ubyte * 5)(*wrong), 5, (ctypes.c_ubyte * 4)(*new_pin), 4)
-print(f"CKR:0x{rv:08x}")
-print("OK")
-raw.C_Logout(sh)
-"""
-        )
+        rc, out, err = _run_destructive("set_pin_wrong_old")
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
         _classify_destructive_ckr(out, (CKR_PIN_INCORRECT,), label="C_SetPIN with a wrong old PIN")
@@ -221,22 +169,7 @@ class TestInitPINErrors:
 
     def test_init_pin_not_logged_in(self) -> None:
         """C_InitPIN without SO login -> CKR_USER_NOT_LOGGED_IN."""
-        rc, out, err = _run_destructive(
-            """\
-sess = ctypes.c_ulong(0)
-rv = raw.C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess))
-assert rv == CKR_OK
-sh = sess.value
-"""
-            + ckr_subprocess_cleanup_setup()
-            + """\
-# Don't login - try InitPIN
-new_pin = b"9999"
-rv = raw.C_InitPIN(sh, (ctypes.c_ubyte * 4)(*new_pin), 4)
-print(f"CKR:0x{rv:08x}")
-print("OK")
-"""
-        )
+        rc, out, err = _run_destructive("init_pin_not_logged_in")
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
         _classify_destructive_ckr(
@@ -245,27 +178,7 @@ print("OK")
 
     def test_init_pin_short_pin(self) -> None:
         """C_InitPIN with 1-byte PIN -> CKR_PIN_TOO_WEAK or related PIN error."""
-        rc, out, err = _run_destructive(
-            """\
-sess = ctypes.c_ulong(0)
-rv = raw.C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess))
-assert rv == CKR_OK
-sh = sess.value
-"""
-            + ckr_subprocess_cleanup_setup()
-            + """\
-# Login as SO
-so_pin = b"87654321"
-rv = raw.C_Login(sh, 0, (ctypes.c_ubyte * len(so_pin))(*so_pin), len(so_pin))
-assert rv == CKR_OK, f"SO login failed: 0x{rv:08x}"
-# Try InitPIN with a 1-byte PIN
-short_pin = b"X"
-rv = raw.C_InitPIN(sh, (ctypes.c_ubyte * 1)(*short_pin), 1)
-print(f"CKR:0x{rv:08x}")
-print("OK")
-raw.C_Logout(sh)
-"""
-        )
+        rc, out, err = _run_destructive("init_pin_short_pin")
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
         _classify_destructive_ckr(
@@ -276,7 +189,8 @@ raw.C_Logout(sh)
 
     def test_init_pin_token_not_initialized(self) -> None:
         """C_InitPIN on uninitialized token -> CKR_TOKEN_NOT_INITIALIZED."""
-        if not os.environ.get("PKCS11_CHECK_THROWAWAY_MODULE"):
+        module = os.environ.get("PKCS11_CHECK_THROWAWAY_MODULE")
+        if not module:
             pytest.skip("throwaway module not configured (PKCS11_CHECK_THROWAWAY_MODULE unset)")
         token_dir = tempfile.mkdtemp(prefix="pkcs11_check_ckr_uninit_")
         # This test writes a file-based uninitialized-token config and therefore
@@ -287,60 +201,19 @@ raw.C_Logout(sh)
             f.write("objectstore.backend = file\n")
         os.makedirs(os.path.join(token_dir, "tokens"), exist_ok=True)
 
-        env = os.environ.copy()
-        conf_env_var = os.environ.get("PKCS11_CHECK_TOKEN_CONF_ENV")
-        if conf_env_var:
-            env[conf_env_var] = conf_path
-        script = textwrap.dedent(f"""\
-        import os, ctypes
-        from pkcs11_check.raw.api import RawPKCS11
-        from pkcs11_check.raw.types_std import (
-            CKR_OK, CKR_TOKEN_NOT_INITIALIZED, CKR_SLOT_ID_INVALID,
-            CKF_SERIAL_SESSION, CKF_RW_SESSION,
-        )
-        raw = RawPKCS11.from_lib(os.environ["PKCS11_CHECK_THROWAWAY_MODULE"])
-{ckr_subprocess_rv_trace_setup(indent="        ")}
-        raw.C_Initialize(None)
-        sc = ctypes.c_ulong(0)
-        rv = raw.C_GetSlotList(1, None, ctypes.byref(sc))
-        if rv != CKR_OK:
-            print(f"CKR:0x{{rv:08x}}")
-            raw.C_Finalize(None)
-            exit(0)
-        sl = (ctypes.c_ulong * sc.value)()
-        raw.C_GetSlotList(1, sl, ctypes.byref(sc))
-        if sc.value == 0:
-            print("NO_SLOTS")
-            raw.C_Finalize(None)
-            exit(0)
-        slot = sl[0]
-        sess = ctypes.c_ulong(0)
-        rv = raw.C_OpenSession(
-            slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess)
-        )
-        if rv != CKR_OK:
-            print(f"CKR:0x{{rv:08x}}")
-            raw.C_Finalize(None)
-            exit(0)
-        sh = sess.value
-{ckr_subprocess_cleanup_setup(indent="        ")}
-        new_pin = b"1234"
-        rv = raw.C_InitPIN(sh, (ctypes.c_ubyte * 4)(*new_pin), 4)
-        print(f"CKR:0x{{rv:08x}}")
-        print("OK")
-        _p11check_cleanup_session()
-        """)
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            env=env,
-        )
-        shutil.rmtree(token_dir, ignore_errors=True)
+        try:
+            with _conf_env(conf_path):
+                result = run_probe(
+                    "ckr_destructive",
+                    {"module_path": module, "probe": "init_pin_token_not_initialized"},
+                    timeout=15,
+                    coverage="session",
+                )
+        finally:
+            shutil.rmtree(token_dir, ignore_errors=True)
 
         if result.returncode != 0:
-            assert False, f"Crash: {result.stderr[-300:]}"
+            raise AssertionError(f"Crash: {result.stderr[-300:]}")
         if "NO_SLOTS" in result.stdout:
             pytest.skip("No slots available on uninitialized token")
         assert "OK" in result.stdout

@@ -1,8 +1,7 @@
 """API boundary tests -- crash-safe probes for invalid handles, NULL pointers, and edge-case inputs.
 
-All tests run in subprocess for crash safety. Each test builds a script string,
-executes it via run_with_coverage(), and checks that the module did not crash
-(negative returncode = killed by signal).
+All tests run in subprocess for crash safety. Each test launches a probe via
+run_probe() and checks that the module did not crash (negative returncode = killed by signal).
 
 Covers:
 - Session handle boundary values (0, ULONG_MAX)
@@ -17,6 +16,7 @@ Covers:
 
 from __future__ import annotations
 
+import ctypes
 from typing import Any
 
 import pytest
@@ -27,11 +27,8 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VERIFY,
 )
-from pkcs11_check.testcases._subprocess_preamble import (
-    pin_from_config,
-    run_with_coverage,
-    subprocess_session_preamble,
-)
+from pkcs11_check.testcases._probes.runner import run_probe
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import (
     destroy_returned_handles,
     gen_aes_key_or_xfail,
@@ -42,16 +39,9 @@ from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess]
 
-# 64-bit CK_ULONG max -- used as literal in subprocess script strings
-_CK_ULONG_MAX_64 = 0xFFFFFFFFFFFFFFFF
-
-
-def _preamble(p11_config: Any) -> str:
-    """Build subprocess session preamble from p11_config."""
-    return subprocess_session_preamble(
-        str(p11_config.module),
-        pin=p11_config.pin.get_secret_value() if p11_config.pin else None,
-    )
+# CK_ULONG max for the host ABI (2^64-1 on LP64, 2^32-1 on Win64 LLP64). Used as a
+# literal in subprocess script strings, so it must fit the child's CK_ULONG width.
+_CK_ULONG_MAX = ctypes.c_ulong(-1).value
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +59,7 @@ class TestSessionHandleBoundary:
     _SESSION_FUNCTIONS = ["C_GetSessionInfo", "C_CloseSession", "C_GetOperationState"]
     _BOUNDARY_HANDLES = [
         pytest.param(0, id="zero"),
-        pytest.param(_CK_ULONG_MAX_64, id="max"),
+        pytest.param(_CK_ULONG_MAX, id="max"),
     ]
 
     @pytest.mark.parametrize("func_name", _SESSION_FUNCTIONS)
@@ -80,39 +70,22 @@ class TestSessionHandleBoundary:
         func_name: str,
         handle: int,
     ) -> None:
-        preamble = _preamble(p11_config)
-        if func_name == "C_GetSessionInfo":
-            body = f"""
-import ctypes
-from pkcs11_check.raw.types_std import CK_SESSION_INFO
-info = CK_SESSION_INFO()
-rv = raw.C_GetSessionInfo({handle}, ctypes.byref(info))
-print(f"rv={{rv}}")
-cleanup()
-"""
-        elif func_name == "C_CloseSession":
-            body = f"""
-rv = raw.C_CloseSession({handle})
-print(f"rv={{rv}}")
-cleanup()
-"""
-        elif func_name == "C_GetOperationState":
-            body = f"""
-import ctypes
-from pkcs11_check.raw.types_std import CK_ULONG
-out_len = CK_ULONG(0)
-rv = raw.C_GetOperationState({handle}, None, ctypes.byref(out_len))
-print(f"rv={{rv}}")
-cleanup()
-"""
-        else:
-            raise ValueError(f"Unhandled function: {func_name}")
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "api_boundary",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "session_handle",
+                "func_name": func_name,
+                "handle": handle,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context=f"{func_name}(handle={handle:#x})",
         )
 
@@ -137,7 +110,7 @@ class TestObjectHandleBoundary:
     ]
     _BOUNDARY_HANDLES = [
         pytest.param(0, id="zero"),
-        pytest.param(_CK_ULONG_MAX_64, id="max"),
+        pytest.param(_CK_ULONG_MAX, id="max"),
     ]
 
     @pytest.mark.parametrize("func_name", _OBJECT_FUNCTIONS)
@@ -148,55 +121,22 @@ class TestObjectHandleBoundary:
         func_name: str,
         handle: int,
     ) -> None:
-        preamble = _preamble(p11_config)
-        if func_name == "C_GetAttributeValue":
-            body = f"""
-import ctypes
-from pkcs11_check.raw.types_std import CK_ATTRIBUTE, CKA_CLASS
-attr = CK_ATTRIBUTE()
-attr.type = CKA_CLASS
-attr.pValue = None
-attr.ulValueLen = 0
-rv = raw.C_GetAttributeValue(sh, {handle}, ctypes.pointer(attr), 1)
-print(f"rv={{rv}}")
-cleanup()
-"""
-        elif func_name == "C_SetAttributeValue":
-            body = f"""
-import ctypes
-from pkcs11_check.raw.types_std import CK_ATTRIBUTE, CKA_TOKEN
-val = ctypes.c_ubyte(0)
-attr = CK_ATTRIBUTE()
-attr.type = CKA_TOKEN
-attr.pValue = ctypes.cast(ctypes.pointer(val), ctypes.c_void_p)
-attr.ulValueLen = 1
-rv = raw.C_SetAttributeValue(sh, {handle}, ctypes.pointer(attr), 1)
-print(f"rv={{rv}}")
-cleanup()
-"""
-        elif func_name == "C_DestroyObject":
-            body = f"""
-rv = raw.C_DestroyObject(sh, {handle})
-print(f"rv={{rv}}")
-cleanup()
-"""
-        elif func_name == "C_CopyObject":
-            body = f"""
-import ctypes
-from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE
-new_handle = CK_OBJECT_HANDLE(0)
-rv = raw.C_CopyObject(sh, {handle}, None, 0, ctypes.byref(new_handle))
-print(f"rv={{rv}}")
-cleanup()
-"""
-        else:
-            raise ValueError(f"Unhandled function: {func_name}")
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "api_boundary",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "object_handle",
+                "func_name": func_name,
+                "handle": handle,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context=f"{func_name}(object_handle={handle:#x})",
         )
 
@@ -227,28 +167,21 @@ class TestNullMechanismInit:
         p11_config: Any,
         func_name: str,
     ) -> None:
-        preamble = _preamble(p11_config)
-        if func_name == "C_DigestInit":
-            # C_DigestInit(session, mechanism_ptr) -- no key argument
-            body = """
-rv = raw.C_DigestInit(sh, None)
-print(f"rv={rv}")
-cleanup()
-"""
-        else:
-            # C_EncryptInit/DecryptInit/SignInit/VerifyInit(session, mech_ptr, key)
-            # Use key handle 0 -- the NULL mechanism should be rejected first
-            body = f"""
-rv = raw.{func_name}(sh, None, 0)
-print(f"rv={{rv}}")
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "api_boundary",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "null_mechanism_init",
+                "func_name": func_name,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context=f"{func_name}(mechanism=NULL)",
         )
 
@@ -278,24 +211,21 @@ class TestMechanismParamNullWithLength:
         p11_config: Any,
         func_name: str,
     ) -> None:
-        preamble = _preamble(p11_config)
-        body = f"""
-import ctypes
-from pkcs11_check.raw.types_std import CK_MECHANISM, CKM_AES_CBC
-mech = CK_MECHANISM()
-mech.mechanism = CKM_AES_CBC
-mech.pParameter = None              # NULL pointer
-mech.ulParameterLen = 16             # Non-zero length -- mismatch!
-rv = raw.{func_name}(sh, ctypes.byref(mech), 0)
-print(f"rv={{rv}}")
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "api_boundary",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "mechanism_param_null",
+                "func_name": func_name,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context=f"{func_name}(pParameter=NULL, ulParameterLen=16)",
         )
 
@@ -325,49 +255,21 @@ class TestNullTemplateNonzeroCount:
         p11_config: Any,
         func_name: str,
     ) -> None:
-        preamble = _preamble(p11_config)
-        if func_name == "C_CreateObject":
-            body = """
-import ctypes
-from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE
-obj = CK_OBJECT_HANDLE(0)
-rv = raw.C_CreateObject(sh, None, 5, ctypes.byref(obj))
-print(f"rv={rv}")
-cleanup()
-"""
-        elif func_name == "C_FindObjectsInit":
-            body = """
-rv = raw.C_FindObjectsInit(sh, None, 5)
-print(f"rv={rv}")
-cleanup()
-"""
-        elif func_name == "C_GenerateKey":
-            body = """
-import ctypes
-from pkcs11_check.raw.types_std import CK_MECHANISM, CKM_AES_KEY_GEN, CK_OBJECT_HANDLE
-mech = CK_MECHANISM()
-mech.mechanism = CKM_AES_KEY_GEN
-mech.pParameter = None
-mech.ulParameterLen = 0
-key = CK_OBJECT_HANDLE(0)
-rv = raw.C_GenerateKey(sh, ctypes.byref(mech), None, 5, ctypes.byref(key))
-print(f"rv={rv}")
-cleanup()
-"""
-        elif func_name == "C_SetAttributeValue":
-            body = """
-rv = raw.C_SetAttributeValue(sh, 0, None, 5)
-print(f"rv={rv}")
-cleanup()
-"""
-        else:
-            raise ValueError(f"Unhandled function: {func_name}")
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "api_boundary",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "null_template",
+                "func_name": func_name,
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context=f"{func_name}(template=NULL, count=5)",
         )
 
@@ -406,7 +308,7 @@ class TestZeroLengthData:
         rs = p11_raw_session
         if not rs.has_mechanism(mech_check):
             pytest.skip(f"CKM_{mech_check} not supported")
-        preamble = _preamble(p11_config)
+
         if operation in ("encrypt", "decrypt") and "AES" in mech_name:
             setup_key = gen_aes_key_or_xfail(
                 rs,
@@ -414,43 +316,18 @@ class TestZeroLengthData:
                 purpose=f"{operation} zero-length {mech_name} crash probe setup",
             )
             destroy_returned_handles(rs, setup_key)
-            c_func = "C_Encrypt" if operation == "encrypt" else "C_Decrypt"
-            init_func = f"{c_func}Init"
-            iv_setup = ""
-            if "CBC" in mech_name:
-                iv_setup = """\
-    iv = (ctypes.c_ubyte * 16)(*range(16))
-    mech.pParameter = ctypes.cast(ctypes.pointer(iv), ctypes.c_void_p)
-    mech.ulParameterLen = 16
-"""
-            body = f"""
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, {mech_name}, CK_ULONG, CKR_OK,
-    CKA_ENCRYPT, CKA_DECRYPT, CKA_TOKEN, CKA_VALUE_LEN, CKM_AES_KEY_GEN,
-)
-from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
-
-key = gen_aes_key(raw, sh, 256)
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = {mech_name}
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-{iv_setup}
-    rv = raw.{init_func}(sh, ctypes.byref(mech), key)
-    print(f"init_rv={{rv}}")
-    if rv == CKR_OK:
-        out_len = CK_ULONG(256)
-        out_buf = (ctypes.c_ubyte * 256)()
-        rv2 = raw.{c_func}(sh, None, 0, out_buf, ctypes.byref(out_len))
-        print(f"rv={{rv2}}")
-    else:
-        print(f"rv={{rv}}")
-finally:
-    destroy_quietly(raw, sh, key)
-cleanup()
-"""
+            result = run_probe(
+                "api_boundary",
+                {
+                    "module_path": str(p11_config.module),
+                    "slot_id": p11_config.slot,
+                    "which": "zero_length_aes",
+                    "operation": operation,
+                    "mech_name": mech_name,
+                },
+                pin=pin_from_config(p11_config),
+                timeout=15,
+            )
         elif operation == "sign" and "RSA" in mech_name:
             pub, priv = gen_rsa_keypair_or_xfail(
                 rs,
@@ -459,37 +336,16 @@ cleanup()
                 public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
             )
             destroy_returned_handles(rs, pub, priv)
-            body = f"""
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, {mech_name}, CK_ULONG, CKR_OK,
-)
-from pkcs11_check.raw.recipes import gen_rsa_keypair, destroy_quietly
-from pkcs11_check.raw.types_std import CKA_SIGN, CKA_TOKEN, CKA_VERIFY
-
-pub, priv = gen_rsa_keypair(raw, sh, 2048,
-    private_attrs={{CKA_SIGN: True, CKA_TOKEN: False}},
-    public_attrs={{CKA_VERIFY: True, CKA_TOKEN: False}},
-)
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = {mech_name}
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_SignInit(sh, ctypes.byref(mech), priv)
-    print(f"init_rv={{rv}}")
-    if rv == CKR_OK:
-        sig_len = CK_ULONG(512)
-        sig_buf = (ctypes.c_ubyte * 512)()
-        rv2 = raw.C_Sign(sh, None, 0, sig_buf, ctypes.byref(sig_len))
-        print(f"rv={{rv2}}")
-    else:
-        print(f"rv={{rv}}")
-finally:
-    destroy_quietly(raw, sh, pub)
-    destroy_quietly(raw, sh, priv)
-cleanup()
-"""
+            result = run_probe(
+                "api_boundary",
+                {
+                    "module_path": str(p11_config.module),
+                    "slot_id": p11_config.slot,
+                    "which": "zero_length_rsa",
+                },
+                pin=pin_from_config(p11_config),
+                timeout=15,
+            )
         elif operation == "sign" and "ECDSA" in mech_name:
             curve_oid = encode_named_curve_parameters("secp256r1")
             pub, priv = gen_ec_keypair_or_xfail(
@@ -498,46 +354,23 @@ cleanup()
                 private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
             )
             destroy_returned_handles(rs, pub, priv)
-            body = f"""
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, {mech_name}, CK_ULONG, CKR_OK,
-    CKA_SIGN, CKA_TOKEN, CKA_VERIFY,
-)
-from pkcs11_check.raw.recipes import gen_ec_keypair, destroy_quietly
-from pkcs11_check.raw.ec import encode_named_curve_parameters
-
-curve_oid = encode_named_curve_parameters("secp256r1")
-pub, priv = gen_ec_keypair(raw, sh, curve_oid,
-    private_attrs={{CKA_SIGN: True, CKA_TOKEN: False}},
-)
-try:
-    mech = CK_MECHANISM()
-    mech.mechanism = {mech_name}
-    mech.pParameter = None
-    mech.ulParameterLen = 0
-    rv = raw.C_SignInit(sh, ctypes.byref(mech), priv)
-    print(f"init_rv={{rv}}")
-    if rv == CKR_OK:
-        sig_len = CK_ULONG(256)
-        sig_buf = (ctypes.c_ubyte * 256)()
-        rv2 = raw.C_Sign(sh, None, 0, sig_buf, ctypes.byref(sig_len))
-        print(f"rv={{rv2}}")
-    else:
-        print(f"rv={{rv}}")
-finally:
-    destroy_quietly(raw, sh, pub)
-    destroy_quietly(raw, sh, priv)
-cleanup()
-"""
+            result = run_probe(
+                "api_boundary",
+                {
+                    "module_path": str(p11_config.module),
+                    "slot_id": p11_config.slot,
+                    "which": "zero_length_ecdsa",
+                },
+                pin=pin_from_config(p11_config),
+                timeout=15,
+            )
         else:
             raise ValueError(f"Unhandled: operation={operation}, mech_name={mech_name}")
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=15, pin=pin_from_config(p11_config))
+
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context=f"{operation}(mechanism={mech_name}, data_len=0)",
         )
 
@@ -555,22 +388,20 @@ class TestLoginNullPin:
     """
 
     def test_login_null_pin_nonzero_length(self, p11_config: Any) -> None:
-        preamble = subprocess_session_preamble(
-            str(p11_config.module),
+        result = run_probe(
+            "api_boundary",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "login_null_pin",
+            },
             pin=None,  # Don't auto-login -- we're testing C_Login directly
+            timeout=10,
         )
-        body = """
-from pkcs11_check.raw.types_std import CKU_USER
-rv = raw.C_Login(sh, int(CKU_USER), None, 8)
-print(f"rv={rv}")
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context="C_Login(pin=NULL, pin_len=8)",
         )
 
@@ -590,67 +421,20 @@ class TestGenerateRsaExtremeKeySize:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA keygen not supported")
-        preamble = _preamble(p11_config)
-        body = """
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_RSA_PKCS_KEY_PAIR_GEN, CK_OBJECT_HANDLE,
-    CK_ATTRIBUTE, CKA_MODULUS_BITS, CKA_TOKEN, CKA_ENCRYPT,
-    CKA_DECRYPT, CKA_PUBLIC_EXPONENT,
-)
-
-mech = CK_MECHANISM()
-mech.mechanism = CKM_RSA_PKCS_KEY_PAIR_GEN
-mech.pParameter = None
-mech.ulParameterLen = 0
-
-# CKA_MODULUS_BITS = 0xFFFFFFFF (extreme)
-bits_val = ctypes.c_ulong(0xFFFFFFFF)
-exp_bytes = (ctypes.c_ubyte * 3)(0x01, 0x00, 0x01)  # 65537
-token_false = ctypes.c_ubyte(0)
-
-pub_attrs = (CK_ATTRIBUTE * 4)()
-pub_attrs[0].type = CKA_MODULUS_BITS
-pub_attrs[0].pValue = ctypes.cast(ctypes.pointer(bits_val), ctypes.c_void_p)
-pub_attrs[0].ulValueLen = ctypes.sizeof(bits_val)
-pub_attrs[1].type = CKA_PUBLIC_EXPONENT
-pub_attrs[1].pValue = ctypes.cast(ctypes.pointer(exp_bytes), ctypes.c_void_p)
-pub_attrs[1].ulValueLen = 3
-pub_attrs[2].type = CKA_TOKEN
-pub_attrs[2].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
-pub_attrs[2].ulValueLen = 1
-pub_attrs[3].type = CKA_ENCRYPT
-enc_true = ctypes.c_ubyte(1)
-pub_attrs[3].pValue = ctypes.cast(ctypes.pointer(enc_true), ctypes.c_void_p)
-pub_attrs[3].ulValueLen = 1
-
-priv_attrs = (CK_ATTRIBUTE * 2)()
-priv_token = ctypes.c_ubyte(0)
-priv_attrs[0].type = CKA_TOKEN
-priv_attrs[0].pValue = ctypes.cast(ctypes.pointer(priv_token), ctypes.c_void_p)
-priv_attrs[0].ulValueLen = 1
-dec_true = ctypes.c_ubyte(1)
-priv_attrs[1].type = CKA_DECRYPT
-priv_attrs[1].pValue = ctypes.cast(ctypes.pointer(dec_true), ctypes.c_void_p)
-priv_attrs[1].ulValueLen = 1
-
-pub_h = CK_OBJECT_HANDLE(0)
-priv_h = CK_OBJECT_HANDLE(0)
-rv = raw.C_GenerateKeyPair(
-    sh, ctypes.byref(mech),
-    ctypes.cast(pub_attrs, ctypes.POINTER(CK_ATTRIBUTE)), 4,
-    ctypes.cast(priv_attrs, ctypes.POINTER(CK_ATTRIBUTE)), 2,
-    ctypes.byref(pub_h), ctypes.byref(priv_h),
-)
-print(f"rv={rv}")
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=5, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "api_boundary",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "generate_rsa_extreme",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=5,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context="C_GenerateKeyPair(CKA_MODULUS_BITS=0xFFFFFFFF)",
         )
 
@@ -669,67 +453,20 @@ class TestGenerateRsaZeroKeySize:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA keygen not supported")
-        preamble = _preamble(p11_config)
-        body = """
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_RSA_PKCS_KEY_PAIR_GEN, CK_OBJECT_HANDLE,
-    CK_ATTRIBUTE, CKA_MODULUS_BITS, CKA_TOKEN,
-    CKA_ENCRYPT, CKA_DECRYPT, CKA_PUBLIC_EXPONENT,
-)
-
-mech = CK_MECHANISM()
-mech.mechanism = CKM_RSA_PKCS_KEY_PAIR_GEN
-mech.pParameter = None
-mech.ulParameterLen = 0
-
-# CKA_MODULUS_BITS = 0
-bits_val = ctypes.c_ulong(0)
-exp_bytes = (ctypes.c_ubyte * 3)(0x01, 0x00, 0x01)  # 65537
-token_false = ctypes.c_ubyte(0)
-
-pub_attrs = (CK_ATTRIBUTE * 4)()
-pub_attrs[0].type = CKA_MODULUS_BITS
-pub_attrs[0].pValue = ctypes.cast(ctypes.pointer(bits_val), ctypes.c_void_p)
-pub_attrs[0].ulValueLen = ctypes.sizeof(bits_val)
-pub_attrs[1].type = CKA_PUBLIC_EXPONENT
-pub_attrs[1].pValue = ctypes.cast(ctypes.pointer(exp_bytes), ctypes.c_void_p)
-pub_attrs[1].ulValueLen = 3
-pub_attrs[2].type = CKA_TOKEN
-pub_attrs[2].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
-pub_attrs[2].ulValueLen = 1
-pub_attrs[3].type = CKA_ENCRYPT
-enc_true = ctypes.c_ubyte(1)
-pub_attrs[3].pValue = ctypes.cast(ctypes.pointer(enc_true), ctypes.c_void_p)
-pub_attrs[3].ulValueLen = 1
-
-priv_attrs = (CK_ATTRIBUTE * 2)()
-priv_token = ctypes.c_ubyte(0)
-priv_attrs[0].type = CKA_TOKEN
-priv_attrs[0].pValue = ctypes.cast(ctypes.pointer(priv_token), ctypes.c_void_p)
-priv_attrs[0].ulValueLen = 1
-dec_true = ctypes.c_ubyte(1)
-priv_attrs[1].type = CKA_DECRYPT
-priv_attrs[1].pValue = ctypes.cast(ctypes.pointer(dec_true), ctypes.c_void_p)
-priv_attrs[1].ulValueLen = 1
-
-pub_h = CK_OBJECT_HANDLE(0)
-priv_h = CK_OBJECT_HANDLE(0)
-rv = raw.C_GenerateKeyPair(
-    sh, ctypes.byref(mech),
-    ctypes.cast(pub_attrs, ctypes.POINTER(CK_ATTRIBUTE)), 4,
-    ctypes.cast(priv_attrs, ctypes.POINTER(CK_ATTRIBUTE)), 2,
-    ctypes.byref(pub_h), ctypes.byref(priv_h),
-)
-print(f"rv={rv}")
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=10, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "api_boundary",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "generate_rsa_zero",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=10,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
             context="C_GenerateKeyPair(CKA_MODULUS_BITS=0)",
         )
 
@@ -749,49 +486,19 @@ class TestGenerateAesExtremeKeySize:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES keygen not supported")
-        preamble = _preamble(p11_config)
-        body = f"""
-import ctypes
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM, CKM_AES_KEY_GEN, CK_OBJECT_HANDLE,
-    CK_ATTRIBUTE, CKA_VALUE_LEN, CKA_TOKEN, CKA_ENCRYPT,
-)
-
-mech = CK_MECHANISM()
-mech.mechanism = CKM_AES_KEY_GEN
-mech.pParameter = None
-mech.ulParameterLen = 0
-
-# CKA_VALUE_LEN = ULONG_MAX
-val_len = ctypes.c_ulong({_CK_ULONG_MAX_64})
-token_false = ctypes.c_ubyte(0)
-enc_true = ctypes.c_ubyte(1)
-
-attrs = (CK_ATTRIBUTE * 3)()
-attrs[0].type = CKA_VALUE_LEN
-attrs[0].pValue = ctypes.cast(ctypes.pointer(val_len), ctypes.c_void_p)
-attrs[0].ulValueLen = ctypes.sizeof(val_len)
-attrs[1].type = CKA_TOKEN
-attrs[1].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
-attrs[1].ulValueLen = 1
-attrs[2].type = CKA_ENCRYPT
-attrs[2].pValue = ctypes.cast(ctypes.pointer(enc_true), ctypes.c_void_p)
-attrs[2].ulValueLen = 1
-
-key = CK_OBJECT_HANDLE(0)
-rv = raw.C_GenerateKey(
-    sh, ctypes.byref(mech),
-    ctypes.cast(attrs, ctypes.POINTER(CK_ATTRIBUTE)), 3,
-    ctypes.byref(key),
-)
-print(f"rv={{rv}}")
-cleanup()
-"""
-        script = preamble + body
-        rc, stdout, stderr = run_with_coverage(script, timeout=5, pin=pin_from_config(p11_config))
+        result = run_probe(
+            "api_boundary",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "which": "generate_aes_extreme",
+            },
+            pin=pin_from_config(p11_config),
+            timeout=5,
+        )
         assert_subprocess_no_crash(
-            rc,
-            stdout,
-            stderr,
-            context=f"C_GenerateKey(CKA_VALUE_LEN={_CK_ULONG_MAX_64:#x})",
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context=f"C_GenerateKey(CKA_VALUE_LEN={_CK_ULONG_MAX:#x})",
         )

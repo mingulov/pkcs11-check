@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, fail_as, xfail_as
+from pkcs11_check.classification import classify, fail_as, set_params, xfail_as
 from pkcs11_check.raw.pack import attr_bytes
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -211,6 +211,7 @@ class TestEdDsaKeyGen:
         if not rs.has_mechanism("EC_EDWARDS_KEY_PAIR_GEN"):
             pytest.skip("EC_EDWARDS_KEY_PAIR_GEN not supported by module")
         skip_duplicate_pkcs11_input(vec, "EdDSA KeyGen")
+        set_params({"curve": vec.get("curve", "")})
 
         pub_key = priv_key = 0
         try:
@@ -255,6 +256,7 @@ class TestEdDsaKeyVer:
         if not rs.has_mechanism("EDDSA"):
             pytest.skip("EDDSA mechanism not supported by module")
         skip_unless_mechanism_flag(rs, CKM_EDDSA, int(CKF_VERIFY))
+        set_params({"curve": vec.get("curve", "")})
 
         pub_key = 0
         try:
@@ -335,6 +337,7 @@ def test_acvp_eddsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, 
     if not rs.has_mechanism("EDDSA"):
         pytest.skip("EDDSA mechanism not supported by module")
     skip_unless_mechanism_flag(rs, CKM_EDDSA, int(CKF_VERIFY))
+    set_params({"curve": vec.get("curve", "")})
 
     pub_key = 0
     try:
@@ -429,6 +432,7 @@ def test_acvp_eddsa_siggen(
     rs = p11_module_session
     if not rs.has_mechanism("EDDSA"):
         pytest.skip("EDDSA mechanism not supported by module")
+    set_params({"curve": vec.get("curve", "")})
 
     priv_key = 0
     try:

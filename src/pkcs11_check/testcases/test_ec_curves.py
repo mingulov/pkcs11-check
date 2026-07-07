@@ -31,7 +31,11 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
 )
-from pkcs11_check.testcases.conftest import skip_unless_capability, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    route_in_range_not_operational,
+    skip_unless_capability,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.crossverify
 
@@ -134,6 +138,21 @@ class TestECDSACrossVerify:
             try:
                 sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
             except AssertionError as exc:
+                # The gate above proved CKM_ECDSA C_Sign is advertised IN_RANGE; a clean
+                # capability-ish refusal here is an advertised-then-refused contradiction.
+                # Tag it as the IN_RANGE not_operational xfail (recorded for investigation,
+                # not hidden); other reject codes fall through to the existing handler.
+                try:
+                    route_in_range_not_operational(
+                        exc,
+                        label="ECDSA sign",
+                        mechanism="CKM_ECDSA",
+                        key_size=None,
+                        operation="C_Sign",
+                    )
+                except AssertionError:
+                    # audit-ok: route re-raised a non-in-range code; handled just below
+                    pass
                 xfail_if_known_ckr(exc, _ECDSA_SIGN_REJECT_RVS, "ECDSA sign not operational")
                 raise
 

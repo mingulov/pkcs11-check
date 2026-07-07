@@ -12,7 +12,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.pack import (
     PackedMechanism,
     mech_bytes,
@@ -172,6 +172,7 @@ def test_pbes2_decrypt(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
     iv = bytes.fromhex(vec["iv"])
     ciphertext = bytes.fromhex(vec["ct"])
     expected = bytes.fromhex(vec["msg"])
+    set_params({"hash": vec.get("_prf_name", "")})
 
     pbkdf2_param = mech_pbkdf2(
         CKM_PKCS5_PBKD2,

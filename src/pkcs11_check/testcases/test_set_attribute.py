@@ -94,7 +94,7 @@ def _classify_readonly_write(
     try:
         set_attributes(rs.raw, rs.sh, handle, {attr: new_value})
     except AssertionError:
-        return  # Rejected the read-only write -- correct.
+        return  # audit-ok: policy probe; rejecting the read-only attribute write is correct
     after = _read_back_or_fail(rs, handle, [attr], label=label)
     if after.get(attr) == new_value:
         fail_as(

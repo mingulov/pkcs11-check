@@ -89,6 +89,8 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
     CKR_WRAPPED_KEY_LEN_RANGE,
 )
+from pkcs11_check.testcases._probes.runner import run_probe
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
@@ -880,70 +882,20 @@ class TestDecryptCrashRegression:
 
     def test_rsa_encrypt_decrypt_no_crash(self, p11_config: Any) -> None:
         """RSA encrypt/decrypt cycle in subprocess - must not crash."""
-        import os
-        import subprocess
-        import sys
-
-        from pkcs11_check.testcases._subprocess_preamble import (
-            _P11CHECK_PIN_ENV,
-            pin_from_config,
-            subprocess_session_preamble,
-        )
-
-        module = str(p11_config.module)
-        pin = pin_from_config(p11_config)
-
-        preamble = subprocess_session_preamble(
-            module,
-            pin=pin,
-            slot_label="pkcs11-check",
-            extra_imports="""\
-from pkcs11_check.raw.recipes import (
-    gen_rsa_keypair, encrypt_single, decrypt_single, destroy_quietly,
-)
-from pkcs11_check.raw.types_std import CKM_RSA_PKCS, CKA_ENCRYPT, CKA_DECRYPT""",
-        )
-
-        script = (
-            preamble
-            + """\
-try:
-    pub, priv = gen_rsa_keypair(raw, sh, 2048,
-        public_attrs={CKA_ENCRYPT: True},
-        private_attrs={CKA_DECRYPT: True},
-    )
-    try:
-        ct = encrypt_single(raw, sh, pub, CKM_RSA_PKCS, b"test data 722")
-        pt = decrypt_single(raw, sh, priv, CKM_RSA_PKCS, ct)
-        assert pt == b"test data 722"
-        print("OK: RSA encrypt/decrypt cycle")
-    except Exception as e:
-        print(f"ERROR: {type(e).__name__}: {e}")
-    finally:
-        destroy_quietly(raw, sh, pub)
-        destroy_quietly(raw, sh, priv)
-    raw.C_CloseSession(sh)
-except Exception as e:
-    print(f"ERROR: {type(e).__name__}: {e}")
-finally:
-    raw.C_Finalize(None)
-"""
-        )
-        # Pass the PIN via the child env (never embed it in the script source).
-        env = {**os.environ}
-        if pin is not None:
-            env[_P11CHECK_PIN_ENV] = pin
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
+        result = run_probe(
+            "cve_regression",
+            {
+                "module_path": str(p11_config.module),
+                "slot_id": p11_config.slot,
+                "probe": "rsa_encrypt_decrypt",
+            },
+            pin=pin_from_config(p11_config),
             timeout=30,
-            env=env,
+            coverage="session",
         )
-        assert result.returncode == 0, (
-            f"RSA encrypt/decrypt crashed (rc={result.returncode}): {result.stderr}"
-        )
-        assert "OK:" in result.stdout or "ERROR:" in result.stdout
+        rc, out, err = result.returncode, result.stdout, result.stderr
+        assert rc == 0, f"RSA encrypt/decrypt crashed (rc={rc}): {err}"
+        assert "OK:" in out or "ERROR:" in out
 
 
 class TestMutexDeadlockRegression:

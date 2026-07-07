@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.pack_mechanisms import mech_sign_context
 from pkcs11_check.raw.recipes import (
     create_object,
@@ -106,6 +106,7 @@ def test_mldsa_verify(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
     ctx = bytes.fromhex(vec.get("ctx", ""))
     sig = bytes.fromhex(vec["sig"])
     result = vec["result"]
+    set_params({"mldsa": str(vec.get("_param_set", ""))})
 
     if not pk_hex:
         pytest.skip("No public key in vector")

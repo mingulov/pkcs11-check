@@ -29,7 +29,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.pack_mechanisms import mech_sign_context
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -64,6 +64,13 @@ _SIGN_FILES = [
     ("mldsa_65_sign_seed_test.json", CKP_ML_DSA_65),
     ("mldsa_87_sign_seed_test.json", CKP_ML_DSA_87),
 ]
+
+# Bare ML-DSA parameter-set labels for per-parameter-set report breakdown.
+_PARAM_LABELS: dict[int, str] = {
+    CKP_ML_DSA_44: "44",
+    CKP_ML_DSA_65: "65",
+    CKP_ML_DSA_87: "87",
+}
 
 # An over-long context (256 > 255) must be rejected; the spec does not pin a
 # single CKR, so all three are accepted as spec-correct (others -> xfail).
@@ -137,7 +144,7 @@ def _context_signing_operational(rs: Any, priv: int, pub: int, msg: bytes) -> bo
             rs.raw, rs.sh, pub, CKM_ML_DSA, msg, sig, mech_param=param
         )
     except CkrAssertionError:
-        return False
+        return False  # audit-ok: operability probe; CkrAssertionError means not operational
 
 
 @pytest.mark.parametrize(
@@ -154,6 +161,7 @@ def test_mldsa_context(vec_id: str, vec: dict[str, Any], p11_module_session: Any
     msg = bytes.fromhex(vec.get("msg", ""))
     ctx = bytes.fromhex(vec.get("ctx", ""))
     is_overlong = "InvalidContext" in vec.get("flags", [])
+    set_params({"mldsa": _PARAM_LABELS.get(vec.get("_param_set", -1), "")})
 
     try:
         priv, pub = _import_keys(rs, vec)

@@ -32,11 +32,13 @@ from pkcs11_check.testcases._operability import (
     classify_kat_clean_error,
     probe_operability,
 )
-from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
+from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors, require_acvp_vectors
 from pkcs11_check.testcases.conftest import assert_correct, import_secret_key_negotiated
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 REQUIRED_MECHANISMS = ["AES_XTS"]
+
+require_acvp_vectors()
 
 # --- Canonical operability probe (triage H2) ---------------------------------
 # One canonical XTS known answer per direction per process decides how clean
