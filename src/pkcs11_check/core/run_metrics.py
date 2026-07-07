@@ -30,8 +30,9 @@ RESULT_OUTCOME_KEYS: tuple[str, ...] = (
 # test that pytest still recorded as outcome=="failed" (the security suite runs an
 # untrusted child; its crash/timeout is the finding). Matched case-insensitively.
 _CHILD_CRASH_MARKERS = (
-    "module crashed with signal",
-    "subprocess crashed with signal",
+    # All child-crash emitters phrase it as "<what> crashed with signal <n>" (module /
+    # subprocess / reload cycle), so match the common substring rather than each prefix.
+    "crashed with signal",
 )
 _CHILD_TIMEOUT_MARKERS = (
     "subprocess.timeoutexpired",
