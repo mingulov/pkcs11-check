@@ -20,10 +20,27 @@ class PinInParamsError(ValueError):
 
 
 def _check_no_pin(data: Mapping[str, Any]) -> None:
-    leaked = PIN_KEYS & set(data)
-    if leaked:
-        # Do NOT include the value (it could be the PIN); name the keys only.
-        raise PinInParamsError(f"PIN-bearing keys forbidden in probe params: {sorted(leaked)}")
+    """Reject a PIN-bearing key at ANY depth (I3), not just the top level.
+
+    Params can nest under ``extra`` (and lists therein), and the whole object is serialized to
+    the temp params file, so the check must recurse to be a real guarantee, not a top-level one.
+    """
+
+    def _walk(obj: Any) -> None:
+        if isinstance(obj, Mapping):
+            leaked = PIN_KEYS & set(obj)
+            if leaked:
+                # Do NOT include the value (it could be the PIN); name the keys only.
+                raise PinInParamsError(
+                    f"PIN-bearing keys forbidden in probe params: {sorted(leaked)}"
+                )
+            for value in obj.values():
+                _walk(value)
+        elif isinstance(obj, (list, tuple)):
+            for item in obj:
+                _walk(item)
+
+    _walk(data)
 
 
 @dataclass(frozen=True)
