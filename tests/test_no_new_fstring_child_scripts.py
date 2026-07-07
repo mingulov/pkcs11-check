@@ -53,11 +53,25 @@ _REMOVED_LAUNCHERS = {
 }
 
 
-def _is_sys_executable(node: ast.expr) -> bool:
-    """True for ``sys.executable`` (or a bare ``executable`` name)."""
+def _exec_alias_names(tree: ast.AST) -> frozenset[str]:
+    """Local names bound to ``sys.executable`` (``py = sys.executable``), so an argv built from
+    the alias (``[py, "-c", script]``) is caught the same as the literal attribute."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Attribute)
+            and node.value.attr == "executable"
+        ):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return frozenset(names)
+
+
+def _is_sys_executable(node: ast.expr, exec_names: frozenset[str] = frozenset()) -> bool:
+    """True for ``sys.executable`` (or a bare ``executable`` / an alias bound to it)."""
     if isinstance(node, ast.Attribute) and node.attr == "executable":
         return True
-    return isinstance(node, ast.Name) and node.id == "executable"
+    return isinstance(node, ast.Name) and (node.id == "executable" or node.id in exec_names)
 
 
 def _is_dash_c(node: ast.expr) -> bool:
@@ -65,7 +79,7 @@ def _is_dash_c(node: ast.expr) -> bool:
     return isinstance(node, ast.Constant) and node.value == "-c"
 
 
-def _list_is_inline_python_c(node: ast.AST) -> bool:
+def _list_is_inline_python_c(node: ast.AST, exec_names: frozenset[str] = frozenset()) -> bool:
     """True for a list/tuple that names ``sys.executable`` together with ``"-c"``.
 
     That shape is unambiguously an inline ``python -c <script>`` child argv,
@@ -75,7 +89,7 @@ def _list_is_inline_python_c(node: ast.AST) -> bool:
     if not isinstance(node, (ast.List, ast.Tuple)):
         return False
     elts = node.elts
-    return any(_is_sys_executable(e) for e in elts) and any(_is_dash_c(e) for e in elts)
+    return any(_is_sys_executable(e, exec_names) for e in elts) and any(_is_dash_c(e) for e in elts)
 
 
 def _call_target_name(node: ast.Call) -> str | None:
@@ -93,9 +107,10 @@ def _scan_file(path: pathlib.Path) -> list[str]:
     tree = ast.parse(path.read_text(), filename=str(path))
     offenders: list[str] = []
     rel = path.relative_to(_TESTCASES)
+    exec_names = _exec_alias_names(tree)
     for node in ast.walk(tree):
         lineno = getattr(node, "lineno", 0)
-        if _list_is_inline_python_c(node):
+        if _list_is_inline_python_c(node, exec_names):
             offenders.append(f"{rel}:{lineno}: inline `[sys.executable, '-c', ...]` child")
         elif isinstance(node, ast.Call):
             name = _call_target_name(node)
@@ -114,6 +129,16 @@ def _governed_files() -> list[pathlib.Path]:
             continue
         files.append(path)
     return files
+
+
+def test_alias_of_sys_executable_in_inline_child_is_caught() -> None:
+    # `py = sys.executable; [py, "-c", script]` used to slip past the literal-attribute check.
+    tree = ast.parse("import sys\npy = sys.executable\ncmd = [py, '-c', script]\n")
+    exec_names = _exec_alias_names(tree)
+    assert "py" in exec_names
+    lists = [n for n in ast.walk(tree) if isinstance(n, ast.List)]
+    assert any(_list_is_inline_python_c(n, exec_names) for n in lists)
+    assert not any(_list_is_inline_python_c(n) for n in lists)  # unaliased check would miss it
 
 
 def test_no_inline_python_c_child_scripts() -> None:
