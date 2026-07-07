@@ -51,6 +51,21 @@ def _is_pin_name(node: ast.AST) -> bool:
     return isinstance(node, ast.Name) and node.id in _PIN_NAMES
 
 
+# Builtins that turn a PIN value into a string/bytes: str(pin) / repr(pin) used to smuggle a
+# PIN into an f-string field past the bare-name check.
+_STRINGIFY_BUILTINS = {"str", "repr", "bytes", "ascii", "format"}
+
+
+def _stringifies_pin(node: ast.AST) -> bool:
+    """True for ``str(pin)`` / ``repr(pin)`` / ``bytes(user_pin)`` -- a PIN fed to a stringifier."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in _STRINGIFY_BUILTINS
+        and any(_is_pin_name(arg) for arg in node.args)
+    )
+
+
 def _is_str_like(node: ast.AST) -> bool:
     """True for a string literal or f-string -- a string-concatenation operand."""
     return (isinstance(node, ast.Constant) and isinstance(node.value, str)) or isinstance(
@@ -69,6 +84,8 @@ def _classify(expr: ast.expr) -> str | None:
         return "get_secret_value() unwrap"
     if _is_pin_name(expr):
         return "PIN variable"
+    if _stringifies_pin(expr):
+        return "stringified PIN"
     return None
 
 
@@ -124,6 +141,16 @@ def _scan_file(path: pathlib.Path) -> list[str]:
 
 def _all_testcases_files() -> list[pathlib.Path]:
     return sorted(_TESTCASES.rglob("*.py"))
+
+
+def test_classify_flags_stringified_pin_but_not_boolean_or_length_uses() -> None:
+    # Mutation self-test: str()/repr()/bytes() around a PIN must be caught (the historical bypass
+    # of the bare-name check), while boolean/length/other-name uses that do not expose the value
+    # stay clean so the guard does not false-flag legitimate code.
+    for leaking in ("str(pin)", "repr(pin)", "bytes(user_pin)", "pin.get_secret_value()"):
+        assert _classify(ast.parse(leaking, mode="eval").body) is not None, leaking
+    for clean in ("pin is not None", "len(pin)", "pin_length", "int(length)"):
+        assert _classify(ast.parse(clean, mode="eval").body) is None, clean
 
 
 def test_no_pin_interpolated_into_source() -> None:

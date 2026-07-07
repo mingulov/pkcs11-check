@@ -29,6 +29,17 @@ def _group(**over: Any) -> dict[str, Any]:
     return grp
 
 
+def test_xfail_leftover_reason_is_rendered_not_just_counted() -> None:
+    # An xfail whose reason is not in the known _XFAIL_REASONS list must still get its own line,
+    # so the "deviations (xfail) (N)" heading total always equals the sum of the reason lines.
+    xf = _group(reason="some_future_reason", outcome="xfail", severity="LOW", kind=None, count=7)
+    out = render_provider("m", [xf], summary={"passed": 1, "total": 8})
+    lines = out.splitlines()
+    head = next(ln for ln in lines if "deviations (xfail)" in ln)
+    assert "(7)" in head
+    assert any("some_future_reason" in ln and "[7]" in ln for ln in lines)
+
+
 def test_critical_before_deviations_and_xfail_collapsed() -> None:
     crit = _group()
     xfail = _group(

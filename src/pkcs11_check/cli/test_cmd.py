@@ -77,7 +77,12 @@ def _build_run_provenance(manifest: Any, data_dir: Path) -> dict[str, Any]:
             data_dir=data_dir,
             environment=environment,
         )
-    except Exception:  # noqa: BLE001  # best-effort: provenance must never abort the run
+    except Exception as exc:  # noqa: BLE001  # best-effort: provenance must never abort the run
+        # Never abort the run, but do not lose the error class either (house rule).
+        console.print(
+            f"[dim]run provenance unavailable ({exc.__class__.__name__}); "
+            "report will show build info absent[/dim]"
+        )
         return {}
 
 
@@ -215,12 +220,12 @@ def _assemble_json_artifacts_from_jsonl(
     quality_records = extract_quality_report_records_from_jsonl(jsonl_p)
     if coverage_data:
         (unified_path.parent / "coverage.json").write_text(
-            json.dumps(coverage_data, indent=2) + "\n"
+            json.dumps(coverage_data, indent=2) + "\n", encoding="utf-8"
         )
     provisioning_data = extract_provisioning_from_jsonl(jsonl_p)
     if provisioning_data is not None:
         (unified_path.parent / "provisioning.json").write_text(
-            json.dumps(provisioning_data, indent=2) + "\n"
+            json.dumps(provisioning_data, indent=2) + "\n", encoding="utf-8"
         )
         if provisioning_data["totals"].get("ran_via_external", 0) > 0:
             _emit_external_provision_banner(provisioning_data["totals"]["ran_via_external"])

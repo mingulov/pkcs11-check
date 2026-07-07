@@ -38,3 +38,17 @@ def test_child_counts_only_failed_with_markers():
         {"counts": {"skipped": 3}},  # no tests key -> ignored
     ]
     assert compute_child_subprocess_counts(units) == (2, 1)
+
+
+def test_reload_cycle_crash_variant_is_counted_as_child_crash():
+    # The subprocess-safety probe phrases it "Reload cycle crashed with signal (rc=...)"; the
+    # child-crash marker must catch every "<what> crashed with signal <n>" variant, not just
+    # the "module"/"subprocess" prefixes.
+    units = [
+        {
+            "tests": [
+                {"outcome": "failed", "longrepr": "Reload cycle crashed with signal (rc=-11)"},
+            ]
+        },
+    ]
+    assert compute_child_subprocess_counts(units) == (1, 0)
