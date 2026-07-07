@@ -42,10 +42,26 @@ def test_unsupported_only_after_trying_all(monkeypatch):
 
 
 def test_non_refusal_ckr_propagates(monkeypatch):
-    # CKR_GENERAL_ERROR is NOT a clean cert-storage refusal -> real finding, not swallowed.
+    # CKR_GENERAL_ERROR is NOT a clean cert-storage refusal -> propagates from the probe
+    # (not swallowed as a silent skip). The skip gate then records it (next test).
     rs, _ = _fake_module(monkeypatch, accept_on=None, raise_rv=int(CKR_GENERAL_ERROR))
     with pytest.raises(CkrAssertionError):
         x509conftest.cert_storage_supported(rs)
+
+
+def test_skip_gate_records_general_error_as_not_operational(monkeypatch):
+    # A KMS that returns CKR_GENERAL_ERROR for every cert template: the skip gate records
+    # a not_operational xfail (a visible deviation) rather than raising raw at the gate
+    # (which the plugin would stamp with its reserved reason). cosmian: 1663 in the
+    # 2026-06-29 round (limbo import + stress), finding F1.
+    from pkcs11_check import classification
+
+    rs, _ = _fake_module(monkeypatch, accept_on=None, raise_rv=int(CKR_GENERAL_ERROR))
+    classification.clear()
+    with pytest.raises(BaseException):  # noqa: B017,PT011 - classify raises the xfail outcome
+        x509conftest.skip_unless_cert_storage(rs)
+    recs = classification.serialize(classification.get_records())
+    assert recs and recs[-1]["reason"] == "not_operational", recs
 
 
 def test_skip_helper_skips_when_unsupported(monkeypatch):

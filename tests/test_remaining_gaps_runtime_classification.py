@@ -58,7 +58,7 @@ def test_legacy_parallel_function_not_supported_is_documented_note(
 ) -> None:
     monkeypatch.setattr(
         test_remaining_gaps,
-        "_run_config_script",
+        "_run_gap_probe",
         lambda *_args, **_kwargs: (0, f"{marker}:0x00000054\n", ""),
     )
 

@@ -34,7 +34,7 @@ def _cfg() -> Any:
 
 def _patch(monkeypatch: pytest.MonkeyPatch, rv: int) -> None:
     out = f"CKR:0x{int(rv):08x}\nOK"
-    monkeypatch.setattr(trs, "_run", lambda *_a, **_k: (0, out, ""))
+    monkeypatch.setattr(trs, "_run_probe", lambda *_a, **_k: (0, out, ""))
     monkeypatch.setattr(trs, "_assert_probe_completed", lambda *_a, **_k: None)
 
 

@@ -62,36 +62,20 @@ def test_crash_is_fail() -> None:
         assert_ckr_subprocess_ok(-11, "", "segfault", context="wrong-key continuation")
 
 
-# --- inner scripts discriminate by effect ---------------------------------
-
-
-def test_sign_script_discriminates() -> None:
-    script = hardening._SIGN_WITH_RSA_UNDER_ECDSA
-    assert "BREAK:" in script
-    assert "DEVIATION_XFAIL:" in script
-    assert "C_Sign(" in script
-    compile(script, "<sign-probe>", "exec")
-
-
-def test_verify_script_discriminates() -> None:
-    script = hardening._VERIFY_WITH_RSA_UNDER_ECDSA
-    assert "BREAK:" in script
-    assert "DEVIATION_XFAIL:" in script
-    assert "C_Verify(" in script
-    compile(script, "<verify-probe>", "exec")
-
-
 # --- end-to-end through the test bodies -----------------------------------
 
 
 def _wire(monkeypatch: pytest.MonkeyPatch, *, rc: int, stdout: str) -> None:
-    monkeypatch.setattr(hardening, "run_with_coverage", lambda *a, **k: (rc, stdout, ""))
+    monkeypatch.setattr(
+        hardening,
+        "run_probe",
+        lambda *a, **k: SimpleNamespace(returncode=rc, stdout=stdout, stderr=""),
+    )
     monkeypatch.setattr(hardening, "_require_rsa_sign_verify_setup", lambda rs: None)
-    monkeypatch.setattr(hardening, "_preamble", lambda cfg: "")
 
 
 def _cfg() -> SimpleNamespace:
-    return SimpleNamespace(module="/fake/p11.so", pin=None)
+    return SimpleNamespace(module="/fake/p11.so", slot=0, pin=None)
 
 
 def _rs() -> SimpleNamespace:

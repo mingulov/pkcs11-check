@@ -8,6 +8,7 @@ corresponding C_*Init still returned CKR_OK -> fail; not claimed -> xfail.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -21,7 +22,12 @@ def _cfg() -> Any:
 
 
 def _patch_run(monkeypatch: pytest.MonkeyPatch, out: str) -> None:
-    monkeypatch.setattr(tra, "_run", lambda *_a, **_k: (0, out, ""))
+    def fake_run_probe(probe: str, params: Any, **_kwargs: Any) -> SimpleNamespace:
+        assert probe == "ckr_raw_attrs"
+        assert params["probe"] in ("encrypt", "sign", "decrypt")
+        return SimpleNamespace(returncode=0, stdout=out, stderr="")
+
+    monkeypatch.setattr(tra, "run_probe", fake_run_probe)
     monkeypatch.setattr(tra, "assert_ckr_subprocess_ok", lambda *_a, **_k: None)
 
 

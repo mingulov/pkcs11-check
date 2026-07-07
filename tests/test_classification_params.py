@@ -1,0 +1,158 @@
+"""classify() carries a structured ``params`` map (curve/key-size/hash) to the record."""
+
+from __future__ import annotations
+
+import pytest
+
+from pkcs11_check import classification as C
+
+
+def test_classify_records_params() -> None:
+    C.clear()
+    with pytest.raises(BaseException):  # noqa: B017,PT011 - classify() raises the pytest outcome
+        C.classify(
+            "not_operational",
+            mechanism="CKM_ECDSA",
+            operation="C_Verify",
+            params={"curve": "brainpoolP224r1"},
+        )
+    recs = C.serialize(C.get_records())
+    assert recs[0]["params"] == {"curve": "brainpoolP224r1"}
+
+
+def test_params_default_none() -> None:
+    C.clear()
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("wrong_result", kind="crypto", mechanism="CKM_RSA_PKCS", operation="C_Decrypt")
+    recs = C.serialize(C.get_records())
+    assert recs[0]["params"] is None
+
+
+def test_active_params_inherited_by_classify() -> None:
+    C.clear()
+    C.set_params({"curve": "secp256k1"})
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("not_operational", mechanism="CKM_ECDSA", operation="C_Verify")
+    assert C.serialize(C.get_records())[0]["params"] == {"curve": "secp256k1"}
+
+
+def test_explicit_params_override_active() -> None:
+    C.clear()
+    C.set_params({"curve": "secp256k1"})
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("wrong_result", kind="crypto", params={"curve": "p256"})
+    assert C.serialize(C.get_records())[0]["params"] == {"curve": "p256"}
+
+
+def test_clear_resets_active_params() -> None:
+    C.set_params({"curve": "x"})
+    C.clear()
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("wrong_result", kind="crypto")
+    assert C.serialize(C.get_records())[0]["params"] is None
+
+
+def test_set_mechanism_inherited_by_classify() -> None:
+    # mechanism/operation are constant per vector-replay test; set once so the
+    # not_operational/xfail emission paths carry them (T5) without per-site wiring.
+    C.clear()
+    C.set_mechanism("CKM_ECDSA", operation="C_Verify")
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("not_operational")
+    rec = C.serialize(C.get_records())[0]
+    assert rec["mechanism"] == "CKM_ECDSA"
+    assert rec["operation"] == "C_Verify"
+
+
+def test_explicit_mechanism_overrides_active() -> None:
+    C.clear()
+    C.set_mechanism("CKM_ECDSA")
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("not_operational", mechanism="CKM_RSA_PKCS")
+    assert C.serialize(C.get_records())[0]["mechanism"] == "CKM_RSA_PKCS"
+
+
+def test_clear_resets_active_mechanism() -> None:
+    C.set_mechanism("CKM_X", operation="C_Sign")
+    C.clear()
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("wrong_result", kind="crypto")
+    rec = C.serialize(C.get_records())[0]
+    assert rec["mechanism"] is None and rec["operation"] is None
+
+
+def test_set_vector_inherited_by_classify() -> None:
+    # source/vector_id are constant per vector-replay test invocation; set once and
+    # every classify() (including the not_operational xfail paths) inherits the
+    # reproducer handle without per-emission-site wiring.
+    C.clear()
+    C.set_vector("wycheproof:rsa_test.json", "tcId=42")
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("not_operational", mechanism="CKM_RSA_PKCS")
+    rec = C.serialize(C.get_records())[0]
+    assert rec["source"] == "wycheproof:rsa_test.json"
+    assert rec["vector_id"] == "tcId=42"
+
+
+def test_explicit_source_overrides_active_vector() -> None:
+    C.clear()
+    C.set_vector("ctx-source", "ctx-vid")
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("wrong_result", kind="crypto", source="explicit-source")
+    rec = C.serialize(C.get_records())[0]
+    assert rec["source"] == "explicit-source"  # explicit wins
+    assert rec["vector_id"] == "ctx-vid"  # context fills the field left unset
+
+
+def test_clear_resets_active_vector() -> None:
+    C.set_vector("s", "v")
+    C.clear()
+    with pytest.raises(BaseException):  # noqa: B017,PT011
+        C.classify("wrong_result", kind="crypto")
+    rec = C.serialize(C.get_records())[0]
+    assert rec["source"] is None and rec["vector_id"] is None
+
+
+def test_set_params_normalizes_hash_aliases() -> None:
+    # hash values arrive in several spellings across vector families (dash form from
+    # wycheproof/acvp RSA, CKM mechanism form from the HMAC suite); they must
+    # canonicalize to one digest vocabulary so the report's per-hash buckets don't
+    # fragment (SHA-512 vs SHA512_HMAC vs SHA_1_HMAC vs SHA-1).
+    cases = [
+        ("SHA-256", "sha-256"),
+        ("SHA-512", "sha-512"),
+        ("SHA3-256", "sha3-256"),
+        ("SHA-512/256", "sha-512/256"),
+        ("SHA_1_HMAC", "sha-1"),
+        ("SHA256_HMAC", "sha-256"),
+        ("SHA512_HMAC", "sha-512"),
+        ("SHA3_256_HMAC", "sha3-256"),
+        ("SHA512_256_HMAC", "sha-512/256"),
+    ]
+    for raw, canon in cases:
+        C.clear()
+        C.set_params({"hash": raw})
+        with pytest.raises(BaseException):  # noqa: B017,PT011
+            C.classify("not_operational", mechanism="CKM_RSA_PKCS")
+        assert C.serialize(C.get_records())[0]["params"] == {"hash": canon}, raw
+
+
+def test_set_params_normalizes_curve_aliases() -> None:
+    # cross-family curve forms must canonicalize so the report's per-curve buckets
+    # don't fragment (P-256 vs secp256r1, brainpoolP vs brainpoolp, ED-25519 vs ed25519)
+    cases = [
+        ("P-256", "secp256r1"),
+        ("P-256K", "secp256k1"),
+        ("P-384", "secp384r1"),
+        ("ED-25519", "ed25519"),
+        ("ED-448", "ed448"),
+        ("brainpoolP224r1", "brainpoolp224r1"),
+        ("secp256r1", "secp256r1"),
+        ("ed25519", "ed25519"),
+    ]
+    for raw, canon in cases:
+        C.clear()
+        C.set_params({"curve": raw})
+        with pytest.raises(BaseException):  # noqa: B017,PT011
+            C.classify("not_operational", mechanism="CKM_ECDSA")
+        assert C.serialize(C.get_records())[0]["params"] == {"curve": canon}, raw

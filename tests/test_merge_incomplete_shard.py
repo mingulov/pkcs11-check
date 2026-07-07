@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pkcs11_check.core.merge import merge_shard_dirs
+from pkcs11_check.core.merge import merge_results_payloads, merge_shard_dirs
 
 
 def _write_jsonl(path: Path, records: list[dict[str, object]]) -> None:
@@ -131,3 +131,35 @@ def test_total_loss_shard_is_warned_not_silent(tmp_path: Path) -> None:
     # Merge still completes, and the loss is loudly recorded (never silent).
     warnings = merged.get("shards", {}).get("warnings", [])
     assert any("LOST" in w for w in warnings), warnings
+
+
+def _summary(**over: int) -> dict[str, object]:
+    base = {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0,
+        "error": 0,
+        "crashed": 0,
+        "timeout": 0,
+        "crash_limited": 0,
+        "total": 0,
+    }
+    base.update(over)
+    return {"summary": base, "units": []}
+
+
+def test_incomplete_set_on_timeout_even_without_crash_limit() -> None:
+    merged = merge_results_payloads([_summary(passed=1, timeout=2)], coverage=None)
+    assert merged["summary"]["incomplete"] is True
+
+
+def test_incomplete_set_on_crash_limit() -> None:
+    merged = merge_results_payloads([_summary(passed=1, crash_limited=5)], coverage=None)
+    assert merged["summary"]["incomplete"] is True
+
+
+def test_incomplete_false_when_clean() -> None:
+    merged = merge_results_payloads([_summary(passed=3)], coverage=None)
+    assert merged["summary"]["incomplete"] is False

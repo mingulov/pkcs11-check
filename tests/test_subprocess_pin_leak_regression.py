@@ -4,9 +4,9 @@ Batch B / M1 follow-up. Three files build their own subprocess boilerplate and
 previously interpolated the user PIN into the ``-c`` script (exposing it in the
 child argv via ``ps``/``/proc`` and in any traceback):
 
-- ``ckr/test_ckr_raw_state.py`` (own ``subprocess.run``)
-- ``test_dual_function.py`` (via ``run_raw_script``)
-- ``test_sign_recover.py`` (via ``run_raw_script``)
+- ``ckr/test_ckr_raw_state.py`` (now via ``run_probe`` -> ``_probes/ckr_raw_state.py``)
+- ``test_dual_function.py`` (now via ``run_probe`` -> ``_probes/dual_function.py``)
+- ``test_sign_recover.py`` (now via ``run_probe`` -> ``_probes/sign_recover.py``)
 
 These assert that the generated script text never contains the PIN and that the
 PIN is forwarded into the CHILD ENVIRONMENT (under ``_P11CHECK_PIN``), never into
@@ -21,7 +21,6 @@ from typing import Any
 import pytest
 
 from pkcs11_check.testcases import test_dual_function, test_sign_recover
-from pkcs11_check.testcases._subprocess_preamble import _P11CHECK_PIN_ENV
 from pkcs11_check.testcases.ckr import test_ckr_raw_state
 
 _PIN = "s3cr3t-PIN-DO-NOT-LEAK"
@@ -35,114 +34,161 @@ def _cfg() -> SimpleNamespace:
     )
 
 
-# --- ckr/test_ckr_raw_state.py (own subprocess.run) ------------------------
+# --- ckr/test_ckr_raw_state.py (via run_probe) -----------------------------
 
 
-def test_ckr_raw_state_pin_not_in_script_or_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ckr_raw_state_pin_routed_to_run_probe_not_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, Any] = {}
 
-    class _Result:
-        returncode = 0
-        stdout = "CKR:0x00000000\nOK"
-        stderr = ""
+    def _fake_run_probe(
+        probe: str, params: dict[str, Any], *, pin: str | None = None, **_kwargs: Any
+    ) -> SimpleNamespace:
+        captured["probe"] = probe
+        captured["params"] = params
+        captured["pin"] = pin
+        return SimpleNamespace(returncode=0, stdout="CKR:0x00000000\nOK", stderr="")
 
-    def _fake_run(args: list[str], **kwargs: Any) -> _Result:
-        captured["args"] = args
-        captured["env"] = kwargs.get("env")
-        return _Result()
+    monkeypatch.setattr(test_ckr_raw_state, "run_probe", _fake_run_probe)
 
-    monkeypatch.setattr(test_ckr_raw_state.subprocess, "run", _fake_run)
-
-    # Run a probe that goes through _run() and builds + spawns the child script.
+    # Run a probe that goes through _run_probe() and launches the child probe module.
     test_ckr_raw_state.TestOperationActive().test_double_encrypt_init(_cfg())
 
-    args = captured["args"]
-    env = captured["env"]
-    # The script is the last argv element ("-c", <script>). The PIN must not be
-    # anywhere in the argv (script text included).
-    assert all(_PIN not in arg for arg in args)
-    # The PIN must be forwarded via the child env under the agreed key.
-    assert env[_P11CHECK_PIN_ENV] == _PIN
-    # Sanity: the script reads the PIN from the environment, not a literal.
-    script = args[-1]
-    assert "_os.environ.get" in script
-    assert "login_user(" in script
+    # The PIN must be forwarded to run_probe via pin= only (the runner injects it into
+    # the child env under _P11CHECK_PIN); it must never appear in the probe params.
+    assert captured["pin"] == _PIN
+    assert _PIN not in str(captured["params"])
 
 
-def test_ckr_raw_state_no_pin_means_no_env_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ckr_raw_state_no_pin_means_pin_none(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
-    class _Result:
-        returncode = 0
-        stdout = "CKR:0x00000000\nOK"
-        stderr = ""
+    def _fake_run_probe(
+        probe: str, params: dict[str, Any], *, pin: str | None = None, **_kwargs: Any
+    ) -> SimpleNamespace:
+        captured["pin"] = pin
+        return SimpleNamespace(returncode=0, stdout="CKR:0x00000000\nOK", stderr="")
 
-    def _fake_run(args: list[str], **kwargs: Any) -> _Result:
-        captured["env"] = kwargs.get("env")
-        return _Result()
-
-    monkeypatch.setattr(test_ckr_raw_state.subprocess, "run", _fake_run)
+    monkeypatch.setattr(test_ckr_raw_state, "run_probe", _fake_run_probe)
 
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", slot=0, pin=None)
     test_ckr_raw_state.TestOperationActive().test_double_encrypt_init(cfg)
 
-    assert _P11CHECK_PIN_ENV not in captured["env"]
+    assert captured["pin"] is None
 
 
-# --- test_dual_function.py / test_sign_recover.py (run_raw_script) ---------
+# --- test_dual_function.py (via run_probe) ---------------------------------
 
 
-def test_dual_function_pin_not_in_script_routed_to_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dual_function_pin_routed_to_run_probe_not_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, Any] = {}
 
-    def _fake_run_raw_script(
-        boilerplate: str, script_body: str, *, pin: str | None = None, **_k: Any
-    ) -> tuple[int, str, str]:
-        captured["boilerplate"] = boilerplate
+    def _fake_run_probe(
+        probe: str, params: dict[str, Any], *, pin: str | None = None, **_kwargs: Any
+    ) -> SimpleNamespace:
+        captured["probe"] = probe
+        captured["params"] = params
         captured["pin"] = pin
-        return 0, "", ""
+        # A SKIP line short-circuits the parent before the crypto assertions.
+        return SimpleNamespace(
+            returncode=0, stdout="SKIP:GenerateKeyUnsupported:0x00000054", stderr=""
+        )
 
-    monkeypatch.setattr(test_dual_function, "run_raw_script", _fake_run_raw_script)
+    monkeypatch.setattr(test_dual_function, "run_probe", _fake_run_probe)
 
-    module_path, slot_index, pin = test_dual_function._get_params(_cfg())
-    test_dual_function._run_script(module_path, slot_index, pin, "    pass\n")
+    raw_session = SimpleNamespace(has_mechanism=lambda _name: True)
+    with pytest.raises(pytest.skip.Exception):
+        test_dual_function.TestDigestEncryptUpdate().test_digest_encrypt_update_round_trip(
+            _cfg(), raw_session
+        )
 
-    assert _PIN not in captured["boilerplate"]
-    assert "_os.environ.get" in captured["boilerplate"]
-    # The PIN is forwarded to run_raw_script's pin= (which injects the env),
-    # never embedded in the script text.
+    # The PIN must be forwarded to run_probe via pin= only (the runner injects it into
+    # the child env under _P11CHECK_PIN); it must never appear in the probe params.
     assert captured["pin"] == _PIN
+    assert _PIN not in str(captured["params"])
 
 
-def test_sign_recover_pin_not_in_script_routed_to_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dual_function_no_pin_means_pin_none(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
-    def _fake_run_raw_script(
-        boilerplate: str, script_body: str, *, pin: str | None = None, **_k: Any
-    ) -> tuple[int, str, str]:
-        captured["boilerplate"] = boilerplate
+    def _fake_run_probe(
+        probe: str, params: dict[str, Any], *, pin: str | None = None, **_kwargs: Any
+    ) -> SimpleNamespace:
         captured["pin"] = pin
-        return 0, "", ""
+        return SimpleNamespace(
+            returncode=0, stdout="SKIP:GenerateKeyUnsupported:0x00000054", stderr=""
+        )
 
-    monkeypatch.setattr(test_sign_recover, "run_raw_script", _fake_run_raw_script)
+    monkeypatch.setattr(test_dual_function, "run_probe", _fake_run_probe)
 
-    module_path, slot_index, pin = test_sign_recover._get_params(_cfg())
-    test_sign_recover._run_script(module_path, slot_index, pin, "    pass\n")
+    raw_session = SimpleNamespace(has_mechanism=lambda _name: True)
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", slot=0, pin=None)
+    with pytest.raises(pytest.skip.Exception):
+        test_dual_function.TestDecryptDigestUpdate().test_decrypt_digest_update_round_trip(
+            cfg, raw_session
+        )
 
-    assert _PIN not in captured["boilerplate"]
-    assert "_os.environ.get" in captured["boilerplate"]
+    assert captured["pin"] is None
+
+
+# --- test_sign_recover.py (via run_probe) ----------------------------------
+
+
+def _rsa_x509_module() -> SimpleNamespace:
+    """Fake p11_module whose first token advertises CKM_RSA_X_509 (passes _has_rsa_x509)."""
+    slot = SimpleNamespace(get_mechanisms=lambda: [SimpleNamespace(name="RSA_X_509")])
+    return SimpleNamespace(get_slots=lambda token_present=True: [slot])
+
+
+def test_sign_recover_pin_routed_to_run_probe_not_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def _fake_run_probe(
+        probe: str, params: dict[str, Any], *, pin: str | None = None, **_kwargs: Any
+    ) -> SimpleNamespace:
+        captured["probe"] = probe
+        captured["params"] = params
+        captured["pin"] = pin
+        # A SKIP line short-circuits the parent before the crypto assertions.
+        return SimpleNamespace(
+            returncode=0, stdout="SKIP:SignRecoverInitUnsupported:0x00000054", stderr=""
+        )
+
+    monkeypatch.setattr(test_sign_recover, "run_probe", _fake_run_probe)
+
+    with pytest.raises(pytest.skip.Exception):
+        test_sign_recover.TestSignRecover().test_sign_recover_produces_output(
+            _cfg(), _rsa_x509_module()
+        )
+
+    # The PIN must be forwarded to run_probe via pin= only (the runner injects it into
+    # the child env under _P11CHECK_PIN); it must never appear in the probe params.
     assert captured["pin"] == _PIN
+    assert _PIN not in str(captured["params"])
 
 
-def test_dual_function_get_params_returns_str_pin() -> None:
-    _module, _slot, pin = test_dual_function._get_params(_cfg())
-    assert pin == _PIN
-    no_pin = SimpleNamespace(module="/tmp/x.so", slot=0, pin=None)
-    assert test_dual_function._get_params(no_pin)[2] is None
+def test_sign_recover_no_pin_means_pin_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
 
+    def _fake_run_probe(
+        probe: str, params: dict[str, Any], *, pin: str | None = None, **_kwargs: Any
+    ) -> SimpleNamespace:
+        captured["pin"] = pin
+        return SimpleNamespace(
+            returncode=0, stdout="SKIP:SignRecoverInitUnsupported:0x00000054", stderr=""
+        )
 
-def test_sign_recover_get_params_returns_str_pin() -> None:
-    _module, _slot, pin = test_sign_recover._get_params(_cfg())
-    assert pin == _PIN
-    no_pin = SimpleNamespace(module="/tmp/x.so", slot=0, pin=None)
-    assert test_sign_recover._get_params(no_pin)[2] is None
+    monkeypatch.setattr(test_sign_recover, "run_probe", _fake_run_probe)
+
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", slot=0, pin=None)
+    with pytest.raises(pytest.skip.Exception):
+        test_sign_recover.TestSignRecover().test_sign_recover_produces_output(
+            cfg, _rsa_x509_module()
+        )
+
+    assert captured["pin"] is None

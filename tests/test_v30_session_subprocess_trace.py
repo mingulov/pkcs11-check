@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import inspect
 import subprocess
 from typing import Any
 
 import pytest
 
+from pkcs11_check.core.subprocess_trace import drain_subprocess_rv_trace
 from pkcs11_check.testcases import test_v30_session
-from pkcs11_check.testcases._subprocess_trace import drain_subprocess_rv_trace
+from pkcs11_check.testcases._probes import v30_session
 
 
 def test_session_cancel_subprocess_failure_records_child_rv_trace(
@@ -40,8 +42,18 @@ def test_session_cancel_subprocess_failure_records_child_rv_trace(
     ]
 
 
-def test_session_cancel_subprocess_registers_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, str] = {}
+def test_session_cancel_subprocess_launches_probe_with_teardown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The migrated cancel-after-digest test launches the ``v30_session`` probe module
+    (``python -m ...``), and that probe guarantees C_CloseSession + C_Finalize teardown.
+
+    Replaces the legacy assertion on the generated ``-c`` script's
+    ``_p11check_cleanup_raw_subprocess`` body: cleanup is now the probe's own ``_teardown``
+    (called at every exit point) plus ``probe_main_raw``'s atexit handler, not an inline
+    script string.
+    """
+    captured: dict[str, list[str]] = {}
 
     class _Result:
         returncode = 1
@@ -49,7 +61,7 @@ def test_session_cancel_subprocess_registers_cleanup(monkeypatch: pytest.MonkeyP
         stderr = "AssertionError: C_OpenSession: 0x000000b1"
 
     def _fake_run(args: list[str], **_kwargs: Any) -> _Result:
-        captured["script"] = args[2]
+        captured["args"] = args
         return _Result()
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
@@ -60,11 +72,12 @@ def test_session_cancel_subprocess_registers_cleanup(monkeypatch: pytest.MonkeyP
     with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
         test_case.test_cancel_after_digest_init_subprocess(p11_config)
 
-    script = captured["script"]
-    assert "def _p11check_cleanup_raw_subprocess():" in script
-    assert "_p11check_atexit.register(_p11check_cleanup_raw_subprocess)" in script
-    assert "        raw.C_CloseSession(hSession)\n    except Exception:" in script
-    assert "        raw.C_Finalize(None)\n    except Exception:" in script
-    assert "raw.C_Finalize(None)" not in script.replace(
-        "        raw.C_Finalize(None)\n    except Exception:", ""
-    )
+    # The child is launched as the v30_session probe module (python -m ...), not an inline script.
+    args = captured["args"]
+    assert "-m" in args
+    assert "pkcs11_check.testcases._probes.v30_session" in args
+
+    # Cleanup contract is now the probe's own _teardown: C_CloseSession + C_Finalize.
+    teardown_src = inspect.getsource(v30_session._teardown)
+    assert "raw.C_CloseSession(session_handle)" in teardown_src
+    assert "raw.C_Finalize(None)" in teardown_src
