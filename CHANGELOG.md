@@ -1,5 +1,73 @@
 # Changelog
 
+## [0.1.7] - 2026-07-07
+
+A large hardening and internals release. The headline user-visible items are Windows/Win64
+support, machine-readable run provenance, a `compare-results` command, and an overhauled
+per-provider report. The bulk of the work is internal: the whole subprocess-probe suite was
+rebuilt for safety, and a slot-resolution bug that was silently skipping security tests on
+some modules was fixed.
+
+### Added
+
+- **Windows / Win64 support (issue #3).** The `ctypes` binding now packs `CK_*` structures
+  for the Microsoft ABI (`_pack_=1`), handles the 32-bit `CK_ULONG` of the Win64 LLP64 model
+  (mechanism parameters and length probes are ABI-general, and hard-coded `>2^32` length
+  probes are gated so they cannot false-accuse a conformant 32-bit-`CK_ULONG` module), maps
+  NTSTATUS load failures, and adds the DLL search directory via `os.add_dll_directory`.
+- **Run provenance.** Reports and results now carry build/runtime provenance (framework
+  `git describe`, provider commit, test-data SHA-256, and a preflight check) so a result set
+  is traceable to exactly what produced it.
+- **`compare-results` command.** Compare two `results.json` files and report regressions;
+  unknown statuses are never silently treated as a pass.
+- **Honest run-quality reporting.** New `crash_limited` / `timeout` / `incomplete` metrics,
+  child-process crash accounting, an INCOMPLETE banner, and `--max-crashes` raised 3 -> 10.
+
+### Improved
+
+- **Per-provider report overhaul.** Health-first ordering, a params/curve+hash capability
+  axis, more accurate capability-gap reporting, and de-duplicated findings. The classification
+  report ships as `pkcs11-check-report`.
+- **Advertised-capability honesty.** A clean `CKR_OPERATION_NOT_VALIDATED` refusal is treated
+  as conformant (pass + compliance note), and a rejection that never actually evaluated the
+  input is an xfail rather than a spurious pass.
+- **Vendor-neutral throughout.** Provider names, fingerprint env, conformance gating, the
+  token harness, and report strings are vendor-neutral; findings are justified by the public
+  PKCS#11 spec, not by vendor attribution.
+
+### Fixed
+
+- **Security probes silently skipped some modules (slot resolution).** `--slot` is a slot
+  *index*; the probe harness was passing it to `C_OpenSession` as a raw slot *id*, so every
+  session-opening security/boundary probe crashed at setup with `CKR_SLOT_ID_INVALID` on
+  modules with dynamic slot ids (SoftHSM2 / kryoptic / tpm2 / wolfPKCS11), silently not
+  testing them and hiding real crashes. Slot resolution is now shared by the fixtures and the
+  probe harness, so a probe can never again receive the raw index.
+- **ACVP collection crash.** A module-level skip in an eagerly-imported base loader could
+  abort collection; ACVP vector availability is now a per-test guard.
+- **Module-reported garbage lengths are classified, not thrown.** A module that returns an
+  implausible output length now yields a legible finding instead of an uncaught
+  `MemoryError` / `OverflowError` / `IndexError` that would mask it.
+- Cross-platform tee reader (thread-based, not `select`-on-pipe); negotiated import-rejects
+  routed to `not_operational`; several classification and provisioning refinements.
+
+### Internal
+
+- **Subprocess-probe extraction.** ~133 f-string `python -c` child scripts across the
+  security / ckr / testcases suites were replaced with real importable `_probes/` modules
+  launched via `python -m ... run_probe` (no shell, no source interpolation). This closes PIN
+  leak vectors, makes the children testable, and is guarded by AST anti-regression tests. No
+  change to what the tests assert.
+- **Architecture cleanup.** Single-sourced the report-log JSONL reader, the outcome-key and
+  slot-resolution helpers, and the Windows DLL-directory logic; moved the RV-trace
+  wire-protocol parser into `core`; removed dead pre-migration code. Behavior-preserving,
+  validated by a full multi-provider pool round.
+
+### Requirements
+
+- Python 3.12+
+- Linux (primary), macOS and Windows where ctypes works
+
 ## [0.1.6] - 2026-06-25
 
 A bug-fix and documentation release - no CLI or API changes.

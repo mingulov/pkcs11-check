@@ -1,6 +1,6 @@
 [project]
 name = "pkcs11-check"
-version = "0.1.6"
+version = "0.1.7"
 description = "Broad, vendor-neutral PKCS#11 behavior & conformance test client (software tokens, HSMs, smart cards, cloud KMS)"
 readme = "README.md"
 authors = [
