@@ -3,9 +3,27 @@
 from __future__ import annotations
 
 import ctypes
+import sys
 from typing import Self
 
 STANDARD_GENERATED = True
+
+# Windows PKCS#11 declares the whole API under ``#pragma pack(cryptoki,1)`` (1-byte
+# packed structs); Unix uses natural alignment. Gate on sys.platform, which is "win32"
+# on Windows including under Wine (it runs a real Win64 CPython). CK_ULONG = c_ulong
+# already narrows to 32 bits on Win64 LLP64, so only struct packing needs a switch.
+_CK_STRUCT_PACK = sys.platform == "win32"
+
+
+class _CKStructure(ctypes.Structure):
+    """Base for every CK_* struct; applies 1-byte packing on the Windows ABI only.
+
+    The structs assign ``_fields_`` after class creation, so the ``_pack_`` inherited
+    here is read by ctypes at field-assignment time and applied correctly.
+    """
+
+    if _CK_STRUCT_PACK:
+        _pack_ = 1
 
 
 class CK_CONSTANT(int):
@@ -117,403 +135,403 @@ class CKZ(CK_CONSTANT):
     pass
 
 
-class CK_AES_CBC_ENCRYPT_DATA_PARAMS(ctypes.Structure):
+class CK_AES_CBC_ENCRYPT_DATA_PARAMS(_CKStructure):
     pass
 
 
-class CK_AES_CCM_PARAMS(ctypes.Structure):
+class CK_AES_CCM_PARAMS(_CKStructure):
     pass
 
 
-class CK_AES_CTR_PARAMS(ctypes.Structure):
+class CK_AES_CTR_PARAMS(_CKStructure):
     pass
 
 
-class CK_AES_GCM_PARAMS(ctypes.Structure):
+class CK_AES_GCM_PARAMS(_CKStructure):
     pass
 
 
-class CK_ARIA_CBC_ENCRYPT_DATA_PARAMS(ctypes.Structure):
+class CK_ARIA_CBC_ENCRYPT_DATA_PARAMS(_CKStructure):
     pass
 
 
-class CK_ASYNC_DATA(ctypes.Structure):
+class CK_ASYNC_DATA(_CKStructure):
     pass
 
 
-class CK_ATTRIBUTE(ctypes.Structure):
+class CK_ATTRIBUTE(_CKStructure):
     pass
 
 
-class CK_CAMELLIA_CBC_ENCRYPT_DATA_PARAMS(ctypes.Structure):
+class CK_CAMELLIA_CBC_ENCRYPT_DATA_PARAMS(_CKStructure):
     pass
 
 
-class CK_CAMELLIA_CTR_PARAMS(ctypes.Structure):
+class CK_CAMELLIA_CTR_PARAMS(_CKStructure):
     pass
 
 
-class CK_CCM_MESSAGE_PARAMS(ctypes.Structure):
+class CK_CCM_MESSAGE_PARAMS(_CKStructure):
     pass
 
 
-class CK_CCM_PARAMS(ctypes.Structure):
+class CK_CCM_PARAMS(_CKStructure):
     pass
 
 
-class CK_CCM_WRAP_PARAMS(ctypes.Structure):
+class CK_CCM_WRAP_PARAMS(_CKStructure):
     pass
 
 
-class CK_CHACHA20_PARAMS(ctypes.Structure):
+class CK_CHACHA20_PARAMS(_CKStructure):
     pass
 
 
-class CK_CMS_SIG_PARAMS(ctypes.Structure):
+class CK_CMS_SIG_PARAMS(_CKStructure):
     pass
 
 
-class CK_C_INITIALIZE_ARGS(ctypes.Structure):
+class CK_C_INITIALIZE_ARGS(_CKStructure):
     pass
 
 
-class CK_DATE(ctypes.Structure):
+class CK_DATE(_CKStructure):
     pass
 
 
-class CK_DERIVED_KEY(ctypes.Structure):
+class CK_DERIVED_KEY(_CKStructure):
     pass
 
 
-class CK_DES_CBC_ENCRYPT_DATA_PARAMS(ctypes.Structure):
+class CK_DES_CBC_ENCRYPT_DATA_PARAMS(_CKStructure):
     pass
 
 
-class CK_DSA_PARAMETER_GEN_PARAM(ctypes.Structure):
+class CK_DSA_PARAMETER_GEN_PARAM(_CKStructure):
     pass
 
 
-class CK_ECDH1_DERIVE_PARAMS(ctypes.Structure):
+class CK_ECDH1_DERIVE_PARAMS(_CKStructure):
     pass
 
 
-class CK_ECDH2_DERIVE_PARAMS(ctypes.Structure):
+class CK_ECDH2_DERIVE_PARAMS(_CKStructure):
     pass
 
 
-class CK_ECDH_AES_KEY_WRAP_PARAMS(ctypes.Structure):
+class CK_ECDH_AES_KEY_WRAP_PARAMS(_CKStructure):
     pass
 
 
-class CK_ECMQV_DERIVE_PARAMS(ctypes.Structure):
+class CK_ECMQV_DERIVE_PARAMS(_CKStructure):
     pass
 
 
-class CK_EDDSA_PARAMS(ctypes.Structure):
+class CK_EDDSA_PARAMS(_CKStructure):
     pass
 
 
-class CK_FUNCTION_LIST(ctypes.Structure):
+class CK_FUNCTION_LIST(_CKStructure):
     pass
 
 
-class CK_FUNCTION_LIST_3_0(ctypes.Structure):
+class CK_FUNCTION_LIST_3_0(_CKStructure):
     pass
 
 
-class CK_FUNCTION_LIST_3_2(ctypes.Structure):
+class CK_FUNCTION_LIST_3_2(_CKStructure):
     pass
 
 
-class CK_GCM_MESSAGE_PARAMS(ctypes.Structure):
+class CK_GCM_MESSAGE_PARAMS(_CKStructure):
     pass
 
 
-class CK_GCM_PARAMS(ctypes.Structure):
+class CK_GCM_PARAMS(_CKStructure):
     pass
 
 
-class CK_GCM_WRAP_PARAMS(ctypes.Structure):
+class CK_GCM_WRAP_PARAMS(_CKStructure):
     pass
 
 
-class CK_GOSTR3410_DERIVE_PARAMS(ctypes.Structure):
+class CK_GOSTR3410_DERIVE_PARAMS(_CKStructure):
     pass
 
 
-class CK_GOSTR3410_KEY_WRAP_PARAMS(ctypes.Structure):
+class CK_GOSTR3410_KEY_WRAP_PARAMS(_CKStructure):
     pass
 
 
-class CK_HASH_SIGN_ADDITIONAL_CONTEXT(ctypes.Structure):
+class CK_HASH_SIGN_ADDITIONAL_CONTEXT(_CKStructure):
     pass
 
 
-class CK_HKDF_PARAMS(ctypes.Structure):
+class CK_HKDF_PARAMS(_CKStructure):
     pass
 
 
-class CK_IKE1_EXTENDED_DERIVE_PARAMS(ctypes.Structure):
+class CK_IKE1_EXTENDED_DERIVE_PARAMS(_CKStructure):
     pass
 
 
-class CK_IKE1_PRF_DERIVE_PARAMS(ctypes.Structure):
+class CK_IKE1_PRF_DERIVE_PARAMS(_CKStructure):
     pass
 
 
-class CK_IKE2_PRF_PLUS_DERIVE_PARAMS(ctypes.Structure):
+class CK_IKE2_PRF_PLUS_DERIVE_PARAMS(_CKStructure):
     pass
 
 
-class CK_IKE_PRF_DERIVE_PARAMS(ctypes.Structure):
+class CK_IKE_PRF_DERIVE_PARAMS(_CKStructure):
     pass
 
 
-class CK_INFO(ctypes.Structure):
+class CK_INFO(_CKStructure):
     pass
 
 
-class CK_INTERFACE(ctypes.Structure):
+class CK_INTERFACE(_CKStructure):
     pass
 
 
-class CK_KEA_DERIVE_PARAMS(ctypes.Structure):
+class CK_KEA_DERIVE_PARAMS(_CKStructure):
     pass
 
 
-class CK_KEY_DERIVATION_STRING_DATA(ctypes.Structure):
+class CK_KEY_DERIVATION_STRING_DATA(_CKStructure):
     pass
 
 
-class CK_KEY_WRAP_SET_OAEP_PARAMS(ctypes.Structure):
+class CK_KEY_WRAP_SET_OAEP_PARAMS(_CKStructure):
     pass
 
 
-class CK_KIP_PARAMS(ctypes.Structure):
+class CK_KIP_PARAMS(_CKStructure):
     pass
 
 
-class CK_KMAC_PARAMS(ctypes.Structure):
+class CK_KMAC_PARAMS(_CKStructure):
     pass
 
 
-class CK_MECHANISM(ctypes.Structure):
+class CK_MECHANISM(_CKStructure):
     pass
 
 
-class CK_MECHANISM_INFO(ctypes.Structure):
+class CK_MECHANISM_INFO(_CKStructure):
     pass
 
 
-class CK_OTP_PARAM(ctypes.Structure):
+class CK_OTP_PARAM(_CKStructure):
     pass
 
 
-class CK_OTP_PARAMS(ctypes.Structure):
+class CK_OTP_PARAMS(_CKStructure):
     pass
 
 
-class CK_OTP_SIGNATURE_INFO(ctypes.Structure):
+class CK_OTP_SIGNATURE_INFO(_CKStructure):
     pass
 
 
-class CK_PBE_PARAMS(ctypes.Structure):
+class CK_PBE_PARAMS(_CKStructure):
     pass
 
 
-class CK_PKCS5_PBKD2_PARAMS(ctypes.Structure):
+class CK_PKCS5_PBKD2_PARAMS(_CKStructure):
     pass
 
 
-class CK_PKCS5_PBKD2_PARAMS2(ctypes.Structure):
+class CK_PKCS5_PBKD2_PARAMS2(_CKStructure):
     pass
 
 
-class CK_PRF_DATA_PARAM(ctypes.Structure):
+class CK_PRF_DATA_PARAM(_CKStructure):
     pass
 
 
-class CK_RC2_CBC_PARAMS(ctypes.Structure):
+class CK_RC2_CBC_PARAMS(_CKStructure):
     pass
 
 
-class CK_RC2_MAC_GENERAL_PARAMS(ctypes.Structure):
+class CK_RC2_MAC_GENERAL_PARAMS(_CKStructure):
     pass
 
 
-class CK_RC5_CBC_PARAMS(ctypes.Structure):
+class CK_RC5_CBC_PARAMS(_CKStructure):
     pass
 
 
-class CK_RC5_MAC_GENERAL_PARAMS(ctypes.Structure):
+class CK_RC5_MAC_GENERAL_PARAMS(_CKStructure):
     pass
 
 
-class CK_RC5_PARAMS(ctypes.Structure):
+class CK_RC5_PARAMS(_CKStructure):
     pass
 
 
-class CK_RSA_AES_KEY_WRAP_PARAMS(ctypes.Structure):
+class CK_RSA_AES_KEY_WRAP_PARAMS(_CKStructure):
     pass
 
 
-class CK_RSA_PKCS_OAEP_PARAMS(ctypes.Structure):
+class CK_RSA_PKCS_OAEP_PARAMS(_CKStructure):
     pass
 
 
-class CK_RSA_PKCS_PSS_PARAMS(ctypes.Structure):
+class CK_RSA_PKCS_PSS_PARAMS(_CKStructure):
     pass
 
 
-class CK_SALSA20_CHACHA20_POLY1305_MSG_PARAMS(ctypes.Structure):
+class CK_SALSA20_CHACHA20_POLY1305_MSG_PARAMS(_CKStructure):
     pass
 
 
-class CK_SALSA20_CHACHA20_POLY1305_PARAMS(ctypes.Structure):
+class CK_SALSA20_CHACHA20_POLY1305_PARAMS(_CKStructure):
     pass
 
 
-class CK_SALSA20_PARAMS(ctypes.Structure):
+class CK_SALSA20_PARAMS(_CKStructure):
     pass
 
 
-class CK_SEED_CBC_ENCRYPT_DATA_PARAMS(ctypes.Structure):
+class CK_SEED_CBC_ENCRYPT_DATA_PARAMS(_CKStructure):
     pass
 
 
-class CK_SESSION_INFO(ctypes.Structure):
+class CK_SESSION_INFO(_CKStructure):
     pass
 
 
-class CK_SIGN_ADDITIONAL_CONTEXT(ctypes.Structure):
+class CK_SIGN_ADDITIONAL_CONTEXT(_CKStructure):
     pass
 
 
-class CK_SKIPJACK_PRIVATE_WRAP_PARAMS(ctypes.Structure):
+class CK_SKIPJACK_PRIVATE_WRAP_PARAMS(_CKStructure):
     pass
 
 
-class CK_SKIPJACK_RELAYX_PARAMS(ctypes.Structure):
+class CK_SKIPJACK_RELAYX_PARAMS(_CKStructure):
     pass
 
 
-class CK_SLOT_INFO(ctypes.Structure):
+class CK_SLOT_INFO(_CKStructure):
     pass
 
 
-class CK_SP800_108_COUNTER_FORMAT(ctypes.Structure):
+class CK_SP800_108_COUNTER_FORMAT(_CKStructure):
     pass
 
 
-class CK_SP800_108_DKM_LENGTH_FORMAT(ctypes.Structure):
+class CK_SP800_108_DKM_LENGTH_FORMAT(_CKStructure):
     pass
 
 
-class CK_SP800_108_FEEDBACK_KDF_PARAMS(ctypes.Structure):
+class CK_SP800_108_FEEDBACK_KDF_PARAMS(_CKStructure):
     pass
 
 
-class CK_SP800_108_KDF_PARAMS(ctypes.Structure):
+class CK_SP800_108_KDF_PARAMS(_CKStructure):
     pass
 
 
-class CK_SSL3_KEY_MAT_OUT(ctypes.Structure):
+class CK_SSL3_KEY_MAT_OUT(_CKStructure):
     pass
 
 
-class CK_SSL3_KEY_MAT_PARAMS(ctypes.Structure):
+class CK_SSL3_KEY_MAT_PARAMS(_CKStructure):
     pass
 
 
-class CK_SSL3_MASTER_KEY_DERIVE_PARAMS(ctypes.Structure):
+class CK_SSL3_MASTER_KEY_DERIVE_PARAMS(_CKStructure):
     pass
 
 
-class CK_SSL3_RANDOM_DATA(ctypes.Structure):
+class CK_SSL3_RANDOM_DATA(_CKStructure):
     pass
 
 
-class CK_TLS12_EXTENDED_MASTER_KEY_DERIVE_PARAMS(ctypes.Structure):
+class CK_TLS12_EXTENDED_MASTER_KEY_DERIVE_PARAMS(_CKStructure):
     pass
 
 
-class CK_TLS12_KEY_MAT_PARAMS(ctypes.Structure):
+class CK_TLS12_KEY_MAT_PARAMS(_CKStructure):
     pass
 
 
-class CK_TLS12_MASTER_KEY_DERIVE_PARAMS(ctypes.Structure):
+class CK_TLS12_MASTER_KEY_DERIVE_PARAMS(_CKStructure):
     pass
 
 
-class CK_TLS_KDF_PARAMS(ctypes.Structure):
+class CK_TLS_KDF_PARAMS(_CKStructure):
     pass
 
 
-class CK_TLS_MAC_PARAMS(ctypes.Structure):
+class CK_TLS_MAC_PARAMS(_CKStructure):
     pass
 
 
-class CK_TLS_PRF_PARAMS(ctypes.Structure):
+class CK_TLS_PRF_PARAMS(_CKStructure):
     pass
 
 
-class CK_TOKEN_INFO(ctypes.Structure):
+class CK_TOKEN_INFO(_CKStructure):
     pass
 
 
-class CK_VERSION(ctypes.Structure):
+class CK_VERSION(_CKStructure):
     pass
 
 
-class CK_WTLS_KEY_MAT_OUT(ctypes.Structure):
+class CK_WTLS_KEY_MAT_OUT(_CKStructure):
     pass
 
 
-class CK_WTLS_KEY_MAT_PARAMS(ctypes.Structure):
+class CK_WTLS_KEY_MAT_PARAMS(_CKStructure):
     pass
 
 
-class CK_WTLS_MASTER_KEY_DERIVE_PARAMS(ctypes.Structure):
+class CK_WTLS_MASTER_KEY_DERIVE_PARAMS(_CKStructure):
     pass
 
 
-class CK_WTLS_PRF_PARAMS(ctypes.Structure):
+class CK_WTLS_PRF_PARAMS(_CKStructure):
     pass
 
 
-class CK_WTLS_RANDOM_DATA(ctypes.Structure):
+class CK_WTLS_RANDOM_DATA(_CKStructure):
     pass
 
 
-class CK_X2RATCHET_INITIALIZE_PARAMS(ctypes.Structure):
+class CK_X2RATCHET_INITIALIZE_PARAMS(_CKStructure):
     pass
 
 
-class CK_X2RATCHET_RESPOND_PARAMS(ctypes.Structure):
+class CK_X2RATCHET_RESPOND_PARAMS(_CKStructure):
     pass
 
 
-class CK_X3DH_INITIATE_PARAMS(ctypes.Structure):
+class CK_X3DH_INITIATE_PARAMS(_CKStructure):
     pass
 
 
-class CK_X3DH_RESPOND_PARAMS(ctypes.Structure):
+class CK_X3DH_RESPOND_PARAMS(_CKStructure):
     pass
 
 
-class CK_X9_42_DH1_DERIVE_PARAMS(ctypes.Structure):
+class CK_X9_42_DH1_DERIVE_PARAMS(_CKStructure):
     pass
 
 
-class CK_X9_42_DH2_DERIVE_PARAMS(ctypes.Structure):
+class CK_X9_42_DH2_DERIVE_PARAMS(_CKStructure):
     pass
 
 
-class CK_X9_42_MQV_DERIVE_PARAMS(ctypes.Structure):
+class CK_X9_42_MQV_DERIVE_PARAMS(_CKStructure):
     pass
 
 
-class CK_XEDDSA_PARAMS(ctypes.Structure):
+class CK_XEDDSA_PARAMS(_CKStructure):
     pass
 
 

@@ -5,12 +5,15 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import sys
 from collections import Counter, defaultdict, deque
 from ctypes import byref, c_void_p, cast
 from typing import Any
 
 from . import metadata_std
+from ._platform import windows_dll_directory as _windows_dll_directory
 from .types_std import *  # noqa: F401,F403,F405
+from .types_std import _CKStructure  # underscore name: not re-exported by ``*``
 
 _PTR_SIZE = ctypes.sizeof(c_void_p)
 
@@ -60,32 +63,71 @@ def ckm_name(mechanism_id: int) -> str:
 
 
 def constant_name(value: int, prefix: str = "") -> str:
-    """Return the name of a CK_CONSTANT by value, optionally filtering by prefix."""
+    """Return the name of a CK_CONSTANT by value, optionally filtering by prefix.
+
+    With a ``prefix`` only that family is consulted; an unknown value renders as
+    hex - it is NOT mis-decoded as a CKM_* mechanism whose value happens to match.
+    """
     if prefix:
-        lookup = _CK_PREFIX_LOOKUPS.get(prefix, {})
-        obj = lookup.get(value)
-        if obj is not None:
-            return str(obj)
+        obj = _CK_PREFIX_LOOKUPS.get(prefix, {}).get(value)
+        return str(obj) if obj is not None else f"0x{value:08x}"
     obj = _CKM_BY_VALUE.get(value)
-    if obj is not None:
-        return str(obj)
-    return f"0x{value:08x}"
+    return str(obj) if obj is not None else f"0x{value:08x}"
 
 
 _SUB_PARAM_PREFIXES: dict[str, str] = {"mgf": "CKG_", "kdf": "CKD_"}
 
 
+# Sub-params whose value is itself a mechanism (CKM_*); everything not listed
+# here and not in _SUB_PARAM_PREFIXES is an integer (length/bit-count/flag).
+_SUB_PARAM_MECHANISMS: frozenset[str] = frozenset(
+    {"hashAlg", "prf", "prfHashMechanism", "prfMechanism"}
+)
+
+
 def sub_param_name(param_name: str, value: int) -> str:
-    """Return the named constant for a sub-mechanism parameter value."""
+    """Return the display form for a sub-mechanism parameter value.
+
+    ``mgf``/``kdf`` decode to their CKG_/CKD_ constant; ``hashAlg``/``prf*`` are
+    mechanisms (CKM_*). Every other parameter is an integer (length, bit count,
+    flag) shown as its decimal value - NOT looked up as a constant, which would
+    mis-decode integers that collide with CK constant values (e.g. ``macLen=16``
+    decoding to ``CKM_DSA_KEY_PAIR_GEN``).
+    """
     prefix = _SUB_PARAM_PREFIXES.get(param_name)
     if prefix:
         return constant_name(value, prefix)
-    return ckm_name(value)
+    if param_name in _SUB_PARAM_MECHANISMS:
+        return ckm_name(value)
+    return str(value)
 
 
-_VERSION_SIZE = _PTR_SIZE
+class _CK_FUNCTION_LIST_HEAD(_CKStructure):  # noqa: N801 - mirrors a PKCS#11 C type name
+    """Mirror of the CK_FUNCTION_LIST header to derive the version-field footprint.
+
+    On Linux (natural alignment) CK_VERSION's 2 bytes pad up to the pointer boundary,
+    so the first function pointer sits at ``_PTR_SIZE``; under the packed Windows ABI it
+    sits at ``sizeof(CK_VERSION)``. The computed offset is correct on both platforms,
+    unlike the former hardcoded ``_PTR_SIZE`` (which raised an access violation on the
+    packed ABI - see docs spec 2026-06-29-windows-abi-support-design).
+    """
+
+    _fields_ = [("version", CK_VERSION), ("firstFunc", c_void_p)]
+
+
+_VERSION_SIZE = _CK_FUNCTION_LIST_HEAD.firstFunc.offset
 _V30_START = metadata_std.FUNCTION_INDICES["C_GetInterfaceList"]
 _V32_START = metadata_std.FUNCTION_INDICES["C_EncapsulateKey"]
+
+
+def function_list_header_size() -> int:
+    """Byte offset of the first ``C_*`` pointer in a CK_FUNCTION_LIST for the current ABI.
+
+    Derived from the packing-aware struct offset (``sizeof(CK_VERSION)`` padded to the
+    pointer boundary on natural-aligned ABIs, ``sizeof(CK_VERSION)`` under ``_pack_=1`` on
+    Windows) so callers that walk the table by hand never hardcode ``sizeof(c_void_p)``.
+    """
+    return _VERSION_SIZE
 
 
 def _resolve_ctype(name: str) -> Any:
@@ -325,6 +367,8 @@ class RawPKCS11:
     ) -> None:
         self._funcs: dict[str, Any] = {}
         self._lib: ctypes.CDLL | None = None
+        # Windows DLL-search handles kept alive for the process (see _windows_dll_directory).
+        self._dll_dir_handles: list[Any] = []
         self._call_log: dict[str, int] = defaultdict(int)
         self._used_mechanisms: set[int] = set()
         self._mechanism_counts: Counter[int] = Counter()
@@ -427,6 +471,9 @@ class RawPKCS11:
         return int(function_list_ptr)
 
     def _load_from_lib(self, lib_path: str) -> None:
+        directory = _windows_dll_directory(lib_path)
+        if directory is not None and sys.platform == "win32":
+            self._dll_dir_handles.append(os.add_dll_directory(directory))
         self._lib = ctypes.CDLL(lib_path)
 
         try:

@@ -27,7 +27,9 @@ def _decode_der_oid(data: bytes) -> str:
     Raises:
         ValueError: If data is not a valid DER OID encoding.
     """
-    if len(data) < 2 or data[0] != 0x06:
+    if len(data) < 2:
+        raise ValueError(f"DER OID too short: {len(data)} byte(s)")
+    if data[0] != 0x06:
         raise ValueError(f"Expected DER OID tag 0x06, got 0x{data[0]:02x}")
     oid_len = data[1]
     if oid_len & 0x80:

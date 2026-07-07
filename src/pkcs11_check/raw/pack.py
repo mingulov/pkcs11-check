@@ -487,6 +487,36 @@ def mech_bytes(
     )
 
 
+def ck_ulong_bytes(value: int) -> bytes:
+    """ABI-native byte encoding of a ``CK_ULONG`` value.
+
+    Both the width and the byte order come from the ``CK_ULONG`` ctypes type, so the result
+    is correct on every ABI ctypes models: 8 bytes on LP64, 4 bytes on Win64 LLP64 / ILP32.
+    Prefer this (or :func:`mech_ulong`) over ``value.to_bytes(8, "little")`` for any CK_ULONG-
+    typed mechanism parameter -- a literal width is wrong on the packed Windows ABI.
+    """
+    return bytes(CK_ULONG(value))
+
+
+def mech_scalar(mechanism_type: CKM | int, ctype: type[Any], value: int) -> PackedMechanism:
+    """Pack a mechanism whose ``pParameter`` is a single scalar C value.
+
+    The parameter width and byte order are taken from ``ctype`` (e.g. ``CK_ULONG``,
+    ``CK_FLAGS``), so the packed ``ulParameterLen`` is always ``sizeof(ctype)`` for the
+    current ABI -- never a hardcoded literal.
+    """
+    return mech_bytes(mechanism_type, bytes(ctype(value)))
+
+
+def mech_ulong(mechanism_type: CKM | int, value: int) -> PackedMechanism:
+    """Pack a mechanism whose ``pParameter`` is a single ``CK_ULONG``.
+
+    Covers the ``*_MAC_GENERAL`` family (the CK_ULONG is the requested MAC length),
+    ``CK_EXTRACT_PARAMS`` (a bit index), the XEdDSA hash type, etc.
+    """
+    return mech_scalar(mechanism_type, CK_ULONG, value)
+
+
 def _pack_bytes(
     data: bytes | None,
     keepalive: list[Any],
@@ -599,8 +629,11 @@ __all__ = [
     "attr_string",
     "attr_template",
     "attr_ulong",
+    "ck_ulong_bytes",
     "mech_bytes",
+    "mech_scalar",
     "mech_simple",
+    "mech_ulong",
     "template",
     "template_from_dict",
     "template_ptr_count",
