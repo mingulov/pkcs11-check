@@ -57,6 +57,8 @@ _SPECIAL_DETAIL_OUTCOMES = {"crashed", "timeout", "passed-in-isolation"}
 def _empty_counts() -> dict[str, int]:
     """A fresh per-unit outcome-counts dict, every canonical outcome key zeroed."""
     return dict.fromkeys(_DETAIL_COUNT_KEYS, 0)
+
+
 _MAX_TIMEOUT_RETRIES = 3
 # Exit code when the selection (module/marker/match/path) collected ZERO tests:
 # a run that executed nothing must not report success. Maps to the contract's

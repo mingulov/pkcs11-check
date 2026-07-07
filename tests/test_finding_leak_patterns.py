@@ -191,11 +191,7 @@ def _named_ckr_ok_membership_hits(source: str, path: str) -> list[str]:
 
 
 def test_guard_flags_named_ckr_ok_membership() -> None:
-    src = (
-        "_ACCEPT = (CKR_ARGUMENTS_BAD, CKR_OK)\n"
-        "def probe(rv):\n"
-        "    assert rv in _ACCEPT\n"
-    )
+    src = "_ACCEPT = (CKR_ARGUMENTS_BAD, CKR_OK)\ndef probe(rv):\n    assert rv in _ACCEPT\n"
     assert _named_ckr_ok_membership_hits(src, "x.py") == ["x.py:3 (in _ACCEPT)"]
 
 
