@@ -72,6 +72,21 @@ that failed, crashed, or timed out are rerun on resume.
 In `--isolation auto`, resume keeps the saved unit plan from the state file. Fresh
 non-resume runs are the point where newly learned policy promotions take effect.
 
+The state file records a fingerprint of the run configuration, so `--resume` refuses to reuse
+results when the fingerprint changes. By default the fingerprint covers pkcs11-check's own
+environment (the `P11TEST_` and `PKCS11_` namespaces) plus the module path and test-data
+provenance; it does not include a provider's own configuration environment (for example a
+token-directory or config-file variable), because those names are provider-specific and
+pkcs11-check stays provider-neutral. If you change such a variable between runs and want the
+change to invalidate a `--resume` (rather than silently reuse results from the old
+configuration), name it via `PKCS11_CHECK_FINGERPRINT_ENV_KEYS` (comma-separated, exact keys)
+or `PKCS11_CHECK_FINGERPRINT_ENV_PREFIXES`:
+
+```bash
+PKCS11_CHECK_FINGERPRINT_ENV_KEYS=MYHSM_CONFIG,MYHSM_TOKENDIR \
+  uv run pkcs11-check test --module /path/to/module.so --isolation file --resume
+```
+
 If you want the run to stop immediately when it hits a bad unit, use:
 
 ```bash
