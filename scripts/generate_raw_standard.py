@@ -591,9 +591,27 @@ def _render_types_module(
         "from __future__ import annotations",
         "",
         "import ctypes",
+        "import sys",
         "from typing import Self",
         "",
         "STANDARD_GENERATED = True",
+        "",
+        "# Windows PKCS#11 declares the whole API under ``#pragma pack(cryptoki,1)`` (1-byte",
+        '# packed structs); Unix uses natural alignment. Gate on sys.platform, which is "win32"',
+        "# on Windows including under Wine (it runs a real Win64 CPython). CK_ULONG = c_ulong",
+        "# already narrows to 32 bits on Win64 LLP64, so only struct packing needs a switch.",
+        '_CK_STRUCT_PACK = sys.platform == "win32"',
+        "",
+        "",
+        "class _CKStructure(ctypes.Structure):",
+        '    """Base for every CK_* struct; applies 1-byte packing on the Windows ABI only.',
+        "",
+        "    The structs assign ``_fields_`` after class creation, so the ``_pack_`` inherited",
+        "    here is read by ctypes at field-assignment time and applied correctly.",
+        '    """',
+        "",
+        "    if _CK_STRUCT_PACK:",
+        "        _pack_ = 1",
         "",
     ]
 
@@ -606,7 +624,7 @@ def _render_types_module(
     function_pointer_names = {_function_pointer_name(name) for name, _ in all_functions}
     callable_names = set(callbacks) | function_pointer_names
     for name in sorted(struct_names):
-        lines.append(f"class {name}(ctypes.Structure):")
+        lines.append(f"class {name}(_CKStructure):")
         lines.append("    pass")
         lines.append("")
 

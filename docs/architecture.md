@@ -19,7 +19,7 @@
 - `core/file_runner.py` - main isolated runner for `auto|file|test`, with resume, adaptive promotion, and aggregated reports
 - `core/preflight.py` - collection-safe capability probe written through a helper subprocess manifest
 - `core/collection.py` - pytest item metadata collection for marker-aware isolation planning
-- `core/isolation.py` - lower-level `spawn` helper retained for focused tests and future integration
+- `core/report_log.py` - shared pytest-reportlog JSONL reader (record iterator, outcome mapper, user_property helpers)
 - `config.py` - four-layer config: CLI > env > TOML > defaults
 - `plugin.py` - pytest11 entry point, registers markers, fixtures, collection hooks
 - `fixtures.py` - p11_raw_session / p11_session (function-scoped, fresh session per test), p11_module_session (module-scoped, self-healing for fast verification tests), p11_module, p11_config, p11_interface_version
@@ -176,7 +176,8 @@ module did - instead of flattening the verdict into a free-text `pytest.fail`/`p
 ```python
 from pkcs11_check import classification as C
 C.classify(reason, *, kind=…, label, operation, mechanism, expected, actual,
-           spec_ref, source, vector_id, summary, detail)
+           spec_ref, source, vector_id, params, summary, detail)
+C.set_params({"curve": "secp256r1"})   # per-test discriminating params (see below)
 ```
 
 `classify()` builds the `Classification` record, stores it in the per-test collector, and **then
@@ -186,6 +187,22 @@ reason; a pass reason returns normally). Thin typed wrappers `fail_as(reason, **
 KAT output equality is checked with `assert_correct(*, actual, expected, label, …)`
 (`testcases/conftest.py`): equal values pass; a mismatch emits a `wrong_result`/`crypto` record and
 fails. The existing `classify_*` / `assert_ckr` helpers now route through this same machinery.
+
+### Discriminating params (`set_params`)
+
+Vector-replay and mechanism tests attach the *discriminating cryptographic parameter* of each case so the report can roll findings up by it (the per-curve / per-key-size / per-hash axis that Step 1 of the report deliberately could not show). Call `C.set_params({...})` once per test - it is inherited by every `classify()` in that test and cleared at teardown - or pass `params={...}` to a single `classify()`. Use these **canonical keys** (do not invent synonyms; a new key silently starts a separate, un-mergeable bucket):
+
+| key | value form | example |
+|---|---|---|
+| `curve` | canonical curve name | `secp256r1`, `ed25519`, `brainpoolp256r1` |
+| `rsa_bits` | modulus bits, decimal string | `2048`, `3072` |
+| `aes_bits` | key bits, decimal string | `128`, `256` |
+| `dsa_bits` | modulus bits, decimal string | `2048` |
+| `hash` | digest name, dash form | `sha-256`, `sha3-512`, `sha-512/256` |
+| `mlkem` / `mldsa` | parameter-set level | `768`, `65` |
+| `cipher` | stream-cipher name | `chacha20` |
+
+Values are canonicalized centrally by `classification.normalize_param` (curve aliases like `P-256`->`secp256r1`, hash spellings like `SHA512_HMAC`->`sha-512`), applied **both at emission and defensively in the report extractor**, so equivalent forms from different vector families share one bucket. To support a new spelling, add an alias there - never normalize at the call site. A guard test (`tests/test_classification_params.py`) pins the canonical forms.
 
 ### The model
 
