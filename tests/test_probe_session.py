@@ -118,3 +118,34 @@ def test_session_probe_emits_rv_trace(tmp_path: Path, mock_module_path: str) -> 
     )
     trace = json.loads(last_json_str)
     assert isinstance(trace, list), f"rv_trace is not a list: {trace!r}"
+
+
+def test_probe_teardown_runs_at_most_once(monkeypatch: object) -> None:
+    """_ProbeTeardown is registered via atexit AND exposed as ctx.cleanup, so a probe that calls
+    ctx.cleanup() plus the atexit firing must not double-finalize. Guards the run-once contract
+    directly (previously only exercised end-to-end)."""
+    import pkcs11_check.testcases._probes.session as session
+
+    calls = {"coverage": 0, "close": 0, "finalize": 0}
+    monkeypatch.setattr(
+        session, "_write_coverage", lambda raw: calls.__setitem__("coverage", calls["coverage"] + 1)
+    )  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        session,
+        "close_session_quietly",
+        lambda raw, sh: calls.__setitem__("close", calls["close"] + 1),
+    )  # type: ignore[attr-defined]
+
+    class _FakeRaw:
+        def C_Finalize(self, _reserved: object) -> int:  # noqa: N802  # PKCS#11 API name
+            calls["finalize"] += 1
+            return 0
+
+    teardown = session._ProbeTeardown(_FakeRaw())  # type: ignore[arg-type]
+    teardown.sh = 7
+    teardown.initialized = True
+
+    teardown()
+    teardown()  # second invocation must be a no-op
+
+    assert calls == {"coverage": 1, "close": 1, "finalize": 1}
