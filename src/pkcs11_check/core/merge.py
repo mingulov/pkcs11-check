@@ -283,10 +283,10 @@ def _load_shard_payload(shard_dir: Path, warnings: list[str]) -> dict[str, Any] 
             )
 
     # results.json missing or corrupt: salvage from the shard's own JSONL.
-    # postprocess_jsonl_to_unified always returns a dict (never None), so the
-    # guard is unconditionally true and is omitted.  An empty JSONL yields a
-    # zero-count payload — no findings are lost — so the "LOST" warning below
-    # is correctly bypassed in that case.
+    # postprocess_jsonl_to_unified always returns a dict (never None). A zero-count salvage is
+    # only a genuine loss when results.json *existed* (proof the shard ran) but was corrupt --
+    # then an empty report.jsonl means the findings are gone; a simply-missing results.json with
+    # an empty JSONL is treated as "shard produced nothing", not a loss.
     if report_path.exists():
         with tempfile.TemporaryDirectory() as tmp:
             payload = postprocess_jsonl_to_unified(report_path, Path(tmp) / "results.json")
@@ -295,6 +295,11 @@ def _load_shard_payload(shard_dir: Path, warnings: list[str]) -> dict[str, Any] 
             warnings.append(
                 f"{shard_dir.name}: results.json missing; reconstructed "
                 f"{total} outcomes from report.jsonl"
+            )
+        elif results_path.exists() and total == 0:
+            warnings.append(
+                f"{shard_dir.name}: results.json corrupt and report.jsonl empty; "
+                "shard findings LOST from the merged summary"
             )
         return payload
 

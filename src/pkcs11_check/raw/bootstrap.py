@@ -51,10 +51,16 @@ def resolve_slot_id(slots: list[int], slot_index: int | None) -> int:
     (which can be a large dynamic value on SoftHSM2/kryoptic/tpm2/wolfPKCS11). The session
     fixtures and the probe harness MUST resolve it identically; keeping the logic here is the
     single source both call, so a probe can never again pass the raw index to ``C_OpenSession``
-    and crash with ``CKR_SLOT_ID_INVALID``. ``slots`` must be non-empty (callers check).
+    and crash with ``CKR_SLOT_ID_INVALID``.
+
+    Raises ``ValueError`` on an empty slot list (no present-token slot) instead of an opaque
+    ``IndexError``. A negative index is out of range and clamps to the first slot (it must not
+    fall through to Python's negative indexing and silently pick the *last* slot).
     """
+    if not slots:
+        raise ValueError("no present-token slot to resolve config.slot against")
     idx = slot_index if slot_index is not None else 0
-    return slots[idx] if idx < len(slots) else slots[0]
+    return slots[idx] if 0 <= idx < len(slots) else slots[0]
 
 
 def open_session(raw: RawPKCS11, slot_id: int, flags: int) -> int:
