@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from typer.testing import CliRunner
+
 from pkcs11_check.cli import list_tests_cmd
+from pkcs11_check.cli.app import app
+
+runner = CliRunner()
 
 
 def _args(**kw):
@@ -91,3 +96,43 @@ def test_enumerate_defaults_targets_to_testcases_dir(monkeypatch) -> None:
         slot=0,
     )
     assert seen["targets"] == [list_tests_cmd._TESTCASES_DIR]
+
+
+def test_emit_nodeids_to_stdout_only(capsys) -> None:
+    list_tests_cmd._emit_nodeids(["a.py::t1", "b.py::t2"])
+    cap = capsys.readouterr()
+    assert cap.out == "a.py::t1\nb.py::t2\n"
+    assert cap.err == ""
+
+
+def test_command_prints_nodeids_and_exits_zero(monkeypatch) -> None:
+    monkeypatch.setattr(
+        list_tests_cmd, "enumerate_nodeids", lambda *a, **k: ["a.py::t1", "b.py::t2"]
+    )
+    result = runner.invoke(app, ["list-tests", "--match", "t"])
+    assert result.exit_code == 0
+    assert "a.py::t1" in result.output
+    assert "b.py::t2" in result.output
+
+
+def test_command_zero_matches_exits_zero(monkeypatch) -> None:
+    monkeypatch.setattr(list_tests_cmd, "enumerate_nodeids", lambda *a, **k: [])
+    result = runner.invoke(app, ["list-tests", "--match", "nope"])
+    assert result.exit_code == 0
+    assert "0 node-ids matched" in result.output
+
+
+def test_command_collection_error_exits_one(monkeypatch) -> None:
+    def _boom(*a, **k):
+        raise ValueError("pytest collection failed: boom")
+
+    monkeypatch.setattr(list_tests_cmd, "enumerate_nodeids", _boom)
+    result = runner.invoke(app, ["list-tests", "--match", "t"])
+    assert result.exit_code == 1
+    assert "boom" in result.output
+
+
+def test_command_registered_help() -> None:
+    result = runner.invoke(app, ["list-tests", "--help"])
+    assert result.exit_code == 0
+    assert "node-id" in result.output.lower() or "enumerate" in result.output.lower()

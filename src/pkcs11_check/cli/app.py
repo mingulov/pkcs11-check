@@ -11,6 +11,7 @@ from pkcs11_check.cli.doctor_cmd import doctor_command
 from pkcs11_check.cli.fetch_cmd import fetch_data_command, fetch_disabled_command
 from pkcs11_check.cli.info_cmd import info_command
 from pkcs11_check.cli.list_cmd import list_command
+from pkcs11_check.cli.list_tests_cmd import list_tests_command
 from pkcs11_check.cli.shard_cmd import merge_shards_command, shard_units_command
 from pkcs11_check.cli.state_cmd import state_command
 from pkcs11_check.cli.test_cmd import test_command
@@ -38,6 +39,7 @@ app.command("test")(test_command)
 app.command("doctor")(doctor_command)
 app.command("info")(info_command)
 app.command("list")(list_command)
+app.command("list-tests")(list_tests_command)
 app.command("state")(state_command)
 app.command("compliance-report")(compliance_report_command)
 app.command("compare-coverage")(compare_coverage_command)
