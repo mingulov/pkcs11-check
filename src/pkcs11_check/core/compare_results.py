@@ -49,7 +49,7 @@ def load_results(path: Path) -> tuple[dict[str, str], dict[str, int]]:
 
     Verbatim port of ``_load_results`` from ``scripts/compare-results.py``.
     """
-    data: dict[str, Any] = json.loads(path.read_text())
+    data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     units: list[dict[str, Any]] = data.get("units", [])
     target_map: dict[str, str] = {}
     for unit in units:

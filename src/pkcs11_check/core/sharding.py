@@ -18,7 +18,7 @@ from pathlib import Path
 
 def duration_by_unit_from_results(results_path: Path) -> dict[str, float]:
     """Extract per-unit (file) wall durations from a prior ``results.json``."""
-    payload = json.loads(results_path.read_text())
+    payload = json.loads(results_path.read_text(encoding="utf-8"))
     out: dict[str, float] = {}
     for unit in payload.get("units", []) or []:
         target = unit.get("target")

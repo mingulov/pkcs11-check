@@ -416,7 +416,7 @@ def load_isolation_policy(path: Path) -> dict[str, BackendIsolationPolicy]:
     if not path.exists():
         return {}
 
-    raw = json.loads(path.read_text())
+    raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         msg = f"invalid isolation policy file: {path}"
         raise ValueError(msg)
@@ -456,7 +456,7 @@ def save_isolation_policy(path: Path, policies: Mapping[str, BackendIsolationPol
             for fingerprint, policy in sorted(policies.items())
         }
     }
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _state_summary(state: FileRunState) -> dict[str, int]:
@@ -1021,7 +1021,9 @@ def _write_unit_report_record_cache(
 ) -> None:
     cache_path = _report_record_cache_path(state_file, unit)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text("".join(json.dumps(record) + "\n" for record in records))
+    cache_path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
 
 
 def _write_unit_report_record_cache_from_jsonl_paths(
@@ -1892,7 +1894,7 @@ def load_run_state(path: Path) -> FileRunState | None:
     if not path.exists():
         return None
 
-    raw = json.loads(path.read_text())
+    raw = json.loads(path.read_text(encoding="utf-8"))
     results = [FileRunResult(**item) for item in raw.get("results", [])]
     report_records_by_unit: dict[str, list[dict[str, Any]]] = {}
     raw_records = raw.get("report_records_by_unit", {})
@@ -1940,7 +1942,7 @@ def save_run_state(path: Path, state: FileRunState) -> None:
         # escape hatch for offline state inspection and for A/B perf measurement;
         # it is OFF by default and never needed for resume.
         payload["report_records_by_unit"] = state.report_records_by_unit
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _extract_option_value(args: list[str], option: str) -> str | None:
@@ -2926,11 +2928,15 @@ def run_isolated_pytest_units(
                     )
                     if coverage_data:
                         coverage_path = report_config.jsonl_path.parent / "coverage.json"
-                        coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
+                        coverage_path.write_text(
+                            json.dumps(coverage_data, indent=2) + "\n", encoding="utf-8"
+                        )
                     provisioning_data = extract_provisioning_from_jsonl(report_config.jsonl_path)
                     if provisioning_data is not None:
                         provisioning_path = report_config.jsonl_path.parent / "provisioning.json"
-                        provisioning_path.write_text(json.dumps(provisioning_data, indent=2) + "\n")
+                        provisioning_path.write_text(
+                            json.dumps(provisioning_data, indent=2) + "\n", encoding="utf-8"
+                        )
                         if provisioning_data["totals"].get("ran_via_external", 0) > 0:
                             _emit_external_provision_banner(
                                 provisioning_data["totals"]["ran_via_external"]
@@ -3831,11 +3837,15 @@ def run_isolated_pytest_units(
                     )
                 if coverage_data:
                     coverage_path = report_config.jsonl_path.parent / "coverage.json"
-                    coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
+                    coverage_path.write_text(
+                        json.dumps(coverage_data, indent=2) + "\n", encoding="utf-8"
+                    )
                 provisioning_data = extract_provisioning_from_jsonl(report_config.jsonl_path)
                 if provisioning_data is not None:
                     provisioning_path = report_config.jsonl_path.parent / "provisioning.json"
-                    provisioning_path.write_text(json.dumps(provisioning_data, indent=2) + "\n")
+                    provisioning_path.write_text(
+                        json.dumps(provisioning_data, indent=2) + "\n", encoding="utf-8"
+                    )
                     if provisioning_data["totals"].get("ran_via_external", 0) > 0:
                         _emit_external_provision_banner(
                             provisioning_data["totals"]["ran_via_external"]

@@ -56,7 +56,7 @@ def crashes_from_results(results_json: Path | None) -> list[dict[str, Any]]:
     if results_json is None:
         return []
     try:
-        payload = json.loads(results_json.read_text())
+        payload = json.loads(results_json.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return []
     units = payload.get("units", []) if isinstance(payload, dict) else []
@@ -85,7 +85,7 @@ def _payload_from_results(results_json: Path | None) -> dict[str, Any]:
     if results_json is None:
         return {}
     try:
-        payload = json.loads(results_json.read_text())
+        payload = json.loads(results_json.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
@@ -96,7 +96,7 @@ def _quality_for(results_json: Path | None) -> dict[str, Any]:
     if results_json is None:
         return {}
     try:
-        payload = json.loads((results_json.parent / "quality.json").read_text())
+        payload = json.loads((results_json.parent / "quality.json").read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
@@ -135,7 +135,7 @@ def _resolve_module_issues_text(explicit: Path | None) -> str:
 
     for path in candidates:
         try:
-            return path.read_text()
+            return path.read_text(encoding="utf-8")
         except (FileNotFoundError, OSError):
             pass
     return ""

@@ -136,12 +136,12 @@ def save_collection_manifest(path: Path, items: list[CollectedPytestItem]) -> No
     """Persist collected pytest item metadata as JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"items": [asdict(item) for item in items]}
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def load_collection_manifest(path: Path) -> list[CollectedPytestItem]:
     """Load collected pytest item metadata from JSON."""
-    raw = json.loads(path.read_text())
+    raw = json.loads(path.read_text(encoding="utf-8"))
     raw_items = raw.get("items", raw)
     if not isinstance(raw_items, list):
         msg = f"invalid collection manifest: {path}"
@@ -202,7 +202,8 @@ def collect_pytest_item_metadata(
 
     try:
         input_path.write_text(
-            json.dumps({"targets": targets, "pytest_args": pytest_args}, sort_keys=True) + "\n"
+            json.dumps({"targets": targets, "pytest_args": pytest_args}, sort_keys=True) + "\n",
+            encoding="utf-8",
         )
         cmd = [
             sys.executable,
@@ -273,7 +274,7 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     """CLI entry point for the helper subprocess."""
     args = _parse_args()
-    raw = json.loads(Path(args.input).read_text())
+    raw = json.loads(Path(args.input).read_text(encoding="utf-8"))
     targets = [str(target) for target in raw.get("targets", [])]
     pytest_args = [str(arg) for arg in raw.get("pytest_args", [])]
     plugin = _CollectionPlugin()

@@ -92,14 +92,14 @@ def probe_capabilities(module: Path, interface: str, slot: int) -> CapabilityMan
 
 def load_manifest(path: Path) -> CapabilityManifest:
     """Load a capability manifest from disk."""
-    raw = json.loads(path.read_text())
+    raw = json.loads(path.read_text(encoding="utf-8"))
     return CapabilityManifest(**raw)
 
 
 def save_manifest(path: Path, manifest: CapabilityManifest) -> None:
     """Persist a capability manifest as JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(manifest), indent=2, sort_keys=True) + "\n")
+    path.write_text(json.dumps(asdict(manifest), indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def run_preflight_subprocess(

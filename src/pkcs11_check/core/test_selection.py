@@ -106,7 +106,7 @@ def load_disabled_baseline(path: Path | None) -> DisabledBaseline | None:
     if path is None:
         return None
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         msg = f"disabled baseline file not found: {path}"
         raise FileNotFoundError(msg) from exc
@@ -239,7 +239,7 @@ def _identify_culprit_for_file(
 
 def _load_results_units(path: Path) -> list[dict[str, object]]:
     try:
-        payload = json.loads(path.read_text())
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return []
     units = payload.get("units", []) if isinstance(payload, dict) else []
@@ -442,5 +442,5 @@ def write_deselect_file(nodeids: Iterable[str]) -> Path:
     fd, raw_path = tempfile.mkstemp(prefix="pkcs11-check-deselect-", suffix=".txt")
     path = Path(raw_path)
     os.close(fd)
-    path.write_text("".join(f"{nodeid}\n" for nodeid in unique_sorted))
+    path.write_text("".join(f"{nodeid}\n" for nodeid in unique_sorted), encoding="utf-8")
     return path

@@ -578,7 +578,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     deselect_file = os.environ.get("PKCS11_CHECK_DESELECT_FILE")
     if deselect_file:
         try:
-            deselect_nodeids = set(parse_disabled_nodeids(Path(deselect_file).read_text()))
+            deselect_nodeids = set(
+                parse_disabled_nodeids(Path(deselect_file).read_text(encoding="utf-8"))
+            )
         except (FileNotFoundError, OSError):
             deselect_nodeids = set()
         if deselect_nodeids:
