@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from pkcs11_check.core.cache_paths import secure_cache_dir
+from pkcs11_check.core.nodeids import normalize_nodeid
 
 # Collection-metadata cache (Lever 2 of the speedup gap analysis). The full
 # --collect-only pass over ~106k items costs ~13-18s but its result changes only
@@ -255,7 +256,7 @@ class _CollectionPlugin:
             markers = sorted({marker.name for marker in item.iter_markers()})
             self.items.append(
                 CollectedPytestItem(
-                    nodeid=item.nodeid,
+                    nodeid=normalize_nodeid(item.nodeid),
                     file_path=str(file_path),
                     markers=markers,
                 )

@@ -13,6 +13,7 @@ from typing import Any, cast
 
 import pytest
 
+from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.preflight import (
     CapabilityManifest,
     load_manifest,
@@ -584,7 +585,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             remaining: list[pytest.Item] = []
             deselected: list[pytest.Item] = []
             for item in items:
-                if item.nodeid in deselect_nodeids:
+                if normalize_nodeid(item.nodeid) in deselect_nodeids:
                     deselected.append(item)
                 else:
                     remaining.append(item)
