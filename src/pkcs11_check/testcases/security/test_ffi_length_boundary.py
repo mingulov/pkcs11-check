@@ -138,7 +138,7 @@ def _classify_unhonorable_length_outcome(
     - SETUP_XFAIL line present -> xfail (not_operational, setup didn't reach probe).
     - Timeout (rc==SUBPROCESS_TIMEOUT_RC or SUBPROCESS_TIMEOUT_MARKER in stderr) ->
       note (honoring an un-backable length is caller-UB territory, not silent truncation).
-    - Crash (rc < 0) -> note (over-read on caller-induced UB, not a module defect).
+    - Crash (is_crash_returncode) -> note (over-read on caller-induced UB, not a module defect).
     - CKR_OK -> fail (accepted_invalid: silent truncation of an un-honorable length).
     - rv in reject_rvs -> pass.
     - other clean code -> xfail (nonspec_reject).

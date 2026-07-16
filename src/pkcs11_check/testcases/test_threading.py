@@ -15,7 +15,8 @@ session. It runs in a dedicated **child process** that performs its own
 ``C_Initialize(CKF_OS_LOCKING_OK)``, against a disposable token where one can be
 minted so that even a genuine thread-safety crash cannot corrupt the
 shared token. A crash
-(``returncode < 0``) or hang under this spec-valid multi-threaded contract is a
+(a POSIX signal or Windows NTSTATUS exit) or hang under this spec-valid
+multi-threaded contract is a
 genuine module thread-safety **finding** (FAIL); a module that cannot lock
 (``CKR_CANT_LOCK``) is skipped (capability genuinely absent).
 
