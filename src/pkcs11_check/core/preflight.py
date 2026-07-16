@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
 from pkcs11_check.core.loader import load_module
 
 
@@ -140,8 +141,7 @@ def run_preflight_subprocess(
     if completed.returncode == 0 and output_path.exists():
         return load_manifest(output_path)
 
-    if completed.returncode < 0:
-        signal = -completed.returncode
+    if is_crash_returncode(completed.returncode):
         return CapabilityManifest(
             status="crashed",
             module_path=str(module),
@@ -150,7 +150,7 @@ def run_preflight_subprocess(
             slot_index=slot,
             slot_count=None,
             mechanisms=[],
-            error=f"preflight crashed (signal {signal})",
+            error=f"preflight crashed ({crash_detail_name(completed.returncode)})",
         )
 
     return CapabilityManifest(
