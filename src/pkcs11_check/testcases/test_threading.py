@@ -34,6 +34,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify, fail_as
+from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
 
 pytestmark = [
     pytest.mark.stress,
@@ -228,13 +229,13 @@ class TestConcurrentUnderOSLocking:
                     f"(timeout) -- a spec-valid multi-threaded contract must make progress"
                 ),
             )
-        if rc < 0:
+        if is_crash_returncode(rc):
             classify(
                 "crash",
                 kind="lifecycle",
                 label=f"threading:{workload}",
                 summary=(
-                    f"{workload}: module SIGSEGV (signal {-rc}) under CKF_OS_LOCKING_OK "
+                    f"{workload}: module crashed ({crash_detail_name(rc)}) under CKF_OS_LOCKING_OK "
                     f"concurrency -- a spec-valid multi-threaded contract MUST be "
                     f"crash-safe. stderr: {stderr}"
                 ),
