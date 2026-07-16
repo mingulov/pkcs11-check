@@ -772,6 +772,25 @@ def _rv_trace_properties_from_previous_failure(
     return [("pkcs11_rv_trace", trace)]
 
 
+def _emit_claimed_op(item: pytest.Item) -> None:
+    """Attach the test's declared C_* operation (pkcs11_claimed_op) to user_properties.
+
+    Called in teardown BEFORE classification.clear(). The value comes from the test's
+    set_mechanism() declaration; quality_audit groups PASSED records by it to compute the
+    hollow-pass oracle's claimed-passes-per-operation. No-op when no operation was declared.
+    """
+    from pkcs11_check.classification import current_operation
+
+    op = current_operation()
+    if not op:
+        return
+    user_properties = getattr(item, "user_properties", None)
+    if not isinstance(user_properties, list):
+        return
+    if not any(name == "pkcs11_claimed_op" for name, _ in user_properties):
+        user_properties.append(("pkcs11_claimed_op", op))
+
+
 def _drain_rv_trace(item: pytest.Item) -> None:
     """Attach the per-test CK_RV trace to ``item.user_properties`` when enabled.
 
@@ -956,6 +975,7 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
     """Clear per-item state after each test to prevent cross-item leakage."""
     if _is_testcase_item(item):
         _drain_rv_trace(item)
+        _emit_claimed_op(item)
 
         from pkcs11_check.compliance import clear_notes
 

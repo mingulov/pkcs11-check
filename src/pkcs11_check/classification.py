@@ -211,6 +211,14 @@ def get_records() -> list[Classification]:
     return list(_records)
 
 
+def current_operation() -> str | None:
+    """The C_* operation the current test declared via set_mechanism(), or None.
+
+    Used by the plugin to label a passing test's claimed operation (pkcs11_claimed_op)
+    for the hollow-pass coverage oracle. Cleared by clear() between tests."""
+    return _active_operation
+
+
 def clear() -> None:
     """Clear collected records and active context (call between tests)."""
     global _active_params, _active_source, _active_vector_id
