@@ -23,6 +23,12 @@ from xml.etree import ElementTree as ET  # nosec B405
 from rich.console import Console
 
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
+from pkcs11_check.core.crash_codes import (
+    crash_detail_name as _crash_detail_name,
+)
+from pkcs11_check.core.crash_codes import (
+    is_windows_crash_code as _is_windows_crash_code,
+)
 from pkcs11_check.core.preflight import load_manifest
 from pkcs11_check.core.quality_audit import build_quality_audit
 from pkcs11_check.core.report_log import (
@@ -2187,13 +2193,6 @@ def units_remaining_for_resume(units: list[str], state: FileRunState | None) -> 
     return [unit for unit in units if unit not in completed_ok]
 
 
-def _is_windows_crash_code(returncode: int) -> bool:
-    """True for an NTSTATUS exit code with error severity (top two bits set), e.g.
-    0xC0000005 (access violation). On Windows an unhandled exception terminates the
-    process with such a code instead of a negative POSIX signal."""
-    return (returncode & 0xFFFFFFFF) & 0xC0000000 == 0xC0000000
-
-
 def _status_from_returncode(returncode: int) -> str:
     if returncode == 0:
         return "passed"
@@ -2206,40 +2205,6 @@ def _status_from_returncode(returncode: int) -> str:
     if sys.platform == "win32" and _is_windows_crash_code(returncode):
         return "crashed"
     return "failed"
-
-
-_CRASH_SIGNALS: dict[int, str] = {
-    -11: "SIGSEGV",
-    -6: "SIGABRT",
-    -5: "SIGTRAP",
-    -4: "SIGILL",
-    -8: "SIGFPE",
-    -7: "SIGBUS",
-}
-
-# Windows NTSTATUS exception codes (the process exit code when a child dies on an
-# unhandled exception); the Windows-ABI counterpart of _CRASH_SIGNALS.
-_WINDOWS_EXCEPTION_NAMES: dict[int, str] = {
-    0xC0000005: "EXCEPTION_ACCESS_VIOLATION",
-    0xC00000FD: "EXCEPTION_STACK_OVERFLOW",
-    0xC000001D: "EXCEPTION_ILLEGAL_INSTRUCTION",
-    0xC0000094: "EXCEPTION_INT_DIVIDE_BY_ZERO",
-    0xC0000409: "STATUS_STACK_BUFFER_OVERRUN",
-    0xC0000374: "STATUS_HEAP_CORRUPTION",
-    0xC0000025: "EXCEPTION_NONCONTINUABLE_EXCEPTION",
-}
-
-
-def _crash_detail_name(returncode: int | None) -> str:
-    """Name a crash exit code: POSIX signal (negative) or Windows NTSTATUS (positive)."""
-    if returncode is None:
-        return "unknown"
-    if returncode < 0:
-        return _CRASH_SIGNALS.get(returncode, f"signal{abs(returncode)}")
-    if _is_windows_crash_code(returncode):
-        u = returncode & 0xFFFFFFFF
-        return _WINDOWS_EXCEPTION_NAMES.get(u, f"0x{u:08X}")
-    return f"exit{returncode}"
 
 
 def crash_classification(
