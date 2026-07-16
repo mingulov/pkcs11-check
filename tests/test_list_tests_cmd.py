@@ -49,3 +49,45 @@ def test_module_adds_p11_trio() -> None:
 
 def test_no_module_has_no_p11_module() -> None:
     assert "--p11-module" not in _args(match="x")
+
+
+def test_enumerate_sorts_and_dedups(monkeypatch) -> None:
+    monkeypatch.setattr(
+        list_tests_cmd,
+        "collect_pytest_nodeids",
+        lambda targets, args, **kw: ["b.py::t2", "a.py::t1", "b.py::t2"],
+    )
+    got = list_tests_cmd.enumerate_nodeids(
+        [],
+        match=None,
+        marker=None,
+        category=None,
+        skip_slow=False,
+        only_slow=False,
+        module=None,
+        interface="auto",
+        slot=0,
+    )
+    assert got == ["a.py::t1", "b.py::t2"]
+
+
+def test_enumerate_defaults_targets_to_testcases_dir(monkeypatch) -> None:
+    seen = {}
+
+    def _fake(targets, args, **kw):
+        seen["targets"] = targets
+        return []
+
+    monkeypatch.setattr(list_tests_cmd, "collect_pytest_nodeids", _fake)
+    list_tests_cmd.enumerate_nodeids(
+        [],
+        match="x",
+        marker=None,
+        category=None,
+        skip_slow=False,
+        only_slow=False,
+        module=None,
+        interface="auto",
+        slot=0,
+    )
+    assert seen["targets"] == [list_tests_cmd._TESTCASES_DIR]
