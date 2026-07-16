@@ -36,6 +36,7 @@ import pytest
 
 from pkcs11_check.classification import classify, fail_as
 from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
+from pkcs11_check.testcases._shellcmd import shell_invocation
 
 pytestmark = [
     pytest.mark.stress,
@@ -65,7 +66,7 @@ def _mint_throwaway_token(tmp_path: Path) -> str | None:
     tokens = tmp_path / "tokens"
     tokens.mkdir(parents=True, exist_ok=True)
     mint_cmd = mint_cmd_tmpl.format(token_dir=str(tmp_path), conf_path=str(conf))
-    proc = subprocess.run(["/bin/sh", "-c", mint_cmd], capture_output=True, text=True)
+    proc = subprocess.run(shell_invocation(mint_cmd), capture_output=True, text=True)
     return str(conf) if proc.returncode == 0 else None
 
 
