@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install pkcs11-check from PyPI into a venv (Ubuntu's system Python is PEP-668
-# "externally managed"). Pin a version (pkcs11-check==0.1.6) for a reproducible image.
+# "externally managed"). Pin a version (pkcs11-check==0.1.7) for a reproducible image.
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir pkcs11-check
@@ -48,12 +48,12 @@ docker build -t pkcs11-check-softhsm2 .
 # Map a host ./reports dir onto /out. On SELinux hosts (Fedora/RHEL) add :z -> /out:z
 docker run --rm -v "$PWD/reports:/out" pkcs11-check-softhsm2
 
-ls reports/        # results.json  report.jsonl  coverage.json  quality.json
+ls reports/        # results.json  report.jsonl  coverage.json  provisioning.json  quality.json
 cat reports/results.json
 ```
 
 The default command writes JSON to `/out/results.json` (alongside `report.jsonl`,
-`coverage.json`, and `quality.json`). Without the `-v` mount the run still prints a
+`coverage.json`, `provisioning.json`, and `quality.json`). Without the `-v` mount the run still prints a
 console summary, but the files stay inside the removed container - the bind mount is
 how the results reach the host. Files written through the mount are owned by `root`
 (the container runs as root); run `sudo chown -R "$USER" reports/` if that matters.
