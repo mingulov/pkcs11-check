@@ -182,6 +182,7 @@ src/pkcs11_check/
 - `docs/mechanism-output-parameters.md` - generated IV/nonce/tag output-parameter coverage
 - `docs/file-isolation.md` - isolation runner design
 - `docs/providers.md` - PKCS#11 implementations pkcs11-check is exercised against
+- `docs/platform-support.md` - OS support matrix (Linux / Windows / macOS / FreeBSD)
 - `docs/roadmap.md` - planned and considered work
 
 ## License
