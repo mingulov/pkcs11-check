@@ -2,7 +2,75 @@
 
 from __future__ import annotations
 
-from pkcs11_check.core.differential import find_disagreements
+import json
+
+from typer.testing import CliRunner
+
+from pkcs11_check.cli.app import app
+from pkcs11_check.core.differential import (
+    find_disagreements,
+    is_kat_nodeid,
+    load_provider_outcomes,
+)
+
+runner = CliRunner()
+
+
+def _write_report(path, nodeid_outcomes: dict[str, str]) -> None:
+    lines = []
+    for nodeid, outcome in nodeid_outcomes.items():
+        lines.append(
+            json.dumps(
+                {"$report_type": "TestReport", "when": "call", "outcome": outcome, "nodeid": nodeid}
+            )
+        )
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_differential_cli_flags_kat_odd_one_out(tmp_path) -> None:
+    kat = "src/pkcs11_check/testcases/wycheproof/test_rsa.py::test_kat[v1]"
+    a = tmp_path / "a.jsonl"
+    b = tmp_path / "b.jsonl"
+    c = tmp_path / "c.jsonl"
+    _write_report(a, {kat: "passed"})
+    _write_report(b, {kat: "passed"})
+    _write_report(c, {kat: "failed"})
+    result = runner.invoke(app, ["differential", f"a={a}", f"b={b}", f"c={c}"])
+    assert result.exit_code == 1  # a disagreement is a finding
+    assert "DISAGREE" in result.output
+    assert "odd-one-out=c" in result.output
+
+
+def test_differential_cli_clean_when_unanimous(tmp_path) -> None:
+    kat = "src/pkcs11_check/testcases/acvp/test_aes.py::test_kat[v]"
+    a, b = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    _write_report(a, {kat: "passed"})
+    _write_report(b, {kat: "passed"})
+    result = runner.invoke(app, ["differential", f"a={a}", f"b={b}"])
+    assert result.exit_code == 0
+
+
+def test_load_provider_outcomes_uses_call_phase_and_setup_skips() -> None:
+    records = [
+        {"$report_type": "TestReport", "when": "setup", "outcome": "passed", "nodeid": "t::a"},
+        {"$report_type": "TestReport", "when": "call", "outcome": "failed", "nodeid": "t::a"},
+        {"$report_type": "TestReport", "when": "setup", "outcome": "skipped", "nodeid": "t::b"},
+        {
+            "$report_type": "TestReport",
+            "when": "call",
+            "outcome": "skipped",
+            "wasxfail": "reason",
+            "nodeid": "t::c",
+        },
+    ]
+    got = load_provider_outcomes(records)
+    assert got == {"t::a": "failed", "t::b": "skipped", "t::c": "xfailed"}
+
+
+def test_is_kat_nodeid() -> None:
+    assert is_kat_nodeid("src/pkcs11_check/testcases/wycheproof/test_x.py::t[v]")
+    assert is_kat_nodeid("src/.../acvp/test_y.py::t")
+    assert not is_kat_nodeid("src/pkcs11_check/testcases/test_encrypt.py::t")
 
 
 def test_odd_one_out_on_deterministic_vector() -> None:

@@ -12,8 +12,16 @@ difference, not a crypto disagreement).
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
+
+from pkcs11_check.core.report_log import map_report_outcome
+
+# Node-id path fragments of the deterministic known-answer-test suites. Restricting the
+# differential check to these is the sound default: a KAT has one correct verdict, so a
+# cross-provider disagreement is a real odd-one-out (not legitimate provider variation).
+KAT_SUITE_FRAGMENTS: tuple[str, ...] = ("wycheproof", "acvp", "cctv", "x509")
 
 # Test-level (node-id) outcome -> broad class. Distinct from compare_results.status_class,
 # which maps unit-level statuses. "xfail" is kept its own class: on a deterministic KAT a
@@ -48,6 +56,35 @@ class ProviderDisagreement:
 
 def _outcome_class(status: str) -> str:
     return _OUTCOME_CLASS.get(status, "unknown")
+
+
+def load_provider_outcomes(records: Iterable[Mapping[str, Any]]) -> dict[str, str]:
+    """Extract a node-id -> unified-outcome map from one provider's report.jsonl records.
+
+    Uses the ``call`` phase outcome (with wasxfail mapping); a test that only reached a
+    ``setup`` skip is recorded as skipped. Later phases win over an earlier setup skip.
+    """
+    outcomes: dict[str, str] = {}
+    for rec in records:
+        if str(rec.get("$report_type", "TestReport")) != "TestReport":
+            continue
+        nodeid = str(rec.get("nodeid", "")).strip()
+        if not nodeid:
+            continue
+        when = str(rec.get("when", ""))
+        if when == "call":
+            outcomes[nodeid] = map_report_outcome(
+                str(rec.get("outcome", "passed")), rec.get("wasxfail")
+            )
+        elif when == "setup" and str(rec.get("outcome", "")) == "skipped":
+            outcomes.setdefault(nodeid, "skipped")
+    return outcomes
+
+
+def is_kat_nodeid(nodeid: str) -> bool:
+    """True if the node-id is in a deterministic KAT suite (the sound differential target)."""
+    head = nodeid.split("::", 1)[0]
+    return any(frag in head for frag in KAT_SUITE_FRAGMENTS)
 
 
 def find_disagreements(
