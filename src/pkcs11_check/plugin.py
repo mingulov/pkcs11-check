@@ -71,6 +71,8 @@ _CUMULATIVE_MECHANISM_DETAILS: pytest.StashKey[set[tuple[int, frozenset[tuple[st
     pytest.StashKey()
 )
 _CUMULATIVE_FUNCTION_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
+# Per-function CKR_OK ("productive") invocation counts, for the hollow-pass oracle.
+_CUMULATIVE_FUNCTION_OK_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
 _CUMULATIVE_MECHANISM_COUNTS: pytest.StashKey[Counter[int]] = pytest.StashKey()
 _CUMULATIVE_DETAIL_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
 _PROVISIONING_COUNTS: pytest.StashKey[Counter[tuple[str, str]]] = pytest.StashKey()
@@ -267,6 +269,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.stash[_CUMULATIVE_USED_MECHANISMS] = set()
     config.stash[_CUMULATIVE_MECHANISM_DETAILS] = set()
     config.stash[_CUMULATIVE_FUNCTION_COUNTS] = Counter()
+    config.stash[_CUMULATIVE_FUNCTION_OK_COUNTS] = Counter()
     config.stash[_CUMULATIVE_MECHANISM_COUNTS] = Counter()
     config.stash[_CUMULATIVE_DETAIL_COUNTS] = Counter()
     config.stash[_BOOTSTRAP_FUNCTION_COUNTS] = {}
@@ -1013,10 +1016,11 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
                 cumulative.update(rs.raw.call_log.keys())
                 if raw_ref is None:
                     session.config.stash[_RAW_INSTANCE] = rs.raw
-                # Accumulate function call counts
+                # Accumulate function call counts (+ CKR_OK "productive" counts)
                 try:
                     fc = session.config.stash[_CUMULATIVE_FUNCTION_COUNTS]
                     fc.update(rs.raw.call_log)
+                    session.config.stash[_CUMULATIVE_FUNCTION_OK_COUNTS].update(rs.raw.call_log_ok)
                 except KeyError:
                     pass
                 # Collect bootstrap counts once
@@ -1063,11 +1067,12 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
     try:
         from pkcs11_check.testcases._raw_subprocess import get_raw_subprocess_coverage
 
-        sub_func, _sub_mech = get_raw_subprocess_coverage()
+        sub_func, _sub_mech, sub_func_ok = get_raw_subprocess_coverage()
         if sub_func:
             cumulative.update(sub_func.keys())
             try:
                 session.config.stash[_CUMULATIVE_FUNCTION_COUNTS].update(sub_func)
+                session.config.stash[_CUMULATIVE_FUNCTION_OK_COUNTS].update(sub_func_ok)
             except KeyError:
                 pass
     except ImportError:
@@ -1075,11 +1080,12 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
     try:
         from pkcs11_check.testcases._subprocess_preamble import get_preamble_subprocess_coverage
 
-        sub_func, _sub_mech = get_preamble_subprocess_coverage()
+        sub_func, _sub_mech, sub_func_ok = get_preamble_subprocess_coverage()
         if sub_func:
             cumulative.update(sub_func.keys())
             try:
                 session.config.stash[_CUMULATIVE_FUNCTION_COUNTS].update(sub_func)
+                session.config.stash[_CUMULATIVE_FUNCTION_OK_COUNTS].update(sub_func_ok)
             except KeyError:
                 pass
     except ImportError:
@@ -1277,6 +1283,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 
     # Call counts
     func_counts = config.stash.get(_CUMULATIVE_FUNCTION_COUNTS, Counter())
+    func_ok_counts = config.stash.get(_CUMULATIVE_FUNCTION_OK_COUNTS, Counter())
     mech_counts_raw = config.stash.get(_CUMULATIVE_MECHANISM_COUNTS, Counter())
     detail_counts = config.stash.get(_CUMULATIVE_DETAIL_COUNTS, Counter())
     bootstrap = config.stash.get(_BOOTSTRAP_FUNCTION_COUNTS, {})
@@ -1302,6 +1309,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             "called": len(called),
             "called_names": called,
             "called_counts": dict(sorted(func_counts.items())),
+            "ok_counts": dict(sorted(func_ok_counts.items())),
             "bootstrap_counts": bootstrap,
             "module_session_health": {
                 "checks": int(module_session_health.get("checks", 0)),

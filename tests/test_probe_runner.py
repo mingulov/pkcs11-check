@@ -77,8 +77,8 @@ def test_run_probe_coverage_session_routes_to_preamble_accumulator() -> None:
         timeout=30,
     )
 
-    preamble_call, _ = get_preamble_subprocess_coverage()
-    raw_call, _ = get_raw_subprocess_coverage()
+    preamble_call, _, _ = get_preamble_subprocess_coverage()
+    raw_call, _, _ = get_raw_subprocess_coverage()
 
     assert preamble_call.get("C_Echo") == 1, f"preamble counter: {dict(preamble_call)}"
     assert not raw_call, f"raw counter should be empty but got: {dict(raw_call)}"
@@ -97,8 +97,8 @@ def test_run_probe_coverage_raw_routes_to_raw_accumulator() -> None:
         timeout=30,
     )
 
-    raw_call, _ = get_raw_subprocess_coverage()
-    preamble_call, _ = get_preamble_subprocess_coverage()
+    raw_call, _, _ = get_raw_subprocess_coverage()
+    preamble_call, _, _ = get_preamble_subprocess_coverage()
 
     assert raw_call.get("C_Echo") == 1, f"raw counter: {dict(raw_call)}"
     assert not preamble_call, f"preamble counter should be empty but got: {dict(preamble_call)}"
