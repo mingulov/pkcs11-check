@@ -72,6 +72,13 @@ _MAX_TIMEOUT_RETRIES = 3
 _NO_TESTS_COLLECTED_EXIT = 2
 # Match the conventional GNU timeout exit code; pytest itself uses only 0-5.
 _TIMEOUT_RETURN_CODE = 124
+# After a child exits on its own, any un-read pipe data is at most the OS pipe
+# buffer and drains in milliseconds. Cap the post-exit reader-thread join so a
+# grandchild that inherited the pipe write-end cannot stall the runner for the
+# full per-test timeout (issue #3: Windows "hangs, single CTRL-C unblocks", where
+# a provider DLL more readily leaves a handle-inheriting helper process). Daemon
+# readers are abandoned after the grace and die at process exit.
+_POST_EXIT_DRAIN_GRACE_S = 3.0
 _DISABLE_COLLECTION_PROBES_ENV = "PKCS11_CHECK_DISABLE_COLLECTION_PROBES"
 
 # The fingerprint detects when the run's effective configuration changed, so
@@ -2691,6 +2698,15 @@ def _subprocess_plugin_env(base_env: Mapping[str, str], unit: str) -> dict[str, 
     return env
 
 
+def _join_readers_bounded(threads: list[threading.Thread], *, grace: float) -> None:
+    """Join each reader thread, but never wait longer than ``grace`` seconds total
+    after the child has already exited. A still-running daemon reader is abandoned
+    (it dies at process exit); its un-drained tail is acceptable to lose."""
+    deadline = time.monotonic() + grace
+    for thread in threads:
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+
+
 def _run_subprocess_tee(
     cmd: list[str],
     *,
@@ -2762,11 +2778,12 @@ def _run_subprocess_tee(
         raise subprocess.TimeoutExpired(cmd, timeout)
 
     # The child exited on its own -- cleanly OR via a crash signal (negative
-    # returncode). Drain the readers, but never block past the deadline: a
-    # surviving grandchild may hold the pipes open (R2), and a crash must report
-    # its real returncode rather than being masked as a timeout.
-    for thread in threads:
-        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+    # returncode). Drain the readers, but only for a short grace: the child is
+    # gone, so any un-read data is at most the OS pipe buffer. A surviving
+    # grandchild that inherited the pipe (R2) must NOT hold the runner for the
+    # full residual timeout (issue #3 Windows hang); abandon a stuck reader after
+    # the grace and report the child's real returncode.
+    _join_readers_bounded(threads, grace=_POST_EXIT_DRAIN_GRACE_S)
 
     proc.wait()
     return (
