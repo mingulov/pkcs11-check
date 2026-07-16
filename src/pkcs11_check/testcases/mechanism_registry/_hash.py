@@ -185,25 +185,16 @@ def populate(registry: dict[int, MechConfig]) -> None:
         notes="BLAKE2b-512 digest",
     )
 
-    # CKM_SHAKE_128 = 0x00000418, CKM_SHAKE_256 = 0x00000419
-    # TODO: not in vendored v3.2 header; expected in a future PKCS#11 spec revision
-    registry[0x00000418] = MechConfig(
-        key_type=None,
-        keygen_mech=None,
-        key_sizes=(),
-        input_constraint="digest_only",
-        expected_flags=CKF_DIGEST,
-        notes="SHAKE-128 XOF: extendable-output function, requires C_DigestXof* (v3.1)",
-    )
-
-    registry[0x00000419] = MechConfig(
-        key_type=None,
-        keygen_mech=None,
-        key_sizes=(),
-        input_constraint="digest_only",
-        expected_flags=CKF_DIGEST,
-        notes="SHAKE-256 XOF: extendable-output function, requires C_DigestXof* (v3.1)",
-    )
+    # The standalone SHAKE-128/256 digest mechanisms (CKM_SHAKE_128/CKM_SHAKE_256, the
+    # extendable-output hash functions used with C_DigestXof*, FIPS PUB 202) are described
+    # in the PKCS#11 working draft but are NOT YET ASSIGNED a numeric CKM value in any
+    # published or working OASIS header (only the SHAKE *KDF* mechanisms are numbered:
+    # CKM_SHAKE_128/256_KEY_DERIVE = 0x039B/0x039C). The former placeholder entries here
+    # (registry[0x418]/registry[0x419]) used invented IDs no provider can advertise, so they
+    # were dead; they are retired. When the spec assigns real IDs and types_std adds
+    # CKM_SHAKE_128/256, register them here and add real XOF support (C_DigestXof*); the
+    # standard-digest tests already skip XOF digests by NAME (see test_mech_digest /
+    # test_mech_multipart), so they will be handled correctly the moment the mechanism exists.
 
     registry[CKM_RIPEMD128] = MechConfig(
         key_type=None,

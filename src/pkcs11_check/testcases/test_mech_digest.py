@@ -48,9 +48,10 @@ from pkcs11_check.testcases.mechanism_registry import MechConfig
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.digest]
 
-# Known CKM IDs for SHAKE (XOF -- different API, not tested here)
-_SHAKE_128_ID = 0x00000418  # TODO: not in vendored v3.2 header; future spec
-_SHAKE_256_ID = 0x00000419  # TODO: not in vendored v3.2 header; future spec
+# Standalone SHAKE-128/256 are XOF digests (C_DigestXof*, not the standard C_Digest path)
+# and are UNNUMBERED in the current spec (only the SHAKE KDF mechanisms have CKM values), so
+# they are detected by NAME rather than a made-up ID -- correct the moment types_std defines them.
+_XOF_DIGEST_NAMES = frozenset({"CKM_SHAKE_128", "CKM_SHAKE_256"})
 
 # Map CKM mech_id -> expected output length in bytes (None = unknown/variable)
 _KNOWN_OUTPUT_LENGTHS: dict[int, int] = {
@@ -103,7 +104,7 @@ def _digest_or_xfail(rs: RawSession, entry: MechEntry, data: bytes) -> bytes | N
 
 def _check_not_xof(entry: MechEntry) -> None:
     """Skip XOF mechanisms that require C_DigestXof* (SHAKE-128/256)."""
-    if entry.mech_id in (_SHAKE_128_ID, _SHAKE_256_ID):
+    if entry.mech_name in _XOF_DIGEST_NAMES:
         pytest.skip(
             f"{entry.mech_name}: XOF mechanism requires C_DigestXof* (v3.1), not tested here"
         )
