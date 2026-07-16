@@ -62,7 +62,7 @@ class ProbeParams:
     @classmethod
     def load(cls, path: str) -> ProbeParams:
         """Load + validate params from a JSON file (child side). Rejects PIN keys."""
-        data = json.loads(Path(path).read_text())
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             raise ValueError("probe params JSON must be a JSON object")
         _check_no_pin(data)

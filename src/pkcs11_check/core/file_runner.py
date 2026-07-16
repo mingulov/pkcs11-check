@@ -29,6 +29,7 @@ from pkcs11_check.core.crash_codes import (
 from pkcs11_check.core.crash_codes import (
     is_windows_crash_code as _is_windows_crash_code,
 )
+from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.preflight import load_manifest
 from pkcs11_check.core.quality_audit import build_quality_audit
 from pkcs11_check.core.report_log import (
@@ -209,7 +210,11 @@ def collect_pytest_nodeids(
         line = raw_line.strip()
         if not line or "::" not in line:
             continue
-        nodeids.append(line)
+        # Canonicalize to forward slashes: on Windows pytest emits OS-native (\)
+        # path separators in node-ids, but disabled/deselect sets are normalized
+        # (core/nodeids.py), so a raw comparison in the escalation path would never
+        # match and a disabled crashing test would be re-included. No-op on POSIX.
+        nodeids.append(normalize_nodeid(line))
 
     return nodeids
 

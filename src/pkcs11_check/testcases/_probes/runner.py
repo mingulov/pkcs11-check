@@ -98,7 +98,7 @@ def run_probe(
     err: str = ""
 
     try:
-        with os.fdopen(params_fd, "w") as fh:
+        with os.fdopen(params_fd, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
 
         cmd = [sys.executable, "-m", f"pkcs11_check.testcases._probes.{probe}", params_path]
