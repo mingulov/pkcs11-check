@@ -127,7 +127,7 @@ def test_discover_pytest_units_test_granularity_collects_nodeids(
     target.write_text("def test_case():\n    assert True\n")
 
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.collect_pytest_nodeids",
+        "pkcs11_check.core._unit_discovery.collect_pytest_nodeids",
         lambda targets, pytest_args, *, env=None: [f"{target}::test_case"],  # type: ignore[arg-type]
     )
 
@@ -184,7 +184,7 @@ def test_discover_auto_isolation_units_keeps_regular_files(
     target = tmp_path / "test_demo.py"
     target.write_text("def test_case():\n    assert True\n")
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
         lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
             CollectedPytestItem(nodeid=f"{target}::test_case", file_path=str(target), markers=[])
         ],
@@ -205,7 +205,7 @@ def test_discover_auto_isolation_units_expands_per_test_marked_files(
     target = tmp_path / "test_demo.py"
     target.write_text("def test_one():\n    assert True\n")
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
         lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
             CollectedPytestItem(
                 nodeid=f"{target}::test_one",
@@ -252,7 +252,7 @@ def test_discover_auto_isolation_units_pins_absolute_nodeid_for_rootdir_mismatch
     target.write_text("def test_one():\n    assert True\n")
     rootdir_relative_nodeid = f"{str(target).lstrip('/')}::test_one"
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
         lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
             CollectedPytestItem(
                 nodeid=rootdir_relative_nodeid,
@@ -308,7 +308,7 @@ def test_discover_auto_isolation_units_expands_policy_promoted_files(
     )
 
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
         lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
             CollectedPytestItem(nodeid=f"{target}::test_one", file_path=str(target), markers=[])
         ],
@@ -330,7 +330,7 @@ def test_discover_auto_isolation_units_collapses_nodeid_for_subprocess_file(
     target = tmp_path / "test_demo.py"
     target.write_text("def test_case():\n    assert True\n")
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
         lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
             CollectedPytestItem(
                 nodeid=f"{target}::test_case",
@@ -369,11 +369,11 @@ def test_discover_auto_isolation_units_falls_back_to_nodeid_collection_when_meta
         },
     )
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
         lambda targets, pytest_args, *, env=None: [],  # type: ignore[arg-type]
     )
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.discover_pytest_units",
+        "pkcs11_check.core._unit_discovery.discover_pytest_units",
         lambda targets, default_root, *, granularity, pytest_args=None, env=None: (  # type: ignore[arg-type]
             [f"{target}::test_case"] if granularity == "test" else list(targets)
         ),

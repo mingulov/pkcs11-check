@@ -226,14 +226,48 @@ from pkcs11_check.core._run_units import (
 from pkcs11_check.core._run_units import (
     normalize_policy_file_key as normalize_policy_file_key,
 )
-from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
+from pkcs11_check.core._unit_discovery import (
+    _collection_args as _collection_args,
+)
+from pkcs11_check.core._unit_discovery import (
+    _markers_by_file as _markers_by_file,
+)
+from pkcs11_check.core._unit_discovery import (
+    _validate_pytest_target_exists as _validate_pytest_target_exists,
+)
+from pkcs11_check.core._unit_discovery import (
+    collect_pytest_nodeids as collect_pytest_nodeids,
+)
+from pkcs11_check.core._unit_discovery import (
+    discover_auto_isolation_units as discover_auto_isolation_units,
+)
+from pkcs11_check.core._unit_discovery import (
+    discover_pytest_units as discover_pytest_units,
+)
+from pkcs11_check.core._unit_discovery import (
+    file_forces_file_isolation as file_forces_file_isolation,
+)
+from pkcs11_check.core._unit_discovery import (
+    file_isolation_mode as file_isolation_mode,
+)
+from pkcs11_check.core._unit_discovery import (
+    load_isolation_policy as load_isolation_policy,
+)
+from pkcs11_check.core._unit_discovery import (
+    load_promoted_files as load_promoted_files,
+)
+from pkcs11_check.core._unit_discovery import (
+    save_isolation_policy as save_isolation_policy,
+)
+from pkcs11_check.core._unit_discovery import (
+    validate_subprocess_per_test_expansion as validate_subprocess_per_test_expansion,
+)
 from pkcs11_check.core.crash_codes import (
     crash_detail_name as _crash_detail_name,
 )
 from pkcs11_check.core.crash_codes import (
     is_windows_crash_code as _is_windows_crash_code,
 )
-from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.recovery import (
     RecoveryConfig,
     RecoveryController,
@@ -259,310 +293,6 @@ _NO_TESTS_COLLECTED_EXIT = 2
 # a provider DLL more readily leaves a handle-inheriting helper process). Daemon
 # readers are abandoned after the grace and die at process exit.
 _POST_EXIT_DRAIN_GRACE_S = 3.0
-
-
-def _validate_pytest_target_exists(target: str) -> None:
-    if "::" in target:
-        file_part = target.split("::", 1)[0]
-        if Path(file_part).exists():
-            return
-        msg = f"pytest target not found: {target}"
-        raise FileNotFoundError(msg)
-
-    if Path(target).exists():
-        return
-
-    msg = f"pytest target not found: {target}"
-    raise FileNotFoundError(msg)
-
-
-def _collection_args(pytest_args: list[str]) -> list[str]:
-    args: list[str] = []
-    skip_next = False
-    for arg in pytest_args:
-        if skip_next:
-            skip_next = False
-            continue
-
-        if arg in {"-q", "-v", "--no-header", "--report-log"}:
-            continue
-        if arg.startswith("--tb="):
-            continue
-        if arg.startswith("--report-log="):
-            continue
-        if arg.startswith("--junit-xml="):
-            continue
-        if arg in {"--tb", "--junit-xml", "--report-log"}:
-            skip_next = True
-            continue
-
-        args.append(arg)
-
-    args.extend(["--collect-only", "-qq"])
-    return args
-
-
-def collect_pytest_nodeids(
-    targets: list[str],
-    pytest_args: list[str],
-    *,
-    env: Mapping[str, str] | None = None,
-) -> list[str]:
-    """Collect pytest nodeids for the requested targets using a subprocess."""
-    cmd = [sys.executable, "-m", "pytest", *targets, *_collection_args(pytest_args)]
-    completed = subprocess.run(
-        cmd,
-        check=False,
-        capture_output=True,
-        text=True,
-        env=dict(env or os.environ),
-    )
-
-    if completed.returncode not in {0, 5}:
-        details = completed.stderr.strip() or completed.stdout.strip() or "unknown collection error"
-        msg = f"pytest collection failed: {details}"
-        raise ValueError(msg)
-
-    nodeids: list[str] = []
-    for raw_line in completed.stdout.splitlines():
-        line = raw_line.strip()
-        if not line or "::" not in line:
-            continue
-        # Canonicalize to forward slashes: on Windows pytest emits OS-native (\)
-        # path separators in node-ids, but disabled/deselect sets are normalized
-        # (core/nodeids.py), so a raw comparison in the escalation path would never
-        # match and a disabled crashing test would be re-included. No-op on POSIX.
-        nodeids.append(normalize_nodeid(line))
-
-    return nodeids
-
-
-def discover_pytest_units(
-    targets: list[str],
-    default_root: Path,
-    *,
-    granularity: IsolationGranularity = "file",
-    pytest_args: list[str] | None = None,
-    env: Mapping[str, str] | None = None,
-) -> list[str]:
-    """Expand pytest targets into an ordered list of file or test units."""
-    requested = targets or [str(default_root)]
-
-    for target in requested:
-        _validate_pytest_target_exists(target)
-
-    if granularity == "test":
-        return collect_pytest_nodeids(requested, pytest_args or [], env=env)
-
-    units: list[str] = []
-    seen: set[str] = set()
-
-    for target in requested:
-        if "::" in target:
-            if target not in seen:
-                units.append(target)
-                seen.add(target)
-            continue
-
-        path = Path(target)
-        if path.is_dir():
-            for file_path in sorted(path.rglob("test_*.py")):
-                unit = str(file_path)
-                if unit not in seen:
-                    units.append(unit)
-                    seen.add(unit)
-            continue
-
-        if path.is_file():
-            unit = str(path)
-            if unit not in seen:
-                units.append(unit)
-                seen.add(unit)
-            continue
-
-    return units
-
-
-def file_isolation_mode(
-    marker_names: set[str] | list[str] | tuple[str, ...],
-) -> IsolationGranularity:
-    """Return the preferred isolated granularity for collected marker names."""
-    if "subprocess_per_test" in marker_names:
-        return "test"
-    return "file"
-
-
-def file_forces_file_isolation(marker_names: set[str] | list[str] | tuple[str, ...]) -> bool:
-    """Return True if collected marker names should stay at file granularity."""
-    if "subprocess_per_test" in marker_names:
-        return False
-    return "subprocess" in marker_names
-
-
-def _markers_by_file(items: list[CollectedPytestItem]) -> dict[str, set[str]]:
-    markers_by_file: dict[str, set[str]] = {}
-    for item in items:
-        file_key = normalize_policy_file_key(item.file_path)
-        markers_by_file.setdefault(file_key, set()).update(item.markers)
-    return markers_by_file
-
-
-def validate_subprocess_per_test_expansion(
-    units: Sequence[str],
-    collected_items: Sequence[CollectedPytestItem],
-) -> None:
-    """Refuse file-level units for files marked ``subprocess_per_test``."""
-    marked_files = {
-        normalize_policy_file_key(item.file_path)
-        for item in collected_items
-        if "subprocess_per_test" in item.markers
-    }
-    if not marked_files:
-        return
-
-    bare_file_units: set[str] = set()
-    nodeid_units: set[str] = set()
-    for unit in units:
-        file_part = unit.split("::", 1)[0]
-        file_key = normalize_policy_file_key(file_part)
-        if "::" in unit:
-            nodeid_units.add(file_key)
-        else:
-            bare_file_units.add(file_key)
-
-    bad_files = sorted(file_key for file_key in marked_files if file_key in bare_file_units)
-    missing_nodeids = sorted(file_key for file_key in marked_files if file_key not in nodeid_units)
-    if bad_files or missing_nodeids:
-        affected = sorted(set(bad_files) | set(missing_nodeids))
-        msg = "subprocess_per_test file was not expanded to per-test units: " + ", ".join(affected)
-        raise ValueError(msg)
-
-
-def discover_auto_isolation_units(
-    targets: list[str],
-    default_root: Path,
-    *,
-    pytest_args: list[str],
-    policy_file: Path | None = None,
-    env: Mapping[str, str] | None = None,
-    collected_out: list[CollectedPytestItem] | None = None,
-) -> list[str]:
-    """Expand targets into a mixed file/test unit list for auto isolation.
-
-    If ``collected_out`` is provided, the per-item metadata gathered here (a
-    full ``--collect-only`` pass over the suite) is appended to it so the caller
-    can reuse it — e.g. for the disabled-baseline selection plan — instead of
-    running a second identical collection pass over ~all tests at startup.
-    """
-    file_units = discover_pytest_units(targets, default_root, granularity="file")
-    units: list[str] = []
-    promoted_files = load_promoted_files(policy_file, pytest_args, env)
-    collected_items = collect_pytest_item_metadata(
-        targets,
-        pytest_args,
-        env=dict(env or os.environ),
-    )
-    if collected_out is not None:
-        collected_out.extend(collected_items)
-    markers_by_file = _markers_by_file(collected_items)
-
-    # One pass over collected items builds BOTH the set of files that have
-    # collected nodes (respects -m / -k filters) AND an index of nodeids per
-    # file key. The per-file expansion below then does an O(1) lookup instead of
-    # re-scanning every collected item (with a path resolve each) for every
-    # test-isolated file — O(files x items). See review finding E4.
-    collected_files: set[str] | None = None
-    nodeids_by_file_key: dict[str, list[str]] = {}
-    if collected_items:
-        collected_files = set()
-        for item in collected_items:
-            fk = normalize_policy_file_key(item.file_path)
-            collected_files.add(fk)
-            nodeids_by_file_key.setdefault(fk, []).append(item.nodeid)
-
-    for file_unit in file_units:
-        file_path = Path(file_unit.split("::", 1)[0])
-        file_key = normalize_policy_file_key(str(file_path))
-
-        # Skip files with no collected items (filtered out by -m or -k)
-        if collected_files is not None and file_key not in collected_files:
-            continue
-
-        marker_names = markers_by_file.get(file_key, set())
-        mode = file_isolation_mode(marker_names)
-        if normalize_policy_file_key(str(file_path)) in promoted_files:
-            mode = "test"
-        if mode == "test":
-            nodeids = nodeids_by_file_key.get(file_key, [])
-            if not nodeids:
-                nodeids = discover_pytest_units(
-                    [file_unit],
-                    default_root,
-                    granularity="test",
-                    pytest_args=pytest_args,
-                    env=env,
-                )
-            # Pin each per-test unit to the resolved absolute file path so it is
-            # runnable and key-matchable regardless of pytest's rootdir (which can
-            # be dragged to '/' by a stray absolute path on the command line for an
-            # installed package with no config file above it).
-            units.extend(_absolute_nodeid(file_key, nid) for nid in nodeids)
-        else:
-            if file_forces_file_isolation(marker_names):
-                units.append(str(file_path))
-            else:
-                units.append(file_unit)
-
-    validate_subprocess_per_test_expansion(units, collected_items)
-    return units
-
-
-def load_isolation_policy(path: Path) -> dict[str, BackendIsolationPolicy]:
-    """Load the adaptive isolation policy file."""
-    if not path.exists():
-        return {}
-
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        msg = f"invalid isolation policy file: {path}"
-        raise ValueError(msg)
-    raw_backends = raw.get("backends", {})
-    if not isinstance(raw_backends, dict):
-        msg = f"invalid isolation policy file: {path}"
-        raise ValueError(msg)
-
-    policies: dict[str, BackendIsolationPolicy] = {}
-    for fingerprint, item in raw_backends.items():
-        if not isinstance(fingerprint, str) or not isinstance(item, dict):
-            continue
-        promoted_files = [
-            str(value) for value in item.get("promoted_files", []) if isinstance(value, str)
-        ]
-        crashed_tests = [
-            str(value) for value in item.get("crashed_tests", []) if isinstance(value, str)
-        ]
-        policies[fingerprint] = BackendIsolationPolicy(
-            fingerprint=fingerprint,
-            promoted_files=promoted_files,
-            crashed_tests=crashed_tests,
-        )
-
-    return policies
-
-
-def save_isolation_policy(path: Path, policies: Mapping[str, BackendIsolationPolicy]) -> None:
-    """Persist the adaptive isolation policy file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "backends": {
-            fingerprint: {
-                "promoted_files": policy.promoted_files,
-                "crashed_tests": policy.crashed_tests,
-            }
-            for fingerprint, policy in sorted(policies.items())
-        }
-    }
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _group_results_by_file(
@@ -1096,23 +826,6 @@ def write_isolated_report(
         )
         return
     write_isolated_junit_report(config.output_path, state)
-
-
-def load_promoted_files(
-    path: Path | None,
-    pytest_args: list[str],
-    env: Mapping[str, str] | None = None,
-) -> set[str]:
-    """Return files promoted to per-test isolation for this backend."""
-    if path is None:
-        return set()
-
-    policies = load_isolation_policy(path)
-    fingerprint = build_policy_fingerprint(pytest_args, env)
-    policy = policies.get(fingerprint)
-    if policy is None:
-        return set()
-    return {normalize_policy_file_key(file_path) for file_path in policy.promoted_files}
 
 
 def _status_from_returncode(returncode: int) -> str:
