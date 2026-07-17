@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import os
@@ -13,7 +12,6 @@ import tempfile
 import threading
 import time
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict
 from functools import cache
 from pathlib import Path
 from typing import IO, Any
@@ -111,6 +109,63 @@ from pkcs11_check.core._report_records import (
 from pkcs11_check.core._report_records import (
     write_report_jsonl as write_report_jsonl,
 )
+from pkcs11_check.core._run_state import (
+    _DEFAULT_FINGERPRINT_ENV_KEYS as _DEFAULT_FINGERPRINT_ENV_KEYS,
+)
+from pkcs11_check.core._run_state import (
+    _DEFAULT_FINGERPRINT_ENV_PREFIXES as _DEFAULT_FINGERPRINT_ENV_PREFIXES,
+)
+from pkcs11_check.core._run_state import (
+    _FINGERPRINT_ENV_KEYS_ENV as _FINGERPRINT_ENV_KEYS_ENV,
+)
+from pkcs11_check.core._run_state import (
+    _FINGERPRINT_ENV_PREFIXES_ENV as _FINGERPRINT_ENV_PREFIXES_ENV,
+)
+from pkcs11_check.core._run_state import (
+    _POLICY_IGNORED_ENV_KEYS as _POLICY_IGNORED_ENV_KEYS,
+)
+from pkcs11_check.core._run_state import (
+    _REDACTED_ENV_KEYS as _REDACTED_ENV_KEYS,
+)
+from pkcs11_check.core._run_state import (
+    _backend_args_snapshot as _backend_args_snapshot,
+)
+from pkcs11_check.core._run_state import (
+    _fingerprint_env as _fingerprint_env,
+)
+from pkcs11_check.core._run_state import (
+    _fingerprint_env_selectors as _fingerprint_env_selectors,
+)
+from pkcs11_check.core._run_state import (
+    _fingerprint_units as _fingerprint_units,
+)
+from pkcs11_check.core._run_state import (
+    _load_available_mechanisms as _load_available_mechanisms,
+)
+from pkcs11_check.core._run_state import (
+    _manifest_digest as _manifest_digest,
+)
+from pkcs11_check.core._run_state import (
+    _path_snapshot as _path_snapshot,
+)
+from pkcs11_check.core._run_state import (
+    _split_env_list as _split_env_list,
+)
+from pkcs11_check.core._run_state import (
+    build_policy_fingerprint as build_policy_fingerprint,
+)
+from pkcs11_check.core._run_state import (
+    build_state_fingerprint as build_state_fingerprint,
+)
+from pkcs11_check.core._run_state import (
+    load_run_state as load_run_state,
+)
+from pkcs11_check.core._run_state import (
+    save_run_state as save_run_state,
+)
+from pkcs11_check.core._run_state import (
+    units_remaining_for_resume as units_remaining_for_resume,
+)
 from pkcs11_check.core._run_units import (
     _DETAIL_COUNT_KEYS as _DETAIL_COUNT_KEYS,
 )
@@ -179,7 +234,6 @@ from pkcs11_check.core.crash_codes import (
     is_windows_crash_code as _is_windows_crash_code,
 )
 from pkcs11_check.core.nodeids import normalize_nodeid
-from pkcs11_check.core.preflight import load_manifest
 from pkcs11_check.core.recovery import (
     RecoveryConfig,
     RecoveryController,
@@ -205,26 +259,6 @@ _NO_TESTS_COLLECTED_EXIT = 2
 # a provider DLL more readily leaves a handle-inheriting helper process). Daemon
 # readers are abandoned after the grace and die at process exit.
 _POST_EXIT_DRAIN_GRACE_S = 3.0
-
-# The fingerprint detects when the run's effective configuration changed, so
-# stale resume/policy state is not reused. By default it covers the framework's
-# own env namespaces only. A provider exposes its token/config through its own
-# env vars, so point PKCS11_CHECK_FINGERPRINT_ENV_PREFIXES (and, rarely,
-# PKCS11_CHECK_FINGERPRINT_ENV_KEYS) at any extra prefixes/keys to have that
-# provider's configuration invalidate the fingerprint too. Both accept a comma-
-# or whitespace-separated list.
-_FINGERPRINT_ENV_PREFIXES_ENV = "PKCS11_CHECK_FINGERPRINT_ENV_PREFIXES"
-_FINGERPRINT_ENV_KEYS_ENV = "PKCS11_CHECK_FINGERPRINT_ENV_KEYS"
-_DEFAULT_FINGERPRINT_ENV_KEYS = ("P11TEST_PIN",)
-_DEFAULT_FINGERPRINT_ENV_PREFIXES = ("P11TEST_", "PKCS11_")
-_REDACTED_ENV_KEYS = {"P11TEST_PIN"}
-_POLICY_IGNORED_ENV_KEYS = {
-    "P11TEST_ISOLATION",
-    "P11TEST_POLICY_FILE",
-    "P11TEST_RESUME",
-    "P11TEST_STATE_FILE",
-    "P11TEST_STOP_ON_FAILURE",
-}
 
 
 def _validate_pytest_target_exists(target: str) -> None:
@@ -1064,167 +1098,6 @@ def write_isolated_report(
     write_isolated_junit_report(config.output_path, state)
 
 
-def load_run_state(path: Path) -> FileRunState | None:
-    """Load a resumable runner state from disk."""
-    if not path.exists():
-        return None
-
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    results = [FileRunResult(**item) for item in raw.get("results", [])]
-    report_records_by_unit: dict[str, list[dict[str, Any]]] = {}
-    raw_records = raw.get("report_records_by_unit", {})
-    if isinstance(raw_records, dict):
-        for unit, records in raw_records.items():
-            if not isinstance(unit, str) or not isinstance(records, list):
-                continue
-            parsed_records = [record for record in records if isinstance(record, dict)]
-            if parsed_records:
-                report_records_by_unit[unit] = parsed_records
-    return FileRunState(
-        units=list(raw.get("units", [])),
-        fingerprint=str(raw.get("fingerprint", "")),
-        results=results,
-        report_records_by_unit=report_records_by_unit,
-    )
-
-
-def save_run_state(path: Path, state: FileRunState) -> None:
-    """Persist the current runner state to disk.
-
-    ``save_run_state`` is called once per completed unit (plus extra times on
-    crash/timeout escalation), so its cost is paid ~N times over a full run.
-    We deliberately do NOT serialize ``state.report_records_by_unit`` here:
-    those per-test JSONL records are already persisted authoritatively as
-    per-unit shards under ``<state>.report-records/`` (written by
-    ``_write_unit_report_record_cache``) and the end-of-run merge always reads
-    them back from those shards. Embedding the records in state.json made the
-    payload grow to hundreds of MB and turned the per-unit save into an O(n^2)
-    re-serialization (~14 min on a full slow-module round) for data that is never
-    the sole source of truth. The in-memory dict is retained only as a
-    legacy/debug inline-state fallback; normal runs reconstruct records from
-    the shards (and the prior report.jsonl on resume).
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload: dict[str, Any] = {
-        "fingerprint": state.fingerprint,
-        "units": state.units,
-        "results": [asdict(result) for result in state.results],
-    }
-    if os.environ.get("PKCS11_CHECK_STATE_INLINE_RECORDS") == "1":
-        # Opt-in legacy/debug behavior: embed the per-unit report records inline.
-        # This is the O(n^2) re-serialization the default path deliberately
-        # avoids (records already live in per-unit shards). Retained only as an
-        # escape hatch for offline state inspection and for A/B perf measurement;
-        # it is OFF by default and never needed for resume.
-        payload["report_records_by_unit"] = state.report_records_by_unit
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _manifest_digest(pytest_args: list[str]) -> str | None:
-    manifest_path = _extract_option_value(pytest_args, "--p11-manifest")
-    if manifest_path is None:
-        return None
-
-    path = Path(manifest_path)
-    if not path.exists():
-        return None
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _load_available_mechanisms(pytest_args: list[str]) -> frozenset[str] | None:
-    """Load mechanism names from the manifest referenced by --p11-manifest.
-
-    Returns a frozenset containing both 'CKM_AES_CBC' and 'AES_CBC' forms,
-    or None if no manifest is available.
-    """
-    manifest_path = _extract_option_value(pytest_args, "--p11-manifest")
-    if manifest_path is None:
-        return None
-    path = Path(manifest_path)
-    if not path.exists():
-        return None
-    try:
-        manifest = load_manifest(path)
-    except Exception:  # noqa: BLE001
-        return None
-    if manifest.status != "ok":
-        return None
-    names: set[str] = set()
-    for mech in manifest.mechanisms:
-        names.add(mech)
-        if mech.startswith("CKM_"):
-            names.add(mech[4:])
-    return frozenset(names)
-
-
-def _backend_args_snapshot(pytest_args: list[str]) -> list[str]:
-    args: list[str] = []
-    skip_next = False
-    for index, arg in enumerate(pytest_args):
-        if skip_next:
-            skip_next = False
-            continue
-
-        if arg in {
-            "--p11-module",
-            "--p11-interface",
-            "--p11-slot",
-            "--p11-pin",
-            "--p11-manifest",
-        }:
-            value = pytest_args[index + 1] if index + 1 < len(pytest_args) else ""
-            if arg == "--p11-pin":
-                value = "<redacted>"
-            elif arg == "--p11-manifest":
-                value = "<manifest>"
-            args.extend([arg, value])
-            skip_next = True
-            continue
-
-        if any(
-            arg.startswith(f"{option}=")
-            for option in {
-                "--p11-module",
-                "--p11-interface",
-                "--p11-slot",
-                "--p11-pin",
-                "--p11-manifest",
-            }
-        ):
-            option, value = arg.split("=", 1)
-            if option == "--p11-pin":
-                value = "<redacted>"
-            elif option == "--p11-manifest":
-                value = "<manifest>"
-            args.append(f"{option}={value}")
-            continue
-
-        if arg == "--p11-destructive":
-            args.append(arg)
-
-    return args
-
-
-def build_policy_fingerprint(pytest_args: list[str], env: Mapping[str, str] | None = None) -> str:
-    """Build a stable backend fingerprint for adaptive isolation policy."""
-    module_snapshot = None
-    module_path = _extract_option_value(pytest_args, "--p11-module")
-    if module_path is not None:
-        module_snapshot = _path_snapshot(module_path)
-
-    payload = json.dumps(
-        {
-            "backend_args": _backend_args_snapshot(pytest_args),
-            "env": _fingerprint_env(env or os.environ, ignored_keys=_POLICY_IGNORED_ENV_KEYS),
-            "manifest_digest": _manifest_digest(pytest_args),
-            "module": module_snapshot,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
 def load_promoted_files(
     path: Path | None,
     pytest_args: list[str],
@@ -1240,125 +1113,6 @@ def load_promoted_files(
     if policy is None:
         return set()
     return {normalize_policy_file_key(file_path) for file_path in policy.promoted_files}
-
-
-def _path_snapshot(path_str: str) -> dict[str, int | str] | None:
-    path = Path(path_str)
-    if not path.exists():
-        return None
-
-    stat = path.stat()
-    return {
-        "path": str(path.resolve()),
-        "size": stat.st_size,
-        "mtime_ns": stat.st_mtime_ns,
-    }
-
-
-def _fingerprint_units(units: list[str]) -> list[dict[str, int | str]]:
-    snapshots: list[dict[str, int | str]] = []
-    seen: set[str] = set()
-    for unit in units:
-        file_part = unit.split("::", 1)[0]
-        snapshot = _path_snapshot(file_part)
-        if snapshot is None:
-            continue
-        path_key = str(snapshot["path"])
-        if path_key in seen:
-            continue
-        snapshots.append(snapshot)
-        seen.add(path_key)
-    return snapshots
-
-
-def _split_env_list(value: str | None) -> tuple[str, ...]:
-    """Parse a comma- or whitespace-separated env value into a tuple of tokens."""
-    if not value:
-        return ()
-    return tuple(value.replace(",", " ").split())
-
-
-def _fingerprint_env_selectors(
-    env: Mapping[str, str],
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Return (exact_keys, prefixes) to fingerprint: framework-generic defaults
-    plus any provider-specific selectors registered via the extension env vars."""
-    keys = _DEFAULT_FINGERPRINT_ENV_KEYS + _split_env_list(env.get(_FINGERPRINT_ENV_KEYS_ENV))
-    prefixes = _DEFAULT_FINGERPRINT_ENV_PREFIXES + _split_env_list(
-        env.get(_FINGERPRINT_ENV_PREFIXES_ENV)
-    )
-    return keys, prefixes
-
-
-def _fingerprint_env(
-    env: Mapping[str, str], *, ignored_keys: set[str] | frozenset[str] = frozenset()
-) -> dict[str, str]:
-    keys, prefixes = _fingerprint_env_selectors(env)
-    snapshot: dict[str, str] = {}
-    for key in sorted(env):
-        if key in ignored_keys:
-            continue
-        if key in keys or key.startswith(prefixes):
-            if key in _REDACTED_ENV_KEYS:
-                snapshot[key] = "<set>" if env[key] else "<unset>"
-            else:
-                snapshot[key] = env[key]
-    return snapshot
-
-
-def build_state_fingerprint(
-    units: list[str],
-    pytest_args: list[str],
-    env: Mapping[str, str] | None = None,
-    *,
-    baseline_fingerprint: str | None = None,
-) -> str:
-    """Build a stable fingerprint for resume validation."""
-    redacted_args: list[str] = []
-    redact_next = False
-    manifest_digest = _manifest_digest(pytest_args)
-    for arg in pytest_args:
-        if redact_next:
-            redacted_args.append("<redacted>")
-            redact_next = False
-            continue
-        if arg.startswith("--p11-manifest="):
-            redacted_args.append("--p11-manifest=<manifest>")
-            continue
-        redacted_args.append(arg)
-        if arg in {"--p11-pin", "--p11-manifest"}:
-            redact_next = True
-
-    module_snapshot = None
-    module_path = _extract_option_value(pytest_args, "--p11-module")
-    if module_path is not None:
-        module_snapshot = _path_snapshot(module_path)
-
-    payload = json.dumps(
-        {
-            "baseline_fingerprint": baseline_fingerprint,
-            "env": _fingerprint_env(env or os.environ),
-            "manifest_digest": manifest_digest,
-            "module": module_snapshot,
-            "pytest_args": redacted_args,
-            "unit_files": _fingerprint_units(units),
-            "units": units,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def units_remaining_for_resume(units: list[str], state: FileRunState | None) -> list[str]:
-    """Return units that still need to run for a resumed session."""
-    if state is None:
-        return list(units)
-
-    completed_ok = {
-        result.target for result in state.results if result.status in _RESUME_COMPLETE_STATUSES
-    }
-    return [unit for unit in units if unit not in completed_ok]
 
 
 def _status_from_returncode(returncode: int) -> str:
