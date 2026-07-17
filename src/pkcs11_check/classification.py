@@ -110,6 +110,10 @@ _active_vector_id: str | None = None
 # every classify() (incl. the not_operational/xfail paths), cleared by clear().
 _active_mechanism: str | None = None
 _active_operation: str | None = None
+# Whether a PASS of this test implies the operation ran productively (returned CKR_OK).
+# True only for positive/expect-success tests; a negative (rejection) vector passes WITHOUT
+# any CKR_OK, so it must not count as a productive claim for the hollow-pass oracle.
+_active_expect_success: bool = False
 
 
 # Curve aliases: NIST P-* and ACVP ED-* names map to the canonical secp*/ed*
@@ -189,16 +193,26 @@ def set_vector(source: str | None, vector_id: str | None) -> None:
     _active_vector_id = vector_id or None
 
 
-def set_mechanism(mechanism: str | None, operation: str | None = None) -> None:
+def set_mechanism(
+    mechanism: str | None, operation: str | None = None, *, expect_success: bool = False
+) -> None:
     """Declare the operation identity (mechanism + C_* op) for the current test.
 
     Every classify() afterwards inherits ``mechanism``/``operation`` unless it passes
     its own. Set once per vector-replay test where the operation is constant, so the
     not_operational/xfail paths carry the mechanism; cleared by clear().
+
+    ``expect_success`` declares that a PASS of this test requires ``operation`` to have
+    run productively (returned CKR_OK) -- i.e. this is a positive vector. It gates the
+    hollow-pass oracle's productive claim (``current_claimed_op``): a negative/rejection
+    vector passes without any CKR_OK, so it must leave ``expect_success`` False (the
+    default) and never count toward claimed_passes. It does NOT affect the ``operation``
+    metadata carried on classify() records.
     """
-    global _active_mechanism, _active_operation
+    global _active_mechanism, _active_operation, _active_expect_success
     _active_mechanism = mechanism or None
     _active_operation = operation or None
+    _active_expect_success = bool(expect_success) and _active_operation is not None
 
 
 def record(rec: Classification) -> None:
@@ -214,21 +228,32 @@ def get_records() -> list[Classification]:
 def current_operation() -> str | None:
     """The C_* operation the current test declared via set_mechanism(), or None.
 
-    Used by the plugin to label a passing test's claimed operation (pkcs11_claimed_op)
-    for the hollow-pass coverage oracle. Cleared by clear() between tests."""
+    This is operation *metadata* (carried on classify() records regardless of outcome).
+    For the hollow-pass oracle's productive claim, use current_claimed_op(), which is
+    gated on expect_success. Cleared by clear() between tests."""
     return _active_operation
+
+
+def current_claimed_op() -> str | None:
+    """The operation a PASS of this test claims to have run productively (CKR_OK), or None.
+
+    Returns the declared operation only when set_mechanism(..., expect_success=True) was
+    used (a positive vector). Negative/rejection vectors return None so their passes do not
+    inflate the hollow-pass oracle's claimed_passes. Cleared by clear() between tests."""
+    return _active_operation if _active_expect_success else None
 
 
 def clear() -> None:
     """Clear collected records and active context (call between tests)."""
     global _active_params, _active_source, _active_vector_id
-    global _active_mechanism, _active_operation
+    global _active_mechanism, _active_operation, _active_expect_success
     _records.clear()
     _active_params = None
     _active_source = None
     _active_vector_id = None
     _active_mechanism = None
     _active_operation = None
+    _active_expect_success = False
 
 
 def serialize(records: list[Classification]) -> list[dict[str, Any]]:

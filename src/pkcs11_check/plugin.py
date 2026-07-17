@@ -772,19 +772,27 @@ def _rv_trace_properties_from_previous_failure(
     return [("pkcs11_rv_trace", trace)]
 
 
-def _emit_claimed_op(item: pytest.Item) -> None:
-    """Attach the test's declared C_* operation (pkcs11_claimed_op) to user_properties.
+def _attach_claimed_op_to_report(item: pytest.Item, report: Any) -> None:
+    """Attach the test's claimed productive operation (pkcs11_claimed_op) to its PASSED call report.
 
-    Called in teardown BEFORE classification.clear(). The value comes from the test's
-    set_mechanism() declaration; quality_audit groups PASSED records by it to compute the
-    hollow-pass oracle's claimed-passes-per-operation. No-op when no operation was declared.
+    The hollow-pass oracle (quality_audit) groups PASSED records with ``when == "call"`` by this
+    property. Attaching in teardown would land it on the *teardown* TestReport record instead
+    (report-log writes a separate record per phase), which the collector never reads -- so the
+    denominator would always be empty. So attach here, on the passed call report, mirroring
+    _attach_rv_trace_to_report. The value comes from classification.current_claimed_op(), which is
+    gated on set_mechanism(expect_success=True): a negative/rejection vector passes without a
+    productive CKR_OK and must not be counted. No-op unless a productive claim was declared.
     """
-    from pkcs11_check.classification import current_operation
+    if getattr(report, "when", None) != "call" or getattr(report, "outcome", None) != "passed":
+        return
+    if not _is_testcase_item(item):
+        return
+    from pkcs11_check.classification import current_claimed_op
 
-    op = current_operation()
+    op = current_claimed_op()
     if not op:
         return
-    user_properties = getattr(item, "user_properties", None)
+    user_properties = getattr(report, "user_properties", None)
     if not isinstance(user_properties, list):
         return
     if not any(name == "pkcs11_claimed_op" for name, _ in user_properties):
@@ -969,13 +977,13 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> 
     _attach_rv_trace_to_report(item, report)
     _attach_compliance_notes_to_report(item, report)
     _attach_classification_to_report(item, report)
+    _attach_claimed_op_to_report(item, report)
 
 
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
     """Clear per-item state after each test to prevent cross-item leakage."""
     if _is_testcase_item(item):
         _drain_rv_trace(item)
-        _emit_claimed_op(item)
 
         from pkcs11_check.compliance import clear_notes
 
