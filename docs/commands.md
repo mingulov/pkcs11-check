@@ -86,11 +86,24 @@ P11TEST_DISABLED_TESTS_FILE=/path/to/disabled-tests.txt \
 ```
 
 A baseline named `disabled-tests.txt` in the resolved data directory is auto-discovered
-if no path is given; pass `--ignore-disabled-tests` to run everything regardless. To find
-the exact node-ids to list (including parametrized variants) without repeatedly running a
-crashing suite, enumerate them with a collect-only pass filtered by `--match`/`--mark`
-(the forthcoming `list-tests` command, issue #6); until then, `--collect-only -q` under
-pytest prints the same forward-slash node-ids.
+if no path is given; pass `--ignore-disabled-tests` to run everything regardless.
+
+To find the exact node-ids to list (including every parametrized variant) without running a
+crashing suite, use `list-tests`:
+
+```bash
+# statically-parametrized tests (vectors) enumerate with no module:
+uv run pkcs11-check list-tests --match "tc249-invalid and rsa_signature" > disabled-tests.txt
+
+# add --module to also enumerate mechanism-driven variants (matches a real run):
+uv run pkcs11-check list-tests --marker "not slow" --module ./module.so > disabled-tests.txt
+```
+
+`list-tests` prints one node-id per line to stdout (forward slashes on every platform), so
+the redirect yields a ready-to-use disabled-tests file; the match count goes to stderr. It
+accepts the same `--match`/`--marker`/`--category`/`--skip-slow`/`--only-slow` selection as
+`test`, so "what `list-tests` prints" is "what `test` would run" for the same filters. An
+optional positional path scopes collection to a subset (e.g. one test file or directory).
 
 ## Artifact comparison
 
