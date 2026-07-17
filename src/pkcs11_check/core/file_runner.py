@@ -226,6 +226,42 @@ from pkcs11_check.core._run_units import (
 from pkcs11_check.core._run_units import (
     normalize_policy_file_key as normalize_policy_file_key,
 )
+from pkcs11_check.core._unit_details import (
+    _augment_mechanism_coverage_from_unit_outcomes as _augment_mechanism_coverage_from_unit_outcomes,  # noqa: E501
+)
+from pkcs11_check.core._unit_details import (
+    _copy_detail as _copy_detail,
+)
+from pkcs11_check.core._unit_details import (
+    _ensure_timeout_recorded as _ensure_timeout_recorded,
+)
+from pkcs11_check.core._unit_details import (
+    _group_results_by_file as _group_results_by_file,
+)
+from pkcs11_check.core._unit_details import (
+    _mechanism_name_set as _mechanism_name_set,
+)
+from pkcs11_check.core._unit_details import (
+    _merge_special_entries_into_detail as _merge_special_entries_into_detail,
+)
+from pkcs11_check.core._unit_details import (
+    _merge_supplemental_special_details as _merge_supplemental_special_details,
+)
+from pkcs11_check.core._unit_details import (
+    _overall_unit_status as _overall_unit_status,
+)
+from pkcs11_check.core._unit_details import (
+    _required_ckm_names_for_unit as _required_ckm_names_for_unit,
+)
+from pkcs11_check.core._unit_details import (
+    _special_test_entry_from_result as _special_test_entry_from_result,
+)
+from pkcs11_check.core._unit_details import (
+    _status_with_detail_counts as _status_with_detail_counts,
+)
+from pkcs11_check.core._unit_details import (
+    _synthetic_file_skip_detail as _synthetic_file_skip_detail,
+)
 from pkcs11_check.core._unit_discovery import (
     _collection_args as _collection_args,
 )
@@ -293,311 +329,6 @@ _NO_TESTS_COLLECTED_EXIT = 2
 # a provider DLL more readily leaves a handle-inheriting helper process). Daemon
 # readers are abandoned after the grace and die at process exit.
 _POST_EXIT_DRAIN_GRACE_S = 3.0
-
-
-def _group_results_by_file(
-    results: list[FileRunResult],
-    details: dict[str, dict[str, Any]],
-) -> list[tuple[str, list[FileRunResult], dict[str, Any]]]:
-    """Group results into file-level aggregates for the unified report.
-
-    If all results are already file-level (no ``::`` in targets), returns
-    them ungrouped.  Otherwise, groups test-level results by their file
-    prefix and merges counts/tests from *details*.
-    """
-    has_test_level = any("::" in r.target for r in results)
-    if not has_test_level:
-        return [(r.target, [r], details.get(r.target, {})) for r in results]
-
-    groups: dict[str, list[FileRunResult]] = {}
-    order: list[str] = []
-    for result in results:
-        file_key = result.target.split("::", 1)[0]
-        if file_key not in groups:
-            groups[file_key] = []
-            order.append(file_key)
-        groups[file_key].append(result)
-
-    out: list[tuple[str, list[FileRunResult], dict[str, Any]]] = []
-    for file_target in order:
-        file_results = groups[file_target]
-        merged_counts: dict[str, int] = _empty_counts()
-        merged_tests: list[dict[str, Any]] = []
-        merged_compliance_notes: list[dict[str, Any]] = []
-        merged_skip_reasons: dict[str, int] = {}
-        file_skip = False
-        for r in file_results:
-            detail = _copy_detail(details.get(r.target, {}))
-            for key in merged_counts:
-                merged_counts[key] += detail.get("counts", {}).get(key, 0)
-            merged_tests.extend(detail.get("tests", []))
-            merged_compliance_notes.extend(detail.get("compliance_notes", []))
-            for reason, count in detail.get("skip_reasons", {}).items():
-                merged_skip_reasons[reason] = merged_skip_reasons.get(reason, 0) + count
-            if detail.get("file_skip"):
-                file_skip = True
-        merged_detail: dict[str, Any] = {"counts": merged_counts, "tests": merged_tests}
-        if merged_compliance_notes:
-            merged_detail["compliance_notes"] = merged_compliance_notes
-        if merged_skip_reasons:
-            merged_detail["skip_reasons"] = merged_skip_reasons
-        if file_skip:
-            merged_detail["file_skip"] = True
-        out.append((file_target, file_results, merged_detail))
-    return out
-
-
-def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
-    counts = _empty_counts()
-    tests: list[dict[str, Any]] = []
-    compliance_notes: list[dict[str, Any]] = []
-    skip_reasons: dict[str, int] = {}
-
-    if isinstance(detail, Mapping):
-        raw_counts = detail.get("counts")
-        if isinstance(raw_counts, Mapping):
-            for key in counts:
-                value = raw_counts.get(key, 0)
-                if isinstance(value, int):
-                    counts[key] = value
-        raw_tests = detail.get("tests")
-        if isinstance(raw_tests, list):
-            tests = [dict(item) for item in raw_tests if isinstance(item, Mapping)]
-        raw_compliance_notes = detail.get("compliance_notes")
-        if isinstance(raw_compliance_notes, list):
-            compliance_notes = [
-                dict(item) for item in raw_compliance_notes if isinstance(item, Mapping)
-            ]
-        raw_skip_reasons = detail.get("skip_reasons")
-        if isinstance(raw_skip_reasons, Mapping):
-            skip_reasons = {
-                str(reason): int(count)
-                for reason, count in raw_skip_reasons.items()
-                if isinstance(count, int)
-            }
-
-    copied: dict[str, Any] = {"counts": counts, "tests": tests}
-    if compliance_notes:
-        copied["compliance_notes"] = compliance_notes
-    if skip_reasons:
-        copied["skip_reasons"] = skip_reasons
-    if isinstance(detail, Mapping) and detail.get("file_skip"):
-        copied["file_skip"] = True
-    return copied
-
-
-def _ensure_timeout_recorded(detail: dict[str, Any] | None, unit: str) -> dict[str, Any]:
-    """Guarantee a timed-out file keeps at least one timeout in its counts.
-
-    Used on the timeout-retry success path: when a file timed out but the
-    timeout could not be attributed to a specific test (no culprit, or the
-    culprit passed in isolation) and the remaining tests then pass, the unit
-    would otherwise be recorded as ``passed`` and the hang would vanish from the
-    summary. This records an unattributed *file-level* timeout so a green retry
-    never hides a real timeout (review finding R3).
-
-    Idempotent: if a timeout is already counted (e.g. a confirmed culprit
-    already added one) the detail is returned with only its structure
-    normalized — never a second, double-counted timeout.
-    """
-    result: dict[str, Any] = detail if detail is not None else {}
-    counts = result.setdefault("counts", _empty_counts())
-    tests = result.setdefault("tests", [])
-    if counts.get("timeout", 0) == 0:
-        tests.append(
-            {
-                "nodeid": unit,
-                "outcome": "timeout",
-                "longrepr": (
-                    "file timed out; cause not attributable to a single test "
-                    "(remaining tests passed on retry after deselection)"
-                ),
-            }
-        )
-        counts["timeout"] = 1
-    return result
-
-
-def _synthetic_file_skip_detail(
-    unit: str,
-    reason: str,
-    pytest_args: list[str],
-    env: Mapping[str, str],
-) -> dict[str, Any]:
-    """Build counted skip detail for a file skipped before pytest execution."""
-    collect_env = dict(env)
-    collect_env[_DISABLE_COLLECTION_PROBES_ENV] = "1"
-    try:
-        nodeids = collect_pytest_nodeids([unit], pytest_args, env=collect_env)
-    except ValueError:
-        nodeids = []
-
-    skipped = len(nodeids) if nodeids else 1
-    counts = _empty_counts()
-    counts["skipped"] = skipped
-    return {
-        "counts": counts,
-        "tests": [],
-        "skip_reasons": {reason: skipped},
-        "file_skip": True,
-    }
-
-
-def _special_test_entry_from_result(result: FileRunResult) -> dict[str, Any] | None:
-    if result.status not in {"crashed", "timeout", "crash_limited"} or "::" not in result.target:
-        return None
-
-    entry: dict[str, Any] = {
-        "nodeid": result.target,
-        "outcome": result.status,
-        "duration": result.duration_s,
-    }
-    flat = result.stderr.strip() or result.stdout.strip()
-    if not flat and result.status == "crash_limited":
-        flat = "abandoned: per-file crash limit reached"
-    if flat:
-        entry["longrepr"] = flat
-    if result.stdout.strip():
-        entry["stdout"] = result.stdout
-    if result.stderr.strip():
-        entry["stderr"] = result.stderr
-    return entry
-
-
-def _merge_special_entries_into_detail(
-    detail: Mapping[str, Any] | None,
-    entries: Sequence[Mapping[str, Any]],
-) -> dict[str, Any]:
-    merged = _copy_detail(detail)
-    existing = {
-        (str(record.get("nodeid", "")), str(record.get("outcome", "")))
-        for record in merged["tests"]
-        if isinstance(record, Mapping)
-    }
-
-    for entry in entries:
-        nodeid = str(entry.get("nodeid", "")).strip()
-        outcome = str(entry.get("outcome", "")).strip()
-        if not nodeid or not outcome:
-            continue
-        key = (nodeid, outcome)
-        if key in existing:
-            continue
-        merged["tests"].append(dict(entry))
-        existing.add(key)
-        if outcome in {"crashed", "timeout", "crash_limited"}:
-            merged["counts"][outcome] += 1
-
-    return merged
-
-
-def _overall_unit_status(file_results: list[FileRunResult]) -> str:
-    seen = {result.status for result in file_results}
-    for status in UNIT_STATUS_PRIORITY:
-        if status in seen:
-            return status
-    return file_results[0].status
-
-
-def _status_with_detail_counts(status: str, counts: Mapping[str, int] | None) -> str:
-    if not counts:
-        return status
-    if counts.get("timeout", 0) > 0:
-        return "timeout"
-    if counts.get("crashed", 0) > 0:
-        return "crashed"
-    return status
-
-
-def _merge_supplemental_special_details(
-    base_details: Mapping[str, dict[str, Any]],
-    supplemental_details: Mapping[str, dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    merged = {unit: _copy_detail(detail) for unit, detail in base_details.items()}
-
-    for unit, detail in supplemental_details.items():
-        if not isinstance(detail, Mapping):
-            continue
-        if detail.get("file_skip") is True:
-            merged[unit] = _copy_detail(detail)
-            continue
-        raw_tests = detail.get("tests")
-        if not isinstance(raw_tests, list):
-            continue
-        special_entries = [
-            record
-            for record in raw_tests
-            if isinstance(record, Mapping)
-            and str(record.get("outcome", "")).strip() in _SPECIAL_DETAIL_OUTCOMES
-        ]
-        if not special_entries:
-            continue
-        merged[unit] = _merge_special_entries_into_detail(merged.get(unit), special_entries)
-
-    return merged
-
-
-def _required_ckm_names_for_unit(unit: str) -> list[str]:
-    required = extract_required_mechanisms(unit.split("::", 1)[0])
-    if not required:
-        return []
-    return sorted(
-        name if name.startswith("CKM_") else f"CKM_{name}"
-        for name in required
-        if isinstance(name, str) and name
-    )
-
-
-def _mechanism_name_set(value: Any) -> set[str]:
-    if not isinstance(value, list):
-        return set()
-    return {str(name) for name in value if name is not None}
-
-
-def _augment_mechanism_coverage_from_unit_outcomes(
-    coverage: dict[str, Any] | None,
-    state: FileRunState,
-    *,
-    per_unit_details: Mapping[str, dict[str, Any]] | None,
-) -> dict[str, Any] | None:
-    """Annotate coverage states for explicit per-file mechanism outcomes."""
-    if coverage is None:
-        return None
-    raw_mechanism_coverage = coverage.get("mechanism_coverage")
-    if not isinstance(raw_mechanism_coverage, Mapping):
-        return coverage
-
-    augmented = dict(coverage)
-    mechanism_coverage = dict(raw_mechanism_coverage)
-    augmented["mechanism_coverage"] = mechanism_coverage
-
-    bucket_names = {
-        "skipped_by_capability_names": _mechanism_name_set(
-            mechanism_coverage.get("skipped_by_capability_names")
-        ),
-        "crashed_names": _mechanism_name_set(mechanism_coverage.get("crashed_names")),
-        "timeout_names": _mechanism_name_set(mechanism_coverage.get("timeout_names")),
-    }
-
-    for unit, file_results, merged_detail in _group_results_by_file(
-        state.results,
-        dict(per_unit_details or {}),
-    ):
-        required_names = _required_ckm_names_for_unit(unit)
-        if not required_names:
-            continue
-        if merged_detail.get("file_skip") is True:
-            bucket_names["skipped_by_capability_names"].update(required_names)
-        status = _overall_unit_status(file_results)
-        if status == "crashed":
-            bucket_names["crashed_names"].update(required_names)
-        elif status == "timeout":
-            bucket_names["timeout_names"].update(required_names)
-
-    for key, names in bucket_names.items():
-        mechanism_coverage[key] = sorted(names)
-
-    return augmented
 
 
 def write_isolated_json_report(

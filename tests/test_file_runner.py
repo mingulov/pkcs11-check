@@ -13,6 +13,8 @@ import pytest
 from rich.console import Console
 
 from pkcs11_check.core import _report_records as report_records_mod
+from pkcs11_check.core import _unit_details as unit_details_mod
+from pkcs11_check.core import _unit_discovery as unit_discovery_mod
 from pkcs11_check.core import file_runner as file_runner_mod
 from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.file_runner import (
@@ -4870,14 +4872,16 @@ def test_file_skip_counts_collected_tests_as_skipped(
     report_path = tmp_path / "results.json"
 
     monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"AES_CBC"})
-    monkeypatch.setattr(
-        file_runner_mod,
-        "collect_pytest_nodeids",
-        lambda targets, pytest_args, *, env=None: [
+
+    def _fake_collect(targets, pytest_args, *, env=None):
+        return [
             f"{test_file}::test_a",
             f"{test_file}::test_b",
-        ],
-    )
+        ]
+
+    monkeypatch.setattr(file_runner_mod, "collect_pytest_nodeids", _fake_collect)
+    monkeypatch.setattr(unit_details_mod, "collect_pytest_nodeids", _fake_collect)
+    monkeypatch.setattr(unit_discovery_mod, "collect_pytest_nodeids", _fake_collect)
 
     def _unexpected_run(*_args: Any, **_kwargs: Any) -> tuple[int, str, str]:
         pytest.fail("file-skipped unit must not invoke pytest")
@@ -4962,11 +4966,13 @@ def test_nodeid_unit_with_missing_required_mechanism_is_skipped_before_pytest(
     report_path = tmp_path / "results.json"
 
     monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"AES_CBC"})
-    monkeypatch.setattr(
-        file_runner_mod,
-        "collect_pytest_nodeids",
-        lambda targets, pytest_args, *, env=None: [nodeid],
-    )
+
+    def _fake_collect(targets, pytest_args, *, env=None):
+        return [nodeid]
+
+    monkeypatch.setattr(file_runner_mod, "collect_pytest_nodeids", _fake_collect)
+    monkeypatch.setattr(unit_details_mod, "collect_pytest_nodeids", _fake_collect)
+    monkeypatch.setattr(unit_discovery_mod, "collect_pytest_nodeids", _fake_collect)
 
     def _unexpected_run(*_args: Any, **_kwargs: Any) -> tuple[int, str, str]:
         pytest.fail("missing REQUIRED_MECHANISMS nodeid unit must not invoke pytest")
@@ -5022,14 +5028,16 @@ def test_file_skip_for_any_missing_required_mechanism_counts_collected_tests(
 
     monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"ML_DSA"})
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
-    monkeypatch.setattr(
-        file_runner_mod,
-        "collect_pytest_nodeids",
-        lambda targets, pytest_args, *, env=None: [
+
+    def _fake_collect(targets, pytest_args, *, env=None):
+        return [
             f"{test_file}::test_a",
             f"{test_file}::test_b",
-        ],
-    )
+        ]
+
+    monkeypatch.setattr(file_runner_mod, "collect_pytest_nodeids", _fake_collect)
+    monkeypatch.setattr(unit_details_mod, "collect_pytest_nodeids", _fake_collect)
+    monkeypatch.setattr(unit_discovery_mod, "collect_pytest_nodeids", _fake_collect)
 
     exit_code = run_isolated_pytest_units(
         [str(test_file)],
@@ -5067,14 +5075,16 @@ def test_file_skip_counts_survive_report_jsonl_merge(
     report_jsonl_path = tmp_path / "report.jsonl"
 
     monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"AES_CBC"})
-    monkeypatch.setattr(
-        file_runner_mod,
-        "collect_pytest_nodeids",
-        lambda targets, pytest_args, *, env=None: [
+
+    def _fake_collect(targets, pytest_args, *, env=None):
+        return [
             f"{skipped_file}::test_a",
             f"{skipped_file}::test_b",
-        ],
-    )
+        ]
+
+    monkeypatch.setattr(file_runner_mod, "collect_pytest_nodeids", _fake_collect)
+    monkeypatch.setattr(unit_details_mod, "collect_pytest_nodeids", _fake_collect)
+    monkeypatch.setattr(unit_discovery_mod, "collect_pytest_nodeids", _fake_collect)
 
     def fake_run(
         cmd: list[str],
