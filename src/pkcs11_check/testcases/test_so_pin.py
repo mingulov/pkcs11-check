@@ -54,6 +54,7 @@ from pkcs11_check.raw.types_std import (
     CKU_SO,
     CKU_USER,
 )
+from pkcs11_check.testcases._so_login import guard_so_lockout, resolve_so_pin
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     get_pin_bytes,
@@ -93,6 +94,9 @@ class TestSOLogin:
     def test_so_login_wrong_pin(self, p11_raw_session: Any) -> None:
         """SO login with wrong PIN must fail."""
         rs = p11_raw_session
+        # Deliberate wrong-PIN probe: burns one SO retry-counter step. Only run
+        # with a pristine counter - skip if ANY CKF_SO_PIN_* counter flag is set.
+        guard_so_lockout(rs.raw, rs.slot_id, explicit=False, require_pristine=True)
         flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
@@ -112,11 +116,12 @@ class TestSOLogin:
         rs = p11_raw_session
         # p11_raw_session is already logged in as user
         # Trying SO login should fail
-        pin_bytes = get_pin_bytes(p11_config)
-        if pin_bytes is None:
+        so_pin, explicit = resolve_so_pin(p11_config)
+        if so_pin is None:
             pytest.skip("No PIN configured")
-        pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-        rv = rs.raw.C_Login(rs.sh, CKU_SO, pin_buf, len(pin_bytes))
+        guard_so_lockout(rs.raw, rs.slot_id, explicit=explicit)
+        pin_buf = (CK_UTF8CHAR * len(so_pin))(*so_pin)
+        rv = rs.raw.C_Login(rs.sh, CKU_SO, pin_buf, len(so_pin))
         classify_negative_rv(
             rv,
             (CKR_USER_ALREADY_LOGGED_IN,),
