@@ -72,7 +72,6 @@ from pkcs11_check.raw.types_std import (
     CKR_GENERAL_ERROR,
     CKR_KEY_NOT_WRAPPABLE,
     CKR_OK,
-    CKR_PIN_INCORRECT,
     CKR_PIN_INVALID,
     CKR_PIN_LEN_RANGE,
     CKR_PIN_TOO_WEAK,
@@ -90,6 +89,12 @@ from pkcs11_check.raw.types_std import (
     CKU_CONTEXT_SPECIFIC,
     CKU_SO,
     CKU_USER,
+)
+from pkcs11_check.testcases._so_login import (
+    guard_so_lockout,
+    resolve_so_pin,
+    skip_if_so_pin_rejected,
+    so_session,
 )
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
@@ -174,11 +179,6 @@ def _login_user_raw(raw: Any, sh: int, pin_bytes: bytes | None) -> None:
 def _logout_safe(raw: Any, sh: int) -> None:
     """Logout ignoring not-logged-in or closed-session errors."""
     raw.C_Logout(sh)
-
-
-def _skip_if_so_pin_differs(rv: int) -> None:
-    if rv == CKR_PIN_INCORRECT:
-        pytest.skip("SO PIN differs from user PIN on this module")
 
 
 def _gen_access_aes_key(rs: Any, sh: int, *, attrs: dict[Any, Any] | None = None) -> int:
@@ -510,13 +510,14 @@ class TestUserSessionCapabilities:
 
     def test_user_cannot_login_as_so(self, p11_raw_session: Any, p11_config: Any) -> None:
         """USER session cannot switch to SO login."""
-        pin_bytes = get_pin_bytes(p11_config)
-        if pin_bytes is None:
+        so_pin, explicit = resolve_so_pin(p11_config)
+        if so_pin is None:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
-        pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-        rv = rs.raw.C_Login(rs.sh, CKU_SO, pin_buf, len(pin_bytes))
-        _skip_if_so_pin_differs(rv)
+        guard_so_lockout(rs.raw, rs.slot_id, explicit=explicit)
+        pin_buf = (CK_UTF8CHAR * len(so_pin))(*so_pin)
+        rv = rs.raw.C_Login(rs.sh, CKU_SO, pin_buf, len(so_pin))
+        skip_if_so_pin_rejected(rv, explicit=explicit)
         classify_negative_rv(
             rv,
             (CKR_USER_ANOTHER_ALREADY_LOGGED_IN,),
@@ -538,37 +539,19 @@ class TestSOSessionCapabilities:
     @pytest.mark.destructive
     def test_so_login_succeeds_on_rw_session(self, p11_raw_session: Any, p11_config: Any) -> None:
         """SO login succeeds on RW session when no USER is logged in."""
-        pin_bytes = get_pin_bytes(p11_config)
-        if pin_bytes is None:
+        user_pin = get_pin_bytes(p11_config)
+        if user_pin is None:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
-        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
-
-        # Clear any existing login
-        pre_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
-        rs.raw.C_Logout(pre_sh)
-        close_session_quietly(rs.raw, pre_sh)
-
-        s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
-        try:
-            pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-            rv = rs.raw.C_Login(s1, CKU_SO, pin_buf, len(pin_bytes))
-            if rv == CKR_PIN_INCORRECT:
-                pytest.skip("SO PIN differs from user PIN on this module")
-            if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_ANOTHER_ALREADY_LOGGED_IN):
-                pytest.skip("Another user already logged in on this token")
-            expect_rv(rv, CKR_OK)
-
+        with so_session(rs, p11_config) as s1:
             # Verify SO is logged in by attempting USER login (should fail)
-            rv2 = rs.raw.C_Login(s1, CKU_USER, pin_buf, len(pin_bytes))
+            pin_buf = (CK_UTF8CHAR * len(user_pin))(*user_pin)
+            rv2 = rs.raw.C_Login(s1, CKU_USER, pin_buf, len(user_pin))
             assert rv2 in (
                 CKR_USER_ALREADY_LOGGED_IN,
                 CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
                 CKR_USER_TYPE_INVALID,
             )
-        finally:
-            _logout_safe(rs.raw, s1)
-            close_session_quietly(rs.raw, s1)
 
     @pytest.mark.destructive
     def test_so_can_init_pin(self, p11_raw_session: Any, p11_config: Any) -> None:
@@ -580,51 +563,37 @@ class TestSOSessionCapabilities:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
         flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
-
-        # Clear any existing login
-        pre_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
-        rs.raw.C_Logout(pre_sh)
-        close_session_quietly(rs.raw, pre_sh)
-
-        s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
-        pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-        rv = rs.raw.C_Login(s1, CKU_SO, pin_buf, len(pin_bytes))
-        if rv == CKR_PIN_INCORRECT:
-            close_session_quietly(rs.raw, s1)
-            pytest.skip("SO PIN differs from user PIN on this module")
-        if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_ANOTHER_ALREADY_LOGGED_IN):
-            close_session_quietly(rs.raw, s1)
-            pytest.skip("Another user already logged in on this token")
-        expect_rv(rv, CKR_OK)
-
         new_pin = pin_bytes + b"X"
-        try:
-            init_pin(rs.raw, s1, new_pin)
-        except AssertionError as exc:
-            if is_known_error(exc, _INIT_PIN_POLICY_REJECT_RVS):
-                pytest.skip(f"C_InitPIN not usable with configured token policy: {exc}")
-            xfail_if_known_ckr(
-                exc,
-                _INIT_PIN_RUNTIME_REJECT_RVS,
-                "C_InitPIN rejected valid SO PIN setup",
-            )
-            raise  # unreachable
-        finally:
-            # Restore original PIN: logout SO, login USER with new PIN, set back
-            _logout_safe(rs.raw, s1)
-            close_session_quietly(rs.raw, s1)
 
-            restore_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
-            try:
-                login_user(rs.raw, restore_sh, CKU_USER, new_pin)
-                set_pin(rs.raw, restore_sh, new_pin, pin_bytes)
-            except AssertionError:
-                # Best-effort restore; if it fails, token may need re-init
-                # audit-ok: best-effort PIN restore in teardown, not a module finding
-                pass
-            finally:
-                _logout_safe(rs.raw, restore_sh)
-                close_session_quietly(rs.raw, restore_sh)
+        entered = False
+        try:
+            with so_session(rs, p11_config) as s1:
+                entered = True
+                try:
+                    init_pin(rs.raw, s1, new_pin)
+                except AssertionError as exc:
+                    if is_known_error(exc, _INIT_PIN_POLICY_REJECT_RVS):
+                        pytest.skip(f"C_InitPIN not usable with configured token policy: {exc}")
+                    xfail_if_known_ckr(
+                        exc,
+                        _INIT_PIN_RUNTIME_REJECT_RVS,
+                        "C_InitPIN rejected valid SO PIN setup",
+                    )
+                    raise  # unreachable
+        finally:
+            if entered:
+                # Restore original PIN: login USER with new PIN, set back
+                restore_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
+                try:
+                    login_user(rs.raw, restore_sh, CKU_USER, new_pin)
+                    set_pin(rs.raw, restore_sh, new_pin, pin_bytes)
+                except AssertionError:
+                    # Best-effort restore; if it fails, token may need re-init
+                    # audit-ok: best-effort PIN restore in teardown, not a module finding
+                    pass
+                finally:
+                    _logout_safe(rs.raw, restore_sh)
+                    close_session_quietly(rs.raw, restore_sh)
 
     @pytest.mark.destructive
     def test_so_cannot_use_private_crypto_keys(self, p11_raw_session: Any, p11_config: Any) -> None:
@@ -656,50 +625,24 @@ class TestSOSessionCapabilities:
             _logout_safe(rs.raw, user_sh)
             close_session_quietly(rs.raw, user_sh)
 
-        # Login as SO and try to find/use the key
-        so_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
-        pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-        rv = rs.raw.C_Login(so_sh, CKU_SO, pin_buf, len(pin_bytes))
-        if rv == CKR_PIN_INCORRECT:
-            close_session_quietly(rs.raw, so_sh)
-            # Cleanup
-            cleanup_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
-            _login_user_raw(rs.raw, cleanup_sh, pin_bytes)
-            for h in find_objects(rs.raw, cleanup_sh, template_from_dict({CKA_LABEL: label})):
-                destroy_quietly(rs.raw, cleanup_sh, h)
-            _logout_safe(rs.raw, cleanup_sh)
-            close_session_quietly(rs.raw, cleanup_sh)
-            pytest.skip("SO PIN differs from user PIN")
-        if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_ANOTHER_ALREADY_LOGGED_IN):
-            close_session_quietly(rs.raw, so_sh)
-            cleanup_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
-            _login_user_raw(rs.raw, cleanup_sh, pin_bytes)
-            for h in find_objects(rs.raw, cleanup_sh, template_from_dict({CKA_LABEL: label})):
-                destroy_quietly(rs.raw, cleanup_sh, h)
-            _logout_safe(rs.raw, cleanup_sh)
-            close_session_quietly(rs.raw, cleanup_sh)
-            pytest.skip("Another user already logged in")
-
         try:
-            tmpl = template_from_dict({CKA_LABEL: label})
-            found = find_objects(rs.raw, so_sh, tmpl)
-            if len(found) == 0:
-                # SO cannot see private keys - expected per spec
-                pass
-            else:
-                # SO can see the key; some modules allow this
-                from pkcs11_check.compliance import ComplianceLevel, note
+            with so_session(rs, p11_config) as so_sh:
+                tmpl = template_from_dict({CKA_LABEL: label})
+                found = find_objects(rs.raw, so_sh, tmpl)
+                if len(found) == 0:
+                    # SO cannot see private keys - expected per spec
+                    pass
+                else:
+                    # SO can see the key; some modules allow this
+                    from pkcs11_check.compliance import ComplianceLevel, note
 
-                note(
-                    "SO session can see CKA_PRIVATE=True USER objects",
-                    ComplianceLevel.VENDOR,
-                    reference="PKCS#11 spec: SO should not access user private objects",
-                )
+                    note(
+                        "SO session can see CKA_PRIVATE=True USER objects",
+                        ComplianceLevel.VENDOR,
+                        reference="PKCS#11 spec: SO should not access user private objects",
+                    )
         finally:
-            _logout_safe(rs.raw, so_sh)
-            close_session_quietly(rs.raw, so_sh)
-
-            # Cleanup the key
+            # Cleanup the key (also on the so_session skip paths)
             cleanup_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
             try:
                 _login_user_raw(rs.raw, cleanup_sh, pin_bytes)
@@ -718,26 +661,11 @@ class TestSOSessionCapabilities:
         rs = p11_raw_session
         flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
-        # Clear any existing login
-        pre_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
-        rs.raw.C_Logout(pre_sh)
-        close_session_quietly(rs.raw, pre_sh)
-
-        # Login as SO first
-        s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
-        pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-        rv = rs.raw.C_Login(s1, CKU_SO, pin_buf, len(pin_bytes))
-        if rv == CKR_PIN_INCORRECT:
-            close_session_quietly(rs.raw, s1)
-            pytest.skip("SO PIN differs from user PIN")
-        if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_ANOTHER_ALREADY_LOGGED_IN):
-            close_session_quietly(rs.raw, s1)
-            pytest.skip("Another user already logged in")
-
-        try:
-            # Try USER login on a second session - should fail
+        with so_session(rs, p11_config):
+            # Try USER login on a second session - should fail (login is token-wide)
             s2 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
             try:
+                pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
                 rv2 = rs.raw.C_Login(s2, CKU_USER, pin_buf, len(pin_bytes))
                 assert rv2 in (
                     CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
@@ -746,9 +674,6 @@ class TestSOSessionCapabilities:
                 ), f"Expected USER login rejected while SO active, got {ckr_name(rv2)}"
             finally:
                 close_session_quietly(rs.raw, s2)
-        finally:
-            _logout_safe(rs.raw, s1)
-            close_session_quietly(rs.raw, s1)
 
 
 # ---------------------------------------------------------------------------
@@ -762,28 +687,8 @@ class TestTrustedAttribute:
     @pytest.mark.destructive
     def test_so_can_set_trusted(self, p11_raw_session: Any, p11_config: Any) -> None:
         """SO session can set CKA_TRUSTED=True on a key (or skip)."""
-        pin_bytes = get_pin_bytes(p11_config)
-        if pin_bytes is None:
-            pytest.skip("No PIN configured")
         rs = p11_raw_session
-        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
-
-        # Clear login
-        pre_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
-        rs.raw.C_Logout(pre_sh)
-        close_session_quietly(rs.raw, pre_sh)
-
-        s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
-        pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-        rv = rs.raw.C_Login(s1, CKU_SO, pin_buf, len(pin_bytes))
-        if rv == CKR_PIN_INCORRECT:
-            close_session_quietly(rs.raw, s1)
-            pytest.skip("SO PIN differs from user PIN")
-        if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_ANOTHER_ALREADY_LOGGED_IN):
-            close_session_quietly(rs.raw, s1)
-            pytest.skip("Another user already logged in")
-
-        try:
+        with so_session(rs, p11_config) as s1:
             try:
                 key_h = _gen_access_aes_key(
                     rs,
@@ -813,9 +718,6 @@ class TestTrustedAttribute:
                 pytest.skip(f"Module does not expose CKA_TRUSTED: {e}")
             finally:
                 destroy_quietly(rs.raw, s1, key_h)
-        finally:
-            _logout_safe(rs.raw, s1)
-            close_session_quietly(rs.raw, s1)
 
     def test_user_cannot_set_trusted(self, p11_raw_session: Any) -> None:
         """USER session must not be able to gen a key with CKA_TRUSTED=True.
@@ -1471,16 +1373,17 @@ class TestSOOnROSession:
     @pytest.mark.destructive
     def test_so_login_rejected_on_ro_session(self, p11_raw_session: Any, p11_config: Any) -> None:
         """C_Login(SO) on R/O session must fail per spec."""
-        pin_bytes = get_pin_bytes(p11_config)
-        if pin_bytes is None:
+        so_pin, explicit = resolve_so_pin(p11_config)
+        if so_pin is None:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
+        guard_so_lockout(rs.raw, rs.slot_id, explicit=explicit)
         flags_ro = CKF_SERIAL_SESSION
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_ro)
         try:
-            pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-            rv = rs.raw.C_Login(s1, CKU_SO, pin_buf, len(pin_bytes))
-            _skip_if_so_pin_differs(rv)
+            pin_buf = (CK_UTF8CHAR * len(so_pin))(*so_pin)
+            rv = rs.raw.C_Login(s1, CKU_SO, pin_buf, len(so_pin))
+            skip_if_so_pin_rejected(rv, explicit=explicit)
             classify_negative_rv(
                 rv,
                 (CKR_SESSION_READ_ONLY_EXISTS,),
