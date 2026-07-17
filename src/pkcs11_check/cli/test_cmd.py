@@ -111,6 +111,7 @@ def _build_pytest_args(
     marker: str | None,
     include_pin_arg: bool,
     pin: str | None,
+    so_pin: str | None,
     slot: int,
     destructive: bool,
     rv_trace: bool,
@@ -138,6 +139,9 @@ def _build_pytest_args(
 
     if include_pin_arg and pin:
         args.extend(["--p11-pin", pin])
+
+    if include_pin_arg and so_pin:
+        args.extend(["--p11-so-pin", so_pin])
 
     if destructive:
         args.append("--p11-destructive")
@@ -257,6 +261,9 @@ def test_command(
         False, "--only-slow", help="Run only the long-running tests (-m 'slow')"
     ),
     pin: str | None = typer.Option(None, "--pin", help="PIN (prefer P11TEST_PIN env)"),
+    so_pin: str | None = typer.Option(
+        None, "--so-pin", help="SO PIN for CKU_SO tests (prefer P11TEST_SO_PIN env)"
+    ),
     slot: int = typer.Option(0, "--slot", help="Slot index"),
     destructive: bool = typer.Option(
         False, "--destructive", help="Enable destructive tests", rich_help_panel="Advanced"
@@ -431,6 +438,12 @@ def test_command(
     if pin:
         os.environ["P11TEST_PIN"] = pin
 
+    original_so_pin = os.environ.get("P11TEST_SO_PIN")
+    had_original_so_pin = "P11TEST_SO_PIN" in os.environ
+
+    if so_pin:
+        os.environ["P11TEST_SO_PIN"] = so_pin
+
     manifest_fd, manifest_raw_path = tempfile.mkstemp(
         prefix="pkcs11-check-manifest-",
         suffix=".json",
@@ -474,6 +487,7 @@ def test_command(
         marker=marker,
         include_pin_arg=isolation == "none",
         pin=pin,
+        so_pin=so_pin,
         slot=slot,
         destructive=destructive,
         rv_trace=rv_trace,
@@ -658,3 +672,8 @@ def test_command(
                 os.environ["P11TEST_PIN"] = original_pin or ""
             else:
                 os.environ.pop("P11TEST_PIN", None)
+        if so_pin:
+            if had_original_so_pin:
+                os.environ["P11TEST_SO_PIN"] = original_so_pin or ""
+            else:
+                os.environ.pop("P11TEST_SO_PIN", None)

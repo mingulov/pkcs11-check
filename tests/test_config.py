@@ -89,3 +89,10 @@ def test_disabled_tests_file_is_none_without_toml(
     config = P11TestConfig(module=tmp_path / "fake.so")
 
     assert config.disabled_tests_file is None
+
+
+def test_so_pin_env_key_fingerprinted_and_redacted() -> None:
+    from pkcs11_check.core import _run_state
+
+    assert "P11TEST_SO_PIN" in _run_state._DEFAULT_FINGERPRINT_ENV_KEYS
+    assert "P11TEST_SO_PIN" in _run_state._REDACTED_ENV_KEYS
