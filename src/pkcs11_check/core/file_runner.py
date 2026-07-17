@@ -32,7 +32,13 @@ from pkcs11_check.core.crash_codes import (
 from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.preflight import load_manifest
 from pkcs11_check.core.quality_audit import build_quality_audit
-from pkcs11_check.core.recovery import RecoveryConfig
+from pkcs11_check.core.recovery import (
+    RecoveryConfig,
+    RecoveryController,
+    RecoveryOutcome,
+    probe_provider_liveness,
+    run_recover_cmd,
+)
 from pkcs11_check.core.report_log import (
     iter_report_log_records as _iter_report_log_records,
 )
@@ -2807,6 +2813,81 @@ def _run_subprocess_tee(
     )
 
 
+def _build_recovery_controller(
+    recovery_config: RecoveryConfig | None, pytest_args: list[str]
+) -> RecoveryController | None:
+    """Bind a RecoveryController to this run's provider, or None when recovery is off.
+
+    The probe/recover callables close over the run's module/interface/slot (extracted from
+    pytest_args). ``recover`` performs one cycle: in ``cmd`` mode it invokes the no-shell command,
+    then (both modes) waits ``wait_s`` for the external supervisor; the injected probe decides
+    whether the daemon actually came back. Returns None when disabled so the run loop stays inert.
+    """
+    if recovery_config is None or recovery_config.mode == "off":
+        return None
+    module_path = _extract_option_value(pytest_args, "--p11-module")
+    interface = _extract_option_value(pytest_args, "--p11-interface") or "auto"
+    slot_raw = _extract_option_value(pytest_args, "--p11-slot")
+    try:
+        slot = int(slot_raw) if slot_raw else 0
+    except ValueError:
+        slot = 0
+
+    def _probe() -> bool:
+        if not module_path:
+            return True  # cannot probe without a module -> treat as alive (never recover)
+        return probe_provider_liveness(
+            Path(module_path),
+            interface=interface,
+            slot=slot,
+            timeout=int(recovery_config.probe_timeout_s),
+        )
+
+    def _recover() -> bool:
+        if recovery_config.mode == "cmd" and recovery_config.recover_cmd:
+            run_recover_cmd(recovery_config.recover_cmd, timeout=recovery_config.cmd_timeout_s)
+        time.sleep(recovery_config.wait_s)
+        return True
+
+    return RecoveryController(recovery_config, probe=_probe, recover=_recover)
+
+
+def _apply_recovery_between_units(
+    controller: RecoveryController,
+    new_results: Sequence[FileRunResult],
+    *,
+    console: Console,
+) -> bool:
+    """Feed newly-completed unit results to the recovery controller, in order.
+
+    Prints a never-silent banner on each confirmed daemon-death event (the crash finding is never
+    hidden) and on abort. Returns True iff the run must abort (provider unrecoverable or the global
+    recovery budget exhausted). NOTE (Level A): hint-RVs are not yet scanned from report records, so
+    detection uses the consecutive-failure and crash triggers (the spec's primary path); the hint
+    fast-path, streak re-queue, and structured report.jsonl finding are scoped refinements.
+    """
+    for result in new_results:
+        assessment = controller.assess(result.target, result.status, frozenset())
+        if not assessment.records:
+            continue
+        for record in assessment.records:
+            trigger = record.get("trigger_unit", result.target)
+            console.print(f"[red]DAEMON UNREACHABLE[/red] after {trigger} (liveness probe failed)")
+        if assessment.outcome is RecoveryOutcome.ABORT:
+            console.print(
+                "[red]Provider unrecoverable[/red] - stopping this run (recovery attempts or "
+                "global budget exhausted). Remaining units not run."
+            )
+            return True
+        if assessment.outcome is RecoveryOutcome.RECOVERED_RETRY:
+            console.print("[green]Daemon recovered[/green] - resuming the run.")
+        elif assessment.outcome is RecoveryOutcome.QUARANTINE:
+            console.print(
+                f"[yellow]Quarantining[/yellow] {result.target} - repeatedly crashed the daemon."
+            )
+    return False
+
+
 def run_isolated_pytest_units(
     units: list[str],
     pytest_args: list[str],
@@ -2902,6 +2983,8 @@ def run_isolated_pytest_units(
     per_unit_details: dict[str, dict[str, Any]] = {}
     executed_units: set[str] = set()
     available_mechanisms = _load_available_mechanisms(pytest_args)
+    recovery_controller = _build_recovery_controller(recovery_config, pytest_args)
+    recovery_assessed = 0  # number of results already fed to the recovery controller
 
     if not pending_units:
         console.print("[green]Nothing to do[/green] - all isolated units already completed.")
@@ -2991,6 +3074,22 @@ def run_isolated_pytest_units(
             if unit not in pending_units:
                 index += 1
                 continue
+
+            # -- Crashing-daemon recovery (between-unit look-back) --
+            # Feed every result completed since the last check to the controller, in order, BEFORE
+            # running the next unit. A confirmed daemon death triggers wait/restart + re-probe here,
+            # so the upcoming unit runs against a recovered daemon (or the run aborts honestly).
+            # Inert unless recovery is enabled, so default runs are byte-identical.
+            if recovery_controller is not None and recovery_assessed < len(state.results):
+                abort = _apply_recovery_between_units(
+                    recovery_controller,
+                    state.results[recovery_assessed:],
+                    console=console,
+                )
+                recovery_assessed = len(state.results)
+                if abort:
+                    exit_code = 1
+                    break
 
             executed_units.add(unit)
             if report_config is not None and report_config.jsonl_path is not None:

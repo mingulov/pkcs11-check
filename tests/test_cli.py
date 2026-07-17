@@ -108,6 +108,7 @@ class TestTestCommand:
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
+            recovery_config: object = None,
         ) -> int:
             del console
             called["units"] = units
@@ -204,6 +205,7 @@ class TestTestCommand:
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
+            recovery_config: object = None,
         ) -> int:
             del (
                 units,
@@ -286,6 +288,7 @@ class TestTestCommand:
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
+            recovery_config: object = None,
         ) -> int:
             del (
                 pytest_args,
@@ -361,6 +364,7 @@ class TestTestCommand:
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
+            recovery_config: object = None,
         ) -> int:
             del (
                 pytest_args,
@@ -448,6 +452,7 @@ class TestTestCommand:
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
+            recovery_config: object = None,
         ) -> int:
             del (
                 units,
@@ -520,6 +525,7 @@ class TestTestCommand:
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
+            recovery_config: object = None,
         ) -> int:
             del (
                 pytest_args,
@@ -694,6 +700,7 @@ class TestTestCommand:
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
+            recovery_config: object = None,
         ) -> int:
             del (
                 units,
@@ -1116,6 +1123,7 @@ class TestTestCommand:
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
+            recovery_config: object = None,
         ) -> int:
             del (
                 pytest_args,
@@ -1204,6 +1212,7 @@ class TestTestCommand:
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
+            recovery_config: object = None,
         ) -> int:
             del (
                 pytest_args,
@@ -1307,6 +1316,7 @@ class TestTestCommand:
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
+            recovery_config: object = None,
         ) -> int:
             del (
                 units,
