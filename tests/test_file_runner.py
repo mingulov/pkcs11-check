@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from rich.console import Console
 
+from pkcs11_check.core import _escalation as escalation_mod
 from pkcs11_check.core import _report_records as report_records_mod
 from pkcs11_check.core import _unit_details as unit_details_mod
 from pkcs11_check.core import _unit_discovery as unit_discovery_mod
@@ -627,17 +628,20 @@ def test_run_isolated_pytest_units_escalates_crashed_file_in_same_run(
         return (-11 if unit == str(target) else 0, "", "")
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
-    monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.discover_pytest_units",
-        lambda targets, default_root, *, granularity, pytest_args, env=None: (
+
+    def _fake_discover(targets, default_root, *, granularity, pytest_args, env=None):
+        return (
             [  # type: ignore[arg-type]
                 f"{target}::test_one",
                 f"{target}::test_two",
             ]
             if granularity == "test"
             else list(targets)
-        ),
-    )
+        )
+
+    monkeypatch.setattr(file_runner_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(unit_discovery_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(escalation_mod, "discover_pytest_units", _fake_discover)
 
     exit_code = run_isolated_pytest_units(
         [str(target), "test_after.py"],
@@ -699,9 +703,9 @@ def test_run_isolated_pytest_units_limits_repeated_crashes_in_same_file(
         return (0, "", "")
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
-    monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.discover_pytest_units",
-        lambda targets, default_root, *, granularity, pytest_args, env=None: (
+
+    def _fake_discover(targets, default_root, *, granularity, pytest_args, env=None):
+        return (
             [  # type: ignore[arg-type]
                 f"{target}::test_one",
                 f"{target}::test_two",
@@ -709,8 +713,11 @@ def test_run_isolated_pytest_units_limits_repeated_crashes_in_same_file(
             ]
             if granularity == "test"
             else list(targets)
-        ),
-    )
+        )
+
+    monkeypatch.setattr(file_runner_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(unit_discovery_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(escalation_mod, "discover_pytest_units", _fake_discover)
 
     exit_code = run_isolated_pytest_units(
         [str(target), "test_after.py"],
@@ -2630,17 +2637,20 @@ def test_run_isolated_pytest_units_filters_disabled_tests_when_escalating_file(
         return (-11 if unit == str(target) else 0, "", "")
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
-    monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.discover_pytest_units",
-        lambda targets, default_root, *, granularity, pytest_args, env=None: (
+
+    def _fake_discover(targets, default_root, *, granularity, pytest_args, env=None):
+        return (
             [  # type: ignore[arg-type]
                 f"{target}::test_one",
                 f"{target}::test_two",
             ]
             if granularity == "test"
             else list(targets)
-        ),
-    )
+        )
+
+    monkeypatch.setattr(file_runner_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(unit_discovery_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(escalation_mod, "discover_pytest_units", _fake_discover)
 
     exit_code = run_isolated_pytest_units(
         [str(target), "test_after.py"],
@@ -4723,9 +4733,9 @@ def test_progressive_timeout_retry_exhausted_escalates_remaining(
         return (0, "", "")
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
-    monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.discover_pytest_units",
-        lambda targets, default_root, *, granularity, pytest_args, env=None: (
+
+    def _fake_discover(targets, default_root, *, granularity, pytest_args, env=None):
+        return (
             [  # type: ignore[arg-type]
                 f"{target}::test_done1",
                 f"{target}::test_done2",
@@ -4737,8 +4747,11 @@ def test_progressive_timeout_retry_exhausted_escalates_remaining(
             ]
             if granularity == "test"
             else list(targets)
-        ),
-    )
+        )
+
+    monkeypatch.setattr(file_runner_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(unit_discovery_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(escalation_mod, "discover_pytest_units", _fake_discover)
 
     exit_code = run_isolated_pytest_units(
         units,

@@ -45,6 +45,30 @@ from pkcs11_check.core._crash_classify import (
 from pkcs11_check.core._crash_classify import (
     crash_classification as crash_classification,
 )
+from pkcs11_check.core._escalation import (
+    _count_test_level_crashes_for_file as _count_test_level_crashes_for_file,
+)
+from pkcs11_check.core._escalation import (
+    _effective_granularity as _effective_granularity,
+)
+from pkcs11_check.core._escalation import (
+    _escalate_current_file as _escalate_current_file,
+)
+from pkcs11_check.core._escalation import (
+    _insert_escalated_units as _insert_escalated_units,
+)
+from pkcs11_check.core._escalation import (
+    _limit_remaining_units_for_file as _limit_remaining_units_for_file,
+)
+from pkcs11_check.core._escalation import (
+    _promote_crashing_unit as _promote_crashing_unit,
+)
+from pkcs11_check.core._escalation import (
+    _record_result as _record_result,
+)
+from pkcs11_check.core._escalation import (
+    _refresh_state_plan as _refresh_state_plan,
+)
 from pkcs11_check.core._jsonl_extract import (
     _emit_external_provision_banner as _emit_external_provision_banner,
 )
@@ -374,235 +398,6 @@ def _unit_timeout_seconds(
         # 5s per test + 60s startup overhead, floor 300s, cap 14400s (4h)
         return min(max(num_tests * 5 + 60, 300), 14400)
     return max(test_timeout * 30, 900)
-
-
-def _effective_granularity(unit: str, granularity: RunnerGranularity) -> IsolationGranularity:
-    if granularity == "mixed":
-        return "test" if "::" in unit else "file"
-    return granularity
-
-
-def _promote_crashing_unit(
-    policy_file: Path | None,
-    pytest_args: list[str],
-    env: Mapping[str, str],
-    unit: str,
-    unit_granularity: IsolationGranularity,
-    status: CrashStatus,
-    console: Console,
-) -> None:
-    if policy_file is None:
-        return
-
-    policies = load_isolation_policy(policy_file)
-    fingerprint = build_policy_fingerprint(pytest_args, env)
-    policy = policies.get(
-        fingerprint,
-        BackendIsolationPolicy(fingerprint=fingerprint, promoted_files=[], crashed_tests=[]),
-    )
-
-    file_key = _unit_file_key(unit)
-    changed = False
-
-    if file_key not in policy.promoted_files:
-        policy.promoted_files.append(file_key)
-        policy.promoted_files.sort()
-        changed = True
-
-    if unit_granularity == "test" and unit not in policy.crashed_tests:
-        policy.crashed_tests.append(unit)
-        policy.crashed_tests.sort()
-        changed = True
-
-    if not changed:
-        return
-
-    policies[fingerprint] = policy
-    save_isolation_policy(policy_file, policies)
-
-    if unit_granularity == "file":
-        console.print(
-            f"[yellow]Adaptive isolation:[/yellow] {unit} {status}; "
-            "future auto runs will promote this file to per-test isolation."
-        )
-    else:
-        console.print(
-            f"[yellow]Adaptive isolation:[/yellow] recorded crashing test {unit} after {status}."
-        )
-
-
-def _record_result(state: FileRunState, result: FileRunResult) -> None:
-    for index, existing in enumerate(state.results):
-        if existing.target == result.target:
-            state.results[index] = result
-            return
-    state.results.append(result)
-
-
-def _refresh_state_plan(
-    state: FileRunState,
-    units: list[str],
-    pytest_args: list[str],
-    env: Mapping[str, str],
-    *,
-    baseline_fingerprint: str | None = None,
-) -> None:
-    state.units = list(units)
-    state.fingerprint = build_state_fingerprint(
-        units,
-        pytest_args,
-        env,
-        baseline_fingerprint=baseline_fingerprint,
-    )
-
-
-def _count_test_level_crashes_for_file(state: FileRunState, file_key: str) -> int:
-    return sum(
-        1
-        for result in state.results
-        if "::" in result.target
-        and _unit_file_key(result.target) == file_key
-        and result.status in {"crashed", "timeout"}
-    )
-
-
-def _limit_remaining_units_for_file(
-    *,
-    unit: str,
-    units: list[str],
-    index: int,
-    pending_units: list[str],
-    state: FileRunState,
-    pytest_args: list[str],
-    env: Mapping[str, str],
-    console: Console,
-    max_crashes_per_file: int,
-    baseline_fingerprint: str | None = None,
-) -> list[str]:
-    if max_crashes_per_file <= 0 or "::" not in unit:
-        return []
-
-    file_key = _unit_file_key(unit)
-    crash_count = _count_test_level_crashes_for_file(state, file_key)
-    if crash_count < max_crashes_per_file:
-        return []
-
-    limited_units: list[str] = []
-    for candidate in units[index + 1 :]:
-        if "::" not in candidate or _unit_file_key(candidate) != file_key:
-            continue
-        if candidate not in pending_units:
-            continue
-
-        limited_units.append(candidate)
-        _record_result(
-            state,
-            FileRunResult(
-                target=candidate,
-                status="crash_limited",
-                returncode=0,
-                duration_s=0.0,
-            ),
-        )
-
-    if not limited_units:
-        return []
-
-    limited_set = set(limited_units)
-    pending_units[:] = [candidate for candidate in pending_units if candidate not in limited_set]
-    _refresh_state_plan(
-        state,
-        units,
-        pytest_args,
-        env,
-        baseline_fingerprint=baseline_fingerprint,
-    )
-    console.print(
-        "[yellow]Adaptive isolation:[/yellow] "
-        f"reached the per-file crash limit for {Path(unit.split('::', 1)[0]).name} "
-        f"({crash_count}/{max_crashes_per_file}); "
-        f"skipping {len(limited_units)} remaining test units from that file."
-    )
-    return limited_units
-
-
-def _insert_escalated_units(
-    state: FileRunState,
-    units: list[str],
-    index: int,
-    new_units: list[str],
-    pytest_args: list[str],
-    env: Mapping[str, str],
-    *,
-    baseline_fingerprint: str | None = None,
-) -> list[str]:
-    existing = set(units)
-    additions = [unit for unit in new_units if unit not in existing]
-    if not additions:
-        return []
-
-    insert_at = index + 1
-    units[insert_at:insert_at] = additions
-    _refresh_state_plan(
-        state,
-        units,
-        pytest_args,
-        env,
-        baseline_fingerprint=baseline_fingerprint,
-    )
-    return additions
-
-
-def _escalate_current_file(
-    *,
-    unit: str,
-    units: list[str],
-    index: int,
-    state: FileRunState,
-    pytest_args: list[str],
-    env: Mapping[str, str],
-    console: Console,
-    disabled_nodeids: set[str] | None = None,
-    exclude_nodeids: set[str] | None = None,
-    baseline_fingerprint: str | None = None,
-) -> list[str]:
-    try:
-        nodeids = discover_pytest_units(
-            [unit],
-            Path(unit).parent,
-            granularity="test",
-            pytest_args=pytest_args,
-            env=env,
-        )
-    except ValueError as exc:
-        console.print(
-            f"[yellow]Adaptive isolation:[/yellow] failed to collect tests for {unit}: {exc}"
-        )
-        return []
-
-    filtered_nodeids = (
-        [nodeid for nodeid in nodeids if nodeid not in disabled_nodeids]
-        if disabled_nodeids
-        else nodeids
-    )
-    if exclude_nodeids:
-        filtered_nodeids = [n for n in filtered_nodeids if n not in exclude_nodeids]
-
-    additions = _insert_escalated_units(
-        state,
-        units,
-        index,
-        filtered_nodeids,
-        pytest_args,
-        env,
-        baseline_fingerprint=baseline_fingerprint,
-    )
-    if additions:
-        console.print(
-            f"[yellow]Adaptive isolation:[/yellow] escalating {unit} to per-test isolation "
-            f"for the rest of this run ({len(additions)} units)."
-        )
-    return additions
 
 
 # Plugins the per-unit pytest subprocess actually needs. Disabling autoload of
