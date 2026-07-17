@@ -55,6 +55,7 @@ def test_xof_trace_records_input_and_requested_output_lengths() -> None:
     raw = object.__new__(RawPKCS11)
     raw._funcs = {"C_DigestXof": Mock(return_value=CKR_OK)}
     raw._call_log = defaultdict(int)
+    raw._call_log_ok = defaultdict(int)
     raw._used_mechanisms = set()
     raw._mechanism_counts = Counter()
     raw._mechanism_rv_counts = defaultdict(Counter)
@@ -224,6 +225,7 @@ def test_call_log_starts_empty_after_reset() -> None:
     from collections import defaultdict
 
     raw._call_log = defaultdict(int)
+    raw._call_log_ok = defaultdict(int)
 
     assert raw.call_log == {}
     assert raw.call_count == 0
@@ -236,6 +238,7 @@ def test_call_log_increments_on_call() -> None:
     raw._funcs = {"C_Initialize": Mock(return_value=0)}
 
     raw._call_log = defaultdict(int)
+    raw._call_log_ok = defaultdict(int)
     raw._rv_trace = None
 
     raw.C_Initialize()
@@ -262,6 +265,7 @@ def test_mechanism_rv_counts_track_accept_and_clean_reject() -> None:
     raw = object.__new__(RawPKCS11)
     raw._funcs = {"C_EncryptInit": Mock(side_effect=[CKR_OK, CKR_MECHANISM_INVALID])}
     raw._call_log = defaultdict(int)
+    raw._call_log_ok = defaultdict(int)
     raw._used_mechanisms = set()
     raw._mechanism_counts = Counter()
     raw._mechanism_rv_counts = defaultdict(Counter)
@@ -288,6 +292,7 @@ def test_call_log_reset_clears_counts() -> None:
     raw._funcs = {"C_Initialize": Mock(return_value=0)}
 
     raw._call_log = defaultdict(int)
+    raw._call_log_ok = defaultdict(int)
     raw._rv_trace = None
 
     raw.C_Initialize()
@@ -317,6 +322,7 @@ def test_call_log_returns_copy() -> None:
     from collections import defaultdict
 
     raw._call_log = defaultdict(int)
+    raw._call_log_ok = defaultdict(int)
     raw._rv_trace = None
 
     raw.C_Initialize()

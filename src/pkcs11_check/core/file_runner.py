@@ -1645,6 +1645,7 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     all_timeout_mechs: set[str] = set()
     all_detail: set[str] = set()
     all_func_counts: Counter[str] = Counter()
+    all_ok_counts: Counter[str] = Counter()
     all_bootstrap_counts: Counter[str] = Counter()
     all_module_session_health_checks = 0
     all_module_session_health_duration_s = 0.0
@@ -1675,6 +1676,10 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             all_called.update(fc.get("called_names", []))
             all_uncalled.update(fc.get("uncalled_names", []))
             all_func_counts.update(fc.get("called_counts", {}))
+            # ok_counts (per-function CKR_OK counts) feed the hollow-pass oracle's productive
+            # numerator; without carrying it here productive_ok is always empty (every claimed
+            # operation would look hollow).
+            all_ok_counts.update(fc.get("ok_counts", {}))
             all_bootstrap_counts.update(fc.get("bootstrap_counts", {}))
             module_session_health = fc.get("module_session_health", {})
             if isinstance(module_session_health, dict):
@@ -1710,6 +1715,7 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             "called": len(all_called),
             "called_names": sorted(all_called),
             "called_counts": dict(all_func_counts),
+            "ok_counts": dict(all_ok_counts),
             "bootstrap_counts": dict(all_bootstrap_counts),
             "module_session_health": {
                 "checks": all_module_session_health_checks,

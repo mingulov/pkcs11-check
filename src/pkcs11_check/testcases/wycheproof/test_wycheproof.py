@@ -438,7 +438,7 @@ class TestECDSAP256Wycheproof:
         result = vec["result"]
         group = vec["_group"]
         set_params({"curve": "secp256r1"})
-        set_mechanism("CKM_ECDSA", operation="C_Verify")
+        set_mechanism("CKM_ECDSA", operation="C_Verify", expect_success=(result == "valid"))
 
         # Get EC public key point from the group's publicKey dict
         pub_key_info = group.get("publicKey", {})
@@ -631,7 +631,7 @@ class TestECDSAP384Wycheproof:
         result = vec["result"]
         group = vec["_group"]
         set_params({"curve": "secp384r1"})
-        set_mechanism("CKM_ECDSA", operation="C_Verify")
+        set_mechanism("CKM_ECDSA", operation="C_Verify", expect_success=(result == "valid"))
 
         pub_key_info = group.get("publicKey", {})
         uncompressed_hex = pub_key_info.get("uncompressed", "")

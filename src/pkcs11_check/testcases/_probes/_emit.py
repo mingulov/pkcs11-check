@@ -40,12 +40,17 @@ def rv_trace_maxlen() -> int | None:
     return maxlen if maxlen > 0 else None
 
 
-def write_coverage(call_log: dict[str, int], mechanism_counts: dict[str, int]) -> None:
-    """Write call_log + mechanism_counts to _P11CHECK_SUBPROCESS_COVERAGE (I6).
+def write_coverage(
+    call_log: dict[str, int],
+    mechanism_counts: dict[str, int],
+    call_log_ok: dict[str, int] | None = None,
+) -> None:
+    """Write call_log + mechanism_counts (+ optional call_log_ok) to the coverage file (I6).
 
-    Key shape: {"call_log": dict[str, int], "mechanism_counts": dict[str, int]}.
-    The parent's get_preamble_subprocess_coverage / get_raw_subprocess_coverage
-    both read exactly this shape.  No-op when the env var is absent.
+    Key shape: {"call_log": dict, "mechanism_counts": dict, "call_log_ok": dict}. The parent's
+    get_preamble_subprocess_coverage / get_raw_subprocess_coverage read exactly this shape;
+    call_log_ok (per-function CKR_OK counts) feeds the hollow-pass oracle. No-op when the env
+    var is absent.
     """
     path = os.environ.get("_P11CHECK_SUBPROCESS_COVERAGE")
     if not path:
@@ -54,6 +59,7 @@ def write_coverage(call_log: dict[str, int], mechanism_counts: dict[str, int]) -
         payload: dict[str, Any] = {
             "call_log": call_log,
             "mechanism_counts": mechanism_counts,
+            "call_log_ok": call_log_ok or {},
         }
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
