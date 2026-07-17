@@ -91,3 +91,24 @@ def test_apply_recovery_silent_on_healthy_run() -> None:
     abort = _apply_recovery_between_units(ctrl, results, console=console)
     assert abort is False
     assert console.file.getvalue() == ""  # never-silent means noisy only on a real event
+
+
+def test_probe_reconfirms_before_declaring_dead(monkeypatch) -> None:
+    # A single failing probe (slow/timeout blip on a live-but-busy provider) must NOT be treated
+    # as dead; the bound probe re-confirms once (M1). First False, reconfirm True -> alive.
+    import pkcs11_check.core.file_runner as fr
+
+    seq = iter([False, True])
+    monkeypatch.setattr(fr, "probe_provider_liveness", lambda *a, **k: next(seq))
+    ctrl = _build_recovery_controller(_cfg(mode="wait"), ["--p11-module", "m.so"])
+    assert ctrl is not None
+    assert ctrl._probe() is True
+
+
+def test_probe_dead_when_both_probes_fail(monkeypatch) -> None:
+    import pkcs11_check.core.file_runner as fr
+
+    monkeypatch.setattr(fr, "probe_provider_liveness", lambda *a, **k: False)
+    ctrl = _build_recovery_controller(_cfg(mode="wait"), ["--p11-module", "m.so"])
+    assert ctrl is not None
+    assert ctrl._probe() is False

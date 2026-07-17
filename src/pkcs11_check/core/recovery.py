@@ -249,6 +249,7 @@ class RecoveryController:
         self._recover_counts[unit] = self._recover_counts.get(unit, 0) + 1
         if self._recover_counts[unit] >= cfg.quarantine_after:
             # This unit reproducibly kills the daemon -> confirmed finding + quarantine.
+            self._streak.clear()
             return RecoveryAssessment(RecoveryOutcome.QUARANTINE, records=[event])
 
         requeue = list(self._streak)

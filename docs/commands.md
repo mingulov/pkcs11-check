@@ -105,6 +105,23 @@ accepts the same `--match`/`--marker`/`--category`/`--skip-slow`/`--only-slow` s
 `test`, so "what `list-tests` prints" is "what `test` would run" for the same filters. An
 optional positional path scopes collection to a subset (e.g. one test file or directory).
 
+## Recovering a crashing daemon
+
+A provider backed by a co-located daemon can crash the daemon mid-suite. Per-test isolation does not help: the test process does not crash, it just gets a persistent connectivity error, so every later test false-fails (a `CKR_DEVICE_REMOVED` cascade). Opt-in recovery detects the death between units and resumes once the daemon is back, without hiding the crash finding.
+
+```bash
+# Primary: pause for an external supervisor (systemd Restart=on-failure, docker restart policy)
+uv run pkcs11-check test -m /path/to/module.so --recover-mode wait
+
+# Convenience: for a daemon nothing else restarts, run a no-shell command each recovery cycle
+uv run pkcs11-check test -m /path/to/module.so --recover-cmd "systemctl restart mydaemond"
+```
+
+- **`wait` (recommended)** executes nothing: it waits (`~60s` by default) and re-probes for the supervisor to bring the daemon back. Use `wait` whenever anything else restarts the daemon; a framework-invoked restart is not idempotent and would race the supervisor.
+- **`cmd`** runs `--recover-cmd` (given alone, it implies `--recover-mode cmd`). The command is an **argv list, never a shell** (`shell=False`, tokenized with `shlex`), so provider output can never inject; no provider-derived data is interpolated. Only use `cmd` when nothing else restarts the daemon.
+- Recovery is **liveness-gated, not a CK_RV allowlist**: it fires only when a fresh-subprocess liveness probe confirms the provider is actually unreachable, so a normal rejection (e.g. kryoptic's `CKR_DEVICE_ERROR`/`CKR_GENERAL_ERROR`) never triggers it and no finding is masked. Default is `off` (inert; runs are byte-identical).
+- Limitations: the probe is **reachability-only** (a daemon whose RPC front-end answers but whose crypto backend died is not detected: its real per-op results are recorded verbatim). A supervisor that restarts the daemon *before* the between-unit probe makes the brief outage invisible (the few units in that window keep their real observed failures). An unrecoverable daemon (recovery attempts or the global budget exhausted) aborts that provider's run honestly with a non-zero exit.
+
 ## Artifact comparison
 
 ```bash

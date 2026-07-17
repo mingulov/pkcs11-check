@@ -2836,6 +2836,17 @@ def _build_recovery_controller(
     def _probe() -> bool:
         if not module_path:
             return True  # cannot probe without a module -> treat as alive (never recover)
+        live = probe_provider_liveness(
+            Path(module_path),
+            interface=interface,
+            slot=slot,
+            timeout=int(recovery_config.probe_timeout_s),
+        )
+        if live:
+            return True
+        # A single failing probe can be a slow/timeout blip on a live-but-busy provider; a real
+        # daemon death is persistent. Re-confirm once before declaring it dead, so we never
+        # recover (in cmd mode, restart) a provider that is merely slow.
         return probe_provider_liveness(
             Path(module_path),
             interface=interface,
@@ -2984,7 +2995,10 @@ def run_isolated_pytest_units(
     executed_units: set[str] = set()
     available_mechanisms = _load_available_mechanisms(pytest_args)
     recovery_controller = _build_recovery_controller(recovery_config, pytest_args)
-    recovery_assessed = 0  # number of results already fed to the recovery controller
+    # Number of results already fed to the recovery controller. Seed from any results already in
+    # state (a --resume run) so the look-back only ever covers deaths in THIS session, not stale
+    # historical failures (which are already recorded).
+    recovery_assessed = len(state.results)
 
     if not pending_units:
         console.print("[green]Nothing to do[/green] - all isolated units already completed.")
