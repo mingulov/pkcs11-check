@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from rich.console import Console
 
+from pkcs11_check.core import _report_records as report_records_mod
 from pkcs11_check.core import file_runner as file_runner_mod
 from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.file_runner import (
@@ -1756,6 +1757,7 @@ def test_write_unit_report_record_cache_from_jsonl_paths_streams_sources(
         pytest.fail("cache writes from JSONL paths must stream records")
 
     monkeypatch.setattr(file_runner_mod, "_load_report_log_records", load_all_forbidden)
+    monkeypatch.setattr(report_records_mod, "_load_report_log_records", load_all_forbidden)
 
     file_runner_mod._write_unit_report_record_cache_from_jsonl_paths(
         state_file,
