@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
 from pkcs11_check.raw.types_std import (
     CKA_CERTIFICATE_TYPE,
@@ -19,11 +19,13 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKC_X_509,
 )
+from pkcs11_check.testcases._so_login import so_session
 from pkcs11_check.testcases.conftest import assert_correct
 from pkcs11_check.testcases.x509.conftest import (
     import_cert_object,
     load_limbo_testcases,
     pem_to_der,
+    skip_unless_cert_storage,
 )
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
@@ -196,3 +198,71 @@ class TestCertificateAttributes:
                 destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError:
             pass  # audit-ok: rejection is expected for security-conscious modules
+
+
+@pytest.mark.destructive
+class TestTrustedCertificateImportSO:
+    """CKA_TRUSTED certificate import under a genuine CKU_SO session (roadmap #11).
+
+    PKCS#11 (Common certificate attributes): CKA_TRUSTED "can only be set to
+    CK_TRUE by the SO user". The non-SO complement lives in
+    TestCertificateAttributes.test_import_with_trusted_flag.
+    """
+
+    def test_so_import_trusted_cert(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+        limbo_available: Any,
+        p11_interface_version: str,
+    ) -> None:
+        """SO imports a cert with CKA_TRUSTED=True; readback must honor it."""
+        rs = p11_raw_session
+        skip_unless_cert_storage(rs)
+        all_cases = load_limbo_testcases()
+        tc = next((t for t in all_cases if t["expected_result"] == "SUCCESS"), None)
+        if not tc:
+            pytest.skip("No suitable success testcase found")
+        der = pem_to_der(tc["peer_certificate"])
+        if not der:
+            pytest.skip("Failed to decode peer cert")
+
+        with so_session(rs, p11_config) as so_sh:
+            try:
+                h = import_cert_object(
+                    rs.raw,
+                    so_sh,
+                    der,
+                    interface_version=p11_interface_version,
+                    extra_attrs={
+                        CKA_LABEL: "so-trusted-import",
+                        CKA_TRUSTED: True,
+                    },
+                )
+            except AssertionError as exc:
+                xfail_as(
+                    "honest_deviation",
+                    label="C_CreateObject CKA_TRUSTED=True certificate on a genuine SO session",
+                    summary=f"SO-session CKA_TRUSTED=True certificate import refused: {exc}",
+                )
+            try:
+                try:
+                    attrs = read_attributes(rs.raw, so_sh, h, [CKA_TRUSTED])
+                except AssertionError as exc:
+                    xfail_as(
+                        "honest_deviation",
+                        label="CKA_TRUSTED readback after SO-session trusted import",
+                        summary=f"CKA_TRUSTED readback after SO import rejected: {exc}",
+                    )
+                val = attrs.get(CKA_TRUSTED)
+                if val is not True:
+                    fail_as(
+                        "self_contradiction",
+                        kind="lifecycle",
+                        label=(
+                            "CKA_TRUSTED=True certificate import accepted by an SO session "
+                            f"but CKA_TRUSTED reads back {val!r}"
+                        ),
+                    )
+            finally:
+                destroy_quietly(rs.raw, so_sh, h)

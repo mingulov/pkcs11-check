@@ -27,6 +27,9 @@ class P11TestConfig(BaseSettings):
     module: Path
     slot: int = 0
     pin: SecretStr | None = None
+    # SO (Security Officer) PIN for CKU_SO tests (e.g. CKA_TRUSTED certificate
+    # import). When unset, SO tests fall back to guessing the user PIN.
+    so_pin: SecretStr | None = None
     interface: str = "auto"
     timeout_operation: int = 30
     # Per-test timeout (pytest-timeout, signal method). Sized as a freeze/runaway

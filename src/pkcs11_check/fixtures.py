@@ -84,6 +84,9 @@ def p11_config(request: pytest.FixtureRequest) -> P11TestConfig:
         kwargs["destructive"] = destructive
     if pin_value is not None:
         kwargs["pin"] = pin_value
+    so_pin_value = request.config.getoption("p11_so_pin", default=None)
+    if so_pin_value is not None:
+        kwargs["so_pin"] = so_pin_value
     rv_trace_enabled, rv_trace_compact = _resolve_rv_trace(
         opt_trace=bool(request.config.getoption("p11_rv_trace", default=False)),
         opt_compact=request.config.getoption("p11_rv_trace_compact", default=None),

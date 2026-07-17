@@ -18,7 +18,7 @@ from pkcs11_check.raw.types_std import (
     CKR_PIN_LEN_RANGE,
     CKR_USER_TYPE_INVALID,
 )
-from pkcs11_check.testcases import test_access_levels, test_session_state_machine, test_so_pin
+from pkcs11_check.testcases import _so_login, test_access_levels, test_so_pin
 
 
 class _Raw:
@@ -27,6 +27,10 @@ class _Raw:
 
     def C_Login(self, _session: int, _user_type: int, _pin: object, _pin_len: int) -> int:  # noqa: N802
         return 0
+
+    def C_GetTokenInfo(self, _slot_id: int, info_ref: object) -> int:  # noqa: N802
+        info_ref._obj.flags = 0  # type: ignore[attr-defined]
+        return int(CKR_OK)
 
 
 def _raw_session() -> SimpleNamespace:
@@ -66,20 +70,18 @@ def _patch_access_init_pin_setup(
     monkeypatch.setattr(test_access_levels, "raw_open_session", lambda *_args: 1)
     monkeypatch.setattr(test_access_levels, "close_session_quietly", lambda *_args: None)
     monkeypatch.setattr(test_access_levels, "login_user", lambda *_args: None)
+    monkeypatch.setattr(_so_login, "raw_open_session", lambda *_args: 1)
+    monkeypatch.setattr(_so_login, "close_session_quietly", lambda *_args: None)
+    monkeypatch.setattr(_so_login, "_SO_PIN_REJECTED", False)
     monkeypatch.setattr(recipes, "init_pin", init_pin_impl)
     monkeypatch.setattr(recipes, "set_pin", lambda *_args: None)
     return SimpleNamespace(raw=Raw(), slot_id=1)
 
 
-@pytest.mark.parametrize(
-    "module",
-    [test_access_levels, test_session_state_machine],
-)
-def test_so_pin_incorrect_is_setup_skip(module: object) -> None:
-    classifier = getattr(module, "_skip_if_so_pin_differs")
-
+def test_so_pin_incorrect_is_setup_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_so_login, "_SO_PIN_REJECTED", False)
     with pytest.raises(pytest.skip.Exception, match="SO PIN differs from user PIN"):
-        classifier(CKR_PIN_INCORRECT)
+        _so_login.skip_if_so_pin_rejected(int(CKR_PIN_INCORRECT), explicit=False)
 
 
 def test_set_pin_python_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:

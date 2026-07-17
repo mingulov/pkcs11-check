@@ -24,6 +24,14 @@ broken local test code from being counted as provider evidence.
 uv run pkcs11-check test --module /path/to/module.so --pin 1234
 ```
 
+### SO PIN (CKU_SO tests)
+
+```bash
+# Distinct SO PIN for CKU_SO tests (CKA_TRUSTED import; SO tests otherwise fall back
+# to trying the user PIN). Prefer the env var over the flag:
+P11TEST_SO_PIN=... uv run pkcs11-check test --module /path/to/module.so --pin 1234 --destructive
+```
+
 ### Test profiles (marker selection)
 
 ```bash
