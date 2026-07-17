@@ -14,14 +14,74 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from functools import cache
 from pathlib import Path
-from typing import IO, Any, Literal
+from typing import IO, Any
 from xml.etree import ElementTree as ET  # nosec B405
 
 from rich.console import Console
 
+from pkcs11_check.core._run_units import (
+    _DETAIL_COUNT_KEYS as _DETAIL_COUNT_KEYS,
+)
+from pkcs11_check.core._run_units import (
+    _DISABLE_COLLECTION_PROBES_ENV as _DISABLE_COLLECTION_PROBES_ENV,
+)
+from pkcs11_check.core._run_units import (
+    _RESUME_COMPLETE_STATUSES as _RESUME_COMPLETE_STATUSES,
+)
+from pkcs11_check.core._run_units import (
+    _SPECIAL_DETAIL_OUTCOMES as _SPECIAL_DETAIL_OUTCOMES,
+)
+from pkcs11_check.core._run_units import (
+    _TIMEOUT_RETURN_CODE as _TIMEOUT_RETURN_CODE,
+)
+from pkcs11_check.core._run_units import (
+    UNIT_STATUS_PRIORITY as UNIT_STATUS_PRIORITY,
+)
+from pkcs11_check.core._run_units import (
+    BackendIsolationPolicy as BackendIsolationPolicy,
+)
+from pkcs11_check.core._run_units import (
+    CrashStatus as CrashStatus,
+)
+from pkcs11_check.core._run_units import (
+    FileRunResult as FileRunResult,
+)
+from pkcs11_check.core._run_units import (
+    FileRunState as FileRunState,
+)
+from pkcs11_check.core._run_units import (
+    IsolatedReportConfig as IsolatedReportConfig,
+)
+from pkcs11_check.core._run_units import (
+    IsolationGranularity as IsolationGranularity,
+)
+from pkcs11_check.core._run_units import (
+    RunnerGranularity as RunnerGranularity,
+)
+from pkcs11_check.core._run_units import (
+    _absolute_nodeid as _absolute_nodeid,
+)
+from pkcs11_check.core._run_units import (
+    _empty_counts as _empty_counts,
+)
+from pkcs11_check.core._run_units import (
+    _extract_option_value as _extract_option_value,
+)
+from pkcs11_check.core._run_units import (
+    _flatten_longrepr as _flatten_longrepr,
+)
+from pkcs11_check.core._run_units import (
+    _state_summary as _state_summary,
+)
+from pkcs11_check.core._run_units import (
+    _unit_file_key as _unit_file_key,
+)
+from pkcs11_check.core._run_units import (
+    normalize_policy_file_key as normalize_policy_file_key,
+)
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.crash_codes import (
     crash_detail_name as _crash_detail_name,
@@ -48,38 +108,11 @@ from pkcs11_check.core.report_log import (
 from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS, compute_child_subprocess_counts
 from pkcs11_check.core.test_selection import extract_required_mechanisms, write_deselect_file
 
-IsolationGranularity = Literal["file", "test"]
-RunnerGranularity = Literal["file", "test", "mixed"]
-CrashStatus = Literal["crashed", "timeout"]
-# Priority-ordered set of unit-level statuses _overall_unit_status can return.
-# Single source of truth: the results-comparison tool binds its status classifier
-# to this so the two cannot drift (see core/compare_results.py).
-UNIT_STATUS_PRIORITY: tuple[str, ...] = (
-    "timeout",
-    "crashed",
-    "failed",
-    "crash_limited",
-    "passed",
-    "empty",
-    "escalated",
-)
-_RESUME_COMPLETE_STATUSES = {"passed", "empty", "escalated", "crash_limited"}
-_DETAIL_COUNT_KEYS = RESULT_OUTCOME_KEYS
-_SPECIAL_DETAIL_OUTCOMES = {"crashed", "timeout", "passed-in-isolation"}
-
-
-def _empty_counts() -> dict[str, int]:
-    """A fresh per-unit outcome-counts dict, every canonical outcome key zeroed."""
-    return dict.fromkeys(_DETAIL_COUNT_KEYS, 0)
-
-
 _MAX_TIMEOUT_RETRIES = 3
 # Exit code when the selection (module/marker/match/path) collected ZERO tests:
 # a run that executed nothing must not report success. Maps to the contract's
 # "couldn't run" code 2 (docs/integration-contract.md), so CI gates on rc>=2.
 _NO_TESTS_COLLECTED_EXIT = 2
-# Match the conventional GNU timeout exit code; pytest itself uses only 0-5.
-_TIMEOUT_RETURN_CODE = 124
 # After a child exits on its own, any un-read pipe data is at most the OS pipe
 # buffer and drains in milliseconds. Cap the post-exit reader-thread join so a
 # grandchild that inherited the pipe write-end cannot stall the runner for the
@@ -87,7 +120,6 @@ _TIMEOUT_RETURN_CODE = 124
 # a provider DLL more readily leaves a handle-inheriting helper process). Daemon
 # readers are abandoned after the grace and die at process exit.
 _POST_EXIT_DRAIN_GRACE_S = 3.0
-_DISABLE_COLLECTION_PROBES_ENV = "PKCS11_CHECK_DISABLE_COLLECTION_PROBES"
 
 # The fingerprint detects when the run's effective configuration changed, so
 # stale resume/policy state is not reused. By default it covers the framework's
@@ -108,46 +140,6 @@ _POLICY_IGNORED_ENV_KEYS = {
     "P11TEST_STATE_FILE",
     "P11TEST_STOP_ON_FAILURE",
 }
-
-
-@dataclass(frozen=True)
-class FileRunResult:
-    """Result for one isolated pytest target."""
-
-    target: str
-    status: str
-    returncode: int
-    duration_s: float
-    stdout: str = ""
-    stderr: str = ""
-
-
-@dataclass
-class FileRunState:
-    """Persistent state for resumable isolated runs."""
-
-    units: list[str]
-    fingerprint: str
-    results: list[FileRunResult]
-    report_records_by_unit: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
-
-
-@dataclass
-class BackendIsolationPolicy:
-    """Persistent adaptive isolation policy for one backend fingerprint."""
-
-    fingerprint: str
-    promoted_files: list[str]
-    crashed_tests: list[str]
-
-
-@dataclass(frozen=True)
-class IsolatedReportConfig:
-    """Output configuration for aggregated isolated-run reports."""
-
-    output_format: Literal["json", "junit"]
-    output_path: Path
-    jsonl_path: Path | None = None
 
 
 def _validate_pytest_target_exists(target: str) -> None:
@@ -327,23 +319,6 @@ def validate_subprocess_per_test_expansion(
         raise ValueError(msg)
 
 
-def _absolute_nodeid(file_key: str, nodeid: str) -> str:
-    """Rebuild a per-test nodeid with an absolute, resolved file path.
-
-    pytest emits the path part of a nodeid relative to its ``rootdir``, and that
-    base is not always the CWD: when a stray absolute path rides on the pytest
-    command line (e.g. the ``--p11-manifest /tmp/...`` value), pytest's early
-    rootdir scan can settle on ``/`` for an installed package with no config file
-    above it, yielding slash-less paths like ``home/user/...``. Such a path does
-    not round-trip through ``normalize_policy_file_key`` (which resolves against
-    the CWD) and is not runnable from the CWD. Pinning the path part to the
-    already-resolved ``file_key`` makes the unit both rootdir-independent and
-    runnable. The test part (after ``::``) is rootdir-independent and preserved.
-    """
-    _, sep, test_part = nodeid.partition("::")
-    return f"{file_key}::{test_part}" if sep else file_key
-
-
 def discover_auto_isolation_units(
     targets: list[str],
     default_root: Path,
@@ -469,14 +444,6 @@ def save_isolation_policy(path: Path, policies: Mapping[str, BackendIsolationPol
         }
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _state_summary(state: FileRunState) -> dict[str, int]:
-    summary: dict[str, int] = {}
-    for result in state.results:
-        summary[result.status] = summary.get(result.status, 0) + 1
-    summary["total"] = len(state.results)
-    return summary
 
 
 def _group_results_by_file(
@@ -1963,17 +1930,6 @@ def save_run_state(path: Path, state: FileRunState) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _extract_option_value(args: list[str], option: str) -> str | None:
-    for index, arg in enumerate(args):
-        if arg == option:
-            if index + 1 < len(args):
-                return args[index + 1]
-            return None
-        if arg.startswith(f"{option}="):
-            return arg.split("=", 1)[1]
-    return None
-
-
 def _manifest_digest(pytest_args: list[str]) -> str | None:
     manifest_path = _extract_option_value(pytest_args, "--p11-manifest")
     if manifest_path is None:
@@ -2077,11 +2033,6 @@ def build_policy_fingerprint(pytest_args: list[str], env: Mapping[str, str] | No
         separators=(",", ":"),
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def normalize_policy_file_key(path_str: str) -> str:
-    """Normalize a test file path for policy matching."""
-    return str(Path(path_str).resolve())
 
 
 def load_promoted_files(
@@ -2285,39 +2236,6 @@ def _maybe_set_crash_journal(run_env: dict[str, str], unit: str) -> None:
     )
 
 
-def _flatten_longrepr(longrepr: Any) -> str:
-    """Flatten a JSONL longrepr value to a plain string.
-
-    longrepr can be a dict (with reprcrash/reprtraceback), a string,
-    a list/tuple ``[path, lineno, reason]`` (for skips), or None.
-    """
-    if longrepr is None:
-        return ""
-    if isinstance(longrepr, str):
-        return longrepr
-    # Skip-style: [path, lineno, "Skipped: reason"] or (path, lineno, reason)
-    if isinstance(longrepr, (list, tuple)) and len(longrepr) >= 3:
-        return str(longrepr[2])
-    if isinstance(longrepr, dict):
-        parts: list[str] = []
-        # Extract crash summary
-        reprcrash = longrepr.get("reprcrash")
-        if isinstance(reprcrash, dict):
-            msg = reprcrash.get("message", "")
-            if msg:
-                parts.append(msg)
-        # Concatenate traceback entries
-        reprtraceback = longrepr.get("reprtraceback")
-        if isinstance(reprtraceback, dict):
-            for entry in reprtraceback.get("reprentries", []):
-                if isinstance(entry, dict):
-                    lines = entry.get("lines", [])
-                    if lines:
-                        parts.append("\n".join(lines))
-        return "\n".join(parts) if parts else ""
-    return str(longrepr)
-
-
 def _identify_crash_culprit_from_records(
     records: Iterable[Mapping[str, Any]],
 ) -> tuple[str | None, list[str]]:
@@ -2446,10 +2364,6 @@ def _effective_granularity(unit: str, granularity: RunnerGranularity) -> Isolati
     if granularity == "mixed":
         return "test" if "::" in unit else "file"
     return granularity
-
-
-def _unit_file_key(unit: str) -> str:
-    return normalize_policy_file_key(unit.split("::", 1)[0])
 
 
 def _promote_crashing_unit(
