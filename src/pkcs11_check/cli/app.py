@@ -7,6 +7,7 @@ import typer
 from pkcs11_check.cli.compare_cmd import compare_coverage_command, compare_results_command
 from pkcs11_check.cli.compliance_cmd import compliance_report_command
 from pkcs11_check.cli.crash_calls_cmd import crash_calls_command
+from pkcs11_check.cli.differential_cmd import differential_command
 from pkcs11_check.cli.doctor_cmd import doctor_command
 from pkcs11_check.cli.fetch_cmd import fetch_data_command, fetch_disabled_command
 from pkcs11_check.cli.info_cmd import info_command
@@ -49,6 +50,7 @@ app.command("fetch-disabled")(fetch_disabled_command)
 app.command("shard-units")(shard_units_command)
 app.command("merge-shards")(merge_shards_command)
 app.command("crash-calls")(crash_calls_command)
+app.command("differential")(differential_command)
 
 
 @app.command()
