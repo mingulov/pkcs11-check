@@ -32,6 +32,7 @@ from pkcs11_check.core.crash_codes import (
 from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.preflight import load_manifest
 from pkcs11_check.core.quality_audit import build_quality_audit
+from pkcs11_check.core.recovery import RecoveryConfig
 from pkcs11_check.core.report_log import (
     iter_report_log_records as _iter_report_log_records,
 )
@@ -2822,8 +2823,15 @@ def run_isolated_pytest_units(
     granularity: RunnerGranularity = "file",
     max_crashes_per_file: int = 10,
     provenance: dict[str, Any] | None = None,
+    recovery_config: RecoveryConfig | None = None,
 ) -> int:
-    """Run pytest units in fresh subprocesses and persist progress."""
+    """Run pytest units in fresh subprocesses and persist progress.
+
+    ``recovery_config`` (default None / mode "off") enables crashing-daemon recovery: the run
+    detects a dead daemon between units, pauses for it to return, supersedes the false-failure
+    cascade, and resumes or aborts honestly. The wiring is inert unless mode != "off", so a
+    default run is byte-identical. See core/recovery.py.
+    """
     if not units:
         # No tests were collected — the module / marker / match / path selection
         # matched nothing. A run that executed zero tests must NOT report success

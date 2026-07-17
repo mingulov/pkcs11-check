@@ -14,6 +14,7 @@ injected ``probe``/``recover`` callables. See the spec
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 import tempfile
 from collections.abc import Callable
@@ -93,6 +94,52 @@ class RecoveryConfig:
     quarantine_after: int
     cmd_timeout_s: float
     probe_timeout_s: float
+
+
+def build_recovery_config(
+    *,
+    mode: str = "off",
+    recover_cmd: str | None = None,
+    wait_s: float = 5.0,
+    max_attempts: int = 12,
+    max_total: int = 20,
+    hint_rv: str = "CKR_DEVICE_REMOVED",
+    consecutive_threshold: int = 3,
+    quarantine_after: int = 2,
+    cmd_timeout_s: float = 30.0,
+    probe_timeout_s: float = 30.0,
+) -> RecoveryConfig:
+    """Build a RecoveryConfig from raw CLI/env values (defaults sized for a real supervisor).
+
+    ``recover_cmd`` is tokenized with ``shlex.split`` (tokenize only, never shell-executed).
+    Providing ``--recover-cmd`` with ``mode`` left ``"off"`` implies ``"cmd"``; ``mode == "cmd"``
+    without a command is a configuration error. ``wait_s`` * ``max_attempts`` (~60s by default)
+    is how long ``wait`` mode waits for the external supervisor before aborting -- it must exceed
+    the supervisor's worst-case restart+backoff window.
+    """
+    cmd_list = shlex.split(recover_cmd) if recover_cmd else None
+    effective_mode: RecoveryMode
+    if mode == "off" and cmd_list:
+        effective_mode = "cmd"  # --recover-cmd alone implies cmd
+    elif mode in ("off", "wait", "cmd"):
+        effective_mode = mode  # type: ignore[assignment]
+    else:
+        raise ValueError(f"invalid recover-mode {mode!r} (expected off|wait|cmd)")
+    if effective_mode == "cmd" and not cmd_list:
+        raise ValueError("recover-mode 'cmd' requires --recover-cmd")
+    hint_rvs = frozenset(h.strip() for h in hint_rv.split(",") if h.strip())
+    return RecoveryConfig(
+        mode=effective_mode,
+        recover_cmd=cmd_list,
+        wait_s=wait_s,
+        max_attempts=max_attempts,
+        max_total=max_total,
+        hint_rvs=hint_rvs,
+        consecutive_threshold=consecutive_threshold,
+        quarantine_after=quarantine_after,
+        cmd_timeout_s=cmd_timeout_s,
+        probe_timeout_s=probe_timeout_s,
+    )
 
 
 class RecoveryOutcome(Enum):

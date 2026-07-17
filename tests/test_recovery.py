@@ -231,3 +231,41 @@ def test_event_finding_emitted_on_confirmed_death() -> None:
     assert any(
         r.get("reason") == "crash" and "unreachable" in r.get("label", "") for r in a.records
     )
+
+
+def test_build_config_tokenizes_cmd_and_implies_cmd_mode() -> None:
+    from pkcs11_check.core.recovery import build_recovery_config
+
+    cfg = build_recovery_config(recover_cmd="systemctl restart softhsmd")
+    assert cfg.recover_cmd == ["systemctl", "restart", "softhsmd"]
+    assert cfg.mode == "cmd"  # --recover-cmd alone implies cmd
+
+
+def test_build_config_defaults_off() -> None:
+    from pkcs11_check.core.recovery import build_recovery_config
+
+    cfg = build_recovery_config()
+    assert cfg.mode == "off" and cfg.recover_cmd is None
+
+
+def test_build_config_wait_mode_needs_no_cmd() -> None:
+    from pkcs11_check.core.recovery import build_recovery_config
+
+    cfg = build_recovery_config(mode="wait")
+    assert cfg.mode == "wait" and cfg.recover_cmd is None
+
+
+def test_build_config_cmd_mode_without_command_is_error() -> None:
+    import pytest
+
+    from pkcs11_check.core.recovery import build_recovery_config
+
+    with pytest.raises(ValueError):
+        build_recovery_config(mode="cmd")
+
+
+def test_build_config_hint_rvs_parsed() -> None:
+    from pkcs11_check.core.recovery import build_recovery_config
+
+    cfg = build_recovery_config(mode="wait", hint_rv="CKR_DEVICE_REMOVED, CKR_DEVICE_ERROR")
+    assert cfg.hint_rvs == frozenset({"CKR_DEVICE_REMOVED", "CKR_DEVICE_ERROR"})

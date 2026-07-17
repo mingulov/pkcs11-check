@@ -32,6 +32,7 @@ from pkcs11_check.core.file_runner import (
     write_quality_json_report,
 )
 from pkcs11_check.core.preflight import run_preflight_subprocess
+from pkcs11_check.core.recovery import build_recovery_config
 from pkcs11_check.core.test_selection import (
     DisabledSelectionPlan,
     build_disabled_selection_plan,
@@ -371,6 +372,21 @@ def test_command(
         help="OAEP hash for wrapping: auto (probe; prefer sha256, fall back sha1), sha1, or sha256",
         rich_help_panel="Key provisioning",
     ),
+    recover_mode: str = typer.Option(
+        "off",
+        "--recover-mode",
+        help="Crashing-daemon recovery: off (default), wait (pause for an external supervisor to "
+        "restart the daemon), or cmd (run --recover-cmd). Use wait if anything else restarts it.",
+        rich_help_panel="Daemon recovery",
+    ),
+    recover_cmd: str | None = typer.Option(
+        None,
+        "--recover-cmd",
+        envvar="P11TEST_RECOVER_CMD",
+        help="No-shell argv (tokenized) run between tests when the provider is detected down; "
+        "implies --recover-mode cmd. Only for daemons nothing else restarts.",
+        rich_help_panel="Daemon recovery",
+    ),
     allow_external_provision: bool = typer.Option(
         False,
         "--allow-external-provision",
@@ -583,6 +599,13 @@ def test_command(
                         deselect_by_file={},
                         baseline_fingerprint=baseline_fingerprint,
                     )
+                try:
+                    recovery_config = build_recovery_config(
+                        mode=recover_mode, recover_cmd=recover_cmd
+                    )
+                except ValueError as exc:
+                    console.print(f"[red]Error:[/red] {exc}")
+                    raise typer.Exit(code=2) from exc
                 exit_code = run_isolated_pytest_units(
                     selection_plan.units,
                     pytest_args,
@@ -598,6 +621,7 @@ def test_command(
                     granularity=runner_granularity,
                     max_crashes_per_file=max_crashes_per_file,
                     provenance=run_provenance,
+                    recovery_config=recovery_config,
                 )
             except (FileNotFoundError, ValueError) as exc:
                 console.print(f"[red]Error:[/red] {exc}")
