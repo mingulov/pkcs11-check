@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 from types import SimpleNamespace
 from typing import Any
 
@@ -9,12 +10,15 @@ import pytest
 from pydantic import SecretStr
 
 from pkcs11_check.raw.types_std import (
+    CK_SESSION_HANDLE_PTR,
     CKF_SO_PIN_COUNT_LOW,
     CKF_SO_PIN_FINAL_TRY,
     CKF_SO_PIN_LOCKED,
     CKR_GENERAL_ERROR,
     CKR_OK,
     CKR_PIN_INCORRECT,
+    CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
+    CKU_SO,
 )
 from pkcs11_check.testcases import _so_login
 
@@ -22,15 +26,38 @@ from pkcs11_check.testcases import _so_login
 class _FakeRaw:
     """Serves C_GetTokenInfo flags; records C_Login calls."""
 
-    def __init__(self, *, token_flags: int = 0, info_rv: int = int(CKR_OK)) -> None:
+    def __init__(
+        self, *, token_flags: int = 0, info_rv: int = int(CKR_OK), login_rv: int = int(CKR_OK)
+    ) -> None:
         self.token_flags = token_flags
         self.info_rv = info_rv
+        self.login_rv = login_rv
         self.info_calls = 0
+        self.login_calls: list[int] = []
+        self.logout_calls = 0
 
     def C_GetTokenInfo(self, _slot_id: int, info_ref: Any) -> int:  # noqa: N802
         self.info_calls += 1
         info_ref._obj.flags = self.token_flags
         return self.info_rv
+
+    def C_OpenSession(  # noqa: N802
+        self, _slot_id: int, _flags: int, _app: Any, _notify: Any, session: Any
+    ) -> int:
+        session_ptr = ctypes.cast(session, CK_SESSION_HANDLE_PTR)
+        session_ptr[0] = 41
+        return int(CKR_OK)
+
+    def C_CloseSession(self, _sh: int) -> int:  # noqa: N802
+        return int(CKR_OK)
+
+    def C_Login(self, _sh: int, user_type: int, _pin: Any, _pin_len: int) -> int:  # noqa: N802
+        self.login_calls.append(user_type)
+        return self.login_rv
+
+    def C_Logout(self, _sh: int) -> int:  # noqa: N802
+        self.logout_calls += 1
+        return int(CKR_OK)
 
 
 def _cfg(*, so_pin: str | None = None, pin: str | None = None) -> SimpleNamespace:
@@ -118,3 +145,46 @@ class TestSkipIfSoPinRejected:
         with pytest.raises(pytest.skip.Exception, match="configured SO PIN rejected"):
             _so_login.skip_if_so_pin_rejected(int(CKR_PIN_INCORRECT), explicit=True)
         assert _so_login._SO_PIN_REJECTED is True
+
+
+class TestSoSession:
+    def test_happy_path_yields_handle_and_logs_out(self) -> None:
+        raw = _FakeRaw()
+        rs = SimpleNamespace(raw=raw, slot_id=0)
+        with _so_login.so_session(rs, _cfg(so_pin="so123")) as sh:
+            assert sh == 41
+        assert raw.login_calls == [int(CKU_SO)]
+        assert raw.logout_calls >= 2  # clear-stale-login logout + final logout
+
+    def test_no_pin_at_all_skips(self) -> None:
+        rs = SimpleNamespace(raw=_FakeRaw(), slot_id=0)
+        with pytest.raises(pytest.skip.Exception, match="No PIN configured"):
+            with _so_login.so_session(rs, _cfg()):
+                pass
+
+    def test_pin_incorrect_skips_and_caches(self) -> None:
+        raw = _FakeRaw(login_rv=int(CKR_PIN_INCORRECT))
+        rs = SimpleNamespace(raw=raw, slot_id=0)
+        with pytest.raises(pytest.skip.Exception, match="configured SO PIN rejected"):
+            with _so_login.so_session(rs, _cfg(so_pin="so123")):
+                pass
+        # second use in the same process: skipped by the cache, no extra C_Login
+        with pytest.raises(pytest.skip.Exception, match="already rejected"):
+            with _so_login.so_session(rs, _cfg(so_pin="so123")):
+                pass
+        assert raw.login_calls == [int(CKU_SO)]
+
+    def test_another_user_logged_in_skips(self) -> None:
+        raw = _FakeRaw(login_rv=int(CKR_USER_ANOTHER_ALREADY_LOGGED_IN))
+        rs = SimpleNamespace(raw=raw, slot_id=0)
+        with pytest.raises(pytest.skip.Exception, match="Another user already logged in"):
+            with _so_login.so_session(rs, _cfg(pin="u456")):
+                pass
+
+    def test_lockout_flag_blocks_before_any_login(self) -> None:
+        raw = _FakeRaw(token_flags=int(CKF_SO_PIN_LOCKED))
+        rs = SimpleNamespace(raw=raw, slot_id=0)
+        with pytest.raises(pytest.skip.Exception, match="CKF_SO_PIN_LOCKED"):
+            with _so_login.so_session(rs, _cfg(so_pin="so123")):
+                pass
+        assert raw.login_calls == []

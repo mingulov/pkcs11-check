@@ -20,18 +20,29 @@ The SO PIN value itself never appears in any message (PIN-handling rule).
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from ctypes import byref
 from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.bootstrap import close_session_quietly
+from pkcs11_check.raw.bootstrap import open_session as raw_open_session
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CK_TOKEN_INFO,
+    CK_UTF8CHAR,
+    CKF_RW_SESSION,
+    CKF_SERIAL_SESSION,
     CKF_SO_PIN_COUNT_LOW,
     CKF_SO_PIN_FINAL_TRY,
     CKF_SO_PIN_LOCKED,
     CKR_OK,
     CKR_PIN_INCORRECT,
+    CKR_USER_ALREADY_LOGGED_IN,
+    CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
+    CKU_SO,
 )
 
 # Per-subprocess cache: once the resolved SO PIN was rejected with
@@ -96,3 +107,34 @@ def skip_if_so_pin_rejected(rv: int, *, explicit: bool) -> None:
                 "check --p11-so-pin / P11TEST_SO_PIN"
             )
         pytest.skip("SO PIN differs from user PIN on this module")
+
+
+@contextmanager
+def so_session(rs: Any, p11_config: Any, *, rw: bool = True) -> Iterator[int]:
+    """Open a session and authenticate as CKU_SO; logout + close on exit.
+
+    Skips (never fails) on: no PIN configured, lockout-gate refusal, SO PIN
+    rejected (cached process-wide), another user already logged in. Any other
+    non-OK C_Login CK_RV is a real finding and propagates via expect_rv.
+    """
+    pin_bytes, explicit = resolve_so_pin(p11_config)
+    if pin_bytes is None:
+        pytest.skip("No PIN configured")
+    guard_so_lockout(rs.raw, rs.slot_id, explicit=explicit)
+    flags = CKF_SERIAL_SESSION | (CKF_RW_SESSION if rw else 0)
+    # Clear any stale token-level login so C_Login(CKU_SO) starts from a known state.
+    pre_sh = raw_open_session(rs.raw, rs.slot_id, flags)
+    rs.raw.C_Logout(pre_sh)
+    close_session_quietly(rs.raw, pre_sh)
+    sh = raw_open_session(rs.raw, rs.slot_id, flags)
+    try:
+        pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
+        rv = rs.raw.C_Login(sh, CKU_SO, pin_buf, len(pin_bytes))
+        skip_if_so_pin_rejected(rv, explicit=explicit)
+        if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_ANOTHER_ALREADY_LOGGED_IN):
+            pytest.skip("Another user already logged in on this token")
+        expect_rv(rv, CKR_OK)
+        yield sh
+    finally:
+        rs.raw.C_Logout(sh)
+        close_session_quietly(rs.raw, sh)
