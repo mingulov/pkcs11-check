@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from pkcs11_check.core import _report_records as report_records_mod
 from pkcs11_check.core import file_runner as file_runner_mod
 from pkcs11_check.core.file_runner import (
     _identify_crash_culprit,
@@ -67,6 +68,7 @@ def test_culprit_path_wrapper_streams_without_load_all(
         pytest.fail("_identify_crash_culprit must stream records")
 
     monkeypatch.setattr(file_runner_mod, "_load_report_log_records", _load_all_forbidden)
+    monkeypatch.setattr(report_records_mod, "_load_report_log_records", _load_all_forbidden)
 
     assert _identify_crash_culprit(jsonl) == ("f.py::test_b", ["f.py::test_a"])
 
@@ -88,6 +90,7 @@ def test_read_jsonl_results_streams_without_load_all(
         pytest.fail("_read_jsonl_results must stream records")
 
     monkeypatch.setattr(file_runner_mod, "_load_report_log_records", _load_all_forbidden)
+    monkeypatch.setattr(report_records_mod, "_load_report_log_records", _load_all_forbidden)
 
     detail = _read_jsonl_results(jsonl)
 
@@ -115,6 +118,7 @@ def test_postprocess_single_pass_per_file_counts(
         pytest.fail("postprocess_jsonl_to_unified must stream records")
 
     monkeypatch.setattr(file_runner_mod, "_load_report_log_records", _load_all_forbidden)
+    monkeypatch.setattr(report_records_mod, "_load_report_log_records", _load_all_forbidden)
 
     payload = postprocess_jsonl_to_unified(jsonl, tmp_path / "results.json")
 
@@ -146,6 +150,7 @@ def test_analyze_report_jsonl_streams_detail_culprit_and_cache(
         pytest.fail("_analyze_report_jsonl must stream records")
 
     monkeypatch.setattr(file_runner_mod, "_load_report_log_records", _load_all_forbidden)
+    monkeypatch.setattr(report_records_mod, "_load_report_log_records", _load_all_forbidden)
 
     analyze = getattr(file_runner_mod, "_analyze_report_jsonl")
     detail, culprit, completed = analyze(

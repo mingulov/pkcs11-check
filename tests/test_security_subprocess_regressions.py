@@ -1120,16 +1120,41 @@ _F1_CATEGORY_A = [
 ]
 
 
+def _ffi_length_probe_sources() -> str:
+    """Concatenated source of the ffi_length probe module and its _ffi_length_* siblings.
+
+    The god-module split (2026-07-17) moved the dispatch arms (which print the
+    ``TARGET_RV:`` protocol lines) into ``_ffi_length_*`` sibling modules; the guard's
+    intent is that the child protocol exists in the probe implementation, wherever the
+    arm bodies live.
+    """
+    import importlib
+    import pkgutil
+
+    import pkcs11_check.testcases._probes as probes_pkg
+
+    names = sorted(
+        mod.name
+        for mod in pkgutil.iter_modules(probes_pkg.__path__)
+        if mod.name == "ffi_length" or mod.name.startswith("_ffi_length")
+    )
+    return "\n".join(
+        inspect.getsource(importlib.import_module(f"{probes_pkg.__name__}.{name}"))
+        for name in names
+    )
+
+
 def test_f1_category_a_methods_parse_and_classify_target_rv() -> None:
     """Every Category-A FFI length probe must parse + classify its child rv.
 
     Migrated methods delegate the child ``TARGET_RV`` emission to the ``_probes/ffi_length.py``
-    module via ``run_probe``; not-yet-migrated methods still build an inline child script.
-    Either way the parent must classify the returned rv, and the child protocol string must
-    exist (inline in the parent body, or via a ``run_probe`` call backed by the probe module).
+    module (and its ``_ffi_length_*`` arm modules) via ``run_probe``; not-yet-migrated methods
+    still build an inline child script.  Either way the parent must classify the returned rv,
+    and the child protocol string must exist (inline in the parent body, or via a ``run_probe``
+    call backed by the probe modules).
     """
     src = inspect.getsource(test_ffi_length_boundary)
-    probe_src = inspect.getsource(ffi_length_probe)
+    probe_src = _ffi_length_probe_sources()
     for name in _F1_CATEGORY_A:
         idx = src.index(f"def {name}(")
         end = src.index("\n    def ", idx + 1) if "\n    def " in src[idx + 1 :] else len(src)
@@ -1140,7 +1165,9 @@ def test_f1_category_a_methods_parse_and_classify_target_rv() -> None:
             "classify_negative_rv(" in body or "_classify_unhonorable_length_outcome(" in body
         )
         assert classifies, f"{name}: parent must classify the rv"
-    assert "TARGET_RV:" in probe_src, "_probes/ffi_length.py must emit the TARGET_RV protocol"
+    assert "TARGET_RV:" in probe_src, (
+        "the _probes ffi_length modules must emit the TARGET_RV protocol"
+    )
 
 
 def test_no_dead_setup_xfail_classify_blocks() -> None:
