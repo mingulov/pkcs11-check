@@ -144,6 +144,12 @@ class TestSOLogin:
         """
         rs = p11_raw_session
 
+        # This probe deliberately does NOT call guard_so_lockout (unlike the other
+        # CKU_SO login sites in this module): the applicability gate below already
+        # skips whenever CKF_TOKEN_INITIALIZED or CKF_USER_PIN_INITIALIZED is set,
+        # and any token exposing SO-counter flags is necessarily provisioned - so
+        # this probe can never reach C_Login on a real, counter-bearing token.
+
         # Safety gate: read token flags (read-only, no state mutation).
         token_info = CK_TOKEN_INFO()
         info_rv = rs.raw.C_GetTokenInfo(rs.slot_id, byref(token_info))

@@ -158,6 +158,8 @@ class TestTestCommand:
                 str(module),
                 "--pin",
                 "1234",
+                "--so-pin",
+                "9876",
                 "--isolation",
                 "file",
                 "--timeout",
@@ -182,6 +184,7 @@ class TestTestCommand:
         assert called["granularity"] == "file"
         assert called["max_crashes_per_file"] == 5
         assert "--p11-pin" not in called["pytest_args"]
+        assert "--p11-so-pin" not in called["pytest_args"]
         assert "--p11-manifest" in called["pytest_args"]
 
     def test_test_restores_pin_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
