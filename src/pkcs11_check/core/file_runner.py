@@ -15,7 +15,6 @@ from collections.abc import Iterable, Mapping, Sequence
 from functools import cache
 from pathlib import Path
 from typing import IO, Any
-from xml.etree import ElementTree as ET  # nosec B405
 
 from rich.console import Console
 
@@ -108,6 +107,21 @@ from pkcs11_check.core._report_records import (
 )
 from pkcs11_check.core._report_records import (
     write_report_jsonl as write_report_jsonl,
+)
+from pkcs11_check.core._report_writers import (
+    _build_isolated_json_payload as _build_isolated_json_payload,
+)
+from pkcs11_check.core._report_writers import (
+    _junit_case_identity as _junit_case_identity,
+)
+from pkcs11_check.core._report_writers import (
+    write_isolated_json_report as write_isolated_json_report,
+)
+from pkcs11_check.core._report_writers import (
+    write_isolated_junit_report as write_isolated_junit_report,
+)
+from pkcs11_check.core._report_writers import (
+    write_isolated_report as write_isolated_report,
 )
 from pkcs11_check.core._run_state import (
     _DEFAULT_FINGERPRINT_ENV_KEYS as _DEFAULT_FINGERPRINT_ENV_KEYS,
@@ -314,7 +328,6 @@ from pkcs11_check.core.recovery import (
 from pkcs11_check.core.report_log import (
     iter_report_log_records as _iter_report_log_records,
 )
-from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS, compute_child_subprocess_counts
 from pkcs11_check.core.test_selection import extract_required_mechanisms, write_deselect_file
 
 _MAX_TIMEOUT_RETRIES = 3
@@ -329,234 +342,6 @@ _NO_TESTS_COLLECTED_EXIT = 2
 # a provider DLL more readily leaves a handle-inheriting helper process). Daemon
 # readers are abandoned after the grace and die at process exit.
 _POST_EXIT_DRAIN_GRACE_S = 3.0
-
-
-def write_isolated_json_report(
-    path: Path,
-    state: FileRunState,
-    *,
-    per_unit_details: dict[str, dict[str, Any]] | None = None,
-    coverage: dict[str, Any] | None = None,
-    provenance: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Write an aggregated JSON report for an isolated run in unified format."""
-    payload = _build_isolated_json_payload(
-        state,
-        per_unit_details=per_unit_details,
-        coverage=coverage,
-        provenance=provenance,
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return payload
-
-
-def _build_isolated_json_payload(
-    state: FileRunState,
-    *,
-    per_unit_details: dict[str, dict[str, Any]] | None = None,
-    coverage: dict[str, Any] | None = None,
-    provenance: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    details = per_unit_details or {}
-
-    summary: dict[str, int] = {key: 0 for key in RESULT_OUTCOME_KEYS}
-
-    grouped = _group_results_by_file(state.results, details)
-    units_out: list[dict[str, Any]] = []
-
-    for file_target, file_results, merged_detail in grouped:
-        overall_status = _overall_unit_status(file_results)
-        special_entries = [
-            entry
-            for result in file_results
-            if (entry := _special_test_entry_from_result(result)) is not None
-        ]
-        detail = _merge_special_entries_into_detail(merged_detail, special_entries)
-        counts = detail.get("counts")
-        overall_status = _status_with_detail_counts(overall_status, counts)
-        if overall_status in {"crashed", "timeout"} and not any(detail["counts"].values()):
-            detail["counts"][overall_status] = 1
-        duration = sum(r.duration_s for r in file_results)
-        stdout_parts = [r.stdout for r in file_results if r.stdout]
-        stderr_parts = [r.stderr for r in file_results if r.stderr]
-
-        unit: dict[str, Any] = {
-            "target": file_target,
-            "status": overall_status,
-            "returncode": (
-                max(abs(r.returncode) for r in file_results)
-                if overall_status in {"failed", "crashed", "timeout"}
-                else 0
-            ),
-            "duration_s": round(duration, 3),
-        }
-        if stdout_parts:
-            unit["stdout"] = "\n".join(stdout_parts)
-        if stderr_parts:
-            unit["stderr"] = "\n".join(stderr_parts)
-
-        if counts and any(v > 0 for v in counts.values()):
-            unit["counts"] = counts
-            for key in summary:
-                summary[key] += counts.get(key, 0)
-        tests = detail.get("tests")
-        if tests:
-            unit["tests"] = tests
-        compliance_notes = detail.get("compliance_notes")
-        if compliance_notes:
-            unit["compliance_notes"] = compliance_notes
-        sr = detail.get("skip_reasons")
-        if sr:
-            unit["skip_reasons"] = sr
-        if detail.get("file_skip"):
-            unit["file_skip"] = True
-
-        units_out.append(unit)
-
-    summary["total"] = sum(summary[key] for key in RESULT_OUTCOME_KEYS)
-    child_crash, child_timeout = compute_child_subprocess_counts(units_out)
-    summary["child_crash"] = child_crash
-    summary["child_timeout"] = child_timeout
-    summary["incomplete"] = summary["crash_limited"] > 0 or summary["timeout"] > 0
-
-    payload: dict[str, Any] = {
-        "tool": "pkcs11-check",
-        "kind": "test-run",
-        "summary": summary,
-        "units": units_out,
-    }
-    if coverage:
-        payload["coverage"] = coverage
-    if provenance:
-        payload["provenance"] = provenance
-    return payload
-
-
-def _junit_case_identity(target: str) -> tuple[str, str]:
-    if "::" not in target:
-        path = Path(target)
-        return (str(path.parent).replace("/", ".").strip(".") or "pkcs11-check", path.name)
-
-    file_part, node_part = target.split("::", 1)
-    class_name = str(Path(file_part).with_suffix("")).replace("/", ".").strip(".") or "pkcs11-check"
-    return (class_name, node_part)
-
-
-def write_isolated_junit_report(
-    path: Path,
-    state: FileRunState,
-    *,
-    suite_name: str = "pkcs11-check-isolated",
-) -> None:
-    """Write an aggregated JUnit XML report for an isolated run."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    failures = sum(1 for result in state.results if result.status == "failed")
-    errors = sum(1 for result in state.results if result.status in {"crashed", "timeout"})
-    skipped = sum(
-        1 for result in state.results if result.status in {"empty", "escalated", "crash_limited"}
-    )
-    duration_s = sum(result.duration_s for result in state.results)
-
-    suite = ET.Element(
-        "testsuite",
-        {
-            "name": suite_name,
-            "tests": str(len(state.results)),
-            "failures": str(failures),
-            "errors": str(errors),
-            "skipped": str(skipped),
-            "time": f"{duration_s:.6f}",
-        },
-    )
-
-    for result in state.results:
-        class_name, case_name = _junit_case_identity(result.target)
-        case = ET.SubElement(
-            suite,
-            "testcase",
-            {
-                "classname": class_name,
-                "name": case_name,
-                "time": f"{result.duration_s:.6f}",
-            },
-        )
-
-        if result.status == "failed":
-            failure = ET.SubElement(
-                case,
-                "failure",
-                {
-                    "message": f"pytest exited with code {result.returncode}",
-                    "type": "failure",
-                },
-            )
-            failure.text = f"Unit {result.target} failed in isolated mode."
-        elif result.status == "crashed":
-            error = ET.SubElement(
-                case,
-                "error",
-                {
-                    "message": f"isolated unit crashed (returncode {result.returncode})",
-                    "type": "crashed",
-                },
-            )
-            error.text = f"Unit {result.target} crashed in isolated mode."
-        elif result.status == "timeout":
-            error = ET.SubElement(
-                case,
-                "error",
-                {
-                    "message": "isolated unit timed out",
-                    "type": "timeout",
-                },
-            )
-            error.text = f"Unit {result.target} timed out in isolated mode."
-        elif result.status == "empty":
-            skipped_node = ET.SubElement(case, "skipped", {"message": "no tests collected"})
-            skipped_node.text = f"Unit {result.target} collected no tests."
-        elif result.status == "escalated":
-            skipped_node = ET.SubElement(
-                case,
-                "skipped",
-                {"message": "unit escalated to per-test isolation"},
-            )
-            skipped_node.text = (
-                f"Unit {result.target} crashed at file granularity and was expanded to per-test "
-                "isolation."
-            )
-        elif result.status == "crash_limited":
-            skipped_node = ET.SubElement(
-                case,
-                "skipped",
-                {"message": "skipped after per-file crash limit was reached"},
-            )
-            skipped_node.text = (
-                f"Unit {result.target} was skipped because this file exceeded the configured "
-                "per-file crash limit in isolated mode."
-            )
-
-    tree = ET.ElementTree(suite)
-    ET.indent(tree, space="  ")
-    tree.write(path, encoding="utf-8", xml_declaration=True)
-
-
-def write_isolated_report(
-    config: IsolatedReportConfig,
-    state: FileRunState,
-    *,
-    per_unit_details: dict[str, dict[str, Any]] | None = None,
-) -> None:
-    """Write the requested aggregated report format for an isolated run."""
-    if config.output_format == "json":
-        write_isolated_json_report(
-            config.output_path,
-            state,
-            per_unit_details=per_unit_details,
-        )
-        return
-    write_isolated_junit_report(config.output_path, state)
 
 
 def _status_from_returncode(returncode: int) -> str:
