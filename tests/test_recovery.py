@@ -112,3 +112,122 @@ def test_feature_off_is_noop() -> None:
         a = ctrl.assess("t.py", "failed", frozenset({"CKR_DEVICE_REMOVED"}))
         assert a.outcome is RecoveryOutcome.CONTINUE
     assert probed == []  # never probes when off
+
+
+def _seq_probe(values):
+    it = iter(values)
+    return lambda: next(it)
+
+
+def test_kryoptic_live_provider_never_recovers() -> None:
+    # Consecutive DEVICE_ERROR failures on a LIVE provider (probe True) must never recover:
+    # this is what protects kryoptic's normal DEVICE_ERROR/GENERAL_ERROR rejections.
+    recovered: list[int] = []
+    ctrl = RecoveryController(
+        _cfg(mode="wait", consecutive_threshold=3),
+        probe=lambda: True,
+        recover=lambda: recovered.append(1) or True,
+    )
+    outs = [
+        ctrl.assess("t.py", "failed", frozenset({"CKR_DEVICE_ERROR"})).outcome for _ in range(6)
+    ]
+    assert all(o is RecoveryOutcome.CONTINUE for o in outs)
+    assert recovered == []
+
+
+def test_counter_reset_on_passing_probe() -> None:
+    probes: list[int] = []
+
+    def _probe():
+        probes.append(1)
+        return True
+
+    ctrl = RecoveryController(
+        _cfg(mode="wait", consecutive_threshold=3), probe=_probe, recover=lambda: True
+    )
+    for _ in range(9):  # 9 failing units, healthy provider
+        ctrl.assess("t.py", "failed", frozenset())
+    assert len(probes) == 3  # once per fresh 3-streak, NOT once per failure past 3
+
+
+def test_cascade_requeues_full_streak() -> None:
+    ctrl = RecoveryController(
+        _cfg(mode="wait", consecutive_threshold=3),
+        probe=_seq_probe([False, True]),
+        recover=lambda: True,
+    )
+    ctrl.assess("a", "failed", frozenset())
+    ctrl.assess("b", "failed", frozenset())
+    a = ctrl.assess("c", "failed", frozenset())
+    assert a.outcome is RecoveryOutcome.RECOVERED_RETRY
+    assert a.requeue_units == ["a", "b", "c"]
+
+
+def test_passing_unit_breaks_streak() -> None:
+    probes: list[int] = []
+    ctrl = RecoveryController(
+        _cfg(mode="wait", consecutive_threshold=3),
+        probe=lambda: probes.append(1) or True,
+        recover=lambda: True,
+    )
+    ctrl.assess("a", "failed", frozenset())
+    ctrl.assess("b", "failed", frozenset())
+    ctrl.assess("ok", "passed", frozenset())  # breaks the streak
+    ctrl.assess("c", "failed", frozenset())  # streak restarts at 1
+    assert probes == []  # never reached the threshold, so never probed
+
+
+def test_recover_fails_to_max_attempts_aborts() -> None:
+    calls: list[int] = []
+    ctrl = RecoveryController(
+        _cfg(mode="wait", max_attempts=3),
+        probe=lambda: False,
+        recover=lambda: calls.append(1) or True,
+    )
+    a = ctrl.assess("t.py", "failed", frozenset({"CKR_DEVICE_REMOVED"}))
+    assert a.outcome is RecoveryOutcome.ABORT
+    assert len(calls) == 3
+
+
+def test_repeat_offender_quarantined_on_nth() -> None:
+    ctrl = RecoveryController(
+        _cfg(mode="wait", quarantine_after=2),
+        probe=_seq_probe([False, True, False, True]),
+        recover=lambda: True,
+    )
+    first = ctrl.assess("t.py", "crashed", frozenset())
+    second = ctrl.assess("t.py", "crashed", frozenset())
+    assert first.outcome is RecoveryOutcome.RECOVERED_RETRY
+    assert second.outcome is RecoveryOutcome.QUARANTINE
+
+
+def test_global_budget_aborts() -> None:
+    ctrl = RecoveryController(
+        _cfg(mode="wait", max_total=2, quarantine_after=99),
+        probe=_seq_probe([False, True] * 100),
+        recover=lambda: True,
+    )
+    outs = [
+        ctrl.assess(f"u{i}", "failed", frozenset({"CKR_DEVICE_REMOVED"})).outcome for i in range(5)
+    ]
+    assert RecoveryOutcome.ABORT in outs
+
+
+def test_dead_then_recover_retries() -> None:
+    ctrl = RecoveryController(
+        _cfg(mode="wait", max_attempts=5),
+        probe=_seq_probe([False, False, True]),
+        recover=lambda: True,
+    )
+    a = ctrl.assess("t.py", "failed", frozenset({"CKR_DEVICE_REMOVED"}))
+    assert a.outcome is RecoveryOutcome.RECOVERED_RETRY
+
+
+def test_event_finding_emitted_on_confirmed_death() -> None:
+    ctrl = RecoveryController(
+        _cfg(mode="wait"), probe=_seq_probe([False, True]), recover=lambda: True
+    )
+    a = ctrl.assess("t.py", "failed", frozenset({"CKR_DEVICE_REMOVED"}))
+    assert any(
+        r.get("reason") == "crash" and "unreachable" in r.get("label", "") for r in a.records
+    )

@@ -26,6 +26,10 @@ from pkcs11_check.core.preflight import run_preflight_subprocess
 
 RecoveryMode = Literal["off", "wait", "cmd"]
 
+# Unit outcomes that count as a failure for streak/suspicion purposes. A "passed" unit proves
+# the provider is live and breaks the streak; anything else neutral (skips) is left untouched.
+_FAILURE_STATUSES = frozenset({"failed", "crashed", "error", "timeout"})
+
 
 def probe_provider_liveness(module: Path, *, interface: str, slot: int, timeout: int) -> bool:
     """Return True iff the provider is reachable, via a fresh-subprocess liveness probe.
@@ -132,11 +136,76 @@ class RecoveryController:
         self._recover_counts: dict[str, int] = {}
         self._total = 0
 
+    def _event_record(self, trigger_unit: str) -> dict[str, Any]:
+        """The immutable synthetic finding emitted on each confirmed daemon death.
+
+        Standalone record (its own synthetic identity) carrying the streak as candidate causes.
+        Never written over a unit's records, so it always survives the re-queue.
+        """
+        return {
+            "reason": "crash",
+            "kind": "lifecycle",
+            "label": "provider became unreachable (liveness probe failed)",
+            "trigger_unit": trigger_unit,
+            "streak": list(self._streak),
+        }
+
     def assess(
         self, unit: str, unit_status: str, unit_hint_rvs: frozenset[str]
     ) -> RecoveryAssessment:
-        """Assess one completed unit and decide the recovery action (see module docstring)."""
-        if self._config.mode == "off":
+        """Assess one completed unit and decide the recovery action (see module docstring).
+
+        Two-stage, liveness-gated: a cheap suspicion hint decides WHEN to run the fresh-subprocess
+        probe; only a failing probe (provider actually unreachable) ever recovers. A passing probe
+        records the unit's result normally and resets the consecutive-failure counter.
+        """
+        cfg = self._config
+        if cfg.mode == "off":
             return RecoveryAssessment(RecoveryOutcome.CONTINUE)
-        # Suspicion + confirmation logic lands in Task 3.
-        return RecoveryAssessment(RecoveryOutcome.CONTINUE)
+
+        if unit_status not in _FAILURE_STATUSES:
+            if unit_status == "passed":
+                self._streak.clear()  # a real pass proves liveness; break the streak
+            return RecoveryAssessment(RecoveryOutcome.CONTINUE)
+
+        # A failing / crashing unit: extend the streak, then decide whether to probe.
+        self._streak.append(unit)
+        suspicious = (
+            bool(unit_hint_rvs & cfg.hint_rvs)
+            or len(self._streak) >= cfg.consecutive_threshold
+            or unit_status == "crashed"
+        )
+        if not suspicious:
+            return RecoveryAssessment(RecoveryOutcome.CONTINUE)
+
+        if self._probe():
+            # Provider is alive: the failures are real (never masked); reset the counter so a
+            # legitimately-failing provider does not re-probe on every subsequent failure.
+            self._streak.clear()
+            return RecoveryAssessment(RecoveryOutcome.CONTINUE)
+
+        # Provider is down. Record the immutable crash finding FIRST, then recover.
+        event = self._event_record(unit)
+        self._total += 1
+        if self._total > cfg.max_total:
+            return RecoveryAssessment(RecoveryOutcome.ABORT, records=[event])
+
+        recovered = False
+        for _ in range(cfg.max_attempts):
+            self._recover()
+            if self._probe():
+                recovered = True
+                break
+        if not recovered:
+            return RecoveryAssessment(RecoveryOutcome.ABORT, records=[event])
+
+        self._recover_counts[unit] = self._recover_counts.get(unit, 0) + 1
+        if self._recover_counts[unit] >= cfg.quarantine_after:
+            # This unit reproducibly kills the daemon -> confirmed finding + quarantine.
+            return RecoveryAssessment(RecoveryOutcome.QUARANTINE, records=[event])
+
+        requeue = list(self._streak)
+        self._streak.clear()
+        return RecoveryAssessment(
+            RecoveryOutcome.RECOVERED_RETRY, requeue_units=requeue, records=[event]
+        )
