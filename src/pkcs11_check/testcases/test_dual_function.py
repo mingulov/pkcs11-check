@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify
+from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
@@ -101,12 +102,12 @@ class TestDigestEncryptUpdate:
         if returncode != 0:
             fatals = [ln for ln in stdout.splitlines() if ln.startswith("FATAL:")]
             detail = fatals[0] if fatals else f"stdout={stdout!r} stderr={stderr!r}"
-            if returncode < 0:
+            if is_crash_returncode(returncode):
                 classify(
                     "crash",
                     label="C_DigestEncryptUpdate",
                     operation="C_DigestEncryptUpdate",
-                    summary=f"Subprocess crashed (signal {-returncode}): {detail}",
+                    summary=f"Subprocess crashed ({crash_detail_name(returncode)}): {detail}",
                 )
             classify(
                 "not_operational",
@@ -196,12 +197,12 @@ class TestDecryptDigestUpdate:
         if returncode != 0:
             fatals = [ln for ln in stdout.splitlines() if ln.startswith("FATAL:")]
             detail = fatals[0] if fatals else f"stdout={stdout!r} stderr={stderr!r}"
-            if returncode < 0:
+            if is_crash_returncode(returncode):
                 classify(
                     "crash",
                     label="C_DecryptDigestUpdate",
                     operation="C_DecryptDigestUpdate",
-                    summary=f"Subprocess crashed (signal {-returncode}): {detail}",
+                    summary=f"Subprocess crashed ({crash_detail_name(returncode)}): {detail}",
                 )
             classify(
                 "not_operational",

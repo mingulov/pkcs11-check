@@ -20,7 +20,7 @@ console = Console()
 
 
 def _load_json(path: Path) -> dict[str, Any]:
-    raw = json.loads(path.read_text())
+    raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         msg = f"Unsupported state file structure: {path}"
         raise ValueError(msg)
@@ -85,7 +85,7 @@ def state_command(
         raise typer.Exit(code=2)
 
     if output == "json":
-        console.print_json(path.read_text())
+        console.print_json(path.read_text(encoding="utf-8"))
         return
 
     if output != "rich":

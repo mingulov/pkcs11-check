@@ -327,7 +327,7 @@ def fetch_disabled_command(
         console.print("[red]Downloaded file doesn't look like a disabled-tests baseline[/red]")
         raise typer.Exit(code=1)
 
-    dest.write_text(content)
+    dest.write_text(content, encoding="utf-8")
     if nodeid_lines:
         console.print(f"  [green]Downloaded {len(nodeid_lines)} disabled entries[/green] to {dest}")
     else:

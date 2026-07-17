@@ -79,6 +79,11 @@ jobs:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v8.1.0
       - run: uv sync --frozen --extra dev
+      - name: Meta-test suite (Windows)
+        # Runs the framework's own meta-tests natively on Windows so portability
+        # regressions surface here rather than only in a user's real run (issue #3).
+        shell: pwsh
+        run: uv run pytest tests/ -v --timeout=60
       - name: Install SoftHSM2 for Windows + provision a token
         shell: pwsh
         run: |
@@ -108,4 +113,39 @@ jobs:
           # conformant provider, so any finding here is a real Windows issue to fix.
           uv run pkcs11-check test --module "$env:P11_MODULE" --pin 1234 `
             --timeout 120 --isolation auto --marker "not security" `
+            --match "test_encrypt or test_sign or test_digest"
+
+  meta-macos:
+    # macOS (arm64) portability proof: the framework meta-tests plus a real
+    # Homebrew SoftHSM2 .dylib functional smoke. macOS is LP64, so the ctypes ABI
+    # path matches Linux; this lane exercises the .dylib load + POSIX-on-Darwin code.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8.1.0
+      - run: uv sync --frozen --extra dev
+      - name: Meta-test suite (macOS)
+        run: uv run pytest tests/ -v --timeout=60
+      - name: Install SoftHSM2 + provision a token
+        run: |
+          brew install softhsm
+          MODULE="$(brew --prefix)/lib/softhsm/libsofthsm2.so"
+          if [ ! -f "$MODULE" ]; then MODULE="$(brew --prefix)/lib/softhsm/libsofthsm2.dylib"; fi
+          if [ ! -f "$MODULE" ]; then MODULE="$(find "$(brew --prefix)" -name 'libsofthsm2.*' | head -n1)"; fi
+          CONF="$PWD/softhsm2.conf"
+          mkdir -p "$PWD/tokens"
+          printf 'directories.tokendir = %s/tokens\nobjectstore.backend = file\nlog.level = ERROR\n' "$PWD" > "$CONF"
+          export SOFTHSM2_CONF="$CONF"
+          softhsm2-util --init-token --slot 0 --label pkcs11-check --so-pin 87654321 --pin 1234
+          echo "P11_MODULE=$MODULE" >> "$GITHUB_ENV"
+          echo "SOFTHSM2_CONF=$CONF" >> "$GITHUB_ENV"
+      - name: doctor + info (macOS .dylib smoke)
+        run: |
+          uv run pkcs11-check info   --module "$P11_MODULE"
+          uv run pkcs11-check doctor --module "$P11_MODULE" --pin 1234
+      - name: functional smoke (encrypt / sign / digest on macOS)
+        run: |
+          # Strict clean functional subset -- any finding here is a real macOS issue.
+          uv run pkcs11-check test --module "$P11_MODULE" --pin 1234 \
+            --timeout 120 --isolation auto --marker "not security" \
             --match "test_encrypt or test_sign or test_digest"

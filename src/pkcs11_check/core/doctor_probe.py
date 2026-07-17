@@ -18,6 +18,8 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
+
 
 @dataclass(frozen=True)
 class LoginProbe:
@@ -109,8 +111,10 @@ def run_login_probe_subprocess(
         )
     except subprocess.TimeoutExpired:
         return LoginProbe("timeout", f"login probe timed out after {timeout}s")
-    if completed.returncode < 0:
-        return LoginProbe("crashed", f"login probe crashed (signal {-completed.returncode})")
+    if is_crash_returncode(completed.returncode):
+        return LoginProbe(
+            "crashed", f"login probe crashed ({crash_detail_name(completed.returncode)})"
+        )
     out = completed.stdout.strip().splitlines()
     for line in reversed(out):
         try:

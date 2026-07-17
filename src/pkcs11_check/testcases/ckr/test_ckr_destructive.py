@@ -36,6 +36,7 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_NOT_LOGGED_IN,
 )
 from pkcs11_check.testcases._probes.runner import run_probe
+from pkcs11_check.testcases._shellcmd import shell_invocation
 from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess, pytest.mark.destructive]
@@ -77,7 +78,7 @@ def _mint_throwaway_token() -> tuple[str, str, str] | None:
     token_dir = tempfile.mkdtemp(prefix="pkcs11_check_ckr_")
     conf_path = os.path.join(token_dir, "module.conf")
     mint_cmd = mint_cmd_tmpl.format(token_dir=token_dir, conf_path=conf_path)
-    proc = subprocess.run(["/bin/sh", "-c", mint_cmd], capture_output=True, check=False)
+    proc = subprocess.run(shell_invocation(mint_cmd), capture_output=True, check=False)
     if proc.returncode != 0:
         shutil.rmtree(token_dir, ignore_errors=True)
         return None
