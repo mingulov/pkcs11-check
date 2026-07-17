@@ -284,6 +284,12 @@ def pytest_addoption(parser: Any) -> None:
         help="PIN (prefer P11TEST_PIN env var)",
     )
     group.addoption(
+        "--p11-so-pin",
+        dest="p11_so_pin",
+        default=None,
+        help="SO PIN for CKU_SO tests (prefer P11TEST_SO_PIN env var)",
+    )
+    group.addoption(
         "--p11-destructive",
         dest="p11_destructive",
         action="store_true",
