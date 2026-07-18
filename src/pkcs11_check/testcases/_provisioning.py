@@ -639,6 +639,34 @@ def _bootstrap_rsa_unwrap_key(rs: Any, start_bits: int) -> tuple[int, int, int] 
     return None
 
 
+def _trial_round_trip(rs: Any, strategy: WrapStrategy, ctx: WrapContext) -> bool:
+    """Trial round-trip: wrap a 16-byte probe, confirm C_UnwrapKey accepts it.
+
+    The unwrapped probe handle is destroyed; a clean CKR failure means "this
+    strategy/hash combo does not work here", never a finding.
+    """
+    from pkcs11_check.raw.recipes import destroy_quietly, unwrap_key
+
+    unwrap_handle = strategy.unwrapping_key_handle(ctx)
+    if unwrap_handle is None:
+        return False
+    blob = strategy.wrap(ctx, b"\x00" * 16)
+    try:
+        handle = unwrap_key(
+            rs.raw,
+            rs.sh,
+            unwrap_handle,
+            blob,
+            strategy.unwrap_mech,
+            attrs=_PROBE_ATTRS,
+            mech_param=strategy.unwrap_mech_param(ctx),
+        )
+    except CkrAssertionError:
+        return False
+    destroy_quietly(rs.raw, rs.sh, handle)
+    return True
+
+
 def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
     """Build a ``WrapContext`` by probing ALL usable strategies in DEFAULT_STRATEGIES order.
 
@@ -677,7 +705,7 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
     rsa_bootstrapped = False
     aes_bootstrapped = False
 
-    from pkcs11_check.raw.recipes import destroy_quietly, unwrap_key
+    from pkcs11_check.raw.recipes import destroy_quietly
 
     for strategy in DEFAULT_STRATEGIES:
         if not strategy.usable(profile_for(rs)):
@@ -771,24 +799,8 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
                 oaep_hash=cand if cand is not None else "sha1",
                 strategy_name=strategy.name,
             )
-            unwrap_handle = strategy.unwrapping_key_handle(trial_ctx)
-            if unwrap_handle is None:
-                continue  # material check passed but no handle (shouldn't happen)
-            blob = strategy.wrap(trial_ctx, b"\x00" * 16)
-            try:
-                handle = unwrap_key(
-                    rs.raw,
-                    rs.sh,
-                    unwrap_handle,
-                    blob,
-                    strategy.unwrap_mech,
-                    attrs=_PROBE_ATTRS,
-                    mech_param=strategy.unwrap_mech_param(trial_ctx),
-                )
-            except CkrAssertionError:
-                continue
-            destroy_quietly(rs.raw, rs.sh, handle)
-            return trial_ctx
+            if _trial_round_trip(rs, strategy, trial_ctx):
+                return trial_ctx
 
     return None
 
