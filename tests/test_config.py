@@ -96,3 +96,22 @@ def test_so_pin_env_key_fingerprinted_and_redacted() -> None:
 
     assert "P11TEST_SO_PIN" in _run_state._DEFAULT_FINGERPRINT_ENV_KEYS
     assert "P11TEST_SO_PIN" in _run_state._REDACTED_ENV_KEYS
+
+
+class TestWrapKeyValueValidation:
+    def test_valid_hex_lengths_accepted(self, tmp_path: Path) -> None:
+        for hexstr in ("00" * 16, "11" * 24, "ab" * 32):
+            config = P11TestConfig(module=tmp_path / "m.so", wrap_key_value=hexstr)
+            assert config.wrap_key_value == hexstr
+
+    def test_non_hex_rejected(self, tmp_path: Path) -> None:
+        with pytest.raises(Exception, match="hex"):
+            P11TestConfig(module=tmp_path / "m.so", wrap_key_value="zz" * 16)
+
+    def test_wrong_length_rejected(self, tmp_path: Path) -> None:
+        with pytest.raises(Exception, match="16, 24, or 32"):
+            P11TestConfig(module=tmp_path / "m.so", wrap_key_value="00" * 15)
+
+    def test_odd_length_rejected(self, tmp_path: Path) -> None:
+        with pytest.raises(Exception, match="hex"):
+            P11TestConfig(module=tmp_path / "m.so", wrap_key_value="0" * 33)

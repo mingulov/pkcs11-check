@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -67,6 +67,20 @@ class P11TestConfig(BaseSettings):
     #   {key_type} {key_class}.
     allow_external_provision: bool = False
     external_provision_cmd: str | None = None
+
+    @field_validator("wrap_key_value")
+    @classmethod
+    def _validate_wrap_key_value(cls, v: str | None) -> str | None:
+        """Fail fast on a malformed configured-KEK hex value (never degrade to a skip)."""
+        if v is None:
+            return v
+        try:
+            raw = bytes.fromhex(v)
+        except ValueError as exc:
+            raise ValueError("wrap_key_value must be a hex string") from exc
+        if len(raw) not in (16, 24, 32):
+            raise ValueError("wrap_key_value must decode to 16, 24, or 32 bytes")
+        return v
 
     @classmethod
     def settings_customise_sources(
