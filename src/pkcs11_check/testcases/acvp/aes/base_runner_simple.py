@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, set_mechanism
 from pkcs11_check.raw.pack import mech_bytes
 from pkcs11_check.raw.recipes import (
     _cancel_operation,
@@ -129,6 +129,8 @@ def run_simple_encrypt_test(
     if not rs.has_mechanism(mech_name):
         pytest.skip(f"{mech_name} not supported by module")
 
+    set_mechanism(mech_name, operation="C_Encrypt", expect_success=True)
+
     key = 0
     try:
         key = _import_aes_key(rs, vec["key"], encrypt=True, decrypt=False)
@@ -203,6 +205,8 @@ def run_simple_decrypt_test(
     rs = p11_module_session
     if not rs.has_mechanism(mech_name):
         pytest.skip(f"{mech_name} not supported by module")
+
+    set_mechanism(mech_name, operation="C_Decrypt", expect_success=True)
 
     key = 0
     try:
@@ -417,6 +421,8 @@ def run_multiblock_encrypt_test(
     if not rs.has_mechanism(mech_name):
         pytest.skip(f"{mech_name} not supported by module")
 
+    set_mechanism(mech_name, operation="C_Encrypt", expect_success=True)
+
     blocks = vec.get("blocks", [])
     assert blocks, f"{vec_id}: No blocks found in multi-block test"
 
@@ -542,6 +548,8 @@ def run_multiblock_decrypt_test(
     rs = p11_module_session
     if not rs.has_mechanism(mech_name):
         pytest.skip(f"{mech_name} not supported by module")
+
+    set_mechanism(mech_name, operation="C_Decrypt", expect_success=True)
 
     blocks = vec.get("blocks", [])
     assert blocks, f"{vec_id}: No blocks found in multi-block test"
