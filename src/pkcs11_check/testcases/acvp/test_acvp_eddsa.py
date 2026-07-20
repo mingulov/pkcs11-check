@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, fail_as, set_params, xfail_as
+from pkcs11_check.classification import classify, fail_as, set_mechanism, set_params, xfail_as
 from pkcs11_check.raw.pack import attr_bytes
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -212,6 +212,9 @@ class TestEdDsaKeyGen:
             pytest.skip("EC_EDWARDS_KEY_PAIR_GEN not supported by module")
         skip_duplicate_pkcs11_input(vec, "EdDSA KeyGen")
         set_params({"curve": vec.get("curve", "")})
+        # Roundtrip below signs then verifies with CKM_EDDSA: declare C_Sign
+        # only, one call -- C_Verify is backstopped by test_acvp_eddsa_sigver.
+        set_mechanism("EDDSA", operation="C_Sign", expect_success=True)
 
         pub_key = priv_key = 0
         try:
@@ -433,6 +436,7 @@ def test_acvp_eddsa_siggen(
     if not rs.has_mechanism("EDDSA"):
         pytest.skip("EDDSA mechanism not supported by module")
     set_params({"curve": vec.get("curve", "")})
+    set_mechanism("EDDSA", operation="C_Sign", expect_success=True)
 
     priv_key = 0
     try:
