@@ -56,6 +56,7 @@ from pkcs11_check.raw.types_std import (
     CKO_CERTIFICATE,
     CKO_DATA,
     CKO_PRIVATE_KEY,
+    CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -741,16 +742,137 @@ def _build_configured_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
     return None
 
 
+def _configured_rsa_pub_der(rs: Any, priv_handle: int, label: str | None) -> bytes | None:
+    """Recover the configured RSA KEK's public half as SubjectPublicKeyInfo DER."""
+    from pkcs11_check.raw.pack import template_from_dict
+    from pkcs11_check.raw.recipes import find_objects, read_attributes
+
+    n_bytes: bytes | None = None
+    e_bytes: bytes | None = None
+
+    def _pub_from(handle: int) -> tuple[bytes | None, bytes | None]:
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, handle, (CKA_MODULUS, CKA_PUBLIC_EXPONENT))
+        except CkrAssertionError:
+            return None, None
+        return attrs.get(CKA_MODULUS), attrs.get(CKA_PUBLIC_EXPONENT)
+
+    # 1) CKA_ID-matched public object (spec-correct pair convention)
+    try:
+        id_attrs = read_attributes(rs.raw, rs.sh, priv_handle, (CKA_ID,))
+        key_id = id_attrs.get(CKA_ID)
+    except CkrAssertionError:
+        key_id = None
+    if key_id:
+        try:
+            pubs = find_objects(
+                rs.raw, rs.sh, template_from_dict({CKA_CLASS: CKO_PUBLIC_KEY, CKA_ID: key_id})
+            )
+        except CkrAssertionError:
+            pubs = []
+        if len(pubs) == 1:
+            n_bytes, e_bytes = _pub_from(pubs[0])
+    # 2) label-matched public object
+    if (n_bytes is None or e_bytes is None) and label is not None:
+        try:
+            pubs = find_objects(
+                rs.raw, rs.sh, template_from_dict({CKA_CLASS: CKO_PUBLIC_KEY, CKA_LABEL: label})
+            )
+        except CkrAssertionError:
+            pubs = []
+        if len(pubs) == 1:
+            n_bytes, e_bytes = _pub_from(pubs[0])
+    # 3) direct read off the private object (CKA_MODULUS/EXPONENT are non-sensitive per spec)
+    if n_bytes is None or e_bytes is None:
+        n_bytes, e_bytes = _pub_from(priv_handle)
+    if n_bytes is None or e_bytes is None:
+        return None
+    n = int.from_bytes(n_bytes, "big")
+    e = int.from_bytes(e_bytes, "big")
+    pub_key = _crypto_rsa.RSAPublicNumbers(e, n).public_key()
+    return pub_key.public_bytes(_Encoding.DER, _PublicFormat.SubjectPublicKeyInfo)
+
+
+def _configured_strategy_trial(
+    rs: Any,
+    cfg: Any,
+    *,
+    rsa_pub_der: bytes | None,
+    rsa_unwrap_handle: int | None,
+    aes_kek_handle: int | None,
+    sym_kek: bytes | None,
+    _fail: Any,
+) -> WrapContext | None:
+    oaep_hash_cfg: str = getattr(cfg, "wrap_oaep_hash", "auto")
+    for strategy in DEFAULT_STRATEGIES:
+        if not strategy.usable(profile_for(rs)):
+            continue
+        if strategy.name in ("rsa_aes_key_wrap", "rsa_oaep"):
+            hash_candidates: tuple[str, ...] = (
+                ("sha256", "sha1") if oaep_hash_cfg == "auto" else (oaep_hash_cfg,)
+            )
+        else:
+            hash_candidates = ("sha1",)
+        for cand in hash_candidates:
+            trial_ctx = WrapContext(
+                rsa_pub_der=rsa_pub_der,
+                rsa_unwrap_handle=rsa_unwrap_handle,
+                aes_kek_handle=aes_kek_handle,
+                sym_kek=sym_kek,
+                aes_bits=256,
+                oaep_hash=cand,
+                strategy_name=strategy.name,
+            )
+            if not strategy.has_material(trial_ctx):
+                break  # missing material is hash-independent
+            if _trial_round_trip(rs, strategy, trial_ctx):
+                return trial_ctx
+    _fail("configured KEK failed every usable strategy's trial round-trip")
+    return None
+
+
 def _configured_rsa_material(
     rs: Any, cfg: Any, handle: int, label: str | None, _fail: Any
 ) -> WrapContext | None:
-    _fail("RSA configured-KEK path not yet built (Task 4)")
-    return None
+    rsa_pub_der = _configured_rsa_pub_der(rs, handle, label)
+    if rsa_pub_der is None:
+        _fail("cannot recover the RSA public half (no unique public object; modulus unreadable)")
+        return None
+    profile_for(rs).rsa_pub_der_probe = rsa_pub_der
+    return _configured_strategy_trial(
+        rs,
+        cfg,
+        rsa_pub_der=rsa_pub_der,
+        rsa_unwrap_handle=handle,
+        aes_kek_handle=None,
+        sym_kek=None,
+        _fail=_fail,
+    )
 
 
 def _configured_secret_material(rs: Any, cfg: Any, handle: int, _fail: Any) -> WrapContext | None:
-    _fail("secret configured-KEK path not yet built (Task 4)")
-    return None
+    from pkcs11_check.raw.recipes import read_attributes
+
+    wkv = getattr(cfg, "wrap_key_value", None)
+    if wkv is not None:
+        sym_kek: bytes | None = bytes.fromhex(wkv)  # validated at config construction
+    else:
+        try:
+            val_attrs = read_attributes(rs.raw, rs.sh, handle, (CKA_VALUE,))
+            sym_kek = val_attrs.get(CKA_VALUE)
+        except CkrAssertionError:
+            sym_kek = None
+    # Non-extractable KEK without wrap_key_value: sym_kek stays None -> AesKwp
+    # has_material() fails in the trial (documented limitation; software-side wrap).
+    return _configured_strategy_trial(
+        rs,
+        cfg,
+        rsa_pub_der=None,
+        rsa_unwrap_handle=None,
+        aes_kek_handle=handle,
+        sym_kek=sym_kek,
+        _fail=_fail,
+    )
 
 
 def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
