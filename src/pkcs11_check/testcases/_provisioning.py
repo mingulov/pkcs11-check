@@ -45,6 +45,7 @@ from pkcs11_check.raw.types_std import (
     CKG_MGF1_SHA256,
     CKK_AES,
     CKK_EC,
+    CKK_GENERIC_SECRET,
     CKK_RSA,
     CKM,
     CKM_AES_KEY_WRAP_KWP,
@@ -667,6 +668,91 @@ def _trial_round_trip(rs: Any, strategy: WrapStrategy, ctx: WrapContext) -> bool
     return True
 
 
+def _build_configured_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
+    """Resolve an operator-configured KEK into a trial-verified WrapContext.
+
+    Every failure emits a compliance note naming the reason and returns None
+    (-> the callers' existing "no wrapping path" skip). The configured key is
+    NEVER destroyed. No bootstrap fallback: explicit config is explicit intent.
+    """
+    from pkcs11_check.compliance import ComplianceLevel, note
+    from pkcs11_check.raw.pack import template_from_dict
+    from pkcs11_check.raw.recipes import find_objects, read_attributes
+
+    def _fail(reason: str) -> None:
+        note(f"configured wrap key unusable: {reason}", ComplianceLevel.STANDARD)
+
+    cfg_handle = getattr(cfg, "wrap_key_handle", None)
+    label = getattr(cfg, "wrap_key_label", None)
+
+    if cfg_handle is not None:
+        try:
+            probe = read_attributes(rs.raw, rs.sh, cfg_handle, (CKA_CLASS,))
+        except CkrAssertionError as exc:
+            _fail(f"wrap_key_handle not usable: {exc}")
+            return None
+        if CKA_CLASS not in probe:
+            _fail("wrap_key_handle: CKA_CLASS unreadable")
+            return None
+        handle = cfg_handle
+    elif label is not None:
+        try:
+            matches = find_objects(
+                rs.raw, rs.sh, template_from_dict({CKA_LABEL: label, CKA_TOKEN: True})
+            )
+        except CkrAssertionError as exc:
+            _fail(f"C_FindObjects for wrap_key_label failed: {exc}")
+            return None
+        if len(matches) != 1:
+            hint = ""
+            if not matches and getattr(cfg, "pin", None) is None:
+                hint = "; session not logged in (no PIN), a private wrap key is not visible"
+            _fail(f"wrap_key_label matched {len(matches)} token objects; expected exactly 1{hint}")
+            return None
+        handle = matches[0]
+        try:
+            probe = read_attributes(rs.raw, rs.sh, handle, (CKA_CLASS,))
+        except CkrAssertionError as exc:
+            _fail(f"resolved wrap key not readable: {exc}")
+            return None
+    else:
+        _fail("wrap_key_source=configured but neither wrap_key_label nor wrap_key_handle given")
+        return None
+
+    try:
+        kt_attrs = read_attributes(rs.raw, rs.sh, handle, (CKA_KEY_TYPE,))
+    except CkrAssertionError as exc:
+        _fail(f"CKA_KEY_TYPE unreadable: {exc}")
+        return None
+    obj_class = probe.get(CKA_CLASS)
+    key_type = kt_attrs.get(CKA_KEY_TYPE)
+
+    if obj_class == CKO_PRIVATE_KEY:
+        if key_type != CKK_RSA:
+            _fail("configured private key is not RSA")
+            return None
+        return _configured_rsa_material(rs, cfg, handle, label, _fail)
+    if obj_class == CKO_SECRET_KEY:
+        if key_type not in (CKK_AES, CKK_GENERIC_SECRET):
+            _fail("configured secret key type unsupported (need AES/generic-secret)")
+            return None
+        return _configured_secret_material(rs, cfg, handle, _fail)
+    _fail("configured object class unsupported (need private RSA or secret key)")
+    return None
+
+
+def _configured_rsa_material(
+    rs: Any, cfg: Any, handle: int, label: str | None, _fail: Any
+) -> WrapContext | None:
+    _fail("RSA configured-KEK path not yet built (Task 4)")
+    return None
+
+
+def _configured_secret_material(rs: Any, cfg: Any, handle: int, _fail: Any) -> WrapContext | None:
+    _fail("secret configured-KEK path not yet built (Task 4)")
+    return None
+
+
 def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
     """Build a ``WrapContext`` by probing ALL usable strategies in DEFAULT_STRATEGIES order.
 
@@ -682,15 +768,16 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
     Sets ``profile_for(rs).rsa_pub_der_probe`` when RSA material is successfully
     bootstrapped so ``select_strategy`` can size-check OAEP payloads correctly.
 
-    The ``configured`` wrap-key-source path is not yet implemented; a
-    ``NotImplementedError`` is raised for that branch.
+    When ``cfg.wrap_key_source == "configured"``, resolution routes to
+    ``_build_configured_wrap_context``: an operator-named KEK (by handle or label) is
+    looked up, class/key-type dispatched, and its material + trial round-trip built —
+    never falling back to bootstrap (explicit config is explicit intent).
     """
     wrap_key_source: str = getattr(cfg, "wrap_key_source", "bootstrap")
+    if wrap_key_source == "configured":
+        return _build_configured_wrap_context(rs, cfg)
     if wrap_key_source != "bootstrap":
-        raise NotImplementedError(
-            f"wrap_key_source={wrap_key_source!r} is not yet implemented; "
-            "only 'bootstrap' is supported in Phase 1"
-        )
+        raise ValueError(f"unknown wrap_key_source {wrap_key_source!r}")
 
     start_bits: int = getattr(cfg, "wrap_rsa_bits", 2048)
     oaep_hash_cfg: str = getattr(cfg, "wrap_oaep_hash", "auto")
